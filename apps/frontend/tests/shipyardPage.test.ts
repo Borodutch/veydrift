@@ -363,7 +363,7 @@ describe("Shipyard page display helpers", () => {
     expect(crawler).toMatchObject({
       notes: [
         "A planetary support machine rather than a fleet ship. Crawlers help an economy develop but are too slow and static for normal fleet missions.",
-        "Special: stays on its home planet and boosts metal, crystal, and deuterium mine output while drawing extra energy.",
+        "Special: a stationary mining-support unit meant to boost the home planet's metal, crystal, and deuterium output. The production bonus is not active on-chain yet, so building crawlers does not increase production today.",
       ],
     });
   });
