@@ -931,6 +931,48 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(originPlanetId).lastSettledAt, arrival1);
     }
 
+    /// @notice Direct regression for the reported VEY-417 freeze: a Colonize mission tracks the
+    ///         ORIGIN planet for resolution (`_trackMissionResolution` registers origin + owner and
+    ///         returns before touching any target), so once the colony fleet has arrived but the
+    ///         resolver has not yet processed it, the colonizer's own planet must not be frozen out
+    ///         of collecting accrued production. Collection clamps to the unresolved arrival instead.
+    function testSettlePlanetNotFrozenByUnresolvedArrivedColonizeMission() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 2, 44, 8);
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            _colonizationTargetId(2, 44, 9),
+            VeydriftGameStorage.FleetMissionType.Colonize,
+            _colonyShipManifest(),
+            VeydriftGameStorage.Resources({metal: 300, crystal: 200, deuterium: 100}),
+            100,
+            0
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        // Fleet has arrived; the Colonize mission is unresolved and pending against the origin planet.
+        // Before the fix this reverted FleetMissionNotResolved and froze the account.
+        vm.warp(uint256(arrivalAt) + 3 hours);
+        vm.prank(player);
+        game.settlePlanet(originPlanetId);
+        assertEq(game.planet(originPlanetId).lastSettledAt, arrivalAt);
+
+        // Resolving the colony mission unblocks full settlement up to the current time.
+        game.resolveFleetMission(missionId);
+        uint64 resolvedTs = uint64(block.timestamp);
+        vm.prank(player);
+        game.settlePlanet(originPlanetId);
+        assertEq(game.planet(originPlanetId).lastSettledAt, resolvedTs);
+    }
+
     function testBuildingUpgradeSpendsInternalResources() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
