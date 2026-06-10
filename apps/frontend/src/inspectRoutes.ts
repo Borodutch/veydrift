@@ -21,6 +21,7 @@ const pageNames = new Set<Page>([
   "rift",
   "rankings",
   "galaxy",
+  "raid-target-finder",
   "planet",
   "battle-reports",
 ]);
