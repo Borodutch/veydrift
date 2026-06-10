@@ -560,8 +560,11 @@ describe("Mission Control battle reports", () => {
     })).join(" ");
 
     expect(text).toContain("Round-by-round combat");
-    expect(text).toContain("Attacker firepower / losses");
-    expect(text).toContain("Defender firepower / losses");
+    expect(text).toContain("Attacker units / losses");
+    expect(text).toContain("Defender units / losses");
+    expect(text).toContain("1,000 units remaining");
+    expect(text).toContain("800 units remaining");
+    expect(text).not.toContain("units fired");
     expect(text).not.toContain("No round-by-round snapshots were indexed");
   });
 
