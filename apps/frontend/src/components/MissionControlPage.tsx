@@ -8,6 +8,7 @@ import type { PlanetType } from "../types";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import {
   type BattleReport,
+  type BattleReportParticipant,
   type FleetMissionArchiveEntry,
   type FleetMissionArchiveResponse,
   type FleetMissionPlanetReference,
@@ -1367,6 +1368,12 @@ function PastBattleReportRow({
     coords: null,
     name: "Attacker",
   };
+  // ACS grouped attack: surface the combined group loot and the joiner count so the compact row makes
+  // clear the haul was split, with the per-participant breakdown one click away on the detail screen.
+  const participants = report.participants ?? [];
+  const isGroupedAttack = participants.length > 1;
+  const lootShown = isGroupedAttack ? sumLoot(participants) : report.loot;
+  const joinerCount = isGroupedAttack ? participants.length - 1 : 0;
   return (
     <MissionCard
       actions={
@@ -1385,8 +1392,13 @@ function PastBattleReportRow({
       direction="outbound"
       fleet={
         <div className="space-y-1">
-          <p className="text-[11px] text-slate-500">Loot {formatCargo(report.loot)}</p>
+          <p className="text-[11px] text-slate-500">
+            {isGroupedAttack ? "Group loot " : "Loot "}{formatCargo(lootShown)}
+          </p>
           <p className="text-[11px] text-slate-500">Losses {formatCargo(report.attackerLosses)} / {formatCargo(report.defenderLosses)}</p>
+          {isGroupedAttack ? (
+            <p className="text-[11px] text-cyan-300/80">ACS group · {joinerCount} {joinerCount === 1 ? "joiner" : "joiners"}</p>
+          ) : null}
         </div>
       }
       missionId={report.missionId}
@@ -1394,6 +1406,19 @@ function PastBattleReportRow({
       routeSubtext={`${battleOutcomeLabel(report.outcome)} · Block ${report.blockNumber || "unknown"} · ${report.rounds} rounds`}
       target={target}
     />
+  );
+}
+
+// Sum each participant's loot share into the combined ACS group total (BigInt to stay exact for the
+// uint128 resource amounts). Mirrors the per-participant split the contract performs on-chain.
+function sumLoot(participants: BattleReportParticipant[]): { metal: string; crystal: string; deuterium: string } {
+  return participants.reduce(
+    (total, participant) => ({
+      metal: (BigInt(total.metal) + BigInt(participant.loot.metal || "0")).toString(),
+      crystal: (BigInt(total.crystal) + BigInt(participant.loot.crystal || "0")).toString(),
+      deuterium: (BigInt(total.deuterium) + BigInt(participant.loot.deuterium || "0")).toString(),
+    }),
+    { metal: "0", crystal: "0", deuterium: "0" }
   );
 }
 

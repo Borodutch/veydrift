@@ -316,6 +316,18 @@ export type CombatRoundReport = {
   defenderLosses: OnChainResources;
 };
 
+// One member of an ACS (Alliance Combat System) attack group: the main attacker plus any fleets that
+// joined the same attack. `loot` is the resources this fleet personally hauled away. Per-participant
+// losses are not emitted on-chain (CombatLosses is a single combined figure), so only loot is broken
+// out per participant; the report's top-level losses/debris/outcome remain the combined group result.
+export type BattleReportParticipant = {
+  missionId: string;
+  address: string;
+  isMainAttacker: boolean;
+  ships: Record<string, string>;
+  loot: OnChainResources;
+};
+
 export type BattleReport = {
   missionId: string;
   attacker: string;
@@ -333,6 +345,11 @@ export type BattleReport = {
   roundReports: CombatRoundReport[];
   transactionHash: string;
   blockNumber: string;
+  // ACS attack group: the main attack mission id for a grouped attack (null for a solo attack), and
+  // every participant (main attacker + joiners) with their individual loot share. Older feeds that
+  // predate VEY-KANEO-432 may omit these; consumers fall back to the single-attacker fields.
+  attackGroupId?: string | null;
+  participants?: BattleReportParticipant[];
 };
 
 export type ChainShipyardState = {

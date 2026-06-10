@@ -9,6 +9,7 @@ import {
   technologyIds
 } from "./contractStateSchema";
 import {
+  attachAttackGroupParticipants,
   decodeAllianceLog,
   decodeBattleReports,
   decodeCompleteFleetMissionLogs,
@@ -705,8 +706,13 @@ export class SettlementIndexer {
       completedMissions: summaries
         .filter((mission) => isVisibleCompletedMission(mission, walletLower, ownedPlanetIds))
         .sort(compareFleetMissionsNewestFirst),
+      // A report is visible to the main attacker, the defender (target planet owner), and — for a
+      // grouped ACS attack — every joiner, so each participant can see the shared report and the loot
+      // they personally hauled (VEY-KANEO-432).
       battleReports: battleReports.filter((report) =>
-        report.attacker.toLowerCase() === walletLower || ownedPlanetIds.has(report.targetPlanetId)
+        report.attacker.toLowerCase() === walletLower
+          || ownedPlanetIds.has(report.targetPlanetId)
+          || report.participants.some((participant) => participant.address.toLowerCase() === walletLower)
       )
     };
   }
@@ -2920,7 +2926,10 @@ export class SettlementIndexer {
     const logs = rows
       .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
       .filter(isBattleReportLog);
-    return decodeBattleReports(logs);
+    // Enrich each report with its ACS attack group participants + per-participant loot, joining the
+    // decoded battle reports against the fleet-mission read model (which carries joinedAttackMissionIds
+    // and each joiner's resulting return-leg cargo). Solo attacks come back with a single participant.
+    return attachAttackGroupParticipants(decodeBattleReports(logs), this.indexedFleetMissionSummaries());
   }
 
   private withFleetMissionPlanetReferences(mission: FleetMissionSummary): FleetMissionSummary {
