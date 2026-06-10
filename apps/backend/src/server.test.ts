@@ -26,7 +26,7 @@ import type {
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import { VeydriftGameReader, riftRequirements } from "./evm";
 import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
-import { createRequestHandler } from "./server";
+import { createRequestHandler, deriveLogBackfiller } from "./server";
 
 const configuredTestConfig: BackendConfig = {
   chainId: 84532,
@@ -688,6 +688,24 @@ function withoutIndexLists(reader: ChainReader): ChainReader {
     }
   });
 }
+
+describe("chain-sync self-heal wiring", () => {
+  test("production reader exposes the log backfiller self-heal depends on", () => {
+    // server.ts builds the chain-sync logBackfiller from the production reader via
+    // deriveLogBackfiller. If VeydriftGameReader stopped exposing listContractLogs, or the
+    // wiring dropped it, self-heal (and reconnect backfill) would silently become a no-op
+    // in production. This asserts the real reader satisfies the backfiller contract.
+    const reader = new VeydriftGameReader(configuredTestConfig);
+    const backfiller = deriveLogBackfiller(reader);
+    expect(backfiller).toBeDefined();
+    expect(typeof backfiller?.listContractLogs).toBe("function");
+  });
+
+  test("deriveLogBackfiller yields nothing when the reader cannot list contract logs", () => {
+    expect(deriveLogBackfiller(undefined)).toBeUndefined();
+    expect(deriveLogBackfiller({} as unknown as Parameters<typeof deriveLogBackfiller>[0])).toBeUndefined();
+  });
+});
 
 describe("Veydrift backend", () => {
   const handler = createRequestHandler();
