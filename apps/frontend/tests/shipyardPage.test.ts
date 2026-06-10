@@ -329,6 +329,45 @@ describe("Shipyard page display helpers", () => {
     });
   });
 
+  test("explains the Crawler mine-production boost as a special note", () => {
+    const baseState = shipyardState();
+    const items = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      quantities: {},
+      queue: undefined,
+      resources: {
+        metal: 100000,
+        crystal: 100000,
+        deuterium: 100000,
+      },
+      shipyardLevel: 5,
+      shipyardState: shipyardState({
+        ships: [
+          ...baseState.ships,
+          {
+            id: 15,
+            count: 2,
+            cost: {
+              metal: "2000",
+              crystal: "2000",
+              deuterium: "1000",
+            },
+          },
+        ],
+      }),
+    });
+
+    const crawler = items.find((item) => item.key === "crawler");
+    expect(crawler).toMatchObject({
+      notes: [
+        "A planetary support machine rather than a fleet ship. Crawlers help an economy develop but are too slow and static for normal fleet missions.",
+        "Special: stays on its home planet and boosts metal, crystal, and deuterium mine output while drawing extra energy.",
+      ],
+    });
+  });
+
   test("keeps catalog context while selected item drives the build panel model", () => {
     const items = shipProductionItems({
       actionPending: false,
