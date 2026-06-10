@@ -931,12 +931,14 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(originPlanetId).lastSettledAt, arrival1);
     }
 
-    /// @notice Direct regression for the reported VEY-417 freeze: a Colonize mission tracks the
-    ///         ORIGIN planet for resolution (`_trackMissionResolution` registers origin + owner and
-    ///         returns before touching any target), so once the colony fleet has arrived but the
-    ///         resolver has not yet processed it, the colonizer's own planet must not be frozen out
-    ///         of collecting accrued production. Collection clamps to the unresolved arrival instead.
-    function testSettlePlanetNotFrozenByUnresolvedArrivedColonizeMission() public {
+    /// @notice Direct regression for the reported VEY-417 freeze. A Colonize mission is tracked
+    ///         against its ORIGIN planet/owner (`_trackMissionResolution` registers origin + owner and
+    ///         returns before touching any target). Resolving a Colonize never reads or mutates the
+    ///         origin planet, so an arrived-but-unresolved Colonize must NOT gate the origin: the owner
+    ///         keeps full settlement AND every mutating action while the colony fleet awaits the
+    ///         resolver. Previously the gate reverted FleetMissionNotResolved and froze the account
+    ///         out of settle/build/research/launch until the off-chain resolver caught up.
+    function testUnresolvedArrivedColonizeMissionDoesNotFreezeOrigin() public {
         vm.prank(player);
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         _setPlanetCoordinates(originPlanetId, 2, 44, 8);
@@ -958,19 +960,25 @@ contract VeydriftGameTest is Test {
 
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
 
-        // Fleet has arrived; the Colonize mission is unresolved and pending against the origin planet.
-        // Before the fix this reverted FleetMissionNotResolved and froze the account.
+        // Fleet has arrived and the Colonize mission is still unresolved (resolver lag). The colony
+        // fleet does not touch the origin, so collection must settle FULLY to now — never clamped to
+        // the arrival, never reverted.
         vm.warp(uint256(arrivalAt) + 3 hours);
+        uint64 nowTs = uint64(block.timestamp);
         vm.prank(player);
         game.settlePlanet(originPlanetId);
-        assertEq(game.planet(originPlanetId).lastSettledAt, arrivalAt);
+        assertEq(game.planet(originPlanetId).lastSettledAt, nowTs);
 
-        // Resolving the colony mission unblocks full settlement up to the current time.
-        game.resolveFleetMission(missionId);
-        uint64 resolvedTs = uint64(block.timestamp);
+        // And the whole account stays usable: a mutating action that settles first (the user's
+        // reported Infrastructure upgrade) must not revert FleetMissionNotResolved.
         vm.prank(player);
-        game.settlePlanet(originPlanetId);
-        assertEq(game.planet(originPlanetId).lastSettledAt, resolvedTs);
+        game.startBuildingUpgrade(originPlanetId, Building.MetalMine);
+        assertTrue(game.activeBuildingConstruction(originPlanetId).active);
+
+        // The Colonize mission is still permissionlessly resolvable on arrival.
+        game.resolveFleetMission(missionId);
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
     }
 
     function testBuildingUpgradeSpendsInternalResources() public {

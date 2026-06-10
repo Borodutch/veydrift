@@ -333,6 +333,13 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         return 0;
     }
 
+    /// @dev Only Attack and Harvest gate settlement: their resolution mutates an involved planet's
+    ///      resources at `arrivalAt` (combat losses, looted/harvested debris), so production must not
+    ///      settle across an unresolved arrival. Colonize is deliberately excluded — resolving a
+    ///      Colonize neither reads nor mutates the origin planet (it only creates a brand-new colony
+    ///      at the target from cargo snapshotted at launch). An unresolved, overdue Colonize is tracked
+    ///      against its origin planet/owner, so including it here froze the owner out of every action
+    ///      (settle, build, research, launch) until the off-chain resolver caught up — see VEY-417.
     function _isPendingResolutionMission(FleetMission storage mission)
         internal
         view
@@ -340,8 +347,7 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     {
         return mission.status == FleetMissionStatus.Outbound
             && (mission.missionType == FleetMissionType.Attack
-                || mission.missionType == FleetMissionType.Harvest
-                || mission.missionType == FleetMissionType.Colonize)
+                || mission.missionType == FleetMissionType.Harvest)
             && _missionResolutionTimestamp() >= mission.arrivalAt;
     }
 
