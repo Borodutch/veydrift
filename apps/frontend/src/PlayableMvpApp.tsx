@@ -249,6 +249,9 @@ const buildingWalletConfirmationLabel = (label: string) =>
     ? "Building completion: confirm the game-state update in your wallet; token balance changes are not expected."
     : `${label}: unlock your wallet if needed, then confirm in your wallet.`;
 const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
+// VEY-KANEO-433: after an active mission's ETA passes, wait a short beat before the tightened Mission
+// Control refresh so the backend indexer has settled the arrival/resolution before we re-read it.
+const MISSION_RESOLUTION_REFRESH_BUFFER_MS = 1_500;
 // A direct on-chain `previewResources` read older than this is treated as stale
 // and dropped, so a read taken before a deposit / settlement can never pin the
 // displayed balance below the player's real spendable while the chain catches up.
@@ -346,6 +349,48 @@ export function shouldRefreshAllianceStateForPage(page: Page): boolean {
 
 export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
   return page === "galaxy" || page === "planet";
+}
+
+// VEY-KANEO-433: Mission Control auto-polls its own data (active missions, the past-mission archives,
+// and battle reports/loot) while the player is viewing it, so a mission resolving at its destination —
+// and the resulting status flip, loot, and battle report — appears within a poll cycle instead of only
+// after a manual Refresh.
+export function shouldAutoPollMissionControlForPage(page: Page): boolean {
+  return page === "mission-control";
+}
+
+// VEY-KANEO-433: the soonest still-pending resolution moment across the player's active missions — an
+// Outbound fleet's arrival, or a Returning/Recalled fleet's landing. Used to fire a tightened refresh
+// just after that instant so the resolution shows promptly rather than waiting up to a full poll
+// interval. Only future events are considered (a moment already in the past is handled by the regular
+// poll), so this never busy-loops on a due-but-unresolved mission. Returns undefined when nothing is
+// pending.
+export function nextMissionResolutionEventMs(
+  fleetVisibility: FleetMissionVisibilityResponse | undefined,
+  now: number,
+): number | undefined {
+  if (!fleetVisibility) {
+    return undefined;
+  }
+  let soonest: number | undefined;
+  const consider = (value: string | undefined) => {
+    const ms = value ? timestampToMs(value) : undefined;
+    if (ms === undefined || ms <= now) {
+      return;
+    }
+    soonest = soonest === undefined ? ms : Math.min(soonest, ms);
+  };
+  for (const mission of [...fleetVisibility.incoming, ...fleetVisibility.outgoing, ...fleetVisibility.joinableAttacks]) {
+    if (mission.status === "Outbound") {
+      consider(mission.arrivalAt);
+    }
+  }
+  for (const mission of fleetVisibility.returning) {
+    if (mission.status === "Returning" || mission.status === "Recalled") {
+      consider(mission.returnAt);
+    }
+  }
+  return soonest;
 }
 
 export function shipyardStateForMissionActions({
@@ -2533,11 +2578,17 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
   }, [account, apiBaseUrl, loadAllActiveMissions, loadGlobalMissionArchive, loadMissionArchive, page]);
 
-  const refreshMissionControl = useCallback(() => {
-    void refreshOnChainState();
-    void loadMissionArchive(missionArchivePage);
-    void loadAllActiveMissions();
-    void loadGlobalMissionArchive(globalMissionArchivePage);
+  // VEY-KANEO-433: refreshes the full Mission Control data set — fleet visibility (active missions +
+  // battle reports) plus the wallet/global past-mission archives and the universe-wide active feed.
+  // Returns a promise so the auto-poll can guard against overlapping refreshes; the manual Refresh
+  // button passes it as a void `onRefresh` and ignores the result (behavior unchanged).
+  const refreshMissionControl = useCallback(async () => {
+    await Promise.allSettled([
+      refreshOnChainState(),
+      loadMissionArchive(missionArchivePage),
+      loadAllActiveMissions(),
+      loadGlobalMissionArchive(globalMissionArchivePage),
+    ]);
   }, [globalMissionArchivePage, loadAllActiveMissions, loadGlobalMissionArchive, loadMissionArchive, missionArchivePage, refreshOnChainState]);
 
   const refreshFinishedBuildingState = useCallback(async (expectation: FinishedBuildingExpectation): Promise<boolean> => {
@@ -2979,6 +3030,55 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     refreshInfrastructureState,
     refreshOnChainState,
   ]);
+
+  // VEY-KANEO-433: while Mission Control is open, poll its full data set on the same cadence as the
+  // top bar so resolutions, loot, and battle reports surface without a manual Refresh. This is the
+  // same work the Refresh button does (fleet visibility + the past-mission archives + the universe
+  // active feed), guarded against overlapping refreshes and paused while the tab is hidden.
+  useEffect(() => {
+    if (!apiBaseUrl || !account || !shouldAutoPollMissionControlForPage(page)) {
+      return;
+    }
+
+    let refreshInFlight = false;
+    const pollMissionControl = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      if (refreshInFlight) {
+        return;
+      }
+      refreshInFlight = true;
+      refreshMissionControl().finally(() => {
+        refreshInFlight = false;
+      });
+    };
+
+    const interval = window.setInterval(pollMissionControl, TOP_BAR_RESOURCE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [account, apiBaseUrl, page, refreshMissionControl]);
+
+  // VEY-KANEO-433: tighten the poll around resolution — schedule a one-shot refresh just after the
+  // soonest active mission is due to arrive (or a returning fleet to land) so the new status, loot,
+  // and battle report appear promptly instead of waiting for the next full poll tick. Re-derived
+  // whenever fleet visibility changes; only active while Mission Control is open.
+  useEffect(() => {
+    if (!apiBaseUrl || !account || !shouldAutoPollMissionControlForPage(page)) {
+      return;
+    }
+    const nextEventMs = nextMissionResolutionEventMs(fleetVisibility, Date.now());
+    if (nextEventMs === undefined) {
+      return;
+    }
+    const delay = Math.max(0, nextEventMs - Date.now()) + MISSION_RESOLUTION_REFRESH_BUFFER_MS;
+    const timer = window.setTimeout(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      void refreshMissionControl();
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [account, apiBaseUrl, fleetVisibility, page, refreshMissionControl]);
 
   // Anchor the top bar to the chain: poll the contract's `previewResources` for
   // the active planet on the same cadence as the backend reads. The direct
