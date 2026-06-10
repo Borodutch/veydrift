@@ -208,10 +208,9 @@ import { timestampToMs } from "./timestampFormat";
 import { canonicalSpendableResources, projectResources } from "./canonicalResources";
 import {
   createPendingSpend,
-  maxResourceCost,
   reconcilePendingSpends,
+  spendDeductionForDisplay,
   subtractResourceCost,
-  sumPendingSpendCosts,
   unsettledQueueSpendCosts,
   type PendingSpend,
   type QueueSpend,
@@ -3226,11 +3225,21 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     () => resourcesFromChain(infrastructureChainState?.resources ?? null),
     [infrastructureChainState?.resources],
   );
-  // Drop pending spends the backend has caught up on (or that hit the TTL
-  // backstop) so they are no longer double-subtracted from the live balance.
+  // Drop pending spends an authoritative read has caught up on (or that hit the
+  // TTL backstop) so they are no longer double-subtracted from the live balance.
+  // Settle against the on-chain `previewResources` read as well as the backend
+  // infrastructure snapshot: the displayed balance is anchored to the preview
+  // read when it is fresh, and that read drops to the post-spend balance ahead of
+  // the lagging snapshot, so settling on infra alone keeps subtracting a cost the
+  // preview already reflects (VEY-KANEO-428: launching a fleet zeroes Metal/Crystal).
   const activePendingSpends = useMemo(
-    () => reconcilePendingSpends({ entries: pendingSpends, infrastructure: infrastructureSpendableResources, now }),
-    [pendingSpends, infrastructureSpendableResources, now],
+    () => reconcilePendingSpends({
+      entries: pendingSpends,
+      infrastructure: infrastructureSpendableResources,
+      preview: freshPreviewResources?.resources,
+      now,
+    }),
+    [pendingSpends, infrastructureSpendableResources, freshPreviewResources, now],
   );
   useEffect(() => {
     // Prune settled/expired entries out of state once they fall away so the
@@ -3267,14 +3276,18 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const spendableResources = useMemo(() => {
     const canonical = walletSpendableResourcesFor({ isWalletConnected, onChainResources: canonicalOnChainResources });
     // Subtract submitted-but-unsettled spends so the displayed balance and every
-    // affordability gate that reads it cannot over-report (VEY-392). The
-    // in-session ledger and the backend active-queue spends estimate the SAME
-    // underlying spends, so combine them with an element-wise max (never a sum)
-    // to avoid double-subtracting while still deducting persistent queue spends
-    // the session ledger misses after a reload / TTL expiry.
-    const deduction = maxResourceCost(sumPendingSpendCosts(activePendingSpends), unsettledQueueSpend);
+    // affordability gate that reads it cannot over-report (VEY-392). When the
+    // balance is anchored to a fresh on-chain `previewResources` read every MINED
+    // spend (including every active backend queue) is already reflected, so only
+    // the pre-mine in-session ledger is applied to avoid double-counting the queue
+    // cost into a pinned-at-0 top bar (VEY-KANEO-428 / VEY-318).
+    const deduction = spendDeductionForDisplay({
+      pendingSpends: activePendingSpends,
+      queueSpend: unsettledQueueSpend,
+      previewAnchored: Boolean(freshPreviewResources),
+    });
     return subtractResourceCost(canonical, deduction);
-  }, [isWalletConnected, canonicalOnChainResources, activePendingSpends, unsettledQueueSpend]);
+  }, [isWalletConnected, canonicalOnChainResources, activePendingSpends, unsettledQueueSpend, freshPreviewResources]);
   // Latest values snapshotted into refs so spend handlers can record an accurate
   // pre-spend baseline without re-subscribing to every render.
   const pendingSpendBaselineRef = useRef<{ baseline: Resources | undefined; rates: Resources }>({

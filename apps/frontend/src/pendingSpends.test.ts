@@ -8,6 +8,7 @@ import {
   maxResourceCost,
   PENDING_SPEND_TTL_MS,
   reconcilePendingSpends,
+  spendDeductionForDisplay,
   subtractResourceCost,
   sumPendingSpendCosts,
   unsettledQueueSpendCosts,
@@ -313,6 +314,104 @@ describe("active-build double-subtraction repro (VEY-318 rework)", () => {
     const deduction = maxResourceCost(sumPendingSpendCosts([]), queueDeduction);
     const displayed = subtractResourceCost(canonical, deduction)!;
     expect(displayed).toEqual({ metal: 1_823, crystal: 6_712, deuterium: 325 });
+  });
+});
+
+describe("spendDeductionForDisplay", () => {
+  const ledgerEntry = spend({ cost: { metal: 500, crystal: 0, deuterium: 0 } });
+  const queueSpend = { metal: 0, crystal: 700, deuterium: 0 };
+
+  test("combines ledger + queue spends with a max when not preview-anchored", () => {
+    // Fallback path (chain read unavailable): keep deducting the persistent queue
+    // spend the session ledger misses after a reload / TTL expiry.
+    expect(spendDeductionForDisplay({ pendingSpends: [ledgerEntry], queueSpend, previewAnchored: false }))
+      .toEqual({ metal: 500, crystal: 700, deuterium: 0 });
+  });
+
+  test("drops the queue spend when the balance is anchored to a fresh preview read", () => {
+    // The on-chain preview already reflects every active (mined) queue, so adding
+    // the queue cost again would double-count. Only the pre-mine ledger remains.
+    expect(spendDeductionForDisplay({ pendingSpends: [ledgerEntry], queueSpend, previewAnchored: true }))
+      .toEqual({ metal: 500, crystal: 0, deuterium: 0 });
+  });
+
+  test("preview-anchored with an empty ledger deducts nothing", () => {
+    // VEY-KANEO-428: a fleet launch refreshes the preview to the post-spend
+    // balance; with no pending ledger entry the top bar must equal the preview,
+    // never preview minus an already-reflected active-queue cost.
+    expect(spendDeductionForDisplay({ pendingSpends: [], queueSpend, previewAnchored: true }))
+      .toEqual({ metal: 0, crystal: 0, deuterium: 0 });
+  });
+});
+
+describe("fleet-launch double-subtraction repro (VEY-KANEO-428)", () => {
+  const RATES = { metal: 0, crystal: 0, deuterium: 0 };
+  const CAPS = { metal: 75_000, crystal: 20_000, deuterium: 20_000 };
+
+  // Repro: a spend (e.g. a build started moments earlier) is recorded in the
+  // in-session pending-spend ledger. Its tx then mines, so the AUTHORITATIVE
+  // on-chain `previewResources` read the top bar is anchored to already reads
+  // the post-spend balance. But the backend `/infrastructure` snapshot the
+  // ledger settles against still LAGS at the pre-spend balance. Launching a
+  // fleet re-settles the planet and refreshes the reads, widening this window:
+  // the preview drops promptly while the infra snapshot trails. The ledger entry
+  // is therefore never settled against infra, so its cost is subtracted from a
+  // canonical balance that ALREADY reflects it — pinning Metal/Crystal to 0
+  // until the infra read catches up or the TTL elapses. "backend is correct"
+  // (preview == on-chain), but the frontend zeroes.
+  const PRE_SPEND = { metal: 3_000, crystal: 2_000, deuterium: 1_000 };
+  const COST = { metal: 2_100, crystal: 1_500, deuterium: 0 };
+  const POST_SPEND = { metal: 900, crystal: 500, deuterium: 1_000 };
+
+  function canonicalFromFreshPreview() {
+    return canonicalSpendableResources({
+      // Backend snapshots both LAG at the pre-spend balance right after the tx
+      // mines; the fresh on-chain preview read is the authoritative post-spend
+      // balance and is used outright.
+      settlementResources: PRE_SPEND,
+      infrastructureResources: PRE_SPEND,
+      infrastructureSettledAtMs: 0,
+      previewResources: POST_SPEND,
+      previewSettledAtMs: 0,
+      rates: RATES,
+      caps: CAPS,
+      now: 0,
+    })!;
+  }
+
+  test("the canonical balance is the authoritative post-spend preview read", () => {
+    expect(canonicalFromFreshPreview()).toEqual(POST_SPEND);
+  });
+
+  test("a pending spend already reflected by the preview read is reconciled away", () => {
+    const pending = [
+      createPendingSpend({ id: "build", cost: COST, baseline: PRE_SPEND, ratePerHour: RATES, now: 0 }),
+    ];
+    // Infrastructure snapshot still LAGS at the pre-spend balance: infra-only
+    // reconciliation keeps the entry (the stuck-pending-spend bug).
+    expect(
+      reconcilePendingSpends({ entries: pending, infrastructure: PRE_SPEND, now: 1_000 }),
+    ).toHaveLength(1);
+    // But the fresh preview read already reflects the spend, so reconciling
+    // against it drops the entry and stops the double-subtraction.
+    expect(
+      reconcilePendingSpends({ entries: pending, infrastructure: PRE_SPEND, preview: POST_SPEND, now: 1_000 }),
+    ).toHaveLength(0);
+  });
+
+  test("displayed balance equals the preview read, not preview minus the cost again", () => {
+    const canonical = canonicalFromFreshPreview();
+    const pending = [
+      createPendingSpend({ id: "build", cost: COST, baseline: PRE_SPEND, ratePerHour: RATES, now: 0 }),
+    ];
+    const active = reconcilePendingSpends({
+      entries: pending,
+      infrastructure: PRE_SPEND,
+      preview: POST_SPEND,
+      now: 1_000,
+    });
+    const deduction = maxResourceCost(sumPendingSpendCosts(active), { metal: 0, crystal: 0, deuterium: 0 });
+    expect(subtractResourceCost(canonical, deduction)).toEqual(POST_SPEND);
   });
 });
 

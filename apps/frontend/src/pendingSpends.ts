@@ -87,6 +87,38 @@ export function applyPendingSpends(
   return subtractResourceCost(balance, sumPendingSpendCosts(entries));
 }
 
+/**
+ * The resource deduction to subtract from the canonical displayed / gated
+ * balance, combining the in-session pending-spend ledger with the backend
+ * active-queue spends.
+ *
+ * The two sources estimate the SAME underlying spends, so they are combined with
+ * an element-wise max (never a sum) to avoid double-subtracting.
+ *
+ * When `previewAnchored` is true the canonical balance is the authoritative
+ * on-chain `previewResources` read, which already reflects every spend that has
+ * MINED — including every active backend queue, since the contract deducts a
+ * queue's cost in the same settlement that starts it. Subtracting the queue cost
+ * again would double-count and pin Metal/Crystal at 0 (VEY-KANEO-428: a fleet
+ * launch re-settles the planet and refreshes the preview to the post-spend
+ * balance while the backend snapshot still lags). So only the in-session ledger
+ * is applied then — its remaining entries are pre-mine spends the preview has not
+ * yet reduced, which must still gate affordability (VEY-392). `reconcilePendingSpends`
+ * is responsible for dropping ledger entries the preview already reflects.
+ */
+export function spendDeductionForDisplay({
+  pendingSpends,
+  queueSpend,
+  previewAnchored,
+}: {
+  pendingSpends: readonly PendingSpend[];
+  queueSpend: Resources;
+  previewAnchored: boolean;
+}): Resources {
+  const ledger = sumPendingSpendCosts(pendingSpends);
+  return previewAnchored ? ledger : maxResourceCost(ledger, queueSpend);
+}
+
 /** Element-wise maximum of two resource costs. */
 export function maxResourceCost(a: Resources, b: Resources): Resources {
   return {
@@ -178,21 +210,41 @@ export function isPendingSpendSettled(
 }
 
 /**
- * Drop pending spends that have either been reflected by the backend
- * (`isPendingSpendSettled`) or outlived the TTL backstop. The remaining entries
- * are the ones still worth subtracting from the displayed/gated balance.
+ * Drop pending spends that have either been reflected by an authoritative
+ * spendable read (`isPendingSpendSettled`) or outlived the TTL backstop. The
+ * remaining entries are the ones still worth subtracting from the displayed /
+ * gated balance.
+ *
+ * An entry is reconciled away as soon as EITHER authoritative read reflects it:
+ *   - `infrastructure`: the backend `/infrastructure` snapshot.
+ *   - `preview`: the direct on-chain `previewResources(planetId)` read.
+ * The displayed balance is anchored to the preview read when it is fresh (see
+ * `canonicalSpendableResources`), but that read leads the backend snapshot: once
+ * a submitted spend mines, the preview drops to the post-spend balance while the
+ * infrastructure snapshot can still lag at the pre-spend value for several
+ * production ticks. Settling against ONLY the lagging snapshot would keep
+ * subtracting the cost from a canonical balance the preview already reduced,
+ * double-counting and pinning Metal/Crystal at 0 until the snapshot catches up
+ * (VEY-KANEO-428: launching a fleet re-settles the planet and widens this
+ * window). Settling against the preview read too closes it, while still gating
+ * affordability during the pre-mine window where the preview has not yet moved.
  */
 export function reconcilePendingSpends({
   entries,
   infrastructure,
+  preview,
   now,
 }: {
   entries: readonly PendingSpend[];
   infrastructure: Resources | undefined;
+  preview?: Resources | undefined;
   now: number;
 }): PendingSpend[] {
   return entries.filter(
-    (entry) => now < entry.expiresAtMs && !isPendingSpendSettled(entry, infrastructure, now),
+    (entry) =>
+      now < entry.expiresAtMs
+      && !isPendingSpendSettled(entry, infrastructure, now)
+      && !isPendingSpendSettled(entry, preview, now),
   );
 }
 
