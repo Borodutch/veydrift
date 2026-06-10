@@ -597,7 +597,7 @@ describe("tester universe display data", () => {
         ships: [{ id: 0, count: 2 }],
       },
       target: { galaxy: 1, system: 20, position: 7 },
-    })?.blockedReason).toBe("No fleet slots open");
+    })?.blockedReason).toBe("No fleet slots open — research Computer tech for more");
   });
 
   test("galaxy mission preview formulas match contract primitives across distances", () => {
