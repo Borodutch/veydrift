@@ -725,6 +725,7 @@ export interface ChainReader {
   listMoonChanceReportEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<MoonChanceReportEvent[]>;
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
   listAllianceLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  listContractLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   rpcMetrics?(): RpcMetrics;
 }
 
@@ -761,7 +762,7 @@ export type RpcLog = {
 };
 
 type RpcLogFilter = {
-  address: Address;
+  address: Address | Address[];
   fromBlock: string;
   toBlock: string;
   topics: Array<string | string[] | null>;
@@ -1058,6 +1059,7 @@ export class VeydriftGameReader implements ChainReader {
   private readonly moonContractAddress: Address | undefined;
   private readonly chainId: number;
   private readonly indexFromBlock: bigint;
+  private readonly logChunkSpan: bigint;
   private readonly resourceTokenAddresses: Partial<Record<RiftResourceKey, Address>>;
   private readonly settlementContractAddress: Address | undefined;
 
@@ -1078,6 +1080,7 @@ export class VeydriftGameReader implements ChainReader {
     this.moonContractAddress = config.moonContractAddress;
     this.chainId = config.chainId;
     this.indexFromBlock = config.indexFromBlock;
+    this.logChunkSpan = config.logChunkSpan && config.logChunkSpan > 0n ? config.logChunkSpan : 2_000n;
     this.resourceTokenAddresses = config.resourceTokenAddresses ?? {};
     this.settlementContractAddress = config.settlementContractAddress;
   }
@@ -2273,6 +2276,36 @@ export class VeydriftGameReader implements ChainReader {
     );
   }
 
+  /**
+   * Raw logs for every indexed contract address over a block range, with no topic
+   * filter. Mirrors the websocket `logs` subscription so chain-sync gap recovery can
+   * backfill ONLY the missed range incrementally instead of triggering a full rebuild.
+   */
+  async listContractLogs(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<RpcLog[]> {
+    const addresses = this.indexedContractAddresses();
+    if (addresses.length === 0) return [];
+
+    return this.getLogs(
+      {
+        address: addresses.length === 1 ? addresses[0]! : addresses,
+        fromBlock: toQuantity(fromBlock),
+        toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
+        topics: []
+      }
+    );
+  }
+
+  private indexedContractAddresses(): Address[] {
+    return [
+      this.gameContractAddress,
+      this.moonContractAddress,
+      this.allianceContractAddress,
+      this.resourceTokenAddresses.metal,
+      this.resourceTokenAddresses.crystal,
+      this.resourceTokenAddresses.deuterium
+    ].filter((address): address is Address => Boolean(address));
+  }
+
   private async getGameSettlement(wallet: Address): Promise<WalletSettlement> {
     const homePlanetId = decodeUint(await this.call("0x0ff79fa5", [encodeAddress(wallet)]));
     const planet = homePlanetId === 0n ? null : await this.getPlanet(homePlanetId);
@@ -2490,7 +2523,7 @@ export class VeydriftGameReader implements ChainReader {
       : decodeUint(filter.toBlock);
     if (toBlock < fromBlock) return [];
 
-    return this.getLogsInChunks(filter, fromBlock, toBlock, 9n);
+    return this.getLogsInChunks(filter, fromBlock, toBlock, this.logChunkSpan);
   }
 
   private async getLogsInChunks(

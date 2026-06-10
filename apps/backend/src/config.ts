@@ -8,6 +8,7 @@ export type BackendConfig = {
   gameContractAddress?: `0x${string}`;
   indexDbPath: string;
   indexFromBlock: bigint;
+  logChunkSpan?: bigint;
   missionResolutionEnabled: boolean;
   missionResolverAddress?: `0x${string}`;
   moonContractAddress?: `0x${string}`;
@@ -61,12 +62,14 @@ export type SafeConfigSummary = {
   resourceTokenAddressesConfigured: boolean;
   settlementContractConfigured: boolean;
   indexFromBlock: string;
+  logChunkSpan: string;
 };
 
 const defaultChainId = 84532;
 const defaultDeploymentMode: DeploymentMode = "local";
 const defaultIndexDbPath = ".data/contract-state.sqlite";
 const defaultRandomnessCommitmentStorePath = ".data/randomness-commitments.json";
+const defaultLogChunkSpan = 2_000n;
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 const privateKeyPattern = /^0x[a-fA-F0-9]{64}$/;
 const deploymentModes = new Set<DeploymentMode>(["local", "test", "staging", "production"]);
@@ -77,6 +80,8 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   const alchemyWebhookSigningKey = env.VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY;
   const chainId = parsePositiveInteger(env.VEYDRIFT_CHAIN_ID, "VEYDRIFT_CHAIN_ID", problems) ?? defaultChainId;
   const indexFromBlock = parseBigInt(env.VEYDRIFT_INDEX_FROM_BLOCK, "VEYDRIFT_INDEX_FROM_BLOCK", problems) ?? 0n;
+  const parsedLogChunkSpan = parseBigInt(env.VEYDRIFT_LOG_CHUNK_SPAN, "VEYDRIFT_LOG_CHUNK_SPAN", problems);
+  const logChunkSpan = parsedLogChunkSpan && parsedLogChunkSpan > 0n ? parsedLogChunkSpan : defaultLogChunkSpan;
   const { rpcUrl, rpcSource } = resolveRpcUrl(env);
   const { wsRpcUrl, wsRpcSource } = resolveWsRpcUrl(env);
   const gameContractAddress = parseAddress(
@@ -157,6 +162,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       ...(gameContractAddress ? { gameContractAddress } : {}),
       indexDbPath: env.VEYDRIFT_INDEX_DB_PATH ?? defaultIndexDbPath,
       indexFromBlock,
+      logChunkSpan,
       missionResolutionEnabled: deploymentMode === "test" && Boolean(missionResolverAddress),
       ...(missionResolverAddress ? { missionResolverAddress } : {}),
       ...(moonContractAddress ? { moonContractAddress } : {}),
@@ -203,7 +209,8 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
         && config.resourceTokenAddresses.deuterium
     ),
     settlementContractConfigured: Boolean(config.settlementContractAddress),
-    indexFromBlock: config.indexFromBlock.toString()
+    indexFromBlock: config.indexFromBlock.toString(),
+    logChunkSpan: (config.logChunkSpan ?? defaultLogChunkSpan).toString()
   };
 }
 

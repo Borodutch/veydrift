@@ -472,6 +472,129 @@ describe("ChainSyncService", () => {
     });
     service.stop();
   });
+
+  test("backfills only the missed range on reconnect instead of a full rebuild", async () => {
+    MockWebSocket.instances = [];
+    const backfillCalls: Array<{ from: bigint; to: bigint | "latest" }> = [];
+    const appliedLogs: unknown[] = [];
+    let reconcileCalls = 0;
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog(log: unknown) {
+        appliedLogs.push(log);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: {} };
+      },
+      markStale() {},
+      async reconcile() {
+        reconcileCalls += 1;
+      }
+    };
+    const backfiller = {
+      async listContractLogs(from: bigint, to?: bigint | "latest") {
+        backfillCalls.push({ from, to: to ?? "latest" });
+        return [{ blockNumber: "0x80", transactionHash: "0xnew", topics: [planetStartedTopic], data: "0x" }];
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
+      WebSocketCtor: MockWebSocket,
+      reconnectBaseMs: 1,
+      heartbeatIntervalMs: 0,
+      logBackfiller: backfiller
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    socket?.message({
+      method: "eth_subscription",
+      params: { subscription: "heads-sub", result: { number: "0x7b" } }
+    });
+
+    socket?.close();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const reconnected = MockWebSocket.instances[1];
+    reconnected?.open();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(backfillCalls).toEqual([{ from: 124n, to: "latest" }]);
+    expect(appliedLogs).toHaveLength(1);
+    expect(reconcileCalls).toBe(0);
+    service.stop();
+  });
+
+  test("throttles full reconciliations so a flapping websocket cannot storm rebuilds", async () => {
+    MockWebSocket.instances = [];
+    const reconcileReasons: string[] = [];
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      markStale() {},
+      async reconcile(reason: string) {
+        reconcileReasons.push(reason);
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      reconcileThrottleMs: 10_000
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x7b" } } });
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x7f" } } });
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x85" } } });
+    await Promise.resolve();
+
+    // First gap reconciles; the second gap is collapsed into a throttled trailing pass.
+    expect(reconcileReasons).toEqual(["websocket head gap 124-127"]);
+    service.stop();
+  });
+
+  test("sends a liveness probe when the websocket is quiet but alive", async () => {
+    MockWebSocket.instances = [];
+    const service = new ChainSyncService(config, undefined, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 2,
+      heartbeatTimeoutMs: 1_000
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const pings = (socket?.sent ?? [])
+      .map((item) => JSON.parse(item))
+      .filter((message) => message.method === "eth_blockNumber");
+    expect(pings.length).toBeGreaterThanOrEqual(1);
+    service.stop();
+  });
+
+  test("forces a reconnect when the websocket goes silent past the heartbeat timeout", async () => {
+    MockWebSocket.instances = [];
+    const service = new ChainSyncService(config, undefined, {
+      WebSocketCtor: MockWebSocket,
+      reconnectBaseMs: 1,
+      heartbeatIntervalMs: 2,
+      heartbeatTimeoutMs: 6
+    });
+
+    service.start();
+    MockWebSocket.instances[0]?.open();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(MockWebSocket.instances.length).toBeGreaterThanOrEqual(2);
+    service.stop();
+  });
 });
 
 function abiWords(...values: bigint[]): string {
