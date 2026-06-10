@@ -1524,7 +1524,7 @@ function PastMissionTable({
             ))}
             {hasPages ? (
               <ClientPaginationControl
-                className="pt-3"
+                className="pb-3"
                 loading={loading}
                 nextLabel="Next mission archive page"
                 onPageChange={onPageChange}
