@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import { MissionDetailPage, type MissionDetailActionState } from "../src/components/MissionDetailPage";
-import type { BattleReport, DefenderPlanetState, FleetMissionSummary, MissionDetailResponse } from "../src/walletFlow";
+import type { BattleReport, DefenderPlanetState, FleetMissionSummary, FleetMissionVisibilityResponse, MissionDetailResponse } from "../src/walletFlow";
 
 // VEY-401: the Battle Report defender block must show the defender planet's indexed fleet/defenses
 // composition (or "None") instead of the old blanket "not published in the on-chain combat log"
@@ -51,16 +51,37 @@ function battleReport(overrides: Partial<BattleReport> = {}): BattleReport {
   };
 }
 
-function renderDetailText(detail: MissionDetailResponse): string {
+// Mirrors the backend's wallet-scoped fleet-visibility classification the detail page now reuses:
+// an Outbound fleet you own is "outgoing", a Returning/Recalled one is "returning". A mission left
+// out of every list models a viewer with no relationship to the fleet (a stranger / shared link),
+// who must get no orders. By default the rendered mission is slotted by its own status so the
+// owner-centric tests below see the same classification Mission Control would compute.
+function visibilityFor(mission: FleetMissionSummary): FleetMissionVisibilityResponse {
+  const empty: FleetMissionVisibilityResponse = {
+    wallet: "0x1111111111111111111111111111111111111111",
+    homePlanetId: "1",
+    incoming: [],
+    outgoing: [],
+    returning: [],
+    joinableAttacks: [],
+    completedMissions: [],
+    battleReports: [],
+  };
+  if (mission.status === "Outbound") return { ...empty, outgoing: [mission] };
+  if (mission.status === "Returning" || mission.status === "Recalled") return { ...empty, returning: [mission] };
+  return empty;
+}
+
+function renderDetailText(detail: MissionDetailResponse, fleetVisibility = visibilityFor(detail.mission)): string {
   const noop = () => {};
   const actionState: MissionDetailActionState = { status: "idle" };
   const page = MissionDetailPage({
-    account: "0x1111111111111111111111111111111111111111",
     actionState,
     canTransact: false,
     copyState: "idle",
     detail,
     error: undefined,
+    fleetVisibility,
     loading: false,
     missionId: detail.mission.missionId,
     now: 1_770_001_000_000,
@@ -313,6 +334,66 @@ describe("MissionDetailPage Recall action", () => {
 
     expect(text).toContain("Recall fleet");
     expect(text).toContain("50 deuterium");
+  });
+});
+
+// VEY-KANEO-424 rework: the detail page must authorize orders exactly like the Mission Control list,
+// which derives them from the backend's wallet-scoped fleet-visibility. The pre-rework detail code
+// re-derived the viewer's role from a bare `owner === account` check, so it (a) only matched the
+// owner's Recall by luck and (b) fabricated an "incoming" defender role for ANY viewer of someone
+// else's attack, wrongly rendering Group defend / Intercept to strangers. QA hit case (b): on an
+// outbound attack they did not own, Available Orders showed Group defend / Intercept and no Recall.
+describe("MissionDetailPage order authorization (matches Mission Control)", () => {
+  function outboundAttack(overrides: Partial<FleetMissionSummary> = {}): FleetMissionSummary {
+    // Far-future arrival so the fleet is still in flight (not yet due) under renderDetailText's now.
+    return combatMission({
+      status: "Outbound",
+      missionType: "Attack",
+      arrivalAt: "1770002000",
+      returnAt: "1770003000",
+      recallCost: "50",
+      ...overrides,
+    });
+  }
+
+  const emptyVisibility: FleetMissionVisibilityResponse = {
+    wallet: "0x9999999999999999999999999999999999999999",
+    homePlanetId: "1",
+    incoming: [],
+    outgoing: [],
+    returning: [],
+    joinableAttacks: [],
+    completedMissions: [],
+    battleReports: [],
+  };
+
+  test("offers no orders to a viewer with no visibility relationship to the fleet", () => {
+    // Stranger / shared link: the fleet is in none of their visibility lists.
+    const text = renderDetailText({ mission: outboundAttack() }, emptyVisibility);
+
+    expect(text).not.toContain("Available Orders");
+    expect(text).not.toContain("Recall fleet");
+    expect(text).not.toContain("Group defend");
+    expect(text).not.toContain("Intercept");
+  });
+
+  test("offers Group defend / Intercept only to the actual defender (incoming attack)", () => {
+    const mission = outboundAttack();
+    const text = renderDetailText({ mission }, { ...emptyVisibility, incoming: [mission] });
+
+    expect(text).toContain("Available Orders");
+    expect(text).toContain("Group defend");
+    expect(text).toContain("Intercept");
+    expect(text).not.toContain("Recall fleet");
+  });
+
+  test("offers Recall to the fleet owner (outgoing) and not the defender's counterplay", () => {
+    const mission = outboundAttack();
+    const text = renderDetailText({ mission }, { ...emptyVisibility, outgoing: [mission] });
+
+    expect(text).toContain("Recall fleet");
+    expect(text).not.toContain("Group defend");
+    expect(text).not.toContain("Intercept");
   });
 });
 
