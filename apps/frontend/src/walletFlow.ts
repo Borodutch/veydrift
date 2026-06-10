@@ -248,6 +248,10 @@ export type FleetMissionPlanetReference = {
   // same planet art the Galaxy view uses (VEY-403 / VEY-67). Optional for back-compat with feeds or
   // fixtures that predate the field; the card falls back to a coordinate-derived type when absent.
   archetype?: PlanetType | null;
+  // VEY-KANEO-440: the planet's Alliance Depot building level. On the target planet of a hostile
+  // attack this is the depot that subsidizes ACS Defend holding fuel, so the compose UX can preview
+  // depot support. Optional for back-compat with feeds/fixtures predating the field.
+  allianceDepotLevel?: number | null;
 };
 
 export type FleetMissionVisibilityResponse = {

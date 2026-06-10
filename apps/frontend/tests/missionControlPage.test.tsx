@@ -340,7 +340,8 @@ describe("MissionControlPage", () => {
     expect(defenderText).toContain("New Eos");
     expect(defenderText).toContain("Red Haven");
     expect(defenderText).toContain("Group defend");
-    expect(defenderText).toContain("Intercept");
+    // Intercept was removed from the frontend (VEY-KANEO-439); only Group defend remains for the defender.
+    expect(defenderText).not.toContain("Intercept");
     expect(defenderText).toContain("Battle report");
     expect(defenderText).toContain("Past missions");
     expect(defenderText).not.toContain("Recall fleet");
