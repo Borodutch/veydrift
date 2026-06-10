@@ -613,6 +613,21 @@ export const shipCatalog: Array<{
   },
 ];
 
+// Ships that exist in the on-chain `Ship` enum and stay fully modelled here (combat
+// stats, queue labels, research effects) but must not be offered for production in the
+// frontend shipyard. Pathfinder is expedition-only, and expeditions are not implemented,
+// so building one is a dead-end spend. The contract enum is intentionally left intact so
+// on-chain ship indices do not shift.
+export const shipyardHiddenShipKeys: ReadonlySet<ShipKey> = new Set<ShipKey>(["pathfinder"]);
+
+export function isShipyardHidden(key: ShipKey): boolean {
+  return shipyardHiddenShipKeys.has(key);
+}
+
+// Buildable subset of `shipCatalog` for the shipyard UI. `shipCatalog` remains the
+// complete source of truth for stats, queue label resolution, and research effects.
+export const shipyardCatalog = shipCatalog.filter((ship) => !isShipyardHidden(ship.key));
+
 export const defenseCatalog: Array<{
   key: DefenseKey;
   id: number;

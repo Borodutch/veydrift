@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } from "../playableMvp";
-import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipDurationEstimate, shipSpecRows } from "../playableMvp";
+import { canAfford, missingUnlockRequirements, shipCatalog, shipyardCatalog, shipCombatStats, shipDurationEstimate, shipSpecRows } from "../playableMvp";
 import { formatMissingResources } from "../buildingDetails";
 import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainShipyardState } from "../walletFlow";
@@ -230,7 +230,10 @@ export function shipProductionItems({
   shipyardLevel: number;
   shipyardState: ChainShipyardState | null;
 }): ProductionCatalogItem<ShipKey>[] {
-  return shipCatalog.map((ship) => {
+  // Build only from the buildable subset so expedition-only ships (Pathfinder) are
+  // hidden from the shipyard. `shipCatalog` is still used elsewhere for queue label
+  // resolution so a pre-existing on-chain queue entry keeps its name.
+  return shipyardCatalog.map((ship) => {
     const chainShip = shipyardState?.ships.find((item) => item.id === ship.id);
     const shipUnavailable = Boolean(shipyardState) && productionAvailable && !chainShip;
     const owned = productionAvailable && chainShip ? chainShip.count : undefined;
