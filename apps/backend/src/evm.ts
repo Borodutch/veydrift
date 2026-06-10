@@ -328,6 +328,13 @@ export type FleetMissionSummary = {
   recallCost: string | null;
   attackGroupId: string | null;
   joinedAttackMissionIds: string[];
+  // VEY-KANEO-442: ACS Defend stationed-defense links. For an AcsDefend mission, `defendsMissionId`
+  // is the hostile attack mission it stations to defend against; that attack's target planet is this
+  // mission's `targetPlanetId`. On the attack mission, `counterplayDefenderMissionIds` lists every
+  // AcsDefend fleet stationed to defend it, so the read model can serve "who is defending attack X"
+  // and (filtering AcsDefend missions by targetPlanetId) "stationed defenders at planet Y".
+  defendsMissionId: string | null;
+  counterplayDefenderMissionIds: string[];
   cargo: Resources;
   // Resulting return-leg cargo from FleetMissionReturnExposed (the contract folds looted resources
   // into mission.cargo before emitting it). Kept separate from `cargo` (which stays the authoritative
@@ -352,6 +359,9 @@ export type FleetMissionPlanetReference = {
   // Real planet archetype (derived from the indexed temperature) so Mission Control can render the
   // same planet art the Galaxy view uses for thumbnails (VEY-403 / VEY-67), not a generic icon.
   archetype: PlanetArchetype;
+  // VEY-KANEO-440: Alliance Depot building level (id 13). On a hostile attack's target planet this is
+  // the depot that subsidizes ACS Defend holding fuel, letting the compose UX preview depot support.
+  allianceDepotLevel: number;
 };
 
 export type ResolvableFleetMission = Pick<
@@ -3346,6 +3356,8 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       recallCost: null,
       attackGroupId: null,
       joinedAttackMissionIds: [],
+      defendsMissionId: null,
+      counterplayDefenderMissionIds: [],
       needsResolution: false,
       transactionHash: log.transactionHash,
       blockNumber: BigInt(log.blockNumber).toString()
@@ -3374,6 +3386,8 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
           recallCost: null,
           attackGroupId: attackMissionId,
           joinedAttackMissionIds: [],
+          defendsMissionId: null,
+          counterplayDefenderMissionIds: [],
           needsResolution: false,
           transactionHash: log.transactionHash,
           blockNumber: BigInt(log.blockNumber).toString()
@@ -3383,6 +3397,34 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
           ...new Set([...(attack.joinedAttackMissionIds ?? []), missionId])
         ];
         missions.set(attackMissionId, attack);
+      } else if (mission.missionType === "AcsDefend") {
+        // VEY-KANEO-442: an AcsDefend fleet stations at the defended planet (its emitted
+        // targetPlanetId) to counter a specific hostile attack. The contract encodes that hostile
+        // mission id in the FleetMissionLaunched `randomnessRequestId` slot (word 4), the same slot
+        // AcsAttack uses for its joined attack id (VeydriftGameplayModule sets
+        // `randomnessRequestId = hostileMissionId` for counterplay). Link the defender to the attack
+        // so stationed-defense state is queryable from the fleet-mission read model.
+        const hostileMissionId = decodeUintWord(wordAt(words, 4)).toString();
+        mission.defendsMissionId = hostileMissionId;
+        const attack = missions.get(hostileMissionId) ?? {
+          missionId: hostileMissionId,
+          cargo: { metal: "0", crystal: "0", deuterium: "0" },
+          returnCargo: null,
+          ships: {},
+          fuelCost: "0",
+          recallCost: null,
+          attackGroupId: null,
+          joinedAttackMissionIds: [],
+          defendsMissionId: null,
+          counterplayDefenderMissionIds: [],
+          needsResolution: false,
+          transactionHash: log.transactionHash,
+          blockNumber: BigInt(log.blockNumber).toString()
+        };
+        attack.counterplayDefenderMissionIds = [
+          ...new Set([...(attack.counterplayDefenderMissionIds ?? []), missionId])
+        ];
+        missions.set(hostileMissionId, attack);
       }
     } else if (topic === fleetMissionCargoTopic) {
       const words = splitWords(log.data);
@@ -3623,6 +3665,8 @@ function isCompleteFleetMissionSummary(mission: MutableFleetMissionSummary): mis
       && mission.fuelCost !== undefined
       && mission.attackGroupId !== undefined
       && mission.joinedAttackMissionIds
+      && mission.defendsMissionId !== undefined
+      && mission.counterplayDefenderMissionIds
       && mission.cargo
       && mission.ships
       && mission.transactionHash

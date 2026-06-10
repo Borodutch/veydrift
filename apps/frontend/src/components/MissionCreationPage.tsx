@@ -3,12 +3,14 @@ import type { Coordinates, Planet } from "../types";
 import {
   DEFAULT_MISSION_SPEED_PERCENT,
   MISSION_SPEED_OPTIONS,
+  acsDefendHoldingFuel,
   fleetMissionAvailableCargoCapacity,
   fleetMissionCargoCapacity,
   fleetMissionDistance,
   fleetMissionFuelCost,
   fleetMissionShipCount,
   fleetMissionTravelSeconds,
+  type AcsDefendFuelBreakdown,
   type FleetDriveLevels,
 } from "../fleetMissionRules";
 import { emptyMissionShips, type GalaxyAction, type MissionShipKey, type MissionShips } from "../galaxyActions";
@@ -73,12 +75,23 @@ const missionShipOptions: ShipOption[] = [
 
 const cargoShipKeys = new Set<MissionShipKey>(["smallCargo", "largeCargo", "pathfinder", "recycler", "colonyShip"]);
 
+export type AcsDefendComposeContext = {
+  // Epoch ms when the hostile attack lands. The defending fleet's effective arrival is pinned to this
+  // moment on-chain, so the gap between natural arrival and this time is the hold duration.
+  hostileArrivalMs: number;
+  // Alliance Depot level of the defended planet, which subsidizes holding fuel.
+  depotLevel: number;
+};
+
 export function MissionCreationPage({
+  acsDefendContext,
+  acsDefendMode = false,
   action,
   actionPending,
   coords,
   driveLevels = {},
   joinAttackMode = false,
+  nowMs = Date.now(),
   onBack,
   onConfirm,
   originCoords,
@@ -87,6 +100,11 @@ export function MissionCreationPage({
   shipyardState,
   target,
 }: {
+  // VEY-KANEO-440: render the picker for an ACS Defend ("Group defend") counterplay. Like a normal
+  // mission it keeps the ship picker and speed control, but adds a hold-duration / holding-fuel /
+  // Alliance Depot preview and pins the launch to the hostile attack's arrival.
+  acsDefendContext?: AcsDefendComposeContext | undefined;
+  acsDefendMode?: boolean | undefined;
   action: EnabledGalaxyAction;
   actionPending: boolean;
   coords: Coordinates;
@@ -95,6 +113,8 @@ export function MissionCreationPage({
   // with no loot ratio or speed controls (the join inherits the lead attack's
   // loot split and coordinated arrival).
   joinAttackMode?: boolean | undefined;
+  // Injectable clock so hold-duration math is deterministic in tests.
+  nowMs?: number | undefined;
   onBack: () => void;
   onConfirm: (draft: MissionLaunchDraft) => void;
   originCoords: Coordinates | undefined;
@@ -120,17 +140,38 @@ export function MissionCreationPage({
   const availableShips = useMemo(() => missionShipOptionsForAction(action, shipyardState), [action, shipyardState]);
   const cargoSupported = action.mode === "mission" && (action.kind === "transport" || action.kind === "deploy");
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
-  const lootRatioSupported = !joinAttackMode && action.mode === "mission" && action.kind === "attack";
+  const lootRatioSupported = !joinAttackMode && !acsDefendMode && action.mode === "mission" && action.kind === "attack";
   const lootRatioActive = lootRatioSupported && lootRatioEnabled;
   const lootRatioTotal = lootRatio.metal + lootRatio.crystal + lootRatio.deuterium;
-  const timingSummary = missionTimingSummary(travelSeconds);
+  const timingSummary = missionTimingSummary(travelSeconds, nowMs);
+
+  // VEY-KANEO-440: ACS Defend holding-fuel preview. The fleet arrives naturally after `travelSeconds`,
+  // then holds until the hostile attack lands; holding fuel scales with that gap and the Alliance Depot
+  // on the defended planet subsidizes part of it. A fleet that cannot arrive before the attack is
+  // rejected on-chain, so flag it here too.
+  const acsActive = acsDefendMode && action.mode === "mission" && Boolean(acsDefendContext);
+  const naturalArrivalMs = nowMs + Math.ceil(travelSeconds) * 1_000;
+  const rawHoldSeconds = acsActive && acsDefendContext
+    ? Math.floor((acsDefendContext.hostileArrivalMs - naturalArrivalMs) / 1_000)
+    : 0;
+  const acsArrivalTooSlow = acsActive && selectedShipCount > 0 && rawHoldSeconds < 0;
+  // Hold duration depends on the selected fleet's speed, so the preview only makes sense once at least
+  // one ship is chosen.
+  const acsBreakdown: AcsDefendFuelBreakdown | null = acsActive && acsDefendContext && selectedShipCount > 0
+    ? acsDefendHoldingFuel(ships, Math.max(0, rawHoldSeconds), acsDefendContext.depotLevel)
+    : null;
+  // Net holding fuel rides in the defending fleet's own deuterium spend on-chain, so it counts toward
+  // both the deuterium balance and cargo-capacity gates.
+  const effectiveFuelCost = acsBreakdown ? fuelCost + acsBreakdown.netHoldingFuel : fuelCost;
+
   const blockedReason = missionDraftBlocker({
+    acsArrivalTooSlow,
     action,
     cargoCapacity,
     cargoSupported,
     cargoTotal,
     fleetSlots: shipyardState?.fleetSlots,
-    fuelCost,
+    fuelCost: effectiveFuelCost,
     lootRatioActive,
     lootRatioTotal,
     originCoords,
@@ -150,7 +191,7 @@ export function MissionCreationPage({
     <div className="grid gap-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-white">{joinAttackMode ? action.label : `${action.label} Mission`}</h2>
+          <h2 className="text-lg font-semibold text-white">{joinAttackMode || acsDefendMode ? action.label : `${action.label} Mission`}</h2>
           <p className="mt-0.5 text-xs text-slate-400">
             {originLabel ?? "Active planet"} to [{coords.galaxy}:{coords.system}:{coords.position}]
           </p>
@@ -320,12 +361,30 @@ export function MissionCreationPage({
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Mission Summary</h3>
           <SummaryRow label="Distance" value={distance.toLocaleString()} />
           <SummaryRow label="Ships" value={action.mode === "missile" ? "Missile launch" : selectedShipCount.toLocaleString()} />
-          <SummaryRow label="Fuel" value={`${fuelCost.toLocaleString()} / ${totalCargoCapacity.toLocaleString()} deuterium`} />
+          <SummaryRow
+            label={acsBreakdown ? "Travel fuel" : "Fuel"}
+            value={`${fuelCost.toLocaleString()} / ${totalCargoCapacity.toLocaleString()} deuterium`}
+          />
+          {acsBreakdown ? (
+            <>
+              <SummaryRow label="Hold duration" value={acsBreakdown.holdSeconds > 0 ? formatDuration(acsBreakdown.holdSeconds) : "None"} />
+              <SummaryRow label="Holding fuel" value={`${acsBreakdown.holdingFuel.toLocaleString()} deuterium`} />
+              <SummaryRow
+                label="Alliance Depot"
+                subvalue={`Depot lvl ${(acsDefendContext?.depotLevel ?? 0).toLocaleString()}`}
+                value={acsBreakdown.depotSupport > 0 ? `−${acsBreakdown.depotSupport.toLocaleString()} deuterium` : "No support"}
+              />
+              <SummaryRow label="Net holding fuel" value={`${acsBreakdown.netHoldingFuel.toLocaleString()} deuterium`} />
+              <SummaryRow label="Total fuel" value={`${effectiveFuelCost.toLocaleString()} deuterium`} />
+            </>
+          ) : null}
           <SummaryRow label="Cargo" value={cargoSupported ? `${cargoTotal.toLocaleString()} / ${cargoCapacity.toLocaleString()}` : "None"} />
           {timingSummary ? (
             <>
-              <SummaryRow label="Arrival" subvalue={timingSummary.arrivalClock} value={timingSummary.arrivalDuration} />
-              <SummaryRow label="Return" subvalue={timingSummary.returnClock} value={timingSummary.returnDuration} />
+              <SummaryRow label={acsBreakdown ? "Reach planet" : "Arrival"} subvalue={timingSummary.arrivalClock} value={timingSummary.arrivalDuration} />
+              {acsBreakdown ? null : (
+                <SummaryRow label="Return" subvalue={timingSummary.returnClock} value={timingSummary.returnDuration} />
+              )}
             </>
           ) : null}
           {blockedReason ? (
@@ -346,7 +405,7 @@ export function MissionCreationPage({
             })}
             type="button"
           >
-            {joinAttackMode ? "Join Attack" : "Confirm Mission"}
+            {joinAttackMode ? "Join Attack" : acsDefendMode ? "Coordinate defense" : "Confirm Mission"}
           </button>
         </aside>
       </div>
@@ -355,6 +414,7 @@ export function MissionCreationPage({
 }
 
 export function missionDraftBlocker({
+  acsArrivalTooSlow = false,
   action,
   cargoCapacity,
   cargoSupported,
@@ -369,6 +429,9 @@ export function missionDraftBlocker({
   selectedShipCount,
   totalCargoCapacity,
 }: {
+  // VEY-KANEO-440: true when an ACS Defend fleet is too slow to reach the defended planet before the
+  // hostile attack lands (the on-chain FleetAlreadyArrived backstop, surfaced before submit).
+  acsArrivalTooSlow?: boolean | undefined;
   action: EnabledGalaxyAction;
   cargoCapacity: number;
   cargoSupported: boolean;
@@ -394,6 +457,9 @@ export function missionDraftBlocker({
     return `Fleet slots full (${fleetSlots.active}/${fleetSlots.limit}) — research Computer Technology to raise the limit, or wait for a fleet to return.`;
   }
   if (selectedShipCount <= 0) return "Choose at least one ship.";
+  if (acsArrivalTooSlow) {
+    return "Fleet cannot reach the planet before the attack — pick a faster speed or faster ships.";
+  }
   if ((resources?.deuterium ?? 0) < fuelCost) return `Need ${fuelCost.toLocaleString()} deuterium for fuel.`;
   if (fuelCost > totalCargoCapacity) {
     return `Selected ships have ${totalCargoCapacity.toLocaleString()} cargo capacity, but this mission needs ${fuelCost.toLocaleString()} for fuel.`;

@@ -68,7 +68,7 @@ interface MissionControlPageProps {
   missionArchiveLoading?: boolean | undefined;
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend") => void;
+  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
@@ -369,7 +369,7 @@ function ActiveMissionSection({
   myRows: ActiveMissionRow[];
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend") => void;
+  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
@@ -450,7 +450,7 @@ function ActiveMissionList({
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend") => void;
+  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
@@ -535,7 +535,7 @@ function MissionRow({
   mission: FleetMissionSummary;
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend") => void;
+  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
@@ -560,7 +560,7 @@ function MissionRow({
             <ActionButton
               action={{ ...action, label: "Group defend" }}
               key={action.kind}
-              onClick={() => onCounterplay(mission.missionId, "acsDefend")}
+              onClick={() => onCounterplay(mission, "acsDefend")}
             />
           ) : action.kind === "joinAttack" ? (
             // VEY-397#13/#14: "Join" shares the Open button style/size (hidden when disabled, VEY-399#6).

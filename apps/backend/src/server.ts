@@ -131,10 +131,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     (isIndexableChainReader(indexerChainReader) ? new SettlementIndexer(indexerChainReader, loaded.config.indexFromBlock, {
       databasePath: loaded.config.indexDbPath
     }) : undefined);
-  const logBackfiller =
-    indexerChainReader && typeof indexerChainReader.listContractLogs === "function"
-      ? { listContractLogs: indexerChainReader.listContractLogs.bind(indexerChainReader) }
-      : undefined;
+  const logBackfiller = deriveLogBackfiller(indexerChainReader);
   const chainSync =
     dependencies.chainSync ??
     (loaded.problems.length === 0
@@ -887,6 +884,22 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     );
   };
+}
+
+/**
+ * Build the incremental log backfiller the chain-sync self-heal and gap recovery depend on.
+ * Returns undefined only when the reader cannot list raw contract logs; the production
+ * reader (VeydriftGameReader) exposes a public `listContractLogs`, so self-heal is wired
+ * by default. Exported so a test can assert production construction enables self-heal and
+ * the wiring can't silently regress to a no-op.
+ */
+export function deriveLogBackfiller(
+  reader: ChainReader | undefined
+): { listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]> } | undefined {
+  if (reader && typeof reader.listContractLogs === "function") {
+    return { listContractLogs: reader.listContractLogs.bind(reader) };
+  }
+  return undefined;
 }
 
 function isIndexableChainReader(

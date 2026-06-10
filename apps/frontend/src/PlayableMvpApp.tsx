@@ -1275,19 +1275,6 @@ export function shouldShowAbandonPlanetButton(
   return canTransact && action.status !== "pending" && abandonPlanetUnavailableLabel(planet, canTransact, action) === undefined;
 }
 
-const counterplayShipPriority = [
-  "battlecruiser",
-  "reaper",
-  "destroyer",
-  "battleship",
-  "cruiser",
-  "heavyFighter",
-  "lightFighter",
-  "pathfinder",
-  "smallCargo",
-] as const satisfies ReadonlyArray<keyof MissionShips>;
-
-type CounterplayShipKey = (typeof counterplayShipPriority)[number];
 type EnabledGalaxyAction = Extract<GalaxyAction, { enabled: true }>;
 
 type PendingGalaxyMission = {
@@ -1295,30 +1282,6 @@ type PendingGalaxyMission = {
   target: Planet | undefined;
   coords: Coordinates;
 };
-
-const counterplayShipIds: Record<CounterplayShipKey, number> = {
-  smallCargo: 0,
-  lightFighter: 1,
-  heavyFighter: 5,
-  cruiser: 6,
-  battleship: 7,
-  destroyer: 10,
-  battlecruiser: 12,
-  reaper: 13,
-  pathfinder: 14,
-};
-
-function selectCounterplayShips(shipyardState: ChainShipyardState | null): MissionShips | null {
-  const selected = emptyMissionShips();
-  for (const key of counterplayShipPriority) {
-    const ship = shipyardState?.ships.find((candidate) => candidate.id === counterplayShipIds[key]);
-    if (ship && ship.count > 0) {
-      selected[key] = 1;
-      return selected;
-    }
-  }
-  return null;
-}
 
 function transportCargoForSelectedPlanet(
   planet: ManagedPlanetResponse | undefined,
@@ -1804,6 +1767,15 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     attackMissionId: string;
     targetPlanetId: string;
     coords: Coordinates;
+  } | null>(null);
+  // VEY-KANEO-440: an ACS Defend ("Group defend") counterplay awaiting fleet selection. When set, the
+  // mission compose picker opens with a hold-duration / holding-fuel / Alliance Depot preview so the
+  // player chooses the fleet and speed, instead of immediately sending a default counterplay fleet.
+  const [pendingAcsDefend, setPendingAcsDefend] = useState<{
+    hostileMissionId: string;
+    coords: Coordinates;
+    hostileArrivalMs: number;
+    depotLevel: number;
   } | null>(null);
   const [researchState, setResearchState] = useState<ChainResearchState | null>(
     () => hydratedGameState?.researchState ?? null
@@ -4672,6 +4644,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     if (action.mode === "colonize") {
       setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
+    setPendingAcsDefend(null);
       void runGalaxyTransaction("Colony mission", () => sendCreateColonyTransaction(
         provider,
         account,
@@ -4694,6 +4667,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     if (action.mode === "missile") {
       setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
+    setPendingAcsDefend(null);
       void runGalaxyTransaction("Missile attack", () => sendLaunchInterplanetaryMissileAttackTransaction(
         provider,
         account,
@@ -4710,6 +4684,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
     setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
+    setPendingAcsDefend(null);
     if (action.kind === "attack" && draft.lootRatio) {
       const { metal, crystal, deuterium } = draft.lootRatio;
       void runGalaxyTransaction(`${action.label} mission`, () => sendLaunchAttackMissionTransaction(
@@ -4862,32 +4837,56 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     );
   }, [account, gameContract, provider, runMissionTransaction]);
 
-  const handleMissionCounterplay = useCallback((missionId: string, mode: "acsDefend") => {
+  // VEY-KANEO-440: ACS Defend ("Group defend") opens the full compose picker (fleet + speed +
+  // hold/holding-fuel + Alliance Depot preview) instead of firing a default fleet. Intercept was
+  // removed from the frontend (VEY-KANEO-439), so this is the only remaining counterplay path.
+  const handleMissionCounterplay = useCallback((mission: FleetMissionSummary, _mode: "acsDefend") => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
       setMissionAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
     }
 
-    const ships = selectCounterplayShips(shipyardState);
-    if (!ships) {
-      setMissionAction({ status: "error", label: "No ships available for counterplay." });
+    const defended = mission.targetPlanet;
+    const coords: Coordinates = defended
+      ? { galaxy: defended.galaxy, system: defended.system, position: defended.position }
+      : { galaxy: 0, system: 0, position: 0 };
+    setMissionAction({ status: "idle" });
+    setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
+    setPendingAcsDefend({
+      hostileMissionId: mission.missionId,
+      coords,
+      hostileArrivalMs: Number(mission.arrivalAt) * 1_000,
+      depotLevel: defended?.allianceDepotLevel ?? 0,
+    });
+  }, [account, gameContract, onChainSettlement?.homePlanetId, provider]);
+
+  const handleConfirmAcsDefend = useCallback((draft: MissionLaunchDraft) => {
+    const pending = pendingAcsDefend;
+    if (!pending) return;
+    const originPlanetId = activePlanetId ?? onChainSettlement?.homePlanetId;
+    if (!provider || !account || !gameContract || !originPlanetId) {
+      setGalaxyAction({ status: "error", label: "Wallet, game contract, or origin planet is unavailable." });
       return;
     }
 
-    runMissionTransaction(`Group defend #${missionId}`, () =>
-      sendLaunchFleetMissionTransaction(
-        provider,
-        account,
-        gameContract,
-        {
-          originPlanetId: onChainSettlement.homePlanetId ?? "0",
-          targetPlanetId: missionId,
-          missionType: missionTypeId(mode),
-          ships,
-        },
-      )
-    );
-  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runMissionTransaction, shipyardState]);
+    setPendingAcsDefend(null);
+    // The hostile mission id is passed as targetPlanetId; the contract resolves the defended planet and
+    // pins the defending fleet's arrival to the attack. The chosen speed controls the natural arrival
+    // (and therefore the hold duration), so it must reach the chain.
+    void runGalaxyTransaction("Group defense", () => sendLaunchFleetMissionTransaction(
+      provider,
+      account,
+      gameContract,
+      {
+        originPlanetId,
+        targetPlanetId: pending.hostileMissionId,
+        missionType: missionTypeId("acsDefend"),
+        ships: draft.ships,
+        speedPercent: draft.speedPercent,
+      },
+    ));
+  }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingAcsDefend, provider, runGalaxyTransaction]);
 
   const handleCopyMissionShareUrl = useCallback((url: string) => {
     if (!url || typeof navigator === "undefined" || !navigator.clipboard) {
@@ -4924,6 +4923,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     setPendingJoinAttack(null);
+    setPendingAcsDefend(null);
     void runGalaxyTransaction("Group attack join", () => sendJoinAttackMissionTransaction(
       provider,
       account,
@@ -4940,6 +4940,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const handleNavigate = useCallback((target: Page) => {
     setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
+    setPendingAcsDefend(null);
     setInspectedPlayerWallet(null);
     setInspectedAllianceId(null);
     setMissionDetailId(null);
@@ -4952,6 +4953,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const handleOpenMissionReport = useCallback((missionId: string) => {
     setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
+    setPendingAcsDefend(null);
     setInspectedPlayerWallet(null);
     setInspectedAllianceId(null);
     setMissionDetailId(missionId);
@@ -4964,6 +4966,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const handleOpenMissionReportList = useCallback(() => {
     setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
+    setPendingAcsDefend(null);
     setMissionDetailId(null);
     setMissionReportId(null);
     setPage("mission-control");
@@ -4980,6 +4983,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const handleSelectPlanet = useCallback((coords: Coordinates) => {
     setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
+    setPendingAcsDefend(null);
     setGalaxyNav({ galaxy: coords.galaxy, system: coords.system });
     setSelectedCoords(coords);
     setInspectedPlayerWallet(null);
@@ -4993,6 +4997,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const handleSelectAlliance = useCallback((allianceId: string) => {
     setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
+    setPendingAcsDefend(null);
     setSelectedAllianceId(allianceId);
     setInspectedAllianceId(allianceId);
     setInspectedPlayerWallet(null);
@@ -5006,6 +5011,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const handleSelectPlayer = useCallback((wallet: string) => {
     setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
+    setPendingAcsDefend(null);
     setInspectedPlayerWallet(wallet);
     setInspectedAllianceId(null);
     setMissionDetailId(null);
@@ -5151,6 +5157,26 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           joinAttackMode
           onBack={() => setPendingJoinAttack(null)}
           onConfirm={handleConfirmJoinAttack}
+          originCoords={activePlanetCoords}
+          originLabel={selectedManagedPlanet?.name ?? homePlanetIdentity?.name}
+          resources={originMissionResources}
+          shipyardState={shipyardState}
+          target={undefined}
+        />
+      );
+    }
+
+    if (pendingAcsDefend) {
+      return (
+        <MissionCreationPage
+          acsDefendContext={{ hostileArrivalMs: pendingAcsDefend.hostileArrivalMs, depotLevel: pendingAcsDefend.depotLevel }}
+          acsDefendMode
+          action={{ enabled: true, kind: "acsDefend", label: "Group defend", mode: "mission", mission: "acsDefend", ships: emptyMissionShips() }}
+          actionPending={galaxyAction.status === "pending"}
+          coords={pendingAcsDefend.coords}
+          driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
+          onBack={() => setPendingAcsDefend(null)}
+          onConfirm={handleConfirmAcsDefend}
           originCoords={activePlanetCoords}
           originLabel={selectedManagedPlanet?.name ?? homePlanetIdentity?.name}
           resources={originMissionResources}
