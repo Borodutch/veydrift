@@ -627,7 +627,7 @@ function productionFillPercent(resourceIndex: number): number {
 }
 
 function formatSolarSatelliteEnergy(maxTemperature: number): string {
-  return `${solarSatelliteEnergy(maxTemperature).toLocaleString()} energy`;
+  return `${solarSatelliteEnergy(maxTemperature).toLocaleString()} E`;
 }
 
 function solarSatelliteEnergy(maxTemperature: number): number {
@@ -804,9 +804,9 @@ function ProductionMetric({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-slate-500">{label}</span>
-        <span className="text-xs font-medium text-slate-300">{value}</span>
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate text-xs text-slate-500" title={label}>{label}</span>
+        <span className="whitespace-nowrap text-xs font-medium text-slate-300">{value}</span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
         <div
