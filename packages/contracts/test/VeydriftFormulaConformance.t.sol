@@ -24,16 +24,46 @@ contract VeydriftFormulaConformanceTest is Test {
         assertEq(scaleBps, BPS);
 
         (uint256 metal, uint256 crystal, uint256 deuterium) =
-            VeydriftFormulas.productionPerHour(5, 4, 3, 12, 0, 0, 0, 0, 10_000, 10_000, 13_040);
+            VeydriftFormulas.productionPerHour(5, 4, 3, 12, 0, 0, 0, 0, 0, 10_000, 10_000, 13_040);
         assertEq(metal, 241);
         assertEq(crystal, 117);
         assertEq(deuterium, 50);
 
         (metal, crystal, deuterium) =
-            VeydriftFormulas.productionPerHour(5, 4, 3, 0, 0, 0, 0, 0, 10_000, 10_000, 13_040);
+            VeydriftFormulas.productionPerHour(5, 4, 3, 0, 0, 0, 0, 0, 0, 10_000, 10_000, 13_040);
         assertEq(metal, 0);
         assertEq(crystal, 0);
         assertEq(deuterium, 0);
+    }
+
+    function testCrawlerProductionBoostBps() public pure {
+        // No crawlers -> no bonus.
+        assertEq(VeydriftFormulas.crawlerProductionBoostBps(0, 5, 4, 3), 0);
+        // 0.02% per crawler while under the per-mine-level cap (8 * 12 = 96).
+        assertEq(VeydriftFormulas.crawlerProductionBoostBps(50, 5, 4, 3), 100);
+        assertEq(VeydriftFormulas.crawlerProductionBoostBps(96, 5, 4, 3), 192);
+        // Crawlers above 8 per combined mine level are inert.
+        assertEq(VeydriftFormulas.crawlerProductionBoostBps(1_000, 5, 4, 3), 192);
+        // Bonus is capped at 50% (5000 bps) even with enough mine levels.
+        assertEq(VeydriftFormulas.crawlerProductionBoostBps(3_000, 200, 100, 100), 5_000);
+        // With zero mine levels no crawler is effective.
+        assertEq(VeydriftFormulas.crawlerProductionBoostBps(10, 0, 0, 0), 0);
+    }
+
+    function testCrawlersBoostMineProduction() public pure {
+        // Baseline production without crawlers.
+        (uint256 baseMetal, uint256 baseCrystal,) =
+            VeydriftFormulas.productionPerHour(5, 4, 3, 12, 0, 0, 0, 0, 0, 10_000, 10_000, 13_040);
+        assertEq(baseMetal, 241);
+        assertEq(baseCrystal, 117);
+
+        // 50 crawlers -> +1% (100 bps) on every mine before energy/fusion handling.
+        (uint256 metal, uint256 crystal,) =
+            VeydriftFormulas.productionPerHour(5, 4, 3, 12, 0, 0, 50, 0, 0, 10_000, 10_000, 13_040);
+        assertEq(metal, 243);
+        assertEq(crystal, 118);
+        assertGt(metal, baseMetal);
+        assertGt(crystal, baseCrystal);
     }
 
     function testCanonicalVeydriftFusionReactorEnergyAndDeuteriumUse() public pure {
@@ -48,7 +78,7 @@ contract VeydriftFormulaConformanceTest is Test {
         assertEq(VeydriftFormulas.fusionReactorDeuteriumConsumption(2), 25);
 
         (uint256 metal, uint256 crystal, uint256 deuterium) =
-            VeydriftFormulas.productionPerHour(0, 0, 3, 0, 2, 0, 0, 3, 10_000, 10_000, 13_040);
+            VeydriftFormulas.productionPerHour(0, 0, 3, 0, 2, 0, 0, 0, 3, 10_000, 10_000, 13_040);
         assertEq(metal, 0);
         assertEq(crystal, 0);
         assertEq(deuterium, 21);
