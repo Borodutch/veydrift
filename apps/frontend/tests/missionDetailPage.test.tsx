@@ -386,6 +386,11 @@ describe("MissionDetailPage order authorization (matches Mission Control)", () =
     // VEY-KANEO-439: Intercept removed from the frontend; only Group defend (AcsDefend) remains.
     expect(text).not.toContain("Intercept");
     expect(text).not.toContain("Recall fleet");
+    // VEY-KANEO-424 rework: the defender has no Recall button, so they must not see a recall-cost
+    // row either — QA bounced the ticket twice reading "RECALL COST: N deuterium" with no button as
+    // a missing button. The cost is wallet-scoped to the owner now.
+    expect(text).not.toContain("Recall cost");
+    expect(text).not.toContain("50 deuterium");
   });
 
   test("offers Recall to the fleet owner (outgoing) and not the defender's counterplay", () => {
