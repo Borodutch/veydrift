@@ -502,8 +502,10 @@ function MissionBattleReport({
                   <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Round</p>
                   <p className="mt-0.5 text-sm font-semibold text-white">{round.round}</p>
                 </div>
-                <Datum label="Attacker firepower / losses" value={`${formatResource(round.attackerUnits)} units fired; ${formatResources(round.attackerLosses)} lost`} />
-                <Datum label="Defender firepower / losses" value={`${formatResource(round.defenderUnits)} units fired; ${formatResources(round.defenderLosses)} lost`} />
+                {/* The on-chain CombatRoundResolved event reports the units left standing at the end of
+                    the round, not a count of shots fired, so label it faithfully as "units remaining". */}
+                <Datum label="Attacker units / losses" value={`${formatResource(round.attackerUnits)} units remaining; ${formatResources(round.attackerLosses)} lost`} />
+                <Datum label="Defender units / losses" value={`${formatResource(round.defenderUnits)} units remaining; ${formatResources(round.defenderLosses)} lost`} />
               </article>
             ))}
           </div>
