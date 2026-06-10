@@ -68,7 +68,7 @@ interface MissionControlPageProps {
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
-  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
   onGlobalMissionArchivePageChange?: ((page: number) => void) | undefined;
@@ -369,7 +369,7 @@ function ActiveMissionSection({
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
-  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
@@ -450,7 +450,7 @@ function ActiveMissionList({
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
-  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
@@ -535,7 +535,7 @@ function MissionRow({
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
-  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
@@ -571,7 +571,7 @@ function MissionRow({
             <button
               className={rowActionButtonClass}
               key={action.kind}
-              onClick={() => onJoinAttack(mission.missionId, mission.targetPlanetId)}
+              onClick={() => onJoinAttack(mission.missionId, mission.targetPlanetId, target.coords)}
               title="Join this alliance attack"
               type="button"
             >

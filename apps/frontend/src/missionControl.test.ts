@@ -308,6 +308,32 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Join attack");
   });
 
+  test("VEY-KANEO-431: Join forwards the target coordinates so it can open the Attack fleet picker", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const joinable = {
+      ...mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now + 180_000),
+      targetPlanet: planetReference("6", "0x3333333333333333333333333333333333333333", "Bastion", "4:5:6"),
+    };
+    const joinCalls: Array<[string, string, { galaxy: number; system: number; position: number } | null]> = [];
+    const tree = MissionControlPage({
+      ...missionControlProps(now, { joinableAttacks: [joinable] }),
+      onJoinAttack: (missionId, targetPlanetId, targetCoords) => {
+        joinCalls.push([missionId, targetPlanetId, targetCoords]);
+      },
+    });
+
+    const joinButton = findElements(tree, "button").find(
+      (element) => element.props?.title === "Join this alliance attack",
+    );
+    expect(joinButton).toBeDefined();
+    (joinButton?.props?.onClick as (() => void) | undefined)?.();
+
+    // The click no longer sends a default fleet immediately; it hands the mission
+    // id, target planet id, and resolved target coordinates up so the parent can
+    // open the same fleet picker the Attack action uses.
+    expect(joinCalls).toEqual([["34", "6", { galaxy: 4, system: 5, position: 6 }]]);
+  });
+
   test("allActiveMissionRows keeps the player's classification and renders other players as observers (VEY-KANEO-402)", () => {
     const classified: ActiveMissionRow[] = [
       { context: "outgoing", direction: "Outbound", mission: mission("1") },
