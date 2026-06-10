@@ -124,15 +124,22 @@ export function MissionControlPage({
   // classification (direction + lifecycle actions); every other active mission renders read-only.
   const allActiveRows = allActiveMissionRows(allActiveMissions, activeMissionRows);
   const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...joinableAttacks, ...completedMissions]);
+  // While a mission is still active (Outbound / Returning / Recalled) it must appear ONLY in the
+  // active section. Its battle report — which can already exist for a fleet that fought and is flying
+  // home — must not also render as a Past Missions row, duplicating the live mission. The report
+  // surfaces in Past Missions only once the fleet has fully returned (VEY-KANEO-434).
+  const activeMissionIds = new Set(activeMissionRows.map((row) => row.mission.missionId));
+  const allActiveMissionIds = new Set(allActiveRows.map((row) => row.mission.missionId));
   const fallbackPastMissionRows = chronologicalPastMissionRows(completedMissions, battleReports);
   const rawPastMissionRows = missionArchive?.rows ?? fallbackPastMissionRows;
-  const pastMissionRows = dedupePastMissionRows(rawPastMissionRows);
-  // Rows collapsed by the dedupe (a mission + its battle report -> one row) so the section header
-  // count can match the actual rendered rows even with server-side pagination (VEY-399#1).
+  const pastMissionRows = dedupePastMissionRows(rawPastMissionRows, activeMissionIds);
+  // Rows collapsed by the dedupe (a mission + its battle report -> one row, or an active mission's
+  // report suppressed) so the section header count can match the actual rendered rows even with
+  // server-side pagination (VEY-399#1, VEY-KANEO-434).
   const pastCollapsedCount = rawPastMissionRows.length - pastMissionRows.length;
   // Universe-wide past archive ("All" past tab): same dedupe + collapse accounting, server-paginated.
   const rawGlobalPastRows = globalMissionArchive?.rows ?? [];
-  const globalPastMissionRows = dedupePastMissionRows(rawGlobalPastRows);
+  const globalPastMissionRows = dedupePastMissionRows(rawGlobalPastRows, allActiveMissionIds);
   const globalPastCollapsedCount = rawGlobalPastRows.length - globalPastMissionRows.length;
   // Past missions render from the paginated archive, which can contain missions absent from the live
   // fleet-visibility feed (older pages, returned missions no longer "active"). The backend already
@@ -1694,13 +1701,21 @@ function pastRowMissionId(row: PastMissionRow): string {
   return row.kind === "battleReport" ? row.report.missionId : row.mission.missionId;
 }
 
-function dedupePastMissionRows(rows: PastMissionRow[]): PastMissionRow[] {
+function dedupePastMissionRows(
+  rows: PastMissionRow[],
+  activeMissionIds: ReadonlySet<string> = new Set<string>(),
+): PastMissionRow[] {
   const missionSummaryIds = new Set(
     rows.filter((row) => row.kind === "mission").map((row) => pastRowMissionId(row))
   );
   const seen = new Set<string>();
   return rows.filter((row) => {
     const missionId = pastRowMissionId(row);
+    // A battle report whose mission is still active (Outbound / Returning / Recalled — e.g. a fleet
+    // that has fought but not yet arrived home) belongs to the active section, not Past Missions. Its
+    // loot already surfaces on the active card, so drop it here to avoid duplicating the live mission
+    // into the archive. The report returns to Past Missions once the fleet fully lands (VEY-KANEO-434).
+    if (row.kind === "battleReport" && activeMissionIds.has(missionId)) return false;
     // Collapse a battle report into its mission summary row when both exist, so each mission
     // appears once with links to both the mission detail and its battle report.
     if (row.kind === "battleReport" && missionSummaryIds.has(missionId)) return false;
