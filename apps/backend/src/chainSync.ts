@@ -496,6 +496,13 @@ export class ChainSyncService {
       return;
     }
     if (this.backfillInProgress) {
+      // The single backfill slot is busy (e.g. a periodic self-heal pass is running).
+      // A self-heal tick is best-effort and simply retries next interval, but a gap/
+      // reconnect recovery is a KNOWN missed range — fall back to the throttled full
+      // reconcile so it is not silently dropped while the slot is occupied.
+      if (!options.selfHeal) {
+        this.requestReconciliation(reason);
+      }
       return;
     }
     this.backfillInProgress = true;

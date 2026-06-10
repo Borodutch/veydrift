@@ -708,6 +708,60 @@ describe("ChainSyncService", () => {
     service.stop();
   });
 
+  test("falls back to a full reconcile when a gap recovery collides with an in-flight backfill", async () => {
+    MockWebSocket.instances = [];
+    const reconcileReasons: string[] = [];
+    let releaseBackfill: (() => void) | undefined;
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog() {
+        return { applied: false, duplicate: true, ignored: false, removed: false, snapshot: {} };
+      },
+      markStale() {},
+      async reconcile(reason: string) {
+        reconcileReasons.push(reason);
+      }
+    };
+    const backfiller = {
+      // Block the first backfill mid-flight so the slot stays occupied while a gap arrives.
+      listContractLogs() {
+        return new Promise<never[]>((resolve) => {
+          releaseBackfill = () => resolve([]);
+        });
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      logBackfiller: backfiller,
+      selfHealIntervalMs: 2,
+      selfHealDepthBlocks: 50
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x190" } } });
+
+    // Let a self-heal tick start a backfill that never resolves (slot now occupied).
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(releaseBackfill).toBeDefined();
+
+    // A head gap arrives while the backfill slot is busy.
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x1a0" } } });
+    await Promise.resolve();
+
+    // The known gap is not dropped: it falls back to a throttled full reconcile.
+    expect(reconcileReasons).toEqual([expect.stringContaining("websocket head gap")]);
+
+    releaseBackfill?.();
+    service.stop();
+  });
+
   test("self-heal is disabled when the interval is zero", async () => {
     MockWebSocket.instances = [];
     let backfillCalls = 0;
