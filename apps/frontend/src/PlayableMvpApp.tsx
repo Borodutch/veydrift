@@ -2551,6 +2551,33 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
   }, [account, apiBaseUrl, loadAllActiveMissions, loadGlobalMissionArchive, loadMissionArchive, page]);
 
+  // VEY-KANEO-445: the Rankings page shows each planet's active inbound/outbound fleet missions as
+  // subtext. Load the universe-wide active feed when Rankings opens and poll it on the shared cadence
+  // so the subtext (and its live ETAs) stays current without a manual refresh. Full transparency
+  // (decision #9978) — the feed is unfiltered by viewer, so this runs even without a connected wallet.
+  // The 1s `now` ticker animates the countdowns between polls; polling refreshes which missions exist.
+  useEffect(() => {
+    if (!apiBaseUrl || page !== "rankings") {
+      return;
+    }
+    void loadAllActiveMissions();
+    let refreshInFlight = false;
+    const pollActiveMissions = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      if (refreshInFlight) {
+        return;
+      }
+      refreshInFlight = true;
+      loadAllActiveMissions().finally(() => {
+        refreshInFlight = false;
+      });
+    };
+    const interval = window.setInterval(pollActiveMissions, TOP_BAR_RESOURCE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [apiBaseUrl, loadAllActiveMissions, page]);
+
   // VEY-KANEO-433: refreshes the full Mission Control data set — fleet visibility (active missions +
   // battle reports) plus the wallet/global past-mission archives and the universe-wide active feed.
   // Returns a promise so the auto-poll can guard against overlapping refreshes; the manual Refresh
@@ -5441,9 +5468,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     if (page === "rankings") {
       return (
         <RankingsPage
+          activeMissions={allActiveMissions}
           apiBaseUrl={apiBaseUrl}
           currentAllianceId={allianceState?.membership.allianceId}
           currentWallet={account}
+          now={now}
           onSelectAlliance={handleSelectAlliance}
           onSelectPlayer={handleSelectPlayer}
           onSelectPlanet={handleSelectPlanet}

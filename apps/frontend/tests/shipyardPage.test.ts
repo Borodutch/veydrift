@@ -11,7 +11,7 @@ import {
   StatusPanel,
 } from "../src/components/ShipyardPage";
 import type { ChainShipyardState } from "../src/walletFlow";
-import { shipCatalog } from "../src/playableMvp";
+import { shipCatalog, shipyardCatalog } from "../src/playableMvp";
 
 describe("Shipyard status panel surfaces only failures", () => {
   test("does not render success or pending action banners", () => {
@@ -172,7 +172,7 @@ describe("Shipyard page display helpers", () => {
       shipyardState: shipyardState(),
     });
 
-    expect(items).toHaveLength(shipCatalog.length);
+    expect(items).toHaveLength(shipyardCatalog.length);
     expect(items.find((item) => item.key === "smallCargo")).toMatchObject({
       actionLabel: "Build",
       countLabel: "At planet",
@@ -210,6 +210,29 @@ describe("Shipyard page display helpers", () => {
       status: "locked",
       statusLabel: "Locked",
     });
+  });
+
+  test("hides expedition-only Pathfinder from the shipyard while keeping it in the full catalog", () => {
+    const items = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      quantities: {},
+      queue: undefined,
+      resources: {
+        metal: 100000,
+        crystal: 100000,
+        deuterium: 100000,
+      },
+      shipyardLevel: 5,
+      shipyardState: shipyardState(),
+    });
+
+    expect(items.find((item) => item.key === "pathfinder")).toBeUndefined();
+    expect(shipyardCatalog.some((ship) => ship.key === "pathfinder")).toBe(false);
+    // Contract enum / stats source of truth stays intact for queue labels and combat.
+    expect(shipCatalog.some((ship) => ship.key === "pathfinder")).toBe(true);
+    expect(shipyardCatalog).toHaveLength(shipCatalog.length - 1);
   });
 
   test("uses a typed shipyard quantity when building the item model", () => {
@@ -366,8 +389,8 @@ describe("Shipyard page display helpers", () => {
     const crawler = items.find((item) => item.key === "crawler");
     expect(crawler).toMatchObject({
       notes: [
-        "A planetary support machine rather than a fleet ship. Crawlers help an economy develop but are too slow and static for normal fleet missions.",
-        "Special: a stationary mining-support unit meant to boost the home planet's metal, crystal, and deuterium output. The production bonus is not active on-chain yet, so building crawlers does not increase production today.",
+        "A stationary mining-support unit rather than a fleet ship: crawlers do not fly, haul cargo, or fight. They boost this planet's metal, crystal, and deuterium mine output.",
+        "Special: each crawler adds +0.02% to this planet's metal, crystal, and deuterium mine production, counting up to 8 crawlers per combined mine level (Metal Mine + Crystal Mine + Deuterium Synthesizer) and capped at a +50% total bonus. The on-chain bonus activates once the crawler production upgrade is live.",
       ],
     });
   });

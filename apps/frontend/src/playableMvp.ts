@@ -608,10 +608,25 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "armor", label: "Armor", level: 4 },
       { kind: "technology", key: "laser", label: "Laser", level: 4 },
     ],
-    description: "A planetary support machine rather than a fleet ship. Crawlers help an economy develop but are too slow and static for normal fleet missions.",
+    description: "A stationary mining-support unit rather than a fleet ship: crawlers do not fly, haul cargo, or fight. They boost this planet's metal, crystal, and deuterium mine output.",
     asset: shipAssetByKey.crawler,
   },
 ];
+
+// Ships that exist in the on-chain `Ship` enum and stay fully modelled here (combat
+// stats, queue labels, research effects) but must not be offered for production in the
+// frontend shipyard. Pathfinder is expedition-only, and expeditions are not implemented,
+// so building one is a dead-end spend. The contract enum is intentionally left intact so
+// on-chain ship indices do not shift.
+export const shipyardHiddenShipKeys: ReadonlySet<ShipKey> = new Set<ShipKey>(["pathfinder"]);
+
+export function isShipyardHidden(key: ShipKey): boolean {
+  return shipyardHiddenShipKeys.has(key);
+}
+
+// Buildable subset of `shipCatalog` for the shipyard UI. `shipCatalog` remains the
+// complete source of truth for stats, queue label resolution, and research effects.
+export const shipyardCatalog = shipCatalog.filter((ship) => !isShipyardHidden(ship.key));
 
 export const defenseCatalog: Array<{
   key: DefenseKey;
