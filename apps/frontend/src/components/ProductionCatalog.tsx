@@ -317,8 +317,7 @@ function SelectedProductionPanel<Key extends string>({
           />
         </div>
         <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Selected</p>
-          <h3 className="mt-1 text-base font-semibold text-white">{item.label}</h3>
+          <h3 className="text-base font-semibold text-white">{item.label}</h3>
           <p className="mt-1 text-xs text-slate-400">{item.detailNote}</p>
         </div>
       </div>

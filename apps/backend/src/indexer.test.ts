@@ -6,6 +6,7 @@ import { Database } from "bun:sqlite";
 import { canonicalContractTables } from "./contractStateSchema";
 import type { Address, AllianceState, DebrisFieldEvent, InfrastructureState, MoonChanceReportEvent, PlayerQueues, ResearchState, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
+import { deriveBuildingRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
 
 const player = "0x2222222222222222222222222222222222222222" as Address;
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
@@ -394,6 +395,113 @@ describe("SettlementIndexer", () => {
     expect(Number(updated?.resources.metal)).toBeGreaterThan(4600);
     expect(Number(updated?.resources.metal)).toBeLessThan(5000);
     expect(Number(updated?.resources.crystal)).toBe(4780);
+  });
+
+  test("settles resources at the old production rate up to readyAt when a building upgrade completes (VEY-KANEO-429)", () => {
+    // Regression: the read-model projects `resources` forward from `lastSettledAt`
+    // at the CURRENT production rate. When a metal-mine upgrade completed, the
+    // indexer bumped the building level (raising the rate) but never settled the
+    // pre-completion window or advanced `lastSettledAt`. The projection then
+    // applied the new, higher rate over the whole window since the last settle,
+    // over-reporting metal by up to ~3x. The contract instead settles
+    // [lastSettledAt, readyAt] at the old rate, completes the building, then
+    // accrues at the new rate from readyAt (VeydriftGame.sol:720-730).
+    const startTs = 1_770_000_000;
+    const readyAt = startTs + 3_600; // build window of exactly one hour
+    const oldMineLevel = 4;
+    const newMineLevel = 8;
+    const solarLevel = 30; // plenty of energy so production is not throttled
+
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent({ ...planet, lastSettledAt: startTs.toString() });
+
+    // Establish baseline building levels (no queue -> no settle), so the metal
+    // mine starts at `oldMineLevel` with the planet settled at `startTs`.
+    for (const [buildingId, level] of [[0, oldMineLevel], [3, solarLevel]] as const) {
+      indexer.applyLog({
+        blockNumber: "0x80",
+        transactionHash: `0xbase${buildingId}`,
+        logIndex: "0x0",
+        topics: [buildingCompletedTopic, topic(7n), topic(BigInt(buildingId))],
+        data: abiWords(BigInt(level))
+      });
+    }
+
+    const planetState = { ...planet, lastSettledAt: startTs.toString() };
+    const oldRate = deriveInfrastructureFields(
+      planetState,
+      deriveBuildingRows((id) => (id === 0 ? oldMineLevel : id === 3 ? solarLevel : 0)),
+      deriveShipRows(() => 0),
+      {}
+    ).productionPerHour;
+    if (!oldRate) throw new Error("expected a derivable old production rate");
+    expect(Number(oldRate.metal)).toBeGreaterThan(0);
+
+    const beforeUpgrade = indexer.walletSettlement(player).planet;
+    expect(beforeUpgrade?.lastSettledAt).toBe(startTs.toString());
+    const metalBeforeUpgrade = Number(beforeUpgrade?.resources.metal);
+
+    // Start the mine upgrade. The spend settles to `startTs` (zero elapsed here)
+    // and queues the upgrade with readyAt one hour out. Cost is zero to keep the
+    // arithmetic focused on accrual.
+    indexer.applyLog({
+      blockNumber: "0x81",
+      blockTimestamp: `0x${startTs.toString(16)}`,
+      transactionHash: "0xupgrade",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(0n)],
+      data: abiWords(BigInt(newMineLevel), BigInt(readyAt), 0n, 0n, 0n)
+    });
+    expect(indexer.planetQueue(planet.planetId, "building")?.readyAt).toBe(readyAt.toString());
+
+    // Complete the upgrade.
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xupgradedone",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(BigInt(newMineLevel))
+    });
+
+    const afterUpgrade = indexer.walletSettlement(player).planet;
+    // Baseline advances to readyAt...
+    expect(afterUpgrade?.lastSettledAt).toBe(readyAt.toString());
+    // ...and the settled metal reflects one hour at the OLD mine rate, not the new one.
+    const expectedMetal = metalBeforeUpgrade + Math.floor((Number(oldRate.metal) * (readyAt - startTs)) / 3_600);
+    expect(Number(afterUpgrade?.resources.metal)).toBe(expectedMetal);
+    // The completed level is applied for subsequent (post-readyAt) accrual.
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(newMineLevel);
+
+    // Validation: the read-model projected forward past readyAt must equal the
+    // contract's previewResources, i.e. one hour at the old rate plus the rest at
+    // the new rate, with no double-counting of the pre-completion window. Force a
+    // settle to readyAt + 1h via a zero-cost spend.
+    const projectTo = readyAt + 3_600;
+    indexer.applyLog({
+      blockNumber: "0x83",
+      blockTimestamp: `0x${projectTo.toString(16)}`,
+      transactionHash: "0xproject",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(1n)],
+      data: abiWords(1n, BigInt(projectTo + 3_600), 0n, 0n, 0n)
+    });
+    const newRate = deriveInfrastructureFields(
+      planetState,
+      deriveBuildingRows((id) => (id === 0 ? newMineLevel : id === 3 ? solarLevel : 0)),
+      deriveShipRows(() => 0),
+      {}
+    ).productionPerHour;
+    if (!newRate) throw new Error("expected a derivable new production rate");
+    const projected = indexer.walletSettlement(player).planet;
+    expect(projected?.lastSettledAt).toBe(projectTo.toString());
+    const previewOracle = metalBeforeUpgrade
+      + Math.floor((Number(oldRate.metal) * (readyAt - startTs)) / 3_600)
+      + Math.floor((Number(newRate.metal) * (projectTo - readyAt)) / 3_600);
+    expect(Number(projected?.resources.metal)).toBe(previewOracle);
   });
 
   test("records an active queue startedAt aligned with the spend settle time (VEY-318)", () => {

@@ -320,7 +320,9 @@ describe("MissionControlPage", () => {
         returning: [],
         joinableAttacks: [],
         completedMissions: [],
-        battleReports: [battleReport("77")],
+        // A past battle report for a *different*, already-landed mission (not the active incoming
+        // one) still renders in Past Missions alongside the live active card.
+        battleReports: [battleReport("78")],
       },
       walletPlanets: [managedPlanet({
         planetId: "9",
@@ -377,7 +379,9 @@ describe("MissionControlPage", () => {
         returning: [],
         joinableAttacks: [],
         completedMissions: [],
-        battleReports: [battleReport("77")],
+        // A past battle report for a *different*, already-landed mission (not the active outgoing
+        // one) still renders in Past Missions alongside the live active card.
+        battleReports: [battleReport("78")],
       },
       walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
     });
@@ -555,6 +559,32 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Open");
     expect(text).not.toContain("Open mission");
     expect(text).not.toContain("Open report");
+  });
+
+  test("keeps active missions' battle reports out of Past Missions until the fleet lands (VEY-KANEO-434)", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        // Both an en-route attack (Outbound) and a fleet flying home (Returning) are still ACTIVE
+        // missions. While active they belong only in the active section — a matching battle report
+        // must not be duplicated into Past Missions for the same in-flight mission (VEY-KANEO-434).
+        outgoing: [mission({ missionId: "44", missionType: "Attack", status: "Outbound" })],
+        returning: [mission({ missionId: "55", missionType: "Attack", status: "Returning" })],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [battleReport("44"), battleReport("55")],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    // The missions still render in the active section.
+    expect(text).toContain("Returning");
+    // Neither active mission's report leaks into the archive while the mission is in flight.
+    expect(text).not.toContain("Battle report");
+    expect(text).toContain("No completed missions are visible for this wallet yet.");
   });
 
   test("labels past missions by direction and drops the self-commander on outgoing", () => {
