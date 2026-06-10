@@ -6,7 +6,7 @@ import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { defenseCatalog, shipCatalog, type ShipKey } from "../playableMvp";
 import type { Coordinates } from "../types";
 import { type BattleReport, type DefenderPlanetState, type FleetMissionSummary, type MissionDetailResponse } from "../walletFlow";
-import { missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
+import { isFleetRecallable, missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
 import {
   MissionRouteCell,
   type MissionPlanetIdentity,
@@ -141,7 +141,7 @@ export function MissionDetailPage({
             onSelectCoordinates={onSelectCoordinates}
             onSelectPlayer={onSelectPlayer}
           />
-          <MissionBattleReport defenderState={detail?.defenderPlanetState ?? undefined} mission={mission} report={report} />
+          <MissionBattleReport defenderState={detail?.defenderPlanetState ?? undefined} mission={mission} now={now} report={report} />
         </>
       ) : (
         <Notice>No mission selected.</Notice>
@@ -170,8 +170,12 @@ function MissionActions({
   onResolve: (missionId: string) => void;
 }) {
   const context = missionActionContext(mission, now, account);
-  const actions = missionLifecycleActions({ canTransact, context, mission, now })
-    .filter((action) => action.kind !== "recall" || Boolean(mission.recallCost));
+  // Whether the Recall button shows is decided purely by mission lifecycle (an outgoing Outbound
+  // fleet that is not yet due), exactly like the Mission Control list. It must NOT be gated on
+  // mission.recallCost: that field is only emitted by FleetMissionRecalled, so a still-recallable
+  // Outbound fleet would carry a null cost and lose its button. The backend now projects the cost for
+  // Outbound fleets (VEY-KANEO-424), and the cost row below tolerates a null cost regardless.
+  const actions = missionLifecycleActions({ canTransact, context, mission, now });
 
   // Hide the section entirely when no wallet action applies at this stage.
   if (actions.length === 0) {
@@ -233,7 +237,7 @@ function MissionFacts({
           <Row label="Cargo" value={formatResources(mission.cargo)} />
           <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
           {showsRecallCost(mission) ? (
-            <Row label="Recall cost" value={mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable"} />
+            <Row label="Recall cost" value={recallCostLabel(mission, now)} />
           ) : null}
         </Panel>
       )}
@@ -321,10 +325,12 @@ function RouteLegTiming({
 function MissionBattleReport({
   defenderState,
   mission,
+  now,
   report,
 }: {
   defenderState?: DefenderPlanetState | undefined;
   mission: FleetMissionSummary;
+  now: number;
   report?: BattleReport | undefined;
 }) {
   if (!isCombatMission(mission)) {
@@ -332,11 +338,22 @@ function MissionBattleReport({
   }
 
   if (!report) {
+    if (mission.needsResolution) {
+      return (
+        <Notice tone="warning">
+          Combat is due or resolving; the indexed battle report is not available yet.
+        </Notice>
+      );
+    }
+    // A combat fleet only fights once it reaches its target. While it is still flying out (Outbound
+    // and not yet due) — or was recalled before it ever arrived — no battle has happened, so the
+    // "no report" notice is pure noise; the whole block is suppressed until combat is actually due.
+    if (hasNotReachedCombat(mission, now)) {
+      return null;
+    }
     return (
-      <Notice tone={mission.needsResolution ? "warning" : "neutral"}>
-        {mission.needsResolution
-          ? "Combat is due or resolving; the indexed battle report is not available yet."
-          : "No indexed battle report is available for this combat mission yet."}
+      <Notice tone="neutral">
+        No indexed battle report is available for this combat mission yet.
       </Notice>
     );
   }
@@ -517,8 +534,28 @@ function showsRecallCost(mission: FleetMissionSummary): boolean {
   return ["Outbound", "Returning"].includes(mission.status);
 }
 
+// VEY-KANEO-424: the deuterium recall cost is shown only when recall is actually possible — a fleet
+// still Outbound and within the recall window (backend projects its cost), or one that has already
+// been recalled (the cost it paid). Past the 60s cutoff, or for a Returning fleet, recall can no
+// longer happen, so the row reads "Not recallable". This keeps the cost row consistent with whether
+// the Recall button is offered, and matches Mission Control.
+function recallCostLabel(mission: FleetMissionSummary, now: number): string {
+  const recallable = mission.status === "Recalled" || isFleetRecallable(mission, now);
+  return recallable && mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable";
+}
+
 function isCombatMission(mission: FleetMissionSummary): boolean {
   return ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType);
+}
+
+// VEY-KANEO-425: a combat fleet has not fought yet while it is still outbound and en route (arrival
+// in the future), or when it was recalled before ever reaching its target. In those states there is
+// no battle to report, so the "No indexed battle report" notice is misleading noise and is hidden.
+// A due/arrived/returning/resolved mission falls through and keeps the notice, since a report is
+// genuinely expected (and merely missing/unindexed) at that point.
+function hasNotReachedCombat(mission: FleetMissionSummary, now: number): boolean {
+  if (mission.status === "Recalled") return true;
+  return mission.status === "Outbound" && !isMissionDue(mission, now);
 }
 
 // Timing shown beside a route endpoint. A completed leg collapses to a single

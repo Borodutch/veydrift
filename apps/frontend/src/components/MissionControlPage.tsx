@@ -267,11 +267,15 @@ export function missionLifecycleActions({
   }
 
   if (context === "outgoing" && mission.status === "Outbound") {
+    // Recall is only valid more than the 60s cutoff before arrival; inside that window the contract
+    // reverts, so the button is shown but disabled with a clear reason rather than offering a tx that
+    // would fail (VEY-KANEO-424).
+    const recallable = isFleetRecallable(mission, now);
     actions.push({
-      enabled: canTransact && !due,
+      enabled: canTransact && recallable,
       kind: "recall",
       label: "Recall fleet",
-      reason: due ? "Mission is already due for resolution." : walletReason(canTransact),
+      reason: recallable ? walletReason(canTransact) : "The recall cutoff has passed (within 60s of arrival).",
     });
   }
 
@@ -1612,6 +1616,18 @@ function Notice({ children, tone }: { children: preact.ComponentChildren; tone: 
 
 function isMissionDue(mission: FleetMissionSummary, now: number): boolean {
   return mission.status === "Outbound" && Number(mission.arrivalAt) * 1_000 <= now;
+}
+
+// The contract refuses a recall once a fleet is within FLEET_RECALL_CUTOFF_SECONDS of arrival (and
+// after arrival), reverting with "the recall cutoff has passed" — VeydriftGameStorage exposes
+// FLEET_RECALL_CUTOFF_SECONDS = 60. A fleet is therefore recallable only while it is still Outbound
+// and more than that cutoff away from arrival. Both Mission Control and Mission Detail gate their
+// Recall affordances on this so the two screens stay consistent (VEY-KANEO-424).
+const FLEET_RECALL_CUTOFF_SECONDS = 60;
+
+export function isFleetRecallable(mission: FleetMissionSummary, now: number): boolean {
+  return mission.status === "Outbound"
+    && now <= (Number(mission.arrivalAt) - FLEET_RECALL_CUTOFF_SECONDS) * 1_000;
 }
 
 function isMissionReturned(mission: FleetMissionSummary, now: number): boolean {
