@@ -78,6 +78,7 @@ export function MissionCreationPage({
   actionPending,
   coords,
   driveLevels = {},
+  joinAttackMode = false,
   onBack,
   onConfirm,
   originCoords,
@@ -90,6 +91,10 @@ export function MissionCreationPage({
   actionPending: boolean;
   coords: Coordinates;
   driveLevels?: FleetDriveLevels | undefined;
+  // VEY-KANEO-431: render the picker for a join-attack — ship selection only,
+  // with no loot ratio or speed controls (the join inherits the lead attack's
+  // loot split and coordinated arrival).
+  joinAttackMode?: boolean | undefined;
   onBack: () => void;
   onConfirm: (draft: MissionLaunchDraft) => void;
   originCoords: Coordinates | undefined;
@@ -115,7 +120,7 @@ export function MissionCreationPage({
   const availableShips = useMemo(() => missionShipOptionsForAction(action, shipyardState), [action, shipyardState]);
   const cargoSupported = action.mode === "mission" && (action.kind === "transport" || action.kind === "deploy");
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
-  const lootRatioSupported = action.mode === "mission" && action.kind === "attack";
+  const lootRatioSupported = !joinAttackMode && action.mode === "mission" && action.kind === "attack";
   const lootRatioActive = lootRatioSupported && lootRatioEnabled;
   const lootRatioTotal = lootRatio.metal + lootRatio.crystal + lootRatio.deuterium;
   const timingSummary = missionTimingSummary(travelSeconds);
@@ -145,7 +150,7 @@ export function MissionCreationPage({
     <div className="grid gap-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-white">{action.label} Mission</h2>
+          <h2 className="text-lg font-semibold text-white">{joinAttackMode ? action.label : `${action.label} Mission`}</h2>
           <p className="mt-0.5 text-xs text-slate-400">
             {originLabel ?? "Active planet"} to [{coords.galaxy}:{coords.system}:{coords.position}]
           </p>
@@ -237,26 +242,28 @@ export function MissionCreationPage({
             </div>
           ) : null}
 
-          <div className="grid gap-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Speed</h3>
-            <div className="flex flex-wrap gap-1.5">
-              {MISSION_SPEED_OPTIONS.map((speed) => (
-                <button
-                  aria-pressed={speedPercent === speed}
-                  className={`h-8 rounded border px-2 text-xs font-semibold transition ${
-                    speedPercent === speed
-                      ? "border-signal/45 bg-signal/15 text-signal"
-                      : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white"
-                  }`}
-                  key={speed}
-                  onClick={() => setSpeedPercent(speed)}
-                  type="button"
-                >
-                  {speed}%
-                </button>
-              ))}
+          {joinAttackMode ? null : (
+            <div className="grid gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Speed</h3>
+              <div className="flex flex-wrap gap-1.5">
+                {MISSION_SPEED_OPTIONS.map((speed) => (
+                  <button
+                    aria-pressed={speedPercent === speed}
+                    className={`h-8 rounded border px-2 text-xs font-semibold transition ${
+                      speedPercent === speed
+                        ? "border-signal/45 bg-signal/15 text-signal"
+                        : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white"
+                    }`}
+                    key={speed}
+                    onClick={() => setSpeedPercent(speed)}
+                    type="button"
+                  >
+                    {speed}%
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {lootRatioSupported ? (
             <div className="grid gap-2">
@@ -339,7 +346,7 @@ export function MissionCreationPage({
             })}
             type="button"
           >
-            Confirm Mission
+            {joinAttackMode ? "Join Attack" : "Confirm Mission"}
           </button>
         </aside>
       </div>
