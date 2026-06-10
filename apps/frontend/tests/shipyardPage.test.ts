@@ -11,7 +11,7 @@ import {
   StatusPanel,
 } from "../src/components/ShipyardPage";
 import type { ChainShipyardState } from "../src/walletFlow";
-import { shipCatalog } from "../src/playableMvp";
+import { shipCatalog, shipyardCatalog } from "../src/playableMvp";
 
 describe("Shipyard status panel surfaces only failures", () => {
   test("does not render success or pending action banners", () => {
@@ -172,7 +172,7 @@ describe("Shipyard page display helpers", () => {
       shipyardState: shipyardState(),
     });
 
-    expect(items).toHaveLength(shipCatalog.length);
+    expect(items).toHaveLength(shipyardCatalog.length);
     expect(items.find((item) => item.key === "smallCargo")).toMatchObject({
       actionLabel: "Build",
       countLabel: "At planet",
@@ -210,6 +210,29 @@ describe("Shipyard page display helpers", () => {
       status: "locked",
       statusLabel: "Locked",
     });
+  });
+
+  test("hides expedition-only Pathfinder from the shipyard while keeping it in the full catalog", () => {
+    const items = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      quantities: {},
+      queue: undefined,
+      resources: {
+        metal: 100000,
+        crystal: 100000,
+        deuterium: 100000,
+      },
+      shipyardLevel: 5,
+      shipyardState: shipyardState(),
+    });
+
+    expect(items.find((item) => item.key === "pathfinder")).toBeUndefined();
+    expect(shipyardCatalog.some((ship) => ship.key === "pathfinder")).toBe(false);
+    // Contract enum / stats source of truth stays intact for queue labels and combat.
+    expect(shipCatalog.some((ship) => ship.key === "pathfinder")).toBe(true);
+    expect(shipyardCatalog).toHaveLength(shipCatalog.length - 1);
   });
 
   test("uses a typed shipyard quantity when building the item model", () => {
