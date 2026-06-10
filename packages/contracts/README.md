@@ -152,6 +152,14 @@ Alliances:
 - Alliance roles are owner, officer, and member. Owners and officers can invite
   members; owners and officers can kick members; owners can add or remove
   officers. Officers cannot remove the owner or other officers.
+- `transferAllianceOwnership(allianceId, newOwner)` hands the single owner role
+  to one of the alliance's officers and demotes the previous owner to officer,
+  so an alliance always keeps exactly one owner. Only the current owner can call
+  it; the target must already be an `Officer` of that alliance (members,
+  non-members, and `address(0)` revert with `NewOwnerMustBeOfficer` /
+  `NotAllianceMember`); self-transfer is rejected. It emits `AllianceRoleUpdated`
+  for both players plus
+  `AllianceOwnershipTransferred(allianceId, previousOwner, newOwner)`.
 - Diplomacy state covers ally, non-aggression, and war flags. Attack-limit tickets
   can query `attackLimitAllianceContext(attacker, defender)` for same-alliance,
   war, bashing, and score-protection exceptions.
@@ -350,6 +358,20 @@ PRIVATE_KEY=... PROXY_ADDRESS=0xProxy forge script script/Upgrade.s.sol:Upgrade 
 ```
 
 The proxy owner must be the broadcasting account for upgrades.
+
+Upgrade the `VeydriftAllianceSystem` proxy (UUPS). The new implementation is
+storage-compatible — it only adds `transferAllianceOwnership` — so the proxy
+keeps every alliance, membership, diplomacy, and defense-intent record:
+
+```bash
+PRIVATE_KEY=... ALLIANCE_PROXY_ADDRESS=0xAllianceProxy \
+  forge script script/UpgradeAllianceSystem.s.sol:UpgradeAllianceSystem \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" --broadcast --verify
+```
+
+The script reads the linked game contract from the live proxy, deploys the new
+implementation, and calls `upgradeToAndCall`. The broadcasting account must be
+the proxy `owner()` because `_authorizeUpgrade` is owner-gated.
 
 ## MVP Simplifications
 
