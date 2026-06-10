@@ -25,6 +25,7 @@ const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a96
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
+const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
@@ -1058,6 +1059,67 @@ describe("fleet mission cargo vs loot", () => {
       })
     ]);
     expect(report?.loot).toEqual({ metal: "50", crystal: "0", deuterium: "0" });
+  });
+});
+
+// VEY-KANEO-424: FleetMissionRecalled is the only event that carries a recall cost, so a still-in-
+// flight Outbound fleet used to decode with recallCost: null, which made the Mission Detail page hide
+// the Recall button and read "Not recallable". The decoder now projects the contract's deterministic
+// recall cost (floor(fuelCost * 2500 / 10000), min 1 deuterium when any fuel was spent) for Outbound
+// fleets, while leaving the authoritative emitted cost for recalled fleets and null elsewhere.
+describe("projected fleet recall cost", () => {
+  const owner = "0x0000000000000000000000000000000000000abc" as Address;
+
+  function launchAndCargo(missionId: bigint, fuelCost: bigint): RpcLog[] {
+    return [
+      makeLog({
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(3n)],
+        data: dataWords([word(99n), word(1n), word(1_900_000_000n), word(1_900_000_300n)])
+      }),
+      makeLog({
+        topics: [fleetMissionCargoTopic, topic(missionId)],
+        data: dataWords([word(0n), word(0n), word(0n), word(fuelCost)])
+      })
+    ];
+  }
+
+  test("projects 25% of fuel cost for an outbound fleet that has not been recalled", () => {
+    const mission = decodeFleetMissionLogs(launchAndCargo(1n, 200n)).get("1");
+    expect(mission?.status).toBe("Outbound");
+    // floor(200 * 2500 / 10000) = 50 deuterium.
+    expect(mission?.recallCost).toBe("50");
+  });
+
+  test("floors a tiny-but-nonzero fuel cost to 1 deuterium, mirroring the contract", () => {
+    const mission = decodeFleetMissionLogs(launchAndCargo(2n, 1n)).get("2");
+    // floor(1 * 2500 / 10000) = 0, but the contract charges a 1 deuterium minimum.
+    expect(mission?.recallCost).toBe("1");
+  });
+
+  test("keeps the authoritative emitted cost for a recalled fleet", () => {
+    const logs: RpcLog[] = [
+      ...launchAndCargo(3n, 200n),
+      makeLog({
+        topics: [fleetMissionRecalledTopic, topic(3n), addressTopic(owner)],
+        data: dataWords([word(1_900_000_500n), word(50n)])
+      })
+    ];
+    const mission = decodeFleetMissionLogs(logs).get("3");
+    expect(mission?.status).toBe("Recalled");
+    expect(mission?.recallCost).toBe("50");
+  });
+
+  test("leaves recall cost null for a returning fleet that can no longer be recalled", () => {
+    const logs: RpcLog[] = [
+      ...launchAndCargo(4n, 200n),
+      makeLog({
+        topics: [fleetMissionReturnExposedTopic, topic(4n), addressTopic(owner), topic(2n)],
+        data: dataWords([word(99n), word(1n), word(1_900_000_600n), word(0n), word(0n), word(0n)])
+      })
+    ];
+    const mission = decodeFleetMissionLogs(logs).get("4");
+    expect(mission?.status).toBe("Returning");
+    expect(mission?.recallCost).toBeNull();
   });
 });
 

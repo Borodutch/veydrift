@@ -164,8 +164,12 @@ function MissionActions({
   onResolve: (missionId: string) => void;
 }) {
   const context = missionActionContext(mission, now, account);
-  const actions = missionLifecycleActions({ canTransact, context, mission, now })
-    .filter((action) => action.kind !== "recall" || Boolean(mission.recallCost));
+  // Whether the Recall button shows is decided purely by mission lifecycle (an outgoing Outbound
+  // fleet that is not yet due), exactly like the Mission Control list. It must NOT be gated on
+  // mission.recallCost: that field is only emitted by FleetMissionRecalled, so a still-recallable
+  // Outbound fleet would carry a null cost and lose its button. The backend now projects the cost for
+  // Outbound fleets (VEY-KANEO-424), and the cost row below tolerates a null cost regardless.
+  const actions = missionLifecycleActions({ canTransact, context, mission, now });
 
   // Hide the section entirely when no wallet action applies at this stage.
   if (actions.length === 0) {
