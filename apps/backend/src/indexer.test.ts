@@ -1898,6 +1898,63 @@ describe("SettlementIndexer", () => {
     expect(attackerVisibility.returning).toEqual([]);
   });
 
+  // VEY-KANEO-415: reproduce/confirm "active Colonize missions not visible in Mission Control".
+  // This exercises the indexed (production) visibility path that backs the live Mission Control feed.
+  // A colonize launch emits the same FleetMissionLaunched/Cargo/Ships events as any mission, with
+  // missionType=Colonize (2) and a flag-encoded unsettled target id; the `outgoing` filter keys only
+  // on owner + Outbound status, so the active colonize fleet is surfaced for its owner.
+  test("indexes an active colonize mission into the owner's outgoing visibility feed", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet); // player owns home planet "7" at 2:44:9
+    // _encodeColonyTarget(galaxy=2, system=44, position=10): (1 << 255) | (g << 24) | (s << 8) | p.
+    const colonizeTargetId = (1n << 255n) | (2n << 24n) | (44n << 8n) | 10n;
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xcolonize",
+      logIndex: "0x0",
+      topics: [
+        fleetMissionLaunchedTopic,
+        topic(50n),
+        addressTopic(player),
+        topic(2n) // Colonize
+      ],
+      data: abiWords(7n, colonizeTargetId, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xcolonize",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(50n)],
+      data: abiWords(0n, 0n, 0n, 5n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xcolonize",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(50n)],
+      // One colony ship (4th ship slot), nothing else.
+      data: abiWords(0n, 0n, 0n, 1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    const visibility = indexer.fleetMissionVisibility(player);
+    const outgoing = visibility.outgoing.find((mission) => mission.missionId === "50");
+    expect(outgoing).toMatchObject({
+      missionId: "50",
+      missionType: "Colonize",
+      status: "Outbound",
+      owner: player,
+      originPlanetId: "7",
+      targetPlanetId: colonizeTargetId.toString(),
+      ships: { colonyShip: "1" }
+    });
+    expect(visibility.incoming).toEqual([]);
+    expect(visibility.joinableAttacks).toEqual([]);
+  });
+
   test("removed duplicate log marks reorg health instead of being ignored", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
