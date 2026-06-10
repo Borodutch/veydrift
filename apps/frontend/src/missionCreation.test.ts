@@ -64,6 +64,37 @@ describe("mission creation", () => {
     })).toBe("Choose at least one ship.");
   });
 
+  test("blocks fleet launches at the Computer-tech fleet-slot cap and names the lever", () => {
+    const base = {
+      action: attackAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      cargoTotal: 0,
+      fuelCost: 0,
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 1,
+      resources: { metal: 0, crystal: 0, deuterium: 1_000 },
+      selectedShipCount: 1,
+      totalCargoCapacity: 50,
+    } as const;
+
+    // At the cap: blocked before submit, message points at Computer Technology.
+    const blocked = missionDraftBlocker({ ...base, fleetSlots: { active: 1, limit: 1 } });
+    expect(blocked).toBe(
+      "All 1 fleet slot are in use — research Computer Technology to raise the limit, or wait for a fleet to return."
+    );
+    expect(missionDraftBlocker({ ...base, fleetSlots: { active: 3, limit: 3 } })).toContain("All 3 fleet slots are in use");
+
+    // Below the cap: gate passes through to the normal checks.
+    expect(missionDraftBlocker({ ...base, fleetSlots: { active: 0, limit: 1 } })).toBeUndefined();
+
+    // Missiles do not consume fleet slots, so a full fleet must not block a missile launch.
+    expect(missionDraftBlocker({ ...base, action: missileAction, fleetSlots: { active: 1, limit: 1 } })).toBeUndefined();
+
+    // Fail open when the backend did not provide slot counts; the on-chain revert stays the backstop.
+    expect(missionDraftBlocker(base)).toBeUndefined();
+  });
+
   test("checks fuel for fleet missions and missile quantity for missile missions", () => {
     expect(missionDraftBlocker({
       action: attackAction,

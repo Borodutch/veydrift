@@ -893,7 +893,7 @@ type FleetMissionRevertContext = {
 const contractRevertReasons: Record<string, string> = {
   "0x2ab0f96f": "The origin planet does not have enough resources or deuterium fuel for this mission. Refresh backend resources and queues before retrying; the indexed spendable balance may still be catching up with earlier queued spending.",
   "0xd7c35576": "The selected ships do not have enough cargo capacity for this mission. Add cargo-capable ships, reduce cargo, slow the mission, or choose a closer target.",
-  "0x57aab7e3": "All fleet slots are already in use. Fleet slots come from your Computer technology — research Computer to unlock more, or wait for a fleet to return, then retry.",
+  "0x57aab7e3": "All fleet slots are already in use. Fleet slots come from your Computer Technology — research it to unlock more, or wait for a fleet to return, then retry.",
   "0x400d5197": "You cannot attack your own planet.",
   "0xbb3f9d15": "Choose a target planet that is different from the origin planet.",
   "0x9a3d4eb9": "The selected target planet no longer exists. Refresh galaxy state and choose a target again.",
