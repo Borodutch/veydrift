@@ -175,7 +175,11 @@ function MissionActions({
   // mission.recallCost: that field is only emitted by FleetMissionRecalled, so a still-recallable
   // Outbound fleet would carry a null cost and lose its button. The backend now projects the cost for
   // Outbound fleets (VEY-KANEO-424), and the cost row below tolerates a null cost regardless.
-  const actions = missionLifecycleActions({ canTransact, context, mission, now });
+  const actions = missionLifecycleActions({ canTransact, context, mission, now })
+    // VEY-KANEO-427: only surface Resolve when it is actionable. A disabled Resolve
+    // (e.g. the mission has not arrived yet) is hidden here, mirroring how the Mission
+    // Control list suppresses disabled Resolve/Join orders rather than greying them out.
+    .filter((action) => action.kind !== "resolve" || action.enabled);
 
   // Hide the section entirely when no wallet action applies at this stage.
   if (actions.length === 0) {

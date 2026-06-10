@@ -520,6 +520,39 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Share URL");
   });
 
+  test("VEY-KANEO-427: hides the disabled Resolve order while an outbound mission is still in flight", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // Own outbound mission that has not arrived yet: Resolve is not actionable (disabled),
+    // while Recall is still available. The Available Orders section must surface Recall but
+    // suppress the disabled Resolve button rather than rendering it greyed out.
+    const text = collectText(MissionDetailPage({
+      account: "0x1111111111111111111111111111111111111111",
+      actionState: { status: "idle" },
+      canTransact: true,
+      copyState: "idle",
+      detail: {
+        mission: mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 60_000),
+        battleReport: null,
+      },
+      loading: false,
+      missionId: "42",
+      now,
+      onBack: () => undefined,
+      onCompleteReturn: () => undefined,
+      onCopyShareUrl: () => undefined,
+      onCounterplay: () => undefined,
+      onRecall: () => undefined,
+      onResolve: () => undefined,
+      onRetry: () => undefined,
+      onSelectCoordinates: () => undefined,
+      onSelectPlayer: () => undefined,
+    })).join(" ");
+
+    expect(text).toContain("Available Orders");
+    expect(text).toContain("Recall fleet");
+    expect(text).not.toContain("Resolve");
+  });
+
   test("renders the round-by-round block only when indexed round snapshots exist", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage({
