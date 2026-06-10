@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage, allActiveMissionRows, buildMissionControlViewQuery, parseMissionControlViewParams, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
+import { MissionControlPage, allActiveMissionRows, buildMissionControlViewQuery, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
@@ -1052,6 +1052,24 @@ describe("Mission Control battle reports", () => {
     const view: MissionControlView = { activePage: 1, activeTab: "all", pastPage: 4, pastTab: "all" };
     const restored = { ...view, ...parseMissionControlViewParams(buildMissionControlViewQuery(view)) };
     expect(restored).toEqual(view);
+  });
+
+  // VEY-412 rework: inside the Farcaster Mini App iframe sessionStorage is blocked (reads back as the
+  // default) and the in-app back button lands on a bare hash (no query). Without a window in this
+  // test env both the URL and storage paths are unavailable — exactly the iframe in-app-back case —
+  // so the in-memory mirror set by the last selection must be what resolve() restores.
+  test("restores the last selection from the in-memory mirror when URL + storage are unavailable (VEY-412)", () => {
+    // Fresh state defaults to My missions.
+    persistMissionControlView({ activePage: 0, activeTab: "mine", pastPage: 0, pastTab: "mine" });
+    expect(resolveMissionControlView()).toEqual({ activePage: 0, activeTab: "mine", pastPage: 0, pastTab: "mine" });
+
+    // Selecting Alliance + a past page must survive the (simulated) remount via the in-memory mirror.
+    persistMissionControlView({ activeTab: "alliance", pastPage: 2, pastTab: "all" });
+    expect(resolveMissionControlView()).toEqual({ activePage: 0, activeTab: "alliance", pastPage: 2, pastTab: "all" });
+
+    // Switching back to the defaults clears the remembered selection too.
+    persistMissionControlView({ activeTab: "mine", pastPage: 0, pastTab: "mine" });
+    expect(resolveMissionControlView()).toEqual({ activePage: 0, activeTab: "mine", pastPage: 0, pastTab: "mine" });
   });
 });
 

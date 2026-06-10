@@ -1209,8 +1209,16 @@ export function readPersistedMissionControlView(): MissionControlView {
   }
 }
 
-function persistMissionControlView(partial: Partial<MissionControlView>): void {
+// VEY-412 rework: in-memory mirror of the last selected view. The Mission Control panel runs inside
+// a Farcaster Mini App iframe where sessionStorage is partitioned/blocked (the guarded accessor
+// returns null), so the in-app "← Mission Control" back button — which lands on a bare
+// `#/mission-control` with no query — cannot restore from the URL or storage there. This
+// module-level value survives the panel remount within the SPA session and covers that case.
+let lastMissionControlView: MissionControlView = DEFAULT_MISSION_CONTROL_VIEW;
+
+export function persistMissionControlView(partial: Partial<MissionControlView>): void {
   const next = { ...readPersistedMissionControlView(), ...partial };
+  lastMissionControlView = next;
   const storage = missionControlViewStorage();
   if (storage) {
     try {
@@ -1220,8 +1228,8 @@ function persistMissionControlView(partial: Partial<MissionControlView>): void {
     }
   }
   // VEY-412 rework: the URL hash is the source of truth — it survives browser back, hard reload, and
-  // is shareable. sessionStorage above is the fallback for the in-app "← Mission Control" button,
-  // which navigates to a bare `#/mission-control` (no query) and so cannot rely on the URL alone.
+  // is shareable. sessionStorage / the in-memory mirror are the fallbacks for the in-app
+  // "← Mission Control" button, which navigates to a bare `#/mission-control` (no query).
   writeMissionControlViewToHash(next);
 }
 
@@ -1285,13 +1293,25 @@ function writeMissionControlViewToHash(view: MissionControlView): void {
   }
 }
 
-// VEY-412 rework: resolve the initial view giving the URL precedence over sessionStorage. Browser
-// back restores the full URL (with query); the in-app back button lands on a bare URL and falls
-// back to storage. Either way the tab/page survives the mission-detail round-trip.
-function resolveMissionControlView(): MissionControlView {
+// VEY-412 rework: resolve the initial view by precedence — URL hash (shareable, survives browser
+// back + reload) first; then sessionStorage when it holds a real selection; then the in-memory
+// mirror, which is the only fallback that works for the in-app back button inside the Farcaster
+// iframe (sessionStorage is blocked there). A blocked/empty storage reads back as the default, so
+// we only trust it when it differs from the default and otherwise defer to the in-memory mirror.
+export function resolveMissionControlView(): MissionControlView {
   const persisted = readPersistedMissionControlView();
+  const base = isDefaultMissionControlView(persisted) ? lastMissionControlView : persisted;
   const fromHash = readMissionControlViewFromHash();
-  return fromHash ? { ...persisted, ...fromHash } : persisted;
+  return fromHash ? { ...base, ...fromHash } : base;
+}
+
+function isDefaultMissionControlView(view: MissionControlView): boolean {
+  return (
+    view.activeTab === DEFAULT_MISSION_CONTROL_VIEW.activeTab &&
+    view.pastTab === DEFAULT_MISSION_CONTROL_VIEW.pastTab &&
+    view.activePage === DEFAULT_MISSION_CONTROL_VIEW.activePage &&
+    view.pastPage === DEFAULT_MISSION_CONTROL_VIEW.pastPage
+  );
 }
 
 // The 0-based client page currently shown inside a tab panel, read straight from the DOM marker the
