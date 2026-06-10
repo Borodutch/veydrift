@@ -5,7 +5,7 @@ import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { defenseCatalog, shipCatalog, type ShipKey } from "../playableMvp";
 import type { Coordinates } from "../types";
-import { type BattleReport, type DefenderPlanetState, type FleetMissionSummary, type MissionDetailResponse } from "../walletFlow";
+import { type BattleReport, type BattleReportParticipant, type DefenderPlanetState, type FleetMissionSummary, type MissionDetailResponse } from "../walletFlow";
 import { isFleetRecallable, missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
 import {
   MissionRouteCell,
@@ -13,6 +13,7 @@ import {
   missionEndpoint,
   missionProgressPercent,
   missionRouteLeg,
+  shortAddress,
 } from "./missionRoute";
 import { PageHeader, RefreshButton } from "./PageHeader";
 
@@ -360,6 +361,14 @@ function MissionBattleReport({
 
   const outcome = battleOutcomeSummary(report.outcome);
   const recyclersNeeded = recyclersForDebris(report.debris);
+  // ACS (Alliance Combat System) grouped attack: more than one participant means joiners fought
+  // alongside the main attacker. The on-chain losses/debris/outcome are already the combined group
+  // result; only loot is split per participant. For a group we show the combined attacking fleet and
+  // total loot here, then break each participant's loot share out in the Attack group panel below.
+  const participants = report.participants ?? [];
+  const isGroupedAttack = participants.length > 1;
+  const attackerShips = isGroupedAttack ? sumShips(participants.map((participant) => participant.ships)) : mission.ships;
+  const totalLoot = isGroupedAttack ? sumLoot(participants) : report.loot;
   // Defender fleet/defenses come from the indexed target-planet composition (ShipCountChanged +
   // defense events) rather than the single AttackBattleResolved event. For a freshly-resolved
   // battle this is the surviving force; we show "None" when the planet had no fleet/defenses, and
@@ -388,12 +397,12 @@ function MissionBattleReport({
           expose (defender composition, loot retained) are flagged compactly rather than fabricated.
           Debris is shown on its own below. */}
       <div className="grid gap-3 lg:grid-cols-2">
-        <Panel title="Attacker">
-          <Row label="Combat ships" value={<UnitIcons units={shipUnitsByKind(mission.ships, "combat")} />} />
-          <Row label="Civil ships" value={<UnitIcons units={shipUnitsByKind(mission.ships, "civil")} />} />
-          <Row label="Cargo carried" value={formatResources(mission.cargo)} />
-          <Row label="Fleet losses" value={formatResources(report.attackerLosses)} />
-          <Row label="Loot grabbed" value={formatResources(report.loot)} />
+        <Panel title={isGroupedAttack ? "Attackers (group)" : "Attacker"}>
+          <Row label={isGroupedAttack ? "Combat ships (combined)" : "Combat ships"} value={<UnitIcons units={shipUnitsByKind(attackerShips, "combat")} />} />
+          <Row label={isGroupedAttack ? "Civil ships (combined)" : "Civil ships"} value={<UnitIcons units={shipUnitsByKind(attackerShips, "civil")} />} />
+          {isGroupedAttack ? null : <Row label="Cargo carried" value={formatResources(mission.cargo)} />}
+          <Row label={isGroupedAttack ? "Fleet losses (combined)" : "Fleet losses"} value={formatResources(report.attackerLosses)} />
+          <Row label={isGroupedAttack ? "Loot grabbed (total)" : "Loot grabbed"} value={formatResources(totalLoot)} />
         </Panel>
         <Panel title="Defender">
           <Row label="Fleet losses" value={formatResources(report.defenderLosses)} />
@@ -413,6 +422,14 @@ function MissionBattleReport({
           )}
         </Panel>
       </div>
+
+      {/* ACS attack group: every participant (main attacker + joiners) and the loot they personally
+          hauled. Only rendered for a grouped attack; a solo attack keeps the two-column report above. */}
+      {isGroupedAttack ? (
+        <div className="mt-3">
+          <AttackGroupPanel participants={participants} totalLoot={totalLoot} />
+        </div>
+      ) : null}
 
       <div className="mt-3">
         <Panel title="Debris Field">
@@ -461,6 +478,90 @@ function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onC
       <RefreshCw aria-hidden="true" size={14} />
       {action.label}
     </button>
+  );
+}
+
+// VEY-KANEO-432: the ACS attack group breakdown. Lists every participant (main attacker + joiners),
+// their committed fleet, and the loot they personally hauled (their proportional share of the raid),
+// followed by the combined group total. Scales to an arbitrary number of joiners.
+function AttackGroupPanel({
+  participants,
+  totalLoot,
+}: {
+  participants: BattleReportParticipant[];
+  totalLoot: { metal: string; crystal: string; deuterium: string };
+}) {
+  return (
+    <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-white">Attack group</h3>
+        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">
+          {participants.length} {participants.length === 1 ? "participant" : "participants"}
+        </span>
+      </div>
+      <p className="mb-3 text-xs text-slate-400">
+        Joined (ACS) attack: the combined fleet fights as one and loot is split across participants in
+        proportion to each fleet's remaining cargo capacity.
+      </p>
+      <div className="grid gap-2">
+        {participants.map((participant) => (
+          <article
+            key={participant.missionId}
+            className="grid gap-2 rounded-md border border-white/10 bg-black/20 p-3 sm:grid-cols-[1fr_auto] sm:items-start"
+          >
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="break-all text-sm font-medium text-slate-200">{shortAddress(participant.address)}</span>
+                <span
+                  className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${
+                    participant.isMainAttacker
+                      ? "border border-cyan-300/30 bg-cyan-300/10 text-cyan-100"
+                      : "border border-white/10 bg-white/5 text-slate-400"
+                  }`}
+                >
+                  {participant.isMainAttacker ? "Main attacker" : "Joined"}
+                </span>
+              </div>
+              <div className="mt-1.5">
+                <UnitIcons units={[...shipUnitsByKind(participant.ships, "combat"), ...shipUnitsByKind(participant.ships, "civil")]} />
+              </div>
+            </div>
+            <div className="sm:text-right">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Loot share</p>
+              <p className="mt-0.5 break-words text-sm text-slate-300">{formatResources(participant.loot)}</p>
+            </div>
+          </article>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Total group loot</span>
+        <span className="break-words text-sm font-semibold text-white">{formatResources(totalLoot)}</span>
+      </div>
+    </section>
+  );
+}
+
+// Merge several ShipKey-keyed fleets into one combined count map (uint128 strings summed as BigInt) so
+// the grouped battle report can show the whole attacking force, not just the main attacker's ships.
+function sumShips(shipSets: Array<Record<string, string>>): Record<string, string> {
+  const totals = new Map<string, bigint>();
+  for (const ships of shipSets) {
+    for (const [key, count] of Object.entries(ships)) {
+      totals.set(key, (totals.get(key) ?? 0n) + BigInt(count || "0"));
+    }
+  }
+  return Object.fromEntries([...totals].map(([key, count]) => [key, count.toString()]));
+}
+
+// Sum each participant's loot share into the combined group total (BigInt to stay exact for uint128).
+function sumLoot(participants: BattleReportParticipant[]): { metal: string; crystal: string; deuterium: string } {
+  return participants.reduce(
+    (total, participant) => ({
+      metal: (BigInt(total.metal) + BigInt(participant.loot.metal || "0")).toString(),
+      crystal: (BigInt(total.crystal) + BigInt(participant.loot.crystal || "0")).toString(),
+      deuterium: (BigInt(total.deuterium) + BigInt(participant.loot.deuterium || "0")).toString(),
+    }),
+    { metal: "0", crystal: "0", deuterium: "0" }
   );
 }
 
