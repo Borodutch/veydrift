@@ -18,6 +18,7 @@ import { MissionControlPage } from "./components/MissionControlPage";
 import { MissionCreationPage, type MissionCargoDraft, type MissionLaunchDraft } from "./components/MissionCreationPage";
 import { BattleReportsPage } from "./components/BattleReportsPage";
 import { RankingsPage } from "./components/RankingsPage";
+import { RaidTargetFinderPage } from "./components/RaidTargetFinderPage";
 import { AllianceInspectPage, PlayerInspectPage } from "./components/InspectPages";
 import { buildInspectHash, parseInspectRoute, type InspectRoute } from "./inspectRoutes";
 import {
@@ -5446,6 +5447,21 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onSelectAlliance={handleSelectAlliance}
           onSelectPlayer={handleSelectPlayer}
           onSelectPlanet={handleSelectPlanet}
+          originCoordinates={activePlanetCoords}
+        />
+      );
+    }
+
+    if (page === "raid-target-finder") {
+      return (
+        <RaidTargetFinderPage
+          apiBaseUrl={apiBaseUrl}
+          currentWallet={account}
+          fleetVisibility={fleetVisibility}
+          now={now}
+          onSelectAlliance={handleSelectAlliance}
+          onSelectPlanet={handleSelectPlanet}
+          onSelectPlayer={handleSelectPlayer}
           originCoordinates={activePlanetCoords}
         />
       );
