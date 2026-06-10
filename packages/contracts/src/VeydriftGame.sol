@@ -710,21 +710,33 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function _settleResources(uint256 planetId) private {
         _requireNoPendingMissionResolutionForPlanet(planetId);
-        uint64 currentTime = uint64(block.timestamp);
+        _settleResourcesUpTo(planetId, uint64(block.timestamp));
+    }
+
+    /// @dev Advances production (and any due building completion) up to `ceiling`. Callers that must
+    ///      not proceed while a mission is unresolved gate this behind
+    ///      `_requireNoPendingMissionResolutionForPlanet`; passive collection instead caps `ceiling`
+    ///      at the earliest unresolved arrival so it never reverts and never settles across it.
+    function _settleResourcesUpTo(uint256 planetId, uint64 ceiling) private {
         BuildingConstruction memory construction = buildingConstructions[planetId];
-        if (construction.active && currentTime >= construction.readyAt) {
+        if (construction.active && ceiling >= construction.readyAt) {
             _settleResourcesUntil(planetId, construction.readyAt);
             _completeBuilding(planetId, construction);
-            _settleResourcesUntil(planetId, currentTime);
+            _settleResourcesUntil(planetId, ceiling);
             return;
         }
 
-        _settleResourcesUntil(planetId, currentTime);
+        _settleResourcesUntil(planetId, ceiling);
     }
 
     function _collectPlanetResources(uint256 planetId) private {
         _requirePlanetOwner(planetId);
-        _settleResources(planetId);
+        uint64 ceiling = uint64(block.timestamp);
+        uint64 pendingArrival = _earliestPendingMissionArrivalForPlanet(planetId);
+        if (pendingArrival < ceiling) {
+            ceiling = pendingArrival;
+        }
+        _settleResourcesUpTo(planetId, ceiling);
         Resources memory resources = _planets[planetId].resources;
         emit PlanetSettled(
             planetId,
