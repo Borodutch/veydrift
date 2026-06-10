@@ -147,7 +147,9 @@ export function MissionControlPage({
   // VEY-412: restore the previously selected tabs + past page. The panel is DOM-driven (tabs/pages
   // toggle `hidden`), so without this the selection resets to defaults every time the component
   // remounts on returning from a mission detail (browser back or the in-app "← Mission Control").
-  const view = initialView ?? readPersistedMissionControlView();
+  // The view comes from the URL hash first (shareable, survives reload + browser back), then the
+  // sessionStorage fallback for the in-app back button which lands on a bare `#/mission-control`.
+  const view = initialView ?? resolveMissionControlView();
 
   return (
     <section className="grid gap-4">
@@ -1154,6 +1156,10 @@ export type MissionControlView = {
 
 const MISSION_CONTROL_VIEW_STORAGE_KEY = "veydrift:mission-control:view";
 
+// VEY-412: the bare Mission Control list route. Only this exact path carries the tab/page query
+// params — never a detail (`#/mission/<id>`) or report (`#/mission-control/report/<id>`) route.
+const MISSION_CONTROL_HASH_PATH = "mission-control";
+
 const ACTIVE_MISSION_TAB_KEYS = new Set<string>(ACTIVE_MISSION_TABS.map((tab) => tab.key));
 const PAST_MISSION_TAB_KEYS = new Set<string>(PAST_MISSION_TABS.map((tab) => tab.key));
 
@@ -1204,14 +1210,88 @@ export function readPersistedMissionControlView(): MissionControlView {
 }
 
 function persistMissionControlView(partial: Partial<MissionControlView>): void {
+  const next = { ...readPersistedMissionControlView(), ...partial };
   const storage = missionControlViewStorage();
-  if (!storage) return;
-  try {
-    const next = { ...readPersistedMissionControlView(), ...partial };
-    storage.setItem(MISSION_CONTROL_VIEW_STORAGE_KEY, JSON.stringify(next));
-  } catch {
-    // Best-effort persistence: ignore quota/security errors.
+  if (storage) {
+    try {
+      storage.setItem(MISSION_CONTROL_VIEW_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Best-effort persistence: ignore quota/security errors.
+    }
   }
+  // VEY-412 rework: the URL hash is the source of truth — it survives browser back, hard reload, and
+  // is shareable. sessionStorage above is the fallback for the in-app "← Mission Control" button,
+  // which navigates to a bare `#/mission-control` (no query) and so cannot rely on the URL alone.
+  writeMissionControlViewToHash(next);
+}
+
+// VEY-412 rework: pure (window-free) encoders so the round-trip is unit-testable. Only non-default
+// fields are written, keeping fresh-load URLs clean (`#/mission-control`).
+export function parseMissionControlViewParams(query: string): Partial<MissionControlView> {
+  const params = new URLSearchParams(query);
+  const out: Partial<MissionControlView> = {};
+  const activeTab = params.get("at");
+  if (activeTab && ACTIVE_MISSION_TAB_KEYS.has(activeTab)) out.activeTab = activeTab as ActiveMissionTabKey;
+  const pastTab = params.get("pt");
+  if (pastTab && PAST_MISSION_TAB_KEYS.has(pastTab)) out.pastTab = pastTab as PastMissionTabKey;
+  if (params.has("ap")) out.activePage = clampPageIndex(params.get("ap"));
+  if (params.has("pp")) out.pastPage = clampPageIndex(params.get("pp"));
+  return out;
+}
+
+export function buildMissionControlViewQuery(view: MissionControlView): string {
+  const params = new URLSearchParams();
+  if (view.activeTab !== ACTIVE_MISSION_DEFAULT_TAB) params.set("at", view.activeTab);
+  if (view.pastTab !== PAST_MISSION_DEFAULT_TAB) params.set("pt", view.pastTab);
+  if (view.activePage > 0) params.set("ap", String(view.activePage));
+  if (view.pastPage > 0) params.set("pp", String(view.pastPage));
+  return params.toString();
+}
+
+// Split a location hash into its `path` (without leading `#`/`/`) and `query` parts.
+function splitHash(hash: string): { path: string; query: string } {
+  const withoutHash = hash.replace(/^#/, "").replace(/^\/+/, "");
+  const [path = "", query = ""] = withoutHash.split("?");
+  return { path, query };
+}
+
+// Read the tab/page selection encoded in the current location hash, but only when we are on the bare
+// Mission Control list route. Returns null elsewhere (detail/report routes, SSR, parse errors).
+function readMissionControlViewFromHash(): Partial<MissionControlView> | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const { path, query } = splitHash(window.location.hash || "");
+    if (path !== MISSION_CONTROL_HASH_PATH || !query) return null;
+    const parsed = parseMissionControlViewParams(query);
+    return Object.keys(parsed).length > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// Reflect the view in the URL via replaceState — no new history entry and no `hashchange` event, so
+// the router is undisturbed. Guarded to the bare list route so we never rewrite a detail URL.
+function writeMissionControlViewToHash(view: MissionControlView): void {
+  if (typeof window === "undefined") return;
+  try {
+    const { path } = splitHash(window.location.hash || "");
+    if (path !== MISSION_CONTROL_HASH_PATH) return;
+    const query = buildMissionControlViewQuery(view);
+    const nextHash = query ? `#/${MISSION_CONTROL_HASH_PATH}?${query}` : `#/${MISSION_CONTROL_HASH_PATH}`;
+    const url = `${window.location.pathname}${window.location.search}${nextHash}`;
+    window.history.replaceState(window.history.state, "", url);
+  } catch {
+    // Best-effort: a sandboxed history (some embeds) can throw on replaceState.
+  }
+}
+
+// VEY-412 rework: resolve the initial view giving the URL precedence over sessionStorage. Browser
+// back restores the full URL (with query); the in-app back button lands on a bare URL and falls
+// back to storage. Either way the tab/page survives the mission-detail round-trip.
+function resolveMissionControlView(): MissionControlView {
+  const persisted = readPersistedMissionControlView();
+  const fromHash = readMissionControlViewFromHash();
+  return fromHash ? { ...persisted, ...fromHash } : persisted;
 }
 
 // The 0-based client page currently shown inside a tab panel, read straight from the DOM marker the
