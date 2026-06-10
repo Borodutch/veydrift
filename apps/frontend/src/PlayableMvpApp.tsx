@@ -4835,7 +4835,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     );
   }, [account, gameContract, provider, runMissionTransaction]);
 
-  const handleMissionCounterplay = useCallback((missionId: string, mode: "acsDefend" | "intercept") => {
+  const handleMissionCounterplay = useCallback((missionId: string, mode: "acsDefend") => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
       setMissionAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
@@ -4847,7 +4847,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    runMissionTransaction(mode === "acsDefend" ? `Group defend #${missionId}` : `Intercept #${missionId}`, () =>
+    runMissionTransaction(`Group defend #${missionId}`, () =>
       sendLaunchFleetMissionTransaction(
         provider,
         account,

@@ -687,7 +687,7 @@ export class SettlementIndexer {
       incoming: summaries.filter((mission) =>
         mission.owner.toLowerCase() !== walletLower
           && ownedPlanetIds.has(mission.targetPlanetId)
-          && ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType)
+          && ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
           && mission.status === "Outbound"
       ),
       outgoing: summaries.filter((mission) =>
