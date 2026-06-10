@@ -316,6 +316,18 @@ export type CombatRoundReport = {
   defenderLosses: OnChainResources;
 };
 
+// One member of an ACS (Alliance Combat System) attack group: the main attacker plus any fleets that
+// joined the same attack. `loot` is the resources this fleet personally hauled away. Per-participant
+// losses are not emitted on-chain (CombatLosses is a single combined figure), so only loot is broken
+// out per participant; the report's top-level losses/debris/outcome remain the combined group result.
+export type BattleReportParticipant = {
+  missionId: string;
+  address: string;
+  isMainAttacker: boolean;
+  ships: Record<string, string>;
+  loot: OnChainResources;
+};
+
 export type BattleReport = {
   missionId: string;
   attacker: string;
@@ -333,6 +345,11 @@ export type BattleReport = {
   roundReports: CombatRoundReport[];
   transactionHash: string;
   blockNumber: string;
+  // ACS attack group: the main attack mission id for a grouped attack (null for a solo attack), and
+  // every participant (main attacker + joiners) with their individual loot share. Older feeds that
+  // predate VEY-KANEO-432 may omit these; consumers fall back to the single-attacker fields.
+  attackGroupId?: string | null;
+  participants?: BattleReportParticipant[];
 };
 
 export type ChainShipyardState = {
@@ -834,6 +851,9 @@ export function isUserRejected(error: unknown): boolean {
   return typeof candidate.message === "string" && /reject|denied|cancel/i.test(candidate.message);
 }
 
+export const CONTRACT_REJECTED_NO_REASON_MESSAGE =
+  "The game contract rejected this transaction, but the wallet did not provide a specific reason. Refresh game state and retry, or choose a different action if the state changed.";
+
 export function walletRequestErrorMessage(error: unknown): string {
   const message = errorMessage(error);
   const code = errorCode(error);
@@ -855,12 +875,15 @@ export function walletRequestErrorMessage(error: unknown): string {
     return `${message} The game API may be temporarily unavailable; the app will retry with backend state.`;
   }
 
-  if (code === -32603 || code === "-32603" || /internal json-rpc error/i.test(message)) {
-    return "The wallet could not read the current game contract state. Retry in a moment while the app checks whether the game API or RPC recovered.";
+  // A genuine on-chain revert can arrive wrapped in an internal JSON-RPC error
+  // (code -32603). Classify it as a contract rejection before the -32603 branch
+  // so a real revert is not mislabeled as RPC/node unavailability.
+  if (isOnChainRevertError(error)) {
+    return CONTRACT_REJECTED_NO_REASON_MESSAGE;
   }
 
-  if (/execution reverted/i.test(message)) {
-    return "The game contract rejected this transaction, but the wallet did not provide a specific reason. Refresh game state and retry, or choose a different action if the state changed.";
+  if (code === -32603 || code === "-32603" || /internal json-rpc error/i.test(message)) {
+    return "The wallet could not read the current game contract state. Retry in a moment while the app checks whether the game API or RPC recovered.";
   }
 
   return message;
@@ -990,18 +1013,62 @@ function fleetMissionRevertReason(error: unknown, context?: FleetMissionRevertCo
   return contractRevertReason(error, context);
 }
 
-function isFleetMissionPreflightRevert(error: unknown): boolean {
-  // A real contract revert carries revert data (a 4-byte selector), the EVM
-  // revert code 3, or an "execution reverted" message. Anything else (internal
-  // JSON-RPC errors, RPC/node unavailability, read timeouts) means the
-  // simulation could not run, not that the mission is invalid.
+/**
+ * Walks the nested error chain (`data`/`error`/`originalError`/`cause`) looking
+ * for the markers a genuine EVM revert carries: the revert code `3` or an
+ * "execution reverted" message. Wallets routinely wrap an on-chain revert inside
+ * an outer `code: -32603` "Internal JSON-RPC error", so checking only the
+ * top-level code/message misses the revert and the failure looks like RPC/node
+ * unavailability.
+ */
+function hasExecutionRevertMarker(value: unknown, seen: Set<object> = new Set()): boolean {
+  if (typeof value === "string") {
+    return /execution reverted/i.test(value);
+  }
+
+  if (typeof value !== "object" || value === null || seen.has(value)) {
+    return false;
+  }
+  seen.add(value);
+
+  const record = value as Record<string, unknown>;
+  if (record.code === 3 || record.code === "3") {
+    return true;
+  }
+
+  for (const key of ["message", "data", "error", "originalError", "cause", "reason"]) {
+    if (key in record && hasExecutionRevertMarker(record[key], seen)) {
+      return true;
+    }
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((item) => hasExecutionRevertMarker(item, seen));
+  }
+
+  return false;
+}
+
+/**
+ * True when an error represents a genuine on-chain revert — it carries revert
+ * data (a 4-byte selector) or the nested revert markers above. A bare
+ * `code: -32603` "Internal JSON-RPC error" with no revert markers is RPC/node
+ * unavailability, not a revert, and returns false so it is not mislabeled.
+ */
+export function isOnChainRevertError(error: unknown): boolean {
   if (revertSelector(error) !== undefined) {
     return true;
   }
-  if (errorCode(error) === 3 || errorCode(error) === "3") {
-    return true;
-  }
-  return /execution reverted/i.test(errorMessage(error));
+  return hasExecutionRevertMarker(error);
+}
+
+function isFleetMissionPreflightRevert(error: unknown): boolean {
+  // A real contract revert carries revert data (a 4-byte selector), the EVM
+  // revert code 3, or an "execution reverted" message — including when those
+  // markers are nested inside an outer internal JSON-RPC error. Anything else
+  // (bare internal JSON-RPC errors, RPC/node unavailability, read timeouts)
+  // means the simulation could not run, not that the mission is invalid.
+  return isOnChainRevertError(error);
 }
 
 async function assertFleetMissionCallSucceeds(
@@ -1144,6 +1211,12 @@ async function sendWalletTransaction(
       const reason = fleetMissionRevertReason(error);
       if (reason) {
         throw new Error(reason);
+      }
+      // A genuine on-chain revert with no decodable reason (e.g. wrapped in an
+      // internal JSON-RPC error). Surface it as a contract rejection so callers
+      // do not mislabel it as transient RPC/node unavailability.
+      if (isOnChainRevertError(error)) {
+        throw new Error(walletRequestErrorMessage(error));
       }
     }
 

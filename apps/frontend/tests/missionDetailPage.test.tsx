@@ -115,6 +115,79 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
   });
 });
 
+describe("MissionDetailPage ACS attack group (VEY-KANEO-432)", () => {
+  const mainAttacker = "0x2222222222222222222222222222222222222222";
+  const joinerA = "0x3333333333333333333333333333333333333333";
+  const joinerB = "0x4444444444444444444444444444444444444444";
+
+  function groupedReport(): BattleReport {
+    return battleReport({
+      attacker: mainAttacker,
+      loot: { metal: "1000", crystal: "0", deuterium: "0" },
+      attackGroupId: "1",
+      participants: [
+        { missionId: "1", address: mainAttacker, isMainAttacker: true, ships: { lightFighter: "10" }, loot: { metal: "1000", crystal: "0", deuterium: "0" } },
+        { missionId: "2", address: joinerA, isMainAttacker: false, ships: { largeCargo: "5" }, loot: { metal: "600", crystal: "0", deuterium: "0" } },
+        { missionId: "3", address: joinerB, isMainAttacker: false, ships: { cruiser: "2" }, loot: { metal: "400", crystal: "0", deuterium: "0" } },
+      ],
+    });
+  }
+
+  test("renders the Attack group panel with every participant and their individual loot share", () => {
+    const text = renderDetailText({ mission: combatMission(), battleReport: groupedReport(), defenderPlanetState: null });
+
+    expect(text).toContain("Attack group");
+    expect(text).toContain("3 participants");
+    expect(text).toContain("Main attacker");
+    expect(text).toContain("Joined");
+    // Each joiner's individual loot share is shown (proportional to capacity on-chain).
+    expect(text).toContain("Loot share");
+    expect(text).toContain("600 metal");
+    expect(text).toContain("400 metal");
+    // The shortened joiner commanders appear in the breakdown.
+    expect(text).toContain("0x3333...3333");
+    expect(text).toContain("0x4444...4444");
+  });
+
+  test("shows the combined group total loot, not just the main attacker's share", () => {
+    const text = renderDetailText({ mission: combatMission(), battleReport: groupedReport(), defenderPlanetState: null });
+
+    // 1000 (main) + 600 + 400 = 2000 hauled by the group; the Attacker panel reports the total.
+    expect(text).toContain("Loot grabbed (total)");
+    expect(text).toContain("2,000 metal");
+    expect(text).toContain("Total group loot");
+    expect(text).toContain("Combat ships (combined)");
+  });
+
+  test("scales to an arbitrary number of joiners", () => {
+    const participants = [
+      { missionId: "1", address: mainAttacker, isMainAttacker: true, ships: {}, loot: { metal: "100", crystal: "0", deuterium: "0" } },
+      ...Array.from({ length: 8 }, (_, index) => ({
+        missionId: String(index + 2),
+        address: `0x${String(index + 1).repeat(40).slice(0, 40)}`,
+        isMainAttacker: false,
+        ships: {},
+        loot: { metal: "10", crystal: "0", deuterium: "0" },
+      })),
+    ];
+    const text = renderDetailText({
+      mission: combatMission(),
+      battleReport: battleReport({ attacker: mainAttacker, participants }),
+      defenderPlanetState: null,
+    });
+
+    expect(text).toContain("9 participants");
+  });
+
+  test("a solo (non-grouped) attack does not render the Attack group panel", () => {
+    const text = renderDetailText({ mission: combatMission(), battleReport: battleReport(), defenderPlanetState: null });
+
+    expect(text).not.toContain("Attack group");
+    expect(text).not.toContain("Loot grabbed (total)");
+    expect(text).toContain("Loot grabbed");
+  });
+});
+
 describe("MissionDetailPage Route timing copy", () => {
   // VEY-405: a completed leg should collapse to a single past-tense word — "Returned"
   // for the origin, "Arrived" for the target — dropping the RETURN/ARRIVAL caption, the

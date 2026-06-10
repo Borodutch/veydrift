@@ -412,7 +412,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
           );
         }
-        const battleReport = indexer.battleReport(missionId);
+        // A joined ACS fleet never emits its own battle report — the resolved combat is keyed to the
+        // main attack mission. When this mission has no report of its own but belongs to an attack
+        // group, fall back to the group's report so a joiner's mission detail still shows the shared
+        // outcome and the per-participant loot split (VEY-KANEO-432).
+        const battleReport =
+          indexer.battleReport(missionId)
+          ?? (mission.attackGroupId ? indexer.battleReport(mission.attackGroupId) : null);
         return Response.json(
           {
             mission,
