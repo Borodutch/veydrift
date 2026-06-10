@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { BackendConfig } from "./config";
 import {
+  attachAttackGroupParticipants,
   decodeBattleReportLogs,
   decodeFleetMissionLogs,
   decodePlanetRenamedLog,
@@ -12,6 +13,8 @@ import {
   isMoonChanceReportLog,
   VeydriftGameReader,
   type Address,
+  type BattleReport,
+  type FleetMissionSummary,
   type RpcLog
 } from "./evm";
 
@@ -1050,6 +1053,9 @@ describe("fleet mission cargo vs loot", () => {
     expect(mission?.status).toBe("Returning");
     // Cargo stays at the outbound launch value (0), not the 50 metal return-leg/loot amount.
     expect(mission?.cargo).toEqual({ metal: "0", crystal: "0", deuterium: "0" });
+    // The return-leg cargo (outbound + looted) is captured separately as returnCargo so the ACS
+    // battle report can surface a joiner's loot share (VEY-KANEO-432) without polluting `cargo`.
+    expect(mission?.returnCargo).toEqual({ metal: "50", crystal: "0", deuterium: "0" });
 
     // Loot is sourced independently from the battle report.
     const report = decodeBattleReportLogs([
@@ -1190,6 +1196,146 @@ describe("battle reports", () => {
         }
       ]
     });
+  });
+});
+
+// VEY-KANEO-432: a joined (ACS) attack groups multiple fleets under the main attack; loot is split
+// across participants proportional to remaining cargo capacity. The main attacker's loot comes from
+// its AttackBattleResolved event; each joiner's loot is its resulting return-leg cargo (returnCargo).
+describe("ACS attack group participants", () => {
+  const main = "0x00000000000000000000000000000000000000a1" as Address;
+  const joinerOne = "0x00000000000000000000000000000000000000b2" as Address;
+  const joinerTwo = "0x00000000000000000000000000000000000000c3" as Address;
+
+  function makeSummary(overrides: Partial<FleetMissionSummary> & { missionId: string }): FleetMissionSummary {
+    return {
+      status: "Returning",
+      missionType: "Attack",
+      owner: main,
+      originPlanetId: "1",
+      targetPlanetId: "9",
+      arrivalAt: "1700000000",
+      returnAt: "1700000600",
+      fuelCost: "0",
+      recallCost: null,
+      attackGroupId: null,
+      joinedAttackMissionIds: [],
+      cargo: { metal: "0", crystal: "0", deuterium: "0" },
+      returnCargo: null,
+      ships: {},
+      transactionHash: "0xtx",
+      blockNumber: "10",
+      needsResolution: false,
+      ...overrides
+    };
+  }
+
+  function makeReport(overrides: Partial<BattleReport> & { missionId: string }): BattleReport {
+    return {
+      attacker: main,
+      targetPlanetId: "9",
+      outcome: "AttackerWin",
+      rounds: 2,
+      randomSeed: "0",
+      loot: { metal: "100", crystal: "0", deuterium: "0" },
+      attackerLosses: { metal: "0", crystal: "0", deuterium: "0" },
+      defenderLosses: { metal: "0", crystal: "0", deuterium: "0" },
+      debris: { metal: "0", crystal: "0" },
+      roundReports: [],
+      transactionHash: "0xtx",
+      blockNumber: "10",
+      attackGroupId: null,
+      participants: [],
+      ...overrides
+    };
+  }
+
+  test("lists the main attacker plus every joiner with their individual loot share", () => {
+    const missions: FleetMissionSummary[] = [
+      makeSummary({
+        missionId: "77",
+        owner: main,
+        attackGroupId: "77",
+        joinedAttackMissionIds: ["78", "79"],
+        ships: { lightFighter: "10" }
+      }),
+      makeSummary({
+        missionId: "78",
+        owner: joinerOne,
+        missionType: "AcsAttack",
+        attackGroupId: "77",
+        ships: { lightFighter: "5" },
+        returnCargo: { metal: "30", crystal: "0", deuterium: "0" }
+      }),
+      makeSummary({
+        missionId: "79",
+        owner: joinerTwo,
+        missionType: "AcsAttack",
+        attackGroupId: "77",
+        ships: { largeCargo: "3" },
+        returnCargo: { metal: "20", crystal: "5", deuterium: "0" }
+      })
+    ];
+    const report = makeReport({ missionId: "77", attacker: main, loot: { metal: "50", crystal: "0", deuterium: "0" } });
+
+    const [enriched] = attachAttackGroupParticipants([report], missions);
+
+    expect(enriched?.attackGroupId).toBe("77");
+    expect(enriched?.participants).toEqual([
+      { missionId: "77", address: main, isMainAttacker: true, ships: { lightFighter: "10" }, loot: { metal: "50", crystal: "0", deuterium: "0" } },
+      { missionId: "78", address: joinerOne, isMainAttacker: false, ships: { lightFighter: "5" }, loot: { metal: "30", crystal: "0", deuterium: "0" } },
+      { missionId: "79", address: joinerTwo, isMainAttacker: false, ships: { largeCargo: "3" }, loot: { metal: "20", crystal: "5", deuterium: "0" } }
+    ]);
+  });
+
+  test("scales to an arbitrary number of joiners", () => {
+    const joinerIds = Array.from({ length: 6 }, (_, index) => String(200 + index));
+    const missions: FleetMissionSummary[] = [
+      makeSummary({ missionId: "77", attackGroupId: "77", joinedAttackMissionIds: joinerIds }),
+      ...joinerIds.map((id, index) =>
+        makeSummary({
+          missionId: id,
+          owner: `0x${(index + 1).toString(16).padStart(40, "0")}` as Address,
+          missionType: "AcsAttack",
+          attackGroupId: "77",
+          returnCargo: { metal: String((index + 1) * 10), crystal: "0", deuterium: "0" }
+        })
+      )
+    ];
+    const [enriched] = attachAttackGroupParticipants([makeReport({ missionId: "77" })], missions);
+
+    expect(enriched?.participants).toHaveLength(7);
+    expect(enriched?.participants.filter((participant) => !participant.isMainAttacker)).toHaveLength(6);
+    expect(enriched?.participants.at(-1)?.loot).toEqual({ metal: "60", crystal: "0", deuterium: "0" });
+  });
+
+  test("a joiner whose fleet was wiped (no return-leg cargo) reports a zero loot share", () => {
+    const missions: FleetMissionSummary[] = [
+      makeSummary({ missionId: "77", attackGroupId: "77", joinedAttackMissionIds: ["78"] }),
+      makeSummary({ missionId: "78", owner: joinerOne, missionType: "AcsAttack", attackGroupId: "77", returnCargo: null })
+    ];
+    const [enriched] = attachAttackGroupParticipants([makeReport({ missionId: "77" })], missions);
+
+    expect(enriched?.participants[1]).toMatchObject({
+      missionId: "78",
+      isMainAttacker: false,
+      loot: { metal: "0", crystal: "0", deuterium: "0" }
+    });
+  });
+
+  test("leaves a solo attack with a single participant and a null group id", () => {
+    const missions: FleetMissionSummary[] = [
+      makeSummary({ missionId: "77", owner: main, ships: { lightFighter: "10" } })
+    ];
+    const [enriched] = attachAttackGroupParticipants(
+      [makeReport({ missionId: "77", loot: { metal: "100", crystal: "0", deuterium: "0" } })],
+      missions
+    );
+
+    expect(enriched?.attackGroupId).toBeNull();
+    expect(enriched?.participants).toEqual([
+      { missionId: "77", address: main, isMainAttacker: true, ships: { lightFighter: "10" }, loot: { metal: "100", crystal: "0", deuterium: "0" } }
+    ]);
   });
 });
 
