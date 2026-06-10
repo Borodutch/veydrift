@@ -1,13 +1,19 @@
-import { ArrowLeft, ArrowRight, Check, RefreshCw, Share2, Swords } from "lucide-preact";
+import { ArrowLeft, Check, RefreshCw, Share2, Swords } from "lucide-preact";
 
-import { planetArtTypeFromArchetypeOrCoords, planetImageForType } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { defenseCatalog, shipCatalog, type ShipKey } from "../playableMvp";
-import type { Coordinates, PlanetType } from "../types";
-import { type BattleReport, type DefenderPlanetState, type FleetMissionPlanetReference, type FleetMissionSummary, type MissionDetailResponse, decodeColonizationTargetId } from "../walletFlow";
-import { missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
+import type { Coordinates } from "../types";
+import { type BattleReport, type DefenderPlanetState, type FleetMissionSummary, type MissionDetailResponse } from "../walletFlow";
+import { isFleetRecallable, missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
+import {
+  MissionRouteCell,
+  type MissionPlanetIdentity,
+  missionEndpoint,
+  missionProgressPercent,
+  missionRouteLeg,
+} from "./missionRoute";
 import { PageHeader, RefreshButton } from "./PageHeader";
 
 type MissionActionContext = "due" | "incoming" | "outgoing" | "returning";
@@ -135,7 +141,7 @@ export function MissionDetailPage({
             onSelectCoordinates={onSelectCoordinates}
             onSelectPlayer={onSelectPlayer}
           />
-          <MissionBattleReport defenderState={detail?.defenderPlanetState ?? undefined} mission={mission} report={report} />
+          <MissionBattleReport defenderState={detail?.defenderPlanetState ?? undefined} mission={mission} now={now} report={report} />
         </>
       ) : (
         <Notice>No mission selected.</Notice>
@@ -164,8 +170,16 @@ function MissionActions({
   onResolve: (missionId: string) => void;
 }) {
   const context = missionActionContext(mission, now, account);
+  // Whether the Recall button shows is decided purely by mission lifecycle (an outgoing Outbound
+  // fleet that is not yet due), exactly like the Mission Control list. It must NOT be gated on
+  // mission.recallCost: that field is only emitted by FleetMissionRecalled, so a still-recallable
+  // Outbound fleet would carry a null cost and lose its button. The backend now projects the cost for
+  // Outbound fleets (VEY-KANEO-424), and the cost row below tolerates a null cost regardless.
   const actions = missionLifecycleActions({ canTransact, context, mission, now })
-    .filter((action) => action.kind !== "recall" || Boolean(mission.recallCost));
+    // VEY-KANEO-427: only surface Resolve when it is actionable. A disabled Resolve
+    // (e.g. the mission has not arrived yet) is hidden here, mirroring how the Mission
+    // Control list suppresses disabled Resolve/Join orders rather than greying them out.
+    .filter((action) => action.kind !== "resolve" || action.enabled);
 
   // Hide the section entirely when no wallet action applies at this stage.
   if (actions.length === 0) {
@@ -227,7 +241,7 @@ function MissionFacts({
           <Row label="Cargo" value={formatResources(mission.cargo)} />
           <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
           {showsRecallCost(mission) ? (
-            <Row label="Recall cost" value={mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable"} />
+            <Row label="Recall cost" value={recallCostLabel(mission, now)} />
           ) : null}
         </Panel>
       )}
@@ -235,11 +249,15 @@ function MissionFacts({
   );
 }
 
-// Full-width "origin -> target" route hero. Replaces the old side-by-side Route and
-// Timing panels: each endpoint shows its planet name, clickable coordinates (opens the
-// galaxy/planet view), a clickable commander (opens the player profile), and the timing
-// that belongs to it — return beside the origin, arrival beside the target. The Mission
-// ID field is intentionally dropped (it already shows in the page header).
+// VEY-KANEO-426: the Mission Detail Route now renders through the shared `MissionRouteCell` so it
+// matches Mission Control exactly — the same origin -> target layout, directional progress-filled
+// arrow, real planet art, clickable planet name, and clickable commander. The detail page keeps its
+// per-leg timing (return beside the origin, arrival beside the target) as a strip beneath the shared
+// hero. Navigation stays in-app: the cell calls back through `onSelectCoordinates`/`onSelectPlayer`
+// rather than emitting hash links. The Mission ID field is intentionally dropped (it shows in the
+// page header).
+const EMPTY_PLANET_LOOKUP: ReadonlyMap<string, MissionPlanetIdentity> = new Map();
+
 function MissionRoute({
   mission,
   now,
@@ -251,167 +269,72 @@ function MissionRoute({
   onSelectCoordinates: (coords: Coordinates) => void;
   onSelectPlayer: (wallet: string) => void;
 }) {
-  const origin = routeEndpoint(mission.originPlanet, mission.originPlanetId);
-  const target = routeEndpoint(mission.targetPlanet, mission.targetPlanetId);
-  // Origin commander is always the fleet owner; the target commander is the defender,
-  // known only when the indexer resolved the target planet.
-  const originCommander = { displayName: mission.originPlanet?.ownerDisplayName ?? null, owner: mission.owner };
-  const targetCommander = mission.targetPlanet
-    ? { displayName: mission.targetPlanet.ownerDisplayName ?? null, owner: mission.targetPlanet.owner }
-    : null;
+  // The mission carries its own origin/target planet refs, so an empty shared lookup is enough —
+  // `missionEndpoint` resolves the name, coordinates, commander, and planet art straight from them.
+  const origin = missionEndpoint(mission, "origin", EMPTY_PLANET_LOOKUP);
+  const target = missionEndpoint(mission, "target", EMPTY_PLANET_LOOKUP);
   const noFleetReturned = isNoFleetReturned(mission);
+  const originTiming = noFleetReturned
+    ? { label: "Return", value: "Completed, no fleet returned" }
+    : missionLegTiming(mission.returnAt, now, "Return", "Returned");
+  const targetTiming = missionLegTiming(mission.arrivalAt, now, "Arrival", "Arrived");
 
   return (
     <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
       <h3 className="mb-3 text-sm font-semibold text-white">Route</h3>
-      <div className="grid items-stretch gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-        <RouteEndpoint
-          commander={originCommander}
-          endpoint={origin}
-          kind="Origin"
-          onSelectCoordinates={onSelectCoordinates}
-          onSelectPlayer={onSelectPlayer}
-          timing={noFleetReturned
-            ? { label: "Return", value: "Completed, no fleet returned" }
-            : missionLegTiming(mission.returnAt, now, "Return", "Returned")}
-        />
-        <div aria-hidden="true" className="flex items-center justify-center text-slate-500">
-          <ArrowRight className="rotate-90 md:rotate-0" size={20} />
-        </div>
-        <RouteEndpoint
-          commander={targetCommander}
-          endpoint={target}
-          kind="Target"
-          onSelectCoordinates={onSelectCoordinates}
-          onSelectPlayer={onSelectPlayer}
-          timing={missionLegTiming(mission.arrivalAt, now, "Arrival", "Arrived")}
-        />
+      <MissionRouteCell
+        direction={missionRouteLeg(mission.status)}
+        onSelectCoordinates={onSelectCoordinates}
+        onSelectPlayer={onSelectPlayer}
+        origin={origin}
+        progressPercent={missionProgressPercent(mission, now)}
+        target={target}
+      />
+      {/* Detail-only leg timing kept beneath the shared route hero: return reads beside the origin,
+          arrival beside the target (VEY-405 / VEY-411 copy retained). */}
+      <div className="mt-3 grid gap-3 border-t border-white/5 pt-3 sm:grid-cols-2">
+        <RouteLegTiming caption="Origin" timing={originTiming} />
+        <RouteLegTiming align="right" caption="Target" timing={targetTiming} />
       </div>
     </section>
   );
 }
 
-type RouteEndpointData = {
-  // Real planet-art type (VEY-403): the same asset selection the Mission Control cards and Galaxy
-  // thumbnails use, so the detail Route shows the actual planet image. Null only when no planet can
-  // be resolved (e.g. an external/uncharted reference without coordinates).
-  archetype: PlanetType | null;
-  coordinates: Coordinates | null;
-  coordinatesLabel: string | null;
-  displayName: string;
-};
-
-function RouteEndpoint({
-  commander,
-  endpoint,
-  kind,
-  onSelectCoordinates,
-  onSelectPlayer,
+// A single leg's timing line under the route hero. A completed leg passes a null `label`, collapsing
+// to just the past-tense word ("Returned"/"Arrived") plus a compact stamp; an in-flight leg keeps its
+// "Return"/"Arrival" caption with the absolute time and countdown.
+function RouteLegTiming({
+  align = "left",
+  caption,
   timing,
 }: {
-  commander: { displayName: string | null; owner: string } | null;
-  endpoint: RouteEndpointData;
-  kind: string;
-  onSelectCoordinates: (coords: Coordinates) => void;
-  onSelectPlayer: (wallet: string) => void;
+  align?: "left" | "right";
+  caption: string;
   timing: { label: string | null; value: string; subtext?: string };
 }) {
-  const coords = endpoint.coordinates;
   return (
-    <div className="grid content-start gap-1.5 rounded-md border border-white/10 bg-black/20 p-3">
-      {/* Real planet art (VEY-403) beside the name, matching the Mission Control card + Galaxy assets. */}
-      <div className="flex items-center gap-2.5">
-        <EndpointPlanetArt archetype={endpoint.archetype} name={endpoint.displayName} />
-        <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{kind}</p>
-          <p className="break-words text-sm font-semibold text-white">{endpoint.displayName}</p>
-        </div>
-      </div>
-      {coords && endpoint.coordinatesLabel ? (
-        <button
-          className="w-fit rounded font-mono text-xs text-cyan-200 underline decoration-cyan-300/40 underline-offset-2 transition hover:text-cyan-100 hover:decoration-cyan-200"
-          onClick={() => onSelectCoordinates(coords)}
-          title={`Open [${endpoint.coordinatesLabel}]`}
-          type="button"
-        >
-          [{endpoint.coordinatesLabel}]
-        </button>
-      ) : endpoint.coordinatesLabel ? (
-        <span className="font-mono text-xs text-slate-400">[{endpoint.coordinatesLabel}]</span>
-      ) : (
-        <span className="font-mono text-xs text-slate-600">Coordinates unavailable</span>
-      )}
-      <CommanderLink commander={commander} onSelectPlayer={onSelectPlayer} />
-      <div className="mt-1 border-t border-white/5 pt-2 text-xs text-slate-400">
-        <p>
-          {timing.label ? (
-            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{timing.label} </span>
-          ) : null}
-          <span className="break-words text-slate-300">{timing.value}</span>
-        </p>
-        {timing.subtext ? <p className="mt-0.5 text-[11px] text-slate-500">{timing.subtext}</p> : null}
-      </div>
+    <div className={`text-xs text-slate-400 ${align === "right" ? "sm:text-right" : ""}`}>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{caption}</p>
+      <p>
+        {timing.label ? (
+          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{timing.label} </span>
+        ) : null}
+        <span className="break-words text-slate-300">{timing.value}</span>
+      </p>
+      {timing.subtext ? <p className="mt-0.5 text-[11px] text-slate-500">{timing.subtext}</p> : null}
     </div>
-  );
-}
-
-// Real planet art for a detail-Route endpoint — the same Galaxy thumbnail asset set the cards use
-// (VEY-403 / VEY-67), selected by archetype. Falls back to a subtle ringed placeholder only when no
-// planet can be resolved (e.g. an external reference without coordinates).
-function EndpointPlanetArt({ archetype, name }: { archetype: PlanetType | null; name: string }) {
-  const frameClass = "relative h-10 w-10 shrink-0 overflow-hidden rounded-full border border-white/15 bg-black/30";
-  if (!archetype) {
-    return (
-      <span aria-hidden="true" className={`${frameClass} flex items-center justify-center`}>
-        <span className="h-3.5 w-3.5 rounded-full border border-white/25" />
-      </span>
-    );
-  }
-  return (
-    <span className={frameClass}>
-      <img
-        alt={`${name} planet`}
-        className="h-full w-full object-cover"
-        data-planet-art={archetype}
-        loading="lazy"
-        src={planetImageForType(archetype)}
-      />
-    </span>
-  );
-}
-
-function CommanderLink({
-  commander,
-  onSelectPlayer,
-}: {
-  commander: { displayName: string | null; owner: string } | null;
-  onSelectPlayer: (wallet: string) => void;
-}) {
-  return (
-    <p className="mt-0.5 text-xs text-slate-400">
-      {commander ? (
-        <button
-          className="rounded text-left text-slate-200 underline decoration-white/20 underline-offset-2 transition hover:text-white hover:decoration-white/40"
-          onClick={() => onSelectPlayer(commander.owner)}
-          title={`Inspect ${commander.displayName ?? shortHash(commander.owner)}`}
-          type="button"
-        >
-          {commander.displayName ? `${commander.displayName} (${shortHash(commander.owner)})` : shortHash(commander.owner)}
-        </button>
-      ) : (
-        <span className="text-slate-500">Unsettled</span>
-      )}
-    </p>
   );
 }
 
 function MissionBattleReport({
   defenderState,
   mission,
+  now,
   report,
 }: {
   defenderState?: DefenderPlanetState | undefined;
   mission: FleetMissionSummary;
+  now: number;
   report?: BattleReport | undefined;
 }) {
   if (!isCombatMission(mission)) {
@@ -419,11 +342,22 @@ function MissionBattleReport({
   }
 
   if (!report) {
+    if (mission.needsResolution) {
+      return (
+        <Notice tone="warning">
+          Combat is due or resolving; the indexed battle report is not available yet.
+        </Notice>
+      );
+    }
+    // A combat fleet only fights once it reaches its target. While it is still flying out (Outbound
+    // and not yet due) — or was recalled before it ever arrived — no battle has happened, so the
+    // "no report" notice is pure noise; the whole block is suppressed until combat is actually due.
+    if (hasNotReachedCombat(mission, now)) {
+      return null;
+    }
     return (
-      <Notice tone={mission.needsResolution ? "warning" : "neutral"}>
-        {mission.needsResolution
-          ? "Combat is due or resolving; the indexed battle report is not available yet."
-          : "No indexed battle report is available for this combat mission yet."}
+      <Notice tone="neutral">
+        No indexed battle report is available for this combat mission yet.
       </Notice>
     );
   }
@@ -604,8 +538,28 @@ function showsRecallCost(mission: FleetMissionSummary): boolean {
   return ["Outbound", "Returning"].includes(mission.status);
 }
 
+// VEY-KANEO-424: the deuterium recall cost is shown only when recall is actually possible — a fleet
+// still Outbound and within the recall window (backend projects its cost), or one that has already
+// been recalled (the cost it paid). Past the 60s cutoff, or for a Returning fleet, recall can no
+// longer happen, so the row reads "Not recallable". This keeps the cost row consistent with whether
+// the Recall button is offered, and matches Mission Control.
+function recallCostLabel(mission: FleetMissionSummary, now: number): string {
+  const recallable = mission.status === "Recalled" || isFleetRecallable(mission, now);
+  return recallable && mission.recallCost ? `${formatResource(mission.recallCost)} deuterium` : "Not recallable";
+}
+
 function isCombatMission(mission: FleetMissionSummary): boolean {
   return ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType);
+}
+
+// VEY-KANEO-425: a combat fleet has not fought yet while it is still outbound and en route (arrival
+// in the future), or when it was recalled before ever reaching its target. In those states there is
+// no battle to report, so the "No indexed battle report" notice is misleading noise and is hidden.
+// A due/arrived/returning/resolved mission falls through and keeps the notice, since a report is
+// genuinely expected (and merely missing/unindexed) at that point.
+function hasNotReachedCombat(mission: FleetMissionSummary, now: number): boolean {
+  if (mission.status === "Recalled") return true;
+  return mission.status === "Outbound" && !isMissionDue(mission, now);
 }
 
 // Timing shown beside a route endpoint. A completed leg collapses to a single
@@ -643,31 +597,6 @@ function formatMissionTime(value: string, now: number): string {
   const absolute = formatUserTimestamp(value);
   const relative = formatDurationUntil(ms, now);
   return `${absolute} (${relative})`;
-}
-
-function routeEndpoint(planet: FleetMissionPlanetReference | null | undefined, fallbackId: string): RouteEndpointData {
-  if (planet) {
-    const coordinates = { galaxy: planet.galaxy, system: planet.system, position: planet.position };
-    return {
-      archetype: planetArtTypeFromArchetypeOrCoords(planet.archetype, coordinates),
-      coordinates,
-      coordinatesLabel: planet.coordinates,
-      displayName: planet.name?.trim() || `Planet [${planet.coordinates}]`,
-    };
-  }
-  // Colonize targets are unsettled coordinates packed behind a flag bit, so there is no
-  // indexed planet but the destination coordinates are still recoverable and clickable.
-  const colonyTarget = decodeColonizationTargetId(fallbackId);
-  if (colonyTarget) {
-    const coordinates = { galaxy: colonyTarget.galaxy, system: colonyTarget.system, position: colonyTarget.position };
-    return {
-      archetype: planetArtTypeFromArchetypeOrCoords(null, coordinates),
-      coordinates,
-      coordinatesLabel: colonyTarget.coordinates,
-      displayName: "Uncharted",
-    };
-  }
-  return { archetype: null, coordinates: null, coordinatesLabel: null, displayName: `Planet #${fallbackId}` };
 }
 
 function missionTypeLabel(value: string): string {
@@ -790,8 +719,4 @@ function shipUnits(ships: Record<string, string>): UnitItem[] {
 // Narrows the resolved ship units to the combat or civil class for the attacker's two-row breakdown.
 function shipUnitsByKind(ships: Record<string, string>, kind: "civil" | "combat"): UnitItem[] {
   return shipUnits(ships).filter((unit) => kind === "civil" ? civilShipKeys.has(unit.key) : !civilShipKeys.has(unit.key));
-}
-
-function shortHash(value: string): string {
-  return value.length > 18 ? `${value.slice(0, 10)}...${value.slice(-6)}` : value;
 }
