@@ -484,7 +484,7 @@ function ActiveMissionList({
           ))}
         </div>
       ))}
-      {pagination.totalPages > 1 ? <ClientPaginationControl className="pt-3" pagination={pagination} /> : null}
+      {pagination.totalPages > 1 ? <ClientPaginationControl className="pb-3" pagination={pagination} /> : null}
     </div>
   );
 }
@@ -1524,7 +1524,7 @@ function PastMissionTable({
             ))}
             {hasPages ? (
               <ClientPaginationControl
-                className="pt-3"
+                className="pb-3"
                 loading={loading}
                 nextLabel="Next mission archive page"
                 onPageChange={onPageChange}
