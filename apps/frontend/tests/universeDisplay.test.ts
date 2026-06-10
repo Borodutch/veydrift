@@ -435,7 +435,7 @@ describe("tester universe display data", () => {
       "Metal: 100%",
       "Crystal: 100%",
       "Deuterium: 100%",
-      "Solar satellite: 25 energy",
+      "Solar satellite: 25 E",
     ]);
 
     const copy = [
