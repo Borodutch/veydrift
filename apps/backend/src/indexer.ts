@@ -988,7 +988,10 @@ export class SettlementIndexer {
       return { applied: false, duplicate: true, ignored: false, removed: false, snapshot: this.snapshot() };
     }
 
-    this.recordLog(eventId, log);
+    const inserted = this.recordLog(eventId, log);
+    if (!inserted) {
+      return { applied: false, duplicate: true, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
     this.recordLatestBlock(log.blockNumber);
 
     if (log.removed) {
@@ -2743,10 +2746,11 @@ export class SettlementIndexer {
     this.setMetadata("lastRebuiltAt", new Date().toISOString());
   }
 
-  private recordLog(eventId: string, log: IndexedRpcLog): void {
-    this.db.query(`
+  private recordLog(eventId: string, log: IndexedRpcLog): boolean {
+    const result = this.db.query(`
       INSERT INTO indexed_event_logs (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(event_id) DO NOTHING
     `).run(
       eventId,
       log.transactionHash,
@@ -2756,6 +2760,7 @@ export class SettlementIndexer {
       JSON.stringify(log),
       new Date().toISOString()
     );
+    return result.changes > 0;
   }
 
   private recordLogIfMissing(log: IndexedRpcLog): void {
@@ -2943,7 +2948,7 @@ export class SettlementIndexer {
     pendingReconciliationReason: string | null;
   }): string | null {
     if (lastReconciliationError) return `reconciliation_failed: ${lastReconciliationError}`;
-    if (pendingReconciliationReason && (!lastReconciledAt || !isPlanetHydrationPendingReason(pendingReconciliationReason))) {
+    if (pendingReconciliationReason && (!lastReconciledAt || !isNonBlockingPendingReason(pendingReconciliationReason))) {
       return pendingReconciliationReason;
     }
     if (!lastReconciledAt) return "never_reconciled";
@@ -3076,6 +3081,21 @@ function isPlanetHydrationPendingReason(reason: string | null): boolean {
     reason?.startsWith("planet_resources_pending:")
     || reason?.startsWith("planet_identity_pending:")
   );
+}
+
+// Transient websocket-triggered reconcile reasons. These are background refreshes
+// (the websocket keeps the indexed state live), not signals that we know data is
+// missing — so once a full reconciliation already exists they must not gate serving.
+function isTransientWebsocketReason(reason: string | null): boolean {
+  return Boolean(
+    reason?.startsWith("websocket reconnected")
+    || reason?.startsWith("websocket head gap")
+    || reason?.startsWith("websocket log decode/apply failure")
+  );
+}
+
+function isNonBlockingPendingReason(reason: string | null): boolean {
+  return isPlanetHydrationPendingReason(reason) || isTransientWebsocketReason(reason);
 }
 
 function subtractResources(left: QueueState["cost"], right: QueueState["cost"]): QueueState["cost"] {
