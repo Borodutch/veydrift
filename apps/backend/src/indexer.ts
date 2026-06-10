@@ -2952,7 +2952,10 @@ export class SettlementIndexer {
       system: planet.system,
       position: planet.position,
       coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
-      archetype: planetArchetypeForTemperature(planet.temperature)
+      archetype: planetArchetypeForTemperature(planet.temperature),
+      // VEY-KANEO-440: surface the Alliance Depot level (building id 13) so the ACS Defend compose UX
+      // can preview how much holding fuel the defended planet's depot subsidizes.
+      allianceDepotLevel: this.infrastructureRows(planet.planetId).find((building) => building.id === 13)?.level ?? 0
     };
   }
 
