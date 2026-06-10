@@ -147,7 +147,8 @@ describe("Mission Control battle reports", () => {
     // VEY-397#9: fleet column shows ship icons with xN counts (ship name is in the hover title).
     expect(text).toContain("x3");
     expect(text).toContain("Group defend");
-    expect(text).toContain("Intercept");
+    // VEY-KANEO-439: the Intercept counterplay was removed; only Group defend (AcsDefend) remains.
+    expect(text).not.toContain("Intercept");
     // VEY-397#12: the active-row action is "Open" (the past-report row keeps "Open mission").
     expect(text).toContain("Open");
     // VEY-397#1/#8: the Countdown and Return columns were removed.

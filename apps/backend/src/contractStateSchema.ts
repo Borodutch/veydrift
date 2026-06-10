@@ -118,7 +118,6 @@ export const contractEnumDefinitions = [
       "Attack",
       "Harvest",
       "AcsDefend",
-      "Intercept",
       "MissileAttack",
       "AcsAttack"
     ]

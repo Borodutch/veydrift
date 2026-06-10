@@ -989,7 +989,7 @@ describe("fleet mission resolution scheduling", () => {
       ...outboundMissionLogs({ missionId: 1n, missionType: 0n, arrivalAt: pastSeconds }), // Transport
       ...outboundMissionLogs({ missionId: 2n, missionType: 1n, arrivalAt: pastSeconds }), // Deploy
       ...outboundMissionLogs({ missionId: 3n, missionType: 3n, arrivalAt: pastSeconds }), // Attack
-      ...outboundMissionLogs({ missionId: 4n, missionType: 6n, arrivalAt: pastSeconds }), // Intercept (unsupported)
+      ...outboundMissionLogs({ missionId: 4n, missionType: 6n, arrivalAt: pastSeconds }), // MissileAttack (unsupported)
       ...outboundMissionLogs({ missionId: 5n, missionType: 0n, arrivalAt: futureSeconds }) // Transport, not yet arrived
     ]);
 

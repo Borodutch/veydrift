@@ -68,7 +68,7 @@ interface MissionControlPageProps {
   missionArchiveLoading?: boolean | undefined;
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onCounterplay: (missionId: string, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
@@ -369,7 +369,7 @@ function ActiveMissionSection({
   myRows: ActiveMissionRow[];
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onCounterplay: (missionId: string, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
@@ -450,7 +450,7 @@ function ActiveMissionList({
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onCounterplay: (missionId: string, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
@@ -535,7 +535,7 @@ function MissionRow({
   mission: FleetMissionSummary;
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onCounterplay: (missionId: string, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
@@ -557,16 +557,11 @@ function MissionRow({
       actions={
         <>
           {actions.map((action) => action.kind === "counterplay" ? (
-            <span className="contents" key={action.kind}>
-              <ActionButton
-                action={{ ...action, label: "Group defend" }}
-                onClick={() => onCounterplay(mission.missionId, "acsDefend")}
-              />
-              <ActionButton
-                action={{ ...action, label: "Intercept" }}
-                onClick={() => onCounterplay(mission.missionId, "intercept")}
-              />
-            </span>
+            <ActionButton
+              action={{ ...action, label: "Group defend" }}
+              key={action.kind}
+              onClick={() => onCounterplay(mission.missionId, "acsDefend")}
+            />
           ) : action.kind === "joinAttack" ? (
             // VEY-397#13/#14: "Join" shares the Open button style/size (hidden when disabled, VEY-399#6).
             <button
@@ -1787,7 +1782,7 @@ function missionTypeTone(missionType: string): string {
   if (missionType === "Transport") return "border-cyan-300/25 bg-cyan-300/10 text-cyan-100";
   if (missionType === "Deploy") return "border-emerald-300/25 bg-emerald-300/10 text-emerald-100";
   if (missionType === "Harvest") return "border-amber-300/25 bg-amber-300/10 text-amber-100";
-  if (["AcsDefend", "Intercept"].includes(missionType)) return "border-violet-300/25 bg-violet-300/10 text-violet-100";
+  if (missionType === "AcsDefend") return "border-violet-300/25 bg-violet-300/10 text-violet-100";
   return "border-slate-300/20 bg-slate-300/10 text-slate-100";
 }
 

@@ -340,7 +340,8 @@ describe("MissionControlPage", () => {
     expect(defenderText).toContain("New Eos");
     expect(defenderText).toContain("Red Haven");
     expect(defenderText).toContain("Group defend");
-    expect(defenderText).toContain("Intercept");
+    // VEY-KANEO-439: Intercept counterplay removed; defenders only get Group defend (AcsDefend).
+    expect(defenderText).not.toContain("Intercept");
     expect(defenderText).toContain("Battle report");
     expect(defenderText).toContain("Past missions");
     expect(defenderText).not.toContain("Recall fleet");

@@ -3479,50 +3479,6 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(targetPlanetId).resources.deuterium, 50_000 - depotSupport);
     }
 
-    function testFleetCounterplayInterceptJoinsCombatModuleResolution() public {
-        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
-        _createAlliance(defender);
-        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
-        _setShipCount(targetPlanetId, Ship.Battleship, 1);
-        _setResources(originPlanetId, 10_000, 10_000, 10_000);
-        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
-
-        VeydriftGameStorage.MissionShips memory attackers;
-        attackers.smallCargo = 1;
-        vm.prank(player);
-        uint256 hostileMissionId = game.launchFleetMission(
-            originPlanetId,
-            targetPlanetId,
-            VeydriftGameStorage.FleetMissionType.Attack,
-            attackers,
-            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
-            803
-        );
-
-        VeydriftGameStorage.MissionShips memory interceptors;
-        interceptors.battleship = 1;
-        vm.prank(defender);
-        uint256 counterplayMissionId = game.launchFleetMission(
-            targetPlanetId,
-            hostileMissionId,
-            VeydriftGameStorage.FleetMissionType.Intercept,
-            interceptors,
-            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
-            0
-        );
-
-        (, uint64 arrivalAt,,) = _fleetMission(hostileMissionId);
-        vm.warp(arrivalAt);
-        _fulfillAttackBattleRandomness(hostileMissionId, 803);
-        game.resolveFleetMission(hostileMissionId);
-
-        (VeydriftGameStorage.FleetMissionStatus hostileStatus,,,) = _fleetMission(hostileMissionId);
-        (VeydriftGameStorage.FleetMissionStatus counterStatus,,,) =
-            _fleetMission(counterplayMissionId);
-        assertEq(uint8(hostileStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
-        assertEq(uint8(counterStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-    }
-
     function testFleetCounterplayCannotReturnBeforeHostileAttackResolution() public {
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
         _createAlliance(defender);

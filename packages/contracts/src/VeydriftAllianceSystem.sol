@@ -789,7 +789,6 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         returns (bool)
     {
         return missionType == VeydriftGameStorage.FleetMissionType.Attack
-            || missionType == VeydriftGameStorage.FleetMissionType.Intercept
             || missionType == VeydriftGameStorage.FleetMissionType.MissileAttack;
     }
 

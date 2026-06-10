@@ -341,8 +341,8 @@ describe("MissionDetailPage Recall action", () => {
 // which derives them from the backend's wallet-scoped fleet-visibility. The pre-rework detail code
 // re-derived the viewer's role from a bare `owner === account` check, so it (a) only matched the
 // owner's Recall by luck and (b) fabricated an "incoming" defender role for ANY viewer of someone
-// else's attack, wrongly rendering Group defend / Intercept to strangers. QA hit case (b): on an
-// outbound attack they did not own, Available Orders showed Group defend / Intercept and no Recall.
+// else's attack, wrongly rendering Group defend to strangers. QA hit case (b): on an
+// outbound attack they did not own, Available Orders showed Group defend and no Recall.
 describe("MissionDetailPage order authorization (matches Mission Control)", () => {
   function outboundAttack(overrides: Partial<FleetMissionSummary> = {}): FleetMissionSummary {
     // Far-future arrival so the fleet is still in flight (not yet due) under renderDetailText's now.
@@ -377,13 +377,14 @@ describe("MissionDetailPage order authorization (matches Mission Control)", () =
     expect(text).not.toContain("Intercept");
   });
 
-  test("offers Group defend / Intercept only to the actual defender (incoming attack)", () => {
+  test("offers Group defend only to the actual defender (incoming attack)", () => {
     const mission = outboundAttack();
     const text = renderDetailText({ mission }, { ...emptyVisibility, incoming: [mission] });
 
     expect(text).toContain("Available Orders");
     expect(text).toContain("Group defend");
-    expect(text).toContain("Intercept");
+    // VEY-KANEO-439: the Intercept counterplay was removed; only Group defend (AcsDefend) remains.
+    expect(text).not.toContain("Intercept");
     expect(text).not.toContain("Recall fleet");
   });
 

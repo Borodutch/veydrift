@@ -137,7 +137,6 @@ abstract contract VeydriftGameStorage {
         Attack,
         Harvest,
         AcsDefend,
-        Intercept,
         MissileAttack,
         AcsAttack
     }

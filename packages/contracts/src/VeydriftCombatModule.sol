@@ -1428,8 +1428,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     {
         return counterplay.status == FleetMissionStatus.Outbound
             && counterplay.arrivalAt <= _fleetMissions[hostileMissionId].arrivalAt
-            && (counterplay.missionType == FleetMissionType.AcsDefend
-                || counterplay.missionType == FleetMissionType.Intercept);
+            && counterplay.missionType == FleetMissionType.AcsDefend;
     }
 
     function _isQualifiedJoinedAttack(uint256 attackMissionId, FleetMission storage joined)

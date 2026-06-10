@@ -227,15 +227,6 @@ contract VeydriftCombatReferenceParityTest is Test {
         _assertReferenceParity(fixture, 105);
     }
 
-    function testReferenceParityCoversInterceptCounterplay() public {
-        VeydriftCombatReferenceSimulator.BattleInput memory fixture = _emptyFixture();
-        fixture.attackerShips[uint8(Ship.SmallCargo)] = 1;
-        fixture.counterplayShips[uint8(Ship.Battleship)] = 1;
-        fixture.counterplayIntercept = true;
-
-        _assertReferenceParity(fixture, 106);
-    }
-
     function _assertReferenceParity(
         VeydriftCombatReferenceSimulator.BattleInput memory fixture,
         uint256 randomWord
@@ -356,9 +347,7 @@ contract VeydriftCombatReferenceParityTest is Test {
             launched.counterplayMissionId = game.launchFleetMission(
                 launched.targetPlanetId,
                 launched.missionId,
-                fixture.counterplayIntercept
-                    ? VeydriftGameStorage.FleetMissionType.Intercept
-                    : VeydriftGameStorage.FleetMissionType.AcsDefend,
+                VeydriftGameStorage.FleetMissionType.AcsDefend,
                 _missionShips(fixture.counterplayShips),
                 VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
                 0

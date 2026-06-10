@@ -154,8 +154,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     ) private returns (uint256 missionId) {
         _requirePlanetOwner(originPlanetId);
         uint256 hostileMissionId;
-        bool counterplayMission =
-            missionType == FleetMissionType.AcsDefend || missionType == FleetMissionType.Intercept;
+        bool counterplayMission = missionType == FleetMissionType.AcsDefend;
         if (counterplayMission) {
             hostileMissionId = targetPlanetId;
             FleetMission storage hostile = _fleetMissions[hostileMissionId];
@@ -790,9 +789,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     }
 
     function _isCounterplayMissionType(FleetMissionType missionType) private pure returns (bool) {
-        return missionType == FleetMissionType.AcsAttack
-            || missionType == FleetMissionType.AcsDefend
-            || missionType == FleetMissionType.Intercept;
+        return
+            missionType == FleetMissionType.AcsAttack || missionType == FleetMissionType.AcsDefend;
     }
 
     function _planetDistance(uint256 originPlanetId, uint256 destinationPlanetId)
