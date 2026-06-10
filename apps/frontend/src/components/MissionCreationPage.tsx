@@ -384,7 +384,7 @@ export function missionDraftBlocker({
   // reached and name the lever. Fail open when the backend did not provide slot counts so a valid
   // launch is never blocked; the on-chain revert remains the backstop.
   if (fleetSlots && fleetSlots.limit > 0 && fleetSlots.active >= fleetSlots.limit) {
-    return `All ${fleetSlots.limit} fleet slot${fleetSlots.limit === 1 ? "" : "s"} are in use — research Computer Technology to raise the limit, or wait for a fleet to return.`;
+    return `Fleet slots full (${fleetSlots.active}/${fleetSlots.limit}) — research Computer Technology to raise the limit, or wait for a fleet to return.`;
   }
   if (selectedShipCount <= 0) return "Choose at least one ship.";
   if ((resources?.deuterium ?? 0) < fuelCost) return `Need ${fuelCost.toLocaleString()} deuterium for fuel.`;

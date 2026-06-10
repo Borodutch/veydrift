@@ -78,12 +78,12 @@ describe("mission creation", () => {
       totalCargoCapacity: 50,
     } as const;
 
-    // At the cap: blocked before submit, message points at Computer Technology.
+    // At the cap: blocked before submit, message shows the ratio and points at Computer Technology.
     const blocked = missionDraftBlocker({ ...base, fleetSlots: { active: 1, limit: 1 } });
     expect(blocked).toBe(
-      "All 1 fleet slot are in use — research Computer Technology to raise the limit, or wait for a fleet to return."
+      "Fleet slots full (1/1) — research Computer Technology to raise the limit, or wait for a fleet to return."
     );
-    expect(missionDraftBlocker({ ...base, fleetSlots: { active: 3, limit: 3 } })).toContain("All 3 fleet slots are in use");
+    expect(missionDraftBlocker({ ...base, fleetSlots: { active: 3, limit: 3 } })).toContain("Fleet slots full (3/3)");
 
     // Below the cap: gate passes through to the normal checks.
     expect(missionDraftBlocker({ ...base, fleetSlots: { active: 0, limit: 1 } })).toBeUndefined();
