@@ -5,7 +5,7 @@ import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { defenseCatalog, shipCatalog, type ShipKey } from "../playableMvp";
 import type { Coordinates } from "../types";
-import { type BattleReport, type DefenderPlanetState, type FleetMissionSummary, type MissionDetailResponse } from "../walletFlow";
+import { type BattleReport, type DefenderPlanetState, type FleetMissionSummary, type FleetMissionVisibilityResponse, type MissionDetailResponse } from "../walletFlow";
 import { isFleetRecallable, missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
 import {
   MissionRouteCell,
@@ -16,7 +16,7 @@ import {
 } from "./missionRoute";
 import { PageHeader, RefreshButton } from "./PageHeader";
 
-type MissionActionContext = "due" | "incoming" | "outgoing" | "returning";
+type MissionActionContext = "incoming" | "observer" | "outgoing" | "returning";
 
 export type MissionDetailActionState =
   | { status: "idle" }
@@ -27,12 +27,14 @@ export type MissionDetailActionState =
 export type MissionShareCopyState = "copied" | "error" | "idle";
 
 interface MissionDetailPageProps {
-  account?: string | undefined;
   actionState: MissionDetailActionState;
   canTransact: boolean;
   copyState: MissionShareCopyState;
   detail?: MissionDetailResponse | undefined;
   error?: string | undefined;
+  // The wallet-scoped mission classification the Mission Control list is built from. The detail page
+  // reuses it so both screens authorize the exact same orders for the same fleet (VEY-KANEO-424).
+  fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   loading: boolean;
   missionId: string | null;
   now: number;
@@ -48,12 +50,12 @@ interface MissionDetailPageProps {
 }
 
 export function MissionDetailPage({
-  account,
   actionState,
   canTransact,
   copyState,
   detail,
   error,
+  fleetVisibility,
   loading,
   missionId,
   now,
@@ -120,8 +122,8 @@ export function MissionDetailPage({
       ) : mission ? (
         <>
           <MissionActions
-            account={account}
             canTransact={canTransact}
+            fleetVisibility={fleetVisibility}
             mission={mission}
             now={now}
             onCompleteReturn={onCompleteReturn}
@@ -151,8 +153,8 @@ export function MissionDetailPage({
 }
 
 function MissionActions({
-  account,
   canTransact,
+  fleetVisibility,
   mission,
   now,
   onCompleteReturn,
@@ -160,8 +162,8 @@ function MissionActions({
   onRecall,
   onResolve,
 }: {
-  account?: string | undefined;
   canTransact: boolean;
+  fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   mission: FleetMissionSummary;
   now: number;
   onCompleteReturn: (missionId: string) => void;
@@ -169,12 +171,12 @@ function MissionActions({
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
 }) {
-  const context = missionActionContext(mission, now, account);
-  // Whether the Recall button shows is decided purely by mission lifecycle (an outgoing Outbound
-  // fleet that is not yet due), exactly like the Mission Control list. It must NOT be gated on
-  // mission.recallCost: that field is only emitted by FleetMissionRecalled, so a still-recallable
-  // Outbound fleet would carry a null cost and lose its button. The backend now projects the cost for
-  // Outbound fleets (VEY-KANEO-424), and the cost row below tolerates a null cost regardless.
+  const context = missionActionContext(mission, fleetVisibility);
+  // Which orders show is decided by the same wallet-scoped classification the Mission Control list
+  // uses, so the two screens always agree (VEY-KANEO-424). It must NOT be gated on mission.recallCost:
+  // that field is only emitted by FleetMissionRecalled, so a still-recallable Outbound fleet would
+  // carry a null cost and lose its Recall button. The backend now projects the cost for Outbound
+  // fleets, and the cost row below tolerates a null cost regardless.
   const actions = missionLifecycleActions({ canTransact, context, mission, now })
     // VEY-KANEO-427: only surface Resolve when it is actionable. A disabled Resolve
     // (e.g. the mission has not arrived yet) is hidden here, mirroring how the Mission
@@ -511,11 +513,28 @@ function Notice({ children, tone = "neutral" }: { children: preact.ComponentChil
   return <div className={`rounded-lg border p-4 text-sm ${className}`}>{children}</div>;
 }
 
-function missionActionContext(mission: FleetMissionSummary, now: number, account?: string | undefined): MissionActionContext {
-  if (mission.status === "Returning" || mission.status === "Recalled") return "returning";
-  if (mission.status === "Outbound" && isMissionDue(mission, now)) return "due";
-  if (account && mission.owner.toLowerCase() === account.toLowerCase()) return "outgoing";
-  return "incoming";
+// The detail page must authorize orders (Recall / Resolve / Group defend / Intercept / Land fleet)
+// the same way the Mission Control list does, or the two screens disagree for the same fleet
+// (VEY-KANEO-424). Mission Control gets that classification from the backend's wallet-scoped
+// fleet-visibility lists; the detail page reuses those same lists by mission id rather than
+// re-deriving authorization from a bare `owner === account` check. That bare check was wrong twice
+// over: it offered Group defend / Intercept to any viewer of someone else's attack (the detail page
+// fabricated an "incoming" defender role for strangers), and it only matched the owner's Recall by
+// luck. A fleet the wallet has no visibility relationship with is an observer and gets no orders.
+//
+// joinableAttacks (alliance) are intentionally treated as observer here: the detail page has no
+// join-attack handler wired, so surfacing a non-functional "Join attack" button would be worse than
+// omitting it. Joining stays a Mission Control affordance.
+function missionActionContext(
+  mission: FleetMissionSummary,
+  fleetVisibility: FleetMissionVisibilityResponse | undefined,
+): MissionActionContext {
+  if (!fleetVisibility) return "observer";
+  const id = mission.missionId;
+  if (fleetVisibility.outgoing.some((entry) => entry.missionId === id)) return "outgoing";
+  if (fleetVisibility.returning.some((entry) => entry.missionId === id)) return "returning";
+  if (fleetVisibility.incoming.some((entry) => entry.missionId === id)) return "incoming";
+  return "observer";
 }
 
 function isMissionDue(mission: FleetMissionSummary, now: number): boolean {

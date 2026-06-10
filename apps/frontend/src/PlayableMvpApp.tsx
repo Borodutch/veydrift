@@ -5095,12 +5095,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     if (missionDetailId) {
       return (
         <MissionDetailPage
-          account={account}
           actionState={missionAction}
           canTransact={Boolean(provider && account && gameContract)}
           copyState={missionShareCopyState}
           detail={missionDetail}
           error={missionDetailError}
+          fleetVisibility={fleetVisibility}
           loading={missionDetailLoading}
           missionId={missionDetailId}
           now={now}
