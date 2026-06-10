@@ -747,6 +747,36 @@ contract VeydriftGameTest is Test {
         assertEq(VeydriftFormulas.buildingDuration(2, 1, 10_000, 5_000, 1, 1), 3_600);
     }
 
+    function testCrawlersBoostPlanetProduction() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+
+        // Give the planet productive mines and ample energy so output is not
+        // throttled by an energy shortage.
+        _setBuildingLevel(planetId, Building.MetalMine, 10);
+        _setBuildingLevel(planetId, Building.CrystalMine, 8);
+        _setBuildingLevel(planetId, Building.DeuteriumSynthesizer, 6);
+        _setBuildingLevel(planetId, Building.SolarPlant, 20);
+
+        (uint256 baseMetal, uint256 baseCrystal, uint256 baseDeuterium) =
+            game.productionPerHour(planetId);
+        assertGt(baseMetal, 0);
+        assertGt(baseCrystal, 0);
+        assertGt(baseDeuterium, 0);
+
+        // 100 crawlers -> +0.02% each = +2% to every mine.
+        _setShipCount(planetId, Ship.Crawler, 100);
+
+        (uint256 boostedMetal, uint256 boostedCrystal, uint256 boostedDeuterium) =
+            game.productionPerHour(planetId);
+        assertEq(boostedMetal, (baseMetal * 10_200) / 10_000);
+        assertEq(boostedCrystal, (baseCrystal * 10_200) / 10_000);
+        assertEq(boostedDeuterium, (baseDeuterium * 10_200) / 10_000);
+        assertGt(boostedMetal, baseMetal);
+        assertGt(boostedCrystal, baseCrystal);
+        assertGt(boostedDeuterium, baseDeuterium);
+    }
+
     function testSolarSatellitesIncreasePlanetEnergy() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();

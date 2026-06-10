@@ -42,7 +42,6 @@ import {
   productionPerHour,
   progress,
   researchCatalog,
-  researchCost,
   storageCaps,
   type BuildingKey,
   type DefenseKey,
@@ -171,6 +170,7 @@ import {
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
   fetchPreviewResources,
+  isOnChainRevertError,
   isUserRejected,
   updatePlayerDisplayName,
   type ChainDefenseState,
@@ -206,16 +206,6 @@ import {
 } from "./transactionActionGate";
 import { timestampToMs } from "./timestampFormat";
 import { canonicalSpendableResources, projectResources } from "./canonicalResources";
-import {
-  createPendingSpend,
-  maxResourceCost,
-  reconcilePendingSpends,
-  subtractResourceCost,
-  sumPendingSpendCosts,
-  unsettledQueueSpendCosts,
-  type PendingSpend,
-  type QueueSpend,
-} from "./pendingSpends";
 
 export function researchStartTransactionLabel(
   technologyId: number,
@@ -241,24 +231,6 @@ export function walletSpendableResourcesFor({
   return isWalletConnected ? onChainResources : undefined;
 }
 
-/**
- * Scale a per-unit resource cost by a production quantity. Returns undefined
- * when the per-unit cost is unavailable so callers can skip optimistic
- * subtraction rather than subtract a wrong (zero) amount.
- */
-export function scaleResourcesBy(
-  cost: Resources | undefined,
-  quantity: number,
-): Resources | undefined {
-  if (!cost) return undefined;
-  const factor = Math.max(0, quantity);
-  return {
-    metal: cost.metal * factor,
-    crystal: cost.crystal * factor,
-    deuterium: cost.deuterium * factor,
-  };
-}
-
 const buildingFinishStateReadFailureLabel =
   "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
 const buildingFinishLiveStateRequiredLabel =
@@ -277,6 +249,9 @@ const buildingWalletConfirmationLabel = (label: string) =>
     ? "Building completion: confirm the game-state update in your wallet; token balance changes are not expected."
     : `${label}: unlock your wallet if needed, then confirm in your wallet.`;
 const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
+// VEY-KANEO-433: after an active mission's ETA passes, wait a short beat before the tightened Mission
+// Control refresh so the backend indexer has settled the arrival/resolution before we re-read it.
+const MISSION_RESOLUTION_REFRESH_BUFFER_MS = 1_500;
 // A direct on-chain `previewResources` read older than this is treated as stale
 // and dropped, so a read taken before a deposit / settlement can never pin the
 // displayed balance below the player's real spendable while the chain catches up.
@@ -376,6 +351,48 @@ export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
   return page === "galaxy" || page === "planet";
 }
 
+// VEY-KANEO-433: Mission Control auto-polls its own data (active missions, the past-mission archives,
+// and battle reports/loot) while the player is viewing it, so a mission resolving at its destination —
+// and the resulting status flip, loot, and battle report — appears within a poll cycle instead of only
+// after a manual Refresh.
+export function shouldAutoPollMissionControlForPage(page: Page): boolean {
+  return page === "mission-control";
+}
+
+// VEY-KANEO-433: the soonest still-pending resolution moment across the player's active missions — an
+// Outbound fleet's arrival, or a Returning/Recalled fleet's landing. Used to fire a tightened refresh
+// just after that instant so the resolution shows promptly rather than waiting up to a full poll
+// interval. Only future events are considered (a moment already in the past is handled by the regular
+// poll), so this never busy-loops on a due-but-unresolved mission. Returns undefined when nothing is
+// pending.
+export function nextMissionResolutionEventMs(
+  fleetVisibility: FleetMissionVisibilityResponse | undefined,
+  now: number,
+): number | undefined {
+  if (!fleetVisibility) {
+    return undefined;
+  }
+  let soonest: number | undefined;
+  const consider = (value: string | undefined) => {
+    const ms = value ? timestampToMs(value) : undefined;
+    if (ms === undefined || ms <= now) {
+      return;
+    }
+    soonest = soonest === undefined ? ms : Math.min(soonest, ms);
+  };
+  for (const mission of [...fleetVisibility.incoming, ...fleetVisibility.outgoing, ...fleetVisibility.joinableAttacks]) {
+    if (mission.status === "Outbound") {
+      consider(mission.arrivalAt);
+    }
+  }
+  for (const mission of fleetVisibility.returning) {
+    if (mission.status === "Returning" || mission.status === "Recalled") {
+      consider(mission.returnAt);
+    }
+  }
+  return soonest;
+}
+
 export function shipyardStateForMissionActions({
   account,
   activePlanetId,
@@ -435,6 +452,14 @@ export function galaxyMissionActionErrorLabel(label: string, error: unknown): st
     return `${label} could not load current game API state before launch. The game API may be temporarily unavailable; refresh mission state and retry.`;
   }
 
+  // A genuine on-chain revert is often wrapped in an internal JSON-RPC error
+  // (code -32603) whose nested data carries the revert. Classify it as a
+  // mission rejection before the RPC-unavailable branch so a real revert is not
+  // mislabeled as transient RPC/node unavailability.
+  if (isOnChainRevertError(error) || /execution reverted/i.test(message)) {
+    return `${label} was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying.`;
+  }
+
   if (
     code === -32603
     || code === "-32603"
@@ -442,10 +467,6 @@ export function galaxyMissionActionErrorLabel(label: string, error: unknown): st
     || normalizedMessage.includes("wallet could not read the current game contract state")
   ) {
     return `${label} could not verify game contract state before launch. The game API or RPC is temporarily unavailable; refresh mission state and retry.`;
-  }
-
-  if (/execution reverted/i.test(message)) {
-    return `${label} was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying.`;
   }
 
   return message || `${label} failed.`;
@@ -1026,29 +1047,6 @@ export function topBarEnergyFor({
   if (!chainEnergy) return localEnergy;
   if (chainEnergy.sources) return chainEnergy;
   return localEnergy.sources ? { ...chainEnergy, sources: localEnergy.sources } : chainEnergy;
-}
-
-/**
- * Derive the in-flight spends from the active backend queues. Each active queue
- * item (build / research / ship / defense) had its resource cost debited
- * on-chain when it started, so we subtract any not-yet-settled cost from the
- * displayed/spendable balance. Unlike the in-session pending-spend ledger these
- * are re-read from the backend on every load, so they survive a page reload —
- * the live QA repro where an in-progress upgrade's cost was not reflected in the
- * top bar. (VEY-KANEO-392)
- */
-export function pendingSpendsFromQueues(
-  queues: ReadonlyArray<QueueStateResponse | null | undefined>,
-): QueueSpend[] {
-  const spends: QueueSpend[] = [];
-  for (const queue of queues) {
-    if (!queue || queue.active === false) continue;
-    const cost = resourcesFromChain(queue.cost);
-    if (!cost) continue;
-    if (cost.metal <= 0 && cost.crystal <= 0 && cost.deuterium <= 0) continue;
-    spends.push({ cost, startedAtMs: timestampToMs(queue.startedAt ?? null) });
-  }
-  return spends;
 }
 
 export function infrastructureUnavailableReasonFor({
@@ -1771,8 +1769,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   // Client-side ledger of submitted-but-not-yet-settled resource spends. Keeps
   // the displayed/gated balance from over-reporting during the window between a
   // spend mining and the backend infrastructure read reflecting it (VEY-392).
-  const [pendingSpends, setPendingSpends] = useState<PendingSpend[]>([]);
-  const pendingSpendIdRef = useRef(0);
   const [infrastructureLoading, setInfrastructureLoading] = useState(false);
   const [infrastructureError, setInfrastructureError] = useState<string | undefined>();
   const [moonState, setMoonState] = useState<ChainMoonState | null>(
@@ -1801,6 +1797,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [shipyardAction, setShipyardAction] = useState<ShipyardActionState>({ status: "idle" });
   const [galaxyAction, setGalaxyAction] = useState<GalaxyActionState>({ status: "idle" });
   const [pendingGalaxyMission, setPendingGalaxyMission] = useState<PendingGalaxyMission | null>(null);
+  // VEY-KANEO-431: a join-attack awaiting fleet selection. When set, the same
+  // fleet picker the Attack action uses is shown so the player chooses which
+  // ships to commit, instead of immediately sending a default fleet.
+  const [pendingJoinAttack, setPendingJoinAttack] = useState<{
+    attackMissionId: string;
+    targetPlanetId: string;
+    coords: Coordinates;
+  } | null>(null);
   const [researchState, setResearchState] = useState<ChainResearchState | null>(
     () => hydratedGameState?.researchState ?? null
   );
@@ -2574,11 +2578,17 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
   }, [account, apiBaseUrl, loadAllActiveMissions, loadGlobalMissionArchive, loadMissionArchive, page]);
 
-  const refreshMissionControl = useCallback(() => {
-    void refreshOnChainState();
-    void loadMissionArchive(missionArchivePage);
-    void loadAllActiveMissions();
-    void loadGlobalMissionArchive(globalMissionArchivePage);
+  // VEY-KANEO-433: refreshes the full Mission Control data set — fleet visibility (active missions +
+  // battle reports) plus the wallet/global past-mission archives and the universe-wide active feed.
+  // Returns a promise so the auto-poll can guard against overlapping refreshes; the manual Refresh
+  // button passes it as a void `onRefresh` and ignores the result (behavior unchanged).
+  const refreshMissionControl = useCallback(async () => {
+    await Promise.allSettled([
+      refreshOnChainState(),
+      loadMissionArchive(missionArchivePage),
+      loadAllActiveMissions(),
+      loadGlobalMissionArchive(globalMissionArchivePage),
+    ]);
   }, [globalMissionArchivePage, loadAllActiveMissions, loadGlobalMissionArchive, loadMissionArchive, missionArchivePage, refreshOnChainState]);
 
   const refreshFinishedBuildingState = useCallback(async (expectation: FinishedBuildingExpectation): Promise<boolean> => {
@@ -3021,6 +3031,55 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     refreshOnChainState,
   ]);
 
+  // VEY-KANEO-433: while Mission Control is open, poll its full data set on the same cadence as the
+  // top bar so resolutions, loot, and battle reports surface without a manual Refresh. This is the
+  // same work the Refresh button does (fleet visibility + the past-mission archives + the universe
+  // active feed), guarded against overlapping refreshes and paused while the tab is hidden.
+  useEffect(() => {
+    if (!apiBaseUrl || !account || !shouldAutoPollMissionControlForPage(page)) {
+      return;
+    }
+
+    let refreshInFlight = false;
+    const pollMissionControl = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      if (refreshInFlight) {
+        return;
+      }
+      refreshInFlight = true;
+      refreshMissionControl().finally(() => {
+        refreshInFlight = false;
+      });
+    };
+
+    const interval = window.setInterval(pollMissionControl, TOP_BAR_RESOURCE_POLL_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [account, apiBaseUrl, page, refreshMissionControl]);
+
+  // VEY-KANEO-433: tighten the poll around resolution — schedule a one-shot refresh just after the
+  // soonest active mission is due to arrive (or a returning fleet to land) so the new status, loot,
+  // and battle report appear promptly instead of waiting for the next full poll tick. Re-derived
+  // whenever fleet visibility changes; only active while Mission Control is open.
+  useEffect(() => {
+    if (!apiBaseUrl || !account || !shouldAutoPollMissionControlForPage(page)) {
+      return;
+    }
+    const nextEventMs = nextMissionResolutionEventMs(fleetVisibility, Date.now());
+    if (nextEventMs === undefined) {
+      return;
+    }
+    const delay = Math.max(0, nextEventMs - Date.now()) + MISSION_RESOLUTION_REFRESH_BUFFER_MS;
+    const timer = window.setTimeout(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      void refreshMissionControl();
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [account, apiBaseUrl, fleetVisibility, page, refreshMissionControl]);
+
   // Anchor the top bar to the chain: poll the contract's `previewResources` for
   // the active planet on the same cadence as the backend reads. The direct
   // on-chain read is the authoritative current spendable (stored + accrual,
@@ -3220,85 +3279,19 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     rates,
     settlementReadAtMs,
   ]);
-  // Raw, backend-known infrastructure balance used to detect when a pending
-  // spend has settled (the read has dropped to reflect the cost).
-  const infrastructureSpendableResources = useMemo(
-    () => resourcesFromChain(infrastructureChainState?.resources ?? null),
-    [infrastructureChainState?.resources],
-  );
-  // Drop pending spends the backend has caught up on (or that hit the TTL
-  // backstop) so they are no longer double-subtracted from the live balance.
-  const activePendingSpends = useMemo(
-    () => reconcilePendingSpends({ entries: pendingSpends, infrastructure: infrastructureSpendableResources, now }),
-    [pendingSpends, infrastructureSpendableResources, now],
-  );
-  useEffect(() => {
-    // Prune settled/expired entries out of state once they fall away so the
-    // ledger does not grow unbounded; the memo above keeps the displayed value
-    // correct in the meantime.
-    if (activePendingSpends.length !== pendingSpends.length) {
-      setPendingSpends(activePendingSpends);
-    }
-  }, [activePendingSpends, pendingSpends.length]);
-  // Spends the backend already shows as active queue items (build / research /
-  // ship / defense). These are re-read from the backend on every load, so unlike
-  // the in-session `activePendingSpends` ledger they survive a page reload and
-  // never expire — they cover the QA repro where an in-progress upgrade started
-  // in a prior session was not reflected in the displayed balance.
-  const unsettledQueueSpend = useMemo(() => {
-    const queueSpends: QueueSpend[] = pendingSpendsFromQueues([
-      activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
-      onChainQueues?.ship,
-      onChainQueues?.research,
-      onChainQueues?.defense,
-    ]);
-    // A fresh infrastructure snapshot already reflects every active on-chain
-    // queue cost (the contract deducts at queue start in the same settlement that
-    // advances `lastSettledAt`), so when its settle time is known these spends are
-    // skipped to avoid double-subtracting — the VEY-318 repro where Metal/Crystal
-    // stayed pinned at 0 for the whole build. They are only subtracted when the
-    // accurate read is unavailable/stale (settle time unknown), as over-report
-    // protection; fresh in-session spends are covered by the pending-spend ledger.
-    return unsettledQueueSpendCosts(
-      queueSpends,
-      timestampToMs(infrastructureChainState?.planetLastSettledAt ?? null),
-    );
-  }, [onChainQueues, infrastructureChainState]);
+  // Single resource source-of-truth: the displayed/spendable balance is exactly
+  // the polled canonical on-chain balance, with no client-side optimistic
+  // adjustment layered on top (VEY-KANEO-430). `canonicalOnChainResources` is
+  // the direct on-chain `previewResources(planetId)` read when a fresh one is
+  // available — the same value a transaction spends against — and falls back to
+  // the polled backend settlement/infrastructure snapshots otherwise. After a
+  // spend, the balance updates when the next poll observes the on-chain
+  // deduction rather than from a faked, locally-subtracted estimate; the
+  // previous pending-spend ledger and active-queue subtraction were removed so a
+  // single polled value drives both the top bar and every affordability gate.
   const spendableResources = useMemo(() => {
-    const canonical = walletSpendableResourcesFor({ isWalletConnected, onChainResources: canonicalOnChainResources });
-    // Subtract submitted-but-unsettled spends so the displayed balance and every
-    // affordability gate that reads it cannot over-report (VEY-392). The
-    // in-session ledger and the backend active-queue spends estimate the SAME
-    // underlying spends, so combine them with an element-wise max (never a sum)
-    // to avoid double-subtracting while still deducting persistent queue spends
-    // the session ledger misses after a reload / TTL expiry.
-    const deduction = maxResourceCost(sumPendingSpendCosts(activePendingSpends), unsettledQueueSpend);
-    return subtractResourceCost(canonical, deduction);
-  }, [isWalletConnected, canonicalOnChainResources, activePendingSpends, unsettledQueueSpend]);
-  // Latest values snapshotted into refs so spend handlers can record an accurate
-  // pre-spend baseline without re-subscribing to every render.
-  const pendingSpendBaselineRef = useRef<{ baseline: Resources | undefined; rates: Resources }>({
-    baseline: undefined,
-    rates,
-  });
-  pendingSpendBaselineRef.current = {
-    baseline: infrastructureSpendableResources ?? canonicalOnChainResources,
-    rates,
-  };
-  const registerPendingSpend = useCallback((cost: Resources | undefined): string | undefined => {
-    if (!cost) return undefined;
-    if (cost.metal <= 0 && cost.crystal <= 0 && cost.deuterium <= 0) return undefined;
-    const { baseline, rates: ratePerHour } = pendingSpendBaselineRef.current;
-    if (!baseline) return undefined;
-    const id = `pending-spend-${(pendingSpendIdRef.current += 1)}`;
-    const entry = createPendingSpend({ id, cost, baseline, ratePerHour, now: Date.now() });
-    setPendingSpends((prev) => [...prev, entry]);
-    return id;
-  }, []);
-  const releasePendingSpend = useCallback((id: string | undefined) => {
-    if (!id) return;
-    setPendingSpends((prev) => prev.filter((entry) => entry.id !== id));
-  }, []);
+    return walletSpendableResourcesFor({ isWalletConnected, onChainResources: canonicalOnChainResources });
+  }, [isWalletConnected, canonicalOnChainResources]);
   const activeBuildingQueue = useMemo(
     () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],
@@ -3526,8 +3519,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       const building = buildingContractIds[key];
       const label = "Building upgrade";
       let backendStateReady = false;
-      let pendingSpendId: string | undefined;
-      let txMined = false;
       setBuildingAction({ status: "pending", buildingKey: key, label: "Refreshing infrastructure state" });
 
       try {
@@ -3548,9 +3539,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
         backendStateReady = true;
         setBuildingAction({ status: "pending", buildingKey: key, label: buildingWalletConfirmationLabel(label) });
-        // Optimistically subtract the upgrade cost so the top bar and every
-        // action gate reflect the spend the instant it is submitted (VEY-392).
-        pendingSpendId = registerPendingSpend(buildingCosts(liveInfrastructure)[key]);
         const txHash = await sendStartBuildingUpgradeTransaction(
           provider,
           account,
@@ -3564,7 +3552,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           label: transactionConfirmingLabel(label, txHash),
         });
         await confirmSubmittedTransaction(txHash);
-        txMined = true;
         setBuildingAction({ status: "pending", buildingKey: key, label: transactionSyncingLabel(label) });
         const currentLevel = liveInfrastructure?.buildings.find((row) => row.id === building)?.level ?? 0;
         await refreshStartedBuildingState({
@@ -3575,10 +3562,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setBuildingAction({ status: "success", buildingKey: key, label: "Building upgrade started." });
       } catch (error) {
         console.error(error);
-        // The tx never durably spent (wallet reject / pre-mine revert): refund
-        // the optimistic subtraction. If it mined, keep it until the backend
-        // settlement reflects the spend.
-        if (!txMined) releasePendingSpend(pendingSpendId);
         setBuildingAction({
           status: "error",
           buildingKey: key,
@@ -3599,8 +3582,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     provider,
     refreshLiveInfrastructureState,
     refreshStartedBuildingState,
-    registerPendingSpend,
-    releasePendingSpend,
     runtimeConfig.status,
     transactionActionGate,
   ]);
@@ -3736,20 +3717,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     actionKey: string,
     send: () => Promise<string>,
     afterReceipt?: (() => Promise<boolean | void>) | undefined,
-    cost?: Resources | undefined,
   ) => {
     await transactionActionGate.run(actionKey, async () => {
       setShipyardAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
-      // Optimistically subtract the production cost so the displayed/gated
-      // balance reflects the spend immediately (VEY-392).
-      const pendingSpendId = registerPendingSpend(cost);
-      let txMined = false;
 
       try {
         const txHash = await send();
         setShipyardAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
         await confirmSubmittedTransaction(txHash);
-        txMined = true;
         setShipyardAction({ status: "pending", label: transactionSyncingLabel(label) });
         let synced = true;
         if (afterReceipt) {
@@ -3765,7 +3740,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           : { status: "pending", label: `${label} confirmed. Rechecking game state after a temporary API/RPC outage.` });
       } catch (error) {
         console.error(error);
-        if (!txMined) releasePendingSpend(pendingSpendId);
         const message = spendTransactionErrorMessage(error);
         setShipyardAction({
           status: "error",
@@ -3773,27 +3747,21 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         });
       }
     });
-  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, refreshShipyardState, registerPendingSpend, releasePendingSpend, transactionActionGate]);
+  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, refreshShipyardState, transactionActionGate]);
 
   const runDefenseTransaction = useCallback(async (
     label: string,
     actionKey: string,
     send: () => Promise<string>,
     afterReceipt?: (() => Promise<void>) | undefined,
-    cost?: Resources | undefined,
   ) => {
     await transactionActionGate.run(actionKey, async () => {
       setDefenseAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
-      // Optimistically subtract the production cost so the displayed/gated
-      // balance reflects the spend immediately (VEY-392).
-      const pendingSpendId = registerPendingSpend(cost);
-      let txMined = false;
 
       try {
         const txHash = await send();
         setDefenseAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
         await confirmSubmittedTransaction(txHash);
-        txMined = true;
         setDefenseAction({ status: "pending", label: transactionSyncingLabel(label) });
         if (afterReceipt) {
           await afterReceipt();
@@ -3805,14 +3773,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setDefenseAction({ status: "success", label: `${label} confirmed.` });
       } catch (error) {
         console.error(error);
-        if (!txMined) releasePendingSpend(pendingSpendId);
         setDefenseAction({
           status: "error",
           label: spendTransactionErrorMessage(error),
         });
       }
     });
-  }, [confirmSubmittedTransaction, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, registerPendingSpend, releasePendingSpend, transactionActionGate]);
+  }, [confirmSubmittedTransaction, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, transactionActionGate]);
 
   const waitForAllianceApplicationState = useCallback((
     expectation: AllianceApplicationExpectation,
@@ -3860,20 +3827,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     label: string,
     send: () => Promise<string>,
     afterReceipt?: (() => Promise<void>) | undefined,
-    cost?: Resources | undefined,
   ) => {
     await transactionActionGate.run(`research:${label}`, async () => {
       setResearchAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
-      // Optimistically subtract the research cost so the displayed/gated balance
-      // reflects the spend immediately (VEY-392).
-      const pendingSpendId = registerPendingSpend(cost);
-      let txMined = false;
 
       try {
         const txHash = await send();
         setResearchAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
         await confirmSubmittedTransaction(txHash);
-        txMined = true;
         setResearchAction({ status: "pending", label: transactionSyncingLabel(label) });
         if (afterReceipt) {
           await afterReceipt();
@@ -3885,14 +3846,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setResearchAction({ status: "success", label: `${label} confirmed.` });
       } catch (error) {
         console.error(error);
-        if (!txMined) releasePendingSpend(pendingSpendId);
         setResearchAction({
           status: "error",
           label: spendTransactionErrorMessage(error),
         });
       }
     });
-  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, refreshResearchState, registerPendingSpend, releasePendingSpend, transactionActionGate]);
+  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, refreshResearchState, transactionActionGate]);
 
   const runRiftTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
     setRiftAction({ status: "pending", label });
@@ -3969,10 +3929,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         ? activeShipyardProductionQueue.quantity ?? 0
         : 0;
     const expectedQuantity = currentQueuedQuantity + quantity;
-    const shipSpendCost = scaleResourcesBy(
-      resourcesFromChain(shipyardState?.ships.find((ship) => ship.id === shipId)?.cost ?? null),
-      quantity,
-    );
 
     void runShipyardTransaction("Ship production", `shipyard:start:${shipId}`, () => sendStartShipProductionTransaction(
       provider,
@@ -3985,7 +3941,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       itemId: shipId,
       planetId,
       quantity: expectedQuantity,
-    }), shipSpendCost);
+    }));
   }, [
     account,
     activeShipyardProductionQueue,
@@ -3995,7 +3951,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     runShipyardTransaction,
     shipyardState?.homePlanetId,
     shipyardState?.planetId,
-    shipyardState?.ships,
   ]);
 
   const handleFinishShipProduction = useCallback(() => {
@@ -4029,10 +3984,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         ? activeDefenseProductionQueue.quantity ?? 0
         : 0;
     const expectedQuantity = currentQueuedQuantity + quantity;
-    const defenseSpendCost = scaleResourcesBy(
-      resourcesFromChain(defenseState.defenses.find((defense) => defense.id === defenseId)?.cost ?? null),
-      quantity,
-    );
 
     void runDefenseTransaction("Defense production", `defense:start:${defenseId}`, () => sendStartDefenseProductionTransaction(
       provider,
@@ -4045,11 +3996,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       itemId: defenseId,
       planetId,
       quantity: expectedQuantity,
-    }), defenseSpendCost);
+    }));
   }, [
     account,
     activeDefenseProductionQueue,
-    defenseState?.defenses,
     defenseState?.homePlanetId,
     gameContract,
     provider,
@@ -4392,10 +4342,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           ?? stateForTransaction.technologyLevels[technologyId.toString()]
           ?? 0;
 
-        // Cost of upgrading from the current level, scaled the same way the
-        // research affordability gate computes it, so the optimistic
-        // subtraction matches what the player is charged on-chain (VEY-392).
-        const researchSpendCost = researchCost({ [key]: currentLevel } as Record<ResearchKey, number>, key);
         void runResearchTransaction(researchStartTransactionLabel(technologyId, key, stateForTransaction), () => sendStartResearchTransaction(
           provider,
           account,
@@ -4405,7 +4351,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         ), () => refreshStartedResearchState({
           itemId: technologyId,
           targetLevel: currentLevel + 1,
-        }), researchSpendCost);
+        }));
       })
       .catch((error) => {
         console.error(error);
@@ -4698,6 +4644,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
     if (action.mode === "colonize") {
       setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
       void runGalaxyTransaction("Colony mission", () => sendCreateColonyTransaction(
         provider,
         account,
@@ -4719,6 +4666,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
     if (action.mode === "missile") {
       setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
       void runGalaxyTransaction("Missile attack", () => sendLaunchInterplanetaryMissileAttackTransaction(
         provider,
         account,
@@ -4734,6 +4682,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
     if (action.kind === "attack" && draft.lootRatio) {
       const { metal, crystal, deuterium } = draft.lootRatio;
       void runGalaxyTransaction(`${action.label} mission`, () => sendLaunchAttackMissionTransaction(
@@ -4886,7 +4835,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     );
   }, [account, gameContract, provider, runMissionTransaction]);
 
-  const handleMissionCounterplay = useCallback((missionId: string, mode: "acsDefend" | "intercept") => {
+  const handleMissionCounterplay = useCallback((missionId: string, mode: "acsDefend") => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
       setMissionAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
@@ -4898,7 +4847,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    runMissionTransaction(mode === "acsDefend" ? `Group defend #${missionId}` : `Intercept #${missionId}`, () =>
+    runMissionTransaction(`Group defend #${missionId}`, () =>
       sendLaunchFleetMissionTransaction(
         provider,
         account,
@@ -4923,33 +4872,47 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       .catch(() => setMissionShareCopyState("error"));
   }, []);
 
-  const handleJoinAttack = useCallback((attackMissionId: string, targetPlanetId: string) => {
+  const handleJoinAttack = useCallback((attackMissionId: string, targetPlanetId: string, targetCoords: Coordinates | null) => {
     if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
       setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
     }
 
-    const ships = selectCounterplayShips(shipyardState);
-    if (!ships) {
-      setGalaxyAction({ status: "error", label: "No ships available to join the attack." });
+    // VEY-KANEO-431: open the Attack fleet picker so the player chooses the
+    // fleet to commit, rather than sending a default counterplay fleet on click.
+    setGalaxyAction({ status: "idle" });
+    setPendingJoinAttack({
+      attackMissionId,
+      targetPlanetId,
+      coords: targetCoords ?? { galaxy: 0, system: 0, position: 0 },
+    });
+  }, [account, gameContract, onChainSettlement?.homePlanetId, provider]);
+
+  const handleConfirmJoinAttack = useCallback((draft: MissionLaunchDraft) => {
+    const pending = pendingJoinAttack;
+    if (!pending) return;
+    if (!provider || !account || !gameContract || !onChainSettlement?.homePlanetId) {
+      setGalaxyAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
     }
 
+    setPendingJoinAttack(null);
     void runGalaxyTransaction("Group attack join", () => sendJoinAttackMissionTransaction(
       provider,
       account,
       gameContract,
       {
         originPlanetId: onChainSettlement.homePlanetId ?? "0",
-        attackMissionId,
-        targetPlanetId,
-        ships,
+        attackMissionId: pending.attackMissionId,
+        targetPlanetId: pending.targetPlanetId,
+        ships: draft.ships,
       },
     ));
-  }, [account, gameContract, onChainSettlement?.homePlanetId, provider, runGalaxyTransaction, shipyardState]);
+  }, [account, gameContract, onChainSettlement?.homePlanetId, pendingJoinAttack, provider, runGalaxyTransaction]);
 
   const handleNavigate = useCallback((target: Page) => {
     setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
     setInspectedPlayerWallet(null);
     setInspectedAllianceId(null);
     setMissionDetailId(null);
@@ -4961,6 +4924,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const handleOpenMissionReport = useCallback((missionId: string) => {
     setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
     setInspectedPlayerWallet(null);
     setInspectedAllianceId(null);
     setMissionDetailId(missionId);
@@ -4972,6 +4936,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const handleOpenMissionReportList = useCallback(() => {
     setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
     setMissionDetailId(null);
     setMissionReportId(null);
     setPage("mission-control");
@@ -4987,6 +4952,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const handleSelectPlanet = useCallback((coords: Coordinates) => {
     setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
     setGalaxyNav({ galaxy: coords.galaxy, system: coords.system });
     setSelectedCoords(coords);
     setInspectedPlayerWallet(null);
@@ -4999,6 +4965,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const handleSelectAlliance = useCallback((allianceId: string) => {
     setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
     setSelectedAllianceId(allianceId);
     setInspectedAllianceId(allianceId);
     setInspectedPlayerWallet(null);
@@ -5011,6 +4978,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const handleSelectPlayer = useCallback((wallet: string) => {
     setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
     setInspectedPlayerWallet(wallet);
     setInspectedAllianceId(null);
     setMissionDetailId(null);
@@ -5095,12 +5063,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     if (missionDetailId) {
       return (
         <MissionDetailPage
-          account={account}
           actionState={missionAction}
           canTransact={Boolean(provider && account && gameContract)}
           copyState={missionShareCopyState}
           detail={missionDetail}
           error={missionDetailError}
+          fleetVisibility={fleetVisibility}
           loading={missionDetailLoading}
           missionId={missionDetailId}
           now={now}
@@ -5142,6 +5110,25 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           resources={originMissionResources}
           shipyardState={shipyardState}
           target={pendingGalaxyMission.target}
+        />
+      );
+    }
+
+    if (pendingJoinAttack) {
+      return (
+        <MissionCreationPage
+          action={{ enabled: true, kind: "attack", label: "Join attack", mode: "mission", mission: "attack", ships: emptyMissionShips() }}
+          actionPending={galaxyAction.status === "pending"}
+          coords={pendingJoinAttack.coords}
+          driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
+          joinAttackMode
+          onBack={() => setPendingJoinAttack(null)}
+          onConfirm={handleConfirmJoinAttack}
+          originCoords={activePlanetCoords}
+          originLabel={selectedManagedPlanet?.name ?? homePlanetIdentity?.name}
+          resources={originMissionResources}
+          shipyardState={shipyardState}
+          target={undefined}
         />
       );
     }

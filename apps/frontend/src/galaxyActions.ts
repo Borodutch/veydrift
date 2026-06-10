@@ -8,7 +8,6 @@ export type GalaxyActionKind =
   | "colonize"
   | "harvest"
   | "acsDefend"
-  | "intercept"
   | "missileAttack";
 
 export type GalaxyMissionKind = Exclude<GalaxyActionKind, "colonize" | "missileAttack">;
@@ -251,8 +250,6 @@ export function missionTypeId(mission: GalaxyMissionKind): number {
       return 4;
     case "acsDefend":
       return 5;
-    case "intercept":
-      return 6;
   }
 }
 

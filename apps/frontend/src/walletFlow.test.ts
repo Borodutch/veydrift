@@ -79,6 +79,7 @@ import {
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   settlementTransactionData,
+  isOnChainRevertError,
   walletRequestErrorMessage,
   type Eip1193Provider
 } from "./walletFlow";
@@ -1505,6 +1506,85 @@ describe("walletFlow", () => {
     expect(walletRequestErrorMessage(new Error("MetaMask is locked"))).toBe(
       "Wallet is locked. Please unlock your wallet and try again."
     );
+  });
+
+  test("detects on-chain reverts wrapped in an internal JSON-RPC error", () => {
+    // Genuine reverts: nested revert code, nested execution-reverted message,
+    // and revert data selectors.
+    expect(isOnChainRevertError({
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+      data: { originalError: { code: 3, message: "execution reverted" } },
+    })).toBe(true);
+    expect(isOnChainRevertError({
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+      data: { originalError: { message: "execution reverted", data: "0x65dba1c3" } },
+    })).toBe(true);
+    expect(isOnChainRevertError(new Error("execution reverted"))).toBe(true);
+    expect(isOnChainRevertError({ code: 3, message: "execution reverted" })).toBe(true);
+
+    // Not reverts: bare internal JSON-RPC error and ordinary transport failures.
+    expect(isOnChainRevertError({ code: -32603, message: "Internal JSON-RPC error." })).toBe(false);
+    expect(isOnChainRevertError(new Error("Failed to fetch"))).toBe(false);
+  });
+
+  test("labels a no-reason -32603-wrapped revert as a contract rejection, not RPC unavailability", () => {
+    expect(walletRequestErrorMessage({
+      code: -32603,
+      message: "Internal JSON-RPC error.",
+      data: { originalError: { code: 3, message: "execution reverted" } },
+    })).toBe(
+      "The game contract rejected this transaction, but the wallet did not provide a specific reason. Refresh game state and retry, or choose a different action if the state changed."
+    );
+
+    // A bare -32603 with no revert markers stays in the RPC-unavailable bucket.
+    expect(walletRequestErrorMessage({ code: -32603, message: "Internal JSON-RPC error." })).toContain(
+      "wallet could not read the current game contract state"
+    );
+  });
+
+  test("surfaces a contract-rejection message when a mission send reverts without a decodable reason", async () => {
+    const ships = {
+      smallCargo: 1,
+      lightFighter: 0,
+      recycler: 0,
+      colonyShip: 0,
+      largeCargo: 0,
+      heavyFighter: 0,
+      cruiser: 0,
+      battleship: 0,
+      bomber: 0,
+      destroyer: 0,
+      deathstar: 0,
+      battlecruiser: 0,
+      reaper: 0,
+      pathfinder: 0,
+    };
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      if (method === "eth_call") return "0x";
+      if (method === "eth_sendTransaction") {
+        // A genuine on-chain revert with no decodable reason (no selector data),
+        // wrapped in an internal JSON-RPC error.
+        throw {
+          code: -32603,
+          message: "Internal JSON-RPC error.",
+          data: { originalError: { code: 3, message: "execution reverted" } },
+        };
+      }
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      missionType: 3,
+      ships,
+    })).rejects.toThrow("the wallet did not provide a specific reason");
+
+    expect(requests.some((request) => (request as { method: string }).method === "eth_sendTransaction")).toBe(true);
   });
 
   test("submits a value-bearing VeydriftGame startPlanet transaction with backend-provided start price", async () => {

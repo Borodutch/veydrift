@@ -5,7 +5,7 @@ import { MissionControlPage, allActiveMissionRows, buildMissionControlViewQuery,
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
-import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary } from "./walletFlow";
+import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary, type FleetMissionVisibilityResponse } from "./walletFlow";
 
 describe("Mission Control battle reports", () => {
   test("builds shareable report list and detail routes", () => {
@@ -147,7 +147,8 @@ describe("Mission Control battle reports", () => {
     // VEY-397#9: fleet column shows ship icons with xN counts (ship name is in the hover title).
     expect(text).toContain("x3");
     expect(text).toContain("Group defend");
-    expect(text).toContain("Intercept");
+    // VEY-KANEO-439: Intercept removed from the frontend; only Group defend (AcsDefend) remains.
+    expect(text).not.toContain("Intercept");
     // VEY-397#12: the active-row action is "Open" (the past-report row keeps "Open mission").
     expect(text).toContain("Open");
     // VEY-397#1/#8: the Countdown and Return columns were removed.
@@ -308,6 +309,32 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Join attack");
   });
 
+  test("VEY-KANEO-431: Join forwards the target coordinates so it can open the Attack fleet picker", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const joinable = {
+      ...mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now + 180_000),
+      targetPlanet: planetReference("6", "0x3333333333333333333333333333333333333333", "Bastion", "4:5:6"),
+    };
+    const joinCalls: Array<[string, string, { galaxy: number; system: number; position: number } | null]> = [];
+    const tree = MissionControlPage({
+      ...missionControlProps(now, { joinableAttacks: [joinable] }),
+      onJoinAttack: (missionId, targetPlanetId, targetCoords) => {
+        joinCalls.push([missionId, targetPlanetId, targetCoords]);
+      },
+    });
+
+    const joinButton = findElements(tree, "button").find(
+      (element) => element.props?.title === "Join this alliance attack",
+    );
+    expect(joinButton).toBeDefined();
+    (joinButton?.props?.onClick as (() => void) | undefined)?.();
+
+    // The click no longer sends a default fleet immediately; it hands the mission
+    // id, target planet id, and resolved target coordinates up so the parent can
+    // open the same fleet picker the Attack action uses.
+    expect(joinCalls).toEqual([["34", "6", { galaxy: 4, system: 5, position: 6 }]]);
+  });
+
   test("allActiveMissionRows keeps the player's classification and renders other players as observers (VEY-KANEO-402)", () => {
     const classified: ActiveMissionRow[] = [
       { context: "outgoing", direction: "Outbound", mission: mission("1") },
@@ -427,7 +454,7 @@ describe("Mission Control battle reports", () => {
   test("renders shareable mission detail stages, actions, and battle report structure", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -526,7 +553,7 @@ describe("Mission Control battle reports", () => {
     // while Recall is still available. The Available Orders section must surface Recall but
     // suppress the disabled Resolve button rather than rendering it greyed out.
     const text = collectText(MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -556,7 +583,7 @@ describe("Mission Control battle reports", () => {
   test("renders the round-by-round block only when indexed round snapshots exist", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -604,7 +631,7 @@ describe("Mission Control battle reports", () => {
   test("VEY-KANEO-407: renders unit art for attacker combat/civil ships and the defender's surviving fleet/defenses", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const tree = MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -661,7 +688,7 @@ describe("Mission Control battle reports", () => {
     // A transport mission has no battle report, so the standalone "Fleet And Cargo" panel renders and
     // its ship listing must show unit art too (per the ticket title's "Fleet And Cargo ships" scope).
     const tree = MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -698,7 +725,7 @@ describe("Mission Control battle reports", () => {
     // Attacker fielded only civil ships and the charted defender had no surviving fleet/defenses, so
     // the empty listings must still read "None" rather than render an empty icon row.
     const tree = MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -798,7 +825,7 @@ describe("Mission Control battle reports", () => {
   test("surfaces share-link copy feedback and mission action status on the detail page", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const baseProps = {
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       canTransact: true,
       detail: {
         mission: {
@@ -866,7 +893,7 @@ describe("Mission Control battle reports", () => {
       },
     };
     const props = {
-      account: owner,
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" } as const,
       canTransact: true,
       copyState: "idle" as const,
@@ -931,7 +958,7 @@ describe("Mission Control battle reports", () => {
       targetPlanet: { planetId: "9", owner: defender, ownerDisplayName: "Zane", name: "Borealis", galaxy: 4, system: 5, position: 6, coordinates: "4:5:6" },
     };
     const tree = MissionDetailPage({
-      account: owner,
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -1208,12 +1235,28 @@ function missionControlProps(
   };
 }
 
+// VEY-KANEO-424: the detail page authorizes orders from the same wallet-scoped fleet-visibility the
+// Mission Control list uses, matching by mission id. These tests all render the owner's own fleets, so
+// one shared visibility classifies each id the way the backend would: Outbound -> outgoing,
+// Returning/Recalled -> returning. (The page looks up by id, so the summaries only need the right id
+// and list placement.) A mission absent from every list models a stranger and gets no orders.
+const ownerVisibility: FleetMissionVisibilityResponse = {
+  wallet: "0x1111111111111111111111111111111111111111",
+  homePlanetId: "7",
+  incoming: [],
+  outgoing: ["42", "43", "51", "52", "60", "62", "64"].map((id) => mission(id, "Attack", "Outbound")),
+  returning: ["61", "63"].map((id) => mission(id, "Attack", "Returning")),
+  joinableAttacks: [],
+  completedMissions: [],
+  battleReports: [],
+};
+
 function missionDetailProps(
   now: number,
   detail: Parameters<typeof MissionDetailPage>[0]["detail"],
 ): Parameters<typeof MissionDetailPage>[0] {
   return {
-    account: "0x1111111111111111111111111111111111111111",
+    fleetVisibility: ownerVisibility,
     actionState: { status: "idle" },
     canTransact: true,
     copyState: "idle",

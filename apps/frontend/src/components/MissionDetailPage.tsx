@@ -5,7 +5,7 @@ import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { defenseCatalog, shipCatalog, type ShipKey } from "../playableMvp";
 import type { Coordinates } from "../types";
-import { type BattleReport, type DefenderPlanetState, type FleetMissionSummary, type MissionDetailResponse } from "../walletFlow";
+import { type BattleReport, type BattleReportParticipant, type DefenderPlanetState, type FleetMissionSummary, type FleetMissionVisibilityResponse, type MissionDetailResponse } from "../walletFlow";
 import { isFleetRecallable, missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
 import {
   MissionRouteCell,
@@ -13,10 +13,11 @@ import {
   missionEndpoint,
   missionProgressPercent,
   missionRouteLeg,
+  shortAddress,
 } from "./missionRoute";
 import { PageHeader, RefreshButton } from "./PageHeader";
 
-type MissionActionContext = "due" | "incoming" | "outgoing" | "returning";
+type MissionActionContext = "incoming" | "observer" | "outgoing" | "returning";
 
 export type MissionDetailActionState =
   | { status: "idle" }
@@ -27,19 +28,21 @@ export type MissionDetailActionState =
 export type MissionShareCopyState = "copied" | "error" | "idle";
 
 interface MissionDetailPageProps {
-  account?: string | undefined;
   actionState: MissionDetailActionState;
   canTransact: boolean;
   copyState: MissionShareCopyState;
   detail?: MissionDetailResponse | undefined;
   error?: string | undefined;
+  // The wallet-scoped mission classification the Mission Control list is built from. The detail page
+  // reuses it so both screens authorize the exact same orders for the same fleet (VEY-KANEO-424).
+  fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   loading: boolean;
   missionId: string | null;
   now: number;
   onBack: () => void;
   onCompleteReturn: (missionId: string) => void;
   onCopyShareUrl: () => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onCounterplay: (missionId: string, mode: "acsDefend") => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
   onRetry: () => void;
@@ -48,12 +51,12 @@ interface MissionDetailPageProps {
 }
 
 export function MissionDetailPage({
-  account,
   actionState,
   canTransact,
   copyState,
   detail,
   error,
+  fleetVisibility,
   loading,
   missionId,
   now,
@@ -120,8 +123,8 @@ export function MissionDetailPage({
       ) : mission ? (
         <>
           <MissionActions
-            account={account}
             canTransact={canTransact}
+            fleetVisibility={fleetVisibility}
             mission={mission}
             now={now}
             onCompleteReturn={onCompleteReturn}
@@ -151,8 +154,8 @@ export function MissionDetailPage({
 }
 
 function MissionActions({
-  account,
   canTransact,
+  fleetVisibility,
   mission,
   now,
   onCompleteReturn,
@@ -160,21 +163,21 @@ function MissionActions({
   onRecall,
   onResolve,
 }: {
-  account?: string | undefined;
   canTransact: boolean;
+  fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   mission: FleetMissionSummary;
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
+  onCounterplay: (missionId: string, mode: "acsDefend") => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
 }) {
-  const context = missionActionContext(mission, now, account);
-  // Whether the Recall button shows is decided purely by mission lifecycle (an outgoing Outbound
-  // fleet that is not yet due), exactly like the Mission Control list. It must NOT be gated on
-  // mission.recallCost: that field is only emitted by FleetMissionRecalled, so a still-recallable
-  // Outbound fleet would carry a null cost and lose its button. The backend now projects the cost for
-  // Outbound fleets (VEY-KANEO-424), and the cost row below tolerates a null cost regardless.
+  const context = missionActionContext(mission, fleetVisibility);
+  // Which orders show is decided by the same wallet-scoped classification the Mission Control list
+  // uses, so the two screens always agree (VEY-KANEO-424). It must NOT be gated on mission.recallCost:
+  // that field is only emitted by FleetMissionRecalled, so a still-recallable Outbound fleet would
+  // carry a null cost and lose its Recall button. The backend now projects the cost for Outbound
+  // fleets, and the cost row below tolerates a null cost regardless.
   const actions = missionLifecycleActions({ canTransact, context, mission, now })
     // VEY-KANEO-427: only surface Resolve when it is actionable. A disabled Resolve
     // (e.g. the mission has not arrived yet) is hidden here, mirroring how the Mission
@@ -191,10 +194,7 @@ function MissionActions({
       <h3 className="mb-3 text-sm font-semibold text-white">Available Orders</h3>
       <div className="flex flex-wrap gap-2">
         {actions.map((action) => action.kind === "counterplay" ? (
-          <span className="contents" key={action.kind}>
-            <ActionButton action={{ ...action, label: "Group defend" }} onClick={() => onCounterplay(mission.missionId, "acsDefend")} />
-            <ActionButton action={{ ...action, label: "Intercept" }} onClick={() => onCounterplay(mission.missionId, "intercept")} />
-          </span>
+          <ActionButton action={{ ...action, label: "Group defend" }} key={action.kind} onClick={() => onCounterplay(mission.missionId, "acsDefend")} />
         ) : (
           <ActionButton
             action={action}
@@ -364,6 +364,14 @@ function MissionBattleReport({
 
   const outcome = battleOutcomeSummary(report.outcome);
   const recyclersNeeded = recyclersForDebris(report.debris);
+  // ACS (Alliance Combat System) grouped attack: more than one participant means joiners fought
+  // alongside the main attacker. The on-chain losses/debris/outcome are already the combined group
+  // result; only loot is split per participant. For a group we show the combined attacking fleet and
+  // total loot here, then break each participant's loot share out in the Attack group panel below.
+  const participants = report.participants ?? [];
+  const isGroupedAttack = participants.length > 1;
+  const attackerShips = isGroupedAttack ? sumShips(participants.map((participant) => participant.ships)) : mission.ships;
+  const totalLoot = isGroupedAttack ? sumLoot(participants) : report.loot;
   // Defender fleet/defenses come from the indexed target-planet composition (ShipCountChanged +
   // defense events) rather than the single AttackBattleResolved event. For a freshly-resolved
   // battle this is the surviving force; we show "None" when the planet had no fleet/defenses, and
@@ -392,12 +400,12 @@ function MissionBattleReport({
           expose (defender composition, loot retained) are flagged compactly rather than fabricated.
           Debris is shown on its own below. */}
       <div className="grid gap-3 lg:grid-cols-2">
-        <Panel title="Attacker">
-          <Row label="Combat ships" value={<UnitIcons units={shipUnitsByKind(mission.ships, "combat")} />} />
-          <Row label="Civil ships" value={<UnitIcons units={shipUnitsByKind(mission.ships, "civil")} />} />
-          <Row label="Cargo carried" value={formatResources(mission.cargo)} />
-          <Row label="Fleet losses" value={formatResources(report.attackerLosses)} />
-          <Row label="Loot grabbed" value={formatResources(report.loot)} />
+        <Panel title={isGroupedAttack ? "Attackers (group)" : "Attacker"}>
+          <Row label={isGroupedAttack ? "Combat ships (combined)" : "Combat ships"} value={<UnitIcons units={shipUnitsByKind(attackerShips, "combat")} />} />
+          <Row label={isGroupedAttack ? "Civil ships (combined)" : "Civil ships"} value={<UnitIcons units={shipUnitsByKind(attackerShips, "civil")} />} />
+          {isGroupedAttack ? null : <Row label="Cargo carried" value={formatResources(mission.cargo)} />}
+          <Row label={isGroupedAttack ? "Fleet losses (combined)" : "Fleet losses"} value={formatResources(report.attackerLosses)} />
+          <Row label={isGroupedAttack ? "Loot grabbed (total)" : "Loot grabbed"} value={formatResources(totalLoot)} />
         </Panel>
         <Panel title="Defender">
           <Row label="Fleet losses" value={formatResources(report.defenderLosses)} />
@@ -417,6 +425,14 @@ function MissionBattleReport({
           )}
         </Panel>
       </div>
+
+      {/* ACS attack group: every participant (main attacker + joiners) and the loot they personally
+          hauled. Only rendered for a grouped attack; a solo attack keeps the two-column report above. */}
+      {isGroupedAttack ? (
+        <div className="mt-3">
+          <AttackGroupPanel participants={participants} totalLoot={totalLoot} />
+        </div>
+      ) : null}
 
       <div className="mt-3">
         <Panel title="Debris Field">
@@ -468,6 +484,90 @@ function ActionButton({ action, onClick }: { action: MissionLifecycleAction; onC
   );
 }
 
+// VEY-KANEO-432: the ACS attack group breakdown. Lists every participant (main attacker + joiners),
+// their committed fleet, and the loot they personally hauled (their proportional share of the raid),
+// followed by the combined group total. Scales to an arbitrary number of joiners.
+function AttackGroupPanel({
+  participants,
+  totalLoot,
+}: {
+  participants: BattleReportParticipant[];
+  totalLoot: { metal: string; crystal: string; deuterium: string };
+}) {
+  return (
+    <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-white">Attack group</h3>
+        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">
+          {participants.length} {participants.length === 1 ? "participant" : "participants"}
+        </span>
+      </div>
+      <p className="mb-3 text-xs text-slate-400">
+        Joined (ACS) attack: the combined fleet fights as one and loot is split across participants in
+        proportion to each fleet's remaining cargo capacity.
+      </p>
+      <div className="grid gap-2">
+        {participants.map((participant) => (
+          <article
+            key={participant.missionId}
+            className="grid gap-2 rounded-md border border-white/10 bg-black/20 p-3 sm:grid-cols-[1fr_auto] sm:items-start"
+          >
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="break-all text-sm font-medium text-slate-200">{shortAddress(participant.address)}</span>
+                <span
+                  className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${
+                    participant.isMainAttacker
+                      ? "border border-cyan-300/30 bg-cyan-300/10 text-cyan-100"
+                      : "border border-white/10 bg-white/5 text-slate-400"
+                  }`}
+                >
+                  {participant.isMainAttacker ? "Main attacker" : "Joined"}
+                </span>
+              </div>
+              <div className="mt-1.5">
+                <UnitIcons units={[...shipUnitsByKind(participant.ships, "combat"), ...shipUnitsByKind(participant.ships, "civil")]} />
+              </div>
+            </div>
+            <div className="sm:text-right">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Loot share</p>
+              <p className="mt-0.5 break-words text-sm text-slate-300">{formatResources(participant.loot)}</p>
+            </div>
+          </article>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Total group loot</span>
+        <span className="break-words text-sm font-semibold text-white">{formatResources(totalLoot)}</span>
+      </div>
+    </section>
+  );
+}
+
+// Merge several ShipKey-keyed fleets into one combined count map (uint128 strings summed as BigInt) so
+// the grouped battle report can show the whole attacking force, not just the main attacker's ships.
+function sumShips(shipSets: Array<Record<string, string>>): Record<string, string> {
+  const totals = new Map<string, bigint>();
+  for (const ships of shipSets) {
+    for (const [key, count] of Object.entries(ships)) {
+      totals.set(key, (totals.get(key) ?? 0n) + BigInt(count || "0"));
+    }
+  }
+  return Object.fromEntries([...totals].map(([key, count]) => [key, count.toString()]));
+}
+
+// Sum each participant's loot share into the combined group total (BigInt to stay exact for uint128).
+function sumLoot(participants: BattleReportParticipant[]): { metal: string; crystal: string; deuterium: string } {
+  return participants.reduce(
+    (total, participant) => ({
+      metal: (BigInt(total.metal) + BigInt(participant.loot.metal || "0")).toString(),
+      crystal: (BigInt(total.crystal) + BigInt(participant.loot.crystal || "0")).toString(),
+      deuterium: (BigInt(total.deuterium) + BigInt(participant.loot.deuterium || "0")).toString(),
+    }),
+    { metal: "0", crystal: "0", deuterium: "0" }
+  );
+}
+
 function Panel({ children, title }: { children: preact.ComponentChildren; title: string }) {
   return (
     <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
@@ -511,11 +611,28 @@ function Notice({ children, tone = "neutral" }: { children: preact.ComponentChil
   return <div className={`rounded-lg border p-4 text-sm ${className}`}>{children}</div>;
 }
 
-function missionActionContext(mission: FleetMissionSummary, now: number, account?: string | undefined): MissionActionContext {
-  if (mission.status === "Returning" || mission.status === "Recalled") return "returning";
-  if (mission.status === "Outbound" && isMissionDue(mission, now)) return "due";
-  if (account && mission.owner.toLowerCase() === account.toLowerCase()) return "outgoing";
-  return "incoming";
+// The detail page must authorize orders (Recall / Resolve / Group defend / Land fleet)
+// the same way the Mission Control list does, or the two screens disagree for the same fleet
+// (VEY-KANEO-424). Mission Control gets that classification from the backend's wallet-scoped
+// fleet-visibility lists; the detail page reuses those same lists by mission id rather than
+// re-deriving authorization from a bare `owner === account` check. That bare check was wrong twice
+// over: it offered Group defend / Intercept to any viewer of someone else's attack (the detail page
+// fabricated an "incoming" defender role for strangers), and it only matched the owner's Recall by
+// luck. A fleet the wallet has no visibility relationship with is an observer and gets no orders.
+//
+// joinableAttacks (alliance) are intentionally treated as observer here: the detail page has no
+// join-attack handler wired, so surfacing a non-functional "Join attack" button would be worse than
+// omitting it. Joining stays a Mission Control affordance.
+function missionActionContext(
+  mission: FleetMissionSummary,
+  fleetVisibility: FleetMissionVisibilityResponse | undefined,
+): MissionActionContext {
+  if (!fleetVisibility) return "observer";
+  const id = mission.missionId;
+  if (fleetVisibility.outgoing.some((entry) => entry.missionId === id)) return "outgoing";
+  if (fleetVisibility.returning.some((entry) => entry.missionId === id)) return "returning";
+  if (fleetVisibility.incoming.some((entry) => entry.missionId === id)) return "incoming";
+  return "observer";
 }
 
 function isMissionDue(mission: FleetMissionSummary, now: number): boolean {

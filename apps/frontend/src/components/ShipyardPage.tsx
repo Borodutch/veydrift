@@ -306,6 +306,13 @@ function shipNotes(ship: (typeof shipCatalog)[number]): string[] {
     ];
   }
 
+  if (ship.key === "crawler") {
+    return [
+      ship.description,
+      "Special: a stationary mining-support unit meant to boost the home planet's metal, crystal, and deuterium output. The production bonus is not active on-chain yet, so building crawlers does not increase production today.",
+    ];
+  }
+
   return [ship.description];
 }
 

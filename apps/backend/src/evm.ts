@@ -329,6 +329,11 @@ export type FleetMissionSummary = {
   attackGroupId: string | null;
   joinedAttackMissionIds: string[];
   cargo: Resources;
+  // Resulting return-leg cargo from FleetMissionReturnExposed (the contract folds looted resources
+  // into mission.cargo before emitting it). Kept separate from `cargo` (which stays the authoritative
+  // outbound launch value, VEY-404) so the ACS battle report can surface each joiner's loot share.
+  // Null until the fleet's return leg is exposed (e.g. still outbound, or fully wiped at the target).
+  returnCargo: Resources | null;
   ships: Record<string, string>;
   transactionHash: string;
   blockNumber: string;
@@ -369,6 +374,19 @@ export type CombatRoundReport = {
   defenderLosses: Resources;
 };
 
+// One member of an ACS (Alliance Combat System) attack group: the main attacker plus any fleets that
+// joined the same attack. `loot` is the resources this fleet personally hauled away — `report.loot`
+// (the AttackBattleResolved snapshot) for the main attacker, and the joiner's resulting return-leg
+// cargo for each joined fleet. Per-participant losses are not emitted on-chain (CombatLosses is a
+// single combined figure keyed by the main mission), so only loot is broken out per participant.
+export type BattleReportParticipant = {
+  missionId: string;
+  address: Address;
+  isMainAttacker: boolean;
+  ships: Record<string, string>;
+  loot: Resources;
+};
+
 export type BattleReport = {
   missionId: string;
   attacker: Address;
@@ -386,6 +404,11 @@ export type BattleReport = {
   roundReports: CombatRoundReport[];
   transactionHash: string;
   blockNumber: string;
+  // ACS attack group: the main attack mission id for a grouped attack (null for a solo attack), and
+  // every participant (main attacker + joiners) with their individual loot share. A solo attack still
+  // populates `participants` with the single main attacker so the frontend can render uniformly.
+  attackGroupId: string | null;
+  participants: BattleReportParticipant[];
 };
 
 export type ShipyardState = {
@@ -1248,7 +1271,7 @@ export class VeydriftGameReader implements ChainReader {
       incoming: summaries.filter((mission) =>
         mission.owner.toLowerCase() !== walletLower
           && ownedPlanetIds.has(mission.targetPlanetId)
-          && ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType)
+          && ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
           && mission.status === "Outbound"
       ),
       outgoing: summaries.filter((mission) =>
@@ -3279,6 +3302,7 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       const attack = missions.get(attackMissionId) ?? {
         missionId: attackMissionId,
         cargo: { metal: "0", crystal: "0", deuterium: "0" },
+        returnCargo: null,
         ships: {},
         fuelCost: "0",
         recallCost: null,
@@ -3297,6 +3321,7 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       const joined = missions.get(joinedMissionId) ?? {
         missionId: joinedMissionId,
         cargo: { metal: "0", crystal: "0", deuterium: "0" },
+        returnCargo: null,
         ships: {},
         fuelCost: "0",
         recallCost: null,
@@ -3315,6 +3340,7 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
     const mission = missions.get(missionId) ?? {
       missionId,
       cargo: { metal: "0", crystal: "0", deuterium: "0" },
+      returnCargo: null,
       ships: {},
       fuelCost: "0",
       recallCost: null,
@@ -3342,6 +3368,7 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
         const attack = missions.get(attackMissionId) ?? {
           missionId: attackMissionId,
           cargo: { metal: "0", crystal: "0", deuterium: "0" },
+          returnCargo: null,
           ships: {},
           fuelCost: "0",
           recallCost: null,
@@ -3402,6 +3429,12 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       // 50 metal showed Cargo 50 / Loot 50 (VEY-404). The outbound launch cargo from
       // FleetMissionCargo is authoritative for `cargo`; loot is surfaced separately from the
       // AttackBattleResolved battle report.
+      //
+      // We DO capture the return-leg cargo separately as `returnCargo`. The main attacker's loot is
+      // read from its AttackBattleResolved event, but joined ACS fleets never emit their own battle
+      // report — their only on-chain loot signal is this resulting cargo, which the ACS battle report
+      // surfaces as each joiner's individual loot share (VEY-KANEO-432).
+      mission.returnCargo = decodeResources(words.slice(3, 6));
     } else if (topic === fleetMissionReturnedTopic) {
       mission.owner = decodeAddressWord(topicAt(log.topics, 2));
       mission.status = "Returned";
@@ -3437,7 +3470,7 @@ export function isBattleReportLog(log: RpcLog): boolean {
 }
 
 export function decodeBattleReportLogs(logs: RpcLog[], requestedMissionId?: string): BattleReport | null {
-  let base: Omit<BattleReport, "attackerLosses" | "debris" | "defenderLosses" | "roundReports"> | null = null;
+  let base: Omit<BattleReport, "attackGroupId" | "attackerLosses" | "debris" | "defenderLosses" | "participants" | "roundReports"> | null = null;
   let attackerLosses: Resources = emptyResources();
   let defenderLosses: Resources = emptyResources();
   let debris: BattleReport["debris"] = { metal: "0", crystal: "0" };
@@ -3497,8 +3530,66 @@ export function decodeBattleReportLogs(logs: RpcLog[], requestedMissionId?: stri
     attackerLosses,
     defenderLosses,
     debris,
-    roundReports: roundReports.sort((left, right) => left.round - right.round)
+    roundReports: roundReports.sort((left, right) => left.round - right.round),
+    // Default to a solo report: the main attacker is the only participant and its loot is the report
+    // loot. attachAttackGroupParticipants() later folds in any ACS joiners and the group id once the
+    // fleet-mission read model is available; a report decoded in isolation still carries the attacker.
+    attackGroupId: null,
+    participants: [
+      {
+        missionId: base.missionId,
+        address: base.attacker,
+        isMainAttacker: true,
+        ships: {},
+        loot: base.loot
+      }
+    ]
   };
+}
+
+// Fold the ACS attack group into each battle report: list every participant (main attacker + joined
+// fleets) with their individual loot share. Joined fleets never emit their own AttackBattleResolved,
+// so a joiner's loot is its resulting return-leg cargo (`returnCargo`), captured from
+// FleetMissionReturnExposed. The main attacker keeps its battle-report loot. `attackGroupId` is set
+// when the main mission has any joiners. Solo attacks are returned unchanged (single participant).
+export function attachAttackGroupParticipants(
+  reports: BattleReport[],
+  missions: FleetMissionSummary[]
+): BattleReport[] {
+  const missionById = new Map(missions.map((mission) => [mission.missionId, mission]));
+  return reports.map((report) => {
+    const mainMission = missionById.get(report.missionId);
+    const participants: BattleReportParticipant[] = [
+      {
+        missionId: report.missionId,
+        address: report.attacker,
+        isMainAttacker: true,
+        ships: mainMission?.ships ?? {},
+        loot: report.loot
+      }
+    ];
+
+    const joinedMissionIds = mainMission?.joinedAttackMissionIds ?? [];
+    for (const joinedMissionId of joinedMissionIds) {
+      const joined = missionById.get(joinedMissionId);
+      if (!joined) continue;
+      participants.push({
+        missionId: joinedMissionId,
+        address: joined.owner,
+        isMainAttacker: false,
+        ships: joined.ships,
+        // The joiner's resulting cargo after combat is its loot share. Null (fleet still outbound or
+        // wiped at the target, so it hauled nothing) reports as zero.
+        loot: joined.returnCargo ?? emptyResources()
+      });
+    }
+
+    return {
+      ...report,
+      attackGroupId: joinedMissionIds.length > 0 ? (mainMission?.attackGroupId ?? report.missionId) : null,
+      participants
+    };
+  });
 }
 
 export function decodeBattleReports(logs: RpcLog[]): BattleReport[] {

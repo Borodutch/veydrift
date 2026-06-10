@@ -9,6 +9,7 @@ import {
   technologyIds
 } from "./contractStateSchema";
 import {
+  attachAttackGroupParticipants,
   decodeAllianceLog,
   decodeBattleReports,
   decodeCompleteFleetMissionLogs,
@@ -686,7 +687,7 @@ export class SettlementIndexer {
       incoming: summaries.filter((mission) =>
         mission.owner.toLowerCase() !== walletLower
           && ownedPlanetIds.has(mission.targetPlanetId)
-          && ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType)
+          && ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
           && mission.status === "Outbound"
       ),
       outgoing: summaries.filter((mission) =>
@@ -705,8 +706,13 @@ export class SettlementIndexer {
       completedMissions: summaries
         .filter((mission) => isVisibleCompletedMission(mission, walletLower, ownedPlanetIds))
         .sort(compareFleetMissionsNewestFirst),
+      // A report is visible to the main attacker, the defender (target planet owner), and — for a
+      // grouped ACS attack — every joiner, so each participant can see the shared report and the loot
+      // they personally hauled (VEY-KANEO-432).
       battleReports: battleReports.filter((report) =>
-        report.attacker.toLowerCase() === walletLower || ownedPlanetIds.has(report.targetPlanetId)
+        report.attacker.toLowerCase() === walletLower
+          || ownedPlanetIds.has(report.targetPlanetId)
+          || report.participants.some((participant) => participant.address.toLowerCase() === walletLower)
       )
     };
   }
@@ -2211,10 +2217,44 @@ export class SettlementIndexer {
   }
 
   private applyQueueCompletedEvent(event: IndexedQueueCompletedEvent): void {
+    // A building completion raises the planet's production rate. The contract
+    // settles [lastSettledAt, readyAt] at the OLD rate, completes the building,
+    // then accrues at the NEW rate from readyAt (VeydriftGame.sol:720-730). The
+    // read-model projects from the stored baseline at the current rate, so the
+    // baseline must absorb the pre-completion window at the old rate before the
+    // level is bumped — otherwise the projection applies the new, higher rate
+    // over the whole window since the last settle and over-reports resources by
+    // up to ~3x (VEY-KANEO-429). Settle BEFORE deleting the queue (it carries
+    // readyAt) and BEFORE applying the completed level.
+    if (event.queueKind === "building" && event.planetId) {
+      const queue = this.queueState(queueKey(event));
+      this.settlePlanetResourcesUntil(event.planetId, queue?.readyAt ?? undefined);
+    }
     this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(queueKey(event));
     this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKey(event));
     this.applyQueueCompletionEffects(event);
     this.touch();
+  }
+
+  // Advance a planet's stored resources/lastSettledAt up to `settledAt` at the
+  // current production rate, mirroring the contract's `_settleResourcesUntil`.
+  // Used when a building completes so the baseline reflects accrual at the
+  // pre-completion rate before the new level is applied.
+  private settlePlanetResourcesUntil(planetId: string, settledAt: string | undefined): void {
+    if (!settledAt) return;
+    const planet = this.planet(planetId);
+    if (!planet) return;
+    if (isZeroResourcePlaceholder(planet) && !this.planetResourceSnapshot(planetId)) return;
+    const previousSettledAt = Number(planet.lastSettledAt);
+    const nextSettledAt = Number(settledAt);
+    if (!Number.isFinite(previousSettledAt) || !Number.isFinite(nextSettledAt) || nextSettledAt <= previousSettledAt) {
+      return;
+    }
+    this.upsertPlanet({
+      ...planet,
+      lastSettledAt: settledAt,
+      resources: this.settlePlanetResourcesForSpend(planet, settledAt)
+    });
   }
 
   private applyQueueCompletionEffects(event: IndexedQueueCompletedEvent): void {
@@ -2886,7 +2926,10 @@ export class SettlementIndexer {
     const logs = rows
       .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
       .filter(isBattleReportLog);
-    return decodeBattleReports(logs);
+    // Enrich each report with its ACS attack group participants + per-participant loot, joining the
+    // decoded battle reports against the fleet-mission read model (which carries joinedAttackMissionIds
+    // and each joiner's resulting return-leg cargo). Solo attacks come back with a single participant.
+    return attachAttackGroupParticipants(decodeBattleReports(logs), this.indexedFleetMissionSummaries());
   }
 
   private withFleetMissionPlanetReferences(mission: FleetMissionSummary): FleetMissionSummary {

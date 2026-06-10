@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import { MissionDetailPage, type MissionDetailActionState } from "../src/components/MissionDetailPage";
-import type { BattleReport, DefenderPlanetState, FleetMissionSummary, MissionDetailResponse } from "../src/walletFlow";
+import type { BattleReport, DefenderPlanetState, FleetMissionSummary, FleetMissionVisibilityResponse, MissionDetailResponse } from "../src/walletFlow";
 
 // VEY-401: the Battle Report defender block must show the defender planet's indexed fleet/defenses
 // composition (or "None") instead of the old blanket "not published in the on-chain combat log"
@@ -51,16 +51,37 @@ function battleReport(overrides: Partial<BattleReport> = {}): BattleReport {
   };
 }
 
-function renderDetailText(detail: MissionDetailResponse): string {
+// Mirrors the backend's wallet-scoped fleet-visibility classification the detail page now reuses:
+// an Outbound fleet you own is "outgoing", a Returning/Recalled one is "returning". A mission left
+// out of every list models a viewer with no relationship to the fleet (a stranger / shared link),
+// who must get no orders. By default the rendered mission is slotted by its own status so the
+// owner-centric tests below see the same classification Mission Control would compute.
+function visibilityFor(mission: FleetMissionSummary): FleetMissionVisibilityResponse {
+  const empty: FleetMissionVisibilityResponse = {
+    wallet: "0x1111111111111111111111111111111111111111",
+    homePlanetId: "1",
+    incoming: [],
+    outgoing: [],
+    returning: [],
+    joinableAttacks: [],
+    completedMissions: [],
+    battleReports: [],
+  };
+  if (mission.status === "Outbound") return { ...empty, outgoing: [mission] };
+  if (mission.status === "Returning" || mission.status === "Recalled") return { ...empty, returning: [mission] };
+  return empty;
+}
+
+function renderDetailText(detail: MissionDetailResponse, fleetVisibility = visibilityFor(detail.mission)): string {
   const noop = () => {};
   const actionState: MissionDetailActionState = { status: "idle" };
   const page = MissionDetailPage({
-    account: "0x1111111111111111111111111111111111111111",
     actionState,
     canTransact: false,
     copyState: "idle",
     detail,
     error: undefined,
+    fleetVisibility,
     loading: false,
     missionId: detail.mission.missionId,
     now: 1_770_001_000_000,
@@ -112,6 +133,79 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
   test("always renders the defender's fleet losses regardless of composition availability", () => {
     const text = renderDetailText({ mission: combatMission(), battleReport: battleReport(), defenderPlanetState: { fleet: [], defenses: [] } });
     expect(text).toContain("Fleet losses");
+  });
+});
+
+describe("MissionDetailPage ACS attack group (VEY-KANEO-432)", () => {
+  const mainAttacker = "0x2222222222222222222222222222222222222222";
+  const joinerA = "0x3333333333333333333333333333333333333333";
+  const joinerB = "0x4444444444444444444444444444444444444444";
+
+  function groupedReport(): BattleReport {
+    return battleReport({
+      attacker: mainAttacker,
+      loot: { metal: "1000", crystal: "0", deuterium: "0" },
+      attackGroupId: "1",
+      participants: [
+        { missionId: "1", address: mainAttacker, isMainAttacker: true, ships: { lightFighter: "10" }, loot: { metal: "1000", crystal: "0", deuterium: "0" } },
+        { missionId: "2", address: joinerA, isMainAttacker: false, ships: { largeCargo: "5" }, loot: { metal: "600", crystal: "0", deuterium: "0" } },
+        { missionId: "3", address: joinerB, isMainAttacker: false, ships: { cruiser: "2" }, loot: { metal: "400", crystal: "0", deuterium: "0" } },
+      ],
+    });
+  }
+
+  test("renders the Attack group panel with every participant and their individual loot share", () => {
+    const text = renderDetailText({ mission: combatMission(), battleReport: groupedReport(), defenderPlanetState: null });
+
+    expect(text).toContain("Attack group");
+    expect(text).toContain("3 participants");
+    expect(text).toContain("Main attacker");
+    expect(text).toContain("Joined");
+    // Each joiner's individual loot share is shown (proportional to capacity on-chain).
+    expect(text).toContain("Loot share");
+    expect(text).toContain("600 metal");
+    expect(text).toContain("400 metal");
+    // The shortened joiner commanders appear in the breakdown.
+    expect(text).toContain("0x3333...3333");
+    expect(text).toContain("0x4444...4444");
+  });
+
+  test("shows the combined group total loot, not just the main attacker's share", () => {
+    const text = renderDetailText({ mission: combatMission(), battleReport: groupedReport(), defenderPlanetState: null });
+
+    // 1000 (main) + 600 + 400 = 2000 hauled by the group; the Attacker panel reports the total.
+    expect(text).toContain("Loot grabbed (total)");
+    expect(text).toContain("2,000 metal");
+    expect(text).toContain("Total group loot");
+    expect(text).toContain("Combat ships (combined)");
+  });
+
+  test("scales to an arbitrary number of joiners", () => {
+    const participants = [
+      { missionId: "1", address: mainAttacker, isMainAttacker: true, ships: {}, loot: { metal: "100", crystal: "0", deuterium: "0" } },
+      ...Array.from({ length: 8 }, (_, index) => ({
+        missionId: String(index + 2),
+        address: `0x${String(index + 1).repeat(40).slice(0, 40)}`,
+        isMainAttacker: false,
+        ships: {},
+        loot: { metal: "10", crystal: "0", deuterium: "0" },
+      })),
+    ];
+    const text = renderDetailText({
+      mission: combatMission(),
+      battleReport: battleReport({ attacker: mainAttacker, participants }),
+      defenderPlanetState: null,
+    });
+
+    expect(text).toContain("9 participants");
+  });
+
+  test("a solo (non-grouped) attack does not render the Attack group panel", () => {
+    const text = renderDetailText({ mission: combatMission(), battleReport: battleReport(), defenderPlanetState: null });
+
+    expect(text).not.toContain("Attack group");
+    expect(text).not.toContain("Loot grabbed (total)");
+    expect(text).toContain("Loot grabbed");
   });
 });
 
@@ -240,6 +334,67 @@ describe("MissionDetailPage Recall action", () => {
 
     expect(text).toContain("Recall fleet");
     expect(text).toContain("50 deuterium");
+  });
+});
+
+// VEY-KANEO-424 rework: the detail page must authorize orders exactly like the Mission Control list,
+// which derives them from the backend's wallet-scoped fleet-visibility. The pre-rework detail code
+// re-derived the viewer's role from a bare `owner === account` check, so it (a) only matched the
+// owner's Recall by luck and (b) fabricated an "incoming" defender role for ANY viewer of someone
+// else's attack, wrongly rendering Group defend / Intercept to strangers. QA hit case (b): on an
+// outbound attack they did not own, Available Orders showed Group defend / Intercept and no Recall.
+describe("MissionDetailPage order authorization (matches Mission Control)", () => {
+  function outboundAttack(overrides: Partial<FleetMissionSummary> = {}): FleetMissionSummary {
+    // Far-future arrival so the fleet is still in flight (not yet due) under renderDetailText's now.
+    return combatMission({
+      status: "Outbound",
+      missionType: "Attack",
+      arrivalAt: "1770002000",
+      returnAt: "1770003000",
+      recallCost: "50",
+      ...overrides,
+    });
+  }
+
+  const emptyVisibility: FleetMissionVisibilityResponse = {
+    wallet: "0x9999999999999999999999999999999999999999",
+    homePlanetId: "1",
+    incoming: [],
+    outgoing: [],
+    returning: [],
+    joinableAttacks: [],
+    completedMissions: [],
+    battleReports: [],
+  };
+
+  test("offers no orders to a viewer with no visibility relationship to the fleet", () => {
+    // Stranger / shared link: the fleet is in none of their visibility lists.
+    const text = renderDetailText({ mission: outboundAttack() }, emptyVisibility);
+
+    expect(text).not.toContain("Available Orders");
+    expect(text).not.toContain("Recall fleet");
+    expect(text).not.toContain("Group defend");
+    expect(text).not.toContain("Intercept");
+  });
+
+  test("offers Group defend only to the actual defender (incoming attack)", () => {
+    const mission = outboundAttack();
+    const text = renderDetailText({ mission }, { ...emptyVisibility, incoming: [mission] });
+
+    expect(text).toContain("Available Orders");
+    expect(text).toContain("Group defend");
+    // VEY-KANEO-439: Intercept removed from the frontend; only Group defend (AcsDefend) remains.
+    expect(text).not.toContain("Intercept");
+    expect(text).not.toContain("Recall fleet");
+  });
+
+  test("offers Recall to the fleet owner (outgoing) and not the defender's counterplay", () => {
+    const mission = outboundAttack();
+    const text = renderDetailText({ mission }, { ...emptyVisibility, outgoing: [mission] });
+
+    expect(text).toContain("Recall fleet");
+    expect(text).not.toContain("Group defend");
+    expect(text).not.toContain("Intercept");
   });
 });
 

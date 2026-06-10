@@ -8,6 +8,7 @@ import type { PlanetType } from "../types";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import {
   type BattleReport,
+  type BattleReportParticipant,
   type FleetMissionArchiveEntry,
   type FleetMissionArchiveResponse,
   type FleetMissionPlanetReference,
@@ -67,8 +68,8 @@ interface MissionControlPageProps {
   missionArchiveLoading?: boolean | undefined;
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
-  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
+  onCounterplay: (missionId: string, mode: "acsDefend") => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
   onGlobalMissionArchivePageChange?: ((page: number) => void) | undefined;
@@ -124,15 +125,22 @@ export function MissionControlPage({
   // classification (direction + lifecycle actions); every other active mission renders read-only.
   const allActiveRows = allActiveMissionRows(allActiveMissions, activeMissionRows);
   const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...joinableAttacks, ...completedMissions]);
+  // While a mission is still active (Outbound / Returning / Recalled) it must appear ONLY in the
+  // active section. Its battle report — which can already exist for a fleet that fought and is flying
+  // home — must not also render as a Past Missions row, duplicating the live mission. The report
+  // surfaces in Past Missions only once the fleet has fully returned (VEY-KANEO-434).
+  const activeMissionIds = new Set(activeMissionRows.map((row) => row.mission.missionId));
+  const allActiveMissionIds = new Set(allActiveRows.map((row) => row.mission.missionId));
   const fallbackPastMissionRows = chronologicalPastMissionRows(completedMissions, battleReports);
   const rawPastMissionRows = missionArchive?.rows ?? fallbackPastMissionRows;
-  const pastMissionRows = dedupePastMissionRows(rawPastMissionRows);
-  // Rows collapsed by the dedupe (a mission + its battle report -> one row) so the section header
-  // count can match the actual rendered rows even with server-side pagination (VEY-399#1).
+  const pastMissionRows = dedupePastMissionRows(rawPastMissionRows, activeMissionIds);
+  // Rows collapsed by the dedupe (a mission + its battle report -> one row, or an active mission's
+  // report suppressed) so the section header count can match the actual rendered rows even with
+  // server-side pagination (VEY-399#1, VEY-KANEO-434).
   const pastCollapsedCount = rawPastMissionRows.length - pastMissionRows.length;
   // Universe-wide past archive ("All" past tab): same dedupe + collapse accounting, server-paginated.
   const rawGlobalPastRows = globalMissionArchive?.rows ?? [];
-  const globalPastMissionRows = dedupePastMissionRows(rawGlobalPastRows);
+  const globalPastMissionRows = dedupePastMissionRows(rawGlobalPastRows, allActiveMissionIds);
   const globalPastCollapsedCount = rawGlobalPastRows.length - globalPastMissionRows.length;
   // Past missions render from the paginated archive, which can contain missions absent from the live
   // fleet-visibility feed (older pages, returned missions no longer "active"). The backend already
@@ -361,8 +369,8 @@ function ActiveMissionSection({
   myRows: ActiveMissionRow[];
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
-  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
+  onCounterplay: (missionId: string, mode: "acsDefend") => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
@@ -442,8 +450,8 @@ function ActiveMissionList({
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
-  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
+  onCounterplay: (missionId: string, mode: "acsDefend") => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
@@ -527,8 +535,8 @@ function MissionRow({
   mission: FleetMissionSummary;
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
-  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
+  onCounterplay: (missionId: string, mode: "acsDefend") => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
@@ -549,22 +557,17 @@ function MissionRow({
       actions={
         <>
           {actions.map((action) => action.kind === "counterplay" ? (
-            <span className="contents" key={action.kind}>
-              <ActionButton
-                action={{ ...action, label: "Group defend" }}
-                onClick={() => onCounterplay(mission.missionId, "acsDefend")}
-              />
-              <ActionButton
-                action={{ ...action, label: "Intercept" }}
-                onClick={() => onCounterplay(mission.missionId, "intercept")}
-              />
-            </span>
+            <ActionButton
+              action={{ ...action, label: "Group defend" }}
+              key={action.kind}
+              onClick={() => onCounterplay(mission.missionId, "acsDefend")}
+            />
           ) : action.kind === "joinAttack" ? (
             // VEY-397#13/#14: "Join" shares the Open button style/size (hidden when disabled, VEY-399#6).
             <button
               className={rowActionButtonClass}
               key={action.kind}
-              onClick={() => onJoinAttack(mission.missionId, mission.targetPlanetId)}
+              onClick={() => onJoinAttack(mission.missionId, mission.targetPlanetId, target.coords)}
               title="Join this alliance attack"
               type="button"
             >
@@ -1360,6 +1363,12 @@ function PastBattleReportRow({
     coords: null,
     name: "Attacker",
   };
+  // ACS grouped attack: surface the combined group loot and the joiner count so the compact row makes
+  // clear the haul was split, with the per-participant breakdown one click away on the detail screen.
+  const participants = report.participants ?? [];
+  const isGroupedAttack = participants.length > 1;
+  const lootShown = isGroupedAttack ? sumLoot(participants) : report.loot;
+  const joinerCount = isGroupedAttack ? participants.length - 1 : 0;
   return (
     <MissionCard
       actions={
@@ -1378,8 +1387,13 @@ function PastBattleReportRow({
       direction="outbound"
       fleet={
         <div className="space-y-1">
-          <p className="text-[11px] text-slate-500">Loot {formatCargo(report.loot)}</p>
+          <p className="text-[11px] text-slate-500">
+            {isGroupedAttack ? "Group loot " : "Loot "}{formatCargo(lootShown)}
+          </p>
           <p className="text-[11px] text-slate-500">Losses {formatCargo(report.attackerLosses)} / {formatCargo(report.defenderLosses)}</p>
+          {isGroupedAttack ? (
+            <p className="text-[11px] text-cyan-300/80">ACS group · {joinerCount} {joinerCount === 1 ? "joiner" : "joiners"}</p>
+          ) : null}
         </div>
       }
       missionId={report.missionId}
@@ -1387,6 +1401,19 @@ function PastBattleReportRow({
       routeSubtext={`${battleOutcomeLabel(report.outcome)} · Block ${report.blockNumber || "unknown"} · ${report.rounds} rounds`}
       target={target}
     />
+  );
+}
+
+// Sum each participant's loot share into the combined ACS group total (BigInt to stay exact for the
+// uint128 resource amounts). Mirrors the per-participant split the contract performs on-chain.
+function sumLoot(participants: BattleReportParticipant[]): { metal: string; crystal: string; deuterium: string } {
+  return participants.reduce(
+    (total, participant) => ({
+      metal: (BigInt(total.metal) + BigInt(participant.loot.metal || "0")).toString(),
+      crystal: (BigInt(total.crystal) + BigInt(participant.loot.crystal || "0")).toString(),
+      deuterium: (BigInt(total.deuterium) + BigInt(participant.loot.deuterium || "0")).toString(),
+    }),
+    { metal: "0", crystal: "0", deuterium: "0" }
   );
 }
 
@@ -1694,13 +1721,21 @@ function pastRowMissionId(row: PastMissionRow): string {
   return row.kind === "battleReport" ? row.report.missionId : row.mission.missionId;
 }
 
-function dedupePastMissionRows(rows: PastMissionRow[]): PastMissionRow[] {
+function dedupePastMissionRows(
+  rows: PastMissionRow[],
+  activeMissionIds: ReadonlySet<string> = new Set<string>(),
+): PastMissionRow[] {
   const missionSummaryIds = new Set(
     rows.filter((row) => row.kind === "mission").map((row) => pastRowMissionId(row))
   );
   const seen = new Set<string>();
   return rows.filter((row) => {
     const missionId = pastRowMissionId(row);
+    // A battle report whose mission is still active (Outbound / Returning / Recalled — e.g. a fleet
+    // that has fought but not yet arrived home) belongs to the active section, not Past Missions. Its
+    // loot already surfaces on the active card, so drop it here to avoid duplicating the live mission
+    // into the archive. The report returns to Past Missions once the fleet fully lands (VEY-KANEO-434).
+    if (row.kind === "battleReport" && activeMissionIds.has(missionId)) return false;
     // Collapse a battle report into its mission summary row when both exist, so each mission
     // appears once with links to both the mission detail and its battle report.
     if (row.kind === "battleReport" && missionSummaryIds.has(missionId)) return false;
