@@ -45,6 +45,17 @@ contract AllianceMockResourceToken {
     }
 }
 
+/// @dev A trivial post-upgrade implementation used to prove the live alliance
+/// proxy can be moved to a new UUPS implementation that still exposes
+/// `transferAllianceOwnership` while preserving all existing storage.
+contract VeydriftAllianceSystemV2 is VeydriftAllianceSystem {
+    constructor(IVeydriftAllianceGame gameContract) VeydriftAllianceSystem(gameContract) {}
+
+    function upgradeVersion() external pure returns (string memory) {
+        return "v2";
+    }
+}
+
 contract VeydriftAllianceSystemTest is Test {
     address internal admin = address(0xA11CE);
     address internal leader = address(0xB0B);
@@ -513,6 +524,168 @@ contract VeydriftAllianceSystemTest is Test {
         assertEq(intent.allianceId, allianceId);
         assertEq(intent.hostileMissionId, missionId);
         assertEq(intent.joinCutoffAt, arrivalAt - 5 minutes);
+    }
+
+    function testTransferAllianceOwnershipHandsOwnerToOfficer() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "discord.gg/vdft");
+        _inviteAndAccept(allianceId, member);
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        vm.expectEmit(true, true, true, true, address(alliances));
+        emit VeydriftAllianceSystem.AllianceOwnershipTransferred(allianceId, leader, member);
+        vm.prank(leader);
+        alliances.transferAllianceOwnership(allianceId, member);
+
+        assertEq(alliances.allianceProfile(allianceId).owner, member);
+        assertEq(
+            uint8(alliances.allianceOf(member).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Owner)
+        );
+        assertEq(
+            uint8(alliances.allianceOf(leader).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Officer)
+        );
+        assertEq(alliances.allianceProfile(allianceId).memberCount, 2);
+
+        // The new owner now holds owner-only authority; the demoted owner does not.
+        vm.prank(member);
+        alliances.setMemberRole(allianceId, leader, VeydriftAllianceSystem.AllianceRole.Member);
+        assertEq(
+            uint8(alliances.allianceOf(leader).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Member)
+        );
+
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.NotAuthorized.selector, leader, allianceId
+            )
+        );
+        alliances.transferAllianceOwnership(allianceId, member);
+    }
+
+    function testTransferAllianceOwnershipRejectsInvalidHandoffs() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        _inviteAndAccept(allianceId, member);
+
+        // Officers and members cannot initiate the handoff.
+        vm.prank(member);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.NotAuthorized.selector, member, allianceId
+            )
+        );
+        alliances.transferAllianceOwnership(allianceId, leader);
+
+        // The target must already be a member of the alliance.
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.NotAllianceMember.selector, recruit, allianceId
+            )
+        );
+        alliances.transferAllianceOwnership(allianceId, recruit);
+
+        // A plain member (not an officer) cannot receive ownership.
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.NewOwnerMustBeOfficer.selector, member, allianceId
+            )
+        );
+        alliances.transferAllianceOwnership(allianceId, member);
+
+        // Transferring to the current owner (self) is rejected.
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.NotAuthorized.selector, leader, allianceId
+            )
+        );
+        alliances.transferAllianceOwnership(allianceId, leader);
+
+        // Zero address is not a member, so it is rejected as well.
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.NotAllianceMember.selector, address(0), allianceId
+            )
+        );
+        alliances.transferAllianceOwnership(allianceId, address(0));
+    }
+
+    function testUupsUpgradePreservesStateAndEnablesOwnershipHandoff() public {
+        VeydriftAllianceSystem proxied = VeydriftAllianceSystem(
+            address(
+                new ERC1967Proxy(
+                    address(new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)))),
+                    abi.encodeCall(
+                        VeydriftAllianceSystem.initialize,
+                        (IVeydriftAllianceGame(address(game)), admin)
+                    )
+                )
+            )
+        );
+
+        vm.prank(leader);
+        uint256 allianceId = proxied.createAlliance("VDFT", "Veydrift Union", "discord.gg/vdft");
+        vm.prank(leader);
+        proxied.inviteMember(allianceId, member);
+        vm.prank(member);
+        proxied.acceptInvite(allianceId);
+        vm.prank(leader);
+        proxied.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        // Upgrade the proxy to a fresh implementation. Storage must survive.
+        VeydriftAllianceSystemV2 newImplementation =
+            new VeydriftAllianceSystemV2(IVeydriftAllianceGame(address(game)));
+        vm.prank(admin);
+        proxied.upgradeToAndCall(address(newImplementation), "");
+
+        assertEq(VeydriftAllianceSystemV2(address(proxied)).upgradeVersion(), "v2");
+        assertEq(proxied.owner(), admin);
+        assertEq(proxied.allianceProfile(allianceId).owner, leader);
+        assertEq(proxied.allianceProfile(allianceId).memberCount, 2);
+        assertEq(
+            uint8(proxied.allianceOf(member).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Officer)
+        );
+
+        // The newly upgraded implementation exposes the ownership handoff.
+        vm.prank(leader);
+        proxied.transferAllianceOwnership(allianceId, member);
+
+        assertEq(proxied.allianceProfile(allianceId).owner, member);
+        assertEq(
+            uint8(proxied.allianceOf(member).role), uint8(VeydriftAllianceSystem.AllianceRole.Owner)
+        );
+        assertEq(
+            uint8(proxied.allianceOf(leader).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Officer)
+        );
+    }
+
+    function testUpgradeAuthorizationRemainsOwnerGated() public {
+        VeydriftAllianceSystem proxied = VeydriftAllianceSystem(
+            address(
+                new ERC1967Proxy(
+                    address(new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)))),
+                    abi.encodeCall(
+                        VeydriftAllianceSystem.initialize,
+                        (IVeydriftAllianceGame(address(game)), admin)
+                    )
+                )
+            )
+        );
+        VeydriftAllianceSystemV2 newImplementation =
+            new VeydriftAllianceSystemV2(IVeydriftAllianceGame(address(game)));
+
+        vm.prank(leader);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftAllianceSystem.NotOwner.selector, leader));
+        proxied.upgradeToAndCall(address(newImplementation), "");
     }
 
     function _start(address player) internal {
