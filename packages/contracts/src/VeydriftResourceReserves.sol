@@ -143,6 +143,29 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         if (missionId != 0) revert FleetMissionNotResolved(_fleetMissions[missionId].arrivalAt);
     }
 
+    /// @notice Earliest arrival timestamp among the planet's missions that have arrived but are not
+    ///         yet resolved, or `type(uint64).max` when none are pending.
+    /// @dev Used by passive resource collection to settle production only up to (and never across) an
+    ///      unresolved arrival, so combat/loot snapshots taken at `arrivalAt` stay correct while the
+    ///      owner is never frozen out of collecting what already accrued.
+    function _earliestPendingMissionArrivalForPlanet(uint256 planetId)
+        internal
+        view
+        returns (uint64 earliestArrival)
+    {
+        earliestArrival = type(uint64).max;
+        uint256[] storage missionIds = _resolutionMissionIdsByPlanet[planetId];
+        for (uint256 index = 0; index < missionIds.length;) {
+            FleetMission storage mission = _fleetMissions[missionIds[index]];
+            if (_isPendingResolutionMission(mission) && mission.arrivalAt < earliestArrival) {
+                earliestArrival = mission.arrivalAt;
+            }
+            unchecked {
+                ++index;
+            }
+        }
+    }
+
     function _trackMissionResolution(uint256 missionId, FleetMission storage mission) internal {
         if (!_isResolutionTrackedMissionType(mission.missionType)) return;
 
