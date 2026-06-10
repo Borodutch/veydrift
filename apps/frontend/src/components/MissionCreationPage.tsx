@@ -124,6 +124,7 @@ export function MissionCreationPage({
     cargoCapacity,
     cargoSupported,
     cargoTotal,
+    fleetSlots: shipyardState?.fleetSlots,
     fuelCost,
     lootRatioActive,
     lootRatioTotal,
@@ -351,6 +352,7 @@ export function missionDraftBlocker({
   cargoCapacity,
   cargoSupported,
   cargoTotal,
+  fleetSlots,
   fuelCost,
   lootRatioActive = false,
   lootRatioTotal = 0,
@@ -364,6 +366,7 @@ export function missionDraftBlocker({
   cargoCapacity: number;
   cargoSupported: boolean;
   cargoTotal: number;
+  fleetSlots?: { active: number; limit: number } | undefined;
   fuelCost: number;
   lootRatioActive?: boolean | undefined;
   lootRatioTotal?: number | undefined;
@@ -374,7 +377,15 @@ export function missionDraftBlocker({
   totalCargoCapacity: number;
 }): string | undefined {
   if (!originCoords) return "Active origin planet is unavailable.";
+  // Interplanetary missiles do not occupy fleet slots, so they skip the fleet-slot gate below.
   if (action.mode === "missile") return quantity > 0 ? undefined : "Choose at least one missile.";
+  // Every fleet mission (attack/transport/deploy/harvest/colonize) consumes a fleet slot, capped at
+  // 1 + Computer Technology level on-chain (FleetSlotLimitReached). Block before submit when the cap is
+  // reached and name the lever. Fail open when the backend did not provide slot counts so a valid
+  // launch is never blocked; the on-chain revert remains the backstop.
+  if (fleetSlots && fleetSlots.limit > 0 && fleetSlots.active >= fleetSlots.limit) {
+    return `Fleet slots full (${fleetSlots.active}/${fleetSlots.limit}) — research Computer Technology to raise the limit, or wait for a fleet to return.`;
+  }
   if (selectedShipCount <= 0) return "Choose at least one ship.";
   if ((resources?.deuterium ?? 0) < fuelCost) return `Need ${fuelCost.toLocaleString()} deuterium for fuel.`;
   if (fuelCost > totalCargoCapacity) {
