@@ -1877,7 +1877,7 @@ function identityFromMissionPlanet(planet: FleetMissionPlanetReference): Mission
   };
 }
 
-function missionTypeLabel(missionType: string): string {
+export function missionTypeLabel(missionType: string): string {
   if (missionType === "AcsAttack") return "Group attack";
   if (missionType === "AcsDefend") return "Group defense";
   return missionType.replace(/([A-Z])/g, " $1").trim();
