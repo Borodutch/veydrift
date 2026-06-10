@@ -65,7 +65,7 @@ Out of scope for the current first-planet MVP:
 | Battlecruiser | implemented | Dependency tightened to Shipyard 8 + Hyperspace Drive 5 + Hyperspace 5 + Laser 12. |
 | Reaper | implemented | Dependency tightened to Shipyard 10 + Hyperspace Drive 7 + Hyperspace 6 + Shielding 6 + Energy 5. |
 | Pathfinder | implemented | Dependency tightened to Shipyard 5 + Hyperspace Drive 2 + Shielding 4. |
-| Crawler | implemented | Added as ship id 16; cost 2,000 metal / 2,000 crystal / 1,000 deuterium; dependency Shipyard 5 + Combustion 4 + Armor 4 + Laser 4. Production boost/energy consumption behavior needs the production module to consume crawler counts. |
+| Crawler | implemented | Added as ship id 16; cost 2,000 metal / 2,000 crystal / 1,000 deuterium; dependency Shipyard 5 + Combustion 4 + Armor 4 + Laser 4. Production boost implemented (VEY-KANEO-435): each crawler adds 0.02% to metal/crystal/deuterium mine output, capped at 8 effective crawlers per combined mine level and a 50% total bonus. Crawler energy consumption is intentionally not modeled yet and remains a separate follow-up. |
 
 ## Defenses And Missiles
 
