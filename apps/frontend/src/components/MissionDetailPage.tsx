@@ -314,7 +314,7 @@ function RouteEndpoint({
   kind: string;
   onSelectCoordinates: (coords: Coordinates) => void;
   onSelectPlayer: (wallet: string) => void;
-  timing: { label: string | null; value: string };
+  timing: { label: string | null; value: string; subtext?: string };
 }) {
   const coords = endpoint.coordinates;
   return (
@@ -342,12 +342,15 @@ function RouteEndpoint({
         <span className="font-mono text-xs text-slate-600">Coordinates unavailable</span>
       )}
       <CommanderLink commander={commander} onSelectPlayer={onSelectPlayer} />
-      <p className="mt-1 border-t border-white/5 pt-2 text-xs text-slate-400">
-        {timing.label ? (
-          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{timing.label} </span>
-        ) : null}
-        <span className="break-words text-slate-300">{timing.value}</span>
-      </p>
+      <div className="mt-1 border-t border-white/5 pt-2 text-xs text-slate-400">
+        <p>
+          {timing.label ? (
+            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{timing.label} </span>
+          ) : null}
+          <span className="break-words text-slate-300">{timing.value}</span>
+        </p>
+        {timing.subtext ? <p className="mt-0.5 text-[11px] text-slate-500">{timing.subtext}</p> : null}
+      </div>
     </div>
   );
 }
@@ -606,20 +609,32 @@ function isCombatMission(mission: FleetMissionSummary): boolean {
 }
 
 // Timing shown beside a route endpoint. A completed leg collapses to a single
-// past-tense word with no caption, timestamp, or "(Ready)" suffix — the origin
-// reads "Returned" and the target "Arrived". A leg still in flight keeps its
-// caption plus absolute time and ETA.
+// past-tense word (origin "Returned", target "Arrived") with the moment it
+// happened as compact subtext beneath it — e.g. "Jun 7, 3:40 PM" — instead of the
+// old verbose inline string with a "(Ready)" suffix. A leg still in flight keeps
+// its caption plus absolute time and ETA.
 function missionLegTiming(
   value: string,
   now: number,
   label: string,
   pastLabel: string,
-): { label: string | null; value: string } {
+): { label: string | null; value: string; subtext?: string } {
   const ms = timestampToMs(value);
   if (ms != null && ms > 0 && ms <= now) {
-    return { label: null, value: pastLabel };
+    return { label: null, value: pastLabel, subtext: formatCompactMissionTime(value) };
   }
   return { label, value: formatMissionTime(value, now) };
+}
+
+// Short "month day, time" stamp (e.g. "Jun 7, 3:40 PM") used as muted subtext under
+// a completed leg's past-tense word. The short month/day and the clock are formatted
+// separately and joined with a comma so the result stays in this compact form rather
+// than the locale's combined "Jun 7 at 3:40 PM" connector. Only called for legs with a
+// valid timestamp, so it always returns a concrete string rather than a placeholder.
+function formatCompactMissionTime(value: string): string {
+  const date = formatUserTimestamp(value, { month: "short", day: "numeric" });
+  const time = formatUserTimestamp(value, { hour: "numeric", minute: "2-digit" });
+  return `${date}, ${time}`;
 }
 
 function formatMissionTime(value: string, now: number): string {

@@ -132,6 +132,24 @@ describe("MissionDetailPage Route timing copy", () => {
     expect(text).not.toContain("Arrival Arrived");
   });
 
+  // VEY-411: complements VEY-405 — the collapsed "Returned"/"Arrived" word keeps its
+  // single-word headline but now carries the moment it happened as a compact, muted
+  // subtext (short month + day + time, e.g. "Feb 1, 6:50 PM"), not the old verbose
+  // inline string with a "(Ready)" suffix.
+  test("shows the completed return/arrival moment as a compact subtext", () => {
+    const text = renderDetailText({ mission: combatMission(), battleReport: battleReport(), defenderPlanetState: null });
+
+    // returnAt/arrivalAt are both before the fixed `now`, so both legs are completed and
+    // each renders a "Mon D, H:MM AM/PM" stamp beneath its past-tense word.
+    const compactStamp = /[A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2}[\s ][AP]M/g;
+    const stamps = text.match(compactStamp) ?? [];
+    expect(stamps.length).toBeGreaterThanOrEqual(2);
+    // Still no "(Ready)" suffix and still collapsed to the single past-tense word.
+    expect(text).toContain("Returned");
+    expect(text).toContain("Arrived");
+    expect(text).not.toContain("(Ready)");
+  });
+
   test("keeps the caption, absolute time, and countdown for an in-flight leg", () => {
     const text = renderDetailText({
       mission: combatMission({ status: "Outbound", arrivalAt: "1770002000", returnAt: "1770003000" }),
