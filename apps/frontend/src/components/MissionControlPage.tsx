@@ -48,8 +48,8 @@ interface MissionControlPageProps {
   globalMissionArchive?: GlobalMissionArchiveResponse | undefined;
   globalMissionArchiveError?: string | undefined;
   globalMissionArchiveLoading?: boolean | undefined;
-  // VEY-412: the tab/page selection to render initially. Defaults to the sessionStorage-persisted
-  // view so the selection survives the mission-detail round-trip; tests pass it explicitly.
+  // VEY-412: the tab/page selection to render initially. Defaults to the view restored from the
+  // `#/mission-control` hash query so it survives the mission-detail round-trip; tests pass it explicitly.
   initialView?: MissionControlView | undefined;
   loading: boolean;
   missionArchive?: FleetMissionArchiveResponse | undefined;
@@ -147,7 +147,7 @@ export function MissionControlPage({
   // VEY-412: restore the previously selected tabs + past page. The panel is DOM-driven (tabs/pages
   // toggle `hidden`), so without this the selection resets to defaults every time the component
   // remounts on returning from a mission detail (browser back or the in-app "← Mission Control").
-  const view = initialView ?? readPersistedMissionControlView();
+  const view = initialView ?? readMissionControlView();
 
   return (
     <section className="grid gap-4">
@@ -1143,16 +1143,21 @@ const PAST_MISSION_DEFAULT_TAB: PastMissionTabKey = "mine";
 // VEY-412: Mission Control remembers which tabs + page the player was on across the mission-detail
 // round-trip. The panel is DOM-driven (tabs/pages toggle `hidden` directly), so the whole component
 // remounts to defaults whenever the player returns from a mission detail — via browser back or the
-// in-app "← Mission Control" button. We persist the view in sessionStorage and read it back at
-// render so the restored selection is reflected directly in the markup, then write on every change.
+// in-app "← Mission Control" button.
+//
+// The selection is encoded in the `#/mission-control` hash query (`?activeTab=&activePage=&…`) so it
+// survives browser back-navigation, refresh, and sharing — the ticket's preferred mechanism. The
+// frontend runs inside a Farcaster Mini App iframe where sessionStorage is partitioned/blocked (the
+// earlier sessionStorage attempt silently no-opped there, so QA saw every return reset to defaults),
+// whereas the URL is always available. The in-app "← Mission Control" button rewrites the hash to a
+// bare `#/mission-control` with no query, so we also keep the last view in module memory and fall
+// back to it when the hash carries no params. Render reads the view; the click handlers write it.
 export type MissionControlView = {
   activePage: number;
   activeTab: ActiveMissionTabKey;
   pastPage: number;
   pastTab: PastMissionTabKey;
 };
-
-const MISSION_CONTROL_VIEW_STORAGE_KEY = "veydrift:mission-control:view";
 
 const ACTIVE_MISSION_TAB_KEYS = new Set<string>(ACTIVE_MISSION_TABS.map((tab) => tab.key));
 const PAST_MISSION_TAB_KEYS = new Set<string>(PAST_MISSION_TABS.map((tab) => tab.key));
@@ -1169,48 +1174,81 @@ function clampPageIndex(value: unknown): number {
   return Number.isFinite(page) && page > 0 ? page : 0;
 }
 
-function missionControlViewStorage(): Storage | null {
-  // Accessing window.sessionStorage can throw in privacy mode / sandboxed iframes, and is undefined
-  // under SSR and the test renderer — fall back to defaults in every such case.
+// Fallback for the in-app "← Mission Control" button, which rewrites the hash to a bare
+// `#/mission-control` (no query). A fresh page load reloads this module, so it resets to defaults —
+// which is the correct fresh-load behavior; deep links / refresh restore from the URL query instead.
+let lastMissionControlView: MissionControlView = DEFAULT_MISSION_CONTROL_VIEW;
+
+function normalizeMissionControlView(raw: Partial<Record<keyof MissionControlView, unknown>>): MissionControlView {
+  return {
+    // Pages are encoded 1-based in the URL for readable shareable links; clamp back to a 0-based index.
+    activePage: clampPageIndex(Number(raw.activePage) - 1),
+    activeTab: ACTIVE_MISSION_TAB_KEYS.has(String(raw.activeTab))
+      ? (raw.activeTab as ActiveMissionTabKey)
+      : ACTIVE_MISSION_DEFAULT_TAB,
+    pastPage: clampPageIndex(Number(raw.pastPage) - 1),
+    pastTab: PAST_MISSION_TAB_KEYS.has(String(raw.pastTab))
+      ? (raw.pastTab as PastMissionTabKey)
+      : PAST_MISSION_DEFAULT_TAB,
+  };
+}
+
+// The query string of the current hash route (everything after the first `?`), or null off-DOM.
+function missionControlHashQuery(): string | null {
   try {
     if (typeof window === "undefined") return null;
-    return window.sessionStorage ?? null;
+    const hash = window.location.hash ?? "";
+    const queryAt = hash.indexOf("?");
+    return queryAt === -1 ? "" : hash.slice(queryAt + 1);
   } catch {
     return null;
   }
 }
 
-export function readPersistedMissionControlView(): MissionControlView {
-  const storage = missionControlViewStorage();
-  if (!storage) return DEFAULT_MISSION_CONTROL_VIEW;
-  try {
-    const raw = storage.getItem(MISSION_CONTROL_VIEW_STORAGE_KEY);
-    if (!raw) return DEFAULT_MISSION_CONTROL_VIEW;
-    const parsed = JSON.parse(raw) as Partial<MissionControlView> | null;
-    if (!parsed || typeof parsed !== "object") return DEFAULT_MISSION_CONTROL_VIEW;
-    return {
-      activePage: clampPageIndex(parsed.activePage),
-      activeTab: ACTIVE_MISSION_TAB_KEYS.has(String(parsed.activeTab))
-        ? (parsed.activeTab as ActiveMissionTabKey)
-        : ACTIVE_MISSION_DEFAULT_TAB,
-      pastPage: clampPageIndex(parsed.pastPage),
-      pastTab: PAST_MISSION_TAB_KEYS.has(String(parsed.pastTab))
-        ? (parsed.pastTab as PastMissionTabKey)
-        : PAST_MISSION_DEFAULT_TAB,
-    };
-  } catch {
-    return DEFAULT_MISSION_CONTROL_VIEW;
-  }
+export function readMissionControlView(): MissionControlView {
+  const query = missionControlHashQuery();
+  if (query === null) return lastMissionControlView;
+  const params = new URLSearchParams(query);
+  // Only treat the URL as authoritative when it actually carries a view param. The in-app back button
+  // lands on a bare `#/mission-control`; in that case restore the last in-memory selection instead.
+  const hasViewParam = ["activeTab", "activePage", "pastTab", "pastPage"].some((key) => params.has(key));
+  if (!hasViewParam) return lastMissionControlView;
+  const view = normalizeMissionControlView({
+    activePage: params.get("activePage"),
+    activeTab: params.get("activeTab"),
+    pastPage: params.get("pastPage"),
+    pastTab: params.get("pastTab"),
+  });
+  lastMissionControlView = view;
+  return view;
 }
 
-function persistMissionControlView(partial: Partial<MissionControlView>): void {
-  const storage = missionControlViewStorage();
-  if (!storage) return;
+// Serializes the view into hash query params, omitting defaults so a default view yields a clean
+// `#/mission-control` and "defaults unchanged on a fresh load" holds. Pages are written 1-based.
+function missionControlViewQuery(view: MissionControlView): string {
+  const params = new URLSearchParams();
+  if (view.activeTab !== ACTIVE_MISSION_DEFAULT_TAB) params.set("activeTab", view.activeTab);
+  if (view.activePage > 0) params.set("activePage", String(view.activePage + 1));
+  if (view.pastTab !== PAST_MISSION_DEFAULT_TAB) params.set("pastTab", view.pastTab);
+  if (view.pastPage > 0) params.set("pastPage", String(view.pastPage + 1));
+  return params.toString();
+}
+
+export function persistMissionControlView(partial: Partial<MissionControlView>): void {
+  lastMissionControlView = { ...readMissionControlView(), ...partial };
   try {
-    const next = { ...readPersistedMissionControlView(), ...partial };
-    storage.setItem(MISSION_CONTROL_VIEW_STORAGE_KEY, JSON.stringify(next));
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash ?? "";
+    const path = (hash.startsWith("#") ? hash.slice(1) : hash).split("?")[0] || "/mission-control";
+    // Only reflect into the URL while actually on the mission-control route, and use replaceState so
+    // we neither spam browser history on every tab click nor fire a `hashchange` that would re-run the
+    // app router and remount this panel mid-interaction.
+    if (!path.replace(/^\/+/, "").startsWith("mission-control")) return;
+    const query = missionControlViewQuery(lastMissionControlView);
+    const nextHash = query ? `#${path}?${query}` : `#${path}`;
+    if (nextHash !== hash) window.history.replaceState(window.history.state, "", nextHash);
   } catch {
-    // Best-effort persistence: ignore quota/security errors.
+    // Best-effort URL reflection: the in-memory fallback above still restores the view.
   }
 }
 

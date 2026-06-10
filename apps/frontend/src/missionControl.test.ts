@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage, allActiveMissionRows, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
+import { MissionControlPage, allActiveMissionRows, partitionActiveMissionRows, persistMissionControlView, readMissionControlView, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
@@ -1019,6 +1019,69 @@ describe("Mission Control battle reports", () => {
     // Page 2 (index 1) is shown; page 1 (index 0) is hidden — the remembered page, not page 1.
     expect(firstPage?.props?.hidden).toBe(true);
     expect(secondPage?.props?.hidden).toBe(false);
+  });
+
+  // VEY-412 rework: the selection is persisted in the `#/mission-control` hash query, not
+  // sessionStorage (which is blocked inside the Farcaster Mini App iframe, so the earlier attempt
+  // reset to defaults on every return). These exercise the read/write round-trip directly.
+  function withMockWindow(initialHash: string, run: () => void): void {
+    const realWindow = (globalThis as { window?: unknown }).window;
+    const location = { hash: initialHash };
+    const fakeWindow = {
+      location,
+      history: {
+        state: null as unknown,
+        replaceState(state: unknown, _title: string, url: string) {
+          this.state = state;
+          location.hash = url.startsWith("#") ? url : `#${url}`;
+        },
+      },
+    };
+    (globalThis as { window?: unknown }).window = fakeWindow;
+    // Flush the module-level in-memory fallback back to defaults so tests don't leak state into one
+    // another: a hash that spells out every param at its default value normalizes to the defaults.
+    location.hash = "#/mission-control?activeTab=mine&activePage=1&pastTab=mine&pastPage=1";
+    readMissionControlView();
+    location.hash = initialHash;
+    try {
+      run();
+    } finally {
+      (globalThis as { window?: unknown }).window = realWindow;
+    }
+  }
+
+  test("reads the tabs + pages from the hash query, decoding 1-based pages (VEY-412)", () => {
+    withMockWindow("#/mission-control?activeTab=all&activePage=2&pastTab=all&pastPage=3", () => {
+      expect(readMissionControlView()).toEqual({ activeTab: "all", activePage: 1, pastTab: "all", pastPage: 2 });
+    });
+  });
+
+  test("persists a selection into the hash query via replaceState, omitting defaults (VEY-412)", () => {
+    withMockWindow("#/mission-control", () => {
+      // Selecting the All tab on page index 1 writes a 1-based page and leaves the still-default past
+      // tab/page out of the URL, so the query stays minimal and shareable.
+      persistMissionControlView({ activeTab: "all", activePage: 1 });
+      expect(window.location.hash).toBe("#/mission-control?activeTab=all&activePage=2");
+      expect(readMissionControlView()).toEqual({ activeTab: "all", activePage: 1, pastTab: "mine", pastPage: 0 });
+    });
+  });
+
+  test("restores the last selection on the in-app bare #/mission-control hash (VEY-412)", () => {
+    withMockWindow("#/mission-control", () => {
+      persistMissionControlView({ pastTab: "all", pastPage: 2 });
+      expect(window.location.hash).toBe("#/mission-control?pastTab=all&pastPage=3");
+      // The in-app "← Mission Control" button rewrites the hash to a bare route with no query; the
+      // remembered selection must still come back from the in-memory fallback.
+      window.location.hash = "#/mission-control";
+      expect(readMissionControlView()).toEqual({ activeTab: "mine", activePage: 0, pastTab: "all", pastPage: 2 });
+    });
+  });
+
+  test("a default selection clears the query to a clean #/mission-control (VEY-412)", () => {
+    withMockWindow("#/mission-control?activeTab=all&activePage=2", () => {
+      persistMissionControlView({ activeTab: "mine", activePage: 0 });
+      expect(window.location.hash).toBe("#/mission-control");
+    });
   });
 });
 
