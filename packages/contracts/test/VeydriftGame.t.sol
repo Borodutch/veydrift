@@ -880,6 +880,57 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(targetPlanetId).lastSettledAt, arrivalAt);
     }
 
+    function testCollectionClampsToEarliestOfMultiplePendingArrivals() public {
+        (uint256 originPlanetId, uint256 target1,) = _seedAttackPlanets();
+        // Computer level 1 gives a second fleet slot so both attacks can be in flight at once,
+        // while keeping the attacker score close to the single-attack tests (no score protection).
+        _setTechnologyLevel(player, Technology.Computer, 1);
+        _setShipCount(originPlanetId, Ship.Battleship, 100);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+
+        // A second target farther from origin (position 20 vs 9) so its arrival is later.
+        address defender2 = address(0xBEEF);
+        vm.deal(defender2, 1 ether);
+        vm.prank(defender2);
+        uint256 target2 = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(target2, 1, 100, 20);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 50;
+        VeydriftGameStorage.Resources memory noCargo =
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0});
+
+        vm.prank(player);
+        uint256 m1 = game.launchFleetMission(
+            originPlanetId,
+            target1,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            noCargo,
+            901
+        );
+        vm.prank(player);
+        uint256 m2 = game.launchFleetMission(
+            originPlanetId,
+            target2,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            noCargo,
+            902
+        );
+
+        (, uint64 arrival1,,) = _fleetMission(m1);
+        (, uint64 arrival2,,) = _fleetMission(m2);
+        assertLt(arrival1, arrival2);
+
+        // Warp past BOTH arrivals: two missions are now pending resolution for the origin planet.
+        // Collection must clamp to the EARLIEST unresolved arrival, never across it.
+        vm.warp(uint256(arrival2) + 1 hours);
+        vm.prank(player);
+        game.settlePlanet(originPlanetId);
+        assertEq(game.planet(originPlanetId).lastSettledAt, arrival1);
+    }
+
     function testBuildingUpgradeSpendsInternalResources() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
