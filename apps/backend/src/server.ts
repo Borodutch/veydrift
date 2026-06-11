@@ -2372,7 +2372,12 @@ function rankedHighscorePlanets(
     const ships = indexer?.shipRows(planet.planetId) ?? [];
     const defenses = indexer?.defenseRows(planet.planetId) ?? [];
     const buildings = indexer?.infrastructureRows(planet.planetId) ?? [];
-    const tactical = indexedPlanetTacticalSummary(planet, buildings, ships, defenses, technologyLevels);
+    // Accrue production before computing raidable loot so the Raid Target Finder / Rankings
+    // tactical intel matches the resources the public planet read (`GET /planets/{id}`) shows.
+    // Without this the snapshot's stored resources under-report LOOT versus the planet's live,
+    // accrued public resources. (VEY-KANEO-454)
+    const accrued = indexer ? accruedPlanetState(indexer, planet) : planet;
+    const tactical = indexedPlanetTacticalSummary(accrued, buildings, ships, defenses, technologyLevels);
 
     return {
       planetId: planet.planetId,
