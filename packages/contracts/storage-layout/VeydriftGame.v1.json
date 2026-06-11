@@ -263,6 +263,24 @@
       "offset": 0,
       "slot": "45",
       "type": "mapping(uint256 => struct ShipQueue[])"
+    },
+    {
+      "label": "_stationedDefenseMissions",
+      "offset": 0,
+      "slot": "46",
+      "type": "mapping(uint256 => uint256[])"
+    },
+    {
+      "label": "_stationedDefenseMissionIndex",
+      "offset": 0,
+      "slot": "47",
+      "type": "mapping(uint256 => mapping(uint256 => uint256))"
+    },
+    {
+      "label": "_defenseHoldUntil",
+      "offset": 0,
+      "slot": "48",
+      "type": "mapping(uint256 => uint64)"
     }
   ],
   "structs": {

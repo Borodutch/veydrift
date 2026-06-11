@@ -21,6 +21,9 @@ library VeydriftAntiRaidPrimitives {
 
     uint32 public constant HOSTILE_MISSION_REVEAL_SECONDS = 30 minutes;
     uint32 public constant ACS_DEFEND_JOIN_CUTOFF_SECONDS = 5 minutes;
+    // OGame-style ACS Defend (DefenseHold) stationing window bounds.
+    uint32 public constant MIN_DEFENSE_HOLD_SECONDS = 1 hours;
+    uint32 public constant MAX_DEFENSE_HOLD_SECONDS = 32 hours;
     uint32 public constant ATTACK_COOLDOWN_SECONDS = 15 minutes;
     uint32 public constant BASHING_WINDOW_SECONDS = 24 hours;
     uint8 public constant MAX_ATTACKS_PER_BASHING_WINDOW = 6;
