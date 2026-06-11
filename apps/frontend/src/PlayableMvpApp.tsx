@@ -233,6 +233,37 @@ export function walletSpendableResourcesFor({
   return isWalletConnected ? onChainResources : undefined;
 }
 
+// VEY-KANEO-453: the mission fuel/cargo gates must read the same canonical spendable
+// balance the top bar and every other affordability gate already use. When a wallet is
+// connected, the polled on-chain `spendableResources` is authoritative; the backend
+// wallet-planet snapshot can lag well behind it and falsely block Confirm with messages
+// like "Need 138 deuterium for fuel" while the player actually holds thousands. We only
+// fall back to the backend snapshot (string-valued, validated through `safeResourceNumber`)
+// when no wallet-connected spendable balance is available.
+export function missionOriginResources({
+  isWalletConnected,
+  spendableResources,
+  planetResources,
+}: {
+  isWalletConnected: boolean;
+  spendableResources: PlayableState["resources"] | undefined;
+  planetResources: OnChainResources | undefined;
+}): PlayableState["resources"] | undefined {
+  if (isWalletConnected && spendableResources) {
+    return {
+      metal: Math.max(0, Math.trunc(spendableResources.metal)),
+      crystal: Math.max(0, Math.trunc(spendableResources.crystal)),
+      deuterium: Math.max(0, Math.trunc(spendableResources.deuterium)),
+    };
+  }
+  if (!planetResources) return undefined;
+  return {
+    metal: safeResourceNumber(planetResources.metal) ?? 0,
+    crystal: safeResourceNumber(planetResources.crystal) ?? 0,
+    deuterium: safeResourceNumber(planetResources.deuterium) ?? 0,
+  };
+}
+
 const buildingFinishStateReadFailureLabel =
   "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
 const buildingFinishLiveStateRequiredLabel =
@@ -1891,14 +1922,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         position: selectedManagedPlanet.position,
       }
     : homeCoords;
-  const originMissionResources = useMemo(() => selectedManagedPlanet?.resources
-    ? {
-        metal: safeResourceNumber(selectedManagedPlanet.resources.metal) ?? 0,
-        crystal: safeResourceNumber(selectedManagedPlanet.resources.crystal) ?? 0,
-        deuterium: safeResourceNumber(selectedManagedPlanet.resources.deuterium) ?? 0,
-      }
-    : undefined,
-  [selectedManagedPlanet?.resources]);
   const homeCoordinateLabel = useMemo(
     () => displayHomeCoordinates(homePlanetIdentity, homeCoords, planet?.coordinates),
     [
@@ -3314,6 +3337,15 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const spendableResources = useMemo(() => {
     return walletSpendableResourcesFor({ isWalletConnected, onChainResources: canonicalOnChainResources });
   }, [isWalletConnected, canonicalOnChainResources]);
+  // VEY-KANEO-453: the mission fuel/cargo gate reads the canonical spendable balance for
+  // the active (origin) planet — the same value the top bar shows and a transaction spends
+  // against — falling back to the backend wallet-planet snapshot only when no wallet-connected
+  // spendable balance is available.
+  const originMissionResources = useMemo(() => missionOriginResources({
+    isWalletConnected,
+    spendableResources,
+    planetResources: selectedManagedPlanet?.resources,
+  }), [isWalletConnected, spendableResources, selectedManagedPlanet?.resources]);
   const activeBuildingQueue = useMemo(
     () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],

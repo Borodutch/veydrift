@@ -36,6 +36,7 @@ import {
   researchStateForCompletionRevalidation,
   researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
+  missionOriginResources,
   shipyardStateForMissionActions,
   shipCompletionPlanetIdFor,
   topBarEnergyFor,
@@ -544,6 +545,43 @@ describe("Playable MVP app display helpers", () => {
     expect(walletSpendableResourcesFor({
       isWalletConnected: false,
       onChainResources: resources,
+    })).toBeUndefined();
+  });
+
+  test("mission origin resources track the canonical spendable balance, not the lagging backend snapshot", () => {
+    // VEY-KANEO-453: the backend wallet-planet snapshot lags the real on-chain balance, so the
+    // mission fuel gate must read the same canonical spendable balance the top bar shows. Here the
+    // player actually holds 3,062 deuterium while the stale snapshot still reports 100 — the gate
+    // must not falsely block Confirm.
+    expect(missionOriginResources({
+      isWalletConnected: true,
+      spendableResources: { metal: 12_000, crystal: 8_000, deuterium: 3_062 },
+      planetResources: { metal: "5000", crystal: "4000", deuterium: "100" },
+    })).toEqual({ metal: 12_000, crystal: 8_000, deuterium: 3_062 });
+  });
+
+  test("mission origin resources fall back to the backend snapshot when no wallet spendable balance is available", () => {
+    // No wallet connected: there is no on-chain spendable read, so the validated backend snapshot
+    // (string-valued) is the only available source.
+    expect(missionOriginResources({
+      isWalletConnected: false,
+      spendableResources: undefined,
+      planetResources: { metal: "5000", crystal: "4000", deuterium: "1200" },
+    })).toEqual({ metal: 5_000, crystal: 4_000, deuterium: 1_200 });
+
+    // Wallet connected but the canonical balance has not been read yet — fall back rather than
+    // returning undefined and dropping the gate to zero.
+    expect(missionOriginResources({
+      isWalletConnected: true,
+      spendableResources: undefined,
+      planetResources: { metal: "5000", crystal: "4000", deuterium: "1200" },
+    })).toEqual({ metal: 5_000, crystal: 4_000, deuterium: 1_200 });
+
+    // No source at all yields undefined, leaving the caller to treat the balance as unknown.
+    expect(missionOriginResources({
+      isWalletConnected: false,
+      spendableResources: undefined,
+      planetResources: undefined,
     })).toBeUndefined();
   });
 
