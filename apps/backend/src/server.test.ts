@@ -3424,6 +3424,12 @@ describe("Veydrift backend", () => {
         targetLevel: 2
       }
     });
+    // Personal state endpoints expose accrued resourcesAsOfNow (VEY-KANEO-464). This
+    // fixture has no mines (zero production), so the projection equals canonical
+    // resources, but the field must be present and non-null for a warm planet.
+    expect(shipyard.resourcesAsOfNow).not.toBeNull();
+    expect(shipyard.resourcesAsOfNow).toEqual(shipyard.resources);
+    expect(research.resourcesAsOfNow).toEqual(research.resources);
     expect(rift).toMatchObject({
       source: "contract-state-indexer",
       unlocked: true,
