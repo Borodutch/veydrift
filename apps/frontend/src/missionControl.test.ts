@@ -321,6 +321,42 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("allied fleets stationed in defense");
   });
 
+  test("VEY-KANEO-440: stationed-defense panel renders a clickable Defend-a-planet CTA wired to navigation", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    let defendOpened = 0;
+    // The Defend launch lives on the Galaxy planet action, but players/QA look for it on this panel
+    // (the empty state literally tells them to "choose Defend"). The CTA must be present and invoke the
+    // navigate-to-Galaxy callback so the entry point is discoverable from the screen that describes it —
+    // this is the recurring "no Defend button anywhere" QA rework cause.
+    const tree = StationedDefenseSection({
+      incoming: [],
+      now,
+      outgoing: [],
+      onOpenReport: () => undefined,
+      onDefendPlanet: () => {
+        defendOpened += 1;
+      },
+    });
+    const text = collectText(tree).join(" ");
+    expect(text).toContain("Defend a planet");
+
+    const button = findElement(tree, (node) =>
+      node.type === "button"
+      && collectText(node.props?.children).join(" ").includes("Defend a planet"));
+    expect(button).toBeTruthy();
+    (button?.props as { onClick: () => void }).onClick();
+    expect(defendOpened).toBe(1);
+
+    // Without the callback the CTA is omitted (e.g. contexts that cannot navigate).
+    const noCta = collectText(StationedDefenseSection({
+      incoming: [],
+      now,
+      outgoing: [],
+      onOpenReport: () => undefined,
+    })).join(" ");
+    expect(noCta).not.toContain("Defend a planet");
+  });
+
   test("active missions render as cards with no table column headers (VEY-400)", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionControlPage(missionControlProps(now, {
@@ -1370,6 +1406,7 @@ function missionControlProps(
     now,
     onCompleteReturn: () => undefined,
     onCounterplay: () => undefined,
+    onDefendPlanet: () => undefined,
     onJoinAttack: () => undefined,
     onOpenReport: () => undefined,
     onOpenReportList: () => undefined,
@@ -1437,6 +1474,29 @@ function findElements(node: unknown, tag: string): FoundElement[] {
   }
   const self = vnode.type === tag ? [vnode] : [];
   return self.concat(findElements(vnode.props?.children, tag));
+}
+
+type VNode = { type?: unknown; props?: { children?: unknown; onClick?: unknown } & Record<string, unknown> };
+
+// Depth-first search for the first vnode matching a predicate, descending through arrays, children, and
+// function-component renders (so a control nested inside a rendered component is still reachable).
+function findElement(node: unknown, match: (vnode: VNode) => boolean): VNode | undefined {
+  if (node === null || node === undefined || typeof node !== "object") return undefined;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findElement(child, match);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  const vnode = node as VNode;
+  if (match(vnode)) return vnode;
+  if (typeof vnode.type === "function") {
+    const render = vnode.type as (props: { children?: unknown }) => unknown;
+    if (render.name === "Icon") return undefined;
+    return findElement(render({ ...(vnode.props ?? {}) }), match);
+  }
+  return findElement(vnode.props?.children, match);
 }
 
 function collectText(node: unknown): string[] {
