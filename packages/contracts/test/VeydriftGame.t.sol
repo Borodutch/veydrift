@@ -106,6 +106,9 @@ contract ShortTransferResourceToken is MockResourceToken {
 
 contract VeydriftGameTest is Test {
     event PlanetShipCountChanged(uint256 indexed planetId, Ship indexed ship, uint32 total);
+    event PlanetDefenseCountChanged(
+        uint256 indexed planetId, Defense indexed defense, uint32 total
+    );
     event DefenseQueued(
         uint256 indexed planetId,
         Defense indexed defense,
@@ -827,6 +830,81 @@ contract VeydriftGameTest is Test {
         assertLt(energyAfter, energyBefore);
     }
 
+    function testCombatLossesEmitShipAndDefenseCountChanged() public {
+        // Pin the settlement entropy so planet attributes (and therefore the battle outcome) are
+        // deterministic; foundry otherwise randomizes block.prevrandao per run, which would make the
+        // per-unit combat losses asserted below flaky. The force levels stay within anti-bashing
+        // score protection while still letting the attacker chew through the defender's ship and
+        // defense stacks, so both a ship-count and a defense-count loss are guaranteed to occur.
+        vm.prevrandao(keccak256("combat losses entropy"));
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.Battleship, 100);
+        _setShipCount(targetPlanetId, Ship.LightFighter, 100);
+        _setDefenseCount(targetPlanetId, Defense.RocketLauncher, 100);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 100;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            901
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 901);
+
+        // The overwhelmed defender loses ships and defenses; every loss routes through the canonical
+        // count sinks, so the backend can index combat losses from events alone. Scan the logs
+        // (rather than anchoring on a single ordered emit) and assert the last emitted total for each
+        // unit reconstructs the final on-chain count.
+        vm.recordLogs();
+        game.resolveFleetMission(missionId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 shipSig = keccak256("PlanetShipCountChanged(uint256,uint8,uint32)");
+        bytes32 defenseSig = keccak256("PlanetDefenseCountChanged(uint256,uint8,uint32)");
+        bool shipLossEvented;
+        bool defenseLossEvented;
+        uint32 lastShipTotal;
+        uint32 lastDefenseTotal;
+        for (uint256 i = 0; i < logs.length;) {
+            Vm.Log memory entry = logs[i];
+            if (entry.emitter == address(game) && entry.topics[1] == bytes32(targetPlanetId)) {
+                if (
+                    entry.topics[0] == shipSig
+                        && entry.topics[2] == bytes32(uint256(uint8(Ship.LightFighter)))
+                ) {
+                    shipLossEvented = true;
+                    lastShipTotal = abi.decode(entry.data, (uint32));
+                } else if (
+                    entry.topics[0] == defenseSig
+                        && entry.topics[2] == bytes32(uint256(uint8(Defense.RocketLauncher)))
+                ) {
+                    defenseLossEvented = true;
+                    lastDefenseTotal = abi.decode(entry.data, (uint32));
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+
+        assertTrue(shipLossEvented, "ship-count loss event missing");
+        assertTrue(defenseLossEvented, "defense-count loss event missing");
+        // Last emitted total is the canonical post-combat count (last-writer-wins upsert).
+        assertEq(lastShipTotal, game.shipCount(targetPlanetId, Ship.LightFighter));
+        assertEq(lastDefenseTotal, game.defenseCount(targetPlanetId, Defense.RocketLauncher));
+        assertLt(game.shipCount(targetPlanetId, Ship.LightFighter), 100);
+        assertLt(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 100);
+    }
+
     function _launchOriginAttack() internal returns (uint256 originPlanetId, uint256 missionId) {
         uint256 targetPlanetId;
         (originPlanetId, targetPlanetId,) = _seedAttackPlanets();
@@ -1445,6 +1523,68 @@ contract VeydriftGameTest is Test {
         assertEq(game.defenseCount(targetPlanetId, Defense.AntiBallisticMissile), 0);
         assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 7);
         assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 20);
+    }
+
+    function testInterplanetaryMissileEmitsDefenseCountChangedForEveryLoss() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
+        _setDefenseCount(originPlanetId, Defense.InterplanetaryMissile, 5);
+        _setDefenseCount(targetPlanetId, Defense.AntiBallisticMissile, 2);
+        _setDefenseCount(targetPlanetId, Defense.LightLaser, 10);
+
+        // The silo debit, the interception debit, and the primary-target hit each emit the
+        // resulting stored total so the backend can index defense state without polling.
+        vm.expectEmit(true, true, false, true, address(game));
+        emit PlanetDefenseCountChanged(originPlanetId, Defense.InterplanetaryMissile, 0);
+        vm.expectEmit(true, true, false, true, address(game));
+        emit PlanetDefenseCountChanged(targetPlanetId, Defense.AntiBallisticMissile, 0);
+        vm.expectEmit(true, true, false, true, address(game));
+        emit PlanetDefenseCountChanged(targetPlanetId, Defense.LightLaser, 7);
+        vm.prank(player);
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.LightLaser, 5
+        );
+    }
+
+    function testFleetLaunchAndReturnEmitShipCountChanged() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 3);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+
+        uint256 destinationPlanetId = _createResolvedColony(player, originPlanetId, 7);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 3;
+
+        // Launch debits the origin fleet and emits the new stored total.
+        vm.expectEmit(true, true, false, true, address(game));
+        emit PlanetShipCountChanged(originPlanetId, Ship.SmallCargo, 0);
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            destinationPlanetId,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            ships,
+            VeydriftGameStorage.Resources({metal: 100, crystal: 0, deuterium: 0}),
+            0
+        );
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 0);
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        vm.prank(player);
+        game.resolveFleetMission(missionId);
+
+        (,, uint64 returnAt,) = _fleetMission(missionId);
+        vm.warp(returnAt);
+        // Return credits the surviving fleet back to the origin and emits the restored total.
+        vm.expectEmit(true, true, false, true, address(game));
+        emit PlanetShipCountChanged(originPlanetId, Ship.SmallCargo, 3);
+        vm.prank(player);
+        game.completeFleetMissionReturn(missionId);
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 3);
     }
 
     function testInterplanetaryMissileAttackUsesScoreProtectionButDoesNotCountBashing() public {

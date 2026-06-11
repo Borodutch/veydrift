@@ -560,6 +560,9 @@ abstract contract VeydriftGameStorage {
         uint256 indexed missionId, uint256 indexed targetPlanetId, uint128 metal, uint128 crystal
     );
     event PlanetShipCountChanged(uint256 indexed planetId, Ship indexed ship, uint32 total);
+    event PlanetDefenseCountChanged(
+        uint256 indexed planetId, Defense indexed defense, uint32 total
+    );
     event FleetMissionReturnExposed(
         uint256 indexed missionId,
         address indexed owner,
@@ -702,6 +705,89 @@ abstract contract VeydriftGameStorage {
         }
         planetIds.pop();
         delete _ownedPlanetIndex[planetId];
+    }
+
+    /// @dev Canonical topic0 hashes for the two count-changed events. Both are emitted through the
+    ///      shared `_writeUnitCount` sink below so the LOG3 bytecode exists once per module rather
+    ///      than once per event, keeping the size-critical combat module within the EIP-170 limit.
+    ///      The events stay declared above so the ABI and off-chain decoders are unchanged.
+    bytes32 private constant _SHIP_COUNT_CHANGED_TOPIC =
+        keccak256("PlanetShipCountChanged(uint256,uint8,uint32)");
+    bytes32 private constant _DEFENSE_COUNT_CHANGED_TOPIC =
+        keccak256("PlanetDefenseCountChanged(uint256,uint8,uint32)");
+
+    /// @dev Writes `total` into a `mapping(uint256 planetId => mapping(uintEnum unit => uint32))` at
+    ///      `baseSlot` and emits a matching `(planetId indexed, unit indexed, uint32 total)` log. The
+    ///      storage slot is derived exactly as Solidity derives `m[planetId][unitId]`
+    ///      (`keccak(unitId . keccak(planetId . baseSlot))`) and the log is identical to a Solidity
+    ///      `emit` of the matching event. Folding the store + log here means the nested-mapping write
+    ///      and the LOG3 bytecode each exist once, rather than once per ship/defense setter — the
+    ///      headroom the size-critical combat module needs to stay within EIP-170.
+    function _writeUnitCount(
+        uint256 baseSlot,
+        bytes32 topic0,
+        uint256 planetId,
+        uint256 unitId,
+        uint32 total
+    ) private {
+        assembly ("memory-safe") {
+            mstore(0x00, planetId)
+            mstore(0x20, baseSlot)
+            mstore(0x20, keccak256(0x00, 0x40))
+            mstore(0x00, unitId)
+            sstore(keccak256(0x00, 0x40), total)
+            mstore(0x00, total)
+            log3(0x00, 0x20, topic0, planetId, unitId)
+        }
+    }
+
+    /// @dev Overwrites a planet's stored ship count and emits the resulting total. This is the single
+    ///      ship-count mutation sink: every ship state change routes through here so indexers can
+    ///      track ship state without polling, and the event-emitting bytecode exists only once.
+    function _setPlanetShipCount(uint256 planetId, Ship ship, uint32 total) internal {
+        uint256 baseSlot;
+        assembly {
+            baseSlot := _shipCounts.slot
+        }
+        _writeUnitCount(baseSlot, _SHIP_COUNT_CHANGED_TOPIC, planetId, uint256(uint8(ship)), total);
+    }
+
+    /// @dev Adds `quantity` ships to a planet and emits the resulting total. No-op when `quantity` is 0.
+    function _creditPlanetShips(uint256 planetId, Ship ship, uint32 quantity) internal {
+        if (quantity == 0) return;
+        _setPlanetShipCount(planetId, ship, _shipCounts[planetId][ship] + quantity);
+    }
+
+    /// @dev Removes `quantity` ships from a planet and emits the resulting total. No-op when `quantity`
+    ///      is 0. Reverts on underflow like a checked `-=`, so callers must validate availability first.
+    function _debitPlanetShips(uint256 planetId, Ship ship, uint32 quantity) internal {
+        if (quantity == 0) return;
+        _setPlanetShipCount(planetId, ship, _shipCounts[planetId][ship] - quantity);
+    }
+
+    /// @dev Overwrites a planet's stored defense count and emits the resulting total. Single
+    ///      defense-count mutation sink, mirroring `_setPlanetShipCount`.
+    function _setPlanetDefenseCount(uint256 planetId, Defense defense, uint32 total) internal {
+        uint256 baseSlot;
+        assembly {
+            baseSlot := _defenseCounts.slot
+        }
+        _writeUnitCount(
+            baseSlot, _DEFENSE_COUNT_CHANGED_TOPIC, planetId, uint256(uint8(defense)), total
+        );
+    }
+
+    /// @dev Adds `quantity` defenses to a planet and emits the resulting total. No-op when 0.
+    function _creditPlanetDefenses(uint256 planetId, Defense defense, uint32 quantity) internal {
+        if (quantity == 0) return;
+        _setPlanetDefenseCount(planetId, defense, _defenseCounts[planetId][defense] + quantity);
+    }
+
+    /// @dev Removes `quantity` defenses from a planet and emits the resulting total. No-op when 0.
+    ///      Reverts on underflow like a checked `-=`, so callers must validate availability first.
+    function _debitPlanetDefenses(uint256 planetId, Defense defense, uint32 quantity) internal {
+        if (quantity == 0) return;
+        _setPlanetDefenseCount(planetId, defense, _defenseCounts[planetId][defense] - quantity);
     }
 
     function _recordAttack(address attacker, uint256 targetPlanetId) internal {

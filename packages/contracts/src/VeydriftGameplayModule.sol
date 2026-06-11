@@ -714,8 +714,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function _debitMissionShips(uint256 planetId, MissionShips memory ships) private {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            uint32 quantity = _missionShipQuantity(ships, ship);
-            if (quantity != 0) _shipCounts[planetId][ship] -= quantity;
+            _debitPlanetShips(planetId, ship, _missionShipQuantity(ships, ship));
             unchecked {
                 ++i;
             }
@@ -725,8 +724,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function _creditMissionShips(uint256 planetId, MissionShips memory ships) private {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            uint32 quantity = _missionShipQuantity(ships, ship);
-            if (quantity != 0) _shipCounts[planetId][ship] += quantity;
+            _creditPlanetShips(planetId, ship, _missionShipQuantity(ships, ship));
             unchecked {
                 ++i;
             }

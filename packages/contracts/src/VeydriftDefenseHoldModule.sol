@@ -227,8 +227,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
     function _debitMissionShips(uint256 planetId, MissionShips calldata ships) private {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
-            uint32 quantity = _missionShipQuantity(ships, ship);
-            if (quantity != 0) _shipCounts[planetId][ship] -= quantity;
+            _debitPlanetShips(planetId, ship, _missionShipQuantity(ships, ship));
             unchecked {
                 ++i;
             }

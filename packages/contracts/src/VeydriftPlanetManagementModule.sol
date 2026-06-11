@@ -42,16 +42,16 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
         uint32 available = _defenseCounts[originPlanetId][Defense.InterplanetaryMissile];
         if (quantity == 0 || available < quantity) revert InvalidQuantity();
-        _defenseCounts[originPlanetId][Defense.InterplanetaryMissile] = available - quantity;
+        _debitPlanetDefenses(originPlanetId, Defense.InterplanetaryMissile, quantity);
 
         uint32 antiBallistic = _defenseCounts[targetPlanetId][Defense.AntiBallisticMissile];
         uint32 intercepted = antiBallistic < quantity ? antiBallistic : quantity;
-        _defenseCounts[targetPlanetId][Defense.AntiBallisticMissile] = antiBallistic - intercepted;
+        _debitPlanetDefenses(targetPlanetId, Defense.AntiBallisticMissile, intercepted);
 
         uint32 hits = quantity - intercepted;
         uint32 targetDefense = _defenseCounts[targetPlanetId][primaryTarget];
         uint32 destroyedPrimary = targetDefense < hits ? targetDefense : hits;
-        _defenseCounts[targetPlanetId][primaryTarget] = targetDefense - destroyedPrimary;
+        _debitPlanetDefenses(targetPlanetId, primaryTarget, destroyedPrimary);
 
         emit InterplanetaryMissileAttack(
             msg.sender,
@@ -287,7 +287,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         if (occupiedCoordinates[coordinates]) revert CoordinatesOccupied();
 
         _settleResources(originPlanetId);
-        _shipCounts[originPlanetId][Ship.ColonyShip] -= 1;
+        _debitPlanetShips(originPlanetId, Ship.ColonyShip, 1);
         colonyPlanetId = nextPlanetId++;
         occupiedCoordinates[coordinates] = true;
         planetCountOf[msg.sender] += 1;
@@ -647,20 +647,20 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     }
 
     function _creditMissionShips(uint256 planetId, MissionShips memory ships) private {
-        _shipCounts[planetId][Ship.SmallCargo] += ships.smallCargo;
-        _shipCounts[planetId][Ship.LightFighter] += ships.lightFighter;
-        _shipCounts[planetId][Ship.Recycler] += ships.recycler;
-        _shipCounts[planetId][Ship.ColonyShip] += ships.colonyShip;
-        _shipCounts[planetId][Ship.LargeCargo] += ships.largeCargo;
-        _shipCounts[planetId][Ship.HeavyFighter] += ships.heavyFighter;
-        _shipCounts[planetId][Ship.Cruiser] += ships.cruiser;
-        _shipCounts[planetId][Ship.Battleship] += ships.battleship;
-        _shipCounts[planetId][Ship.Bomber] += ships.bomber;
-        _shipCounts[planetId][Ship.Destroyer] += ships.destroyer;
-        _shipCounts[planetId][Ship.Deathstar] += ships.deathstar;
-        _shipCounts[planetId][Ship.Battlecruiser] += ships.battlecruiser;
-        _shipCounts[planetId][Ship.Reaper] += ships.reaper;
-        _shipCounts[planetId][Ship.Pathfinder] += ships.pathfinder;
+        _creditPlanetShips(planetId, Ship.SmallCargo, ships.smallCargo);
+        _creditPlanetShips(planetId, Ship.LightFighter, ships.lightFighter);
+        _creditPlanetShips(planetId, Ship.Recycler, ships.recycler);
+        _creditPlanetShips(planetId, Ship.ColonyShip, ships.colonyShip);
+        _creditPlanetShips(planetId, Ship.LargeCargo, ships.largeCargo);
+        _creditPlanetShips(planetId, Ship.HeavyFighter, ships.heavyFighter);
+        _creditPlanetShips(planetId, Ship.Cruiser, ships.cruiser);
+        _creditPlanetShips(planetId, Ship.Battleship, ships.battleship);
+        _creditPlanetShips(planetId, Ship.Bomber, ships.bomber);
+        _creditPlanetShips(planetId, Ship.Destroyer, ships.destroyer);
+        _creditPlanetShips(planetId, Ship.Deathstar, ships.deathstar);
+        _creditPlanetShips(planetId, Ship.Battlecruiser, ships.battlecruiser);
+        _creditPlanetShips(planetId, Ship.Reaper, ships.reaper);
+        _creditPlanetShips(planetId, Ship.Pathfinder, ships.pathfinder);
     }
 
     function _addWithCap(uint128 current, uint128 addition, uint128 cap)

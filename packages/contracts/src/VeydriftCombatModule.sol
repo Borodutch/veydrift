@@ -402,8 +402,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         if (settlement.outcome == BattleOutcome.AttackerWin) {
             // Solar satellites are stationary planet fixtures. A cleared defense wipes
             // the remaining satellite field and emits one canonical total for indexers.
-            delete _shipCounts[mission.targetPlanetId][Ship.SolarSatellite];
-            emit PlanetShipCountChanged(mission.targetPlanetId, Ship.SolarSatellite, 0);
+            _setPlanetShipCount(mission.targetPlanetId, Ship.SolarSatellite, 0);
             _raidResourcesForAttackGroup(missionId, mission);
         }
         _returnLinkedMissions(missionId, mission);
@@ -1070,7 +1069,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             if (lost != 0) {
                 uint32 count = _shipCounts[planetId][ship];
                 uint32 destroyed = count > lost ? lost : count;
-                _shipCounts[planetId][ship] = count - destroyed;
+                _setPlanetShipCount(planetId, ship, count - destroyed);
                 _recordCombatWreckage(planetId, ship, destroyed);
             }
             unchecked {
@@ -1087,7 +1086,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             if (lost != 0) {
                 Defense defense = Defense(i);
                 uint32 count = _defenseCounts[planetId][defense];
-                _defenseCounts[planetId][defense] = count > lost ? count - lost : 0;
+                _setPlanetDefenseCount(planetId, defense, count > lost ? count - lost : 0);
             }
             unchecked {
                 ++i;
@@ -1163,7 +1162,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                 uint32 repaired = (destroyed * 7) / 10;
                 if (repaired != 0) {
                     Defense defense = Defense(i);
-                    _defenseCounts[planetId][defense] += repaired;
+                    _setPlanetDefenseCount(
+                        planetId, defense, _defenseCounts[planetId][defense] + repaired
+                    );
                 }
             }
             unchecked {
