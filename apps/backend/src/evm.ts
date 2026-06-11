@@ -1473,12 +1473,9 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   async getInfrastructureAuthoritativeFields(planetId: bigint): Promise<Partial<Pick<InfrastructureState, "buildings" | "resources">>> {
-    const [resources, buildings] = await Promise.all([
-      this.readResources("0x0adbf924", planetId),
-      this.readBuildingRows(planetId)
-    ]);
-
-    return { resources, buildings };
+    return {
+      resources: await this.readResources("0x0adbf924", planetId)
+    };
   }
 
   async getMoonState(wallet: Address, selectedPlanetId?: bigint): Promise<MoonState> {
