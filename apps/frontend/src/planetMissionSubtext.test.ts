@@ -77,7 +77,7 @@ describe("planetMissionSubtext owner vs third-party classification", () => {
     expect(lines[0]?.origin).toBe("owner");
     expect(lines[0]?.direction).toBe("outgoing");
     expect(lines[0]?.hostile).toBe(false);
-    expect(lines[0]?.label).toContain("Attack → [7:396:3]");
+    expect(lines[0]?.label).toContain("Own Attack → [7:396:3]");
   });
 
   test("owner fleet returning home names the mission type", () => {
@@ -92,7 +92,7 @@ describe("planetMissionSubtext owner vs third-party classification", () => {
     const { lines } = planetMissionSubtext("home", OWNER, [m], NOW);
     expect(lines[0]?.origin).toBe("owner");
     expect(lines[0]?.direction).toBe("incoming");
-    expect(lines[0]?.label).toContain("Returning (Attack)");
+    expect(lines[0]?.label).toContain("Own Attack returning");
   });
 
   test("owner's own fleet arriving at one of their planets reads as own arrival", () => {
@@ -107,7 +107,7 @@ describe("planetMissionSubtext owner vs third-party classification", () => {
     expect(lines[0]?.origin).toBe("owner");
     expect(lines[0]?.direction).toBe("incoming");
     expect(lines[0]?.hostile).toBe(false);
-    expect(lines[0]?.label).toContain("Own transport arriving");
+    expect(lines[0]?.label).toContain("Own Transport arriving");
   });
 
   test("third-party hostile fleet inbound reads as an incoming attack from the attacker", () => {
@@ -163,12 +163,12 @@ describe("planetMissionSubtext owner vs third-party classification", () => {
       owner: THIRD_PARTY,
       originPlanetId: "raiderHome",
       targetPlanetId: "victim",
-      originPlanet: planetRef({ planetId: "raiderHome", coordinates: "9:9:9", owner: THIRD_PARTY }),
+      originPlanet: planetRef({ planetId: "raiderHome", coordinates: "9:9:9", owner: THIRD_PARTY, ownerDisplayName: "Dread Pirate" }),
     });
     const { lines } = planetMissionSubtext("victim", OWNER, [m], NOW);
     expect(lines[0]?.origin).toBe("third-party");
     expect(lines[0]?.direction).toBe("outgoing");
-    expect(lines[0]?.label).toContain("returning → [9:9:9]");
+    expect(lines[0]?.label).toContain("Attack from Dread Pirate returning → [9:9:9]");
   });
 
   test("missing planet owner never misclassifies a fleet as third-party", () => {
