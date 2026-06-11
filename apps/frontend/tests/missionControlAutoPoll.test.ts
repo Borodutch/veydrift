@@ -107,11 +107,30 @@ describe("VEY-KANEO-433 Mission Control auto-poll wiring", () => {
     // Periodic poll while the page is open, on the same cadence as the top bar, hidden-tab guarded.
     expect(source).toContain("shouldAutoPollMissionControlForPage(page)");
     expect(source).toContain("window.setInterval(pollMissionControl, TOP_BAR_RESOURCE_POLL_INTERVAL_MS)");
-    expect(source).toContain("refreshMissionControl().finally(");
+    // The periodic poll refreshes both the lists and the open battle-report detail together.
+    expect(source).toContain("Promise.allSettled([refreshMissionControl(), refreshOpenMissionDetailSilently()]).finally(");
     // Tightened one-shot refresh around the next resolution ETA.
     expect(source).toContain("nextMissionResolutionEventMs(fleetVisibility, Date.now())");
     expect(source).toContain("MISSION_RESOLUTION_REFRESH_BUFFER_MS");
     // The manual Refresh button stays wired to the same refresher (no regression).
     expect(source).toContain("onRefresh={refreshMissionControl}");
+  });
+
+  test("the open mission-detail report is refreshed silently by the auto-poll (no loading flicker)", async () => {
+    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+
+    // VEY-KANEO-433: a viewer sitting on a battle report when the mission resolves must see the new
+    // loot/report without a manual Refresh, so the open detail is re-fetched on the same cadence.
+    expect(source).toContain("const refreshOpenMissionDetailSilently = useCallback(async () => {");
+    // The silent refresher must NOT toggle the loading spinner (that is the manual Refresh's job),
+    // so it only ever touches setMissionDetail / setMissionDetailError, never setMissionDetailLoading.
+    const silent = source.slice(
+      source.indexOf("const refreshOpenMissionDetailSilently"),
+      source.indexOf("}, [apiBaseUrl, missionDetailId]);", source.indexOf("const refreshOpenMissionDetailSilently")),
+    );
+    expect(silent).not.toContain("setMissionDetailLoading");
+    expect(silent).toContain("setMissionDetail(detail)");
+    // The ETA-tightened one-shot pulls the open report too, so resolution lands promptly on it.
+    expect(source).toContain("void refreshOpenMissionDetailSilently();");
   });
 });
