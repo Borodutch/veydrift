@@ -11,7 +11,7 @@ import type { ChainInfrastructureState, PlayerQueuesResponse, QueueStateResponse
 import { createInitialPlayableState, progress } from "./playableMvp";
 
 describe("chainState", () => {
-  test("derives stable building queue progress from readyAt and upgrade duration", () => {
+  test("derives building queue progress from the backend queue startedAt/readyAt", () => {
     const readyAtSeconds = 1_700_000_060;
     const halfway = (readyAtSeconds - 54) * 1_000;
     const state = infrastructurePlayableState({
@@ -27,6 +27,8 @@ describe("chainState", () => {
         kind: "building",
         itemId: 0,
         targetLevel: 1,
+        // VEY-KANEO-465: backend-provided startedAt anchors the progress bar.
+        startedAt: (readyAtSeconds - 108).toString(),
         readyAt: readyAtSeconds.toString(),
         cost: { metal: "60", crystal: "15", deuterium: "0" },
       },
@@ -42,17 +44,19 @@ describe("chainState", () => {
     expect(progress(state.queue, halfway)).toBe(0.5);
   });
 
-  test("derives building queue progress from the queues endpoint payload", () => {
+  test("derives building queue progress from the backend queue startedAt/readyAt", () => {
     const readyAtSeconds = 1_700_000_060;
-    const state = createInitialPlayableState();
     const queue = buildingQueueItemForDisplay({
       active: true,
       kind: "building",
       itemId: 3,
       targetLevel: 1,
+      // VEY-KANEO-465: progress is anchored to the backend's queue startedAt, not
+      // a client duration estimate.
+      startedAt: (readyAtSeconds - 151).toString(),
       readyAt: readyAtSeconds.toString(),
       cost: { metal: "75", crystal: "30", deuterium: "0" },
-    }, state.buildings, (readyAtSeconds - 76) * 1_000);
+    }, (readyAtSeconds - 76) * 1_000);
 
     expect(queue).toMatchObject({
       kind: "building",
@@ -87,7 +91,7 @@ describe("chainState", () => {
 
     expect(isBuildingQueueReadyToFinish(queue, readyAtMs)).toBe(true);
     expect(isBuildingQueueReadyToFinish(queue, readyAtMs - 1)).toBe(false);
-    expect(buildingQueueItemForDisplay(queue, createInitialPlayableState().buildings, readyAtMs)).toMatchObject({
+    expect(buildingQueueItemForDisplay(queue, readyAtMs)).toMatchObject({
       readyAt: readyAtMs,
     });
   });
@@ -146,7 +150,7 @@ describe("chainState", () => {
       startedAt: startedAtSeconds.toString(),
       readyAt: readyAtSeconds.toString(),
       cost: { metal: "48", crystal: "24", deuterium: "0" },
-    }, state.buildings, halfway);
+    }, halfway);
 
     expect(queue).toMatchObject({
       kind: "building",
@@ -183,21 +187,20 @@ describe("chainState", () => {
     expect(progress(queue, halfway)).toBe(0.5);
   });
 
-  test("derives active research progress from cost and lab level when startedAt is missing", () => {
+  test("derives active research progress from the backend queue startedAt/readyAt", () => {
     const readyAtSeconds = 1_700_002_880;
     const now = 1_700_001_440_000;
-    const state = createInitialPlayableState();
     const queue = researchQueueForDisplay({
       active: true,
       kind: "research",
       itemId: 0,
       targetLevel: 2,
+      // VEY-KANEO-465: backend-provided startedAt anchors the progress bar — no
+      // client research-duration estimate.
+      startedAt: "1700000000",
       readyAt: readyAtSeconds.toString(),
       cost: { metal: "0", crystal: "1600", deuterium: "800" },
-    }, now, {
-      buildings: { ...state.buildings, researchLab: 1 },
-      research: { ...state.research, energy: 1 },
-    });
+    }, now);
 
     expect(queue).toMatchObject({
       kind: "research",
@@ -231,34 +234,8 @@ describe("chainState", () => {
     expect(progress(queue, 1_700_000_300_000)).toBe(0);
   });
 
-  test("uses Nanite Factory level when estimating active building queue progress without startedAt", () => {
-    const readyAtSeconds = 1_700_003_600;
-    const state = createInitialPlayableState();
-    const queue = buildingQueueItemForDisplay({
-      active: true,
-      kind: "building",
-      itemId: 7,
-      targetLevel: 1,
-      readyAt: readyAtSeconds.toString(),
-      cost: { metal: "10000", crystal: "5000", deuterium: "0" },
-    }, {
-      ...state.buildings,
-      roboticsFactory: 2,
-      naniteFactory: 1,
-    }, (readyAtSeconds - 1_800) * 1_000);
-
-    expect(queue).toMatchObject({
-      kind: "building",
-      key: "metalStorage",
-      readyAt: readyAtSeconds * 1_000,
-      startedAt: (readyAtSeconds - 3_600) * 1_000,
-    });
-    expect(progress(queue, (readyAtSeconds - 1_800) * 1_000)).toBe(0.5);
-  });
-
-  test("keeps ready building queues complete when startedAt is missing", () => {
+  test("keeps ready building queues complete when the backend omits startedAt", () => {
     const readyAtSeconds = 1_700_000_060;
-    const state = createInitialPlayableState();
     const queue = buildingQueueItemForDisplay({
       active: true,
       kind: "building",
@@ -266,13 +243,16 @@ describe("chainState", () => {
       targetLevel: 1,
       readyAt: readyAtSeconds.toString(),
       cost: { metal: "60", crystal: "15", deuterium: "0" },
-    }, state.buildings, (readyAtSeconds + 5) * 1_000);
+    }, (readyAtSeconds + 5) * 1_000);
 
+    // VEY-KANEO-465: with no backend startedAt the progress bar has no fill
+    // anchor (startedAt falls back to readyAt) — no client duration estimate. A
+    // past-ready queue still reads as complete.
     expect(queue).toMatchObject({
       kind: "building",
       key: "metalMine",
       readyAt: readyAtSeconds * 1_000,
-      startedAt: (readyAtSeconds - 108) * 1_000,
+      startedAt: readyAtSeconds * 1_000,
     });
     expect(progress(queue, (readyAtSeconds + 5) * 1_000)).toBe(1);
   });

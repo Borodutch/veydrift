@@ -412,7 +412,6 @@ describe("Playable MVP app display helpers", () => {
     expect(topBarEnergyFor({
       infrastructureChainState,
       isWalletConnected: true,
-      settledState,
     })).toMatchObject({
       deuteriumConsumed: 0,
       produced: 100,
@@ -422,8 +421,6 @@ describe("Playable MVP app display helpers", () => {
   });
 
   test("keeps loaded top bar energy independent from background refresh errors", () => {
-    const settledState = createInitialPlayableState();
-
     expect(topBarEnergyFor({
       infrastructureChainState: infrastructureState({
         energyBalance: {
@@ -433,7 +430,6 @@ describe("Playable MVP app display helpers", () => {
         },
       }),
       isWalletConnected: true,
-      settledState,
     })).toMatchObject({
       deuteriumConsumed: 0,
       produced: 100,
@@ -442,21 +438,10 @@ describe("Playable MVP app display helpers", () => {
     });
   });
 
-  test("derives top bar energy from indexed infrastructure levels when live energy is unavailable", () => {
-    const baseState = createInitialPlayableState();
-    const settledState = {
-      ...baseState,
-      buildings: {
-        ...baseState.buildings,
-        metalMine: 1,
-        solarPlant: 0,
-      },
-      ships: {
-        ...baseState.ships,
-        solarSatellite: 3,
-      },
-    };
-
+  test("does not invent top bar energy when the backend energy balance is unavailable (VEY-KANEO-465)", () => {
+    // VEY-KANEO-465: the frontend displays backend-derived energy only; it no
+    // longer recomputes the balance from indexed building levels when the backend
+    // omits it.
     expect(topBarEnergyFor({
       infrastructureChainState: infrastructureState({
         energyBalance: null,
@@ -464,58 +449,13 @@ describe("Playable MVP app display helpers", () => {
         stale: true,
       }),
       isWalletConnected: true,
-      planetProductionProfile: {
-        maxTemperature: 80,
-        metalMultiplierBps: 10_000,
-        crystalMultiplierBps: 10_000,
-        deuteriumMultiplierBps: 10_000,
-      },
-      settledState,
-    })).toEqual({
-      deuteriumConsumed: 0,
-      produced: 108,
-      required: 11,
-      scaleBps: 10000,
-      sources: {
-        solarPlant: 0,
-        fusionReactor: 0,
-        fusionReactorDeuteriumConsumed: 0,
-        solarSatellites: 108,
-        solarSatelliteCount: 3,
-        solarSatelliteEnergy: 36,
-      },
-    });
-
-    expect(topBarEnergyFor({
-      infrastructureChainState: infrastructureState({
-        energyBalance: null,
-        source: "contract-state-indexer",
-        stale: true,
-      }),
-      isWalletConnected: true,
-      planetProductionProfile: {
-        maxTemperature: 80,
-        metalMultiplierBps: 10_000,
-        crystalMultiplierBps: 10_000,
-        deuteriumMultiplierBps: 10_000,
-      },
-      settledState: {
-        ...settledState,
-        ships: {
-          ...settledState.ships,
-          solarSatellite: 1,
-        },
-      },
-    })?.produced).toBe(36);
+    })).toBeUndefined();
   });
 
   test("does not invent top bar energy when chain state is missing", () => {
-    const settledState = createInitialPlayableState();
-
     expect(topBarEnergyFor({
       infrastructureChainState: null,
       isWalletConnected: true,
-      settledState,
     })).toBeUndefined();
   });
 

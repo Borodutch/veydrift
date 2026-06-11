@@ -102,6 +102,28 @@ export type SettlementFundingState = {
   unavailableReason?: string;
 };
 
+// Derived as-of-now state shapes (VEY-KANEO-464). Defined here next to the
+// canonical read-model types they augment; the derivation logic lives in
+// ./asOfNow.
+export type QueueAsOfNow = {
+  // Whole seconds until the active item finishes; 0 once it is due (or unknown).
+  secondsRemaining: number;
+  // Whether the active item is due as of now (its `readyAt` has passed).
+  complete: boolean;
+};
+
+export type MissionAsOfNow = {
+  // Whole seconds until the fleet reaches its target; 0 once it has arrived.
+  secondsUntilArrival: number;
+  // Whole seconds until the fleet is back at its origin; 0 once it has returned.
+  secondsUntilReturn: number;
+  // Whether the outbound leg's arrival time has passed as of now. An arrived but
+  // still-`Outbound` mission is one awaiting resolution (see `needsResolution`).
+  arrived: boolean;
+  // Whether the return leg's arrival time has passed as of now.
+  returned: boolean;
+};
+
 export type QueueState = {
   active: boolean;
   kind: string | null;
@@ -112,6 +134,11 @@ export type QueueState = {
   startedAt?: string | null;
   cost: Resources;
   backlog?: QueueState[];
+  // Derived as-of-now state (VEY-KANEO-464): seconds left / whether the active
+  // item is due, computed server-side at request time from `readyAt`. Optional so
+  // persisted/event-derived queue rows stay valid; the read-model getters always
+  // populate it before serving.
+  asOfNow?: QueueAsOfNow;
 };
 
 export type PlayerQueues = {
@@ -383,6 +410,11 @@ export type FleetMissionSummary = {
   // missions reconstructed without a launch event.
   launchBlockNumber: string;
   needsResolution: boolean;
+  // Derived as-of-now state (VEY-KANEO-464): arrival/return ETA in seconds and
+  // whether each leg is due, computed server-side at request time from
+  // `arrivalAt` / `returnAt`. Optional so internally-constructed summaries stay
+  // valid; the read model populates it before serving on every mission endpoint.
+  asOfNow?: MissionAsOfNow;
 };
 
 export type FleetMissionPlanetReference = {
@@ -466,6 +498,10 @@ export type ShipyardState = {
   productionAvailable: boolean;
   unavailableReason?: string;
   resources: Resources | null;
+  // Canonical `resources` projected forward to now at the planet's production rate
+  // (capped at storage), so callers get accrued resources without re-deriving them
+  // (VEY-KANEO-464). Null when the planet/derivation is unavailable.
+  resourcesAsOfNow?: Resources | null;
   fleetSlots: {
     active: number;
     limit: number;
@@ -488,6 +524,8 @@ export type DefenseState = {
   productionAvailable: boolean;
   unavailableReason?: string;
   resources: Resources | null;
+  // Accrued-to-now projection of `resources` (VEY-KANEO-464).
+  resourcesAsOfNow?: Resources | null;
   shipyardLevel: number;
   naniteLevel: number;
   missileSiloLevel: number;
@@ -508,6 +546,8 @@ export type InfrastructureState = {
   infrastructureAvailable: boolean;
   unavailableReason?: string;
   resources: Resources | null;
+  // Accrued-to-now projection of `resources` (VEY-KANEO-464).
+  resourcesAsOfNow?: Resources | null;
   productionPerHour: Resources | null;
   energyBalance: EnergyBalance | null;
   storageCaps: Resources | null;
@@ -552,6 +592,8 @@ export type ResearchState = {
   researchAvailable: boolean;
   unavailableReason?: string;
   resources: Resources | null;
+  // Accrued-to-now projection of `resources` (VEY-KANEO-464).
+  resourcesAsOfNow?: Resources | null;
   researchLabLevel: number;
   researchNetworkLabLevels: number[];
   technologyLevels: Record<string, number>;

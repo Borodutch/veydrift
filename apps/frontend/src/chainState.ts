@@ -1,11 +1,8 @@
 import {
   buildingContractIds,
   buildingCatalog,
-  buildingDurationEstimate,
   createInitialPlayableState,
   researchCatalog,
-  researchDurationEstimate,
-  researchLabRequirementFor,
   type BuildingKey,
   type EnergyBalance,
   type PlayableState,
@@ -130,7 +127,7 @@ export function buildingQueueForDisplay(
   infrastructureState: ChainInfrastructureState,
   now = Date.now(),
 ): PlayableState["queue"] {
-  return buildingQueueItemForDisplay(infrastructureState.queue, buildingLevels(infrastructureState), now);
+  return buildingQueueItemForDisplay(infrastructureState.queue, now);
 }
 
 export function activeBuildingQueueResponse(
@@ -146,13 +143,18 @@ export function isBuildingQueueReadyToFinish(
   queue: QueueStateResponse | null | undefined,
   now = Date.now(),
 ): boolean {
-  const readyAt = queueTimestampMs(queue?.readyAt);
-  return Boolean(queue?.active && readyAt !== undefined && readyAt <= now);
+  if (!queue?.active) return false;
+  // VEY-KANEO-465: use the backend-derived readiness (`asOfNow.complete`,
+  // VEY-KANEO-464) instead of comparing `readyAt` to the client clock. Fall back
+  // to the timestamp comparison only when the backend has not populated `asOfNow`
+  // (older deploy), so readiness still resolves during the transition.
+  if (queue.asOfNow) return queue.asOfNow.complete;
+  const readyAt = queueTimestampMs(queue.readyAt);
+  return readyAt !== undefined && readyAt <= now;
 }
 
 export function buildingQueueItemForDisplay(
   queue: QueueStateResponse | null,
-  buildings: PlayableState["buildings"],
   now = Date.now(),
 ): BuildingQueueItem | undefined {
   if (!queue?.active || queue.itemId === undefined) return undefined;
@@ -161,11 +163,13 @@ export function buildingQueueItemForDisplay(
 
   const readyAt = queueTimestampMs(queue.readyAt) ?? now;
   const chainStartedAt = queueTimestampMs(queue.startedAt);
-  const cost = toResources(queue.cost) ?? { metal: 0, crystal: 0, deuterium: 0 };
-  const durationMs = buildingDurationEstimate(buildings, cost) * 1_000;
+  // VEY-KANEO-465: anchor the progress bar to the backend's queue `startedAt`
+  // (VEY-KANEO-464) — no client duration estimate. When the backend omits
+  // startedAt, fall back to readyAt (no progress fill) rather than fabricating a
+  // start time from the cost and building levels.
   const startedAt = chainStartedAt !== undefined && chainStartedAt < readyAt
     ? chainStartedAt
-    : readyAt - durationMs;
+    : readyAt;
   return {
     kind: "building",
     key: building.key,
@@ -192,12 +196,13 @@ export function researchQueueForDisplay(
   const readyAt = queueTimestampMs(queue.readyAt);
   if (readyAt === undefined) return undefined;
   const chainStartedAt = queueTimestampMs(queue.startedAt);
-  const estimatedStartedAt = estimateResearchStartedAt(queue, research.key, readyAt, options);
+  // VEY-KANEO-465: anchor the progress bar to the backend's queue startedAt
+  // (VEY-KANEO-464) — no client research-duration estimate. When the backend
+  // omits startedAt, fall back to a minimal anchor so an in-progress research
+  // still renders.
   const startedAt = chainStartedAt !== undefined && chainStartedAt < readyAt
     ? chainStartedAt
-    : estimatedStartedAt !== undefined && estimatedStartedAt < readyAt
-      ? estimatedStartedAt
-      : fallbackResearchStartedAt(readyAt, now);
+    : fallbackResearchStartedAt(readyAt, now);
 
   return {
     kind: "research",
@@ -211,31 +216,6 @@ export function researchQueueForDisplay(
 
 function fallbackResearchStartedAt(readyAt: number, now: number): number {
   return Math.min(now, readyAt - 1);
-}
-
-function estimateResearchStartedAt(
-  queue: QueueStateResponse,
-  key: (typeof researchCatalog)[number]["key"],
-  readyAt: number,
-  options: {
-    buildings?: PlayableState["buildings"] | undefined;
-    research?: PlayableState["research"] | undefined;
-    researchNetworkLabLevels?: readonly number[] | undefined;
-  },
-): number | undefined {
-  if (!options.buildings || !options.research) return undefined;
-  const cost = toResources(queue.cost);
-  if (!cost) return undefined;
-
-  const durationSeconds = researchDurationEstimate(options.buildings, cost, {
-    networkLevel: options.research.intergalacticResearchNetwork,
-    requiredLabLevel: researchLabRequirementFor(key),
-    researchNetworkLabLevels: options.researchNetworkLabLevels,
-  });
-  const durationMs = durationSeconds * 1_000;
-  if (!Number.isFinite(durationMs) || durationMs <= 0) return undefined;
-
-  return readyAt - durationMs;
 }
 
 function zeroResearchLevels(): PlayableState["research"] {

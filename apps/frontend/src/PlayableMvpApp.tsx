@@ -40,11 +40,8 @@ import {
 } from "./data/mockUniverse";
 import {
   buildingContractIds,
-  energyBalance,
-  productionPerHour,
   progress,
   researchCatalog,
-  storageCaps,
   type BuildingKey,
   type DefenseKey,
   type EnergyBalance,
@@ -208,7 +205,6 @@ import {
   transactionSyncingLabel,
 } from "./transactionActionGate";
 import { timestampToMs } from "./timestampFormat";
-import { canonicalSpendableResources, projectResources } from "./canonicalResources";
 
 export function researchStartTransactionLabel(
   technologyId: number,
@@ -1054,29 +1050,19 @@ export function homePlanetIdentityRefreshKey({
 export function topBarEnergyFor({
   infrastructureChainState,
   isWalletConnected,
-  planetProductionProfile,
-  settledState,
 }: {
   infrastructureChainState: ChainInfrastructureState | null;
   isWalletConnected: boolean;
-  planetProductionProfile?: PlanetProductionProfile | undefined;
-  settledState: PlayableState;
 }): EnergyBalance | undefined {
+  // VEY-KANEO-465: energy balance is backend-derived (`energyBalance` on
+  // /infrastructure, with the full source breakdown, VEY-KANEO-464). The frontend
+  // displays it directly and no longer recomputes it from indexed building levels;
+  // when the backend has not provided it, show nothing rather than inventing a
+  // value.
   if (!isWalletConnected || !infrastructureChainState) {
     return undefined;
   }
-
-  const localEnergy = energyBalance(
-    settledState.buildings,
-    settledState.research.energy,
-    settledState.ships.solarSatellite,
-    planetProductionProfile,
-  );
-  const chainEnergy = energyBalanceFromChain(infrastructureChainState.energyBalance);
-
-  if (!chainEnergy) return localEnergy;
-  if (chainEnergy.sources) return chainEnergy;
-  return localEnergy.sources ? { ...chainEnergy, sources: localEnergy.sources } : chainEnergy;
+  return energyBalanceFromChain(infrastructureChainState.energyBalance) ?? undefined;
 }
 
 export function infrastructureUnavailableReasonFor({
@@ -1725,9 +1711,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [onChainSettlement, setOnChainSettlementState] = useState<WalletSettlementResponse | undefined>(
     () => hydratedGameState?.onChainSettlement
   );
-  const [topBarResourceSnapshotReceivedAtMs, setTopBarResourceSnapshotReceivedAtMs] = useState(() => Date.now());
   const applyOnChainSettlementSnapshot = useCallback((settlement: WalletSettlementResponse | undefined) => {
-    setTopBarResourceSnapshotReceivedAtMs(Date.now());
     setOnChainSettlementState(settlement);
   }, []);
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile | undefined>(
@@ -3150,131 +3134,58 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     onChainSettlement?.planet?.metalMultiplierBps,
     onChainSettlement?.planet?.temperature,
   ]);
+  // VEY-KANEO-465: production rate is backend-derived (`productionPerHour` on
+  // /infrastructure, VEY-KANEO-464) — no client recomputation. Zeros until the
+  // backend value has loaded; skeleton loaders cover the initial load and React
+  // Query keeps the last value during a background refresh.
   const rates = useMemo(() => {
     const production = infrastructureChainState?.productionPerHour;
-    if (!production) {
-      return productionPerHour(
-        settledState.buildings,
-        planetProductionProfile,
-        settledState.research.energy,
-        settledState.ships.solarSatellite,
-      );
-    }
     return {
-      metal: Number(production.metal),
-      crystal: Number(production.crystal),
-      deuterium: Number(production.deuterium),
+      metal: production ? Number(production.metal) : 0,
+      crystal: production ? Number(production.crystal) : 0,
+      deuterium: production ? Number(production.deuterium) : 0,
     };
-  }, [
-    infrastructureChainState?.productionPerHour,
-    planetProductionProfile,
-    settledState.buildings,
-    settledState.research.energy,
-  ]);
+  }, [infrastructureChainState?.productionPerHour]);
+  // VEY-KANEO-465: storage caps are backend-derived (`storageCaps` on
+  // /infrastructure) — no client recomputation.
   const caps = useMemo(() => {
     const nextCaps = infrastructureChainState?.storageCaps;
-    if (!nextCaps) return storageCaps(settledState.buildings);
     return {
-      metal: Number(nextCaps.metal),
-      crystal: Number(nextCaps.crystal),
-      deuterium: Number(nextCaps.deuterium),
+      metal: nextCaps ? Number(nextCaps.metal) : 0,
+      crystal: nextCaps ? Number(nextCaps.crystal) : 0,
+      deuterium: nextCaps ? Number(nextCaps.deuterium) : 0,
     };
-  }, [infrastructureChainState?.storageCaps, settledState.buildings]);
-  useEffect(() => {
-    if (onChainResources) {
-      setTopBarResourceSnapshotReceivedAtMs(Date.now());
-    }
+  }, [infrastructureChainState?.storageCaps]);
+  // VEY-KANEO-465: display backend-derived resource state only — the frontend no
+  // longer projects/accrues resources against its own clock, takes an
+  // element-wise minimum of two snapshots, or freezes a free-running projection.
+  // The backend returns `resourcesAsOfNow` (VEY-KANEO-464): the canonical settled
+  // balance accrued forward at the production rate and capped at storage, computed
+  // server-side at request time. This is the contract-authoritative "spendable
+  // now" value — `_spend` settles to exactly this (`previewResources`) before
+  // checking affordability — so the top bar and every affordability gate read it
+  // directly. Because nothing is projected client-side the value holds steady
+  // between polls and React Query keeps the last successful response during a
+  // transient backend error, so it cannot drift toward the storage cap (the
+  // VEY-392 over-report can no longer happen on the client). When the backend has
+  // not populated `resourcesAsOfNow` (older deploy / planet still warming) fall
+  // back to the raw settled `resources` snapshot — still a backend value and never
+  // an over-report — so affordability stays safe.
+  const backendSpendableResources = useMemo(() => {
+    return (
+      resourcesFromChain(infrastructureChainState?.resourcesAsOfNow ?? null)
+      ?? resourcesFromChain(infrastructureChainState?.resources ?? null)
+      ?? onChainResources
+    );
   }, [
-    caps.crystal,
-    caps.deuterium,
-    caps.metal,
-    rates.crystal,
-    rates.deuterium,
-    rates.metal,
-  ]);
-  // The backend resource snapshots are NOT stored-at-settle values: both
-  // `/wallet/<addr>/settlement` and `/wallet/<addr>/infrastructure` read the
-  // contract's `previewResources(planetId)` live, so `onChainResources` already
-  // includes uncollected production accrued up to the moment the snapshot was
-  // read, capped at storage — it IS the canonical accrued balance. The on-chain
-  // `lastSettledAt` is the planet's last *settlement* timestamp (often hours
-  // old) and is unrelated to when the snapshot was read. Projecting the
-  // already-accrued snapshot forward from `lastSettledAt` re-adds every hour of
-  // production since the last settle a second time, over-reporting the top bar
-  // by exactly `rate × (now − lastSettledAt)` (VEY-318 double-count). Anchor the
-  // live projection to the snapshot *read time* instead, so the displayed value
-  // equals the canonical `previewResources` at rest and only ticks forward by
-  // the few seconds elapsed between backend polls.
-  const settlementReadAtMs = topBarResourceSnapshotReceivedAtMs;
-  const liveOnChainResources = useMemo(() => {
-    return projectResources({
-      resources: onChainResources,
-      rates,
-      caps,
-      settledAtMs: settlementReadAtMs,
-      now,
-    });
-  }, [caps, now, onChainResources, rates, settlementReadAtMs]);
-  // Anchor the displayed/spendable balance to the canonical (accurate) value.
-  // The settlement endpoint can over-report after a spend because it adds
-  // production accrual without subtracting the recent cost; the infrastructure
-  // endpoint reports the true on-chain spendable balance. Taking the
-  // element-wise minimum keeps the UI from ever exceeding the real balance, so
-  // affordability gating cannot let through a tx that would revert with
-  // InsufficientResources.
-  //
-  // The displayed balance is projected forward by a free-running `now` clock so
-  // production "ticks up" between backend reads. But when the backend resource
-  // read is stale/unavailable (settlement read errored, infrastructure errored,
-  // or backend sync is paused) the snapshots stop refreshing while `now` keeps
-  // advancing, which would run the balance up toward storage caps and
-  // over-report a spendable balance the player does not have (the QA repro:
-  // top bar climbed to the 10,000 cap during an infrastructure-API outage).
-  // While stale we therefore freeze the projection: feed the canonical helper
-  // the unprojected settlement snapshot and tell it not to accrue infrastructure
-  // forward, so both sources hold their last known value instead of drifting.
-  const backendResourceReadStale =
-    onChainStatus === "error"
-    || Boolean(infrastructureError)
-    || isInfrastructureBackendSyncPaused(infrastructureChainState);
-  const canonicalOnChainResources = useMemo(() => {
-    // VEY-KANEO-463: the frontend no longer reads the chain directly. The backend
-    // settlement/infrastructure snapshots — which the backend itself populates
-    // from the contract's live `previewResources(planetId)` read — are the source
-    // of truth: each is anchored to the snapshot read time and the element-wise
-    // minimum is taken, frozen at the last-known value when the backend read is
-    // stale so it cannot drift toward the storage cap (VEY-392).
-    return canonicalSpendableResources({
-      settlementResources: onChainResources,
-      settlementSettledAtMs: settlementReadAtMs,
-      infrastructureResources: resourcesFromChain(infrastructureChainState?.resources ?? null),
-      infrastructureSettledAtMs: settlementReadAtMs,
-      rates,
-      caps,
-      now,
-      freezeProjection: backendResourceReadStale,
-    });
-  }, [
-    backendResourceReadStale,
-    caps,
+    infrastructureChainState?.resourcesAsOfNow,
     infrastructureChainState?.resources,
-    now,
     onChainResources,
-    rates,
-    settlementReadAtMs,
   ]);
-  // Single resource source-of-truth: the displayed/spendable balance is exactly
-  // the polled canonical balance, with no client-side optimistic adjustment
-  // layered on top (VEY-KANEO-430). `canonicalOnChainResources` is derived from
-  // the polled backend settlement/infrastructure snapshots (themselves live
-  // `previewResources` reads done server-side). After a spend, the balance
-  // updates when the next poll observes the on-chain deduction rather than from a
-  // faked, locally-subtracted estimate; the previous pending-spend ledger and
-  // active-queue subtraction were removed so a single polled value drives both
-  // the top bar and every affordability gate.
+  const liveOnChainResources = backendSpendableResources;
   const spendableResources = useMemo(() => {
-    return walletSpendableResourcesFor({ isWalletConnected, onChainResources: canonicalOnChainResources });
-  }, [isWalletConnected, canonicalOnChainResources]);
+    return walletSpendableResourcesFor({ isWalletConnected, onChainResources: backendSpendableResources });
+  }, [isWalletConnected, backendSpendableResources]);
   // VEY-KANEO-453: the mission fuel/cargo gate reads the canonical spendable balance for
   // the active (origin) planet — the same value the top bar shows and a transaction spends
   // against — falling back to the backend wallet-planet snapshot only when no wallet-connected
@@ -3335,11 +3246,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   ]);
   const buildingQueue = useMemo(() => {
     if (activeBuildingQueue?.active) {
-      return buildingQueueItemForDisplay(activeBuildingQueue, settledState.buildings, now);
+      return buildingQueueItemForDisplay(activeBuildingQueue, now);
     }
 
     return settledState.queue?.kind === "building" ? settledState.queue : undefined;
-  }, [activeBuildingQueue, now, settledState.buildings, settledState.queue]);
+  }, [activeBuildingQueue, now, settledState.queue]);
   const effectiveResearchState = useMemo(
     () => researchStateWithFallbackQueue(researchState, onChainQueues?.research),
     [onChainQueues?.research, researchState],
@@ -3417,14 +3328,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     return topBarEnergyFor({
       infrastructureChainState,
       isWalletConnected,
-      planetProductionProfile,
-      settledState,
     });
   }, [
     infrastructureChainState,
     isWalletConnected,
-    planetProductionProfile,
-    settledState,
   ]);
 
   useEffect(() => {

@@ -1243,6 +1243,22 @@ function accruedPlanetState<T extends PlanetState | null>(
   };
 }
 
+// As-of-now accrued resources for a planet (VEY-KANEO-464): the canonical settled
+// `resources` projected forward to now at the planet's production rate, capped at
+// storage. Returns null when the planet (or its derivation) is unavailable. Mirrors
+// the accrual the public planet reads (`GET /planets/{id}`) already apply, so the
+// personal state endpoints expose the same live value alongside canonical resources.
+// Returns null while the planet's indexed resources are still warming, matching the
+// infrastructure endpoint — projecting forward off a zero placeholder baseline would
+// invent resources that were never produced.
+function accruedResourcesFor(
+  indexer: SettlementIndexer,
+  planet: SettledPlanetEvent | null
+): Resources | null {
+  if (!planet || indexer.hasPendingPlanetResources(planet.planetId)) return null;
+  return accruedPlanetState(indexer, planet)?.resources ?? null;
+}
+
 function indexedPlayerQueues(
   wallet: `0x${string}`,
   settlement: ReturnType<SettlementIndexer["walletSettlement"]>,
@@ -1383,6 +1399,9 @@ function indexedInfrastructureState(
       ? "Infrastructure indexed resources for this planet are still warming. Refresh shortly."
       : unavailableReason,
     resources: planet && !planetResourcesPending ? planet.resources : null,
+    resourcesAsOfNow: planet && !planetResourcesPending
+      ? resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt)
+      : null,
     ...derived,
     technologyLevels,
     buildings,
@@ -1417,6 +1436,7 @@ function indexedShipyardState(
     productionAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,
+    resourcesAsOfNow: accruedResourcesFor(indexer, planet),
     fleetSlots: { active: 0, limit: 1 },
     shipyardLevel,
     naniteLevel,
@@ -1443,6 +1463,7 @@ function indexedDefenseState(
     productionAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,
+    resourcesAsOfNow: accruedResourcesFor(indexer, planet),
     shipyardLevel: buildings.find((building) => building.id === 5)?.level ?? 0,
     naniteLevel: buildings.find((building) => building.id === 11)?.level ?? 0,
     missileSiloLevel: buildings.find((building) => building.id === 14)?.level ?? 0,
@@ -1467,6 +1488,7 @@ function indexedResearchState(
     researchAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,
+    resourcesAsOfNow: accruedResourcesFor(indexer, planet),
     researchLabLevel: buildings.find((building) => building.id === 6)?.level ?? 0,
     researchNetworkLabLevels: [],
     technologyLevels: indexer.technologyLevels(wallet),
