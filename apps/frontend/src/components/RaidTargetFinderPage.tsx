@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { AlertTriangle, ArrowDown, ArrowUp, Crosshair, ShieldAlert, Swords } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
+import { activeMissionsByPlanetId, planetMissionSubtext } from "../planetMissionSubtext";
 import type { Coordinates } from "../types";
-import { fetchHighscores, shortAddress, type HighscoreEntry } from "../walletFlow";
+import { fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreEntry } from "../walletFlow";
 import type { FleetMissionVisibilityResponse } from "../walletFlow";
 import {
   DEFAULT_RAID_TARGET_FILTERS,
@@ -20,9 +21,14 @@ import {
 } from "../raidTargetFinder";
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton } from "./PageHeader";
+import { PlanetMissionLines } from "./PlanetMissionLines";
 import { VeydriftLoader } from "./VeydriftLoader";
 
 type RaidTargetFinderPageProps = {
+  // Universe-wide active fleet missions (the unfiltered `/missions?status=active` feed). Drives the
+  // per-target mission subtext so the Raid Finder classifies owner-originated vs incoming third-party
+  // fleets exactly like Rankings (VEY-KANEO-448). Defaults to empty so the page renders without it.
+  activeMissions?: readonly FleetMissionSummary[] | undefined;
   apiBaseUrl: string | undefined;
   currentWallet?: string | undefined;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
@@ -46,6 +52,7 @@ const sortColumns: Array<{ key: RaidTargetSortKey; label: string; hint: string }
 ];
 
 export function RaidTargetFinderPage({
+  activeMissions,
   apiBaseUrl,
   currentWallet,
   fleetVisibility,
@@ -105,6 +112,7 @@ export function RaidTargetFinderPage({
   );
   const totals = useMemo(() => raidTargetTotals(allTargets, visibleTargets), [allTargets, visibleTargets]);
   const threats = useMemo(() => incomingThreats(fleetVisibility), [fleetVisibility]);
+  const missionsByPlanetId = useMemo(() => activeMissionsByPlanetId(activeMissions ?? []), [activeMissions]);
 
   const toggleSort = (key: RaidTargetSortKey) => {
     setSort((current) =>
@@ -159,6 +167,12 @@ export function RaidTargetFinderPage({
           visibleTargets.map((target) => (
             <RaidTargetRow
               key={target.planetId}
+              missionSubtext={planetMissionSubtext(
+                target.planetId,
+                target.owner,
+                missionsByPlanetId.get(target.planetId) ?? [],
+                now,
+              )}
               now={now}
               onSelectAlliance={onSelectAlliance}
               onSelectPlanet={onSelectPlanet}
@@ -379,12 +393,14 @@ function RaidTargetTableHeader({
 }
 
 function RaidTargetRow({
+  missionSubtext,
   now,
   onSelectAlliance,
   onSelectPlanet,
   onSelectPlayer,
   target,
 }: {
+  missionSubtext: ReturnType<typeof planetMissionSubtext>;
   now: number;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
@@ -494,6 +510,7 @@ function RaidTargetRow({
               </span>
             </span>
           </div>
+          <PlanetMissionLines className="mt-1" planetId={target.planetId} subtext={missionSubtext} />
         </div>
       </div>
 

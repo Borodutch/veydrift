@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { ChevronLeft, ChevronRight, UserRound } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
-import { formatDurationUntil } from "../durationFormat";
 import { fleetMissionDistance } from "../fleetMissionRules";
-import { timestampToMs } from "../timestampFormat";
+import { activeMissionsByPlanetId, planetMissionSubtext } from "../planetMissionSubtext";
 import type { Coordinates } from "../types";
-import { decodeColonizationTargetId, fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
-import { missionTypeLabel } from "./MissionControlPage";
+import { fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
+import { PlanetMissionLines } from "./PlanetMissionLines";
 import { VeydriftLoader } from "./VeydriftLoader";
 
 type RankingsPageProps = {
@@ -510,7 +509,7 @@ function RankingRow({
           </div>
           {rankedPlanets.map((planet) => {
             const isHomePlanet = entry.homePlanetId === planet.planetId;
-            const missionLines = planetMissionSubtext(planet.planetId, missionsByPlanetId?.get(planet.planetId) ?? [], now ?? Date.now());
+            const missionLines = planetMissionSubtext(planet.planetId, entry.wallet, missionsByPlanetId?.get(planet.planetId) ?? [], now ?? Date.now());
             return (
               <div className="space-y-1" key={`tactical-${planet.planetId}`}>
               <button
@@ -560,23 +559,7 @@ function RankingRow({
                   {compactScore(planet.tactical?.combatPower ?? "0")}
                 </span>
               </button>
-              {missionLines.lines.length > 0 ? (
-                <ul className="space-y-0.5 pl-2 sm:pl-[34px]" data-planet-missions={planet.planetId}>
-                  {missionLines.lines.map((line) => (
-                    <li
-                      className={`flex min-w-0 items-center gap-1 truncate font-mono text-[10px] leading-4 ${line.tone === "incoming" ? "text-amber-200/80" : "text-sky-200/70"}`}
-                      key={line.key}
-                      title={line.label}
-                    >
-                      <span aria-hidden="true" className="shrink-0 text-slate-500">{line.tone === "incoming" ? "↘" : "↗"}</span>
-                      <span className="min-w-0 truncate">{line.label}</span>
-                    </li>
-                  ))}
-                  {missionLines.overflow > 0 ? (
-                    <li className="font-mono text-[10px] leading-4 text-slate-500">+{missionLines.overflow} more</li>
-                  ) : null}
-                </ul>
-              ) : null}
+              <PlanetMissionLines className="pl-2 sm:pl-[34px]" planetId={planet.planetId} subtext={missionLines} />
               </div>
             );
           })}
@@ -655,98 +638,6 @@ function planetCombatLabel(planet: HighscorePlanet): string {
   const tactical = planet.tactical;
   if (!tactical) return "Combat signal unavailable";
   return `Combat ${formatScore(tactical.combatPower)} from ${tactical.ships.count} ships and ${tactical.defenses.count} defenses`;
-}
-
-// Active fleet missions touching each planet, indexed by planet id. A mission is filed under both its
-// origin and its target planet so a Rankings planet row can surface every fleet currently flying to or
-// from it. Full transparency (decision #9978, VEY-KANEO-445): the source feed is the unfiltered
-// universe-wide active feed, so missions are never filtered by the viewing wallet.
-export function activeMissionsByPlanetId(
-  missions: readonly FleetMissionSummary[],
-): Map<string, FleetMissionSummary[]> {
-  const byPlanet = new Map<string, FleetMissionSummary[]>();
-  const file = (planetId: string, mission: FleetMissionSummary) => {
-    const list = byPlanet.get(planetId);
-    if (list) list.push(mission);
-    else byPlanet.set(planetId, [mission]);
-  };
-  for (const mission of missions) {
-    file(mission.originPlanetId, mission);
-    if (mission.targetPlanetId !== mission.originPlanetId) file(mission.targetPlanetId, mission);
-  }
-  return byPlanet;
-}
-
-export type PlanetMissionLine = {
-  key: string;
-  label: string;
-  // Relative direction for this planet: a fleet heading toward it ("incoming") or away from it
-  // ("outgoing"). Drives the subtext tone/icon so inbound fleets are easy to spot at a glance.
-  tone: "incoming" | "outgoing";
-};
-
-// Max mission subtext lines rendered per planet before collapsing the rest into a "+N more" tail, so a
-// busy planet stays compact in the rankings list.
-export const maxPlanetMissionLines = 3;
-
-// Compact mission subtext for a single planet: one live line per active mission touching it, sorted by
-// the soonest upcoming event (arrival for outbound legs, landing for return legs), capped at
-// `maxPlanetMissionLines` with the remainder surfaced as an overflow count. Each line reads as
-// direction + mission type (or "Returning") + the other endpoint (coords, or "here" when the fleet is
-// inbound to this planet) + a live ETA.
-export function planetMissionSubtext(
-  planetId: string,
-  missions: readonly FleetMissionSummary[],
-  now: number,
-): { lines: PlanetMissionLine[]; overflow: number } {
-  const resolved = missions
-    .map((mission) => planetMissionLine(planetId, mission, now))
-    .filter((line): line is PlanetMissionLine & { eta: number } => line !== null)
-    .sort((left, right) => left.eta - right.eta);
-  const lines = resolved.slice(0, maxPlanetMissionLines).map(({ eta: _eta, ...line }) => line);
-  return { lines, overflow: Math.max(0, resolved.length - lines.length) };
-}
-
-function planetMissionLine(
-  planetId: string,
-  mission: FleetMissionSummary,
-  now: number,
-): (PlanetMissionLine & { eta: number }) | null {
-  const returning = mission.status === "Returning" || mission.status === "Recalled";
-  // The in-flight fleet is heading to its target on the outbound leg and back to its origin on the
-  // return leg; the matching event time is the arrival (outbound) or the landing-at-home (return).
-  const destinationId = returning ? mission.originPlanetId : mission.targetPlanetId;
-  const sourceId = returning ? mission.targetPlanetId : mission.originPlanetId;
-  const eventAt = returning ? mission.returnAt : mission.arrivalAt;
-  const eta = timestampToMs(eventAt);
-  if (eta === undefined) return null;
-
-  const etaLabel = formatDurationUntil(eta, now);
-  const typeLabel = returning ? "Returning" : missionTypeLabel(mission.missionType);
-
-  if (destinationId === planetId) {
-    // A fleet inbound to this planet — arriving (outbound leg) or landing back home (return leg).
-    const label = returning ? `Returning · ${etaLabel}` : `${typeLabel} → here · ${etaLabel}`;
-    return { key: `${mission.missionId}-in`, label, tone: "incoming", eta };
-  }
-  if (sourceId === planetId) {
-    // A fleet outbound from this planet toward its current destination.
-    const destination = missionEndpointCoordinatesLabel(mission, returning ? "origin" : "target");
-    return { key: `${mission.missionId}-out`, label: `${typeLabel} → ${destination} · ${etaLabel}`, tone: "outgoing", eta };
-  }
-  return null;
-}
-
-// Coordinate label for one end of a mission, preferring the mission's resolved planet reference and
-// falling back to a decoded colonization target (empty coordinates a Colonize fleet is heading to) or
-// an opaque planet id when neither is available.
-function missionEndpointCoordinatesLabel(mission: FleetMissionSummary, side: "origin" | "target"): string {
-  const ref = side === "origin" ? mission.originPlanet : mission.targetPlanet;
-  if (ref?.coordinates) return `[${ref.coordinates}]`;
-  const planetId = side === "origin" ? mission.originPlanetId : mission.targetPlanetId;
-  const colony = decodeColonizationTargetId(planetId);
-  if (colony) return `[${colony.coordinates}]`;
-  return `#${planetId}`;
 }
 
 function rankingPlanets(entry: HighscoreEntry): HighscorePlanet[] {

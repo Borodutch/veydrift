@@ -2556,8 +2556,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   // so the subtext (and its live ETAs) stays current without a manual refresh. Full transparency
   // (decision #9978) — the feed is unfiltered by viewer, so this runs even without a connected wallet.
   // The 1s `now` ticker animates the countdowns between polls; polling refreshes which missions exist.
+  // VEY-KANEO-448: the Raid Target Finder shows the same per-planet subtext, so it shares this feed/poll.
   useEffect(() => {
-    if (!apiBaseUrl || page !== "rankings") {
+    if (!apiBaseUrl || (page !== "rankings" && page !== "raid-target-finder")) {
       return;
     }
     void loadAllActiveMissions();
@@ -5484,6 +5485,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     if (page === "raid-target-finder") {
       return (
         <RaidTargetFinderPage
+          activeMissions={allActiveMissions}
           apiBaseUrl={apiBaseUrl}
           currentWallet={account}
           fleetVisibility={fleetVisibility}
