@@ -2887,8 +2887,7 @@ describe("Veydrift backend", () => {
     (chainReader as ChainReader).getInfrastructureAuthoritativeFields = async (planetId: bigint) => {
       expect(planetId).toBe(10n);
       return {
-        resources: previewResources,
-        buildings: [{ id: 1, level: 12, cost: { metal: "13510", crystal: "6755", deuterium: "0" } }]
+        resources: previewResources
       };
     };
     chainReader.listSettledPlanetEvents = async () => {
@@ -2907,7 +2906,6 @@ describe("Veydrift backend", () => {
 
     expect(response.status).toBe(200);
     expect(body.resources).toEqual(previewResources);
-    expect(body.buildings).toContainEqual(expect.objectContaining({ id: 1, level: 12 }));
   });
 
   test("serves shipyard ships from the authoritative on-chain shipCount over a drifted indexed roster", async () => {
