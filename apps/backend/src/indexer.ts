@@ -1197,7 +1197,8 @@ export class SettlementIndexer {
   // to chain. Never throws; skips while a full rebuild is in flight (the rebuild does the same work).
   async refreshCanonicalState(): Promise<void> {
     if (this.canonicalRefreshPromise) return this.canonicalRefreshPromise;
-    if (this.rebuildPromise || this.planetRebuildPromise) return;
+    const fullReconciliationInProgress = this.rebuildPromise || this.planetRebuildPromise;
+    if (fullReconciliationInProgress && !this.metadata("lastReconciledAt")) return;
     if (!this.chainReader.listCurrentPlanets) return;
     this.canonicalRefreshPromise = this.refreshCanonicalStateUncached()
       .catch((error) => {
