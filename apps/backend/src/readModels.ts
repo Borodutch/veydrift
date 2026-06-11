@@ -36,11 +36,34 @@ type BuildingKey =
 
 const BPS = 10_000;
 const RAID_PROTECTED_STORAGE_BPS = 0;
+// Share of (unprotected) resources an attacker can actually haul away in a raid.
+// Mirrors the on-chain default plunder rate (plunderBps = 5000 = 50%, see
+// VeydriftClient.getAttackProtectionStatus in evm.ts). Without this, raidable loot
+// shown on Rankings/Raid Finder reported 100% of resources — ~2x the real haul (VEY-451).
+const RAID_PLUNDER_BPS = 5000;
 
 export const buildingCount = 16;
 export const defenseCount = 10;
 export const supportedShipIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] as const;
 export const supportedTechnologyIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] as const;
+
+// Ships with no meaningful combat role: they carry a build cost but deal no (or
+// negligible) damage, so they must not count toward the COMBAT / fighting-strength
+// figure that the Raid Finder and Rankings surface. Excluding them keeps satellite-only
+// or logistics-only planets reading as soft targets. (VEY-KANEO-450)
+//   0  Small Cargo      (logistics)
+//   2  Recycler         (debris salvage)
+//   3  Colony Ship      (settlement)
+//   4  Large Cargo      (logistics)
+//   9  Solar Satellite  (stationary energy platform)
+//   15 Crawler          (stationary mining support)
+// Combat-capable hulls — fighters, cruisers, battleships, bombers, destroyers,
+// battlecruisers, reapers, Dreadstar, and the attack-bearing Pathfinder — still count.
+export const nonCombatShipIds: ReadonlySet<number> = new Set([0, 2, 3, 4, 9, 15]);
+
+export function isCombatShipId(id: number): boolean {
+  return !nonCombatShipIds.has(id);
+}
 
 export const riftResourceCatalog: Array<Pick<RiftResourceState, "key" | "label" | "resourceId">> = [
   { key: "metal", label: "Metal", resourceId: 0 },
@@ -222,7 +245,10 @@ export function deriveInfrastructureFields(
     },
     productionPerHour: productionPerHour(levels, planet, energy),
     protectedResources,
-    raidableResources: subtractResources(planet.resources, protectedResources),
+    raidableResources: scaleResources(
+      subtractResources(planet.resources, protectedResources),
+      RAID_PLUNDER_BPS
+    ),
     storageCaps: caps
   };
 }

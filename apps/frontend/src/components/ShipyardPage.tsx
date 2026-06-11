@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } from "../playableMvp";
-import { canAfford, missingUnlockRequirements, shipCatalog, shipCombatStats, shipDurationEstimate, shipSpecRows } from "../playableMvp";
+import { canAfford, missingUnlockRequirements, shipCatalog, shipyardCatalog, shipCombatStats, shipDurationEstimate, shipSpecRows } from "../playableMvp";
 import { formatMissingResources } from "../buildingDetails";
 import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainShipyardState } from "../walletFlow";
@@ -230,7 +230,10 @@ export function shipProductionItems({
   shipyardLevel: number;
   shipyardState: ChainShipyardState | null;
 }): ProductionCatalogItem<ShipKey>[] {
-  return shipCatalog.map((ship) => {
+  // Build only from the buildable subset so expedition-only ships (Pathfinder) are
+  // hidden from the shipyard. `shipCatalog` is still used elsewhere for queue label
+  // resolution so a pre-existing on-chain queue entry keeps its name.
+  return shipyardCatalog.map((ship) => {
     const chainShip = shipyardState?.ships.find((item) => item.id === ship.id);
     const shipUnavailable = Boolean(shipyardState) && productionAvailable && !chainShip;
     const owned = productionAvailable && chainShip ? chainShip.count : undefined;
@@ -266,7 +269,7 @@ export function shipProductionItems({
       asset: ship.asset,
       blockedReason,
       cost: totalCost,
-      countLabel: "Owned",
+      countLabel: "At planet",
       countValue: owned,
       detailSections: shipDetailSections({
         cost: totalCost,
@@ -303,6 +306,13 @@ function shipNotes(ship: (typeof shipCatalog)[number]): string[] {
     ];
   }
 
+  if (ship.key === "crawler") {
+    return [
+      ship.description,
+      "Special: each crawler adds +0.02% to this planet's metal, crystal, and deuterium mine production, counting up to 8 crawlers per combined mine level (Metal Mine + Crystal Mine + Deuterium Synthesizer) and capped at a +50% total bonus. The on-chain bonus activates once the crawler production upgrade is live.",
+    ];
+  }
+
   return [ship.description];
 }
 
@@ -331,7 +341,11 @@ function shipDetailSections({
     {
       title: "Build",
       stats: [
-        { label: "Owned", value: owned === undefined ? "unavailable" : owned.toLocaleString("en-US") },
+        {
+          label: "At planet",
+          value: owned === undefined ? "unavailable" : owned.toLocaleString("en-US"),
+          hint: "Ships stationed at this planet now. Fleets in flight on missions are not counted here.",
+        },
         { label: "Build time", value: durationSeconds === undefined ? "-" : formatShipyardDuration(durationSeconds) },
         { label: "Price", value: cost ? formatProductionPrice(cost) : "-", wide: true },
       ],

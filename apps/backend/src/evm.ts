@@ -336,10 +336,29 @@ export type FleetMissionSummary = {
   recallCost: string | null;
   attackGroupId: string | null;
   joinedAttackMissionIds: string[];
+  // VEY-KANEO-442: ACS Defend stationed-defense links. For an AcsDefend mission, `defendsMissionId`
+  // is the hostile attack mission it stations to defend against; that attack's target planet is this
+  // mission's `targetPlanetId`. On the attack mission, `counterplayDefenderMissionIds` lists every
+  // AcsDefend fleet stationed to defend it, so the read model can serve "who is defending attack X"
+  // and (filtering AcsDefend missions by targetPlanetId) "stationed defenders at planet Y".
+  defendsMissionId: string | null;
+  counterplayDefenderMissionIds: string[];
   cargo: Resources;
+  // Resulting return-leg cargo from FleetMissionReturnExposed (the contract folds looted resources
+  // into mission.cargo before emitting it). Kept separate from `cargo` (which stays the authoritative
+  // outbound launch value, VEY-404) so the ACS battle report can surface each joiner's loot share.
+  // Null until the fleet's return leg is exposed (e.g. still outbound, or fully wiped at the target).
+  returnCargo: Resources | null;
   ships: Record<string, string>;
   transactionHash: string;
   blockNumber: string;
+  // Block of the FleetMissionLaunched event specifically, i.e. when the contract debited these ships
+  // from the origin planet (VeydriftGameplayModule._debitMissionShips). `blockNumber` tracks the LAST
+  // event for the mission (recall/resolve/return) and so drifts forward over the fleet's life; the
+  // ship-count read model needs the immutable launch block to tell whether a still-away fleet's debit
+  // has already been absorbed by the canonical reconcile baseline (VEY-KANEO-447). Defaults to "0" for
+  // missions reconstructed without a launch event.
+  launchBlockNumber: string;
   needsResolution: boolean;
 };
 
@@ -355,6 +374,9 @@ export type FleetMissionPlanetReference = {
   // Real planet archetype (derived from the indexed temperature) so Mission Control can render the
   // same planet art the Galaxy view uses for thumbnails (VEY-403 / VEY-67), not a generic icon.
   archetype: PlanetArchetype;
+  // VEY-KANEO-440: Alliance Depot building level (id 13). On a hostile attack's target planet this is
+  // the depot that subsidizes ACS Defend holding fuel, letting the compose UX preview depot support.
+  allianceDepotLevel: number;
 };
 
 export type ResolvableFleetMission = Pick<
@@ -377,6 +399,19 @@ export type CombatRoundReport = {
   defenderLosses: Resources;
 };
 
+// One member of an ACS (Alliance Combat System) attack group: the main attacker plus any fleets that
+// joined the same attack. `loot` is the resources this fleet personally hauled away — `report.loot`
+// (the AttackBattleResolved snapshot) for the main attacker, and the joiner's resulting return-leg
+// cargo for each joined fleet. Per-participant losses are not emitted on-chain (CombatLosses is a
+// single combined figure keyed by the main mission), so only loot is broken out per participant.
+export type BattleReportParticipant = {
+  missionId: string;
+  address: Address;
+  isMainAttacker: boolean;
+  ships: Record<string, string>;
+  loot: Resources;
+};
+
 export type BattleReport = {
   missionId: string;
   attacker: Address;
@@ -394,6 +429,11 @@ export type BattleReport = {
   roundReports: CombatRoundReport[];
   transactionHash: string;
   blockNumber: string;
+  // ACS attack group: the main attack mission id for a grouped attack (null for a solo attack), and
+  // every participant (main attacker + joiners) with their individual loot share. A solo attack still
+  // populates `participants` with the single main attacker so the frontend can render uniformly.
+  attackGroupId: string | null;
+  participants: BattleReportParticipant[];
 };
 
 export type ShipyardState = {
@@ -714,9 +754,14 @@ export interface ChainReader {
   getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility>;
   listBattleReports(): Promise<BattleReport[]>;
   getBattleReport(missionId: bigint): Promise<BattleReport | null>;
+  getInfrastructureAuthoritativeFields?(planetId: bigint): Promise<Partial<Pick<InfrastructureState, "buildings" | "resources">>>;
   getInfrastructureState(wallet: Address, planetId?: bigint): Promise<InfrastructureState>;
   getMoonState(wallet: Address, planetId?: bigint): Promise<MoonState>;
   getDefenseState(wallet: Address, planetId?: bigint): Promise<DefenseState>;
+  getShipyardAuthoritativeFields?(
+    planetId: bigint,
+    maxTemperature?: number
+  ): Promise<Partial<Pick<ShipyardState, "naniteLevel" | "resources" | "ships" | "shipyardLevel">>>;
   getShipyardState(wallet: Address, planetId?: bigint): Promise<ShipyardState>;
   getResearchState(wallet: Address, planetId?: bigint): Promise<ResearchState>;
   getRiftState(wallet: Address, planetId?: bigint): Promise<RiftState>;
@@ -741,6 +786,10 @@ export type RpcMetrics = {
   batchRequests: number;
   callsByMethod: Record<string, number>;
   httpRequests: number;
+};
+
+export type VeydriftGameReaderOptions = {
+  hydrateQueueStartedAt?: boolean;
 };
 
 type RpcCacheEntry<T> = {
@@ -1070,10 +1119,12 @@ export class VeydriftGameReader implements ChainReader {
   private readonly logChunkSpan: bigint;
   private readonly resourceTokenAddresses: Partial<Record<RiftResourceKey, Address>>;
   private readonly settlementContractAddress: Address | undefined;
+  private readonly hydrateQueueStartedAt: boolean;
 
   constructor(
     config: BackendConfig,
-    transport?: Pick<HttpJsonRpcTransport, "request"> & Partial<Pick<HttpJsonRpcTransport, "requestBatch" | "snapshot">>
+    transport?: Pick<HttpJsonRpcTransport, "request"> & Partial<Pick<HttpJsonRpcTransport, "requestBatch" | "snapshot">>,
+    options: VeydriftGameReaderOptions = {}
   ) {
     if (!config.rpcUrl) {
       throw new Error("RPC URL is required.");
@@ -1091,6 +1142,7 @@ export class VeydriftGameReader implements ChainReader {
     this.logChunkSpan = config.logChunkSpan && config.logChunkSpan > 0n ? config.logChunkSpan : 2_000n;
     this.resourceTokenAddresses = config.resourceTokenAddresses ?? {};
     this.settlementContractAddress = config.settlementContractAddress;
+    this.hydrateQueueStartedAt = options.hydrateQueueStartedAt ?? true;
   }
 
   rpcMetrics(): RpcMetrics {
@@ -1256,7 +1308,7 @@ export class VeydriftGameReader implements ChainReader {
       incoming: summaries.filter((mission) =>
         mission.owner.toLowerCase() !== walletLower
           && ownedPlanetIds.has(mission.targetPlanetId)
-          && ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType)
+          && ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
           && mission.status === "Outbound"
       ),
       outgoing: summaries.filter((mission) =>
@@ -1428,6 +1480,12 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
+  async getInfrastructureAuthoritativeFields(planetId: bigint): Promise<Partial<Pick<InfrastructureState, "buildings" | "resources">>> {
+    return {
+      resources: await this.readResources("0x0adbf924", planetId)
+    };
+  }
+
   async getMoonState(wallet: Address, selectedPlanetId?: bigint): Promise<MoonState> {
     let settlement: WalletSettlement;
     try {
@@ -1556,6 +1614,25 @@ export class VeydriftGameReader implements ChainReader {
       technologyLevels,
       ships,
       queue
+    };
+  }
+
+  async getShipyardAuthoritativeFields(
+    planetId: bigint,
+    maxTemperature?: number
+  ): Promise<Partial<Pick<ShipyardState, "naniteLevel" | "resources" | "ships" | "shipyardLevel">>> {
+    const [resources, shipyardLevel, naniteLevel, ships] = await Promise.all([
+      this.readResources("0x0adbf924", planetId),
+      this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(5n)]),
+      this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(11n)]),
+      this.readShipRows(planetId, maxTemperature)
+    ]);
+
+    return {
+      resources,
+      shipyardLevel: Number(shipyardLevel),
+      naniteLevel: Number(naniteLevel),
+      ships
     };
   }
 
@@ -2342,11 +2419,15 @@ export class VeydriftGameReader implements ChainReader {
       cost: decodeResources(words.slice(4, 7))
     };
 
-    if (kind === "building" && active) {
+    if (!this.hydrateQueueStartedAt || !active) {
+      return queue;
+    }
+
+    if (kind === "building") {
       queue.startedAt = await this.readBuildingStartedAt(planetId, queue);
-    } else if (kind === "defense" && active) {
+    } else if (kind === "defense") {
       queue.startedAt = await this.readDefenseStartedAt(planetId, queue);
-    } else if (kind === "ship" && active) {
+    } else if (kind === "ship") {
       queue.startedAt = await this.readShipStartedAt(planetId, queue);
     }
 
@@ -3288,6 +3369,7 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       const attack = missions.get(attackMissionId) ?? {
         missionId: attackMissionId,
         cargo: { metal: "0", crystal: "0", deuterium: "0" },
+        returnCargo: null,
         ships: {},
         fuelCost: "0",
         recallCost: null,
@@ -3295,7 +3377,8 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
         joinedAttackMissionIds: [],
         needsResolution: false,
         transactionHash: log.transactionHash,
-        blockNumber: BigInt(log.blockNumber).toString()
+        blockNumber: BigInt(log.blockNumber).toString(),
+        launchBlockNumber: "0"
       };
       attack.attackGroupId = attackMissionId;
       attack.joinedAttackMissionIds = [
@@ -3306,6 +3389,7 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       const joined = missions.get(joinedMissionId) ?? {
         missionId: joinedMissionId,
         cargo: { metal: "0", crystal: "0", deuterium: "0" },
+        returnCargo: null,
         ships: {},
         fuelCost: "0",
         recallCost: null,
@@ -3313,7 +3397,8 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
         joinedAttackMissionIds: [],
         needsResolution: false,
         transactionHash: log.transactionHash,
-        blockNumber: BigInt(log.blockNumber).toString()
+        blockNumber: BigInt(log.blockNumber).toString(),
+        launchBlockNumber: "0"
       };
       joined.attackGroupId = attackMissionId;
       missions.set(joinedMissionId, joined);
@@ -3324,14 +3409,18 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
     const mission = missions.get(missionId) ?? {
       missionId,
       cargo: { metal: "0", crystal: "0", deuterium: "0" },
+      returnCargo: null,
       ships: {},
       fuelCost: "0",
       recallCost: null,
       attackGroupId: null,
       joinedAttackMissionIds: [],
+      defendsMissionId: null,
+      counterplayDefenderMissionIds: [],
       needsResolution: false,
       transactionHash: log.transactionHash,
-      blockNumber: BigInt(log.blockNumber).toString()
+      blockNumber: BigInt(log.blockNumber).toString(),
+      launchBlockNumber: "0"
     };
     mission.transactionHash = log.transactionHash;
     mission.blockNumber = BigInt(log.blockNumber).toString();
@@ -3341,6 +3430,9 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       mission.owner = decodeAddressWord(topicAt(log.topics, 2));
       mission.missionType = missionTypeLabel(decodeUint(topicAt(log.topics, 3)));
       mission.status = "Outbound";
+      // Capture the launch block here (not the rolling `blockNumber`) so the ship-count read model can
+      // later tell whether this departure's debit predates the canonical reconcile baseline (VEY-KANEO-447).
+      mission.launchBlockNumber = BigInt(log.blockNumber).toString();
       mission.originPlanetId = decodeUintWord(wordAt(words, 0)).toString();
       mission.targetPlanetId = decodeUintWord(wordAt(words, 1)).toString();
       mission.arrivalAt = decodeUintWord(wordAt(words, 2)).toString();
@@ -3351,20 +3443,53 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
         const attack = missions.get(attackMissionId) ?? {
           missionId: attackMissionId,
           cargo: { metal: "0", crystal: "0", deuterium: "0" },
+          returnCargo: null,
           ships: {},
           fuelCost: "0",
           recallCost: null,
           attackGroupId: attackMissionId,
           joinedAttackMissionIds: [],
+          defendsMissionId: null,
+          counterplayDefenderMissionIds: [],
           needsResolution: false,
           transactionHash: log.transactionHash,
-          blockNumber: BigInt(log.blockNumber).toString()
+          blockNumber: BigInt(log.blockNumber).toString(),
+          launchBlockNumber: "0"
         };
         attack.attackGroupId = attackMissionId;
         attack.joinedAttackMissionIds = [
           ...new Set([...(attack.joinedAttackMissionIds ?? []), missionId])
         ];
         missions.set(attackMissionId, attack);
+      } else if (mission.missionType === "AcsDefend") {
+        // VEY-KANEO-442: an AcsDefend fleet stations at the defended planet (its emitted
+        // targetPlanetId) to counter a specific hostile attack. The contract encodes that hostile
+        // mission id in the FleetMissionLaunched `randomnessRequestId` slot (word 4), the same slot
+        // AcsAttack uses for its joined attack id (VeydriftGameplayModule sets
+        // `randomnessRequestId = hostileMissionId` for counterplay). Link the defender to the attack
+        // so stationed-defense state is queryable from the fleet-mission read model.
+        const hostileMissionId = decodeUintWord(wordAt(words, 4)).toString();
+        mission.defendsMissionId = hostileMissionId;
+        const attack = missions.get(hostileMissionId) ?? {
+          missionId: hostileMissionId,
+          cargo: { metal: "0", crystal: "0", deuterium: "0" },
+          returnCargo: null,
+          ships: {},
+          fuelCost: "0",
+          recallCost: null,
+          attackGroupId: null,
+          joinedAttackMissionIds: [],
+          defendsMissionId: null,
+          counterplayDefenderMissionIds: [],
+          needsResolution: false,
+          transactionHash: log.transactionHash,
+          blockNumber: BigInt(log.blockNumber).toString(),
+          launchBlockNumber: "0"
+        };
+        attack.counterplayDefenderMissionIds = [
+          ...new Set([...(attack.counterplayDefenderMissionIds ?? []), missionId])
+        ];
+        missions.set(hostileMissionId, attack);
       }
     } else if (topic === fleetMissionCargoTopic) {
       const words = splitWords(log.data);
@@ -3411,6 +3536,12 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       // 50 metal showed Cargo 50 / Loot 50 (VEY-404). The outbound launch cargo from
       // FleetMissionCargo is authoritative for `cargo`; loot is surfaced separately from the
       // AttackBattleResolved battle report.
+      //
+      // We DO capture the return-leg cargo separately as `returnCargo`. The main attacker's loot is
+      // read from its AttackBattleResolved event, but joined ACS fleets never emit their own battle
+      // report — their only on-chain loot signal is this resulting cargo, which the ACS battle report
+      // surfaces as each joiner's individual loot share (VEY-KANEO-432).
+      mission.returnCargo = decodeResources(words.slice(3, 6));
     } else if (topic === fleetMissionReturnedTopic) {
       mission.owner = decodeAddressWord(topicAt(log.topics, 2));
       mission.status = "Returned";
@@ -3418,6 +3549,16 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
     }
 
     missions.set(missionId, mission);
+  }
+
+  // Project the recall cost for fleets that can still be recalled (Outbound, no recall event yet) so
+  // Mission Detail / Mission Control can surface the Recall action and its deuterium cost instead of
+  // falling back to "Not recallable" (VEY-KANEO-424). Recalled fleets keep the authoritative cost
+  // emitted by FleetMissionRecalled; finished/returning fleets stay null since recall no longer applies.
+  for (const mission of missions.values()) {
+    if (mission.recallCost == null && mission.status === "Outbound") {
+      mission.recallCost = projectedFleetRecallCost(mission.fuelCost ?? "0");
+    }
   }
 
   return missions;
@@ -3436,7 +3577,7 @@ export function isBattleReportLog(log: RpcLog): boolean {
 }
 
 export function decodeBattleReportLogs(logs: RpcLog[], requestedMissionId?: string): BattleReport | null {
-  let base: Omit<BattleReport, "attackerLosses" | "debris" | "defenderLosses" | "roundReports"> | null = null;
+  let base: Omit<BattleReport, "attackGroupId" | "attackerLosses" | "debris" | "defenderLosses" | "participants" | "roundReports"> | null = null;
   let attackerLosses: Resources = emptyResources();
   let defenderLosses: Resources = emptyResources();
   let debris: BattleReport["debris"] = { metal: "0", crystal: "0" };
@@ -3496,8 +3637,66 @@ export function decodeBattleReportLogs(logs: RpcLog[], requestedMissionId?: stri
     attackerLosses,
     defenderLosses,
     debris,
-    roundReports: roundReports.sort((left, right) => left.round - right.round)
+    roundReports: roundReports.sort((left, right) => left.round - right.round),
+    // Default to a solo report: the main attacker is the only participant and its loot is the report
+    // loot. attachAttackGroupParticipants() later folds in any ACS joiners and the group id once the
+    // fleet-mission read model is available; a report decoded in isolation still carries the attacker.
+    attackGroupId: null,
+    participants: [
+      {
+        missionId: base.missionId,
+        address: base.attacker,
+        isMainAttacker: true,
+        ships: {},
+        loot: base.loot
+      }
+    ]
   };
+}
+
+// Fold the ACS attack group into each battle report: list every participant (main attacker + joined
+// fleets) with their individual loot share. Joined fleets never emit their own AttackBattleResolved,
+// so a joiner's loot is its resulting return-leg cargo (`returnCargo`), captured from
+// FleetMissionReturnExposed. The main attacker keeps its battle-report loot. `attackGroupId` is set
+// when the main mission has any joiners. Solo attacks are returned unchanged (single participant).
+export function attachAttackGroupParticipants(
+  reports: BattleReport[],
+  missions: FleetMissionSummary[]
+): BattleReport[] {
+  const missionById = new Map(missions.map((mission) => [mission.missionId, mission]));
+  return reports.map((report) => {
+    const mainMission = missionById.get(report.missionId);
+    const participants: BattleReportParticipant[] = [
+      {
+        missionId: report.missionId,
+        address: report.attacker,
+        isMainAttacker: true,
+        ships: mainMission?.ships ?? {},
+        loot: report.loot
+      }
+    ];
+
+    const joinedMissionIds = mainMission?.joinedAttackMissionIds ?? [];
+    for (const joinedMissionId of joinedMissionIds) {
+      const joined = missionById.get(joinedMissionId);
+      if (!joined) continue;
+      participants.push({
+        missionId: joinedMissionId,
+        address: joined.owner,
+        isMainAttacker: false,
+        ships: joined.ships,
+        // The joiner's resulting cargo after combat is its loot share. Null (fleet still outbound or
+        // wiped at the target, so it hauled nothing) reports as zero.
+        loot: joined.returnCargo ?? emptyResources()
+      });
+    }
+
+    return {
+      ...report,
+      attackGroupId: joinedMissionIds.length > 0 ? (mainMission?.attackGroupId ?? report.missionId) : null,
+      participants
+    };
+  });
 }
 
 export function decodeBattleReports(logs: RpcLog[]): BattleReport[] {
@@ -3531,6 +3730,8 @@ function isCompleteFleetMissionSummary(mission: MutableFleetMissionSummary): mis
       && mission.fuelCost !== undefined
       && mission.attackGroupId !== undefined
       && mission.joinedAttackMissionIds
+      && mission.defendsMissionId !== undefined
+      && mission.counterplayDefenderMissionIds
       && mission.cargo
       && mission.ships
       && mission.transactionHash
@@ -3567,6 +3768,24 @@ function missionTypeLabel(value: bigint): string {
 
 function missionStatusLabel(value: bigint): string {
   return missionStatuses[Number(value)] ?? `Unknown:${value.toString()}`;
+}
+
+// VEY-KANEO-424: the only on-chain event that carries a recall cost is FleetMissionRecalled, so an
+// Outbound fleet that has not been recalled yet decodes with recallCost: null. That null made the
+// Mission Detail page hide the Recall button and render "Not recallable" for a fleet that can still
+// be recalled. The contract derives the recall cost deterministically from the mission's fuel cost
+// (VeydriftGameplayModule._fleetRecallCost: floor(fuelCost * FLEET_RECALL_COST_BPS / BPS), with a
+// floor of 1 deuterium whenever any fuel was spent), so we project the same value for still-recallable
+// Outbound missions instead of leaving it null. A real recall later overwrites this with the emitted
+// amount, which equals this projection.
+const fleetRecallCostBps = 2_500n;
+const fleetRecallCostBpsDenominator = 10_000n;
+
+function projectedFleetRecallCost(fuelCost: string): string {
+  const fuel = BigInt(fuelCost);
+  if (fuel <= 0n) return "0";
+  const cost = (fuel * fleetRecallCostBps) / fleetRecallCostBpsDenominator;
+  return (cost === 0n ? 1n : cost).toString();
 }
 
 function battleOutcomeLabel(value: bigint): BattleOutcomeName {
@@ -3620,7 +3839,7 @@ const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5
 const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
 const combatDebrisSignaledTopic = "0xd0fbe8b5c73fec6dcfc5fef85459b695d1c9fedb4f94f9748ecaeff785192f14";
-const missionTypes = ["Transport", "Deploy", "Colonize", "Attack", "Harvest", "AcsDefend", "Intercept", "MissileAttack", "AcsAttack"] as const;
+const missionTypes = ["Transport", "Deploy", "Colonize", "Attack", "Harvest", "AcsDefend", "Intercept", "MissileAttack", "AcsAttack", "DefenseHold"] as const;
 const missionStatuses = ["None", "Outbound", "Returning", "Resolved", "Returned", "Recalled"] as const;
 const battleOutcomes = ["Draw", "AttackerWin", "DefenderWin"] as const;
 const moonChanceRequestedTopic = "0x8969f3a52192b4b918b49219d60ea0b68d3f5fd8b70c4691b297a538ac333121";

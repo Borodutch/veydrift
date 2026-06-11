@@ -114,6 +114,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     error InvalidInvite(address player, uint256 allianceId);
     error InvalidJoinRequest(address player, uint256 allianceId);
     error InvalidRole(AllianceRole role);
+    error NewOwnerMustBeOfficer(address account, uint256 allianceId);
     error NoAlliance(address player);
     error NoPlanet(address player);
     error NotAllianceMember(address player, uint256 allianceId);
@@ -413,17 +414,20 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         emit AllianceRoleUpdated(allianceId, player, role);
     }
 
-    /// @notice Hand the alliance owner role to one of its officers. The caller steps down to officer.
+    /// @notice Hand the alliance owner role to one of the alliance's officers,
+    /// demoting the previous owner to officer so the alliance always keeps
+    /// exactly one owner.
     function transferAllianceOwnership(uint256 allianceId, address newOwner) external {
         _requireOwner(allianceId, msg.sender);
         if (newOwner == msg.sender) revert NotAuthorized(msg.sender, allianceId);
-
-        Membership storage nextOwner = _memberships[newOwner];
-        if (nextOwner.allianceId != allianceId) revert NotAllianceMember(newOwner, allianceId);
-        if (nextOwner.role != AllianceRole.Officer) revert InvalidRole(nextOwner.role);
+        Membership storage incoming = _memberships[newOwner];
+        if (incoming.allianceId != allianceId) revert NotAllianceMember(newOwner, allianceId);
+        if (incoming.role != AllianceRole.Officer) {
+            revert NewOwnerMustBeOfficer(newOwner, allianceId);
+        }
 
         _memberships[msg.sender].role = AllianceRole.Officer;
-        nextOwner.role = AllianceRole.Owner;
+        incoming.role = AllianceRole.Owner;
         _alliances[allianceId].owner = newOwner;
 
         emit AllianceRoleUpdated(allianceId, msg.sender, AllianceRole.Officer);
@@ -601,6 +605,38 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     ) external view returns (bool canCoordinate, uint128 netHoldingFuelCost, uint128 depotSupport) {
         canCoordinate = _canCoordinateDefense(viewer, defenderPlanetId, hostileMissionId);
         if (!canCoordinate) return (false, 0, 0);
+
+        uint128 holdingFuelCost = _acsHoldingFuelCost(ships, holdSeconds);
+        uint128 supportCapacity = uint128(
+            uint256(game.buildingLevel(defenderPlanetId, Building.AllianceDepot))
+                * ALLIANCE_DEPOT_SUPPORT_DEUTERIUM_PER_LEVEL
+        );
+        depotSupport = holdingFuelCost < supportCapacity ? holdingFuelCost : supportCapacity;
+        netHoldingFuelCost = holdingFuelCost - depotSupport;
+    }
+
+    /// @notice Authorization and holding-fuel context for an OGame-style ACS Defend (DefenseHold)
+    ///         stationing mission. Unlike counterplay defense, this is not tied to a specific hostile
+    ///         mission: a player may station a fleet at their own planet or at any same-alliance
+    ///         member's planet for a chosen hold window. Holding fuel scales with the hold duration
+    ///         and is offset by the defended planet's Alliance Depot, mirroring counterplay holding.
+    function defenseHoldFuelContext(
+        address viewer,
+        uint256 defenderPlanetId,
+        VeydriftGameStorage.MissionShips calldata ships,
+        uint256 holdSeconds
+    ) external view returns (bool canCoordinate, uint128 netHoldingFuelCost, uint128 depotSupport) {
+        VeydriftGameStorage.Planet memory target = game.planet(defenderPlanetId);
+        if (target.owner == address(0)) return (false, 0, 0);
+
+        if (target.owner != viewer) {
+            uint256 targetAllianceId = _memberships[target.owner].allianceId;
+            uint256 viewerAllianceId = _memberships[viewer].allianceId;
+            if (targetAllianceId == 0 || targetAllianceId != viewerAllianceId) {
+                return (false, 0, 0);
+            }
+        }
+        canCoordinate = true;
 
         uint128 holdingFuelCost = _acsHoldingFuelCost(ships, holdSeconds);
         uint128 supportCapacity = uint128(

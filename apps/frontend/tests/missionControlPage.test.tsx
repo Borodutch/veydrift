@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionControlPage, formatMissionTime, missionControlRefreshButtonState, missionLifecycleActions, returnPhaseLoot } from "../src/components/MissionControlPage";
+import { MissionControlPage, formatMissionTime, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseLoot } from "../src/components/MissionControlPage";
 import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
@@ -68,6 +68,30 @@ describe("MissionControlPage", () => {
     ]);
   });
 
+  // VEY-KANEO-424: recall is only valid more than the 60s contract cutoff before arrival. Inside that
+  // window the fleet is still Outbound and not yet due, so the Recall button is offered but disabled.
+  test("disables Recall once an outbound fleet is within the 60s recall cutoff", () => {
+    const now = 1_770_000_100_000;
+
+    // 200s before arrival: comfortably outside the cutoff, so recall is enabled.
+    expect(missionLifecycleActions({
+      canTransact: true,
+      context: "outgoing",
+      mission: mission({ arrivalAt: "1770000300", missionId: "1", status: "Outbound" }),
+      now,
+    }).find((action) => action.kind === "recall")?.enabled).toBe(true);
+
+    // 30s before arrival: inside the 60s cutoff. The button is still present (not yet due) but disabled.
+    const recall = missionLifecycleActions({
+      canTransact: true,
+      context: "outgoing",
+      mission: mission({ arrivalAt: "1770000130", missionId: "2", status: "Outbound" }),
+      now,
+    }).find((action) => action.kind === "recall");
+    expect(recall?.enabled).toBe(false);
+    expect(recall?.reason).toContain("recall cutoff");
+  });
+
   test("renders player-facing mission control rows without implementation copy", () => {
     const page = MissionControlPage({
       actionState: { status: "idle" },
@@ -111,9 +135,12 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Mission Route Fleet");
     expect(text).not.toContain("Origin -> Target");
     // Status reads as a header pill with the live ETA (outbound) / return (returning) countdown.
-    expect(text).toContain("En route");
+    // VEY-KANEO-433: the pill tracks the live clock — this fixture's `now` (…700_000) is past the
+    // outbound arrival (…300) and the return landing (…600), so the fleets read "Arrived"/"Returned"
+    // rather than the stale backend "Outbound"/"Returning" (see the dedicated pill test below).
+    expect(text).toContain("Arrived");
     expect(text).toContain("ETA");
-    expect(text).toContain("Returning");
+    expect(text).toContain("Returned");
     expect(text).toContain("Returns");
     // Hostile inbound missions read "Incoming attack"; the player's own launches stay bare.
     expect(text).toContain("Incoming attack # 8");
@@ -296,7 +323,9 @@ describe("MissionControlPage", () => {
         returning: [],
         joinableAttacks: [],
         completedMissions: [],
-        battleReports: [battleReport("77")],
+        // A past battle report for a *different*, already-landed mission (not the active incoming
+        // one) still renders in Past Missions alongside the live active card.
+        battleReports: [battleReport("78")],
       },
       walletPlanets: [managedPlanet({
         planetId: "9",
@@ -314,7 +343,8 @@ describe("MissionControlPage", () => {
     expect(defenderText).toContain("New Eos");
     expect(defenderText).toContain("Red Haven");
     expect(defenderText).toContain("Group defend");
-    expect(defenderText).toContain("Intercept");
+    // Intercept was removed from the frontend (VEY-KANEO-439); only Group defend remains for the defender.
+    expect(defenderText).not.toContain("Intercept");
     expect(defenderText).toContain("Battle report");
     expect(defenderText).toContain("Past missions");
     expect(defenderText).not.toContain("Recall fleet");
@@ -353,7 +383,9 @@ describe("MissionControlPage", () => {
         returning: [],
         joinableAttacks: [],
         completedMissions: [],
-        battleReports: [battleReport("77")],
+        // A past battle report for a *different*, already-landed mission (not the active outgoing
+        // one) still renders in Past Missions alongside the live active card.
+        battleReports: [battleReport("78")],
       },
       walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
     });
@@ -533,6 +565,32 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Open report");
   });
 
+  test("keeps active missions' battle reports out of Past Missions until the fleet lands (VEY-KANEO-434)", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        // Both an en-route attack (Outbound) and a fleet flying home (Returning) are still ACTIVE
+        // missions. While active they belong only in the active section — a matching battle report
+        // must not be duplicated into Past Missions for the same in-flight mission (VEY-KANEO-434).
+        outgoing: [mission({ missionId: "44", missionType: "Attack", status: "Outbound" })],
+        returning: [mission({ missionId: "55", missionType: "Attack", status: "Returning" })],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [battleReport("44"), battleReport("55")],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    // The missions still render in the active section.
+    expect(text).toContain("Returning");
+    // Neither active mission's report leaks into the archive while the mission is in flight.
+    expect(text).not.toContain("Battle report");
+    expect(text).toContain("No completed missions are visible for this wallet yet.");
+  });
+
   test("labels past missions by direction and drops the self-commander on outgoing", () => {
     const page = missionControlPage({
       fleetVisibility: {
@@ -651,6 +709,40 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Active missions 1");
     expect(text).toContain("My missions (0)");
     expect(text).toContain("Alliance (1)");
+  });
+});
+
+describe("VEY-KANEO-433 time-aware mission status", () => {
+  // arrivalAt 1770000300 (ms 1_770_000_300_000), returnAt 1770000600 (ms 1_770_000_600_000).
+  const beforeArrival = 1_770_000_200_000;
+  const afterArrival = 1_770_000_400_000;
+  const afterReturn = 1_770_000_700_000;
+
+  test("Outbound pill flips from En route to Arrived once arrival passes", () => {
+    const fleet = mission({ status: "Outbound" });
+    expect(missionStatusPill(fleet, beforeArrival).label).toBe("En route");
+    expect(missionStatusPill(fleet, afterArrival).label).toBe("Arrived");
+  });
+
+  test("Returning/Recalled pill flips to Returned once the fleet has landed", () => {
+    const returning = mission({ status: "Returning" });
+    const recalled = mission({ status: "Recalled" });
+    expect(missionStatusPill(returning, afterArrival).label).toBe("Returning");
+    expect(missionStatusPill(returning, afterReturn).label).toBe("Returned");
+    expect(missionStatusPill(recalled, afterArrival).label).toBe("Recalled");
+    expect(missionStatusPill(recalled, afterReturn).label).toBe("Returned");
+  });
+
+  test("terminal backend statuses pass through unchanged", () => {
+    expect(missionStatusPill(mission({ status: "Returned" }), afterReturn).label).toBe("Returned");
+    expect(missionStatusPill(mission({ status: "Resolved" }), afterReturn).label).toBe("Resolved");
+  });
+
+  test("the text label mirrors the pill for the report card and shared report", () => {
+    const fleet = mission({ status: "Outbound" });
+    expect(missionDisplayStatusLabel(fleet, beforeArrival)).toBe("en route");
+    expect(missionDisplayStatusLabel(fleet, afterArrival)).toBe("arrived");
+    expect(missionDisplayStatusLabel(mission({ status: "Returning" }), afterReturn)).toBe("returned");
   });
 });
 

@@ -9,6 +9,7 @@ import {
   technologyIds
 } from "./contractStateSchema";
 import {
+  attachAttackGroupParticipants,
   decodeAllianceLog,
   decodeBattleReports,
   decodeCompleteFleetMissionLogs,
@@ -112,6 +113,35 @@ export type IndexerSnapshot = {
 export type SettlementIndexerOptions = {
   database?: Database;
   databasePath?: string;
+};
+
+// A single field of a planet's stored canonical state that disagrees with the
+// authoritative on-chain getter. `resources` rows carry a resource `key` and a
+// null `id`; building/ship/defense rows carry the numeric item `id` and a null
+// `key`. `stored` is the backend value, `onChain` the contract value, both as
+// decimal strings so large resource amounts survive without precision loss.
+export type CanonicalFieldDivergence = {
+  field: "resources" | "building" | "ship" | "defense";
+  id: number | null;
+  key: "metal" | "crystal" | "deuterium" | null;
+  stored: string;
+  onChain: string;
+};
+
+// The result of comparing a planet's stored canonical state against the on-chain
+// previewResources / buildingLevel / shipCount / defenseCount getters, and
+// optionally self-healing it back to the contract values.
+export type CanonicalDivergenceReport = {
+  planetId: string;
+  owner: string | null;
+  checkedAt: string;
+  // True only when at least one on-chain getter answered; false when the planet
+  // is uncharted or the chain reader exposes none of the canonical getters, in
+  // which case no comparison was possible and `divergent` is meaningless.
+  reachedChain: boolean;
+  divergent: boolean;
+  divergences: CanonicalFieldDivergence[];
+  healed: boolean;
 };
 
 type CountRow = {
@@ -261,10 +291,30 @@ export type ApplyLogResult = {
   snapshot: IndexerSnapshot;
 };
 
+// Maps each FleetMissionShips composition key to its on-chain Ship enum id (VeydriftTypes.Ship). The list
+// deliberately omits SolarSatellite (9) and Crawler (15) — the contract never lets those join a mission.
+const MISSION_SHIP_IDS: ReadonlyArray<readonly [string, number]> = [
+  ["smallCargo", 0],
+  ["lightFighter", 1],
+  ["recycler", 2],
+  ["colonyShip", 3],
+  ["largeCargo", 4],
+  ["heavyFighter", 5],
+  ["cruiser", 6],
+  ["battleship", 7],
+  ["bomber", 8],
+  ["destroyer", 10],
+  ["deathstar", 11],
+  ["battlecruiser", 12],
+  ["reaper", 13],
+  ["pathfinder", 14]
+];
+
 export class SettlementIndexer {
   private readonly db: Database;
   private planetRebuildPromise: Promise<IndexerSnapshot> | null = null;
   private rebuildPromise: Promise<IndexerSnapshot> | null = null;
+  private canonicalRefreshPromise: Promise<void> | null = null;
 
   constructor(
     private readonly chainReader: Pick<
@@ -686,7 +736,7 @@ export class SettlementIndexer {
       incoming: summaries.filter((mission) =>
         mission.owner.toLowerCase() !== walletLower
           && ownedPlanetIds.has(mission.targetPlanetId)
-          && ["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType)
+          && ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
           && mission.status === "Outbound"
       ),
       outgoing: summaries.filter((mission) =>
@@ -705,8 +755,13 @@ export class SettlementIndexer {
       completedMissions: summaries
         .filter((mission) => isVisibleCompletedMission(mission, walletLower, ownedPlanetIds))
         .sort(compareFleetMissionsNewestFirst),
+      // A report is visible to the main attacker, the defender (target planet owner), and — for a
+      // grouped ACS attack — every joiner, so each participant can see the shared report and the loot
+      // they personally hauled (VEY-KANEO-432).
       battleReports: battleReports.filter((report) =>
-        report.attacker.toLowerCase() === walletLower || ownedPlanetIds.has(report.targetPlanetId)
+        report.attacker.toLowerCase() === walletLower
+          || ownedPlanetIds.has(report.targetPlanetId)
+          || report.participants.some((participant) => participant.address.toLowerCase() === walletLower)
       )
     };
   }
@@ -750,6 +805,57 @@ export class SettlementIndexer {
       (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
       this.planet(planetId)?.temperature
     );
+  }
+
+  // Ships physically present at the planet and therefore launchable right now — the value the contract
+  // returns from `shipCount(planetId, ship)` — as opposed to `shipRows`, the planet's full owned roster.
+  //
+  // The contract debits ships from the origin planet at launch (VeydriftGameplayModule._debitMissionShips),
+  // credits survivors back on return, and burns combat losses, but emits NO PlanetShipCountChanged for any
+  // of those moves — the only ship-count events are build completions and the combat solar-satellite wipe.
+  // So `contract_ship_counts` only re-syncs with on-chain on the next canonical reconcile; between
+  // reconciles it still counts ships that have already left (and may have died) on a mission. Mission
+  // Compose read that stale roster and offered phantom ships, so a launch exceeding the real on-chain count
+  // reverted (VEY-KANEO-447) — and the reporter saw it with the fleet already gone, not merely in flight.
+  //
+  // We can't restore departures from events: FleetMissionReturned/ReturnExposed carry no surviving ship
+  // composition, so the read model never learns how many ships actually came home. We therefore apply a
+  // debit-only projection — subtract EVERY mission that has departed since the reconcile baseline (any
+  // status, including Returned/Resolved/lost), per its launch composition — and let the next reconcile's
+  // fresh on-chain read add survivors back. Gating on the launch block vs `lastReconciledBlock` keeps us
+  // from re-subtracting departures the baseline already excludes. This never over-reports (so no phantom
+  // ships, no launch revert); a fleet that returned intact transiently under-reports until the next
+  // reconcile, which only ever offers fewer ships than are truly present.
+  availableShipRows(planetId: string): ShipyardState["ships"] {
+    const departedByShipId = this.shipsDepartedSinceReconcile(planetId);
+    return deriveShipRows(
+      (id) => Math.max(0, this.indexedLevel("contract_ship_counts", "ship_id", planetId, id) - (departedByShipId.get(id) ?? 0)),
+      this.planet(planetId)?.temperature
+    );
+  }
+
+  // Sum, per ship id, the ships that have left `planetId` on missions the canonical reconcile baseline has
+  // not yet absorbed. Every complete fleet-mission summary has already departed (the contract debited it at
+  // launch), and we cannot know which ships returned, so we count them all regardless of current status —
+  // an intact return is restored by the next reconcile, a loss stays correctly subtracted.
+  private shipsDepartedSinceReconcile(planetId: string): Map<number, number> {
+    const baselineBlock = BigInt(this.metadata("lastReconciledBlock") ?? "0");
+    const departed = new Map<number, number>();
+    for (const mission of this.indexedFleetMissionSummaries()) {
+      if (mission.originPlanetId !== planetId) continue;
+      let launchBlock: bigint;
+      try {
+        launchBlock = BigInt(mission.launchBlockNumber ?? "0");
+      } catch {
+        launchBlock = 0n;
+      }
+      if (launchBlock <= baselineBlock) continue;
+      for (const [key, shipId] of MISSION_SHIP_IDS) {
+        const quantity = Number(mission.ships[key] ?? "0");
+        if (quantity > 0) departed.set(shipId, (departed.get(shipId) ?? 0) + quantity);
+      }
+    }
+    return departed;
   }
 
   defenseRows(planetId: string): DefenseState["defenses"] {
@@ -1077,9 +1183,182 @@ export class SettlementIndexer {
     return this.rebuild();
   }
 
+  // Lightweight, frequent on-chain state refresh — decoupled from the heavy full rebuild(). The full
+  // rebuild re-scans the entire getLogs history (slow, occasionally OOMs/hangs) and is the ONLY place the
+  // canonical chain reads run, so between rebuilds the served contract_* tables drift: event handlers
+  // mutate them with derivation that the contract emits no events for (mission ship debits/credits, loot,
+  // spend), and the departed-ships projection keeps subtracting fleets that already returned because its
+  // `lastReconciledBlock` baseline is stale — that is why resources read wrong and the shipyard shows 0.
+  //
+  // This reads each live planet's authoritative state straight from the contract (previewResources /
+  // shipyard / infrastructure / defenses / research) via readCanonicalState and overwrites contract_* with
+  // it, then advances the reconcile baseline to the current chain head so the departed-ships projection
+  // only nets out genuinely in-flight fleets. Run on a short interval it keeps every served number pinned
+  // to chain. Never throws; skips while a full rebuild is in flight (the rebuild does the same work).
+  async refreshCanonicalState(): Promise<void> {
+    if (this.canonicalRefreshPromise) return this.canonicalRefreshPromise;
+    const fullReconciliationInProgress = this.rebuildPromise || this.planetRebuildPromise;
+    if (fullReconciliationInProgress && !this.metadata("lastReconciledAt")) return;
+    if (!this.chainReader.listCurrentPlanets) return;
+    this.canonicalRefreshPromise = this.refreshCanonicalStateUncached()
+      .catch((error) => {
+        // A refresh miss is non-fatal: the persisted snapshot stays serveable and the next tick retries.
+        // Deliberately do NOT set lastReconciliationError here — that would flip serve-stale/health gating.
+        console.error("Veydrift canonical state refresh failed", error);
+      })
+      .finally(() => {
+        this.canonicalRefreshPromise = null;
+      });
+    return this.canonicalRefreshPromise;
+  }
+
+  private async refreshCanonicalStateUncached(): Promise<void> {
+    const planets = await this.chainReader.listCurrentPlanets!();
+    if (planets.length === 0) return;
+    // Snapshot the head BEFORE the chain reads. Used as the departed-ships baseline: any mission whose
+    // launch block is <= head is already reflected in the shipCount we just read, so it must not be
+    // subtracted again. Reading head-before-state keeps the projection on the safe (never-over-report)
+    // side if a fleet departs mid-refresh. latestIndexedBlock is maintained by the websocket head feed.
+    const head = this.metadata("latestIndexedBlock")
+      ?? this.metadata("lastReconciledBlock")
+      ?? this.fromBlock.toString();
+    const state = await this.readCanonicalState(planets);
+    const now = new Date().toISOString();
+    const apply = this.db.transaction(() => {
+      this.setMetadata("lastReconciledBlock", head);
+      this.applyCanonicalState(state);
+      this.setMetadata("lastReconciledAt", now);
+      this.touch();
+    });
+    apply();
+  }
+
   markStale(reason: string): IndexerSnapshot {
     this.setMetadata("pendingReconciliationReason", reason);
     return this.snapshot();
+  }
+
+  // Verify — and optionally self-heal — a single planet's stored canonical state
+  // against the authoritative on-chain getters, without the cost of a full
+  // `rebuild()`. The canonical mirror is updated incrementally between reconciles
+  // from event logs, but the contract debits/credits ships, defenses and
+  // resources for many actions (mission launches, combat losses, settlement)
+  // without emitting an event the indexer can replay, so a planet's stored
+  // {resources, buildings, ships, defenses} can drift from the chain until the
+  // next full reconcile. This reads the exact authoritative values the reconcile
+  // uses — getInfrastructureState -> previewResources + buildingLevel,
+  // getShipyardState -> shipCount, getDefenseState -> defenseCount — diffs them
+  // against the stored canonical rows, and (with `heal`) re-syncs just this
+  // planet's rows to the contract values so the served state equals on-chain.
+  //
+  // Healing writes EXACT contract values (not the monotonic max() the event-replay
+  // path uses) because the on-chain read is authoritative: a building or ship that
+  // genuinely dropped on-chain must be corrected downward too, otherwise the
+  // divergence the call set out to remove would survive.
+  async verifyCanonicalState(
+    planetId: string,
+    options: { heal?: boolean } = {}
+  ): Promise<CanonicalDivergenceReport> {
+    const checkedAt = new Date().toISOString();
+    const planet = this.planet(planetId);
+    const owner = planet?.owner ?? null;
+    const baseReport: CanonicalDivergenceReport = {
+      planetId,
+      owner,
+      checkedAt,
+      reachedChain: false,
+      divergent: false,
+      divergences: [],
+      healed: false
+    };
+
+    if (!owner) return baseReport;
+
+    const ownerAddress = owner as `0x${string}`;
+    const planetIdBig = BigInt(planetId);
+    const [infrastructure, shipyard, defenseState] = await Promise.all([
+      this.chainReader.getInfrastructureState?.(ownerAddress, planetIdBig),
+      this.chainReader.getShipyardState?.(ownerAddress, planetIdBig),
+      this.chainReader.getDefenseState?.(ownerAddress, planetIdBig)
+    ]);
+
+    if (!infrastructure && !shipyard && !defenseState) {
+      return baseReport;
+    }
+
+    const divergences: CanonicalFieldDivergence[] = [];
+
+    if (infrastructure?.resources) {
+      const stored = this.planetResourceSnapshot(planetId);
+      for (const key of ["metal", "crystal", "deuterium"] as const) {
+        const storedValue = stored ? stored[key] : "0";
+        const onChain = infrastructure.resources[key];
+        if (BigInt(storedValue) !== BigInt(onChain)) {
+          divergences.push({ field: "resources", id: null, key, stored: storedValue, onChain });
+        }
+      }
+    }
+
+    for (const building of infrastructure?.buildings ?? []) {
+      const storedValue = this.indexedLevel("contract_building_levels", "building_id", planetId, building.id);
+      if (storedValue !== building.level) {
+        divergences.push({ field: "building", id: building.id, key: null, stored: String(storedValue), onChain: String(building.level) });
+      }
+    }
+
+    for (const ship of shipyard?.ships ?? []) {
+      const storedValue = this.indexedLevel("contract_ship_counts", "ship_id", planetId, ship.id);
+      if (storedValue !== ship.count) {
+        divergences.push({ field: "ship", id: ship.id, key: null, stored: String(storedValue), onChain: String(ship.count) });
+      }
+    }
+
+    for (const defense of defenseState?.defenses ?? []) {
+      const storedValue = this.indexedLevel("contract_defense_counts", "defense_id", planetId, defense.id);
+      if (storedValue !== defense.count) {
+        divergences.push({ field: "defense", id: defense.id, key: null, stored: String(storedValue), onChain: String(defense.count) });
+      }
+    }
+
+    const divergent = divergences.length > 0;
+    let healed = false;
+    if (divergent && options.heal) {
+      this.healPlanetCanonicalState(planetId, { infrastructure, shipyard, defenseState });
+      healed = true;
+    }
+
+    return { planetId, owner, checkedAt, reachedChain: true, divergent, divergences, healed };
+  }
+
+  private healPlanetCanonicalState(
+    planetId: string,
+    state: {
+      infrastructure: InfrastructureState | undefined;
+      shipyard: ShipyardState | undefined;
+      defenseState: DefenseState | undefined;
+    }
+  ): void {
+    const blockNumber = this.metadata("lastReconciledBlock") ?? "0";
+    const heal = this.db.transaction(() => {
+      if (state.infrastructure?.resources) {
+        const reconciledAt = Math.floor(Date.now() / 1_000).toString();
+        this.upsertPlanetResourceSnapshot(planetId, state.infrastructure.resources, reconciledAt, "0x", blockNumber);
+      }
+      for (const building of state.infrastructure?.buildings ?? []) {
+        this.upsertIndexedLevel("indexed_building_levels", "building_id", "level", planetId, building.id, building.level);
+        this.upsertIndexedLevel("contract_building_levels", "building_id", "level", planetId, building.id, building.level);
+      }
+      for (const ship of state.shipyard?.ships ?? []) {
+        this.upsertIndexedLevel("indexed_ship_counts", "ship_id", "count", planetId, ship.id, ship.count);
+        this.upsertIndexedLevel("contract_ship_counts", "ship_id", "count", planetId, ship.id, ship.count);
+      }
+      for (const defense of state.defenseState?.defenses ?? []) {
+        this.upsertIndexedLevel("indexed_defense_counts", "defense_id", "count", planetId, defense.id, defense.count);
+        this.upsertIndexedLevel("contract_defense_counts", "defense_id", "count", planetId, defense.id, defense.count);
+      }
+      this.touch();
+    });
+    heal();
   }
 
   async rebuildPlanets(): Promise<IndexerSnapshot> {
@@ -2211,10 +2490,44 @@ export class SettlementIndexer {
   }
 
   private applyQueueCompletedEvent(event: IndexedQueueCompletedEvent): void {
+    // A building completion raises the planet's production rate. The contract
+    // settles [lastSettledAt, readyAt] at the OLD rate, completes the building,
+    // then accrues at the NEW rate from readyAt (VeydriftGame.sol:720-730). The
+    // read-model projects from the stored baseline at the current rate, so the
+    // baseline must absorb the pre-completion window at the old rate before the
+    // level is bumped — otherwise the projection applies the new, higher rate
+    // over the whole window since the last settle and over-reports resources by
+    // up to ~3x (VEY-KANEO-429). Settle BEFORE deleting the queue (it carries
+    // readyAt) and BEFORE applying the completed level.
+    if (event.queueKind === "building" && event.planetId) {
+      const queue = this.queueState(queueKey(event));
+      this.settlePlanetResourcesUntil(event.planetId, queue?.readyAt ?? undefined);
+    }
     this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(queueKey(event));
     this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKey(event));
     this.applyQueueCompletionEffects(event);
     this.touch();
+  }
+
+  // Advance a planet's stored resources/lastSettledAt up to `settledAt` at the
+  // current production rate, mirroring the contract's `_settleResourcesUntil`.
+  // Used when a building completes so the baseline reflects accrual at the
+  // pre-completion rate before the new level is applied.
+  private settlePlanetResourcesUntil(planetId: string, settledAt: string | undefined): void {
+    if (!settledAt) return;
+    const planet = this.planet(planetId);
+    if (!planet) return;
+    if (isZeroResourcePlaceholder(planet) && !this.planetResourceSnapshot(planetId)) return;
+    const previousSettledAt = Number(planet.lastSettledAt);
+    const nextSettledAt = Number(settledAt);
+    if (!Number.isFinite(previousSettledAt) || !Number.isFinite(nextSettledAt) || nextSettledAt <= previousSettledAt) {
+      return;
+    }
+    this.upsertPlanet({
+      ...planet,
+      lastSettledAt: settledAt,
+      resources: this.settlePlanetResourcesForSpend(planet, settledAt)
+    });
   }
 
   private applyQueueCompletionEffects(event: IndexedQueueCompletedEvent): void {
@@ -2892,7 +3205,10 @@ export class SettlementIndexer {
     const logs = rows
       .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
       .filter(isBattleReportLog);
-    return decodeBattleReports(logs);
+    // Enrich each report with its ACS attack group participants + per-participant loot, joining the
+    // decoded battle reports against the fleet-mission read model (which carries joinedAttackMissionIds
+    // and each joiner's resulting return-leg cargo). Solo attacks come back with a single participant.
+    return attachAttackGroupParticipants(decodeBattleReports(logs), this.indexedFleetMissionSummaries());
   }
 
   private withFleetMissionPlanetReferences(mission: FleetMissionSummary): FleetMissionSummary {
@@ -2915,7 +3231,10 @@ export class SettlementIndexer {
       system: planet.system,
       position: planet.position,
       coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
-      archetype: planetArchetypeForTemperature(planet.temperature)
+      archetype: planetArchetypeForTemperature(planet.temperature),
+      // VEY-KANEO-440: surface the Alliance Depot level (building id 13) so the ACS Defend compose UX
+      // can preview how much holding fuel the defended planet's depot subsidizes.
+      allianceDepotLevel: this.infrastructureRows(planet.planetId).find((building) => building.id === 13)?.level ?? 0
     };
   }
 

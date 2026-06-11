@@ -1,5 +1,5 @@
 import type { Planet } from "./types";
-import type { ChainDefenseState, ChainShipyardState } from "./walletFlow";
+import { DEFENSE_HOLD_MISSION_TYPE, type ChainDefenseState, type ChainShipyardState } from "./walletFlow";
 
 export type GalaxyActionKind =
   | "attack"
@@ -8,7 +8,10 @@ export type GalaxyActionKind =
   | "colonize"
   | "harvest"
   | "acsDefend"
-  | "intercept"
+  // VEY-KANEO-440: proactive ACS Defend — station a fleet at an own/ally planet for a chosen hold
+  // window. Unlike "acsDefend" (reactive counterplay tied to a hostile mission), this targets a
+  // planet and is launched via launchDefenseHold.
+  | "defenseHold"
   | "missileAttack";
 
 export type GalaxyMissionKind = Exclude<GalaxyActionKind, "colonize" | "missileAttack">;
@@ -113,6 +116,10 @@ export function galaxyActionsForSlot({
   const accountLower = account?.toLowerCase();
   const isOwnTarget = Boolean(owner && accountLower && owner === accountLower);
   const isOccupied = Boolean(owner);
+  // VEY-KANEO-440: a same-alliance member's planet is a valid proactive-defense target. The backend
+  // already surfaces this through the attack guard (you cannot attack an ally), so reuse that signal
+  // rather than re-deriving alliance membership here.
+  const isAllyTarget = attackProtection?.blockedReason === "same_alliance";
 
   if (!isOccupied) {
     return [
@@ -136,7 +143,18 @@ export function galaxyActionsForSlot({
 
   if (isOwnTarget) {
     if (isOrigin) {
-      return [];
+      // The home/launch planet is where every wallet starts and the slot players inspect first, so the
+      // proactive Defend action is surfaced here (disabled) rather than hidden — otherwise a player with
+      // a single colony and no alliance sees no Defend affordance anywhere and the feature reads as
+      // missing. launchDefenseHold reverts with SamePlanet when origin == target, so the reason explains
+      // the prerequisite (a second colony or an alliance member's planet to station the fleet at).
+      return [
+        defenseHoldAction(
+          commonBlocker,
+          shipyardState,
+          "You can't station a defending fleet at the planet it launches from. Open another colony or an alliance member's planet to defend it.",
+        ),
+      ];
     }
 
     const cargoBlocker = commonBlocker ?? firstAvailableCargoShipBlocker(shipyardState);
@@ -177,6 +195,7 @@ export function galaxyActionsForSlot({
           mission: "deploy",
         },
       }),
+      defenseHoldAction(commonBlocker, shipyardState),
     ];
   }
 
@@ -184,6 +203,7 @@ export function galaxyActionsForSlot({
   const missileBlocker = commonBlocker ?? interplanetaryMissileBlocker(defenseState);
 
   return [
+    ...(isAllyTarget ? [defenseHoldAction(commonBlocker, shipyardState)] : []),
     enabledOrDisabled({
       blocker: attackBlocker,
       enabled: {
@@ -251,9 +271,42 @@ export function missionTypeId(mission: GalaxyMissionKind): number {
       return 4;
     case "acsDefend":
       return 5;
-    case "intercept":
-      return 6;
+    case "defenseHold":
+      // Indexed FleetMissionType for a DefenseHold mission. Proactive defense launches via
+      // launchDefenseHold (a type-specific selector), so this value is not passed to a
+      // launchFleetMission call — it keeps the mapping exhaustive and aligned with the chain enum.
+      return DEFENSE_HOLD_MISSION_TYPE;
   }
+}
+
+// VEY-KANEO-440: proactive "Defend" action — station a fleet at an own/ally planet. Enabled once the
+// active planet has a movable ship; the planet-eligibility check (own/ally) is enforced by the call
+// sites that emit this action and re-validated on-chain by launchDefenseHold. A call site may pass an
+// `eligibilityBlocker` to surface the action in a disabled+explained state (e.g. on the launch planet
+// itself, where launchDefenseHold reverts with SamePlanet) so the feature stays discoverable and the
+// "explain when not coordinatable" acceptance criterion is met instead of the action silently vanishing.
+function defenseHoldAction(
+  commonBlocker: string | undefined,
+  shipyardState: ChainShipyardState | null,
+  eligibilityBlocker?: string
+): GalaxyAction {
+  return enabledOrDisabled({
+    blocker: eligibilityBlocker ?? commonBlocker ?? firstAvailableFleetShipBlocker(shipyardState),
+    enabled: {
+      enabled: true,
+      kind: "defenseHold",
+      label: "Defend",
+      mode: "mission",
+      mission: "defenseHold",
+      ships: firstAvailableFleetShips(shipyardState),
+    },
+    disabled: {
+      kind: "defenseHold",
+      label: "Defend",
+      mode: "mission",
+      mission: "defenseHold",
+    },
+  });
 }
 
 function enabledOrDisabled<T extends Extract<GalaxyAction, { enabled: true }>>({

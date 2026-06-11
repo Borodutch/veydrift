@@ -1,14 +1,14 @@
 import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List } from "lucide-preact";
 
-import { planetArtTypeFromArchetypeOrCoords, planetImageForType, planetTypeFromCoordinates, planetTypeFromTemperature } from "../data/mockUniverse";
+import { planetTypeFromCoordinates, planetTypeFromTemperature } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import { shipAssetByKey } from "../gameAssets";
-import { buildInspectHash } from "../inspectRoutes";
 import type { ShipKey } from "../playableMvp";
 import type { PlanetType } from "../types";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import {
   type BattleReport,
+  type BattleReportParticipant,
   type FleetMissionArchiveEntry,
   type FleetMissionArchiveResponse,
   type FleetMissionPlanetReference,
@@ -18,6 +18,17 @@ import {
   type ManagedPlanetResponse,
   decodeColonizationTargetId,
 } from "../walletFlow";
+import {
+  MissionRouteCell,
+  type MissionEndpoint,
+  type MissionPlanetIdentity,
+  type RouteLeg,
+  endpointFromPlanetId,
+  missionEndpoint,
+  missionProgressPercent,
+  missionRouteLeg,
+  shortAddress,
+} from "./missionRoute";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { VeydriftLoader } from "./VeydriftLoader";
 
@@ -57,8 +68,11 @@ interface MissionControlPageProps {
   missionArchiveLoading?: boolean | undefined;
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
-  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
+  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
+  // VEY-KANEO-440: opens the player's own planet detail, where the Defend control is always shown
+  // (enabled+explained where eligible, or disabled+explained on the launch planet itself).
+  onDefendPlanet?: (() => void) | undefined;
+  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
   onGlobalMissionArchivePageChange?: ((page: number) => void) | undefined;
@@ -87,6 +101,7 @@ export function MissionControlPage({
   now,
   onCompleteReturn,
   onCounterplay,
+  onDefendPlanet,
   onJoinAttack,
   onOpenReport,
   onOpenReportList,
@@ -114,15 +129,22 @@ export function MissionControlPage({
   // classification (direction + lifecycle actions); every other active mission renders read-only.
   const allActiveRows = allActiveMissionRows(allActiveMissions, activeMissionRows);
   const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...joinableAttacks, ...completedMissions]);
+  // While a mission is still active (Outbound / Returning / Recalled) it must appear ONLY in the
+  // active section. Its battle report — which can already exist for a fleet that fought and is flying
+  // home — must not also render as a Past Missions row, duplicating the live mission. The report
+  // surfaces in Past Missions only once the fleet has fully returned (VEY-KANEO-434).
+  const activeMissionIds = new Set(activeMissionRows.map((row) => row.mission.missionId));
+  const allActiveMissionIds = new Set(allActiveRows.map((row) => row.mission.missionId));
   const fallbackPastMissionRows = chronologicalPastMissionRows(completedMissions, battleReports);
   const rawPastMissionRows = missionArchive?.rows ?? fallbackPastMissionRows;
-  const pastMissionRows = dedupePastMissionRows(rawPastMissionRows);
-  // Rows collapsed by the dedupe (a mission + its battle report -> one row) so the section header
-  // count can match the actual rendered rows even with server-side pagination (VEY-399#1).
+  const pastMissionRows = dedupePastMissionRows(rawPastMissionRows, activeMissionIds);
+  // Rows collapsed by the dedupe (a mission + its battle report -> one row, or an active mission's
+  // report suppressed) so the section header count can match the actual rendered rows even with
+  // server-side pagination (VEY-399#1, VEY-KANEO-434).
   const pastCollapsedCount = rawPastMissionRows.length - pastMissionRows.length;
   // Universe-wide past archive ("All" past tab): same dedupe + collapse accounting, server-paginated.
   const rawGlobalPastRows = globalMissionArchive?.rows ?? [];
-  const globalPastMissionRows = dedupePastMissionRows(rawGlobalPastRows);
+  const globalPastMissionRows = dedupePastMissionRows(rawGlobalPastRows, allActiveMissionIds);
   const globalPastCollapsedCount = rawGlobalPastRows.length - globalPastMissionRows.length;
   // Past missions render from the paginated archive, which can contain missions absent from the live
   // fleet-visibility feed (older pages, returned missions no longer "active"). The backend already
@@ -204,6 +226,15 @@ export function MissionControlPage({
             walletPlanetIds={walletPlanetIds}
           />
 
+          <StationedDefenseSection
+            incoming={incoming}
+            now={now}
+            onDefendPlanet={onDefendPlanet}
+            onOpenReport={onOpenReport}
+            outgoing={outgoing}
+            planetLookup={planetLookup}
+          />
+
           <PastMissionSection
             allCollapsedCount={globalPastCollapsedCount}
             allError={globalMissionArchiveError}
@@ -232,6 +263,200 @@ export function MissionControlPage({
   );
 }
 
+const EMPTY_PLANET_LOOKUP: ReadonlyMap<string, MissionPlanetIdentity> = new Map();
+
+// VEY-KANEO-440 stationed-defense display. ACS Defend stations a fleet at a planet to defend it
+// against a specific incoming attack (the only stationing today's contract supports), so this panel
+// surfaces both sides of that arrangement: (a) the defense fleets the player currently has stationed
+// at allied planets, and (b) the allied fleets stationed at the player's own attacked planets. Each
+// "holds" until the defended attack lands, so the countdown is the defended attack's arrival. The panel
+// is read-only — the launch flow lives on the "Group defend" action of an incoming attack.
+export function StationedDefenseSection({
+  incoming,
+  now,
+  onOpenReport,
+  outgoing,
+  // Mission endpoints render from each summary's embedded origin/target planet references (the backend
+  // enriches them), so callers without a prebuilt lookup (e.g. the Defenses page) can omit it.
+  planetLookup = EMPTY_PLANET_LOOKUP,
+  // VEY-KANEO-440: launching a DefenseHold lives on a planet's Defend action, but players (and QA) look
+  // for it here, where the empty state already tells them to "choose Defend". Without an affordance on
+  // this panel the feature reads as missing (repeated QA "no Defend button anywhere" bounces). When
+  // provided, render a "Defend a planet" CTA that opens the player's own planet detail — which always
+  // shows the Defend control + its eligibility explanation — so the entry point is discoverable from the
+  // screen that describes it.
+  onDefendPlanet,
+}: {
+  incoming: FleetMissionSummary[];
+  now: number;
+  onOpenReport: (missionId: string) => void;
+  outgoing: FleetMissionSummary[];
+  planetLookup?: ReadonlyMap<string, MissionPlanetIdentity>;
+  onDefendPlanet?: (() => void) | undefined;
+}) {
+  // Both the reactive AcsDefend (keyed to a specific attack) and the DefenseHold mission (stationed
+  // for a chosen window, VEY-KANEO-441) count as fleets the player has stationed in defense.
+  const myStationed = outgoing
+    .filter((mission) =>
+      (mission.missionType === "AcsDefend" || mission.missionType === "DefenseHold")
+        && mission.status === "Outbound")
+    .sort((left, right) => Number(left.arrivalAt) - Number(right.arrivalAt));
+  // Incoming hostile attacks on the player's own planets that already have allied defenders stationed.
+  const defendedPlanets = incoming
+    .filter((mission) => (mission.counterplayDefenderMissionIds?.length ?? 0) > 0)
+    .sort((left, right) => Number(left.arrivalAt) - Number(right.arrivalAt));
+  const total = myStationed.length + defendedPlanets.length;
+
+  return (
+    <section className="grid gap-3 rounded-lg border border-violet-300/15 bg-violet-300/[0.03] p-4">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-violet-100">Stationed defenses</h2>
+        <div className="flex items-center gap-3">
+          {onDefendPlanet ? (
+            <button
+              className="rounded border border-violet-300/40 bg-violet-300/10 px-2.5 py-1 text-[11px] font-semibold text-violet-100 transition-colors hover:bg-violet-300/20"
+              onClick={onDefendPlanet}
+              type="button"
+            >
+              Defend a planet
+            </button>
+          ) : null}
+          <span className="text-[11px] tabular-nums text-slate-400">{total}</span>
+        </div>
+      </div>
+      {total === 0 ? (
+        <p className="text-xs text-slate-400">
+          No fleets are stationed in defense yet. Pick one of your other colonies or an alliance member's
+          planet and choose <span className="text-violet-100">Defend</span>
+          {onDefendPlanet ? (
+            <>
+              {" "}(use{" "}
+              <button
+                className="font-semibold text-violet-200 underline decoration-dotted underline-offset-2 hover:text-violet-100"
+                onClick={onDefendPlanet}
+                type="button"
+              >
+                Defend a planet
+              </button>{" "}
+              to open your planet, where Defend explains how to station a fleet)
+            </>
+          ) : null}{" "}
+          to station a fleet that holds
+          for a chosen duration, fighting any attack that lands while it holds. Defending another planet
+          requires a second colony or an alliance member's planet to send the fleet to.
+        </p>
+      ) : (
+        <div className="grid gap-2">
+          {myStationed.map((mission) => (
+            <StationedDefenseCard
+              key={mission.missionId}
+              mission={mission}
+              now={now}
+              onOpenReport={onOpenReport}
+              planetLookup={planetLookup}
+            />
+          ))}
+          {defendedPlanets.map((attack) => (
+            <DefendedPlanetCard
+              attack={attack}
+              key={attack.missionId}
+              now={now}
+              onOpenReport={onOpenReport}
+              planetLookup={planetLookup}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// A defense fleet the player has stationed at an allied planet: full route + ships, with the "Holds"
+// countdown running to the defended attack's arrival (the AcsDefend mission's arrival is pinned to it).
+function StationedDefenseCard({
+  mission,
+  now,
+  onOpenReport,
+  planetLookup,
+}: {
+  mission: FleetMissionSummary;
+  now: number;
+  onOpenReport: (missionId: string) => void;
+  planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
+}) {
+  return (
+    <MissionCard
+      actions={
+        <button
+          className={rowActionButtonClass}
+          onClick={() => onOpenReport(mission.missionId)}
+          title="Open the full mission detail screen"
+          type="button"
+        >
+          <ExternalLink aria-hidden="true" size={13} />
+          Open
+        </button>
+      }
+      badgeLabel="Defending"
+      badgeTone={missionTypeTone("AcsDefend")}
+      direction={missionRouteLeg(mission.status)}
+      fleet={<MissionFleet cargo={mission.cargo} ships={mission.ships} />}
+      headerTiming={{ label: "Holds", value: missionEndpointTiming(mission.arrivalAt, now) }}
+      missionId={mission.missionId}
+      origin={missionEndpoint(mission, "origin", planetLookup)}
+      progressPercent={missionProgressPercent(mission, now)}
+      statusPill={missionStatusPill(mission, now)}
+      target={missionEndpoint(mission, "target", planetLookup)}
+    />
+  );
+}
+
+// One of the player's own planets that is under attack but already has allied fleets stationed to
+// defend it. The defenders belong to alliance members, so only their count is known here (the read
+// model links them by id, not full composition); the countdown holds until the attack lands.
+function DefendedPlanetCard({
+  attack,
+  now,
+  onOpenReport,
+  planetLookup,
+}: {
+  attack: FleetMissionSummary;
+  now: number;
+  onOpenReport: (missionId: string) => void;
+  planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
+}) {
+  const defenderCount = attack.counterplayDefenderMissionIds?.length ?? 0;
+  return (
+    <MissionCard
+      actions={
+        <button
+          className={rowActionButtonClass}
+          onClick={() => onOpenReport(attack.missionId)}
+          title="Open the full mission detail screen"
+          type="button"
+        >
+          <ExternalLink aria-hidden="true" size={13} />
+          Open
+        </button>
+      }
+      badgeLabel="Defended"
+      badgeTone={missionTypeTone("AcsDefend")}
+      direction={missionRouteLeg(attack.status)}
+      fleet={
+        <p className="text-[11px] font-medium text-violet-100">
+          {`${defenderCount} allied ${defenderCount === 1 ? "fleet" : "fleets"} stationed in defense`}
+        </p>
+      }
+      headerTiming={{ label: "Holds", value: missionEndpointTiming(attack.arrivalAt, now) }}
+      missionId={attack.missionId}
+      origin={missionEndpoint(attack, "origin", planetLookup)}
+      progressPercent={missionProgressPercent(attack, now)}
+      statusPill={{ label: "Under attack", tone: "border-red-300/25 bg-red-400/10 text-red-100" }}
+      target={missionEndpoint(attack, "target", planetLookup)}
+    />
+  );
+}
+
 export function missionLifecycleActions({
   canTransact,
   context,
@@ -257,11 +482,15 @@ export function missionLifecycleActions({
   }
 
   if (context === "outgoing" && mission.status === "Outbound") {
+    // Recall is only valid more than the 60s cutoff before arrival; inside that window the contract
+    // reverts, so the button is shown but disabled with a clear reason rather than offering a tx that
+    // would fail (VEY-KANEO-424).
+    const recallable = isFleetRecallable(mission, now);
     actions.push({
-      enabled: canTransact && !due,
+      enabled: canTransact && recallable,
       kind: "recall",
       label: "Recall fleet",
-      reason: due ? "Mission is already due for resolution." : walletReason(canTransact),
+      reason: recallable ? walletReason(canTransact) : "The recall cutoff has passed (within 60s of arrival).",
     });
   }
 
@@ -347,8 +576,8 @@ function ActiveMissionSection({
   myRows: ActiveMissionRow[];
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
-  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
+  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
@@ -428,8 +657,8 @@ function ActiveMissionList({
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
-  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
+  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
@@ -513,8 +742,8 @@ function MissionRow({
   mission: FleetMissionSummary;
   now: number;
   onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (missionId: string, mode: "acsDefend" | "intercept") => void;
-  onJoinAttack: (missionId: string, targetPlanetId: string) => void;
+  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
+  onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
@@ -535,22 +764,17 @@ function MissionRow({
       actions={
         <>
           {actions.map((action) => action.kind === "counterplay" ? (
-            <span className="contents" key={action.kind}>
-              <ActionButton
-                action={{ ...action, label: "Group defend" }}
-                onClick={() => onCounterplay(mission.missionId, "acsDefend")}
-              />
-              <ActionButton
-                action={{ ...action, label: "Intercept" }}
-                onClick={() => onCounterplay(mission.missionId, "intercept")}
-              />
-            </span>
+            <ActionButton
+              action={{ ...action, label: "Group defend" }}
+              key={action.kind}
+              onClick={() => onCounterplay(mission, "acsDefend")}
+            />
           ) : action.kind === "joinAttack" ? (
             // VEY-397#13/#14: "Join" shares the Open button style/size (hidden when disabled, VEY-399#6).
             <button
               className={rowActionButtonClass}
               key={action.kind}
-              onClick={() => onJoinAttack(mission.missionId, mission.targetPlanetId)}
+              onClick={() => onJoinAttack(mission.missionId, mission.targetPlanetId, target.coords)}
               title="Join this alliance attack"
               type="button"
             >
@@ -588,7 +812,7 @@ function MissionRow({
       origin={origin}
       progressPercent={missionProgressPercent(mission, now)}
       routeSubtext={directionSubtext}
-      statusPill={missionStatusPill(mission.status)}
+      statusPill={missionStatusPill(mission, now)}
       target={target}
     />
   );
@@ -643,82 +867,33 @@ export function returnPhaseLoot(
 // Status pill shown in every card header (VEY-400): "En route" for outbound fleets, "Returning"/
 // "Recalled" while a fleet heads home, and the terminal status ("Returned"/"Resolved"/…) for past
 // missions. This folds in the VEY-399 rework intent — status reads as a pill, never a raw timestamp.
-function missionStatusPill(status: string): MissionStatusPill {
-  if (status === "Outbound") return { label: "En route", tone: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100" };
-  if (status === "Returning") return { label: "Returning", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
-  if (status === "Recalled") return { label: "Recalled", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
-  return { label: status, tone: "border-slate-300/20 bg-slate-300/10 text-slate-300" };
+// VEY-KANEO-433: the status pill reflects a mission's progress against the live clock, not only the
+// indexed backend status. Mission resolution can lag well behind arrival (and on some deployments the
+// resolver runs only on demand), so an arrived fleet keeps a stale "Outbound" backend status; showing
+// "En route" then contradicts both the live ETA (already at zero) and the mission-detail timeline,
+// which derives "Arrived"/"Returned" from the timestamps. Flipping the pill once the matching moment
+// passes keeps Mission Control consistent with reality and updates on the 1s `now` tick — no manual
+// refresh — which is the heart of this ticket. The auto-poll (#744) then folds in loot/battle reports
+// once the backend actually resolves the mission.
+export function missionStatusPill(mission: FleetMissionSummary, now: number): MissionStatusPill {
+  if (mission.status === "Outbound") {
+    return isMissionDue(mission, now)
+      ? { label: "Arrived", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" }
+      : { label: "En route", tone: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100" };
+  }
+  if (mission.status === "Returning" || mission.status === "Recalled") {
+    if (isMissionReturned(mission, now)) {
+      return { label: "Returned", tone: "border-emerald-300/25 bg-emerald-300/10 text-emerald-100" };
+    }
+    return mission.status === "Returning"
+      ? { label: "Returning", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" }
+      : { label: "Recalled", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
+  }
+  return { label: mission.status, tone: "border-slate-300/20 bg-slate-300/10 text-slate-300" };
 }
 
 // Shared style for the "Open" and "Join" row actions (VEY-397#14).
 const rowActionButtonClass = "inline-flex h-8 items-center justify-center gap-2 rounded border border-white/10 bg-white/5 px-2 text-xs font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500";
-
-type MissionEndpoint = {
-  // Real planet archetype used to pick the planet art asset (VEY-403 / VEY-67); null only when the
-  // endpoint has no resolvable planet (e.g. a battle-report attacker with no coordinates).
-  archetype: PlanetType | null;
-  commanderName: string | null;
-  commanderWallet: string | null;
-  coordinates: string | null;
-  coords: { galaxy: number; position: number; system: number } | null;
-  name: string;
-};
-
-// Resolves the planet archetype (art type) for an endpoint, preferring the mission feed's real
-// archetype, then a shared-lookup archetype, then a deterministic coordinate-derived fallback so
-// uncharted colonization targets still render planet art rather than a generic icon.
-function endpointArchetype(
-  refArchetype: PlanetType | null | undefined,
-  identityArchetype: PlanetType | null | undefined,
-  coords: { galaxy: number; position: number; system: number } | null,
-): PlanetType | null {
-  return planetArtTypeFromArchetypeOrCoords(refArchetype ?? identityArchetype, coords);
-}
-
-// Resolves a mission endpoint to a clickable planet (name with coords fallback, coords on
-// hover) and its commander, preferring the mission's own planet reference and falling back
-// to the shared planet lookup or a colonization-target decode.
-function missionEndpoint(
-  mission: FleetMissionSummary,
-  side: "origin" | "target",
-  planetLookup: ReadonlyMap<string, MissionPlanetIdentity>,
-): MissionEndpoint {
-  const ref = side === "origin" ? mission.originPlanet : mission.targetPlanet;
-  const planetId = side === "origin" ? mission.originPlanetId : mission.targetPlanetId;
-  const identity = planetLookup.get(planetId);
-  const colony = ref ? null : decodeColonizationTargetId(planetId);
-  const coordinates = ref?.coordinates ?? identity?.coordinates ?? colony?.coordinates ?? null;
-  const coords = ref
-    ? { galaxy: ref.galaxy, position: ref.position, system: ref.system }
-    : colony
-      ? { galaxy: colony.galaxy, position: colony.position, system: colony.system }
-      : parseCoordinateString(coordinates);
-  const rawName = ref?.name?.trim() || identityName(identity);
-  const commanderWallet = ref?.owner ?? identity?.owner ?? (side === "origin" ? mission.owner : null);
-  const commanderDisplay = ref?.ownerDisplayName?.trim() || identity?.ownerDisplayName?.trim() || null;
-  return {
-    archetype: endpointArchetype(ref?.archetype, identity?.archetype, coords),
-    commanderName: commanderDisplay || (commanderWallet ? shortAddress(commanderWallet) : null),
-    commanderWallet,
-    coordinates,
-    coords,
-    name: rawName || (coordinates ? coordinates : colony ? "Uncharted" : `Planet #${planetId}`),
-  };
-}
-
-// The shared planet identity stores "Planet [coords]" as its display fallback; strip that so
-// the endpoint can show the coordinates themselves when there is no real planet name.
-function identityName(identity: MissionPlanetIdentity | undefined): string | null {
-  if (!identity) return null;
-  return /^Planet \[/.test(identity.displayName) ? null : identity.displayName;
-}
-
-function parseCoordinateString(value: string | null): { galaxy: number; position: number; system: number } | null {
-  if (!value) return null;
-  const parts = value.split(":").map((part) => Number(part));
-  if (parts.length !== 3 || parts.some((part) => !Number.isInteger(part) || part <= 0)) return null;
-  return { galaxy: parts[0]!, position: parts[2]!, system: parts[1]! };
-}
 
 // Compact absolute timestamp like "Jun 8, 9:55 AM" (VEY-399#4).
 function compactMissionTime(value: string, now: number): string {
@@ -737,177 +912,6 @@ function missionEndpointTiming(value: string, now: number): string {
 }
 
 type EndpointTiming = { label: string; value: string };
-
-// The leg of the journey a card's route arrow represents: an outbound fleet flies origin -> target,
-// a returning/recalled/returned fleet flies back target -> origin (home). The arrow points along
-// this leg and fills with mission progress (VEY-403).
-type RouteLeg = "outbound" | "returning";
-
-function missionRouteLeg(status: string): RouteLeg {
-  return status === "Returning" || status === "Recalled" || status === "Returned" ? "returning" : "outbound";
-}
-
-// The single shared, alignment-clean route cell used by every mission table — active My missions /
-// Alliance and Past missions (VEY-399#5, VEY-403). Each endpoint renders its real planet art plus a
-// clickable name + commander; between them a directional arrow points along the active leg
-// (outbound -> target, returning -> home) and fills with mission progress. An optional whole-route
-// subtext (e.g. "Returned · <time>") sits below.
-function MissionRouteCell({
-  direction,
-  origin,
-  progressPercent,
-  subtext,
-  target,
-}: {
-  direction: RouteLeg;
-  origin: MissionEndpoint;
-  progressPercent?: number | undefined;
-  subtext?: string | undefined;
-  target: MissionEndpoint;
-}) {
-  return (
-    <div className="min-w-0">
-      {/* Origin hugs the left edge, target hugs the right edge, and the directional arrow spans the
-          full gap between them (VEY-403 rework). The endpoint columns size to their content but are
-          capped (via the RouteEndpoint max-width) so the arrow always owns the central span. */}
-      <div className="grid grid-cols-[minmax(0,auto)_minmax(2.5rem,1fr)_minmax(0,auto)] items-center gap-x-2 sm:gap-x-3">
-        <RouteEndpoint align="left" endpoint={origin} />
-        <RouteArrow direction={direction} progressPercent={progressPercent ?? 100} />
-        <RouteEndpoint align="right" endpoint={target} />
-      </div>
-      {subtext ? <p className="mt-1.5 text-[11px] text-slate-500">{subtext}</p> : null}
-    </div>
-  );
-}
-
-// One side of the route: the planet art asset pinned to the outer edge (origin on the left, target
-// on the right via the mirrored layout) with the clickable planet name + commander stacked
-// alongside it. Width is capped so long planet names truncate instead of squeezing the arrow.
-function RouteEndpoint({ align, endpoint }: { align: "left" | "right"; endpoint: MissionEndpoint }) {
-  return (
-    <div className={`flex min-w-0 max-w-[7rem] items-center gap-2 sm:max-w-[11rem] ${align === "right" ? "flex-row-reverse text-right" : ""}`}>
-      <EndpointPlanetImage endpoint={endpoint} />
-      <div className="min-w-0">
-        <EndpointName endpoint={endpoint} />
-        <EndpointCommander endpoint={endpoint} />
-      </div>
-    </div>
-  );
-}
-
-// Real planet art for an endpoint (the same asset set the Galaxy view uses for thumbnails — VEY-67).
-// Falls back to a subtle ringed placeholder only when no planet can be resolved (e.g. a
-// battle-report attacker without coordinates).
-function EndpointPlanetImage({ endpoint }: { endpoint: MissionEndpoint }) {
-  const frameClass = "relative h-8 w-8 shrink-0 overflow-hidden rounded-full border border-white/15 bg-black/30 sm:h-9 sm:w-9";
-  if (!endpoint.archetype) {
-    return <span aria-hidden="true" className={`${frameClass} flex items-center justify-center`}><span className="h-3 w-3 rounded-full border border-white/25" /></span>;
-  }
-  return (
-    <span className={frameClass}>
-      <img
-        alt={`${endpoint.name} planet`}
-        className="h-full w-full object-cover"
-        data-planet-art={endpoint.archetype}
-        loading="lazy"
-        src={planetImageForType(endpoint.archetype)}
-      />
-    </span>
-  );
-}
-
-function EndpointName({ endpoint }: { endpoint: MissionEndpoint }) {
-  if (endpoint.coords) {
-    return (
-      <a
-        className="block min-w-0 truncate rounded font-medium text-cyan-100 underline-offset-2 transition hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50"
-        href={buildInspectHash({ coords: endpoint.coords, kind: "planet" })}
-        title={endpoint.coordinates ? `Open ${endpoint.coordinates} in Galaxy` : undefined}
-      >
-        {endpoint.name}
-      </a>
-    );
-  }
-  return (
-    <span className="block min-w-0 truncate font-medium text-slate-100" title={endpoint.coordinates ?? undefined}>
-      {endpoint.name}
-    </span>
-  );
-}
-
-function EndpointCommander({ endpoint }: { endpoint: MissionEndpoint }) {
-  if (!endpoint.commanderName) return null;
-  return (
-    <p className="truncate text-slate-400">
-      {endpoint.commanderWallet ? (
-        <a
-          className="rounded text-slate-300 underline-offset-2 transition hover:text-cyan-100 hover:underline focus-visible:underline focus-visible:outline-none"
-          href={buildInspectHash({ kind: "player", wallet: endpoint.commanderWallet })}
-          title={`Open ${endpoint.commanderName}'s profile`}
-        >
-          {endpoint.commanderName}
-        </a>
-      ) : (
-        endpoint.commanderName
-      )}
-    </p>
-  );
-}
-
-// Directional, progress-filled route arrow (VEY-403). The arrowhead always points along the active
-// leg — right toward the target for outbound fleets, left toward home for returning fleets — and a
-// cyan fill grows from the trailing end to the current position, ending in a matching arrowhead, so
-// the head sits at 100% on arrival/return. A muted destination chevron marks the leading end even at
-// 0% progress.
-function RouteArrow({ direction, progressPercent }: { direction: RouteLeg; progressPercent: number }) {
-  const progress = clamp(progressPercent, 0, 100);
-  const returning = direction === "returning";
-  const rounded = Math.round(progress);
-  const label = returning
-    ? `Returning home, ${rounded}% of the way back`
-    : `Outbound to target, ${rounded}% of the way there`;
-  const Chevron = returning ? ChevronLeft : ChevronRight;
-  // The track is inset by 0.5rem on each side to leave room for the destination chevron; the fill
-  // and its leading chevron are positioned within that same inset span so the head reaches the tip
-  // exactly at 100%. All transforms are inline to avoid clashing with Tailwind transform utilities.
-  const fillStyle: Record<string, string> = returning
-    ? { right: "0.5rem", width: `calc((100% - 1rem) * ${progress / 100})` }
-    : { left: "0.5rem", width: `calc((100% - 1rem) * ${progress / 100})` };
-  const headStyle: Record<string, string> = returning
-    ? { right: `calc(0.5rem + (100% - 1rem) * ${progress / 100})`, transform: "translate(50%, -50%)" }
-    : { left: `calc(0.5rem + (100% - 1rem) * ${progress / 100})`, transform: "translate(-50%, -50%)" };
-  return (
-    <div
-      aria-label={label}
-      className="relative h-5 w-full"
-      data-route-arrow
-      data-route-direction={direction}
-      data-route-progress={String(rounded)}
-      role="img"
-    >
-      {/* Muted full-length track. */}
-      <span className="absolute inset-x-2 top-1/2 h-[3px] rounded-full bg-white/12" style={{ transform: "translateY(-50%)" }} />
-      {/* Muted destination chevron pinned at the leading end (visible even at 0% progress). */}
-      <span
-        className={`absolute top-1/2 text-white/25 ${returning ? "left-0" : "right-0"}`}
-        style={{ transform: "translateY(-50%)" }}
-      >
-        <Chevron aria-hidden="true" size={13} />
-      </span>
-      {/* Cyan progress fill growing from the trailing end toward the destination tip. */}
-      <span
-        className="absolute top-1/2 h-[3px] rounded-full bg-cyan-300"
-        data-route-fill
-        data-route-progress={String(rounded)}
-        style={{ ...fillStyle, transform: "translateY(-50%)" }}
-      />
-      {/* Cyan arrowhead riding the leading edge of the fill, marking the current position. */}
-      <span className="absolute top-1/2 text-cyan-200" data-route-head style={headStyle}>
-        <Chevron aria-hidden="true" size={13} />
-      </span>
-    </div>
-  );
-}
 
 type MissionStatusPill = { label: string; tone: string };
 
@@ -971,27 +975,6 @@ function MissionCard({
       </div>
     </article>
   );
-}
-
-// Builds a clickable route endpoint from a planet id alone (used by battle-report-only past rows,
-// which carry no full mission planet reference) — VEY-399 shared route reuse.
-function endpointFromPlanetId(planetId: string, lookup: ReadonlyMap<string, MissionPlanetIdentity>): MissionEndpoint {
-  const identity = lookup.get(planetId);
-  const colony = decodeColonizationTargetId(planetId);
-  const coordinates = identity?.coordinates ?? colony?.coordinates ?? null;
-  const coords = colony
-    ? { galaxy: colony.galaxy, position: colony.position, system: colony.system }
-    : parseCoordinateString(coordinates);
-  const commanderWallet = identity?.owner ?? null;
-  const commanderDisplay = identity?.ownerDisplayName?.trim() || null;
-  return {
-    archetype: endpointArchetype(undefined, identity?.archetype, coords),
-    commanderName: commanderDisplay || (commanderWallet ? shortAddress(commanderWallet) : null),
-    commanderWallet,
-    coordinates,
-    coords,
-    name: identityName(identity) || coordinates || `Planet #${planetId}`,
-  };
 }
 
 // Compact fleet column: small ship images with xN counts; hover shows the ship name + count.
@@ -1100,7 +1083,7 @@ function MissionReportDetail({
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <ReportPanel title="Battle time">
           <ReportLine label="Arrival" value={report.battleTime} />
-          <ReportLine label="Status" value={missionStatusLabel(mission.status)} />
+          <ReportLine label="Status" value={missionDisplayStatusLabel(mission, now)} />
           <ReportLine label="Outcome" value={report.outcome} />
         </ReportPanel>
         <ReportPanel title="Commanders">
@@ -1581,7 +1564,7 @@ function PastMissionSummaryRow({
       origin={origin}
       // VEY-400: the terminal status (e.g. "Returned") reads as the header pill, folding in the
       // VEY-399 rework intent (status as a pill, no raw timestamp) now that cards have no columns.
-      statusPill={missionStatusPill(mission.status)}
+      statusPill={missionStatusPill(mission, now)}
       target={target}
     />
   );
@@ -1605,6 +1588,12 @@ function PastBattleReportRow({
     coords: null,
     name: "Attacker",
   };
+  // ACS grouped attack: surface the combined group loot and the joiner count so the compact row makes
+  // clear the haul was split, with the per-participant breakdown one click away on the detail screen.
+  const participants = report.participants ?? [];
+  const isGroupedAttack = participants.length > 1;
+  const lootShown = isGroupedAttack ? sumLoot(participants) : report.loot;
+  const joinerCount = isGroupedAttack ? participants.length - 1 : 0;
   return (
     <MissionCard
       actions={
@@ -1623,8 +1612,13 @@ function PastBattleReportRow({
       direction="outbound"
       fleet={
         <div className="space-y-1">
-          <p className="text-[11px] text-slate-500">Loot {formatCargo(report.loot)}</p>
+          <p className="text-[11px] text-slate-500">
+            {isGroupedAttack ? "Group loot " : "Loot "}{formatCargo(lootShown)}
+          </p>
           <p className="text-[11px] text-slate-500">Losses {formatCargo(report.attackerLosses)} / {formatCargo(report.defenderLosses)}</p>
+          {isGroupedAttack ? (
+            <p className="text-[11px] text-cyan-300/80">ACS group · {joinerCount} {joinerCount === 1 ? "joiner" : "joiners"}</p>
+          ) : null}
         </div>
       }
       missionId={report.missionId}
@@ -1632,6 +1626,19 @@ function PastBattleReportRow({
       routeSubtext={`${battleOutcomeLabel(report.outcome)} · Block ${report.blockNumber || "unknown"} · ${report.rounds} rounds`}
       target={target}
     />
+  );
+}
+
+// Sum each participant's loot share into the combined ACS group total (BigInt to stay exact for the
+// uint128 resource amounts). Mirrors the per-participant split the contract performs on-chain.
+function sumLoot(participants: BattleReportParticipant[]): { metal: string; crystal: string; deuterium: string } {
+  return participants.reduce(
+    (total, participant) => ({
+      metal: (BigInt(total.metal) + BigInt(participant.loot.metal || "0")).toString(),
+      crystal: (BigInt(total.crystal) + BigInt(participant.loot.crystal || "0")).toString(),
+      deuterium: (BigInt(total.deuterium) + BigInt(participant.loot.deuterium || "0")).toString(),
+    }),
+    { metal: "0", crystal: "0", deuterium: "0" }
   );
 }
 
@@ -1863,6 +1870,18 @@ function isMissionDue(mission: FleetMissionSummary, now: number): boolean {
   return mission.status === "Outbound" && Number(mission.arrivalAt) * 1_000 <= now;
 }
 
+// The contract refuses a recall once a fleet is within FLEET_RECALL_CUTOFF_SECONDS of arrival (and
+// after arrival), reverting with "the recall cutoff has passed" — VeydriftGameStorage exposes
+// FLEET_RECALL_CUTOFF_SECONDS = 60. A fleet is therefore recallable only while it is still Outbound
+// and more than that cutoff away from arrival. Both Mission Control and Mission Detail gate their
+// Recall affordances on this so the two screens stay consistent (VEY-KANEO-424).
+const FLEET_RECALL_CUTOFF_SECONDS = 60;
+
+export function isFleetRecallable(mission: FleetMissionSummary, now: number): boolean {
+  return mission.status === "Outbound"
+    && now <= (Number(mission.arrivalAt) - FLEET_RECALL_CUTOFF_SECONDS) * 1_000;
+}
+
 function isMissionReturned(mission: FleetMissionSummary, now: number): boolean {
   return Number(mission.returnAt) * 1_000 <= now;
 }
@@ -1927,13 +1946,21 @@ function pastRowMissionId(row: PastMissionRow): string {
   return row.kind === "battleReport" ? row.report.missionId : row.mission.missionId;
 }
 
-function dedupePastMissionRows(rows: PastMissionRow[]): PastMissionRow[] {
+function dedupePastMissionRows(
+  rows: PastMissionRow[],
+  activeMissionIds: ReadonlySet<string> = new Set<string>(),
+): PastMissionRow[] {
   const missionSummaryIds = new Set(
     rows.filter((row) => row.kind === "mission").map((row) => pastRowMissionId(row))
   );
   const seen = new Set<string>();
   return rows.filter((row) => {
     const missionId = pastRowMissionId(row);
+    // A battle report whose mission is still active (Outbound / Returning / Recalled — e.g. a fleet
+    // that has fought but not yet arrived home) belongs to the active section, not Past Missions. Its
+    // loot already surfaces on the active card, so drop it here to avoid duplicating the live mission
+    // into the archive. The report returns to Past Missions once the fleet fully lands (VEY-KANEO-434).
+    if (row.kind === "battleReport" && activeMissionIds.has(missionId)) return false;
     // Collapse a battle report into its mission summary row when both exist, so each mission
     // appears once with links to both the mission detail and its battle report.
     if (row.kind === "battleReport" && missionSummaryIds.has(missionId)) return false;
@@ -1973,20 +2000,6 @@ function pastRowTimestamp(row: PastMissionRow): number {
   return Number(row.mission.blockNumber || "0");
 }
 
-function missionProgressPercent(mission: FleetMissionSummary, now: number): number {
-  const arrivalAt = timestampToMs(mission.arrivalAt);
-  const returnAt = timestampToMs(mission.returnAt);
-  if (arrivalAt === undefined || returnAt === undefined) return 0;
-
-  const returning = mission.status === "Returning" || mission.status === "Recalled" || mission.status === "Returned";
-  const duration = Math.abs(returnAt - arrivalAt);
-  const start = returning ? arrivalAt : arrivalAt - duration;
-  const end = returning ? returnAt : arrivalAt;
-  if (end <= start) return 100;
-
-  return clamp(((now - start) / (end - start)) * 100, 0, 100);
-}
-
 function missionTypeTone(missionType: string): string {
   if (["Attack", "AcsAttack", "MissileAttack"].includes(missionType)) {
     return "border-red-300/25 bg-red-400/10 text-red-100";
@@ -1994,13 +2007,10 @@ function missionTypeTone(missionType: string): string {
   if (missionType === "Transport") return "border-cyan-300/25 bg-cyan-300/10 text-cyan-100";
   if (missionType === "Deploy") return "border-emerald-300/25 bg-emerald-300/10 text-emerald-100";
   if (missionType === "Harvest") return "border-amber-300/25 bg-amber-300/10 text-amber-100";
-  if (["AcsDefend", "Intercept"].includes(missionType)) return "border-violet-300/25 bg-violet-300/10 text-violet-100";
+  if (["AcsDefend", "DefenseHold", "Intercept"].includes(missionType)) return "border-violet-300/25 bg-violet-300/10 text-violet-100";
   return "border-slate-300/20 bg-slate-300/10 text-slate-100";
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
 
 function walletReason(canTransact: boolean): string | undefined {
   return canTransact ? undefined : "Wallet or mission actions unavailable.";
@@ -2028,13 +2038,19 @@ function missionStatusLabel(status: string): string {
   return status;
 }
 
-type MissionPlanetIdentity = {
-  archetype: PlanetType | null;
-  coordinates: string;
-  displayName: string;
-  owner: string;
-  ownerDisplayName: string | null;
-};
+// VEY-KANEO-433: the text-label counterpart to `missionStatusPill` — a phase label that tracks the
+// live clock so the mission report card and shared battle-report text never read "en route" for a
+// fleet that has already arrived (or "returning" for one that has already landed). Keeps the report
+// surfaces consistent with the time-aware list pills and the mission-detail timeline.
+export function missionDisplayStatusLabel(mission: FleetMissionSummary, now: number): string {
+  if (mission.status === "Outbound" && isMissionDue(mission, now)) {
+    return "arrived";
+  }
+  if ((mission.status === "Returning" || mission.status === "Recalled") && isMissionReturned(mission, now)) {
+    return "returned";
+  }
+  return missionStatusLabel(mission.status);
+}
 
 function uniqueMissions(missions: FleetMissionSummary[]): FleetMissionSummary[] {
   const seen = new Set<string>();
@@ -2100,9 +2116,10 @@ function identityFromMissionPlanet(planet: FleetMissionPlanetReference): Mission
   };
 }
 
-function missionTypeLabel(missionType: string): string {
+export function missionTypeLabel(missionType: string): string {
   if (missionType === "AcsAttack") return "Group attack";
   if (missionType === "AcsDefend") return "Group defense";
+  if (missionType === "DefenseHold") return "Stationed defense";
   return missionType.replace(/([A-Z])/g, " $1").trim();
 }
 
@@ -2204,7 +2221,7 @@ function missionReport(
       : "External commander unavailable",
     losses: mission.status === "Resolved" ? "Resolved combat losses are not exposed in this mission feed." : "Pending battle resolution.",
     origin,
-    outcome: mission.needsResolution || isMissionDue(mission, now) ? "Ready to resolve." : missionStatusLabel(mission.status),
+    outcome: mission.needsResolution || isMissionDue(mission, now) ? "Ready to resolve." : missionDisplayStatusLabel(mission, now),
     routeSummary: `${origin} -> ${target}`,
     target,
     title: `${missionTypeLabel(mission.missionType)} #${mission.missionId}`,
@@ -2221,7 +2238,7 @@ function missionReportText(
   return [
     `Veydrift battle report: ${report.title}`,
     `Battle time: ${report.battleTime}`,
-    `Status: ${missionStatusLabel(mission.status)}`,
+    `Status: ${missionDisplayStatusLabel(mission, now)}`,
     `Route: ${report.routeSummary}`,
     `Attacker: ${report.attacker}`,
     `Defender: ${report.defender}`,
@@ -2239,11 +2256,6 @@ function missionReportText(
 
 function copyText(text: string): void {
   void globalThis.navigator?.clipboard?.writeText(text);
-}
-
-function shortAddress(address: string): string {
-  if (address.length <= 12) return address;
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
 }
 
 function battleOutcomeLabel(outcome: BattleReport["outcome"]): string {

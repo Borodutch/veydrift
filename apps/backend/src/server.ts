@@ -47,7 +47,7 @@ import {
   verifyPlayerDisplayNameSignature,
   type PlayerProfile
 } from "./playerProfiles";
-import { deriveInfrastructureFields } from "./readModels";
+import { deriveInfrastructureFields, isCombatShipId } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
 const jsonHeaders = {
@@ -62,6 +62,12 @@ const corsHeaders = {
 } as const;
 
 const indexedSource = "contract-state-indexer" as const;
+
+// How often to re-pin the served contract_* read model to authoritative on-chain state between full
+// rebuilds. Short enough that resources/ship counts/buildings never visibly diverge from chain; long
+// enough that the batched eth_call sweep over live planets stays cheap.
+const CANONICAL_STATE_REFRESH_INTERVAL_MS = 30_000;
+const AUTHORITATIVE_READ_TIMEOUT_MS = 8_000;
 
 type GraphQLPayload = {
   query?: string;
@@ -102,6 +108,7 @@ type RuntimeConfig = {
 };
 
 export type ServerDependencies = {
+  authoritativeReadTimeoutMs?: number;
   chainSync?: ChainSyncService;
   config?: BackendConfig;
   configProblems?: ConfigProblem[];
@@ -115,11 +122,23 @@ const defaultUniverseSeed = "veydrift-mainnet-preview";
 
 export function createRequestHandler(dependencies: ServerDependencies = {}): (request: Request) => Promise<Response> {
   const loaded = dependencies.config ? { config: dependencies.config, problems: dependencies.configProblems ?? [] } : loadBackendConfig();
+  const authoritativeReadTimeoutMs = dependencies.authoritativeReadTimeoutMs ?? AUTHORITATIVE_READ_TIMEOUT_MS;
   const rawChainReader =
     dependencies.chainReader ??
-    (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config) : undefined);
+    (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config, undefined, { hydrateQueueStartedAt: false }) : undefined);
   const cacheReader = rawChainReader && !dependencies.chainReader ? new CachedChainReader(rawChainReader) : undefined;
   const chainReader = cacheReader ?? rawChainReader;
+  const fastRawChainReader =
+    dependencies.chainReader
+      ? undefined
+      : loaded.problems.length === 0
+        ? new VeydriftGameReader(loaded.config, undefined, { hydrateQueueStartedAt: false })
+        : undefined;
+  const fastChainReader = dependencies.chainReader
+    ? chainReader
+    : fastRawChainReader
+      ? new CachedChainReader(fastRawChainReader)
+      : undefined;
   const indexerChainReader =
     dependencies.chainReader
       ? chainReader
@@ -131,10 +150,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     (isIndexableChainReader(indexerChainReader) ? new SettlementIndexer(indexerChainReader, loaded.config.indexFromBlock, {
       databasePath: loaded.config.indexDbPath
     }) : undefined);
-  const logBackfiller =
-    indexerChainReader && typeof indexerChainReader.listContractLogs === "function"
-      ? { listContractLogs: indexerChainReader.listContractLogs.bind(indexerChainReader) }
-      : undefined;
+  const logBackfiller = deriveLogBackfiller(indexerChainReader);
   const chainSync =
     dependencies.chainSync ??
     (loaded.problems.length === 0
@@ -162,9 +178,25 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   missionResolver?.start();
   randomnessCommitter?.start();
   if (!dependencies.indexer && indexer && loaded.problems.length === 0) {
+    // Keep boot reconcile off the readiness path: the index DB is already opened
+    // synchronously in the SettlementIndexer constructor above, so persisted
+    // indexed reads are serveable the moment Bun binds the port. Fire the chain
+    // reconcile in the background (never await it) so GET /health answers within
+    // a second or two of process start — this is what gates start-first redeploys
+    // (see README "Backend redeploy health gate"). Do not turn this into an await.
     void indexer.rebuild().catch((error) => {
       console.error("Veydrift index reconciliation failed", error);
     });
+    // Continuously re-pin the served contract_* state to chain between full rebuilds. The full rebuild is
+    // too heavy/fragile to run often, so without this the read model drifts (wrong resources, shipyard
+    // shows 0, etc). This is a cheap batched eth_call sweep of live planets — see
+    // SettlementIndexer.refreshCanonicalState. Skips itself while a rebuild is running; never throws.
+    const refreshCanonicalState = () => {
+      void indexer.refreshCanonicalState();
+    };
+    refreshCanonicalState();
+    const canonicalRefresh = setInterval(refreshCanonicalState, CANONICAL_STATE_REFRESH_INTERVAL_MS);
+    canonicalRefresh.unref?.();
   }
   if (cacheReader) {
     chainSync?.addListener((event) => {
@@ -333,7 +365,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        const indexed = indexedWalletPlanetsWarmResponse(indexer, wallet);
+        const indexed = await authoritativeWalletPlanetsResponse(indexer, chainReader, wallet);
         if (indexed) return indexed;
         return indexedReadNotReadyResponse("wallet planets", indexer);
       } catch (error) {
@@ -412,7 +444,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
           );
         }
-        const battleReport = indexer.battleReport(missionId);
+        // A joined ACS fleet never emits its own battle report — the resolved combat is keyed to the
+        // main attack mission. When this mission has no report of its own but belongs to an attack
+        // group, fall back to the group's report so a joiner's mission detail still shows the shared
+        // outcome and the per-participant loot split (VEY-KANEO-432).
+        const battleReport =
+          indexer.battleReport(missionId)
+          ?? (mission.attackGroupId ? indexer.battleReport(mission.attackGroupId) : null);
         return Response.json(
           {
             mission,
@@ -470,7 +508,15 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/infrastructure$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "infrastructure", indexedInfrastructureState);
+        return await authoritativeWalletStateResponse(
+          url, indexer, chainReader, "infrastructure", indexedInfrastructureState,
+          (reader, wallet, planetId) => reader.getInfrastructureState(wallet, planetId),
+          (reader, wallet, planetId, indexed) =>
+            fastChainReader?.getInfrastructureAuthoritativeFields
+              ? fastChainReader.getInfrastructureAuthoritativeFields(BigInt(indexed.planet.planetId))
+              : reader.getInfrastructureState(wallet, planetId),
+          authoritativeReadTimeoutMs
+        );
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -494,7 +540,15 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/shipyard$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "shipyard", indexedShipyardState);
+        return await authoritativeWalletStateResponse(
+          url, indexer, chainReader, "shipyard", indexedShipyardState,
+          (reader, wallet, planetId) => reader.getShipyardState(wallet, planetId),
+          (reader, wallet, planetId, indexed) =>
+            fastChainReader?.getShipyardAuthoritativeFields
+              ? fastChainReader.getShipyardAuthoritativeFields(BigInt(indexed.planet.planetId), indexed.planet.temperature)
+              : reader.getShipyardState(wallet, planetId),
+          authoritativeReadTimeoutMs
+        );
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -502,7 +556,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/defenses$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "defenses", indexedDefenseState);
+        return await authoritativeWalletStateResponse(
+          url, indexer, chainReader, "defenses", indexedDefenseState,
+          (reader, wallet, planetId) => reader.getDefenseState(wallet, planetId),
+          undefined,
+          authoritativeReadTimeoutMs
+        );
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -510,7 +569,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/research$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "research", indexedResearchState);
+        return await authoritativeWalletStateResponse(
+          url, indexer, chainReader, "research", indexedResearchState,
+          (reader, wallet, planetId) => reader.getResearchState(wallet, planetId),
+          undefined,
+          authoritativeReadTimeoutMs
+        );
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -649,7 +713,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     if (request.method === "GET" && url.pathname.match(/^\/planets\/[0-9]+$/)) {
       const planetId = BigInt(url.pathname.split("/")[2] ?? "0");
         if (indexer && hasWarmPlanetIndex(indexer)) {
-        return Response.json(accruedPlanetState(indexer, indexer.planet(planetId.toString())), {
+        const planet = await authoritativePlanetResources(
+          chainReader,
+          accruedPlanetState(indexer, indexer.planet(planetId.toString()))
+        );
+        return Response.json(planet, {
           headers: corsHeaders
         });
       }
@@ -808,6 +876,26 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "POST" && url.pathname.startsWith("/index/verify/")) {
+      if (!indexer) {
+        return unavailableResponse(loaded.problems);
+      }
+
+      const planetId = decodeURIComponent(url.pathname.slice("/index/verify/".length));
+      if (!planetId) {
+        return errorResponse(new Error("Missing planetId"), 400);
+      }
+
+      const heal = url.searchParams.get("heal") === "true";
+      try {
+        return Response.json(await indexer.verifyCanonicalState(planetId, { heal }), {
+          headers: jsonHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 502);
+      }
+    }
+
     if (request.method === "POST" && url.pathname === "/webhooks/alchemy") {
       if (!indexer) {
         return unavailableResponse(loaded.problems);
@@ -881,6 +969,22 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     );
   };
+}
+
+/**
+ * Build the incremental log backfiller the chain-sync self-heal and gap recovery depend on.
+ * Returns undefined only when the reader cannot list raw contract logs; the production
+ * reader (VeydriftGameReader) exposes a public `listContractLogs`, so self-heal is wired
+ * by default. Exported so a test can assert production construction enables self-heal and
+ * the wiring can't silently regress to a no-op.
+ */
+export function deriveLogBackfiller(
+  reader: ChainReader | undefined
+): { listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]> } | undefined {
+  if (reader && typeof reader.listContractLogs === "function") {
+    return { listContractLogs: reader.listContractLogs.bind(reader) };
+  }
+  return undefined;
 }
 
 function isIndexableChainReader(
@@ -992,6 +1096,177 @@ async function indexedWalletStateResponse<T extends object>(
   const planetId = options.includeSelectedPlanet === false ? undefined : selectedPlanetId(url);
   const indexed = await indexedWarmResponse(indexer, wallet, planetId, surface, build);
   return indexed ?? indexedReadNotReadyResponse(surface, indexer);
+}
+
+// ── Authoritative read-through serve ─────────────────────────────────────────
+// Player-facing per-planet numeric state — resources, ship counts, building /
+// defense / research levels — is served STRAIGHT FROM THE CONTRACT's own getters
+// (previewResources, shipCount, building levels, ...), NOT from the event-derived
+// indexer tables.
+//
+// Root cause this fixes: the contract emits NO events for mission ship
+// debits/credits, loot payouts, or resource spend, yet the indexer derived these
+// numbers incrementally from events. Deriving state from events that don't carry
+// it is structurally unsound, so the served tables drifted in both directions
+// (VEY-429 resources, VEY-447 ship counts) — the upgrade gate read a phantom
+// balance the chain didn't agree with, and the shipyard showed 0. A periodic
+// re-pin (VEY-452) only narrowed the drift window; it never removed the bug.
+//
+// Reading the authoritative contract getter on serve removes the entire class of
+// divergence at the source: the served number IS the value a transaction spends
+// against, and there is no event-derived arithmetic left to corrupt it. The reads
+// are cheap (self-hosted node), cached ~2s by CachedChainReader, and invalidated
+// on every chain event, so this is not a periodic fixer — it is chain truth per
+// request. The indexer stays the source for aggregate/historical surfaces (galaxy
+// map, rankings, fleet archive, alliance) and is the resilient fallback when a
+// chain read is momentarily unavailable.
+type AuthoritativeSurface = "infrastructure" | "shipyard" | "defenses" | "research";
+
+// Fields taken from the contract for each surface. Everything else (wallet,
+// homePlanetId, planetId, *Available flags, envelope) is kept from the indexed
+// body so the response shape and IDs never change.
+const authoritativeTruthKeys: Record<AuthoritativeSurface, readonly string[]> = {
+  infrastructure: [
+    "resources", "buildings", "productionPerHour", "energyBalance", "storageCaps",
+    "protectedResources", "raidableResources", "technologyLevels", "queue"
+  ],
+  shipyard: [
+    "resources", "ships", "fleetSlots", "shipyardLevel", "naniteLevel", "technologyLevels", "queue"
+  ],
+  defenses: [
+    "resources", "defenses", "shipyardLevel", "naniteLevel", "missileSiloLevel", "technologyLevels", "queue"
+  ],
+  research: [
+    "resources", "technologies", "researchLabLevel", "researchNetworkLabLevels", "technologyLevels", "queue"
+  ]
+};
+
+function overlayAuthoritativeTruth<T extends object>(base: T, chain: object, keys: readonly string[]): T {
+  const merged = { ...base } as Record<string, unknown>;
+  const source = chain as Record<string, unknown>;
+  for (const key of keys) {
+    if (source[key] !== undefined) merged[key] = source[key];
+  }
+  return merged as T;
+}
+
+async function authoritativeWalletStateResponse<T extends object>(
+  url: URL,
+  indexer: SettlementIndexer | undefined,
+  chainReader: ChainReader | undefined,
+  surface: AuthoritativeSurface,
+  build: IndexedWarmBuilder<T>,
+  readChain: (reader: ChainReader, wallet: Address, planetId: bigint | undefined) => Promise<T>,
+  readFastChain: ((
+    reader: ChainReader,
+    wallet: Address,
+    planetId: bigint | undefined,
+    indexed: { body: T; planet: SettledPlanetEvent }
+  ) => Promise<Partial<T>>) | undefined,
+  readTimeoutMs: number
+): Promise<Response> {
+  const wallet = walletAddressFromPath(url);
+  const planetId = selectedPlanetId(url);
+
+  // Indexed body: complete response shape + IDs + envelope, and the resilient
+  // fallback used when the authoritative chain read is momentarily unavailable.
+  const settlement = indexer && hasWarmPlanetIndex(indexer)
+    ? indexedWalletSettlement(indexer, wallet, planetId)
+    : null;
+  const indexedBody = settlement?.planet && indexer
+    ? build(wallet, settlement.settlement, settlement.planet, indexedWarmDetail(surface), indexer)
+    : null;
+
+  if (chainReader) {
+    try {
+      const chainRead = indexedBody && settlement?.planet && readFastChain
+        ? readFastChain(chainReader, wallet, planetId, { body: indexedBody, planet: settlement.planet })
+        : readChain(chainReader, wallet, planetId);
+      const chain = await withTimeout(
+        chainRead,
+        readTimeoutMs,
+        () => new Error(`Timed out reading ${surface} from live chain state after ${Math.ceil(readTimeoutMs / 1_000)} seconds.`)
+      );
+      const body = indexedBody
+        ? overlayAuthoritativeTruth(indexedBody, chain, authoritativeTruthKeys[surface])
+        : chain;
+      const snapshot = indexer?.snapshot();
+      return Response.json(
+        {
+          ...body,
+          detail: indexedWarmDetail(surface),
+          stale: false,
+          ...(snapshot ? { indexer: snapshot } : {}),
+          source: indexedSource
+        },
+        { headers: indexedStateHeaders(snapshot ? indexedStateLabel(snapshot) : "healthy") }
+      );
+    } catch (error) {
+      // A chain-read miss is non-fatal: fall through to the persisted indexed
+      // snapshot so the surface stays serveable during a transient RPC outage.
+      console.error(`Veydrift authoritative ${surface} read failed; serving indexed fallback`, reasonText(error));
+    }
+  }
+
+  if (indexedBody && indexer) {
+    return indexedWarmJsonResponse(indexedBody, surface, indexer.snapshot());
+  }
+  return indexedReadNotReadyResponse(surface, indexer);
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutError: () => Error): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(timeoutError()), timeoutMs);
+    timer.unref?.();
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+// Overlay each managed planet's authoritative on-chain resources (previewResources)
+// onto the indexed wallet-planets body so the top bar tracks chain exactly. Resources
+// only — lastSettledAt stays the indexed anchor (the frontend re-anchors backend
+// resources to the read time, so replacing the balance alone keeps the count once).
+async function authoritativeWalletPlanetsResponse(
+  indexer: SettlementIndexer | undefined,
+  chainReader: ChainReader | undefined,
+  wallet: `0x${string}`
+): Promise<Response | null> {
+  if (!indexer || !hasWarmPlanetIndex(indexer)) return null;
+  const snapshot = indexer.snapshot();
+  const base = withPlayerProfile(indexedWalletPlanets(indexer, wallet), indexer, wallet);
+
+  if (chainReader) {
+    try {
+      const planets = await Promise.all(base.planets.map(async (planet) => {
+        const chain = await chainReader.getPlanet(BigInt(planet.planetId));
+        return chain?.resources ? { ...planet, resources: chain.resources } : planet;
+      }));
+      return indexedWarmJsonResponse({ ...base, planets }, "wallet planets", snapshot);
+    } catch (error) {
+      console.error("Veydrift authoritative wallet planets read failed; serving indexed fallback", reasonText(error));
+    }
+  }
+
+  return indexedWarmJsonResponse(base, "wallet planets", snapshot);
+}
+
+// Overlay a single planet's authoritative on-chain resources onto its indexed detail.
+async function authoritativePlanetResources<T extends PlanetState | null>(
+  chainReader: ChainReader | undefined,
+  planet: T
+): Promise<T> {
+  if (!planet || !chainReader) return planet;
+  try {
+    const chain = await chainReader.getPlanet(BigInt(planet.planetId));
+    return chain?.resources ? { ...planet, resources: chain.resources } : planet;
+  } catch (error) {
+    console.error("Veydrift authoritative planet resources read failed; serving indexed fallback", reasonText(error));
+    return planet;
+  }
 }
 
 function walletAddressFromPath(url: URL): `0x${string}` {
@@ -1354,7 +1629,9 @@ function indexedShipyardState(
     shipyardLevel,
     naniteLevel,
     technologyLevels: indexer.technologyLevels(wallet),
-    ships: planet ? indexer.shipRows(planet.planetId) : [],
+    // Launchable ships only: exclude fleets already away on missions so Mission Compose stops offering
+    // phantom ships that revert at launch (VEY-KANEO-447).
+    ships: planet ? indexer.availableShipRows(planet.planetId) : [],
     queue: planet ? indexer.planetQueue(planet.planetId, "ship") : null
   };
 }
@@ -2111,7 +2388,7 @@ function rankedHighscorePlanets(
   });
 }
 
-function indexedPlanetTacticalSummary(
+export function indexedPlanetTacticalSummary(
   planet: PlanetState,
   buildings: InfrastructureState["buildings"],
   ships: ShipyardState["ships"],
@@ -2124,13 +2401,19 @@ function indexedPlanetTacticalSummary(
     : fallbackResources;
   const shipSummary = tacticalUnitSummary(ships);
   const defenseSummary = tacticalUnitSummary(defenses);
+  // COMBAT is a fighting-strength figure, not an inventory value: non-combat ships
+  // (Solar Satellites, cargo, recyclers, colony ships, crawlers) carry a build cost but
+  // do not fight, so they are excluded from combat power even though they remain in the
+  // ship totals above. This keeps satellite-only / undefended planets reading as soft
+  // targets in the Raid Finder and Rankings COMBAT column. (VEY-KANEO-450)
+  const combatShipSummary = tacticalUnitSummary(ships.filter((ship) => isCombatShipId(ship.id)));
 
   return {
     raidableResources,
     raidableResourceTotal: resourceTotal(raidableResources).toString(),
     ships: shipSummary,
     defenses: defenseSummary,
-    combatPower: (BigInt(shipSummary.power) + BigInt(defenseSummary.power)).toString()
+    combatPower: (BigInt(combatShipSummary.power) + BigInt(defenseSummary.power)).toString()
   };
 }
 
@@ -2354,6 +2637,10 @@ function errorResponse(error: unknown, status: number): Response {
       status: responseStatus
     }
   );
+}
+
+function reasonText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function statusForError(error: unknown, fallback: number): number {

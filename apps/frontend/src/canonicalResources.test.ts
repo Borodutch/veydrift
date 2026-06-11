@@ -5,7 +5,6 @@ import {
   projectResourceAmount,
   projectResources,
 } from "./canonicalResources";
-import { subtractResourceCost } from "./pendingSpends";
 
 const RATES = { metal: 3_600, crystal: 1_800, deuterium: 0 };
 const CAPS = { metal: 1_000_000, crystal: 1_000_000, deuterium: 1_000_000 };
@@ -430,20 +429,17 @@ describe("VEY-318 displayed resources while a build is queued", () => {
   // Nikita's repro (2026-06-08): top-bar Metal/Crystal dropped to 0 and stopped
   // accruing while a crystal-mine build was queued, "coming back to normal" only
   // when the build completed. Starting a build re-settles the planet with
-  // Metal/Crystal drained near 0 and leaves an active queue item whose cost is
-  // subtracted from the spendable balance (clamped at zero). Before the fix the
-  // canonical value was pinned at the raw read amount with no live tick, so
-  // `balance − queueCost` clamped to 0 and stayed frozen until the next settle.
-  // Projecting the previewResources read forward from its read time (and the
-  // backend re-reading a growing previewResources each poll) lets the displayed
-  // balance climb back off 0 *during* the active queue.
+  // Metal/Crystal drained near 0. The displayed balance is now the single polled
+  // canonical source of truth with no client-side optimistic subtraction layered
+  // on top (VEY-KANEO-430), so the regression to guard is that the polled
+  // canonical balance itself ticks up between reads instead of freezing at the
+  // drained settle value until the next settlement.
   const HOUR_MS = 3_600_000;
   const rates = { metal: 1_346, crystal: 627, deuterium: 110 };
   const caps = { metal: 75_000, crystal: 20_000, deuterium: 20_000 };
-  const queueCost = { metal: 60, crystal: 48, deuterium: 0 };
 
   function displayedWhileQueued(elapsedMs: number) {
-    const canonical = canonicalSpendableResources({
+    return canonicalSpendableResources({
       settlementResources: { metal: 10, crystal: 5, deuterium: 2_531 },
       settlementSettledAtMs: 0,
       infrastructureResources: { metal: 10, crystal: 5, deuterium: 2_531 },
@@ -452,19 +448,17 @@ describe("VEY-318 displayed resources while a build is queued", () => {
       caps,
       now: elapsedMs,
     });
-    return subtractResourceCost(canonical, queueCost);
   }
 
-  test("displayed balance recovers and grows during an active queue instead of freezing at 0", () => {
-    // Right at settle the post-cost balance clamps to 0 (the build spent almost
-    // everything) — the failing state the user saw.
-    expect(displayedWhileQueued(0)).toEqual({ metal: 0, crystal: 0, deuterium: 2_531 });
+  test("displayed balance grows during an active queue instead of freezing at the drained settle value", () => {
+    // Right at settle the balance is the drained read value the build left behind.
+    expect(displayedWhileQueued(0)).toEqual({ metal: 10, crystal: 5, deuterium: 2_531 });
 
     const after1h = displayedWhileQueued(HOUR_MS)!;
     const after2h = displayedWhileQueued(2 * HOUR_MS)!;
     // It does NOT stay frozen: production accrues from the on-chain settle time.
-    expect(after1h.metal).toBeGreaterThan(0);
-    expect(after1h.crystal).toBeGreaterThan(0);
+    expect(after1h.metal).toBeGreaterThan(10);
+    expect(after1h.crystal).toBeGreaterThan(5);
     // ...and keeps climbing as time passes while the build is still queued.
     expect(after2h.metal).toBeGreaterThan(after1h.metal);
     expect(after2h.crystal).toBeGreaterThan(after1h.crystal);

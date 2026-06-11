@@ -35,6 +35,30 @@ const missileAction: Extract<GalaxyAction, { enabled: true }> = {
   quantity: 1,
 };
 
+const defenseHoldAction: Extract<GalaxyAction, { enabled: true }> = {
+  enabled: true,
+  kind: "defenseHold",
+  label: "Defend",
+  mode: "mission",
+  mission: "defenseHold",
+  ships: {
+    smallCargo: 0,
+    lightFighter: 1,
+    recycler: 0,
+    colonyShip: 0,
+    largeCargo: 0,
+    heavyFighter: 0,
+    cruiser: 0,
+    battleship: 0,
+    bomber: 0,
+    destroyer: 0,
+    deathstar: 0,
+    battlecruiser: 0,
+    reaper: 0,
+    pathfinder: 0,
+  },
+};
+
 describe("mission creation", () => {
   test("requires an origin and selected ships for fleet missions", () => {
     expect(missionDraftBlocker({
@@ -123,6 +147,42 @@ describe("mission creation", () => {
     })).toBe("Choose at least one missile.");
   });
 
+  test("gates a proactive DefenseHold on ship selection and total (travel + holding) fuel", () => {
+    const base = {
+      action: defenseHoldAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      cargoTotal: 0,
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 1,
+      totalCargoCapacity: 50_000,
+    } as const;
+
+    // No ships selected — blocked like any other fleet mission.
+    expect(missionDraftBlocker({
+      ...base,
+      fuelCost: 0,
+      resources: { metal: 0, crystal: 0, deuterium: 100_000 },
+      selectedShipCount: 0,
+    })).toBe("Choose at least one ship.");
+
+    // Travel fuel plus net holding fuel exceeds the deuterium balance — surfaced before submit.
+    expect(missionDraftBlocker({
+      ...base,
+      fuelCost: 12_000,
+      resources: { metal: 0, crystal: 0, deuterium: 5_000 },
+      selectedShipCount: 1,
+    })).toBe("Need 12,000 deuterium for fuel.");
+
+    // Enough deuterium and capacity — the proactive defend passes the draft gate.
+    expect(missionDraftBlocker({
+      ...base,
+      fuelCost: 3_000,
+      resources: { metal: 0, crystal: 0, deuterium: 50_000 },
+      selectedShipCount: 1,
+    })).toBeUndefined();
+  });
+
   test("blocks fleet missions when fuel alone exceeds selected ship cargo capacity", () => {
     expect(missionDraftBlocker({
       action: attackAction,
@@ -184,6 +244,42 @@ describe("mission creation", () => {
       lootRatioActive: false,
       lootRatioTotal: 0,
     })).toBeUndefined();
+  });
+
+  const acsDefendAction: Extract<GalaxyAction, { enabled: true }> = {
+    enabled: true,
+    kind: "acsDefend",
+    label: "Group defend",
+    mode: "mission",
+    mission: "acsDefend",
+    ships: { ...attackAction.ships },
+  };
+
+  test("blocks an ACS Defend fleet that cannot reach the planet before the attack", () => {
+    const base = {
+      action: acsDefendAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      cargoTotal: 0,
+      fuelCost: 10,
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 1,
+      resources: { metal: 0, crystal: 0, deuterium: 1_000 },
+      selectedShipCount: 1,
+      totalCargoCapacity: 500,
+    } as const;
+
+    // Too slow to arrive before the hostile attack lands -> surfaced before submit.
+    expect(missionDraftBlocker({ ...base, acsArrivalTooSlow: true })).toBe(
+      "Fleet cannot reach the planet before the attack — pick a faster speed or faster ships."
+    );
+
+    // The "too slow" gate only applies once ships are chosen (no ship -> earlier gate wins).
+    expect(missionDraftBlocker({ ...base, acsArrivalTooSlow: false })).toBeUndefined();
+
+    // Net holding fuel rides in the fleet's deuterium spend, so the caller passes the combined fuel
+    // cost; an underfunded fleet is blocked with the combined figure.
+    expect(missionDraftBlocker({ ...base, fuelCost: 1_200 })).toBe("Need 1,200 deuterium for fuel.");
   });
 
   test("summarizes mission timing with duration first and exact clocks preserved", () => {

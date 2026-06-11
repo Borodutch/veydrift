@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
-import { ArrowLeftRight, Factory, FlaskConical, Menu, Moon, Orbit, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
+import { ArrowLeftRight, Crosshair, Factory, FlaskConical, Menu, Moon, Orbit, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
 
 import { shortAddress } from "../walletFlow";
 
@@ -17,6 +17,7 @@ export type Page =
   | "rift"
   | "rankings"
   | "galaxy"
+  | "raid-target-finder"
   | "planet"
   | "battle-reports"
   | "player-inspect"
@@ -42,6 +43,7 @@ const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: Lucide
   { key: "rift", label: "Rift", mobileLabel: "Rift", icon: ArrowLeftRight },
   { key: "rankings", label: "Rankings", mobileLabel: "Ranks", icon: Trophy },
   { key: "galaxy", label: "Galaxy", mobileLabel: "Galaxy", icon: Orbit },
+  { key: "raid-target-finder", label: "Raid Finder", mobileLabel: "Raids", icon: Crosshair },
 ];
 
 export function NavBar({ active, account, coordinates, mobilePlanetSelector, onNavigate }: NavBarProps) {

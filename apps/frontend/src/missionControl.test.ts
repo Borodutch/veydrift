@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage, allActiveMissionRows, buildMissionControlViewQuery, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
+import { MissionControlPage, StationedDefenseSection, allActiveMissionRows, buildMissionControlViewQuery, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
-import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary } from "./walletFlow";
+import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary, type FleetMissionVisibilityResponse } from "./walletFlow";
 
 describe("Mission Control battle reports", () => {
   test("builds shareable report list and detail routes", () => {
@@ -147,7 +147,8 @@ describe("Mission Control battle reports", () => {
     // VEY-397#9: fleet column shows ship icons with xN counts (ship name is in the hover title).
     expect(text).toContain("x3");
     expect(text).toContain("Group defend");
-    expect(text).toContain("Intercept");
+    // VEY-KANEO-439: Intercept removed from the frontend; only Group defend (AcsDefend) remains.
+    expect(text).not.toContain("Intercept");
     // VEY-397#12: the active-row action is "Open" (the past-report row keeps "Open mission").
     expect(text).toContain("Open");
     // VEY-397#1/#8: the Countdown and Return columns were removed.
@@ -247,6 +248,115 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Borealis");
   });
 
+  test("VEY-KANEO-440: stationed-defense panel lists own defending fleets and allied defenders at your planets", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const attacker = "0x2222222222222222222222222222222222222222";
+    // The player has an ACS Defend fleet stationed at an ally planet, holding until the defended attack.
+    const stationed: FleetMissionSummary = {
+      ...mission("90", "AcsDefend", "Outbound", owner, "7", "9", now + 120_000),
+      defendsMissionId: "55",
+      originPlanet: planetReference("7", owner, "New Zion", "6:9:1", "temperate-ocean"),
+      targetPlanet: planetReference("9", attacker, "Borealis", "5:407:4", "frozen-ice"),
+    };
+    // An incoming attack on the player's own planet already has two allied defenders stationed.
+    const attackOnMe: FleetMissionSummary = {
+      ...mission("55", "Attack", "Outbound", attacker, "8", "7", now + 90_000),
+      counterplayDefenderMissionIds: ["90", "91"],
+      originPlanet: planetReference("8", attacker, "Hostis", "9:1:2", "hot-desert"),
+      targetPlanet: planetReference("7", owner, "New Zion", "6:9:1", "temperate-ocean"),
+    };
+    const text = collectText(MissionControlPage(missionControlProps(now, {
+      incoming: [attackOnMe],
+      outgoing: [stationed],
+    }))).join(" ");
+
+    expect(text).toContain("Stationed defenses");
+    // Own stationed fleet card: violet "Defending" badge + "Holds" countdown.
+    expect(text).toContain("Defending");
+    expect(text).toContain("Holds");
+    // Allied defenders at the player's planet are summarised by count.
+    expect(text).toContain("2 allied fleets stationed in defense");
+  });
+
+  test("VEY-KANEO-440: stationed-defense section renders from embedded planet refs without a lookup (Defenses-page reuse)", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const attacker = "0x2222222222222222222222222222222222222222";
+    const stationed: FleetMissionSummary = {
+      ...mission("90", "AcsDefend", "Outbound", owner, "7", "9", now + 120_000),
+      defendsMissionId: "55",
+      originPlanet: planetReference("7", owner, "New Zion", "6:9:1", "temperate-ocean"),
+      targetPlanet: planetReference("9", attacker, "Borealis", "5:407:4", "frozen-ice"),
+    };
+    // The Defenses page reuses StationedDefenseSection without a prebuilt planet lookup; endpoints must
+    // still resolve from each summary's embedded origin/target planet references.
+    const text = collectText(StationedDefenseSection({
+      incoming: [],
+      now,
+      onOpenReport: () => undefined,
+      outgoing: [stationed],
+    })).join(" ");
+
+    expect(text).toContain("Stationed defenses");
+    expect(text).toContain("Defending");
+    expect(text).toContain("Borealis");
+    expect(text).toContain("New Zion");
+  });
+
+  test("VEY-KANEO-440: stationed-defense panel shows a discoverable empty state when nothing is stationed", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionControlPage(missionControlProps(now, {
+      outgoing: [mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
+    }))).join(" ");
+
+    expect(text).toContain("Stationed defenses");
+    expect(text).toContain("No fleets are stationed in defense");
+    // The empty state must point players to the proactive Defend entry point (Galaxy → own colony /
+    // ally planet → Defend) and explain the prerequisite, so the feature is discoverable rather than
+    // reading as missing — the repeated QA "no Defend button anywhere" rework cause (VEY-KANEO-440).
+    expect(text).toContain("Defend");
+    expect(text).toContain("requires a second colony or an alliance member's planet");
+    // A Transport mission must never be mistaken for a stationed defense.
+    expect(text).not.toContain("allied fleets stationed in defense");
+  });
+
+  test("VEY-KANEO-440: stationed-defense panel renders a clickable Defend-a-planet CTA wired to navigation", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    let defendOpened = 0;
+    // The Defend launch lives on a planet's Defend action, but players/QA look for it on this panel
+    // (the empty state literally tells them to "choose Defend"). The CTA must be present and invoke the
+    // open-my-planet callback so the entry point is discoverable from the screen that describes it —
+    // this is the recurring "no Defend button anywhere" QA rework cause.
+    const tree = StationedDefenseSection({
+      incoming: [],
+      now,
+      outgoing: [],
+      onOpenReport: () => undefined,
+      onDefendPlanet: () => {
+        defendOpened += 1;
+      },
+    });
+    const text = collectText(tree).join(" ");
+    expect(text).toContain("Defend a planet");
+
+    const button = findElement(tree, (node) =>
+      node.type === "button"
+      && collectText(node.props?.children).join(" ").includes("Defend a planet"));
+    expect(button).toBeTruthy();
+    (button?.props as { onClick: () => void }).onClick();
+    expect(defendOpened).toBe(1);
+
+    // Without the callback the CTA is omitted (e.g. contexts that cannot navigate).
+    const noCta = collectText(StationedDefenseSection({
+      incoming: [],
+      now,
+      outgoing: [],
+      onOpenReport: () => undefined,
+    })).join(" ");
+    expect(noCta).not.toContain("Defend a planet");
+  });
+
   test("active missions render as cards with no table column headers (VEY-400)", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionControlPage(missionControlProps(now, {
@@ -306,6 +416,32 @@ describe("Mission Control battle reports", () => {
     // VEY-397#13: join actions stay available on the Alliance tab, now labelled "Join".
     expect(text).toContain("Join");
     expect(text).not.toContain("Join attack");
+  });
+
+  test("VEY-KANEO-431: Join forwards the target coordinates so it can open the Attack fleet picker", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const joinable = {
+      ...mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now + 180_000),
+      targetPlanet: planetReference("6", "0x3333333333333333333333333333333333333333", "Bastion", "4:5:6"),
+    };
+    const joinCalls: Array<[string, string, { galaxy: number; system: number; position: number } | null]> = [];
+    const tree = MissionControlPage({
+      ...missionControlProps(now, { joinableAttacks: [joinable] }),
+      onJoinAttack: (missionId, targetPlanetId, targetCoords) => {
+        joinCalls.push([missionId, targetPlanetId, targetCoords]);
+      },
+    });
+
+    const joinButton = findElements(tree, "button").find(
+      (element) => element.props?.title === "Join this alliance attack",
+    );
+    expect(joinButton).toBeDefined();
+    (joinButton?.props?.onClick as (() => void) | undefined)?.();
+
+    // The click no longer sends a default fleet immediately; it hands the mission
+    // id, target planet id, and resolved target coordinates up so the parent can
+    // open the same fleet picker the Attack action uses.
+    expect(joinCalls).toEqual([["34", "6", { galaxy: 4, system: 5, position: 6 }]]);
   });
 
   test("allActiveMissionRows keeps the player's classification and renders other players as observers (VEY-KANEO-402)", () => {
@@ -427,7 +563,7 @@ describe("Mission Control battle reports", () => {
   test("renders shareable mission detail stages, actions, and battle report structure", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -520,10 +656,86 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Share URL");
   });
 
+  test("VEY-KANEO-427: hides the disabled Resolve order while an outbound mission is still in flight", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // Own outbound mission that has not arrived yet: Resolve is not actionable (disabled),
+    // while Recall is still available. The Available Orders section must surface Recall but
+    // suppress the disabled Resolve button rather than rendering it greyed out.
+    const text = collectText(MissionDetailPage({
+      fleetVisibility: ownerVisibility,
+      actionState: { status: "idle" },
+      canTransact: true,
+      copyState: "idle",
+      detail: {
+        mission: mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 60_000),
+        battleReport: null,
+      },
+      loading: false,
+      missionId: "42",
+      now,
+      onBack: () => undefined,
+      onCompleteReturn: () => undefined,
+      onCopyShareUrl: () => undefined,
+      onCounterplay: () => undefined,
+      onRecall: () => undefined,
+      onResolve: () => undefined,
+      onRetry: () => undefined,
+      onSelectCoordinates: () => undefined,
+      onSelectPlayer: () => undefined,
+    })).join(" ");
+
+    expect(text).toContain("Available Orders");
+    expect(text).toContain("Recall fleet");
+    expect(text).not.toContain("Resolve");
+  });
+
+  test("VEY-KANEO-424: owner's outbound recallable mission shows the Recall button and the projected cost, not 'Not recallable'", () => {
+    // The ticket: for the same outbound mission Mission Control showed a Recall fleet button while
+    // Mission Detail showed neither the button nor the cost ("Not recallable") because the single
+    // -mission read returned recallCost: null. The fix projects recallCost for outbound fleets and
+    // gates the button on the owner's wallet-scoped fleet-visibility (outgoing), not on recallCost.
+    // Here the owner (ownerVisibility.outgoing includes "42") views their own outbound Attack that is
+    // still more than the 60s cutoff from arrival, so it is genuinely recallable: the detail page must
+    // surface both the Recall button and the projected cost, matching Mission Control.
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: {
+        ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 600_000),
+        recallCost: "50",
+      },
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).toContain("Available Orders");
+    expect(text).toContain("Recall fleet");
+    expect(text).toContain("Recall cost");
+    expect(text).toContain("50 deuterium");
+    expect(text).not.toContain("Not recallable");
+  });
+
+  test("VEY-KANEO-424: owner's outbound mission past the 60s cutoff reads 'Not recallable', matching Mission Control", () => {
+    // Acceptance criterion's second half: past the recall cutoff (within 60s of arrival) the fleet can
+    // no longer be recalled, so both screens consistently show it as not recallable. The recall-cost
+    // row reads "Not recallable" even though the projected cost is present, keeping the cost row honest
+    // about whether recall is actually possible.
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: {
+        ...mission("43", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 30_000),
+        recallCost: "50",
+      },
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).toContain("Recall cost");
+    expect(text).toContain("Not recallable");
+    expect(text).not.toContain("50 deuterium");
+  });
+
   test("renders the round-by-round block only when indexed round snapshots exist", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -571,7 +783,7 @@ describe("Mission Control battle reports", () => {
   test("VEY-KANEO-407: renders unit art for attacker combat/civil ships and the defender's surviving fleet/defenses", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const tree = MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -628,7 +840,7 @@ describe("Mission Control battle reports", () => {
     // A transport mission has no battle report, so the standalone "Fleet And Cargo" panel renders and
     // its ship listing must show unit art too (per the ticket title's "Fleet And Cargo ships" scope).
     const tree = MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -665,7 +877,7 @@ describe("Mission Control battle reports", () => {
     // Attacker fielded only civil ships and the charted defender had no surviving fleet/defenses, so
     // the empty listings must still read "None" rather than render an empty icon row.
     const tree = MissionDetailPage({
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -699,10 +911,73 @@ describe("Mission Control battle reports", () => {
     expect(imageSrcs.some((src) => src.includes("/ships/small-cargo"))).toBe(true);
   });
 
+  test("VEY-KANEO-425: hides the 'no battle report' notice for an outbound combat fleet still en route", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // An attack fleet still flying out: arrival is in the future, no report, combat not yet due.
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: mission("60", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 60_000),
+      battleReport: null,
+    }))).join(" ");
+
+    // The fleet has not reached its target, so there is nothing to fight: the notice must be hidden.
+    expect(text).not.toContain("No indexed battle report");
+    expect(text).not.toContain("Combat is due or resolving");
+    expect(text).not.toContain("Battle Report");
+  });
+
+  test("VEY-KANEO-425: hides the 'no battle report' notice for a recalled combat fleet that never fought", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // A recalled attack fleet turned back before arrival, so it never fought and has no report.
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: mission("61", "Attack", "Recalled", "0x1111111111111111111111111111111111111111", "7", "9", now + 60_000),
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).not.toContain("No indexed battle report");
+    expect(text).not.toContain("Combat is due or resolving");
+  });
+
+  test("VEY-KANEO-425: still shows the due/resolving notice for an outbound combat fleet whose arrival has passed", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: {
+        ...mission("62", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
+        needsResolution: true,
+      },
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).toContain("Combat is due or resolving");
+    expect(text).not.toContain("No indexed battle report");
+  });
+
+  test("VEY-KANEO-425: still shows the 'no battle report' notice for a returning combat fleet that fought without an indexed report", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // A fleet that fought and is heading home should have a report; its absence is genuinely
+    // notable, so the notice stays.
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: mission("63", "Attack", "Returning", "0x1111111111111111111111111111111111111111", "7", "9", now - 120_000),
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).toContain("No indexed battle report is available for this combat mission yet.");
+  });
+
+  test("VEY-KANEO-425: keeps a non-combat outbound mission free of any battle-report notice", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: mission("64", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 60_000),
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).not.toContain("No indexed battle report");
+    expect(text).not.toContain("Battle Report");
+  });
+
   test("surfaces share-link copy feedback and mission action status on the detail page", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const baseProps = {
-      account: "0x1111111111111111111111111111111111111111",
+      fleetVisibility: ownerVisibility,
       canTransact: true,
       detail: {
         mission: {
@@ -749,6 +1024,34 @@ describe("Mission Control battle reports", () => {
     expect(failed).toContain("Copy failed");
   });
 
+  test("share button is a non-navigating trigger that preventDefaults and calls the share handler", () => {
+    // VEY-339 rework: QA reported the battle-report share control navigating
+    // away from the page. The control must stay a type="button" that only
+    // invokes the share handler and swallows any default/navigation action.
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    let shareCalls = 0;
+    let defaultPrevented = false;
+
+    const tree = MissionDetailPage({
+      ...missionDetailProps(now, { mission: mission("228"), battleReport: battleReport("228") }),
+      copyState: "idle",
+      onCopyShareUrl: () => { shareCalls += 1; },
+    });
+
+    const shareButton = findElements(tree, "button").find(
+      (node) => node.props?.["aria-label"] === "Copy link",
+    );
+    expect(shareButton).toBeDefined();
+    expect(shareButton?.props?.type).toBe("button");
+
+    const onClick = shareButton?.props?.onClick as ((event: { preventDefault: () => void }) => void) | undefined;
+    expect(onClick).toBeDefined();
+    onClick?.({ preventDefault: () => { defaultPrevented = true; } });
+
+    expect(defaultPrevented).toBe(true);
+    expect(shareCalls).toBe(1);
+  });
+
   test("renders the route as origin -> target with clickable coordinates and commanders", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const owner = "0x1111111111111111111111111111111111111111";
@@ -770,7 +1073,7 @@ describe("Mission Control battle reports", () => {
       },
     };
     const props = {
-      account: owner,
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" } as const,
       canTransact: true,
       copyState: "idle" as const,
@@ -835,7 +1138,7 @@ describe("Mission Control battle reports", () => {
       targetPlanet: { planetId: "9", owner: defender, ownerDisplayName: "Zane", name: "Borealis", galaxy: 4, system: 5, position: 6, coordinates: "4:5:6" },
     };
     const tree = MissionDetailPage({
-      account: owner,
+      fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
       copyState: "idle",
@@ -1103,12 +1406,54 @@ function missionControlProps(
     now,
     onCompleteReturn: () => undefined,
     onCounterplay: () => undefined,
+    onDefendPlanet: () => undefined,
     onJoinAttack: () => undefined,
     onOpenReport: () => undefined,
     onOpenReportList: () => undefined,
     onRecall: () => undefined,
     onRefresh: () => undefined,
     onResolve: () => undefined,
+  };
+}
+
+// VEY-KANEO-424: the detail page authorizes orders from the same wallet-scoped fleet-visibility the
+// Mission Control list uses, matching by mission id. These tests all render the owner's own fleets, so
+// one shared visibility classifies each id the way the backend would: Outbound -> outgoing,
+// Returning/Recalled -> returning. (The page looks up by id, so the summaries only need the right id
+// and list placement.) A mission absent from every list models a stranger and gets no orders.
+const ownerVisibility: FleetMissionVisibilityResponse = {
+  wallet: "0x1111111111111111111111111111111111111111",
+  homePlanetId: "7",
+  incoming: [],
+  outgoing: ["42", "43", "51", "52", "60", "62", "64"].map((id) => mission(id, "Attack", "Outbound")),
+  returning: ["61", "63"].map((id) => mission(id, "Attack", "Returning")),
+  joinableAttacks: [],
+  completedMissions: [],
+  battleReports: [],
+};
+
+function missionDetailProps(
+  now: number,
+  detail: Parameters<typeof MissionDetailPage>[0]["detail"],
+): Parameters<typeof MissionDetailPage>[0] {
+  return {
+    fleetVisibility: ownerVisibility,
+    actionState: { status: "idle" },
+    canTransact: true,
+    copyState: "idle",
+    detail,
+    loading: false,
+    missionId: detail?.mission?.missionId ?? null,
+    now,
+    onBack: () => undefined,
+    onCompleteReturn: () => undefined,
+    onCopyShareUrl: () => undefined,
+    onCounterplay: () => undefined,
+    onRecall: () => undefined,
+    onResolve: () => undefined,
+    onRetry: () => undefined,
+    onSelectCoordinates: () => undefined,
+    onSelectPlayer: () => undefined,
   };
 }
 
@@ -1129,6 +1474,29 @@ function findElements(node: unknown, tag: string): FoundElement[] {
   }
   const self = vnode.type === tag ? [vnode] : [];
   return self.concat(findElements(vnode.props?.children, tag));
+}
+
+type VNode = { type?: unknown; props?: { children?: unknown; onClick?: unknown } & Record<string, unknown> };
+
+// Depth-first search for the first vnode matching a predicate, descending through arrays, children, and
+// function-component renders (so a control nested inside a rendered component is still reachable).
+function findElement(node: unknown, match: (vnode: VNode) => boolean): VNode | undefined {
+  if (node === null || node === undefined || typeof node !== "object") return undefined;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findElement(child, match);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  const vnode = node as VNode;
+  if (match(vnode)) return vnode;
+  if (typeof vnode.type === "function") {
+    const render = vnode.type as (props: { children?: unknown }) => unknown;
+    if (render.name === "Icon") return undefined;
+    return findElement(render({ ...(vnode.props ?? {}) }), match);
+  }
+  return findElement(vnode.props?.children, match);
 }
 
 function collectText(node: unknown): string[] {

@@ -779,12 +779,30 @@ describe("tester universe display data", () => {
       enabled: false,
       reason: "Requires a recycler on your home planet.",
     });
-    expect(ownActions.map((action) => action.label)).toEqual(["Transport", "Deploy"]);
-    expect(originActions).toEqual([]);
+    expect(ownActions.map((action) => action.label)).toEqual(["Transport", "Deploy", "Defend"]);
+    expect(ownActions.find((action) => action.kind === "defenseHold")).toMatchObject({
+      enabled: true,
+      mode: "mission",
+      mission: "defenseHold",
+    });
+    // The home/launch planet keeps the proactive Defend action visible but disabled (launchDefenseHold
+    // reverts with SamePlanet on origin == target) so single-colony wallets still discover the feature
+    // and see the eligibility prerequisite (VEY-KANEO-440).
+    expect(originActions).toMatchObject([
+      {
+        kind: "defenseHold",
+        enabled: false,
+        label: "Defend",
+        reason:
+          "You can't station a defending fleet at the planet it launches from. Open another colony or an alliance member's planet to defend it.",
+      },
+    ]);
     expect(emptyActions).toMatchObject([{ enabled: true, kind: "colonize", label: "Colonize" }]);
     expect(noCargoActions).toMatchObject([
       { enabled: false, kind: "transport", reason: "Requires a cargo-capable ship on your home planet." },
       { enabled: false, kind: "deploy", reason: "Requires a cargo-capable ship on your home planet." },
+      // A lone Light Fighter cannot carry cargo but is movable, so proactive Defend stays available.
+      { enabled: true, kind: "defenseHold", label: "Defend" },
     ]);
     expect([...enemyActions, ...ownActions, ...emptyActions].map((action) => action.label).join(" ")).not.toMatch(/spy|espionage|probe/i);
     expect(PUBLIC_INTEL_SUMMARY_LABEL).toBe("Public intel");

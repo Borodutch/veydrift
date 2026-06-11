@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import type { BackendConfig } from "./config";
 import {
+  attachAttackGroupParticipants,
   decodeBattleReportLogs,
   decodeFleetMissionLogs,
   decodePlanetRenamedLog,
@@ -12,6 +13,8 @@ import {
   isMoonChanceReportLog,
   VeydriftGameReader,
   type Address,
+  type BattleReport,
+  type FleetMissionSummary,
   type RpcLog
 } from "./evm";
 
@@ -25,6 +28,7 @@ const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a96
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
+const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
@@ -798,6 +802,59 @@ describe("player queue startedAt", () => {
     });
     expect((getLogsTopics as string[])?.[0]).toBe(shipQueuedTopic);
   });
+
+  test("can skip queue startedAt log hydration for fast authoritative read-through", async () => {
+    const wallet = "0x0000000000000000000000000000000000000def" as Address;
+    const abiWords = (...values: bigint[]) => dataWords(values.map(word));
+    const itemId = 0n;
+    const quantity = 2n;
+    const readyAt = 1_700_000_600n;
+    const cost = { metal: 4_000n, crystal: 4_000n, deuterium: 0n };
+    let getLogsCalled = false;
+
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(method: string, params: unknown[]): Promise<T> {
+        if (method === "eth_call") {
+          const selector = (params[0] as { data: string }).data.slice(0, 10);
+          if (selector === "0xb8e835ab") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+          if (selector === "0x5758361d") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+          if (selector === "0x4f5ed437") return abiWords(0n, 0n) as T;
+          if (selector === "0xb6f4b7b7") {
+            return abiWords(1n, itemId, quantity, readyAt, cost.metal, cost.crystal, cost.deuterium) as T;
+          }
+          if (selector === "0x52b55205") return abiWords(0n, 0n) as T;
+          if (selector === "0x2b98afc7") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+          throw new Error(`Unexpected eth_call selector ${selector}`);
+        }
+        if (method === "eth_getLogs") {
+          getLogsCalled = true;
+          throw new Error("startedAt log scans should be skipped");
+        }
+        throw new Error(`Unexpected method ${method}`);
+      }
+    }, { hydrateQueueStartedAt: false });
+    (reader as unknown as {
+      getGameSettlement: (wallet: Address) => Promise<unknown>;
+    }).getGameSettlement = async () => ({
+      wallet,
+      hasFirstPlanet: true,
+      homePlanetId: "7",
+      planet: null,
+      contractKind: "game"
+    });
+
+    const queues = await reader.getPlayerQueues(wallet);
+
+    expect(getLogsCalled).toBe(false);
+    expect(queues.ship).toMatchObject({
+      active: true,
+      kind: "ship",
+      itemId: 0,
+      quantity: 2,
+      readyAt: readyAt.toString()
+    });
+    expect(queues.ship?.startedAt).toBeUndefined();
+  });
 });
 
 describe("fleet mission visibility", () => {
@@ -1051,6 +1108,9 @@ describe("fleet mission cargo vs loot", () => {
     expect(mission?.status).toBe("Returning");
     // Cargo stays at the outbound launch value (0), not the 50 metal return-leg/loot amount.
     expect(mission?.cargo).toEqual({ metal: "0", crystal: "0", deuterium: "0" });
+    // The return-leg cargo (outbound + looted) is captured separately as returnCargo so the ACS
+    // battle report can surface a joiner's loot share (VEY-KANEO-432) without polluting `cargo`.
+    expect(mission?.returnCargo).toEqual({ metal: "50", crystal: "0", deuterium: "0" });
 
     // Loot is sourced independently from the battle report.
     const report = decodeBattleReportLogs([
@@ -1060,6 +1120,130 @@ describe("fleet mission cargo vs loot", () => {
       })
     ]);
     expect(report?.loot).toEqual({ metal: "50", crystal: "0", deuterium: "0" });
+  });
+});
+
+// VEY-KANEO-424: FleetMissionRecalled is the only event that carries a recall cost, so a still-in-
+// flight Outbound fleet used to decode with recallCost: null, which made the Mission Detail page hide
+// the Recall button and read "Not recallable". The decoder now projects the contract's deterministic
+// recall cost (floor(fuelCost * 2500 / 10000), min 1 deuterium when any fuel was spent) for Outbound
+// fleets, while leaving the authoritative emitted cost for recalled fleets and null elsewhere.
+describe("projected fleet recall cost", () => {
+  const owner = "0x0000000000000000000000000000000000000abc" as Address;
+
+  function launchAndCargo(missionId: bigint, fuelCost: bigint): RpcLog[] {
+    return [
+      makeLog({
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(3n)],
+        data: dataWords([word(99n), word(1n), word(1_900_000_000n), word(1_900_000_300n)])
+      }),
+      makeLog({
+        topics: [fleetMissionCargoTopic, topic(missionId)],
+        data: dataWords([word(0n), word(0n), word(0n), word(fuelCost)])
+      })
+    ];
+  }
+
+  test("projects 25% of fuel cost for an outbound fleet that has not been recalled", () => {
+    const mission = decodeFleetMissionLogs(launchAndCargo(1n, 200n)).get("1");
+    expect(mission?.status).toBe("Outbound");
+    // floor(200 * 2500 / 10000) = 50 deuterium.
+    expect(mission?.recallCost).toBe("50");
+  });
+
+  test("floors a tiny-but-nonzero fuel cost to 1 deuterium, mirroring the contract", () => {
+    const mission = decodeFleetMissionLogs(launchAndCargo(2n, 1n)).get("2");
+    // floor(1 * 2500 / 10000) = 0, but the contract charges a 1 deuterium minimum.
+    expect(mission?.recallCost).toBe("1");
+  });
+
+  test("keeps the authoritative emitted cost for a recalled fleet", () => {
+    const logs: RpcLog[] = [
+      ...launchAndCargo(3n, 200n),
+      makeLog({
+        topics: [fleetMissionRecalledTopic, topic(3n), addressTopic(owner)],
+        data: dataWords([word(1_900_000_500n), word(50n)])
+      })
+    ];
+    const mission = decodeFleetMissionLogs(logs).get("3");
+    expect(mission?.status).toBe("Recalled");
+    expect(mission?.recallCost).toBe("50");
+  });
+
+  test("leaves recall cost null for a returning fleet that can no longer be recalled", () => {
+    const logs: RpcLog[] = [
+      ...launchAndCargo(4n, 200n),
+      makeLog({
+        topics: [fleetMissionReturnExposedTopic, topic(4n), addressTopic(owner), topic(2n)],
+        data: dataWords([word(99n), word(1n), word(1_900_000_600n), word(0n), word(0n), word(0n)])
+      })
+    ];
+    const mission = decodeFleetMissionLogs(logs).get("4");
+    expect(mission?.status).toBe("Returning");
+    expect(mission?.recallCost).toBeNull();
+  });
+});
+
+// VEY-KANEO-442: index + serve OGame-style ACS Defend stationed-defense state. An AcsDefend fleet
+// stations at a planet (its emitted targetPlanetId) to defend a specific hostile attack mission; the
+// contract puts that hostile mission id in the FleetMissionLaunched `randomnessRequestId` slot
+// (word 4). The read model must link the defender to the attack so stationed-defense state is
+// queryable (who defends attack X, and which fleets are stationed at planet Y).
+describe("ACS Defend stationed-defense indexing", () => {
+  const attacker = "0x00000000000000000000000000000000000000a1" as Address;
+  const defender = "0x00000000000000000000000000000000000000b2" as Address;
+  const allyDefender = "0x00000000000000000000000000000000000000c3" as Address;
+  const defendedPlanetId = 9n;
+  const hostileMissionId = 50n;
+  const attackMissionType = topic(3n); // Attack
+  const acsDefendMissionType = topic(5n); // AcsDefend
+
+  function launch(missionId: bigint, owner: Address, missionType: string, originPlanetId: bigint, targetPlanetId: bigint, randomnessRequestId: bigint): RpcLog {
+    return makeLog({
+      topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), missionType],
+      data: dataWords([
+        word(originPlanetId),
+        word(targetPlanetId),
+        word(1_900_000_000n),
+        word(1_900_000_600n),
+        word(randomnessRequestId)
+      ])
+    });
+  }
+
+  test("links an AcsDefend fleet to the hostile attack it stations against", () => {
+    const missions = decodeFleetMissionLogs([
+      // Hostile attack heading for the defended planet.
+      launch(hostileMissionId, attacker, attackMissionType, 1n, defendedPlanetId, 0n),
+      // Two allied fleets station at the defended planet to defend that attack.
+      launch(51n, defender, acsDefendMissionType, 2n, defendedPlanetId, hostileMissionId),
+      launch(52n, allyDefender, acsDefendMissionType, 3n, defendedPlanetId, hostileMissionId)
+    ]);
+
+    const firstDefender = missions.get("51");
+    expect(firstDefender?.missionType).toBe("AcsDefend");
+    // The AcsDefend fleet stations at the real defended planet, not at the hostile mission id.
+    expect(firstDefender?.targetPlanetId).toBe(defendedPlanetId.toString());
+    expect(firstDefender?.defendsMissionId).toBe(hostileMissionId.toString());
+    expect(firstDefender?.counterplayDefenderMissionIds).toEqual([]);
+
+    // The attack mission now lists every fleet stationed to defend its target.
+    const attack = missions.get(hostileMissionId.toString());
+    expect(attack?.missionType).toBe("Attack");
+    expect(attack?.counterplayDefenderMissionIds).toEqual(["51", "52"]);
+    expect(attack?.defendsMissionId).toBeNull();
+  });
+
+  test("records the defender link even when the hostile attack launch is outside the decoded range", () => {
+    // Self-heal / windowed range may only contain the defender's launch, not the attack's. The link
+    // must still be captured so a follow-up query can resolve the stationed defense.
+    const missions = decodeFleetMissionLogs([
+      launch(51n, defender, acsDefendMissionType, 2n, defendedPlanetId, hostileMissionId)
+    ]);
+
+    expect(missions.get("51")?.defendsMissionId).toBe(hostileMissionId.toString());
+    // A placeholder attack entry carries the back-reference for serving stationed defenders.
+    expect(missions.get(hostileMissionId.toString())?.counterplayDefenderMissionIds).toEqual(["51"]);
   });
 });
 
@@ -1130,6 +1314,149 @@ describe("battle reports", () => {
         }
       ]
     });
+  });
+});
+
+// VEY-KANEO-432: a joined (ACS) attack groups multiple fleets under the main attack; loot is split
+// across participants proportional to remaining cargo capacity. The main attacker's loot comes from
+// its AttackBattleResolved event; each joiner's loot is its resulting return-leg cargo (returnCargo).
+describe("ACS attack group participants", () => {
+  const main = "0x00000000000000000000000000000000000000a1" as Address;
+  const joinerOne = "0x00000000000000000000000000000000000000b2" as Address;
+  const joinerTwo = "0x00000000000000000000000000000000000000c3" as Address;
+
+  function makeSummary(overrides: Partial<FleetMissionSummary> & { missionId: string }): FleetMissionSummary {
+    return {
+      status: "Returning",
+      missionType: "Attack",
+      owner: main,
+      originPlanetId: "1",
+      targetPlanetId: "9",
+      arrivalAt: "1700000000",
+      returnAt: "1700000600",
+      fuelCost: "0",
+      recallCost: null,
+      attackGroupId: null,
+      joinedAttackMissionIds: [],
+      defendsMissionId: null,
+      counterplayDefenderMissionIds: [],
+      cargo: { metal: "0", crystal: "0", deuterium: "0" },
+      returnCargo: null,
+      ships: {},
+      transactionHash: "0xtx",
+      blockNumber: "10",
+      launchBlockNumber: "10",
+      needsResolution: false,
+      ...overrides
+    };
+  }
+
+  function makeReport(overrides: Partial<BattleReport> & { missionId: string }): BattleReport {
+    return {
+      attacker: main,
+      targetPlanetId: "9",
+      outcome: "AttackerWin",
+      rounds: 2,
+      randomSeed: "0",
+      loot: { metal: "100", crystal: "0", deuterium: "0" },
+      attackerLosses: { metal: "0", crystal: "0", deuterium: "0" },
+      defenderLosses: { metal: "0", crystal: "0", deuterium: "0" },
+      debris: { metal: "0", crystal: "0" },
+      roundReports: [],
+      transactionHash: "0xtx",
+      blockNumber: "10",
+      attackGroupId: null,
+      participants: [],
+      ...overrides
+    };
+  }
+
+  test("lists the main attacker plus every joiner with their individual loot share", () => {
+    const missions: FleetMissionSummary[] = [
+      makeSummary({
+        missionId: "77",
+        owner: main,
+        attackGroupId: "77",
+        joinedAttackMissionIds: ["78", "79"],
+        ships: { lightFighter: "10" }
+      }),
+      makeSummary({
+        missionId: "78",
+        owner: joinerOne,
+        missionType: "AcsAttack",
+        attackGroupId: "77",
+        ships: { lightFighter: "5" },
+        returnCargo: { metal: "30", crystal: "0", deuterium: "0" }
+      }),
+      makeSummary({
+        missionId: "79",
+        owner: joinerTwo,
+        missionType: "AcsAttack",
+        attackGroupId: "77",
+        ships: { largeCargo: "3" },
+        returnCargo: { metal: "20", crystal: "5", deuterium: "0" }
+      })
+    ];
+    const report = makeReport({ missionId: "77", attacker: main, loot: { metal: "50", crystal: "0", deuterium: "0" } });
+
+    const [enriched] = attachAttackGroupParticipants([report], missions);
+
+    expect(enriched?.attackGroupId).toBe("77");
+    expect(enriched?.participants).toEqual([
+      { missionId: "77", address: main, isMainAttacker: true, ships: { lightFighter: "10" }, loot: { metal: "50", crystal: "0", deuterium: "0" } },
+      { missionId: "78", address: joinerOne, isMainAttacker: false, ships: { lightFighter: "5" }, loot: { metal: "30", crystal: "0", deuterium: "0" } },
+      { missionId: "79", address: joinerTwo, isMainAttacker: false, ships: { largeCargo: "3" }, loot: { metal: "20", crystal: "5", deuterium: "0" } }
+    ]);
+  });
+
+  test("scales to an arbitrary number of joiners", () => {
+    const joinerIds = Array.from({ length: 6 }, (_, index) => String(200 + index));
+    const missions: FleetMissionSummary[] = [
+      makeSummary({ missionId: "77", attackGroupId: "77", joinedAttackMissionIds: joinerIds }),
+      ...joinerIds.map((id, index) =>
+        makeSummary({
+          missionId: id,
+          owner: `0x${(index + 1).toString(16).padStart(40, "0")}` as Address,
+          missionType: "AcsAttack",
+          attackGroupId: "77",
+          returnCargo: { metal: String((index + 1) * 10), crystal: "0", deuterium: "0" }
+        })
+      )
+    ];
+    const [enriched] = attachAttackGroupParticipants([makeReport({ missionId: "77" })], missions);
+
+    expect(enriched?.participants).toHaveLength(7);
+    expect(enriched?.participants.filter((participant) => !participant.isMainAttacker)).toHaveLength(6);
+    expect(enriched?.participants.at(-1)?.loot).toEqual({ metal: "60", crystal: "0", deuterium: "0" });
+  });
+
+  test("a joiner whose fleet was wiped (no return-leg cargo) reports a zero loot share", () => {
+    const missions: FleetMissionSummary[] = [
+      makeSummary({ missionId: "77", attackGroupId: "77", joinedAttackMissionIds: ["78"] }),
+      makeSummary({ missionId: "78", owner: joinerOne, missionType: "AcsAttack", attackGroupId: "77", returnCargo: null })
+    ];
+    const [enriched] = attachAttackGroupParticipants([makeReport({ missionId: "77" })], missions);
+
+    expect(enriched?.participants[1]).toMatchObject({
+      missionId: "78",
+      isMainAttacker: false,
+      loot: { metal: "0", crystal: "0", deuterium: "0" }
+    });
+  });
+
+  test("leaves a solo attack with a single participant and a null group id", () => {
+    const missions: FleetMissionSummary[] = [
+      makeSummary({ missionId: "77", owner: main, ships: { lightFighter: "10" } })
+    ];
+    const [enriched] = attachAttackGroupParticipants(
+      [makeReport({ missionId: "77", loot: { metal: "100", crystal: "0", deuterium: "0" } })],
+      missions
+    );
+
+    expect(enriched?.attackGroupId).toBeNull();
+    expect(enriched?.participants).toEqual([
+      { missionId: "77", address: main, isMainAttacker: true, ships: { lightFighter: "10" }, loot: { metal: "100", crystal: "0", deuterium: "0" } }
+    ]);
   });
 });
 

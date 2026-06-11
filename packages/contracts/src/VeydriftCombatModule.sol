@@ -1386,7 +1386,12 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         for (uint256 i = 0; i < counterplayMissionIds.length;) {
             uint256 counterplayMissionId = counterplayMissionIds[i];
             FleetMission storage counterplay = _fleetMissions[counterplayMissionId];
-            if (_isQualifiedCounterplay(hostileMissionId, counterplay)) {
+            // DefenseHold fleets keep holding after a battle to defend any further attack in their
+            // window; they are sent home by their owner once the hold elapses, not here.
+            if (
+                counterplay.missionType != FleetMissionType.DefenseHold
+                    && _isQualifiedCounterplay(hostileMissionId, counterplay)
+            ) {
                 if (_missionShipTotal(counterplay.ships) == 0) {
                     counterplay.status = FleetMissionStatus.Resolved;
                     counterplay.returnAt = uint64(block.timestamp);
@@ -1426,10 +1431,13 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         view
         returns (bool)
     {
+        // DefenseHold fleets stationed over this attack are linked into the counterplay roster at
+        // resolution time, so they qualify here and fight exactly like reactive counterplay.
         return counterplay.status == FleetMissionStatus.Outbound
             && counterplay.arrivalAt <= _fleetMissions[hostileMissionId].arrivalAt
             && (counterplay.missionType == FleetMissionType.AcsDefend
-                || counterplay.missionType == FleetMissionType.Intercept);
+                || counterplay.missionType == FleetMissionType.Intercept
+                || counterplay.missionType == FleetMissionType.DefenseHold);
     }
 
     function _isQualifiedJoinedAttack(uint256 attackMissionId, FleetMission storage joined)
@@ -1711,28 +1719,6 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
 
     function _combatScaled(uint256 value, uint16 technologyLevel) private pure returns (uint256) {
         return (value * (BPS + uint256(technologyLevel) * 1_000)) / BPS;
-    }
-
-    function _planetDistance(uint256 originPlanetId, uint256 destinationPlanetId)
-        private
-        view
-        returns (uint256)
-    {
-        Planet storage origin = _planets[originPlanetId];
-        Planet storage destination = _planets[destinationPlanetId];
-        uint256 galaxyDistance = origin.galaxy > destination.galaxy
-            ? uint256(origin.galaxy - destination.galaxy)
-            : uint256(destination.galaxy - origin.galaxy);
-        if (galaxyDistance != 0) return galaxyDistance * 20_000;
-        uint256 systemDistance = origin.system > destination.system
-            ? uint256(origin.system - destination.system)
-            : uint256(destination.system - origin.system);
-        if (systemDistance != 0) return 2_700 + systemDistance * 95;
-        uint256 positionDistance = origin.position > destination.position
-            ? uint256(origin.position - destination.position)
-            : uint256(destination.position - origin.position);
-        if (positionDistance != 0) return 1_000 + positionDistance * 5;
-        return 0;
     }
 
     function _missionCargoCapacity(MissionShips memory ships) private pure returns (uint256) {

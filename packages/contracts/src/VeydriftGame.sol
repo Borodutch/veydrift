@@ -16,22 +16,26 @@ contract VeydriftGame is VeydriftResourceReserves {
     address private immutable _planetManagementModule;
     address private immutable _attackProtectionModule;
     address private immutable _colonizationModule;
+    address private immutable _defenseHoldModule;
 
     constructor(
         address admin,
         address gameplayModule,
         address planetManagementModule,
         address attackProtectionModule,
-        address colonizationModule
+        address colonizationModule,
+        address defenseHoldModule
     ) VeydriftResourceReserves(admin) {
         if (
             gameplayModule == address(0) || planetManagementModule == address(0)
                 || attackProtectionModule == address(0) || colonizationModule == address(0)
+                || defenseHoldModule == address(0)
         ) revert UnsupportedGameplayModule();
         _gameplayModule = gameplayModule;
         _planetManagementModule = planetManagementModule;
         _attackProtectionModule = attackProtectionModule;
         _colonizationModule = colonizationModule;
+        _defenseHoldModule = defenseHoldModule;
     }
 
     function startPlanet() external payable returns (uint256 planetId) {
@@ -297,14 +301,32 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToPlayModule();
     }
 
+    /// @notice Launch an OGame-style ACS Defend (DefenseHold) mission: station a fleet at a planet
+    ///         for a chosen hold window so it defends any attack that lands during the hold.
+    function launchDefenseHold(
+        uint256,
+        uint256,
+        MissionShips calldata,
+        Resources calldata,
+        uint16,
+        uint256
+    ) external returns (uint256) {
+        _touchPlayer(msg.sender);
+        _delegateToDefenseHoldModule();
+    }
+
     function recallFleetMission(uint256) external {
         _touchPlayer(msg.sender);
         _delegateToPlayModule();
     }
 
     function resolveFleetMission(uint256 missionId) external {
-        if (_fleetMissions[missionId].missionType == FleetMissionType.Colonize) {
+        FleetMissionType missionType = _fleetMissions[missionId].missionType;
+        if (missionType == FleetMissionType.Colonize) {
             _delegateToColonizationModule();
+        }
+        if (missionType == FleetMissionType.DefenseHold) {
+            _delegateToDefenseHoldModule();
         }
         _delegateToPlayModule();
     }
@@ -499,6 +521,7 @@ contract VeydriftGame is VeydriftResourceReserves {
             _buildingLevels[planetId][Building.SolarPlant],
             _buildingLevels[planetId][Building.FusionReactor],
             _shipCounts[planetId][Ship.SolarSatellite],
+            _shipCounts[planetId][Ship.Crawler],
             planetRef.temperature,
             _technologyLevels[planetRef.owner][Technology.Energy],
             planetRef.metalMultiplierBps,
@@ -943,6 +966,18 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function _delegateToColonizationModule() private {
         (bool ok, bytes memory result) = _colonizationModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        assembly ("memory-safe") {
+            return(add(result, 32), mload(result))
+        }
+    }
+
+    function _delegateToDefenseHoldModule() private {
+        (bool ok, bytes memory result) = _defenseHoldModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(result, 32), mload(result))

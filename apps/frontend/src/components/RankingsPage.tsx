@@ -1,17 +1,25 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useMemo, useState } from "preact/hooks";
 import { ChevronLeft, ChevronRight, UserRound } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import { fleetMissionDistance } from "../fleetMissionRules";
+import { activeMissionsByPlanetId, countPlanetsWithActiveMissions, planetMissionSubtext } from "../planetMissionSubtext";
 import type { Coordinates } from "../types";
-import { fetchHighscores, shortAddress, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
+import { fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
+import { PlanetMissionLines } from "./PlanetMissionLines";
 import { VeydriftLoader } from "./VeydriftLoader";
 
 type RankingsPageProps = {
+  // Universe-wide active fleet missions (the unfiltered `/missions?status=active` feed). Shown as
+  // per-planet subtext for ALL players — full transparency, no per-viewer fog of war (decision #9978,
+  // VEY-KANEO-445). Defaults to empty so the page renders before/without the feed.
+  activeMissions?: readonly FleetMissionSummary[] | undefined;
   apiBaseUrl: string | undefined;
   currentAllianceId?: string | null | undefined;
   currentWallet?: string | undefined;
+  // Live clock (ms) driving the mission-subtext ETA countdowns; ticks every second from the app shell.
+  now?: number | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
@@ -54,7 +62,7 @@ export function rankingsRefreshButtonState(loading: boolean): { disabled: boolea
   return refreshButtonState(loading);
 }
 
-export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onSelectAlliance, onSelectPlayer, onSelectPlanet, originCoordinates }: RankingsPageProps) {
+export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, currentWallet, now, onSelectAlliance, onSelectPlayer, onSelectPlanet, originCoordinates }: RankingsPageProps) {
   const [active, setActive] = useState<HighscoreCategory>("total");
   const [data, setData] = useState<HighscoreResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -88,6 +96,8 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
     load(page);
   }, [active, apiBaseUrl, currentWallet, page]);
 
+  const missionsByPlanetId = useMemo(() => activeMissionsByPlanetId(activeMissions ?? []), [activeMissions]);
+  const nowMs = now ?? Date.now();
   const entries = data?.rankings[active] ?? [];
   const pagination = data?.pagination ?? null;
   const currentPlayerPage = data?.currentPlayer?.rankings[active] ?? null;
@@ -95,6 +105,18 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
     ? entries.find((entry) => entry.wallet.toLowerCase() === currentWallet.toLowerCase()) ?? null
     : null;
   const currentPlayerScore = currentPlayerEntry?.score[active] ?? null;
+  // VEY-KANEO-448: discoverability signal so the enriched per-planet mission subtext is never buried in
+  // a long rank-ordered page (mirrors the Raid Target Finder footer). Counts visible planets that carry
+  // at least one active mission line, using the same owner (entry wallet) the rows classify against.
+  const activeMissionPlanetCount = useMemo(
+    () =>
+      countPlanetsWithActiveMissions(
+        entries.flatMap((entry) => rankingPlanets(entry).map((planet) => ({ planetId: planet.planetId, owner: entry.wallet }))),
+        missionsByPlanetId,
+        nowMs,
+      ),
+    [entries, missionsByPlanetId, nowMs],
+  );
 
   return (
     <section className="space-y-4">
@@ -140,6 +162,8 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
         entries={entries}
         hasLoadedData={Boolean(data)}
         loading={loading}
+        missionsByPlanetId={missionsByPlanetId}
+        now={nowMs}
         onSelectAlliance={onSelectAlliance}
         onSelectPlayer={onSelectPlayer}
         onSelectPlanet={onSelectPlanet}
@@ -160,6 +184,14 @@ export function RankingsPage({ apiBaseUrl, currentAllianceId, currentWallet, onS
       {data ? (
         <p className="text-xs leading-5 text-slate-500">
           {data.formula.summary}
+          {activeMissionPlanetCount > 0 ? (
+            <>
+              {" "}
+              <span className="text-slate-400">
+                {activeMissionPlanetCount} {activeMissionPlanetCount === 1 ? "planet has" : "planets have"} active fleet activity on this page — shown as mission subtext under the planet.
+              </span>
+            </>
+          ) : null}
         </p>
       ) : null}
     </section>
@@ -303,6 +335,8 @@ export function RankingsTable({
   entries,
   hasLoadedData = entries.length > 0,
   loading,
+  missionsByPlanetId,
+  now,
   onSelectAlliance,
   onSelectPlayer,
   onSelectPlanet,
@@ -314,6 +348,8 @@ export function RankingsTable({
   entries: HighscoreEntry[];
   hasLoadedData?: boolean | undefined;
   loading: boolean;
+  missionsByPlanetId?: ReadonlyMap<string, FleetMissionSummary[]> | undefined;
+  now?: number | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
@@ -342,6 +378,8 @@ export function RankingsTable({
             currentWallet={currentWallet}
             entry={entry}
             key={`${active}-${entry.wallet}`}
+            missionsByPlanetId={missionsByPlanetId}
+            now={now}
             onSelectAlliance={onSelectAlliance}
             onSelectPlayer={onSelectPlayer}
             onSelectPlanet={onSelectPlanet}
@@ -358,6 +396,8 @@ function RankingRow({
   currentAllianceId,
   currentWallet,
   entry,
+  missionsByPlanetId,
+  now,
   onSelectAlliance,
   onSelectPlayer,
   onSelectPlanet,
@@ -367,6 +407,8 @@ function RankingRow({
   currentAllianceId?: string | null | undefined;
   currentWallet?: string | undefined;
   entry: HighscoreEntry;
+  missionsByPlanetId?: ReadonlyMap<string, FleetMissionSummary[]> | undefined;
+  now?: number | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
@@ -487,12 +529,13 @@ function RankingRow({
           </div>
           {rankedPlanets.map((planet) => {
             const isHomePlanet = entry.homePlanetId === planet.planetId;
+            const missionLines = planetMissionSubtext(planet.planetId, entry.wallet, missionsByPlanetId?.get(planet.planetId) ?? [], now ?? Date.now());
             return (
+              <div className="space-y-1" key={`tactical-${planet.planetId}`}>
               <button
                 aria-label={`Open planet at ${homePlanetCoordinatesLabel(planet)}`}
                 className="grid w-full grid-cols-[22px_minmax(0,1fr)] items-center gap-1 rounded border border-white/5 bg-black/20 px-2 py-1.5 text-left text-[11px] transition hover:border-cyan-200/30 hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-cyan-300/30 sm:grid-cols-[26px_minmax(0,1fr)_56px_88px_82px] sm:gap-2"
                 disabled={!onSelectPlanet}
-                key={`tactical-${planet.planetId}`}
                 onClick={() => onSelectPlanet?.(planet.coordinates)}
                 title={`Open ${homePlanetHoverLabel(planet)}`}
                 type="button"
@@ -536,6 +579,8 @@ function RankingRow({
                   {compactScore(planet.tactical?.combatPower ?? "0")}
                 </span>
               </button>
+              <PlanetMissionLines className="pl-2 sm:pl-[34px]" planetId={planet.planetId} subtext={missionLines} />
+              </div>
             );
           })}
         </div>

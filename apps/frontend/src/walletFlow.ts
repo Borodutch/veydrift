@@ -228,6 +228,12 @@ export type FleetMissionSummary = {
   recallCost: string | null;
   attackGroupId: string | null;
   joinedAttackMissionIds: string[];
+  // VEY-KANEO-442 stationed-defense links. For an AcsDefend mission, `defendsMissionId` is the hostile
+  // Attack mission it is stationed to defend (its fleet holds at the defended planet until that attack
+  // lands). On an Attack mission, `counterplayDefenderMissionIds` lists every AcsDefend mission stationed
+  // to defend against it. Optional for back-compat with feeds/fixtures predating the fields.
+  defendsMissionId?: string | null;
+  counterplayDefenderMissionIds?: string[];
   cargo: OnChainResources;
   ships: Record<string, string>;
   transactionHash: string;
@@ -248,6 +254,10 @@ export type FleetMissionPlanetReference = {
   // same planet art the Galaxy view uses (VEY-403 / VEY-67). Optional for back-compat with feeds or
   // fixtures that predate the field; the card falls back to a coordinate-derived type when absent.
   archetype?: PlanetType | null;
+  // VEY-KANEO-440: the planet's Alliance Depot building level. On the target planet of a hostile
+  // attack this is the depot that subsidizes ACS Defend holding fuel, so the compose UX can preview
+  // depot support. Optional for back-compat with feeds/fixtures predating the field.
+  allianceDepotLevel?: number | null;
 };
 
 export type FleetMissionVisibilityResponse = {
@@ -316,6 +326,18 @@ export type CombatRoundReport = {
   defenderLosses: OnChainResources;
 };
 
+// One member of an ACS (Alliance Combat System) attack group: the main attacker plus any fleets that
+// joined the same attack. `loot` is the resources this fleet personally hauled away. Per-participant
+// losses are not emitted on-chain (CombatLosses is a single combined figure), so only loot is broken
+// out per participant; the report's top-level losses/debris/outcome remain the combined group result.
+export type BattleReportParticipant = {
+  missionId: string;
+  address: string;
+  isMainAttacker: boolean;
+  ships: Record<string, string>;
+  loot: OnChainResources;
+};
+
 export type BattleReport = {
   missionId: string;
   attacker: string;
@@ -333,6 +355,11 @@ export type BattleReport = {
   roundReports: CombatRoundReport[];
   transactionHash: string;
   blockNumber: string;
+  // ACS attack group: the main attack mission id for a grouped attack (null for a solo attack), and
+  // every participant (main attacker + joiners) with their individual loot share. Older feeds that
+  // predate VEY-KANEO-432 may omit these; consumers fall back to the single-attacker fields.
+  attackGroupId?: string | null;
+  participants?: BattleReportParticipant[];
 };
 
 export type ChainShipyardState = {
@@ -694,6 +721,9 @@ const GAME_SELECTORS = {
   joinAttackMission: "0x28260eb6",
   launchInterplanetaryMissileAttack: "0xa72cd29a",
   launchAttackMission: "0x19fec22b",
+  // VEY-KANEO-440/441: ACS Defend stationing. Selector for
+  // launchDefenseHold(uint256,uint256,(uint32 x14 MissionShips),(uint128 x3 Resources),uint16,uint256).
+  launchDefenseHold: "0xd3ad415f",
   launchFleetMission: "0x60eac16f",
   previewResources: "0x0adbf924",
   resolveFleetMission: "0xde09e7cf",
@@ -710,6 +740,10 @@ const GAME_SELECTORS = {
 const COLONIZATION_COORDINATE_FLAG = 1n << 255n;
 const COLONIZE_MISSION_TYPE = 2;
 const ATTACK_MISSION_TYPE = 3;
+// VEY-KANEO-440/441: FleetMissionType.DefenseHold (enum 9). DefenseHold has its own launch entrypoint
+// (launchDefenseHold) rather than going through launchFleetMission, but the indexed missions still carry
+// this type, so the UI keys stationed-defense rendering on it.
+export const DEFENSE_HOLD_MISSION_TYPE = 9;
 const MOON_SELECTORS = {
   finishMoonBuildingUpgrade: "0x713b9e66",
   jumpGateJump: "0x36aaf8f8",
@@ -835,6 +869,9 @@ export function isUserRejected(error: unknown): boolean {
   return typeof candidate.message === "string" && /reject|denied|cancel/i.test(candidate.message);
 }
 
+export const CONTRACT_REJECTED_NO_REASON_MESSAGE =
+  "The game contract rejected this transaction, but the wallet did not provide a specific reason. Refresh game state and retry, or choose a different action if the state changed.";
+
 export function walletRequestErrorMessage(error: unknown): string {
   const message = errorMessage(error);
   const code = errorCode(error);
@@ -856,12 +893,15 @@ export function walletRequestErrorMessage(error: unknown): string {
     return `${message} The game API may be temporarily unavailable; the app will retry with backend state.`;
   }
 
-  if (code === -32603 || code === "-32603" || /internal json-rpc error/i.test(message)) {
-    return "The wallet could not read the current game contract state. Retry in a moment while the app checks whether the game API or RPC recovered.";
+  // A genuine on-chain revert can arrive wrapped in an internal JSON-RPC error
+  // (code -32603). Classify it as a contract rejection before the -32603 branch
+  // so a real revert is not mislabeled as RPC/node unavailability.
+  if (isOnChainRevertError(error)) {
+    return CONTRACT_REJECTED_NO_REASON_MESSAGE;
   }
 
-  if (/execution reverted/i.test(message)) {
-    return "The game contract rejected this transaction, but the wallet did not provide a specific reason. Refresh game state and retry, or choose a different action if the state changed.";
+  if (code === -32603 || code === "-32603" || /internal json-rpc error/i.test(message)) {
+    return "The wallet could not read the current game contract state. Retry in a moment while the app checks whether the game API or RPC recovered.";
   }
 
   return message;
@@ -991,18 +1031,62 @@ function fleetMissionRevertReason(error: unknown, context?: FleetMissionRevertCo
   return contractRevertReason(error, context);
 }
 
-function isFleetMissionPreflightRevert(error: unknown): boolean {
-  // A real contract revert carries revert data (a 4-byte selector), the EVM
-  // revert code 3, or an "execution reverted" message. Anything else (internal
-  // JSON-RPC errors, RPC/node unavailability, read timeouts) means the
-  // simulation could not run, not that the mission is invalid.
+/**
+ * Walks the nested error chain (`data`/`error`/`originalError`/`cause`) looking
+ * for the markers a genuine EVM revert carries: the revert code `3` or an
+ * "execution reverted" message. Wallets routinely wrap an on-chain revert inside
+ * an outer `code: -32603` "Internal JSON-RPC error", so checking only the
+ * top-level code/message misses the revert and the failure looks like RPC/node
+ * unavailability.
+ */
+function hasExecutionRevertMarker(value: unknown, seen: Set<object> = new Set()): boolean {
+  if (typeof value === "string") {
+    return /execution reverted/i.test(value);
+  }
+
+  if (typeof value !== "object" || value === null || seen.has(value)) {
+    return false;
+  }
+  seen.add(value);
+
+  const record = value as Record<string, unknown>;
+  if (record.code === 3 || record.code === "3") {
+    return true;
+  }
+
+  for (const key of ["message", "data", "error", "originalError", "cause", "reason"]) {
+    if (key in record && hasExecutionRevertMarker(record[key], seen)) {
+      return true;
+    }
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((item) => hasExecutionRevertMarker(item, seen));
+  }
+
+  return false;
+}
+
+/**
+ * True when an error represents a genuine on-chain revert — it carries revert
+ * data (a 4-byte selector) or the nested revert markers above. A bare
+ * `code: -32603` "Internal JSON-RPC error" with no revert markers is RPC/node
+ * unavailability, not a revert, and returns false so it is not mislabeled.
+ */
+export function isOnChainRevertError(error: unknown): boolean {
   if (revertSelector(error) !== undefined) {
     return true;
   }
-  if (errorCode(error) === 3 || errorCode(error) === "3") {
-    return true;
-  }
-  return /execution reverted/i.test(errorMessage(error));
+  return hasExecutionRevertMarker(error);
+}
+
+function isFleetMissionPreflightRevert(error: unknown): boolean {
+  // A real contract revert carries revert data (a 4-byte selector), the EVM
+  // revert code 3, or an "execution reverted" message — including when those
+  // markers are nested inside an outer internal JSON-RPC error. Anything else
+  // (bare internal JSON-RPC errors, RPC/node unavailability, read timeouts)
+  // means the simulation could not run, not that the mission is invalid.
+  return isOnChainRevertError(error);
 }
 
 async function assertFleetMissionCallSucceeds(
@@ -1145,6 +1229,12 @@ async function sendWalletTransaction(
       const reason = fleetMissionRevertReason(error);
       if (reason) {
         throw new Error(reason);
+      }
+      // A genuine on-chain revert with no decodable reason (e.g. wrapped in an
+      // internal JSON-RPC error). Surface it as a contract rejection so callers
+      // do not mislabel it as transient RPC/node unavailability.
+      if (isOnChainRevertError(error)) {
+        throw new Error(walletRequestErrorMessage(error));
       }
     }
 
@@ -1297,6 +1387,51 @@ export function encodeLaunchFleetMissionCall({
     cargo?.deuterium ?? 0,
     speedPercent,
     randomnessRequestId,
+  ]);
+}
+
+// VEY-KANEO-440/441: encode a launchDefenseHold call. Mirrors encodeLaunchFleetMissionCall's flat
+// layout (static MissionShips/Resources tuples inline to consecutive 32-byte words), but carries no
+// missionType (the selector is type-specific) and ends with the player-chosen `holdSeconds` (1h–32h)
+// instead of a randomness id. The fleet flies to `targetPlanetId` (the player's own other planet or a
+// same-alliance member's), holds for the window, and defends any attack landing during it.
+export function encodeLaunchDefenseHoldCall({
+  originPlanetId,
+  targetPlanetId,
+  ships,
+  cargo,
+  speedPercent = 100,
+  holdSeconds,
+}: {
+  originPlanetId: bigint | number | string;
+  targetPlanetId: bigint | number | string;
+  ships: MissionShips;
+  cargo?: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
+  speedPercent?: number | undefined;
+  holdSeconds: bigint | number | string;
+}): string {
+  return encodeGameCall(GAME_SELECTORS.launchDefenseHold, [
+    originPlanetId,
+    targetPlanetId,
+    ships.smallCargo,
+    ships.lightFighter,
+    ships.recycler,
+    ships.colonyShip,
+    ships.largeCargo,
+    ships.heavyFighter,
+    ships.cruiser,
+    ships.battleship,
+    ships.bomber,
+    ships.destroyer,
+    ships.deathstar,
+    ships.battlecruiser,
+    ships.reaper,
+    ships.pathfinder,
+    cargo?.metal ?? 0,
+    cargo?.crystal ?? 0,
+    cargo?.deuterium ?? 0,
+    speedPercent,
+    holdSeconds,
   ]);
 }
 
@@ -2189,6 +2324,25 @@ export async function sendJoinAttackMissionTransaction(
     from: account,
     to: contractAddress,
     data: encodeJoinAttackMissionCall(params)
+  });
+}
+
+// VEY-KANEO-440/441: launch a DefenseHold (ACS Defend stationing) mission. Pre-flights the
+// call so contract reverts — ineligible target (not own/ally), out-of-range hold window, under-fuelled
+// or over-capacity fleet — surface as a clear message before the wallet prompt rather than a raw revert.
+export async function sendLaunchDefenseHoldTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  params: Parameters<typeof encodeLaunchDefenseHoldCall>[0]
+): Promise<string> {
+  const data = encodeLaunchDefenseHoldCall(params);
+  await assertFleetMissionCallSucceeds(provider, account, contractAddress, data);
+
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data
   });
 }
 

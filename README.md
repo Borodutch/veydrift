@@ -69,6 +69,7 @@ bun run dev:frontend
 - `GET /universe/galaxies/:galaxy/systems/:system`
 - `GET /universe/systems?galaxy=1&center=250&radius=2`
 - `POST /index/rebuild`
+- `POST /index/verify/:planetId` (append `?heal=true` to self-heal)
 - `POST /webhooks/alchemy`
 - `GET /graphql` / `POST /graphql` for the existing minimal service status response
 
@@ -118,6 +119,11 @@ last reconciliation error in `GET /health`. The websocket chain sync keeps the
 SQLite-backed contract state index warm, `GET /chain/events` streams backend
 chain-event notifications to the frontend, and `POST /index/rebuild` remains
 the manual HTTP fallback for rebuilding settlement events.
+`POST /index/verify/:planetId` compares a single planet's stored canonical state
+against the authoritative on-chain getters (`previewResources`, `buildingLevel`,
+`shipCount`, `defenseCount`) and reports any divergence without a full rebuild;
+with `?heal=true` it re-syncs just that planet's resources/buildings/ships/defenses
+to the contract values so the served canonical state equals on-chain.
 `POST /webhooks/alchemy` accepts Alchemy contract log webhook payloads, verifies
 `X-Alchemy-Signature` when `VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY` is configured,
 and applies duplicate-safe indexed event updates.
@@ -325,8 +331,40 @@ PORT=4000
 `VEYDRIFT_RPC_URL`, `VEYDRIFT_WS_RPC_URL`, and deployer keys must come from
 Vaultwarden or EasyPanel secret storage and must not be committed. When the
 shared `ALCHEMY_BASE_SEPOLIA_API_KEY` is used, the backend derives both HTTPS
-and websocket Alchemy RPC URLs. If the backend Nixpacks deploy needs to be
-rolled back, keep the same environment variables and switch only
+and websocket Alchemy RPC URLs.
+
+#### Backend redeploy health gate
+
+`veydrift/backend-test` redeploys with the start-first (zero-downtime) strategy:
+EasyPanel starts the new container before stopping the old one. Without a health
+gate the proxy cuts traffic to the new container the instant the process starts —
+before Bun has bound the port — so a redeploy drops requests for a second or two.
+Configure EasyPanel's **Health Check** on `veydrift/backend-test` so the new
+container only receives traffic once `GET /health` answers `200`:
+
+```text
+Health check path: /health
+Health check port: 4000
+Interval: 5s
+Timeout: 3s
+Retries: 3
+Start period: 30s
+```
+
+`GET /health` returns `200` (`{ "ok": true }`) as soon as the HTTP server is
+serving, regardless of chain-sync/indexer warmup, so the gate clears within a
+second of the new container binding the port and keeps the cutover effectively
+downtime-free. This is intentional: the SQLite index DB is opened synchronously
+during request-handler construction (before Bun binds the port), so persisted
+indexed reads are serveable the instant `/health` first answers, while the heavy
+chain reconcile runs in the background and never blocks readiness (it is fired as
+`void indexer.rebuild()` — see `apps/backend/src/server.ts`). The same readiness gate is embedded as a Docker `HEALTHCHECK` in
+`apps/backend/Dockerfile.test`, so the Dockerfile rollback build path carries it
+automatically; Nixpacks builds cannot embed a `HEALTHCHECK`, so the EasyPanel
+Health Check above is required for the primary Nixpacks deploy.
+
+If the backend Nixpacks deploy needs to be rolled back, keep the same
+environment variables and switch only
 `veydrift/backend-test` back to Dockerfile build with Dockerfile path
 `apps/backend/Dockerfile.test` from the repository root. Broader rollback is
 service-local: remove the `test.veydrift.com` and `api-test.veydrift.com`

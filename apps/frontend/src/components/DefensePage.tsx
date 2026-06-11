@@ -3,7 +3,7 @@ import type { BuildingKey, DefenseKey, ResearchKey, Resources, UnlockRequirement
 import { canAfford, defenseCatalog, defenseCombatStats, defenseDurationEstimate, missingUnlockRequirements } from "../playableMvp";
 import { formatMissingResources } from "../buildingDetails";
 import { activeProductionQueue } from "../productionQueueFallback";
-import type { ChainDefenseState } from "../walletFlow";
+import type { ChainDefenseState, FleetMissionVisibilityResponse } from "../walletFlow";
 import {
   Notice,
   parseProductionQuantity,
@@ -13,6 +13,7 @@ import {
   type ProductionRequirementState,
   productionQueueViewModel,
 } from "./ProductionCatalog";
+import { StationedDefenseSection } from "./MissionControlPage";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import type { RequirementTarget } from "./RequirementFlairs";
 import { VeydriftLoader } from "./VeydriftLoader";
@@ -28,10 +29,18 @@ interface DefensePageProps {
   canTransact: boolean;
   defenseState: ChainDefenseState | null;
   error: string | undefined;
+  // VEY-KANEO-440: wallet-scoped fleet missions, so the page can surface ACS Defend fleets stationed in
+  // defense alongside the planet's static (turret/shield) defenses. The static "Deployed" counts below
+  // are stationary buildings; stationed fleets are a separate, mission-based defense.
+  fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   loading: boolean;
   now?: number | undefined;
   onBuild: (defenseId: number, key: DefenseKey, quantity: number) => void;
+  // VEY-KANEO-440: opens the player's own planet detail, where the Defend control is always shown
+  // (enabled+explained where eligible, or disabled+explained on the launch planet itself).
+  onDefendPlanet?: (() => void) | undefined;
   onFinish: () => void;
+  onOpenMission?: ((missionId: string) => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
   onSelectDefense?: ((key: DefenseKey) => void) | undefined;
@@ -67,10 +76,13 @@ export function DefensePage({
   canTransact,
   defenseState,
   error,
+  fleetVisibility,
   loading,
   now,
   onBuild,
+  onDefendPlanet,
   onFinish,
+  onOpenMission,
   onOpenRequirement,
   onRefresh,
   onSelectDefense,
@@ -106,6 +118,16 @@ export function DefensePage({
         error={error}
         loading={loading}
       />
+
+      {fleetVisibility ? (
+        <StationedDefenseSection
+          incoming={fleetVisibility.incoming}
+          now={now ?? 0}
+          onDefendPlanet={onDefendPlanet}
+          onOpenReport={onOpenMission ?? (() => undefined)}
+          outgoing={fleetVisibility.outgoing}
+        />
+      ) : null}
 
       {initialLoading ? (
         <VeydriftLoader label="Reading defenses" />
