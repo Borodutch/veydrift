@@ -717,6 +717,64 @@ describe("SettlementIndexer", () => {
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(1);
   });
 
+  test("refreshCanonicalState re-pins served ship counts to chain and advances the departed-ships baseline (VEY-452)", async () => {
+    let onchainShipCount = 2;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async listCurrentPlanets() { return [planet]; },
+      async getShipyardState() {
+        return {
+          wallet: player,
+          homePlanetId: planet.planetId,
+          planetId: planet.planetId,
+          productionAvailable: true,
+          resources: planet.resources,
+          fleetSlots: { active: 1, limit: 1 },
+          shipyardLevel: 1,
+          naniteLevel: 0,
+          technologyLevels: {},
+          ships: [{ id: 1, count: onchainShipCount, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+          queue: null
+        };
+      }
+    }, 100n);
+
+    // Reconcile from the planet event (block 123) → lastReconciledBlock = "123", stored id1 = 2.
+    await indexer.rebuild();
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(2);
+
+    // A mission launches AFTER the baseline (block 0x90 = 144) with 1 light fighter; applyLog advances the
+    // indexed head to 144. The debit-only projection nets it out → only 1 launchable.
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch-452",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(61n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch-452",
+      logIndex: "0x1",
+      topics: [fleetMissionShipsTopic, topic(61n)],
+      data: abiWords(0n, 1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(1);
+
+    // The fleet comes home and the contract now reports 5 at the planet. A lightweight canonical refresh
+    // must (a) re-pin the stored roster to the live on-chain value and (b) advance the reconcile baseline
+    // to the indexed head (144) so the now-absorbed mission stops being subtracted. Both numbers land at 5.
+    onchainShipCount = 5;
+    await indexer.refreshCanonicalState();
+
+    // Re-pinned to chain (was 2).
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
+    // Baseline advanced past block 144 → mission absorbed, no longer subtracted (would be 4 otherwise).
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
+  });
+
   test("availableShipRows keeps subtracting a departed mission that already returned/was lost — reporter repro, 0 in flight (VEY-KANEO-447)", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

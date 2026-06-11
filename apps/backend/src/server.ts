@@ -63,6 +63,11 @@ const corsHeaders = {
 
 const indexedSource = "contract-state-indexer" as const;
 
+// How often to re-pin the served contract_* read model to authoritative on-chain state between full
+// rebuilds. Short enough that resources/ship counts/buildings never visibly diverge from chain; long
+// enough that the batched eth_call sweep over live planets stays cheap.
+const CANONICAL_STATE_REFRESH_INTERVAL_MS = 30_000;
+
 type GraphQLPayload = {
   query?: string;
 };
@@ -168,6 +173,14 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     void indexer.rebuild().catch((error) => {
       console.error("Veydrift index reconciliation failed", error);
     });
+    // Continuously re-pin the served contract_* state to chain between full rebuilds. The full rebuild is
+    // too heavy/fragile to run often, so without this the read model drifts (wrong resources, shipyard
+    // shows 0, etc). This is a cheap batched eth_call sweep of live planets — see
+    // SettlementIndexer.refreshCanonicalState. Skips itself while a rebuild is running; never throws.
+    const canonicalRefresh = setInterval(() => {
+      void indexer.refreshCanonicalState();
+    }, CANONICAL_STATE_REFRESH_INTERVAL_MS);
+    canonicalRefresh.unref?.();
   }
   if (cacheReader) {
     chainSync?.addListener((event) => {
