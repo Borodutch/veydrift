@@ -255,12 +255,37 @@ export function acsHoldingFuelCost(
 ): number {
   const seconds = Math.max(0, Math.trunc(holdSeconds));
   if (seconds === 0) return 0;
-  const tenthsPerHour = missionShipKeys.reduce((total, key) => {
+  const tenthsPerHour = acsHoldingFuelTenthsPerHour(ships);
+  if (tenthsPerHour === 0) return 0;
+  return Math.ceil((tenthsPerHour * seconds) / ACS_HOLDING_FUEL_WINDOW_SECONDS);
+}
+
+function acsHoldingFuelTenthsPerHour(ships: Partial<MissionShips> | undefined): number {
+  return missionShipKeys.reduce((total, key) => {
     const quantity = Math.max(0, Math.trunc(ships?.[key] ?? 0));
     return total + quantity * ACS_HOLDING_FUEL_TENTHS_PER_HOUR[key];
   }, 0);
-  if (tenthsPerHour === 0) return 0;
-  return Math.ceil((tenthsPerHour * seconds) / ACS_HOLDING_FUEL_WINDOW_SECONDS);
+}
+
+// VEY-KANEO-456: the deuterium-per-hour upkeep an ACS Defend fleet burns while holding — the same fuel
+// the Alliance Depot subsidizes, expressed as a rate for the Stationed defenses panel. Equals the
+// holding fuel for one hour, so it stays consistent with acsHoldingFuelCost / the on-chain ceil window.
+export function acsHoldingFuelRatePerHour(ships: Partial<MissionShips> | undefined): number {
+  return acsHoldingFuelCost(ships, 3_600);
+}
+
+// VEY-KANEO-456: how many seconds the defended planet's Alliance Depot (level * 20_000 deuterium) can
+// fully cover this fleet's holding fuel — the inverse of acsHoldingFuelCost's ceil window. Returns
+// Infinity when the fleet burns no holding fuel (depot is never the constraint). Used to show "depot
+// sustains for N" / "covers the full hold" as-of-now, with no chain read.
+export function allianceDepotSustainSeconds(
+  ships: Partial<MissionShips> | undefined,
+  depotLevel: number,
+): number {
+  const tenthsPerHour = acsHoldingFuelTenthsPerHour(ships);
+  if (tenthsPerHour === 0) return Number.POSITIVE_INFINITY;
+  const capacity = Math.max(0, Math.trunc(depotLevel)) * ALLIANCE_DEPOT_SUPPORT_DEUTERIUM_PER_LEVEL;
+  return Math.floor((capacity * ACS_HOLDING_FUEL_WINDOW_SECONDS) / tenthsPerHour);
 }
 
 export type AcsDefendFuelBreakdown = {

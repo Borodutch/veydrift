@@ -244,11 +244,31 @@ export type FleetMissionSummary = {
   // to defend against it. Optional for back-compat with feeds/fixtures predating the fields.
   defendsMissionId?: string | null;
   counterplayDefenderMissionIds?: string[];
+  // VEY-KANEO-456: on an incoming hostile attack, the allied fleets currently stationed to defend it,
+  // resolved by the backend from `counterplayDefenderMissionIds` after lazy as-of-now reconciliation
+  // (elapsed/withdrawn holds already dropped). The Stationed defenses panel renders per-defender detail
+  // from this; absent on feeds/fixtures predating the field, in which case the panel falls back to the
+  // raw defender count from `counterplayDefenderMissionIds`.
+  stationedDefenders?: StationedDefenderSummary[];
   cargo: OnChainResources;
   ships: Record<string, string>;
   transactionHash: string;
   blockNumber: string;
   needsResolution?: boolean;
+};
+
+// VEY-KANEO-456: one allied fleet stationed (AcsDefend) to defend a planet under attack. `holdUntil` is
+// the hold's expiry (the AcsDefend `arrivalAt` — the moment the defended attack lands); the panel runs a
+// live countdown to it. `allianceDepotLevel` is the defended planet's Alliance Depot level, from which
+// the panel derives the deuterium upkeep rate the depot covers and how long it sustains the hold — all
+// as-of-now on the client, matching the backend's lazy reconciliation (no extra fetch, no poller).
+export type StationedDefenderSummary = {
+  missionId: string;
+  defender: string;
+  defenderDisplayName?: string | null;
+  ships: Record<string, string>;
+  holdUntil: string;
+  allianceDepotLevel: number;
 };
 
 export type FleetMissionPlanetReference = {

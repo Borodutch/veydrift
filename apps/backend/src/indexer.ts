@@ -48,6 +48,7 @@ import {
   type FleetMissionPlanetReference,
   type FleetMissionVisibility,
   type FleetMissionSummary,
+  type StationedDefenderSummary,
   type IndexedQueueCompletedEvent,
   type IndexedQueueStartedEvent,
   type IndexedAllianceEvent,
@@ -760,16 +761,27 @@ export class SettlementIndexer {
     );
     const summaries = this.indexedFleetMissionSummaries().map((mission) => this.withFleetMissionPlanetReferences(mission));
     const battleReports = this.indexedBattleReports();
+    // VEY-KANEO-456: index every mission by id so an incoming attack can resolve the allied AcsDefend
+    // fleets stationed against it (linked by `counterplayDefenderMissionIds`) into per-defender detail
+    // for the Stationed defenses panel. `nowSeconds` drives the lazy as-of-now reconciliation that hides
+    // holds which have already elapsed — derived on read from indexed state, no chain read, no poller.
+    const summariesById = new Map(summaries.map((mission) => [mission.missionId, mission]));
+    const nowSeconds = Math.floor(Date.now() / 1_000);
 
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
-      incoming: summaries.filter((mission) =>
-        mission.owner.toLowerCase() !== walletLower
-          && ownedPlanetIds.has(mission.targetPlanetId)
-          && ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
-          && mission.status === "Outbound"
-      ),
+      incoming: summaries
+        .filter((mission) =>
+          mission.owner.toLowerCase() !== walletLower
+            && ownedPlanetIds.has(mission.targetPlanetId)
+            && ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
+            && mission.status === "Outbound"
+        )
+        .map((attack) => ({
+          ...attack,
+          stationedDefenders: this.stationedDefendersForAttack(attack, summariesById, nowSeconds)
+        })),
       outgoing: summaries.filter((mission) =>
         mission.owner.toLowerCase() === walletLower && mission.status === "Outbound"
       ),
@@ -3336,6 +3348,36 @@ export class SettlementIndexer {
     // decoded battle reports against the fleet-mission read model (which carries joinedAttackMissionIds
     // and each joiner's resulting return-leg cargo). Solo attacks come back with a single participant.
     return attachAttackGroupParticipants(decodeBattleReports(logs), this.indexedFleetMissionSummaries());
+  }
+
+  // VEY-KANEO-456: resolve an incoming attack's stationed allied defenders into the per-defender detail
+  // the Stationed defenses panel renders — defender identity, full ship composition, hold-until, and the
+  // defended planet's Alliance Depot level (which funds the deuterium upkeep). Applies the lazy
+  // reconciliation the ticket requires: a defender is only stationed while its AcsDefend mission is still
+  // Outbound and its hold (arrivalAt) has not elapsed as-of-now, so expired/withdrawn holds drop out on
+  // read without waiting for a settlement event. Sorted soonest-expiring first.
+  private stationedDefendersForAttack(
+    attack: FleetMissionSummary,
+    summariesById: Map<string, FleetMissionSummary>,
+    nowSeconds: number
+  ): StationedDefenderSummary[] {
+    const allianceDepotLevel = attack.targetPlanet?.allianceDepotLevel ?? 0;
+    return (attack.counterplayDefenderMissionIds ?? [])
+      .map((missionId) => summariesById.get(missionId))
+      .filter((defender): defender is FleetMissionSummary =>
+        defender !== undefined
+          && defender.missionType === "AcsDefend"
+          && defender.status === "Outbound"
+          && Number(defender.arrivalAt) > nowSeconds)
+      .map((defender) => ({
+        missionId: defender.missionId,
+        defender: defender.owner,
+        defenderDisplayName: this.playerProfile(defender.owner).displayName,
+        ships: defender.ships,
+        holdUntil: defender.arrivalAt,
+        allianceDepotLevel
+      }))
+      .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
   }
 
   private withFleetMissionPlanetReferences(mission: FleetMissionSummary): FleetMissionSummary {

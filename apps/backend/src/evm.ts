@@ -348,6 +348,24 @@ export type GlobalMissionArchiveResponse = {
   pagination: FleetMissionArchiveResponse["pagination"];
 };
 
+// VEY-KANEO-456: a single allied fleet stationed (AcsDefend) to defend a planet under attack, resolved
+// from the attack's `counterplayDefenderMissionIds` into the per-defender detail the Stationed defenses
+// panel renders. The defenders belong to alliance members, so their full mission summaries are not in
+// the viewing wallet's visibility feed; the read model surfaces just what the panel needs. `holdUntil`
+// is the AcsDefend mission's `arrivalAt` — the moment the hold elapses (the defended attack lands) and
+// the only authoritative expiry: VeydriftAllianceSystem pre-pays holding fuel for the whole window at
+// launch (the Alliance Depot offsets up to `level * 20_000` deuterium then), so there is no separate
+// depot-balance settlement. `allianceDepotLevel` (the defended planet's depot) lets the frontend derive
+// the deuterium upkeep rate + how long the depot sustains it, as-of-now, with no chain read or poller.
+export type StationedDefenderSummary = {
+  missionId: string;
+  defender: Address;
+  defenderDisplayName: string | null;
+  ships: Record<string, string>;
+  holdUntil: string;
+  allianceDepotLevel: number;
+};
+
 export type FleetMissionSummary = {
   missionId: string;
   status: string;
@@ -370,6 +388,11 @@ export type FleetMissionSummary = {
   // and (filtering AcsDefend missions by targetPlanetId) "stationed defenders at planet Y".
   defendsMissionId: string | null;
   counterplayDefenderMissionIds: string[];
+  // VEY-KANEO-456: present only on an incoming hostile attack in a wallet's visibility feed. The read
+  // model resolves `counterplayDefenderMissionIds` into the allied fleets currently stationed to defend
+  // it, after lazy as-of-now reconciliation (defenders whose hold has elapsed or whose mission left
+  // Outbound are dropped). Absent on raw decoded summaries; the Stationed defenses panel renders from it.
+  stationedDefenders?: StationedDefenderSummary[];
   cargo: Resources;
   // Resulting return-leg cargo from FleetMissionReturnExposed (the contract folds looted resources
   // into mission.cargo before emitting it). Kept separate from `cargo` (which stays the authoritative

@@ -2650,6 +2650,87 @@ describe("SettlementIndexer", () => {
     expect(attackerVisibility.returning).toEqual([]);
   });
 
+  // VEY-KANEO-456: an incoming attack must expose its stationed allied defenders with full per-defender
+  // detail (identity, ship composition, hold-until, the defended planet's Alliance Depot level) so the
+  // Stationed defenses panel can render them — and the resolution must lazily reconcile as-of-now, so a
+  // defender whose hold has already elapsed drops out without a settlement event landing first.
+  test("resolves an incoming attack's stationed defenders and drops elapsed holds as-of-now", () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const defender = "0x4444444444444444444444444444444444444444" as Address;
+    const expiredDefender = "0x5555555555555555555555555555555555555555" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyEvent({ ...planet, planetId: "99", owner: attacker, name: "Spearhead", galaxy: 3, system: 12, position: 4 });
+    // Alliance Depot (building id 13) level 2 on the defended planet funds the holding-fuel upkeep.
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xdepot",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(13n)],
+      data: abiWords(2n)
+    });
+    // Hostile attack #60 on the player's planet 7.
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xattack",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(60n), addressTopic(attacker), topic(3n)],
+      data: abiWords(99n, 7n, 4000000000n, 4000001200n, 0n)
+    });
+    // Active AcsDefend #61 stationed against #60, holding well into the future (still stationed now).
+    indexer.applyLog({
+      blockNumber: "0x92",
+      transactionHash: "0xdefend-active",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(61n), addressTopic(defender), topic(5n)],
+      data: abiWords(12n, 7n, 4000000000n, 4000001200n, 60n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92",
+      transactionHash: "0xdefend-active",
+      logIndex: "0x1",
+      topics: [fleetMissionShipsTopic, topic(61n)],
+      data: abiWords(2n, 5n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+    // AcsDefend #62 stationed against #60 but whose hold elapsed in the past — still Outbound (no resolve
+    // event yet), so only the as-of-now reconciliation can drop it.
+    indexer.applyLog({
+      blockNumber: "0x93",
+      transactionHash: "0xdefend-expired",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(62n), addressTopic(expiredDefender), topic(5n)],
+      data: abiWords(13n, 7n, 1000n, 2000n, 60n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x93",
+      transactionHash: "0xdefend-expired",
+      logIndex: "0x1",
+      topics: [fleetMissionShipsTopic, topic(62n)],
+      data: abiWords(1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    const visibility = indexer.fleetMissionVisibility(player);
+    const attack = visibility.incoming.find((mission) => mission.missionId === "60");
+    expect(attack).toBeDefined();
+    // Both defenders remain linked by id (raw on-chain links are not reconciled away)...
+    expect(new Set(attack!.counterplayDefenderMissionIds)).toEqual(new Set(["61", "62"]));
+    // ...but only the still-holding defender survives the as-of-now stationed-defense reconciliation.
+    expect(attack!.stationedDefenders).toHaveLength(1);
+    const surviving = attack!.stationedDefenders![0]!;
+    expect(surviving).toMatchObject({
+      missionId: "61",
+      defender,
+      defenderDisplayName: null,
+      holdUntil: "4000000000",
+      allianceDepotLevel: 2
+    });
+    expect(surviving.ships).toMatchObject({ smallCargo: "2", lightFighter: "5" });
+  });
+
   // VEY-KANEO-415: reproduce/confirm "active Colonize missions not visible in Mission Control".
   // This exercises the indexed (production) visibility path that backs the live Mission Control feed.
   // A colonize launch emits the same FleetMissionLaunched/Cargo/Ships events as any mission, with
