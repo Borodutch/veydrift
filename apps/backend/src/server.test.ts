@@ -266,9 +266,9 @@ class MockChainReader implements ChainReader {
         deuterium: "1000"
       },
       raidableResources: {
-        metal: "4000",
-        crystal: "3900",
-        deuterium: "3800"
+        metal: "2000",
+        crystal: "1950",
+        deuterium: "1900"
       },
       technologyLevels: {
         "0": 3
@@ -1314,11 +1314,11 @@ describe("Veydrift backend", () => {
           },
           tactical: {
             raidableResources: {
-              metal: "5000",
-              crystal: "4900",
-              deuterium: "4800"
+              metal: "2500",
+              crystal: "2450",
+              deuterium: "2400"
             },
-            raidableResourceTotal: "14700",
+            raidableResourceTotal: "7350",
             ships: {
               count: 2,
               power: expect.any(String)
@@ -2727,7 +2727,8 @@ describe("Veydrift backend", () => {
     expect(infrastructureBody.planetId).toBe("7");
     expect(infrastructureBody.planetLastSettledAt).toBe(settlementBody.planet.lastSettledAt);
     expect(infrastructureBody.resources.metal).toBe("5064");
-    expect(infrastructureBody.raidableResources.metal).toBe("5064");
+    // Raidable loot reflects ~50% of resources (RAID_PLUNDER_BPS), not the full 5064 (VEY-451).
+    expect(infrastructureBody.raidableResources.metal).toBe("2532");
   });
 
   test("serves selected infrastructure planet resources from warm indexed state without chain preview reads", async () => {
@@ -2786,9 +2787,9 @@ describe("Veydrift backend", () => {
           deuterium: "1000"
         },
         raidableResources: {
-          metal: "13214",
-          crystal: "2389",
-          deuterium: "934"
+          metal: "6607",
+          crystal: "1194",
+          deuterium: "467"
         },
         technologyLevels: {},
         buildings: [],
@@ -2888,7 +2889,12 @@ describe("Veydrift backend", () => {
     expect(settlementBody.planet.resources).toEqual(expectedResources);
     expect(planetsBody.planets[0].resources).toEqual(expectedResources);
     expect(infrastructureBody.resources).toEqual(expectedResources);
-    expect(infrastructureBody.raidableResources).toEqual(expectedResources);
+    // Raidable loot is ~50% of current resources (RAID_PLUNDER_BPS), not the full amount (VEY-451).
+    expect(infrastructureBody.raidableResources).toEqual({
+      metal: "1826",
+      crystal: "2070",
+      deuterium: "2370"
+    });
     expect(planetsBody.planets[0].queues).toMatchObject({
       building: { kind: "building", itemId: 3, targetLevel: 12 },
       defense: { kind: "defense", itemId: 0, quantity: 1 },
@@ -3075,9 +3081,9 @@ describe("Veydrift backend", () => {
         deuterium: "0"
       },
       raidableResources: {
-        metal: "4600",
-        crystal: "4780",
-        deuterium: "4740"
+        metal: "2300",
+        crystal: "2390",
+        deuterium: "2370"
       },
       queue: {
         active: true,
@@ -3379,9 +3385,9 @@ describe("Veydrift backend", () => {
         deuterium: "0"
       },
       raidableResources: {
-        metal: "5000",
-        crystal: "4900",
-        deuterium: "4800"
+        metal: "2500",
+        crystal: "2450",
+        deuterium: "2400"
       },
       queue: null,
       stale: true,
@@ -3876,11 +3882,11 @@ describe("Veydrift backend", () => {
           archetype: "temperate-ocean",
           tactical: {
             raidableResources: {
-              metal: "5000",
-              crystal: "4900",
-              deuterium: "4800"
+              metal: "2500",
+              crystal: "2450",
+              deuterium: "2400"
             },
-            raidableResourceTotal: "14700",
+            raidableResourceTotal: "7350",
             ships: {
               count: expect.any(Number),
               power: expect.any(String)
