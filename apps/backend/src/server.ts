@@ -610,8 +610,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         if (indexer) {
           const indexNotReady = highscoreIndexNotReadyResponse(indexer, startedAt);
           if (indexNotReady) return indexNotReady;
-          planetsByOwner = indexer.settledPlanetsByOwner();
-          entries = indexer.highscoreEntriesForOwners(planetsByOwner);
+          // Memoized against the indexer state version: the full leaderboard is recomputed only
+          // when integrated events change state, not on every request (VEY-KANEO-467).
+          const leaderboard = indexer.highscoreLeaderboard();
+          planetsByOwner = leaderboard.planetsByOwner;
+          entries = leaderboard.entries;
         } else {
           return indexedReadNotReadyResponse("highscores", indexer);
         }
