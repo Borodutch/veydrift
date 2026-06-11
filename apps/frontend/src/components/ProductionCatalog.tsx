@@ -41,7 +41,6 @@ export type ProductionCatalogItem<Key extends string = string> = {
   status: "ready" | "locked" | "queued" | "unavailable";
   statusLabel: string;
   cost: Resources | undefined;
-  durationSeconds?: number | undefined;
   requirements: ProductionRequirementState[];
   missing: string[];
   blockedReason?: string | undefined;
@@ -353,7 +352,6 @@ function SelectedProductionPanel<Key extends string>({
           <dl className="grid grid-cols-2 gap-2 text-xs">
             <Stat className="col-span-2" label="Price" value={item.cost ? formatProductionPrice(item.cost) : "-"} />
             <Stat label={item.countLabel} value={item.countValue === undefined ? "unavailable" : format(item.countValue)} />
-            <Stat label="Build time" value={item.durationSeconds === undefined ? "-" : formatDuration(item.durationSeconds)} />
           </dl>
         </div>
       )}
@@ -487,18 +485,6 @@ function format(value: number): string {
 
 export function formatProductionPrice(cost: Resources): string {
   return formatCost(cost);
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds < 3_600) {
-    return `${Math.ceil(seconds / 60)}m`;
-  }
-
-  if (seconds < 86_400) {
-    return `${Math.floor(seconds / 3_600)}h ${Math.ceil((seconds % 3_600) / 60)}m`;
-  }
-
-  return `${Math.floor(seconds / 86_400)}d ${Math.ceil((seconds % 86_400) / 3_600)}h`;
 }
 
 export function Notice({

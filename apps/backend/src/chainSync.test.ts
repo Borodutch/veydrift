@@ -811,10 +811,12 @@ describe("ChainSyncService", () => {
     service.stop();
   });
 
-  test("falls back to a full reconcile when a gap recovery collides with an in-flight backfill", async () => {
+  test("re-queues a bounded backfill instead of a full reconcile when a gap recovery collides with an in-flight backfill (VEY-KANEO-461)", async () => {
     MockWebSocket.instances = [];
     const reconcileReasons: string[] = [];
+    const backfillRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
     let releaseBackfill: (() => void) | undefined;
+    let callCount = 0;
     const indexer = {
       applyDebrisEvent() {},
       applyEvent() {},
@@ -828,11 +830,16 @@ describe("ChainSyncService", () => {
       }
     };
     const backfiller = {
-      // Block the first backfill mid-flight so the slot stays occupied while a gap arrives.
-      listContractLogs() {
-        return new Promise<never[]>((resolve) => {
-          releaseBackfill = () => resolve([]);
-        });
+      listContractLogs(from: bigint, to?: bigint | "latest") {
+        callCount += 1;
+        backfillRanges.push({ from, to: to ?? "latest" });
+        // Block only the first backfill mid-flight so the slot stays occupied while a gap arrives.
+        if (callCount === 1) {
+          return new Promise<never[]>((resolve) => {
+            releaseBackfill = () => resolve([]);
+          });
+        }
+        return Promise.resolve([] as never[]);
       }
     };
     const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
@@ -840,7 +847,8 @@ describe("ChainSyncService", () => {
       heartbeatIntervalMs: 0,
       logBackfiller: backfiller,
       selfHealIntervalMs: 2,
-      selfHealDepthBlocks: 50
+      selfHealDepthBlocks: 50,
+      backfillRetryBaseMs: 5
     });
 
     service.start();
@@ -858,10 +866,17 @@ describe("ChainSyncService", () => {
     socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x1a0" } } });
     await Promise.resolve();
 
-    // The known gap is not dropped: it falls back to a throttled full reconcile.
-    expect(reconcileReasons).toEqual([expect.stringContaining("websocket head gap")]);
+    // The known gap is NOT escalated to the heavy universe-wide canonical reconcile (VEY-KANEO-461)...
+    expect(reconcileReasons).toEqual([]);
 
+    // ...it is re-queued as a bounded backfill retry. Free the slot and let the retry fire.
     releaseBackfill?.();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    // The gap range was recovered by a bounded backfill (extended to chain head), never a reconcile.
+    expect(reconcileReasons).toEqual([]);
+    expect(backfillRanges.length).toBeGreaterThanOrEqual(2);
+    expect(backfillRanges.some((range) => range.to === "latest" && range.from <= 401n)).toBe(true);
     service.stop();
   });
 
@@ -903,6 +918,147 @@ describe("ChainSyncService", () => {
     expect(backfillCalls).toBe(0);
     expect(service.snapshot().lastSelfHealAt).toBeNull();
     expect(service.snapshot().selfHealRecoveredEvents).toBe(0);
+    service.stop();
+  });
+
+  test("backs off exponentially after a failing reconcile instead of retrying back-to-back (VEY-KANEO-461)", async () => {
+    MockWebSocket.instances = [];
+    let reconcileCalls = 0;
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      markStale() {},
+      async reconcile() {
+        reconcileCalls += 1;
+        // The truncated/empty RPC body that took prod down on the heavy canonical read.
+        throw new Error("Unexpected end of JSON input");
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      // Isolate the failure backoff from the recency throttle.
+      reconcileThrottleMs: 0,
+      reconcileBackoffBaseMs: 60,
+      reconcileBackoffMaxMs: 60
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    // A head gap (no backfiller wired) drives the first canonical reconcile, which fails and
+    // arms the exponential backoff.
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x7b" } } });
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x7f" } } });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(reconcileCalls).toBe(1);
+    expect(service.snapshot().reconcileFailureCount).toBe(1);
+    expect(service.snapshot().reconcileBackoffUntil).toEqual(expect.any(String));
+
+    // A second gap arrives during the backoff window — it must NOT run reconcile again immediately.
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x85" } } });
+    await Promise.resolve();
+    expect(reconcileCalls).toBe(1);
+
+    // Once the backoff window elapses, the collapsed trailing pass runs exactly one more reconcile.
+    await new Promise((resolve) => setTimeout(resolve, 90));
+    expect(reconcileCalls).toBe(2);
+    service.stop();
+  });
+
+  test("a failing gap backfill retries a bounded range with backoff and never escalates to a full reconcile (VEY-KANEO-461)", async () => {
+    MockWebSocket.instances = [];
+    let reconcileCalls = 0;
+    let backfillAttempts = 0;
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog() {
+        return { applied: false, duplicate: true, ignored: false, removed: false, snapshot: {} };
+      },
+      markStale() {},
+      async reconcile() {
+        reconcileCalls += 1;
+      }
+    };
+    const backfiller = {
+      async listContractLogs() {
+        backfillAttempts += 1;
+        throw new Error("Unexpected end of JSON input");
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      selfHealIntervalMs: 0,
+      logBackfiller: backfiller,
+      backfillRetryBaseMs: 5,
+      backfillRetryMaxMs: 5
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x7b" } } });
+    // A head gap whose bounded backfill RPC keeps returning a truncated/empty body.
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x7f" } } });
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    // The bounded backfill retried several times under backoff...
+    expect(backfillAttempts).toBeGreaterThanOrEqual(2);
+    // ...but the heavy universe-wide canonical reconcile was NEVER triggered (VEY-KANEO-461).
+    expect(reconcileCalls).toBe(0);
+    expect(service.snapshot().lastError).toBe("Unexpected end of JSON input");
+    service.stop();
+  });
+
+  test("a genuine reorg (removed log) still escalates to a reconcile so missed state is recovered (VEY-KANEO-461)", async () => {
+    MockWebSocket.instances = [];
+    const reconcileReasons: string[] = [];
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog() {
+        // The provider reported this previously-applied log as removed (a reorg): bounded replay
+        // cannot reconstruct the rolled-back state, so a reconcile is the correct escalation.
+        return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: {} };
+      },
+      markStale() {},
+      async reconcile(reason: string) {
+        reconcileReasons.push(reason);
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      selfHealIntervalMs: 0
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    socket?.message({
+      method: "eth_subscription",
+      params: {
+        subscription: "logs-sub",
+        result: { blockNumber: "0x7b", transactionHash: "0xreorg", topics: [planetStartedTopic], data: "0x", removed: true }
+      }
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(reconcileReasons).toEqual(["removed log/reorg"]);
     service.stop();
   });
 });

@@ -73,7 +73,7 @@ describe("ProductionCatalog selected panel", () => {
     });
   }
 
-  test("renders compact selected details as price, count, and build time only", () => {
+  test("renders compact selected details as price and count only (no client build time)", () => {
     const item = catalogItem();
     const catalog = ProductionCatalog({
       actionPending: false,
@@ -89,7 +89,8 @@ describe("ProductionCatalog selected panel", () => {
     const definitionList = elementNodes(catalog).find((node) => node.type === "dl");
     const labels = elementNodes(definitionList).filter((node) => node.type === "dt").map(visibleText);
 
-    expect(labels).toEqual(["Price", "Deployed", "Build time"]);
+    // VEY-KANEO-465: client-derived build time is removed; backend owns durations.
+    expect(labels).toEqual(["Price", "Deployed"]);
     expect(visibleText(definitionList)).toContain("Metal 2,000");
     expect(visibleText(definitionList)).not.toContain("Status");
     expect(visibleText(catalog)).not.toContain("Combat");
@@ -149,7 +150,6 @@ function catalogItem(overrides: Partial<ProductionCatalogItem<"rocketLauncher">>
     requirements: [],
     status: "ready",
     statusLabel: "Ready",
-    durationSeconds: 960,
     ...overrides,
   };
 }

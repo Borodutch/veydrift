@@ -16,7 +16,6 @@ import {
   buildingLevelInfoRows,
   buildingUpgradeStatus,
   formatCost,
-  formatDuration,
   formatNumber,
   formatSigned,
   mineSolarPlantPrerequisiteFor,
@@ -91,7 +90,6 @@ interface InfrastructurePageProps {
   onRefresh?: (() => void) | undefined;
   onSelectBuilding?: ((key: BuildingKey) => void) | undefined;
   planetProductionProfile?: PlanetProductionProfile | undefined;
-  productionRates?: Resources | undefined;
   selectedBuildingKey?: BuildingKey | undefined;
   spendableResources?: Resources | undefined;
   state: PlayableState;
@@ -117,7 +115,6 @@ export function InfrastructurePage({
   onRefresh,
   onSelectBuilding,
   planetProductionProfile,
-  productionRates,
   selectedBuildingKey,
   spendableResources,
   settledState,
@@ -231,7 +228,6 @@ export function InfrastructurePage({
             onUpgrade={() => onUpgrade(selectedBuilding.key)}
             now={now}
             planetProductionProfile={planetProductionProfile}
-            productionRates={productionRates}
             spendableResources={spendableResources}
             state={settledState}
           />
@@ -312,7 +308,6 @@ function BuildingDetailPanel({
   onUpgrade,
   now,
   planetProductionProfile,
-  productionRates,
   spendableResources,
   state,
 }: {
@@ -329,7 +324,6 @@ function BuildingDetailPanel({
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onUpgrade: () => void;
   planetProductionProfile?: PlanetProductionProfile | undefined;
-  productionRates?: Resources | undefined;
   spendableResources?: Resources | undefined;
   state: PlayableState;
 }) {
@@ -346,7 +340,6 @@ function BuildingDetailPanel({
     actionUnavailableReason: actionUnavailableReason ?? actionPendingLabel,
     chainCost,
     now,
-    productionRates,
     spendableResources,
   });
   const effectRows = detailEffectRows(effect, energy);
@@ -449,7 +442,6 @@ function BuildingDetailPanel({
         ) : (
           <>
             <InspectInfoBlock label={binary ? "Build cost" : "Upgrade cost"} value={formatCost(status.cost)} />
-            <InspectInfoBlock label={binary ? "Build time" : "Upgrade time"} value={formatDuration(status.durationSeconds)} />
           </>
         )}
       </div>
@@ -690,8 +682,6 @@ export function BuildingLevelInfoModal({
                 <LevelInfoHeader className="min-w-24 whitespace-nowrap">Level</LevelInfoHeader>
                 <LevelInfoHeader className="min-w-24 whitespace-nowrap">Status</LevelInfoHeader>
                 <LevelInfoHeader className="min-w-52">Upgrade cost</LevelInfoHeader>
-                <LevelInfoHeader className="min-w-32">Build time</LevelInfoHeader>
-                {columns.production && <LevelInfoHeader className="min-w-40">Production</LevelInfoHeader>}
                 {columns.storage && <LevelInfoHeader className="min-w-40">Storage</LevelInfoHeader>}
                 {columns.effect && <LevelInfoHeader className="min-w-44">Effect</LevelInfoHeader>}
                 {columns.energyRequired && <LevelInfoHeader className="min-w-36">Energy use</LevelInfoHeader>}
@@ -719,14 +709,6 @@ export function BuildingLevelInfoModal({
                     {row.next && <LevelPill tone="next">Next</LevelPill>}
                   </LevelInfoCell>
                   <LevelInfoCell>{formatCost(row.cost)}</LevelInfoCell>
-                  <LevelInfoCell>{formatDuration(row.durationSeconds)}</LevelInfoCell>
-                  {columns.production && (
-                    <LevelInfoCell>
-                      {row.production
-                        ? `${formatNumber(row.production.perHour)} ${fullResourceLabels[row.production.resource]}/h`
-                        : "N/A"}
-                    </LevelInfoCell>
-                  )}
                   {columns.storage && (
                     <LevelInfoCell>
                       {row.storage
@@ -890,12 +872,9 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
   }> = [];
 
   if (effect.kind === "production") {
-    rows.push({
-      delta: `${formatSigned(effect.deltaPerHour)}/h`,
-      label: "Production capacity",
-      next: `${formatNumber(effect.nextPerHour)} ${shortResourceLabels[effect.resource]}/h`,
-      value: `${formatNumber(effect.currentPerHour)} ${shortResourceLabels[effect.resource]}/h`,
-    });
+    // Per-building production rate is backend-owned game state (VEY-KANEO-465): the
+    // frontend no longer derives or displays a client-computed /h figure. The mine's
+    // energy-required row is still appended below.
   } else if (effect.kind === "energy") {
     const output = energy.kind === "produces"
       ? {
@@ -1034,7 +1013,8 @@ export function infrastructureCatalogStatusText(
 
 function compactEffect(effect: BuildingEffectMetrics): string {
   if (effect.kind === "production") {
-    return `${formatNumber(effect.currentPerHour)}/h`;
+    // Backend owns production rates (VEY-KANEO-465); show what the mine produces, not a derived /h.
+    return fullResourceLabels[effect.resource];
   }
 
   if (effect.kind === "energy") {
