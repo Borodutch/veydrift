@@ -47,7 +47,7 @@ import {
   verifyPlayerDisplayNameSignature,
   type PlayerProfile
 } from "./playerProfiles";
-import { deriveInfrastructureFields } from "./readModels";
+import { deriveInfrastructureFields, isCombatShipId } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
 const jsonHeaders = {
@@ -159,6 +159,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   missionResolver?.start();
   randomnessCommitter?.start();
   if (!dependencies.indexer && indexer && loaded.problems.length === 0) {
+    // Keep boot reconcile off the readiness path: the index DB is already opened
+    // synchronously in the SettlementIndexer constructor above, so persisted
+    // indexed reads are serveable the moment Bun binds the port. Fire the chain
+    // reconcile in the background (never await it) so GET /health answers within
+    // a second or two of process start — this is what gates start-first redeploys
+    // (see README "Backend redeploy health gate"). Do not turn this into an await.
     void indexer.rebuild().catch((error) => {
       console.error("Veydrift index reconciliation failed", error);
     });
@@ -2132,7 +2138,7 @@ function rankedHighscorePlanets(
   });
 }
 
-function indexedPlanetTacticalSummary(
+export function indexedPlanetTacticalSummary(
   planet: PlanetState,
   buildings: InfrastructureState["buildings"],
   ships: ShipyardState["ships"],
@@ -2145,13 +2151,19 @@ function indexedPlanetTacticalSummary(
     : fallbackResources;
   const shipSummary = tacticalUnitSummary(ships);
   const defenseSummary = tacticalUnitSummary(defenses);
+  // COMBAT is a fighting-strength figure, not an inventory value: non-combat ships
+  // (Solar Satellites, cargo, recyclers, colony ships, crawlers) carry a build cost but
+  // do not fight, so they are excluded from combat power even though they remain in the
+  // ship totals above. This keeps satellite-only / undefended planets reading as soft
+  // targets in the Raid Finder and Rankings COMBAT column. (VEY-KANEO-450)
+  const combatShipSummary = tacticalUnitSummary(ships.filter((ship) => isCombatShipId(ship.id)));
 
   return {
     raidableResources,
     raidableResourceTotal: resourceTotal(raidableResources).toString(),
     ships: shipSummary,
     defenses: defenseSummary,
-    combatPower: (BigInt(shipSummary.power) + BigInt(defenseSummary.power)).toString()
+    combatPower: (BigInt(combatShipSummary.power) + BigInt(defenseSummary.power)).toString()
   };
 }
 
