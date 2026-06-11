@@ -1115,6 +1115,19 @@ describe("Veydrift backend", () => {
     // Universe-wide: missions from a wallet other than the connected one are present.
     expect(body.missions.some((mission: { owner: string }) => mission.owner.toLowerCase() === otherPlayer.toLowerCase())).toBe(true);
     expect(body.missions.every((mission: { status: string }) => mission.status === "Outbound")).toBe(true);
+    // As-of-now derivation (VEY-KANEO-464): outbound missions arrive in the future, so
+    // every active mission reports a positive ETA and neither leg is due yet.
+    for (const mission of body.missions as Array<{ asOfNow: {
+      secondsUntilArrival: number;
+      secondsUntilReturn: number;
+      arrived: boolean;
+      returned: boolean;
+    } }>) {
+      expect(mission.asOfNow.arrived).toBe(false);
+      expect(mission.asOfNow.returned).toBe(false);
+      expect(mission.asOfNow.secondsUntilArrival).toBeGreaterThan(0);
+      expect(mission.asOfNow.secondsUntilReturn).toBeGreaterThan(mission.asOfNow.secondsUntilArrival);
+    }
   });
 
   test("serves paginated universe-wide completed mission archive (all players, no wallet scope)", async () => {
@@ -3136,6 +3149,12 @@ describe("Veydrift backend", () => {
         metal: "400",
         crystal: "120",
         deuterium: "60"
+      },
+      // As-of-now derivation (VEY-KANEO-464): readyAt is in the past, so the queue
+      // reads as complete with no time remaining.
+      asOfNow: {
+        secondsRemaining: 0,
+        complete: true
       }
     });
     expect(infrastructureResponse.status).toBe(200);
@@ -3171,10 +3190,21 @@ describe("Veydrift backend", () => {
         crystal: "2390",
         deuterium: "2370"
       },
+      // Accrued-to-now resources (VEY-KANEO-464). Production is 0 here (no mines), so
+      // the projection equals canonical resources but the field is always present.
+      resourcesAsOfNow: {
+        metal: "4600",
+        crystal: "4780",
+        deuterium: "4740"
+      },
       queue: {
         active: true,
         kind: "building",
-        itemId: 5
+        itemId: 5,
+        asOfNow: {
+          secondsRemaining: 0,
+          complete: true
+        }
       }
     });
 
