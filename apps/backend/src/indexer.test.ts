@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { canonicalContractTables } from "./contractStateSchema";
-import type { Address, AllianceState, DebrisFieldEvent, InfrastructureState, MoonChanceReportEvent, PlayerQueues, ResearchState, SettledPlanetEvent } from "./evm";
+import type { Address, AllianceState, DebrisFieldEvent, DefenseState, InfrastructureState, MoonChanceReportEvent, PlayerQueues, ResearchState, ShipyardState, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
-import { deriveBuildingRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
+import { deriveBuildingRows, deriveDefenseRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
 
 const player = "0x2222222222222222222222222222222222222222" as Address;
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
@@ -2545,6 +2545,196 @@ describe("SettlementIndexer", () => {
       safeToServeIndexedState: true,
       staleReason: null
     });
+  });
+
+  test("verifyCanonicalState reports no divergence when stored canonical equals on-chain (VEY-KANEO-452)", async () => {
+    const resources = { metal: "9900", crystal: "8800", deuterium: "7700" };
+    const liveInfrastructure: InfrastructureState = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      infrastructureAvailable: true,
+      resources,
+      productionPerHour: { metal: "0", crystal: "0", deuterium: "0" },
+      energyBalance: { produced: "0", required: "0", scaleBps: "10000" },
+      storageCaps: { metal: "100000", crystal: "100000", deuterium: "100000" },
+      protectedResources: { metal: "0", crystal: "0", deuterium: "0" },
+      raidableResources: { metal: "0", crystal: "0", deuterium: "0" },
+      technologyLevels: {},
+      buildings: deriveBuildingRows((id) => (id === 0 ? 4 : 0)),
+      queue: null
+    };
+    const liveShipyard: ShipyardState = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      planetId: planet.planetId,
+      productionAvailable: true,
+      resources: null,
+      fleetSlots: { active: 0, limit: 1 },
+      shipyardLevel: 0,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: deriveShipRows((id) => (id === 1 ? 5 : 0)),
+      queue: null
+    };
+    const liveDefense: DefenseState = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      productionAvailable: true,
+      resources: null,
+      shipyardLevel: 0,
+      naniteLevel: 0,
+      missileSiloLevel: 0,
+      technologyLevels: {},
+      defenses: deriveDefenseRows((id) => (id === 2 ? 3 : 0)),
+      queue: null
+    };
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return [planet]; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async getInfrastructureState() { return liveInfrastructure; },
+      async getShipyardState() { return liveShipyard; },
+      async getDefenseState() { return liveDefense; }
+    }, 100n);
+
+    await indexer.rebuild();
+
+    const report = await indexer.verifyCanonicalState(planet.planetId);
+    expect(report).toMatchObject({
+      planetId: planet.planetId,
+      owner: player,
+      reachedChain: true,
+      divergent: false,
+      healed: false
+    });
+    expect(report.divergences).toEqual([]);
+  });
+
+  test("verifyCanonicalState detects and self-heals divergence vs previewResources/shipCount/buildingLevel/defenseCount (VEY-KANEO-452)", async () => {
+    let liveInfrastructure: InfrastructureState = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      infrastructureAvailable: true,
+      resources: { metal: "1000", crystal: "1000", deuterium: "1000" },
+      productionPerHour: { metal: "0", crystal: "0", deuterium: "0" },
+      energyBalance: { produced: "0", required: "0", scaleBps: "10000" },
+      storageCaps: { metal: "1000000", crystal: "1000000", deuterium: "1000000" },
+      protectedResources: { metal: "0", crystal: "0", deuterium: "0" },
+      raidableResources: { metal: "0", crystal: "0", deuterium: "0" },
+      technologyLevels: {},
+      buildings: deriveBuildingRows((id) => (id === 0 ? 5 : 0)),
+      queue: null
+    };
+    let liveShipyard: ShipyardState = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      planetId: planet.planetId,
+      productionAvailable: true,
+      resources: null,
+      fleetSlots: { active: 0, limit: 1 },
+      shipyardLevel: 0,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: deriveShipRows((id) => (id === 1 ? 10 : 0)),
+      queue: null
+    };
+    let liveDefense: DefenseState = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      productionAvailable: true,
+      resources: null,
+      shipyardLevel: 0,
+      naniteLevel: 0,
+      missileSiloLevel: 0,
+      technologyLevels: {},
+      defenses: deriveDefenseRows((id) => (id === 2 ? 4 : 0)),
+      queue: null
+    };
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return [planet]; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async getInfrastructureState() { return liveInfrastructure; },
+      async getShipyardState() { return liveShipyard; },
+      async getDefenseState() { return liveDefense; }
+    }, 100n);
+
+    // Reconcile so the stored canonical mirror matches the v1 on-chain state.
+    await indexer.rebuild();
+    expect((await indexer.verifyCanonicalState(planet.planetId)).divergent).toBe(false);
+
+    // Simulate on-chain moves the indexer never observed via events: a building
+    // downgrade, fleet losses, a defense built, and resources spent — the kind of
+    // drift the contract applies without an event the read model can replay.
+    liveInfrastructure = {
+      ...liveInfrastructure,
+      resources: { metal: "250", crystal: "8000", deuterium: "120" },
+      buildings: deriveBuildingRows((id) => (id === 0 ? 3 : 0))
+    };
+    liveShipyard = {
+      ...liveShipyard,
+      ships: deriveShipRows((id) => (id === 1 ? 2 : 0))
+    };
+    liveDefense = {
+      ...liveDefense,
+      defenses: deriveDefenseRows((id) => (id === 2 ? 7 : 0))
+    };
+
+    // Read-only verify surfaces every diverged field without mutating state.
+    const detected = await indexer.verifyCanonicalState(planet.planetId);
+    expect(detected.reachedChain).toBe(true);
+    expect(detected.divergent).toBe(true);
+    expect(detected.healed).toBe(false);
+    expect(detected.divergences).toEqual(
+      expect.arrayContaining([
+        { field: "resources", id: null, key: "metal", stored: "1000", onChain: "250" },
+        { field: "resources", id: null, key: "crystal", stored: "1000", onChain: "8000" },
+        { field: "resources", id: null, key: "deuterium", stored: "1000", onChain: "120" },
+        { field: "building", id: 0, key: null, stored: "5", onChain: "3" },
+        { field: "ship", id: 1, key: null, stored: "10", onChain: "2" },
+        { field: "defense", id: 2, key: null, stored: "4", onChain: "7" }
+      ])
+    );
+    // Read models are still stale before the heal.
+    expect(indexer.shipRows(planet.planetId).find((row) => row.id === 1)?.count).toBe(10);
+
+    // Heal re-syncs just this planet's canonical rows to the contract values.
+    const healed = await indexer.verifyCanonicalState(planet.planetId, { heal: true });
+    expect(healed.divergent).toBe(true);
+    expect(healed.healed).toBe(true);
+
+    expect(indexer.infrastructureRows(planet.planetId).find((row) => row.id === 0)?.level).toBe(3);
+    expect(indexer.shipRows(planet.planetId).find((row) => row.id === 1)?.count).toBe(2);
+    expect(indexer.defenseRows(planet.planetId).find((row) => row.id === 2)?.count).toBe(7);
+    expect(indexer.planet(planet.planetId)?.resources).toEqual({ metal: "250", crystal: "8000", deuterium: "120" });
+
+    // After healing, the canonical state equals on-chain — no divergence remains.
+    const reverified = await indexer.verifyCanonicalState(planet.planetId);
+    expect(reverified.divergent).toBe(false);
+    expect(reverified.divergences).toEqual([]);
+  });
+
+  test("verifyCanonicalState returns reachedChain=false for an uncharted planet (VEY-KANEO-452)", async () => {
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return []; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+
+    await indexer.rebuild();
+
+    const report = await indexer.verifyCanonicalState("404");
+    expect(report).toMatchObject({
+      planetId: "404",
+      owner: null,
+      reachedChain: false,
+      divergent: false,
+      healed: false
+    });
+    expect(report.divergences).toEqual([]);
   });
 
   test("records reconciliation failures for health/debug visibility", async () => {
