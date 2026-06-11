@@ -13,7 +13,7 @@ import { ShipyardPage } from "./components/ShipyardPage";
 import type { RequirementTarget } from "./components/RequirementFlairs";
 import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
-import { MissionDetailPage, type MissionShareCopyState } from "./components/MissionDetailPage";
+import { MissionDetailPage } from "./components/MissionDetailPage";
 import { MissionControlPage } from "./components/MissionControlPage";
 import { MissionCreationPage, type MissionCargoDraft, type MissionLaunchDraft } from "./components/MissionCreationPage";
 import { BattleReportsPage } from "./components/BattleReportsPage";
@@ -21,6 +21,7 @@ import { RankingsPage } from "./components/RankingsPage";
 import { RaidTargetFinderPage } from "./components/RaidTargetFinderPage";
 import { AllianceInspectPage, PlayerInspectPage } from "./components/InspectPages";
 import { buildInspectHash, parseInspectRoute, type InspectRoute } from "./inspectRoutes";
+import { ShareDialog } from "./components/ShareDialog";
 import {
   buildingKeyForContractId,
   infrastructureActionNoticeFor,
@@ -1850,7 +1851,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [planetRenameAction, setPlanetRenameAction] = useState<PlanetRenameActionState>({ status: "idle" });
   const [playerProfileAction, setPlayerProfileAction] = useState<PlanetRenameActionState>({ status: "idle" });
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
-  const [missionShareCopyState, setMissionShareCopyState] = useState<MissionShareCopyState>("idle");
+  // The shareable battle-report URL currently shown in the share dialog; null when it is closed.
+  const [shareDialogUrl, setShareDialogUrl] = useState<string | null>(null);
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
   const onChainRefreshGate = useRef(0);
@@ -2130,15 +2132,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     };
   }, [apiBaseUrl, missionDetailId]);
 
+  // Close the battle-report share dialog whenever the viewer moves to a different mission so a stale
+  // link is never left open.
   useEffect(() => {
-    setMissionShareCopyState("idle");
+    setShareDialogUrl(null);
   }, [missionDetailId]);
-
-  useEffect(() => {
-    if (missionShareCopyState === "idle") return;
-    const timer = setTimeout(() => setMissionShareCopyState("idle"), 2_000);
-    return () => clearTimeout(timer);
-  }, [missionShareCopyState]);
 
   const refreshPlayerProfile = useCallback(async () => {
     if (!apiBaseUrl || !account) {
@@ -4977,48 +4975,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     ));
   }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingAcsDefend, provider, runGalaxyTransaction]);
 
-  const handleCopyMissionShareUrl = useCallback((url: string) => {
-    if (!url) {
-      setMissionShareCopyState("error");
-      return;
-    }
-
-    // Fallback path: silently copy the shareable link to the clipboard.
-    const copyToClipboard = () => {
-      if (typeof navigator === "undefined" || !navigator.clipboard) {
-        setMissionShareCopyState("error");
-        return;
-      }
-      navigator.clipboard.writeText(url)
-        .then(() => setMissionShareCopyState("copied"))
-        .catch(() => setMissionShareCopyState("error"));
-    };
-
-    // VEY-339: prefer the native share sheet where it exists (mobile browsers
-    // and the Farcaster webview) so players get a real "share via..." dialog
-    // with copy/social options instead of a silent clipboard write that can
-    // fail unnoticed inside an embedded webview. Desktop browsers without the
-    // Web Share API fall back to the clipboard copy. Neither path navigates —
-    // the trigger stays a type="button" control.
-    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
-      navigator.share({ title: "Veydrift battle report", url })
-        .then(() => setMissionShareCopyState("idle"))
-        .catch((error: unknown) => {
-          // Dismissing the share sheet rejects with AbortError; treat that as a
-          // no-op. Any other failure falls back to copying the link.
-          const name = typeof error === "object" && error !== null
-            ? (error as { name?: string }).name
-            : undefined;
-          if (name === "AbortError") {
-            setMissionShareCopyState("idle");
-            return;
-          }
-          copyToClipboard();
-        });
-      return;
-    }
-
-    copyToClipboard();
+  const handleShareMissionReport = useCallback((url: string) => {
+    // Open the in-app share dialog (link + copy + social targets). It is a modal overlay, so the
+    // viewer always gets a visible dialog and is never navigated away from the report (VEY-KANEO-339).
+    if (!url) return;
+    setShareDialogUrl(url);
   }, []);
 
   const handleJoinAttack = useCallback((attackMissionId: string, targetPlanetId: string, targetCoords: Coordinates | null) => {
@@ -5237,7 +5198,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         <MissionDetailPage
           actionState={missionAction}
           canTransact={Boolean(provider && account && gameContract)}
-          copyState={missionShareCopyState}
           detail={missionDetail}
           error={missionDetailError}
           fleetVisibility={fleetVisibility}
@@ -5246,7 +5206,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           now={now}
           onBack={() => handleNavigate("mission-control")}
           onCompleteReturn={handleCompleteMissionReturn}
-          onCopyShareUrl={() => handleCopyMissionShareUrl(missionDetailShareUrl)}
+          onShareReport={() => handleShareMissionReport(missionDetailShareUrl)}
           onCounterplay={handleMissionCounterplay}
           onRecall={handleRecallMission}
           onResolve={handleResolveMission}
@@ -5717,6 +5677,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
         {planetSidebar}
       </div>
+
+      {shareDialogUrl ? (
+        <ShareDialog onClose={() => setShareDialogUrl(null)} url={shareDialogUrl} />
+      ) : null}
     </div>
   );
 }
