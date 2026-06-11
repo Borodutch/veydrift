@@ -1,4 +1,3 @@
-import { isPlanetSlotPopulated, parsePlanetSlot } from "@veydrift/universe";
 import type { DebrisField, MoonChanceReport, OccupiedPlanet, Planet, PlanetType, PublicPlanetState, Resources } from "../types";
 
 const PLANET_IMAGES: Record<PlanetType, string> = {
@@ -15,21 +14,6 @@ const PLANET_IMAGES: Record<PlanetType, string> = {
   "crystal-violet": "/assets/game/style-pass/generated/planets/crystal-violet.webp",
   "deuterium-blue": "/assets/game/style-pass/generated/planets/deuterium-blue.webp",
 };
-
-const PLANET_NAMES = [
-  "Aethelgard", "Boros", "Calth", "Draetheus", "Epsilon Prime",
-  "Ferron", "Golgotha", "Helios", "Icarion", "Jotunheim",
-  "Kronos", "Lyra", "Morpheus", "Nyx", "Orion",
-  "Prometheus", "Quantum", "Ragnarok", "Solstice", "Tartarus",
-  "Umbra", "Vortex", "Wraith", "Xenon", "Yggdrasil",
-  "Zenith", "Aether", "Borealis", "Celestia", "Draconis",
-  "Elysium", "Frost", "Gaia", "Hyperion", "Iridium",
-  "Jade", "Kepler", "Lumina", "Meridian", "Nebula",
-  "Obsidian", "Pulsar", "Quasar", "Rift", "Sable",
-  "Titan", "Utopia", "Vega", "Wisp", "Xerxes",
-];
-
-const FRONTEND_UNIVERSE_SEED = "veydrift-mainnet-preview";
 
 function seededRandom(seed: number): number {
   const x = Math.sin(seed * 9301 + 49297) * 233280;
@@ -56,25 +40,6 @@ function pickPlanetType(position: number, seed: number): PlanetType {
     : special;
 
   return pickFromSeed(seed, types);
-}
-
-function generateTemperature(position: number, seed: number): { min: number; max: number } {
-  const base = position <= 3 ? 120 : position <= 6 ? 60 : position <= 9 ? 20 : position <= 12 ? -40 : -100;
-  const spread = Math.floor(seededRandom(seed * 7) * 40) + 10;
-  return { min: base - spread, max: base + spread };
-}
-
-function generateResources(type: PlanetType): Resources {
-  switch (type) {
-    case "metal-planetoid":
-      return { metal: 250, crystal: 80, deuterium: 30, energy: 0 };
-    case "crystal-violet":
-      return { metal: 80, crystal: 250, deuterium: 30, energy: 0 };
-    case "deuterium-blue":
-      return { metal: 80, crystal: 50, deuterium: 220, energy: 0 };
-    default:
-      return { metal: 150, crystal: 120, deuterium: 80, energy: 0 };
-  }
 }
 
 type ApiPlanet = {
@@ -143,9 +108,10 @@ export function formatPlanetType(type: PlanetType): string {
   return type.split("-").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 }
 
-// Deterministic planet type from coordinates alone, matching the frontend fallback universe
-// generator (`planetFromCoordinates`). Used when a real archetype/temperature is unavailable —
-// e.g. uncharted colonization targets — so a card can still show planet art by type (VEY-403).
+// Deterministic planet art-type from coordinates alone. Used only for visuals when a real
+// archetype/temperature is unavailable — e.g. uncharted colonization targets — so a card can still
+// show planet art by type (VEY-403). It never fabricates planet data such as names, owners,
+// resources, or stats; those always come from the live universe API.
 export function planetTypeFromCoordinates(galaxy: number, system: number, position: number): PlanetType {
   const seed = galaxy * 10000 + system * 100 + position;
   return pickPlanetType(position, seed + 1);
@@ -159,29 +125,6 @@ export function planetTypeFromTemperature(temperature: number): PlanetType {
   if (temperature <= 40) return "warm-terracotta";
   if (temperature <= 55) return "hot-desert";
   return "scorching-molten";
-}
-
-export function generateSystem(galaxy: number, system: number): Planet[] {
-  const planets: Planet[] = [];
-
-  for (let position = 1; position <= 15; position++) {
-    if (isFallbackPositionPopulated(galaxy, system, position)) {
-      planets.push(planetFromCoordinates(galaxy, system, position));
-    }
-  }
-
-  return planets;
-}
-
-export function ensurePlanetAtCoordinates(
-  planets: Planet[],
-  coordinates: { galaxy: number; system: number; position: number } | undefined
-): Planet[] {
-  if (!coordinates) return planets;
-  if (planets.some((planet) => sameCoordinates(planet, coordinates))) return planets;
-
-  return [...planets, planetFromCoordinates(coordinates.galaxy, coordinates.system, coordinates.position)]
-    .sort((left, right) => left.position - right.position);
 }
 
 export function mergePlanetAtCoordinates(planets: Planet[], planet: Planet | undefined): Planet[] {
@@ -334,60 +277,9 @@ function resourcesFromMultipliers(planet: {
   };
 }
 
-export function getPlanet(
-  galaxy: number,
-  system: number,
-  position: number
-): Planet | null {
-  if (!isFallbackPositionPopulated(galaxy, system, position)) return null;
-  return planetFromCoordinates(galaxy, system, position);
-}
-
 export const GALAXY_COUNT = 9;
 export const SYSTEM_COUNT = 499;
 export const POSITION_COUNT = 15;
-
-function planetFromCoordinates(galaxy: number, system: number, position: number): Planet {
-  const seed = galaxy * 10000 + system * 100 + position;
-  const type = pickPlanetType(position, seed + 1);
-  const nameIdx = Math.floor(seededRandom(seed + 3) * PLANET_NAMES.length);
-  const name = `${PLANET_NAMES[nameIdx]}-${galaxy}.${system}.${position}`;
-  const hasMoon = seededRandom(seed + 8) > 0.85;
-  const temperature = generateTemperature(position, seed + 9);
-  const diameter = Math.floor(seededRandom(seed + 10) * 15000) + 5000;
-  const fields = Math.floor(seededRandom(seed + 11) * 80) + 160;
-
-  return {
-    id: `${galaxy}-${system}-${position}`,
-    name,
-    type,
-    image: PLANET_IMAGES[type],
-    position,
-    galaxy,
-    system,
-    owner: null,
-    ownerId: null,
-    alliance: null,
-    occupiedBy: null,
-    debrisField: null,
-    moonChance: null,
-    resources: generateResources(type),
-    temperature,
-    diameter,
-    fields,
-    hasMoon,
-    ...(hasMoon ? { moonName: `${name} Moon` } : {}),
-  };
-}
-
-function isFallbackPositionPopulated(galaxy: number, system: number, position: number): boolean {
-  return isPlanetSlotPopulated({
-    seed: FRONTEND_UNIVERSE_SEED,
-    galaxyId: galaxy,
-    systemId: system,
-    slot: parsePlanetSlot(position)
-  });
-}
 
 function sameCoordinates(
   planet: Planet,

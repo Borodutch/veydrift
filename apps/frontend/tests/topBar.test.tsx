@@ -110,6 +110,15 @@ describe("TopBar", () => {
     expect(text).not.toContain("(+0)");
   });
 
+  test("does not show fabricated resource pips while the wallet is disconnected", () => {
+    // VEY-KANEO-458: disconnected must not render synthesized "0 +0/h" resources as if real.
+    const text = visibleText(renderTopBar({ isWalletConnected: false }));
+
+    expect(text).toContain("Connect wallet for resources");
+    expect(text).not.toContain("+0/h");
+    expect(text).not.toContain("Metal");
+  });
+
   test("keeps loaded resources visible during background loading and error states", () => {
     expect(visibleText(renderTopBar({ resourceStatus: "loading" }))).toContain("Metal");
     expect(visibleText(renderTopBar({ resourceStatus: "loading" }))).not.toContain("Resources loading");

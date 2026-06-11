@@ -3,8 +3,6 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
-  ensurePlanetAtCoordinates,
-  generateSystem,
   planetImageForType,
   planetsFromSystemResponse
 } from "../src/data/mockUniverse";
@@ -93,48 +91,6 @@ const APPROVED_MISSILE_DEFENSE_ASSETS = [
 ] as const;
 
 describe("tester universe display data", () => {
-  test("neutral deterministic fallback does not invent owners or alliances", () => {
-    const planets = generateSystem(1, 1);
-
-    expect(planets.length).toBeGreaterThanOrEqual(5);
-    expect(planets.length).toBeLessThanOrEqual(11);
-    expect(planets.every((planet) => planet.owner === null)).toBe(true);
-    expect(planets.every((planet) => planet.ownerId === null)).toBe(true);
-    expect(planets.every((planet) => planet.alliance === null)).toBe(true);
-    expect(planets.every((planet) => planet.occupiedBy === null)).toBe(true);
-  });
-
-  test("neutral deterministic fallback leaves stable empty positions", () => {
-    const systemOne = generateSystem(1, 1);
-    const systemTwo = generateSystem(1, 2);
-
-    expect(systemOne.map((planet) => planet.position)).toEqual(
-      generateSystem(1, 1).map((planet) => planet.position)
-    );
-    expect(systemOne.map((planet) => planet.position)).not.toEqual(
-      systemTwo.map((planet) => planet.position)
-    );
-    expect(systemOne.length).toBeLessThan(15);
-    expect(systemTwo.length).toBeLessThan(15);
-  });
-
-  test("home coordinates can be shown even when the deterministic slot is empty", () => {
-    const planets = generateSystem(1, 1);
-    const emptyPosition = Array.from({ length: 15 }, (_, index) => index + 1)
-      .find((position) => !planets.some((planet) => planet.position === position));
-
-    expect(emptyPosition).toBeDefined();
-
-    const withHome = ensurePlanetAtCoordinates(planets, {
-      galaxy: 1,
-      system: 1,
-      position: emptyPosition ?? 1,
-    });
-
-    expect(withHome.some((planet) => planet.position === emptyPosition)).toBe(true);
-    expect(withHome.length).toBe(planets.length + 1);
-  });
-
   test("public occupancy is preserved as an owner address only", () => {
     const planets = planetsFromSystemResponse({
       galaxy: 2,
@@ -374,7 +330,20 @@ describe("tester universe display data", () => {
   });
 
   test("keeps current planet detail records visible during background refreshes", () => {
-    const planet = generateSystem(2, 44).find((item) => item.position === 8)!;
+    const [planet] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [{
+        fields: 211,
+        galaxy: 2,
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 10_000,
+        position: 8,
+        system: 44,
+        temperature: -8,
+      }],
+    });
 
     expect(shouldShowPlanetDetailInitialLoader({ planet: null, source: "loading" })).toBe(true);
     expect(shouldShowPlanetDetailInitialLoader({ planet, source: "loading" })).toBe(false);
