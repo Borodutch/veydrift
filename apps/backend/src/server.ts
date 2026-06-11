@@ -128,6 +128,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config, undefined, { hydrateQueueStartedAt: false }) : undefined);
   const cacheReader = rawChainReader && !dependencies.chainReader ? new CachedChainReader(rawChainReader) : undefined;
   const chainReader = cacheReader ?? rawChainReader;
+  const fastRawChainReader =
+    dependencies.chainReader
+      ? undefined
+      : loaded.problems.length === 0
+        ? new VeydriftGameReader(loaded.config, undefined, { hydrateQueueStartedAt: false })
+        : undefined;
+  const fastChainReader = dependencies.chainReader
+    ? chainReader
+    : fastRawChainReader
+      ? new CachedChainReader(fastRawChainReader)
+      : undefined;
   const indexerChainReader =
     dependencies.chainReader
       ? chainReader
@@ -501,8 +512,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           url, indexer, chainReader, "infrastructure", indexedInfrastructureState,
           (reader, wallet, planetId) => reader.getInfrastructureState(wallet, planetId),
           (reader, wallet, planetId, indexed) =>
-            reader.getInfrastructureAuthoritativeFields
-              ? reader.getInfrastructureAuthoritativeFields(BigInt(indexed.planet.planetId))
+            fastChainReader?.getInfrastructureAuthoritativeFields
+              ? fastChainReader.getInfrastructureAuthoritativeFields(BigInt(indexed.planet.planetId))
               : reader.getInfrastructureState(wallet, planetId),
           authoritativeReadTimeoutMs
         );
@@ -533,8 +544,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           url, indexer, chainReader, "shipyard", indexedShipyardState,
           (reader, wallet, planetId) => reader.getShipyardState(wallet, planetId),
           (reader, wallet, planetId, indexed) =>
-            reader.getShipyardAuthoritativeFields
-              ? reader.getShipyardAuthoritativeFields(BigInt(indexed.planet.planetId), indexed.planet.temperature)
+            fastChainReader?.getShipyardAuthoritativeFields
+              ? fastChainReader.getShipyardAuthoritativeFields(BigInt(indexed.planet.planetId), indexed.planet.temperature)
               : reader.getShipyardState(wallet, planetId),
           authoritativeReadTimeoutMs
         );
