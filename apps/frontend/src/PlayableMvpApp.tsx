@@ -2099,6 +2099,23 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       .finally(() => setMissionDetailLoading(false));
   }, [apiBaseUrl, missionDetailId]);
 
+  // VEY-KANEO-433: background refresh for the *open* mission detail. The auto-poll/ETA one-shot keep
+  // the Mission Control lists live, but a viewer sitting on a battle report (`#/mission/<id>` or the
+  // legacy `#/battle-report/<id>`) when the mission resolves would still see stale loot / "no battle
+  // report yet" until a manual Refresh — exactly the gap this ticket targets. Unlike `loadMissionDetail`
+  // (the manual Refresh button), this never toggles the loading spinner and never clobbers the rendered
+  // detail or surfaces an error on a transient poll failure, so the page updates silently in place.
+  const refreshOpenMissionDetailSilently = useCallback(async () => {
+    if (!apiBaseUrl || !missionDetailId) return;
+    try {
+      const detail = await fetchMission(apiBaseUrl, missionDetailId);
+      setMissionDetail(detail);
+      setMissionDetailError(undefined);
+    } catch {
+      // Keep the last-rendered detail on a transient background failure; the next tick retries.
+    }
+  }, [apiBaseUrl, missionDetailId]);
+
   useEffect(() => {
     if (!missionDetailId) return;
     let cancelled = false;
@@ -3093,14 +3110,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         return;
       }
       refreshInFlight = true;
-      refreshMissionControl().finally(() => {
+      // Refresh the lists and, when a battle report is open, that detail too, so loot/report on the
+      // open report surface live alongside the list status (VEY-KANEO-433).
+      Promise.allSettled([refreshMissionControl(), refreshOpenMissionDetailSilently()]).finally(() => {
         refreshInFlight = false;
       });
     };
 
     const interval = window.setInterval(pollMissionControl, TOP_BAR_RESOURCE_POLL_INTERVAL_MS);
     return () => window.clearInterval(interval);
-  }, [account, apiBaseUrl, page, refreshMissionControl]);
+  }, [account, apiBaseUrl, page, refreshMissionControl, refreshOpenMissionDetailSilently]);
 
   // VEY-KANEO-433: tighten the poll around resolution — schedule a one-shot refresh just after the
   // soonest active mission is due to arrive (or a returning fleet to land) so the new status, loot,
@@ -3120,9 +3139,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         return;
       }
       void refreshMissionControl();
+      // Also pull the open report so a viewer watching it sees the resolution land at arrival time.
+      void refreshOpenMissionDetailSilently();
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [account, apiBaseUrl, fleetVisibility, page, refreshMissionControl]);
+  }, [account, apiBaseUrl, fleetVisibility, page, refreshMissionControl, refreshOpenMissionDetailSilently]);
 
   // Anchor the top bar to the chain: poll the contract's `previewResources` for
   // the active planet on the same cadence as the backend reads. The direct
