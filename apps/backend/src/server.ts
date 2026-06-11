@@ -67,6 +67,7 @@ const indexedSource = "contract-state-indexer" as const;
 // rebuilds. Short enough that resources/ship counts/buildings never visibly diverge from chain; long
 // enough that the batched eth_call sweep over live planets stays cheap.
 const CANONICAL_STATE_REFRESH_INTERVAL_MS = 30_000;
+const AUTHORITATIVE_READ_TIMEOUT_MS = 8_000;
 
 type GraphQLPayload = {
   query?: string;
@@ -107,6 +108,7 @@ type RuntimeConfig = {
 };
 
 export type ServerDependencies = {
+  authoritativeReadTimeoutMs?: number;
   chainSync?: ChainSyncService;
   config?: BackendConfig;
   configProblems?: ConfigProblem[];
@@ -120,6 +122,7 @@ const defaultUniverseSeed = "veydrift-mainnet-preview";
 
 export function createRequestHandler(dependencies: ServerDependencies = {}): (request: Request) => Promise<Response> {
   const loaded = dependencies.config ? { config: dependencies.config, problems: dependencies.configProblems ?? [] } : loadBackendConfig();
+  const authoritativeReadTimeoutMs = dependencies.authoritativeReadTimeoutMs ?? AUTHORITATIVE_READ_TIMEOUT_MS;
   const rawChainReader =
     dependencies.chainReader ??
     (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config) : undefined);
@@ -496,7 +499,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         return await authoritativeWalletStateResponse(
           url, indexer, chainReader, "infrastructure", indexedInfrastructureState,
-          (reader, wallet, planetId) => reader.getInfrastructureState(wallet, planetId)
+          (reader, wallet, planetId) => reader.getInfrastructureState(wallet, planetId),
+          authoritativeReadTimeoutMs
         );
       } catch (error) {
         return errorResponse(error, 400);
@@ -523,7 +527,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         return await authoritativeWalletStateResponse(
           url, indexer, chainReader, "shipyard", indexedShipyardState,
-          (reader, wallet, planetId) => reader.getShipyardState(wallet, planetId)
+          (reader, wallet, planetId) => reader.getShipyardState(wallet, planetId),
+          authoritativeReadTimeoutMs
         );
       } catch (error) {
         return errorResponse(error, 400);
@@ -534,7 +539,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         return await authoritativeWalletStateResponse(
           url, indexer, chainReader, "defenses", indexedDefenseState,
-          (reader, wallet, planetId) => reader.getDefenseState(wallet, planetId)
+          (reader, wallet, planetId) => reader.getDefenseState(wallet, planetId),
+          authoritativeReadTimeoutMs
         );
       } catch (error) {
         return errorResponse(error, 400);
@@ -545,7 +551,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         return await authoritativeWalletStateResponse(
           url, indexer, chainReader, "research", indexedResearchState,
-          (reader, wallet, planetId) => reader.getResearchState(wallet, planetId)
+          (reader, wallet, planetId) => reader.getResearchState(wallet, planetId),
+          authoritativeReadTimeoutMs
         );
       } catch (error) {
         return errorResponse(error, 400);
@@ -1128,7 +1135,8 @@ async function authoritativeWalletStateResponse<T extends object>(
   chainReader: ChainReader | undefined,
   surface: AuthoritativeSurface,
   build: IndexedWarmBuilder<T>,
-  readChain: (reader: ChainReader, wallet: Address, planetId: bigint | undefined) => Promise<T>
+  readChain: (reader: ChainReader, wallet: Address, planetId: bigint | undefined) => Promise<T>,
+  readTimeoutMs: number
 ): Promise<Response> {
   const wallet = walletAddressFromPath(url);
   const planetId = selectedPlanetId(url);
@@ -1144,7 +1152,11 @@ async function authoritativeWalletStateResponse<T extends object>(
 
   if (chainReader) {
     try {
-      const chain = await readChain(chainReader, wallet, planetId);
+      const chain = await withTimeout(
+        readChain(chainReader, wallet, planetId),
+        readTimeoutMs,
+        () => new Error(`Timed out reading ${surface} from live chain state after ${Math.ceil(readTimeoutMs / 1_000)} seconds.`)
+      );
       const body = indexedBody
         ? overlayAuthoritativeTruth(indexedBody, chain, authoritativeTruthKeys[surface])
         : chain;
@@ -1170,6 +1182,18 @@ async function authoritativeWalletStateResponse<T extends object>(
     return indexedWarmJsonResponse(indexedBody, surface, indexer.snapshot());
   }
   return indexedReadNotReadyResponse(surface, indexer);
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutError: () => Error): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(timeoutError()), timeoutMs);
+    timer.unref?.();
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 // Overlay each managed planet's authoritative on-chain resources (previewResources)

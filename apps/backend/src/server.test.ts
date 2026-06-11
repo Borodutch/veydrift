@@ -3654,6 +3654,62 @@ describe("Veydrift backend", () => {
     expect(liveReads).toEqual(["shipyard", "defenses", "research"]);
   });
 
+  test("bounds hung authoritative shipyard reads and falls back to indexed page state", async () => {
+    const chainReader = new MockChainReader();
+    let liveReadCalled = false;
+    chainReader.getShipyardState = async () => {
+      liveReadCalled = true;
+      return new Promise<ShipyardState>(() => {});
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm shipyard endpoint should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123"
+    });
+    indexer.applyLog({
+      blockNumber: "0x7d",
+      transactionHash: "0xship",
+      logIndex: "0x0",
+      topics: [
+        planetShipCountChangedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(1n)
+    });
+    const handler = createRequestHandler({
+      authoritativeReadTimeoutMs: 5,
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const startedAt = Date.now();
+    const response = await handler(new Request(`http://localhost/wallet/${player}/shipyard`));
+    const body = await response.json();
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+    expect(liveReadCalled).toBe(true);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(body).toMatchObject({
+      wallet: player,
+      homePlanetId: planet.planetId,
+      stale: true,
+      source: "contract-state-indexer",
+      detail: "shipyard loaded from DB-indexed contract state."
+    });
+    expect(body.ships).toContainEqual(expect.objectContaining({
+      id: 0,
+      count: 1
+    }));
+  });
+
   test("keeps selected planet id in warm indexed shipyard responses", async () => {
     const chainReader = new MockChainReader();
     chainReader.getShipyardState = async () => {
