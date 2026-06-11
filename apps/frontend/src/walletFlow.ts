@@ -192,6 +192,15 @@ export type WalletPlanetsResponse = {
   planets: ManagedPlanetResponse[];
 };
 
+// Server-derived "as-of-now" queue state (VEY-KANEO-464): seconds left until the
+// active item finishes and whether it is due, computed by the backend at request
+// time from `readyAt`. The frontend displays these directly instead of deriving
+// readiness/remaining time against its own clock (VEY-KANEO-465).
+export type QueueAsOfNowResponse = {
+  secondsRemaining: number;
+  complete: boolean;
+};
+
 export type QueueStateResponse = {
   active: boolean;
   kind: string | null;
@@ -202,6 +211,7 @@ export type QueueStateResponse = {
   startedAt?: string | null;
   cost: OnChainResources;
   backlog?: QueueStateResponse[];
+  asOfNow?: QueueAsOfNowResponse;
 };
 
 export type PlayerQueuesResponse = {
@@ -383,6 +393,7 @@ export type ChainShipyardState = {
     energyPerUnit?: string;
   }>;
   queue: QueueStateResponse | null;
+  resourcesAsOfNow?: OnChainResources | null;
 };
 
 export type ChainDefenseState = {
@@ -401,6 +412,7 @@ export type ChainDefenseState = {
     cost: OnChainResources;
   }>;
   queue: QueueStateResponse | null;
+  resourcesAsOfNow?: OnChainResources | null;
 };
 
 export type ChainInfrastructureState = {
@@ -415,6 +427,11 @@ export type ChainInfrastructureState = {
   infrastructureAvailable?: boolean;
   unavailableReason?: string;
   resources: OnChainResources | null;
+  // Server-accrued "spendable now" balance (VEY-KANEO-464): canonical `resources`
+  // projected forward at the production rate and capped at storage, computed
+  // backend-side. The frontend displays/gates on this directly instead of
+  // projecting `resources` itself (VEY-KANEO-465).
+  resourcesAsOfNow?: OnChainResources | null;
   productionPerHour: OnChainResources | null;
   energyBalance: OnChainEnergyBalance | null;
   storageCaps: OnChainResources | null;
@@ -474,6 +491,7 @@ export type ChainResearchState = {
     cost: OnChainResources;
   }>;
   queue: QueueStateResponse | null;
+  resourcesAsOfNow?: OnChainResources | null;
 };
 
 export type RiftResourceKey = "metal" | "crystal" | "deuterium";

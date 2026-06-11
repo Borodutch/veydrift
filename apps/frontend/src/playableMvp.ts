@@ -1959,36 +1959,6 @@ export function canAfford(resources: Resources, cost: Resources): boolean {
     && resources.deuterium >= cost.deuterium;
 }
 
-export function spendableResources(resources: Resources, collectibleDeltas?: Resources | undefined): Resources {
-  if (!collectibleDeltas) return resources;
-
-  return {
-    metal: resources.metal + Math.max(0, Math.floor(collectibleDeltas.metal)),
-    crystal: resources.crystal + Math.max(0, Math.floor(collectibleDeltas.crystal)),
-    deuterium: resources.deuterium + Math.max(0, Math.floor(collectibleDeltas.deuterium)),
-  };
-}
-
-export function collectibleResourceDeltas(
-  rates: Resources,
-  lastSettledAtSeconds: number,
-  now = Date.now(),
-  currentResources?: Resources | undefined,
-  caps?: Resources | undefined,
-): Resources {
-  const elapsedSeconds = Math.max(0, Math.floor(now / 1_000) - lastSettledAtSeconds);
-
-  return resourceEntries(rates).reduce<Resources>((deltas, [resource, ratePerHour]) => {
-    const produced = Math.floor((Math.max(0, ratePerHour) * elapsedSeconds) / 3_600);
-    const remainingCapacity = currentResources && caps
-      ? Math.max(0, caps[resource] - currentResources[resource])
-      : undefined;
-
-    deltas[resource] = remainingCapacity === undefined ? produced : Math.min(produced, remainingCapacity);
-    return deltas;
-  }, { metal: 0, crystal: 0, deuterium: 0 });
-}
-
 export function queueProgress(queue: QueueTimeline | undefined, now = Date.now()): number {
   if (!queue) {
     return 0;
@@ -2225,14 +2195,6 @@ function effectiveResearchLabLevel(
 
 function scaleByBps(value: number, multiplierBps: number): number {
   return Math.floor((value * multiplierBps) / BPS);
-}
-
-function resourceEntries(resources: Resources): Array<[keyof Resources, number]> {
-  return [
-    ["metal", resources.metal],
-    ["crystal", resources.crystal],
-    ["deuterium", resources.deuterium],
-  ];
 }
 
 function multiply(resources: Resources, quantity: number): Resources {
