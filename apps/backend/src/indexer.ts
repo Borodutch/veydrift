@@ -3398,7 +3398,17 @@ export class SettlementIndexer {
     lastReconciliationError: string | null;
     pendingReconciliationReason: string | null;
   }): string | null {
-    if (lastReconciliationError) return `reconciliation_failed: ${lastReconciliationError}`;
+    if (lastReconciliationError) {
+      // A reconcile *error* must NOT take the service down once a full reconciliation has succeeded
+      // at least once: the websocket-synced indexed read model is authoritative between events, so
+      // serve the last good state and let the reconcile retry in the background. The error stays
+      // visible via the `lastReconciliationError` snapshot field. The pending reason that this
+      // failed reconcile was attempting to clear is moot for gating, so ignore it too — otherwise a
+      // transient truncated/empty RPC body ("Unexpected end of JSON input") would flip serving off.
+      // Only a cold start that has never reconciled is genuinely unserveable (VEY-KANEO-461 rework).
+      if (!lastReconciledAt) return `reconciliation_failed: ${lastReconciliationError}`;
+      return null;
+    }
     if (pendingReconciliationReason && (!lastReconciledAt || !isNonBlockingPendingReason(pendingReconciliationReason))) {
       return pendingReconciliationReason;
     }
@@ -3415,10 +3425,13 @@ export class SettlementIndexer {
     lastReconciliationError: string | null;
     reconciliationInProgress: boolean;
   }): string | null {
+    // Mirror blockingStaleReason: once an alliance reconciliation has succeeded, a later reconcile
+    // error must not gate alliance serving — keep serving the indexed alliance state and retry in
+    // the background (VEY-KANEO-461 rework).
+    if (allianceReconciledAt) return null;
     if (lastReconciliationError) return `reconciliation_failed: ${lastReconciliationError}`;
-    if (reconciliationInProgress && !allianceReconciledAt) return "reconciliation_in_progress";
-    if (!allianceReconciledAt) return "alliance_never_reconciled";
-    return null;
+    if (reconciliationInProgress) return "reconciliation_in_progress";
+    return "alliance_never_reconciled";
   }
 }
 
