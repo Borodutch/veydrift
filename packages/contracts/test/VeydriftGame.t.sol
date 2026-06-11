@@ -8,6 +8,7 @@ import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
+import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
@@ -3509,6 +3510,213 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(targetPlanetId).resources.deuterium, 50_000 - depotSupport);
     }
 
+    // --- OGame-style ACS Defend (DefenseHold) stationing: VEY-KANEO-441 ---
+
+    function _noCargo() internal pure returns (VeydriftGameStorage.Resources memory) {
+        return VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0});
+    }
+
+    function _seedDefenseHold()
+        internal
+        returns (
+            address ally,
+            uint256 attackerPlanetId,
+            uint256 targetPlanetId,
+            uint256 allyPlanetId
+        )
+    {
+        address defender = address(0xDEF);
+        ally = address(0xA11);
+        vm.deal(defender, 1 ether);
+        vm.deal(ally, 1 ether);
+        vm.prank(player);
+        attackerPlanetId = game.startPlanet{value: 0.05 ether}();
+        vm.prank(defender);
+        targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        vm.prank(ally);
+        allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(attackerPlanetId, 1, 100, 8);
+        _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
+        _setPlanetCoordinates(allyPlanetId, 1, 100, 10);
+        uint256 allianceId = _createAlliance(defender);
+        vm.prank(defender);
+        allianceSystem.inviteMember(allianceId, ally);
+        vm.prank(ally);
+        allianceSystem.acceptInvite(allianceId);
+    }
+
+    function testDefenseHoldStationedFleetDefendsAttackAndKeepsHolding() public {
+        (address ally, uint256 attackerPlanetId, uint256 targetPlanetId, uint256 allyPlanetId) =
+            _seedDefenseHold();
+        _setShipCount(attackerPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(allyPlanetId, Ship.Battleship, 1);
+        _setResources(attackerPlanetId, 100_000, 100_000, 100_000);
+        _setResources(allyPlanetId, 100_000, 100_000, 100_000);
+        _setResources(targetPlanetId, 100_000, 100_000, 100_000);
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.battleship = 1;
+        vm.prank(ally);
+        uint256 holdMissionId = game.launchDefenseHold(
+            allyPlanetId, targetPlanetId, defenders, _noCargo(), 100, 4 hours
+        );
+
+        // The stationed fleet has arrived and is holding before the attack lands.
+        (, uint64 holdArrivalAt, uint64 holdReturnAt,) = _fleetMission(holdMissionId);
+        vm.warp(holdArrivalAt + 1 hours);
+
+        VeydriftGameStorage.MissionShips memory attackers;
+        attackers.smallCargo = 1;
+        vm.prank(player);
+        uint256 attackMissionId = game.launchFleetMission(
+            attackerPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            attackers,
+            _noCargo(),
+            771
+        );
+        (, uint64 attackArrivalAt,,) = _fleetMission(attackMissionId);
+        vm.warp(attackArrivalAt);
+        _fulfillAttackBattleRandomness(attackMissionId, 771);
+        game.resolveFleetMission(attackMissionId);
+
+        // The lone SmallCargo cannot dent the stationed Battleship: the attacker is wiped and the
+        // stationed fleet survives and KEEPS holding to defend any further attack in the window.
+        (VeydriftGameStorage.FleetMissionStatus attackStatus,,,) = _fleetMission(attackMissionId);
+        assertEq(uint8(attackStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        (VeydriftGameStorage.FleetMissionStatus holdStatus,,,) = _fleetMission(holdMissionId);
+        assertEq(uint8(holdStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+
+        // After the hold window the fleet flies home with its surviving ships.
+        vm.warp(holdArrivalAt + 4 hours);
+        game.resolveFleetMission(holdMissionId);
+        (VeydriftGameStorage.FleetMissionStatus afterHold,,,) = _fleetMission(holdMissionId);
+        assertEq(uint8(afterHold), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        vm.warp(holdReturnAt);
+        game.completeFleetMissionReturn(holdMissionId);
+        assertEq(game.shipCount(allyPlanetId, Ship.Battleship), 1);
+    }
+
+    function testDefenseHoldDefendsEveryAttackWithinWindow() public {
+        (address ally, uint256 attackerPlanetId, uint256 targetPlanetId, uint256 allyPlanetId) =
+            _seedDefenseHold();
+        _setShipCount(attackerPlanetId, Ship.SmallCargo, 2);
+        _setShipCount(allyPlanetId, Ship.Battleship, 1);
+        _setResources(attackerPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(allyPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(targetPlanetId, 1_000_000, 1_000_000, 1_000_000);
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.battleship = 1;
+        vm.prank(ally);
+        uint256 holdMissionId = game.launchDefenseHold(
+            allyPlanetId, targetPlanetId, defenders, _noCargo(), 100, 8 hours
+        );
+        (, uint64 holdArrivalAt,,) = _fleetMission(holdMissionId);
+
+        VeydriftGameStorage.MissionShips memory attackers;
+        attackers.smallCargo = 1;
+        for (uint256 i = 0; i < 2; i++) {
+            vm.warp(holdArrivalAt + 1 hours + i * 1 hours);
+            vm.prank(player);
+            uint256 attackMissionId = game.launchFleetMission(
+                attackerPlanetId,
+                targetPlanetId,
+                VeydriftGameStorage.FleetMissionType.Attack,
+                attackers,
+                _noCargo(),
+                900 + i
+            );
+            (, uint64 attackArrivalAt,,) = _fleetMission(attackMissionId);
+            vm.warp(attackArrivalAt);
+            _fulfillAttackBattleRandomness(attackMissionId, 900 + i);
+            game.resolveFleetMission(attackMissionId);
+
+            // The stationed fleet defends each successive attack and stays on station.
+            (VeydriftGameStorage.FleetMissionStatus holdStatus,,,) = _fleetMission(holdMissionId);
+            assertEq(uint8(holdStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        }
+        assertEq(game.shipCount(targetPlanetId, Ship.SmallCargo), 0);
+    }
+
+    function testDefenseHoldCannotReturnBeforeWindowElapses() public {
+        (address ally,, uint256 targetPlanetId, uint256 allyPlanetId) = _seedDefenseHold();
+        _setShipCount(allyPlanetId, Ship.Battleship, 1);
+        _setResources(allyPlanetId, 100_000, 100_000, 100_000);
+        _setResources(targetPlanetId, 100_000, 100_000, 100_000);
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.battleship = 1;
+        vm.prank(ally);
+        uint256 holdMissionId = game.launchDefenseHold(
+            allyPlanetId, targetPlanetId, defenders, _noCargo(), 100, 4 hours
+        );
+        (, uint64 holdArrivalAt,,) = _fleetMission(holdMissionId);
+        uint64 holdUntil = holdArrivalAt + 4 hours;
+
+        vm.warp(holdArrivalAt + 1 hours);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.DefenseHoldStillActive.selector, holdUntil)
+        );
+        game.resolveFleetMission(holdMissionId);
+    }
+
+    function testDefenseHoldRejectsUnauthorizedTarget() public {
+        (, uint256 attackerPlanetId, uint256 targetPlanetId,) = _seedDefenseHold();
+        _setShipCount(attackerPlanetId, Ship.Battleship, 1);
+        _setResources(attackerPlanetId, 100_000, 100_000, 100_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 1;
+        // The attacker is neither the target owner nor a same-alliance member.
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.DefenseHoldNotAuthorized.selector, targetPlanetId
+            )
+        );
+        game.launchDefenseHold(attackerPlanetId, targetPlanetId, ships, _noCargo(), 100, 4 hours);
+    }
+
+    function testDefenseHoldRejectsInvalidHoldWindow() public {
+        (address ally,, uint256 targetPlanetId, uint256 allyPlanetId) = _seedDefenseHold();
+        _setShipCount(allyPlanetId, Ship.Battleship, 1);
+        _setResources(allyPlanetId, 100_000, 100_000, 100_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 1;
+        vm.prank(ally);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.InvalidHoldWindow.selector, uint256(0))
+        );
+        game.launchDefenseHold(allyPlanetId, targetPlanetId, ships, _noCargo(), 100, 0);
+    }
+
+    function testLaunchFleetMissionRejectsDefenseHoldType() public {
+        (address ally,, uint256 targetPlanetId, uint256 allyPlanetId) = _seedDefenseHold();
+        _setShipCount(allyPlanetId, Ship.Battleship, 1);
+        _setResources(allyPlanetId, 100_000, 100_000, 100_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 1;
+        vm.prank(ally);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InvalidMissionType.selector,
+                VeydriftGameStorage.FleetMissionType.DefenseHold
+            )
+        );
+        game.launchFleetMission(
+            allyPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.DefenseHold,
+            ships,
+            _noCargo(),
+            4 hours
+        );
+    }
+
     function testFleetCounterplayInterceptJoinsCombatModuleResolution() public {
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
         _createAlliance(defender);
@@ -5675,12 +5883,14 @@ contract VeydriftGameTest is Test {
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
+        VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
         return new VeydriftGame(
             owner,
             address(gameplayModule),
             address(planetManagementModule),
             address(attackProtectionModule),
-            address(colonizationModule)
+            address(colonizationModule),
+            address(defenseHoldModule)
         );
     }
 

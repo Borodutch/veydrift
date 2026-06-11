@@ -344,6 +344,13 @@ export type FleetMissionSummary = {
   ships: Record<string, string>;
   transactionHash: string;
   blockNumber: string;
+  // Block of the FleetMissionLaunched event specifically, i.e. when the contract debited these ships
+  // from the origin planet (VeydriftGameplayModule._debitMissionShips). `blockNumber` tracks the LAST
+  // event for the mission (recall/resolve/return) and so drifts forward over the fleet's life; the
+  // ship-count read model needs the immutable launch block to tell whether a still-away fleet's debit
+  // has already been absorbed by the canonical reconcile baseline (VEY-KANEO-447). Defaults to "0" for
+  // missions reconstructed without a launch event.
+  launchBlockNumber: string;
   needsResolution: boolean;
 };
 
@@ -3320,7 +3327,8 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
         joinedAttackMissionIds: [],
         needsResolution: false,
         transactionHash: log.transactionHash,
-        blockNumber: BigInt(log.blockNumber).toString()
+        blockNumber: BigInt(log.blockNumber).toString(),
+        launchBlockNumber: "0"
       };
       attack.attackGroupId = attackMissionId;
       attack.joinedAttackMissionIds = [
@@ -3339,7 +3347,8 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
         joinedAttackMissionIds: [],
         needsResolution: false,
         transactionHash: log.transactionHash,
-        blockNumber: BigInt(log.blockNumber).toString()
+        blockNumber: BigInt(log.blockNumber).toString(),
+        launchBlockNumber: "0"
       };
       joined.attackGroupId = attackMissionId;
       missions.set(joinedMissionId, joined);
@@ -3360,7 +3369,8 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       counterplayDefenderMissionIds: [],
       needsResolution: false,
       transactionHash: log.transactionHash,
-      blockNumber: BigInt(log.blockNumber).toString()
+      blockNumber: BigInt(log.blockNumber).toString(),
+      launchBlockNumber: "0"
     };
     mission.transactionHash = log.transactionHash;
     mission.blockNumber = BigInt(log.blockNumber).toString();
@@ -3370,6 +3380,9 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       mission.owner = decodeAddressWord(topicAt(log.topics, 2));
       mission.missionType = missionTypeLabel(decodeUint(topicAt(log.topics, 3)));
       mission.status = "Outbound";
+      // Capture the launch block here (not the rolling `blockNumber`) so the ship-count read model can
+      // later tell whether this departure's debit predates the canonical reconcile baseline (VEY-KANEO-447).
+      mission.launchBlockNumber = BigInt(log.blockNumber).toString();
       mission.originPlanetId = decodeUintWord(wordAt(words, 0)).toString();
       mission.targetPlanetId = decodeUintWord(wordAt(words, 1)).toString();
       mission.arrivalAt = decodeUintWord(wordAt(words, 2)).toString();
@@ -3390,7 +3403,8 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
           counterplayDefenderMissionIds: [],
           needsResolution: false,
           transactionHash: log.transactionHash,
-          blockNumber: BigInt(log.blockNumber).toString()
+          blockNumber: BigInt(log.blockNumber).toString(),
+          launchBlockNumber: "0"
         };
         attack.attackGroupId = attackMissionId;
         attack.joinedAttackMissionIds = [
@@ -3419,7 +3433,8 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
           counterplayDefenderMissionIds: [],
           needsResolution: false,
           transactionHash: log.transactionHash,
-          blockNumber: BigInt(log.blockNumber).toString()
+          blockNumber: BigInt(log.blockNumber).toString(),
+          launchBlockNumber: "0"
         };
         attack.counterplayDefenderMissionIds = [
           ...new Set([...(attack.counterplayDefenderMissionIds ?? []), missionId])
@@ -3774,7 +3789,7 @@ const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5
 const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
 const combatDebrisSignaledTopic = "0xd0fbe8b5c73fec6dcfc5fef85459b695d1c9fedb4f94f9748ecaeff785192f14";
-const missionTypes = ["Transport", "Deploy", "Colonize", "Attack", "Harvest", "AcsDefend", "Intercept", "MissileAttack", "AcsAttack"] as const;
+const missionTypes = ["Transport", "Deploy", "Colonize", "Attack", "Harvest", "AcsDefend", "Intercept", "MissileAttack", "AcsAttack", "DefenseHold"] as const;
 const missionStatuses = ["None", "Outbound", "Returning", "Resolved", "Returned", "Recalled"] as const;
 const battleOutcomes = ["Draw", "AttackerWin", "DefenderWin"] as const;
 const moonChanceRequestedTopic = "0x8969f3a52192b4b918b49219d60ea0b68d3f5fd8b70c4691b297a538ac333121";

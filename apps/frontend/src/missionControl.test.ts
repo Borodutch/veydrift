@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage, allActiveMissionRows, buildMissionControlViewQuery, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
+import { MissionControlPage, StationedDefenseSection, allActiveMissionRows, buildMissionControlViewQuery, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
@@ -246,6 +246,74 @@ describe("Mission Control battle reports", () => {
     expect(links.some((link) => String(link.props?.title ?? "").includes("5:407:4"))).toBe(true);
     expect(text).toContain("New Zion");
     expect(text).toContain("Borealis");
+  });
+
+  test("VEY-KANEO-440: stationed-defense panel lists own defending fleets and allied defenders at your planets", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const attacker = "0x2222222222222222222222222222222222222222";
+    // The player has an ACS Defend fleet stationed at an ally planet, holding until the defended attack.
+    const stationed: FleetMissionSummary = {
+      ...mission("90", "AcsDefend", "Outbound", owner, "7", "9", now + 120_000),
+      defendsMissionId: "55",
+      originPlanet: planetReference("7", owner, "New Zion", "6:9:1", "temperate-ocean"),
+      targetPlanet: planetReference("9", attacker, "Borealis", "5:407:4", "frozen-ice"),
+    };
+    // An incoming attack on the player's own planet already has two allied defenders stationed.
+    const attackOnMe: FleetMissionSummary = {
+      ...mission("55", "Attack", "Outbound", attacker, "8", "7", now + 90_000),
+      counterplayDefenderMissionIds: ["90", "91"],
+      originPlanet: planetReference("8", attacker, "Hostis", "9:1:2", "hot-desert"),
+      targetPlanet: planetReference("7", owner, "New Zion", "6:9:1", "temperate-ocean"),
+    };
+    const text = collectText(MissionControlPage(missionControlProps(now, {
+      incoming: [attackOnMe],
+      outgoing: [stationed],
+    }))).join(" ");
+
+    expect(text).toContain("Stationed defenses");
+    // Own stationed fleet card: violet "Defending" badge + "Holds" countdown.
+    expect(text).toContain("Defending");
+    expect(text).toContain("Holds");
+    // Allied defenders at the player's planet are summarised by count.
+    expect(text).toContain("2 allied fleets stationed in defense");
+  });
+
+  test("VEY-KANEO-440: stationed-defense section renders from embedded planet refs without a lookup (Defenses-page reuse)", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const attacker = "0x2222222222222222222222222222222222222222";
+    const stationed: FleetMissionSummary = {
+      ...mission("90", "AcsDefend", "Outbound", owner, "7", "9", now + 120_000),
+      defendsMissionId: "55",
+      originPlanet: planetReference("7", owner, "New Zion", "6:9:1", "temperate-ocean"),
+      targetPlanet: planetReference("9", attacker, "Borealis", "5:407:4", "frozen-ice"),
+    };
+    // The Defenses page reuses StationedDefenseSection without a prebuilt planet lookup; endpoints must
+    // still resolve from each summary's embedded origin/target planet references.
+    const text = collectText(StationedDefenseSection({
+      incoming: [],
+      now,
+      onOpenReport: () => undefined,
+      outgoing: [stationed],
+    })).join(" ");
+
+    expect(text).toContain("Stationed defenses");
+    expect(text).toContain("Defending");
+    expect(text).toContain("Borealis");
+    expect(text).toContain("New Zion");
+  });
+
+  test("VEY-KANEO-440: stationed-defense panel shows a discoverable empty state when nothing is stationed", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionControlPage(missionControlProps(now, {
+      outgoing: [mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
+    }))).join(" ");
+
+    expect(text).toContain("Stationed defenses");
+    expect(text).toContain("No fleets are stationed in defense");
+    // A Transport mission must never be mistaken for a stationed defense.
+    expect(text).not.toContain("allied fleets stationed in defense");
   });
 
   test("active missions render as cards with no table column headers (VEY-400)", () => {

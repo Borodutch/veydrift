@@ -1290,6 +1290,7 @@ describe("ACS attack group participants", () => {
       ships: {},
       transactionHash: "0xtx",
       blockNumber: "10",
+      launchBlockNumber: "10",
       needsResolution: false,
       ...overrides
     };
