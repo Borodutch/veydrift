@@ -69,6 +69,7 @@ bun run dev:frontend
 - `GET /universe/galaxies/:galaxy/systems/:system`
 - `GET /universe/systems?galaxy=1&center=250&radius=2`
 - `POST /index/rebuild`
+- `POST /index/verify/:planetId` (append `?heal=true` to self-heal)
 - `POST /webhooks/alchemy`
 - `GET /graphql` / `POST /graphql` for the existing minimal service status response
 
@@ -118,6 +119,11 @@ last reconciliation error in `GET /health`. The websocket chain sync keeps the
 SQLite-backed contract state index warm, `GET /chain/events` streams backend
 chain-event notifications to the frontend, and `POST /index/rebuild` remains
 the manual HTTP fallback for rebuilding settlement events.
+`POST /index/verify/:planetId` compares a single planet's stored canonical state
+against the authoritative on-chain getters (`previewResources`, `buildingLevel`,
+`shipCount`, `defenseCount`) and reports any divergence without a full rebuild;
+with `?heal=true` it re-syncs just that planet's resources/buildings/ships/defenses
+to the contract values so the served canonical state equals on-chain.
 `POST /webhooks/alchemy` accepts Alchemy contract log webhook payloads, verifies
 `X-Alchemy-Signature` when `VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY` is configured,
 and applies duplicate-safe indexed event updates.

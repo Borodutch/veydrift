@@ -830,6 +830,26 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "POST" && url.pathname.startsWith("/index/verify/")) {
+      if (!indexer) {
+        return unavailableResponse(loaded.problems);
+      }
+
+      const planetId = decodeURIComponent(url.pathname.slice("/index/verify/".length));
+      if (!planetId) {
+        return errorResponse(new Error("Missing planetId"), 400);
+      }
+
+      const heal = url.searchParams.get("heal") === "true";
+      try {
+        return Response.json(await indexer.verifyCanonicalState(planetId, { heal }), {
+          headers: jsonHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 502);
+      }
+    }
+
     if (request.method === "POST" && url.pathname === "/webhooks/alchemy") {
       if (!indexer) {
         return unavailableResponse(loaded.problems);

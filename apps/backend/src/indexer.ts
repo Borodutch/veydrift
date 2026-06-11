@@ -115,6 +115,35 @@ export type SettlementIndexerOptions = {
   databasePath?: string;
 };
 
+// A single field of a planet's stored canonical state that disagrees with the
+// authoritative on-chain getter. `resources` rows carry a resource `key` and a
+// null `id`; building/ship/defense rows carry the numeric item `id` and a null
+// `key`. `stored` is the backend value, `onChain` the contract value, both as
+// decimal strings so large resource amounts survive without precision loss.
+export type CanonicalFieldDivergence = {
+  field: "resources" | "building" | "ship" | "defense";
+  id: number | null;
+  key: "metal" | "crystal" | "deuterium" | null;
+  stored: string;
+  onChain: string;
+};
+
+// The result of comparing a planet's stored canonical state against the on-chain
+// previewResources / buildingLevel / shipCount / defenseCount getters, and
+// optionally self-healing it back to the contract values.
+export type CanonicalDivergenceReport = {
+  planetId: string;
+  owner: string | null;
+  checkedAt: string;
+  // True only when at least one on-chain getter answered; false when the planet
+  // is uncharted or the chain reader exposes none of the canonical getters, in
+  // which case no comparison was possible and `divergent` is meaningless.
+  reachedChain: boolean;
+  divergent: boolean;
+  divergences: CanonicalFieldDivergence[];
+  healed: boolean;
+};
+
 type CountRow = {
   count: number;
 };
@@ -1206,6 +1235,129 @@ export class SettlementIndexer {
   markStale(reason: string): IndexerSnapshot {
     this.setMetadata("pendingReconciliationReason", reason);
     return this.snapshot();
+  }
+
+  // Verify — and optionally self-heal — a single planet's stored canonical state
+  // against the authoritative on-chain getters, without the cost of a full
+  // `rebuild()`. The canonical mirror is updated incrementally between reconciles
+  // from event logs, but the contract debits/credits ships, defenses and
+  // resources for many actions (mission launches, combat losses, settlement)
+  // without emitting an event the indexer can replay, so a planet's stored
+  // {resources, buildings, ships, defenses} can drift from the chain until the
+  // next full reconcile. This reads the exact authoritative values the reconcile
+  // uses — getInfrastructureState -> previewResources + buildingLevel,
+  // getShipyardState -> shipCount, getDefenseState -> defenseCount — diffs them
+  // against the stored canonical rows, and (with `heal`) re-syncs just this
+  // planet's rows to the contract values so the served state equals on-chain.
+  //
+  // Healing writes EXACT contract values (not the monotonic max() the event-replay
+  // path uses) because the on-chain read is authoritative: a building or ship that
+  // genuinely dropped on-chain must be corrected downward too, otherwise the
+  // divergence the call set out to remove would survive.
+  async verifyCanonicalState(
+    planetId: string,
+    options: { heal?: boolean } = {}
+  ): Promise<CanonicalDivergenceReport> {
+    const checkedAt = new Date().toISOString();
+    const planet = this.planet(planetId);
+    const owner = planet?.owner ?? null;
+    const baseReport: CanonicalDivergenceReport = {
+      planetId,
+      owner,
+      checkedAt,
+      reachedChain: false,
+      divergent: false,
+      divergences: [],
+      healed: false
+    };
+
+    if (!owner) return baseReport;
+
+    const ownerAddress = owner as `0x${string}`;
+    const planetIdBig = BigInt(planetId);
+    const [infrastructure, shipyard, defenseState] = await Promise.all([
+      this.chainReader.getInfrastructureState?.(ownerAddress, planetIdBig),
+      this.chainReader.getShipyardState?.(ownerAddress, planetIdBig),
+      this.chainReader.getDefenseState?.(ownerAddress, planetIdBig)
+    ]);
+
+    if (!infrastructure && !shipyard && !defenseState) {
+      return baseReport;
+    }
+
+    const divergences: CanonicalFieldDivergence[] = [];
+
+    if (infrastructure?.resources) {
+      const stored = this.planetResourceSnapshot(planetId);
+      for (const key of ["metal", "crystal", "deuterium"] as const) {
+        const storedValue = stored ? stored[key] : "0";
+        const onChain = infrastructure.resources[key];
+        if (BigInt(storedValue) !== BigInt(onChain)) {
+          divergences.push({ field: "resources", id: null, key, stored: storedValue, onChain });
+        }
+      }
+    }
+
+    for (const building of infrastructure?.buildings ?? []) {
+      const storedValue = this.indexedLevel("contract_building_levels", "building_id", planetId, building.id);
+      if (storedValue !== building.level) {
+        divergences.push({ field: "building", id: building.id, key: null, stored: String(storedValue), onChain: String(building.level) });
+      }
+    }
+
+    for (const ship of shipyard?.ships ?? []) {
+      const storedValue = this.indexedLevel("contract_ship_counts", "ship_id", planetId, ship.id);
+      if (storedValue !== ship.count) {
+        divergences.push({ field: "ship", id: ship.id, key: null, stored: String(storedValue), onChain: String(ship.count) });
+      }
+    }
+
+    for (const defense of defenseState?.defenses ?? []) {
+      const storedValue = this.indexedLevel("contract_defense_counts", "defense_id", planetId, defense.id);
+      if (storedValue !== defense.count) {
+        divergences.push({ field: "defense", id: defense.id, key: null, stored: String(storedValue), onChain: String(defense.count) });
+      }
+    }
+
+    const divergent = divergences.length > 0;
+    let healed = false;
+    if (divergent && options.heal) {
+      this.healPlanetCanonicalState(planetId, { infrastructure, shipyard, defenseState });
+      healed = true;
+    }
+
+    return { planetId, owner, checkedAt, reachedChain: true, divergent, divergences, healed };
+  }
+
+  private healPlanetCanonicalState(
+    planetId: string,
+    state: {
+      infrastructure: InfrastructureState | undefined;
+      shipyard: ShipyardState | undefined;
+      defenseState: DefenseState | undefined;
+    }
+  ): void {
+    const blockNumber = this.metadata("lastReconciledBlock") ?? "0";
+    const heal = this.db.transaction(() => {
+      if (state.infrastructure?.resources) {
+        const reconciledAt = Math.floor(Date.now() / 1_000).toString();
+        this.upsertPlanetResourceSnapshot(planetId, state.infrastructure.resources, reconciledAt, "0x", blockNumber);
+      }
+      for (const building of state.infrastructure?.buildings ?? []) {
+        this.upsertIndexedLevel("indexed_building_levels", "building_id", "level", planetId, building.id, building.level);
+        this.upsertIndexedLevel("contract_building_levels", "building_id", "level", planetId, building.id, building.level);
+      }
+      for (const ship of state.shipyard?.ships ?? []) {
+        this.upsertIndexedLevel("indexed_ship_counts", "ship_id", "count", planetId, ship.id, ship.count);
+        this.upsertIndexedLevel("contract_ship_counts", "ship_id", "count", planetId, ship.id, ship.count);
+      }
+      for (const defense of state.defenseState?.defenses ?? []) {
+        this.upsertIndexedLevel("indexed_defense_counts", "defense_id", "count", planetId, defense.id, defense.count);
+        this.upsertIndexedLevel("contract_defense_counts", "defense_id", "count", planetId, defense.id, defense.count);
+      }
+      this.touch();
+    });
+    heal();
   }
 
   async rebuildPlanets(): Promise<IndexerSnapshot> {
