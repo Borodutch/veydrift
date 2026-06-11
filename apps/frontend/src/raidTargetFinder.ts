@@ -350,6 +350,26 @@ export function raidTargetTotals(
   };
 }
 
+// VEY-KANEO-448: stable partition that floats raid targets with active fleet-mission activity to the
+// top of the already-sorted list (preserving the viewer's chosen sort within each group). The enriched
+// per-planet mission subtext (incoming third-party attacks/transports, returning fleets) is the most
+// time-sensitive raid intel, but on a loot/distance-sorted field a mission-bearing target can sit far
+// down the list — so the enrichment is effectively invisible without scrolling. Floating active targets
+// up keeps that intel discoverable. `hasActiveMission` is injected by the caller (which owns the
+// universe-wide mission feed and its classification), keeping this module free of mission/DOM concerns.
+export function floatActiveMissionTargetsFirst(
+  sortedTargets: RaidTarget[],
+  hasActiveMission: (target: RaidTarget) => boolean,
+): { ordered: RaidTarget[]; activeCount: number } {
+  const active: RaidTarget[] = [];
+  const quiet: RaidTarget[] = [];
+  for (const target of sortedTargets) {
+    if (hasActiveMission(target)) active.push(target);
+    else quiet.push(target);
+  }
+  return { ordered: active.concat(quiet), activeCount: active.length };
+}
+
 export type IncomingThreat = {
   missionId: string;
   attacker: string;
