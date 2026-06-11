@@ -208,7 +208,6 @@ import {
   transactionSyncingLabel,
 } from "./transactionActionGate";
 import { timestampToMs } from "./timestampFormat";
-import { canonicalSpendableResources, projectResources } from "./canonicalResources";
 
 export function researchStartTransactionLabel(
   technologyId: number,
@@ -1725,9 +1724,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [onChainSettlement, setOnChainSettlementState] = useState<WalletSettlementResponse | undefined>(
     () => hydratedGameState?.onChainSettlement
   );
-  const [topBarResourceSnapshotReceivedAtMs, setTopBarResourceSnapshotReceivedAtMs] = useState(() => Date.now());
   const applyOnChainSettlementSnapshot = useCallback((settlement: WalletSettlementResponse | undefined) => {
-    setTopBarResourceSnapshotReceivedAtMs(Date.now());
     setOnChainSettlementState(settlement);
   }, []);
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile | undefined>(
@@ -3180,101 +3177,36 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       deuterium: Number(nextCaps.deuterium),
     };
   }, [infrastructureChainState?.storageCaps, settledState.buildings]);
-  useEffect(() => {
-    if (onChainResources) {
-      setTopBarResourceSnapshotReceivedAtMs(Date.now());
-    }
+  // VEY-KANEO-465: display backend-derived resource state only — the frontend no
+  // longer projects/accrues resources against its own clock, takes an
+  // element-wise minimum of two snapshots, or freezes a free-running projection.
+  // The backend returns `resourcesAsOfNow` (VEY-KANEO-464): the canonical settled
+  // balance accrued forward at the production rate and capped at storage, computed
+  // server-side at request time. This is the contract-authoritative "spendable
+  // now" value — `_spend` settles to exactly this (`previewResources`) before
+  // checking affordability — so the top bar and every affordability gate read it
+  // directly. Because nothing is projected client-side the value holds steady
+  // between polls and React Query keeps the last successful response during a
+  // transient backend error, so it cannot drift toward the storage cap (the
+  // VEY-392 over-report can no longer happen on the client). When the backend has
+  // not populated `resourcesAsOfNow` (older deploy / planet still warming) fall
+  // back to the raw settled `resources` snapshot — still a backend value and never
+  // an over-report — so affordability stays safe.
+  const backendSpendableResources = useMemo(() => {
+    return (
+      resourcesFromChain(infrastructureChainState?.resourcesAsOfNow ?? null)
+      ?? resourcesFromChain(infrastructureChainState?.resources ?? null)
+      ?? onChainResources
+    );
   }, [
-    caps.crystal,
-    caps.deuterium,
-    caps.metal,
-    rates.crystal,
-    rates.deuterium,
-    rates.metal,
-  ]);
-  // The backend resource snapshots are NOT stored-at-settle values: both
-  // `/wallet/<addr>/settlement` and `/wallet/<addr>/infrastructure` read the
-  // contract's `previewResources(planetId)` live, so `onChainResources` already
-  // includes uncollected production accrued up to the moment the snapshot was
-  // read, capped at storage — it IS the canonical accrued balance. The on-chain
-  // `lastSettledAt` is the planet's last *settlement* timestamp (often hours
-  // old) and is unrelated to when the snapshot was read. Projecting the
-  // already-accrued snapshot forward from `lastSettledAt` re-adds every hour of
-  // production since the last settle a second time, over-reporting the top bar
-  // by exactly `rate × (now − lastSettledAt)` (VEY-318 double-count). Anchor the
-  // live projection to the snapshot *read time* instead, so the displayed value
-  // equals the canonical `previewResources` at rest and only ticks forward by
-  // the few seconds elapsed between backend polls.
-  const settlementReadAtMs = topBarResourceSnapshotReceivedAtMs;
-  const liveOnChainResources = useMemo(() => {
-    return projectResources({
-      resources: onChainResources,
-      rates,
-      caps,
-      settledAtMs: settlementReadAtMs,
-      now,
-    });
-  }, [caps, now, onChainResources, rates, settlementReadAtMs]);
-  // Anchor the displayed/spendable balance to the canonical (accurate) value.
-  // The settlement endpoint can over-report after a spend because it adds
-  // production accrual without subtracting the recent cost; the infrastructure
-  // endpoint reports the true on-chain spendable balance. Taking the
-  // element-wise minimum keeps the UI from ever exceeding the real balance, so
-  // affordability gating cannot let through a tx that would revert with
-  // InsufficientResources.
-  //
-  // The displayed balance is projected forward by a free-running `now` clock so
-  // production "ticks up" between backend reads. But when the backend resource
-  // read is stale/unavailable (settlement read errored, infrastructure errored,
-  // or backend sync is paused) the snapshots stop refreshing while `now` keeps
-  // advancing, which would run the balance up toward storage caps and
-  // over-report a spendable balance the player does not have (the QA repro:
-  // top bar climbed to the 10,000 cap during an infrastructure-API outage).
-  // While stale we therefore freeze the projection: feed the canonical helper
-  // the unprojected settlement snapshot and tell it not to accrue infrastructure
-  // forward, so both sources hold their last known value instead of drifting.
-  const backendResourceReadStale =
-    onChainStatus === "error"
-    || Boolean(infrastructureError)
-    || isInfrastructureBackendSyncPaused(infrastructureChainState);
-  const canonicalOnChainResources = useMemo(() => {
-    // VEY-KANEO-463: the frontend no longer reads the chain directly. The backend
-    // settlement/infrastructure snapshots — which the backend itself populates
-    // from the contract's live `previewResources(planetId)` read — are the source
-    // of truth: each is anchored to the snapshot read time and the element-wise
-    // minimum is taken, frozen at the last-known value when the backend read is
-    // stale so it cannot drift toward the storage cap (VEY-392).
-    return canonicalSpendableResources({
-      settlementResources: onChainResources,
-      settlementSettledAtMs: settlementReadAtMs,
-      infrastructureResources: resourcesFromChain(infrastructureChainState?.resources ?? null),
-      infrastructureSettledAtMs: settlementReadAtMs,
-      rates,
-      caps,
-      now,
-      freezeProjection: backendResourceReadStale,
-    });
-  }, [
-    backendResourceReadStale,
-    caps,
+    infrastructureChainState?.resourcesAsOfNow,
     infrastructureChainState?.resources,
-    now,
     onChainResources,
-    rates,
-    settlementReadAtMs,
   ]);
-  // Single resource source-of-truth: the displayed/spendable balance is exactly
-  // the polled canonical balance, with no client-side optimistic adjustment
-  // layered on top (VEY-KANEO-430). `canonicalOnChainResources` is derived from
-  // the polled backend settlement/infrastructure snapshots (themselves live
-  // `previewResources` reads done server-side). After a spend, the balance
-  // updates when the next poll observes the on-chain deduction rather than from a
-  // faked, locally-subtracted estimate; the previous pending-spend ledger and
-  // active-queue subtraction were removed so a single polled value drives both
-  // the top bar and every affordability gate.
+  const liveOnChainResources = backendSpendableResources;
   const spendableResources = useMemo(() => {
-    return walletSpendableResourcesFor({ isWalletConnected, onChainResources: canonicalOnChainResources });
-  }, [isWalletConnected, canonicalOnChainResources]);
+    return walletSpendableResourcesFor({ isWalletConnected, onChainResources: backendSpendableResources });
+  }, [isWalletConnected, backendSpendableResources]);
   // VEY-KANEO-453: the mission fuel/cargo gate reads the canonical spendable balance for
   // the active (origin) planet — the same value the top bar shows and a transaction spends
   // against — falling back to the backend wallet-planet snapshot only when no wallet-connected
