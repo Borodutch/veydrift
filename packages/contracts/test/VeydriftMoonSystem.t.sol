@@ -48,6 +48,8 @@ contract VeydriftMoonSystemTest is Test {
     MoonMockResourceToken internal crystalToken;
     MoonMockResourceToken internal deuteriumToken;
 
+    event PlanetShipCountChanged(uint256 indexed planetId, Ship indexed ship, uint32 total);
+
     event MoonChanceRequested(
         uint256 indexed outcomeId,
         uint256 indexed battleId,
@@ -601,6 +603,36 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(game.shipCount(planetId, Ship.Battlecruiser), 0);
         assertEq(game.shipCount(secondPlanetId, Ship.SmallCargo), 3);
         assertEq(game.shipCount(secondPlanetId, Ship.Battlecruiser), 2);
+    }
+
+    function testJumpGateShipMovementEmitsShipCountChangedForBothMoons() public {
+        uint256 planetId = _startPlanet();
+        uint256 secondPlanetId = 2;
+        _setPlanetOwner(secondPlanetId, player);
+        _setTechnologyLevel(player, Technology.Hyperspace, 7);
+
+        _createMoon(planetId);
+        _fundPlanet(planetId, 3_000_000, 5_000_000, 3_000_000);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+        _buildMoon(planetId, MoonBuilding.JumpGate);
+
+        _createMoon(secondPlanetId);
+        _fundPlanet(secondPlanetId, 3_000_000, 5_000_000, 3_000_000);
+        _buildMoon(secondPlanetId, MoonBuilding.LunarBase);
+        _buildMoon(secondPlanetId, MoonBuilding.JumpGate);
+
+        _setShipCount(planetId, Ship.SmallCargo, 4);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 3;
+
+        // A jump-gate transfer debits the origin moon and credits the destination moon, emitting the
+        // resulting stored total at both planets so the backend can index moon-gate moves.
+        vm.expectEmit(true, true, false, true, address(game));
+        emit PlanetShipCountChanged(planetId, Ship.SmallCargo, 1);
+        vm.expectEmit(true, true, false, true, address(game));
+        emit PlanetShipCountChanged(secondPlanetId, Ship.SmallCargo, 3);
+        vm.prank(player);
+        moons.jumpGateJumpShips(planetId, secondPlanetId, ships);
     }
 
     function _startPlanet() internal returns (uint256 planetId) {

@@ -333,7 +333,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
             })
         );
         _increaseInternalResources(cargo);
-        _shipCounts[originPlanetId][Ship.ColonyShip] -= 1;
+        _debitPlanetShips(originPlanetId, Ship.ColonyShip, 1);
 
         uint64 departureAt = _currentTimestamp();
         uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(

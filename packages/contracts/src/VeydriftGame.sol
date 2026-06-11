@@ -217,8 +217,12 @@ contract VeydriftGame is VeydriftResourceReserves {
                     uint32 available = _shipCounts[originPlanetId][ship];
                     if (available < quantity) revert InsufficientShips(ship, available, quantity);
                     shipTotal += quantity;
-                    _shipCounts[originPlanetId][ship] = available - quantity;
-                    _shipCounts[destinationPlanetId][ship] += quantity;
+                    // Both quantities are known non-zero here, so call the count sink directly and
+                    // avoid pulling the credit/debit wrapper bodies into this size-critical contract.
+                    _setPlanetShipCount(originPlanetId, ship, available - quantity);
+                    _setPlanetShipCount(
+                        destinationPlanetId, ship, _shipCounts[destinationPlanetId][ship] + quantity
+                    );
                 }
             }
             unchecked {
