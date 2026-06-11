@@ -738,7 +738,6 @@ const GAME_SELECTORS = {
 } as const;
 const COLONIZATION_COORDINATE_FLAG = 1n << 255n;
 const COLONIZE_MISSION_TYPE = 2;
-const ATTACK_MISSION_TYPE = 3;
 // VEY-KANEO-440/441: FleetMissionType.DefenseHold (enum 9). DefenseHold has its own launch entrypoint
 // (launchDefenseHold) rather than going through launchFleetMission, but the indexed missions still carry
 // this type, so the UI keys stationed-defense rendering on it.
@@ -1077,42 +1076,6 @@ export function isOnChainRevertError(error: unknown): boolean {
     return true;
   }
   return hasExecutionRevertMarker(error);
-}
-
-function isFleetMissionPreflightRevert(error: unknown): boolean {
-  // A real contract revert carries revert data (a 4-byte selector), the EVM
-  // revert code 3, or an "execution reverted" message — including when those
-  // markers are nested inside an outer internal JSON-RPC error. Anything else
-  // (bare internal JSON-RPC errors, RPC/node unavailability, read timeouts)
-  // means the simulation could not run, not that the mission is invalid.
-  return isOnChainRevertError(error);
-}
-
-async function assertFleetMissionCallSucceeds(
-  provider: Eip1193Provider,
-  from: string,
-  to: string,
-  data: string,
-  context?: FleetMissionRevertContext,
-): Promise<void> {
-  try {
-    await provider.request({
-      method: "eth_call",
-      params: [{ from, to, data }, "latest"],
-    });
-  } catch (error) {
-    const reason = fleetMissionRevertReason(error, context);
-    if (reason) {
-      throw new Error(reason);
-    }
-    if (isFleetMissionPreflightRevert(error)) {
-      throw new Error(walletRequestErrorMessage(error));
-    }
-    // The preflight simulation could not reach the game contract (RPC/node
-    // unavailable, internal JSON-RPC error, or a read timeout). This is a
-    // best-effort guard, not a validity gate — don't block the mission. Let
-    // the wallet submit the transaction and re-simulate it on send.
-  }
 }
 
 export async function assertWalletUnlocked(provider: Eip1193Provider): Promise<void> {
@@ -2244,7 +2207,6 @@ export async function sendLaunchFleetMissionTransaction(
   params: Parameters<typeof encodeLaunchFleetMissionCall>[0]
 ): Promise<string> {
   const data = encodeLaunchFleetMissionCall(params);
-  await assertFleetMissionCallSucceeds(provider, account, contractAddress, data, params);
 
   return sendWalletTransaction(provider, account, {
     from: account,
@@ -2260,7 +2222,6 @@ export async function sendLaunchAttackMissionTransaction(
   params: Parameters<typeof encodeLaunchAttackMissionCall>[0]
 ): Promise<string> {
   const data = encodeLaunchAttackMissionCall(params);
-  await assertFleetMissionCallSucceeds(provider, account, contractAddress, data, { missionType: ATTACK_MISSION_TYPE });
 
   return sendWalletTransaction(provider, account, {
     from: account,
@@ -2282,9 +2243,10 @@ export async function sendJoinAttackMissionTransaction(
   });
 }
 
-// VEY-KANEO-440/441: launch a DefenseHold (ACS Defend stationing) mission. Pre-flights the
-// call so contract reverts — ineligible target (not own/ally), out-of-range hold window, under-fuelled
-// or over-capacity fleet — surface as a clear message before the wallet prompt rather than a raw revert.
+// VEY-KANEO-440/441: launch a DefenseHold (ACS Defend stationing) mission. Contract reverts —
+// ineligible target (not own/ally), out-of-range hold window, under-fuelled or over-capacity fleet —
+// surface as a clear message from the send error path (the wallet simulates before signing, and a
+// reverted receipt is reported on submit). VEY-KANEO-463: no frontend preflight eth_call.
 export async function sendLaunchDefenseHoldTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -2292,7 +2254,6 @@ export async function sendLaunchDefenseHoldTransaction(
   params: Parameters<typeof encodeLaunchDefenseHoldCall>[0]
 ): Promise<string> {
   const data = encodeLaunchDefenseHoldCall(params);
-  await assertFleetMissionCallSucceeds(provider, account, contractAddress, data);
 
   return sendWalletTransaction(provider, account, {
     from: account,
@@ -2386,7 +2347,6 @@ export async function sendCreateColonyTransaction(
     speedPercent,
   };
   const data = encodeLaunchFleetMissionCall(params);
-  await assertFleetMissionCallSucceeds(provider, account, contractAddress, data, params);
 
   return sendWalletTransaction(provider, account, {
     from: account,
