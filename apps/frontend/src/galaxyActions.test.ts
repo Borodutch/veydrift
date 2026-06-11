@@ -97,7 +97,7 @@ describe("galaxyActions", () => {
     });
   });
 
-  test("keeps transport and deploy available for owned non-origin planets", () => {
+  test("keeps transport and deploy available for owned non-origin planets, plus proactive defend", () => {
     const ownColony = planet({
       ownerId: account,
       occupiedBy: {
@@ -116,7 +116,57 @@ describe("galaxyActions", () => {
     expect(actions.map((action) => [action.kind, action.enabled])).toEqual([
       ["transport", true],
       ["deploy", true],
+      ["defenseHold", true],
     ]);
+  });
+
+  test("offers proactive Defend on a same-alliance member's planet but not on a hostile planet", () => {
+    const allyPlanet = planet({
+      ownerId: "0x3333333333333333333333333333333333333333",
+      alliance: { allianceId: "5", tag: "ALLY", name: "Allies" },
+    });
+    const allyActions = galaxyActionsForSlot({
+      account,
+      attackProtection: {
+        allowed: false,
+        blockedReason: "same_alliance",
+        blockedReasonLabel: "Attack blocked: target belongs to your alliance.",
+      },
+      homePlanetId: "7",
+      planet: allyPlanet,
+      shipyardState: shipyardState([{ id: 1, count: 3 }]),
+    });
+    const allyDefend = allyActions.find((action) => action.kind === "defenseHold");
+    expect(allyActions[0]).toMatchObject({ kind: "defenseHold", enabled: true, label: "Defend" });
+    expect(allyDefend).toMatchObject({ enabled: true, mission: "defenseHold", ships: { lightFighter: 1 } });
+
+    const hostileDefend = galaxyActionsForSlot({
+      account,
+      attackProtection: { allowed: true, blockedReason: "none", blockedReasonLabel: null },
+      homePlanetId: "7",
+      planet: planet(),
+      shipyardState: shipyardState([{ id: 1, count: 3 }]),
+    }).find((action) => action.kind === "defenseHold");
+    expect(hostileDefend).toBeUndefined();
+  });
+
+  test("blocks proactive Defend with a clear reason when no movable ship is available", () => {
+    const ownColony = planet({
+      ownerId: account,
+      occupiedBy: { owner: account, planetId: "9" },
+    });
+    const defend = galaxyActionsForSlot({
+      account,
+      homePlanetId: "7",
+      isOrigin: false,
+      planet: ownColony,
+      shipyardState: shipyardState([]),
+    }).find((action) => action.kind === "defenseHold");
+
+    expect(defend).toMatchObject({
+      enabled: false,
+      reason: "Requires at least one movable ship on your home planet.",
+    });
   });
 
   test("planet detail reuses galaxy mission actions for occupied, owned, origin, and empty targets", () => {
@@ -180,7 +230,7 @@ describe("galaxyActions", () => {
     });
 
     expect(enemyActions.map((action) => action.label)).toEqual(["Attack", "Harvest", "Missile"]);
-    expect(ownActions.map((action) => action.label)).toEqual(["Transport", "Deploy"]);
+    expect(ownActions.map((action) => action.label)).toEqual(["Transport", "Deploy", "Defend"]);
     expect(originActions).toEqual([]);
     expect(emptyActions).toMatchObject([{ enabled: true, kind: "colonize", label: "Colonize" }]);
   });

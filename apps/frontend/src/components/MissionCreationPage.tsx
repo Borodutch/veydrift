@@ -37,6 +37,8 @@ export type MissionLaunchDraft = {
   lootRatio?: MissionLootRatioDraft | undefined;
   primaryTargetId?: number | undefined;
   quantity?: number | undefined;
+  // VEY-KANEO-440: chosen hold window (seconds) for a proactive DefenseHold stationing mission.
+  holdSeconds?: number | undefined;
 };
 
 export const LOOT_RATIO_TOTAL_PERCENT = 100;
@@ -83,12 +85,27 @@ export type AcsDefendComposeContext = {
   depotLevel: number;
 };
 
+// VEY-KANEO-440: context for a proactive DefenseHold ("Defend Union") compose. Unlike the reactive
+// counterplay above, the hold window is chosen by the player rather than pinned to a hostile attack,
+// so only the defended planet's Alliance Depot level is needed to preview the holding-fuel subsidy.
+export type DefenseHoldComposeContext = {
+  depotLevel: number;
+};
+
+// VEY-KANEO-440: discrete hold-duration steps offered for a proactive DefenseHold, in hours. Bounded
+// by the contract's MIN/MAX_DEFENSE_HOLD_SECONDS (1h–32h).
+export const DEFENSE_HOLD_HOUR_OPTIONS = [1, 2, 4, 8, 12, 16, 24, 32] as const;
+const DEFAULT_DEFENSE_HOLD_HOURS = 8;
+const SECONDS_PER_HOUR = 3_600;
+
 export function MissionCreationPage({
   acsDefendContext,
   acsDefendMode = false,
   action,
   actionPending,
   coords,
+  defenseHoldContext,
+  defenseHoldMode = false,
   driveLevels = {},
   joinAttackMode = false,
   nowMs = Date.now(),
@@ -108,6 +125,10 @@ export function MissionCreationPage({
   action: EnabledGalaxyAction;
   actionPending: boolean;
   coords: Coordinates;
+  // VEY-KANEO-440: render a proactive DefenseHold compose — adds a player-chosen hold-duration selector
+  // and a travel + holding-fuel + Alliance Depot preview, stationing the fleet at the target planet.
+  defenseHoldContext?: DefenseHoldComposeContext | undefined;
+  defenseHoldMode?: boolean | undefined;
   driveLevels?: FleetDriveLevels | undefined;
   // VEY-KANEO-431: render the picker for a join-attack — ship selection only,
   // with no loot ratio or speed controls (the join inherits the lead attack's
@@ -130,6 +151,7 @@ export function MissionCreationPage({
   const [lootRatio, setLootRatio] = useState<MissionLootRatioDraft>(DEFAULT_LOOT_RATIO);
   const [primaryTargetId, setPrimaryTargetId] = useState(action.mode === "missile" ? action.primaryTargetId : 0);
   const [quantity, setQuantity] = useState(action.mode === "missile" ? action.quantity : 1);
+  const [holdHours, setHoldHours] = useState<number>(DEFAULT_DEFENSE_HOLD_HOURS);
 
   const distance = originCoords ? fleetMissionDistance(originCoords, coords) : 0;
   const travelSeconds = action.mode === "missile" ? 0 : fleetMissionTravelSeconds(distance, ships, driveLevels, speedPercent);
@@ -160,9 +182,22 @@ export function MissionCreationPage({
   const acsBreakdown: AcsDefendFuelBreakdown | null = acsActive && acsDefendContext && selectedShipCount > 0
     ? acsDefendHoldingFuel(ships, Math.max(0, rawHoldSeconds), acsDefendContext.depotLevel)
     : null;
+
+  // VEY-KANEO-440: proactive DefenseHold — the hold window is the player's choice (1h–32h), not derived
+  // from a hostile arrival. Holding fuel scales with the chosen duration and is subsidized by the target
+  // planet's Alliance Depot, exactly as on-chain.
+  const defenseHoldActive = defenseHoldMode && action.mode === "mission" && Boolean(defenseHoldContext);
+  const defenseHoldSeconds = holdHours * SECONDS_PER_HOUR;
+  const defenseHoldBreakdown: AcsDefendFuelBreakdown | null = defenseHoldActive && selectedShipCount > 0
+    ? acsDefendHoldingFuel(ships, defenseHoldSeconds, defenseHoldContext?.depotLevel ?? 0)
+    : null;
+
+  // Both flows share the same holding-fuel summary; whichever is active drives the preview.
+  const holdingBreakdown = acsBreakdown ?? defenseHoldBreakdown;
+  const holdDepotLevel = acsDefendContext?.depotLevel ?? defenseHoldContext?.depotLevel ?? 0;
   // Net holding fuel rides in the defending fleet's own deuterium spend on-chain, so it counts toward
   // both the deuterium balance and cargo-capacity gates.
-  const effectiveFuelCost = acsBreakdown ? fuelCost + acsBreakdown.netHoldingFuel : fuelCost;
+  const effectiveFuelCost = holdingBreakdown ? fuelCost + holdingBreakdown.netHoldingFuel : fuelCost;
 
   const blockedReason = missionDraftBlocker({
     acsArrivalTooSlow,
@@ -191,7 +226,7 @@ export function MissionCreationPage({
     <div className="grid gap-4 p-4 sm:p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-white">{joinAttackMode || acsDefendMode ? action.label : `${action.label} Mission`}</h2>
+          <h2 className="text-lg font-semibold text-white">{joinAttackMode || acsDefendMode || defenseHoldMode ? action.label : `${action.label} Mission`}</h2>
           <p className="mt-0.5 text-xs text-slate-400">
             {originLabel ?? "Active planet"} to [{coords.galaxy}:{coords.system}:{coords.position}]
           </p>
@@ -306,6 +341,33 @@ export function MissionCreationPage({
             </div>
           )}
 
+          {defenseHoldMode ? (
+            <div className="grid gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Hold duration</h3>
+              <div className="flex flex-wrap gap-1.5">
+                {DEFENSE_HOLD_HOUR_OPTIONS.map((hours) => (
+                  <button
+                    aria-pressed={holdHours === hours}
+                    className={`h-8 rounded border px-2 text-xs font-semibold transition ${
+                      holdHours === hours
+                        ? "border-violet-300/45 bg-violet-300/15 text-violet-200"
+                        : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white"
+                    }`}
+                    key={hours}
+                    onClick={() => setHoldHours(hours)}
+                    type="button"
+                  >
+                    {hours}h
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500">
+                The fleet holds at the target planet for this long, defending any attack that lands while
+                stationed, then flies home. Longer holds cost more deuterium.
+              </p>
+            </div>
+          ) : null}
+
           {lootRatioSupported ? (
             <div className="grid gap-2">
               <label className="flex items-center justify-between gap-2">
@@ -362,27 +424,27 @@ export function MissionCreationPage({
           <SummaryRow label="Distance" value={distance.toLocaleString()} />
           <SummaryRow label="Ships" value={action.mode === "missile" ? "Missile launch" : selectedShipCount.toLocaleString()} />
           <SummaryRow
-            label={acsBreakdown ? "Travel fuel" : "Fuel"}
+            label={holdingBreakdown ? "Travel fuel" : "Fuel"}
             value={`${fuelCost.toLocaleString()} / ${totalCargoCapacity.toLocaleString()} deuterium`}
           />
-          {acsBreakdown ? (
+          {holdingBreakdown ? (
             <>
-              <SummaryRow label="Hold duration" value={acsBreakdown.holdSeconds > 0 ? formatDuration(acsBreakdown.holdSeconds) : "None"} />
-              <SummaryRow label="Holding fuel" value={`${acsBreakdown.holdingFuel.toLocaleString()} deuterium`} />
+              <SummaryRow label="Hold duration" value={holdingBreakdown.holdSeconds > 0 ? formatDuration(holdingBreakdown.holdSeconds) : "None"} />
+              <SummaryRow label="Holding fuel" value={`${holdingBreakdown.holdingFuel.toLocaleString()} deuterium`} />
               <SummaryRow
                 label="Alliance Depot"
-                subvalue={`Depot lvl ${(acsDefendContext?.depotLevel ?? 0).toLocaleString()}`}
-                value={acsBreakdown.depotSupport > 0 ? `−${acsBreakdown.depotSupport.toLocaleString()} deuterium` : "No support"}
+                subvalue={`Depot lvl ${holdDepotLevel.toLocaleString()}`}
+                value={holdingBreakdown.depotSupport > 0 ? `−${holdingBreakdown.depotSupport.toLocaleString()} deuterium` : "No support"}
               />
-              <SummaryRow label="Net holding fuel" value={`${acsBreakdown.netHoldingFuel.toLocaleString()} deuterium`} />
+              <SummaryRow label="Net holding fuel" value={`${holdingBreakdown.netHoldingFuel.toLocaleString()} deuterium`} />
               <SummaryRow label="Total fuel" value={`${effectiveFuelCost.toLocaleString()} deuterium`} />
             </>
           ) : null}
           <SummaryRow label="Cargo" value={cargoSupported ? `${cargoTotal.toLocaleString()} / ${cargoCapacity.toLocaleString()}` : "None"} />
           {timingSummary ? (
             <>
-              <SummaryRow label={acsBreakdown ? "Reach planet" : "Arrival"} subvalue={timingSummary.arrivalClock} value={timingSummary.arrivalDuration} />
-              {acsBreakdown ? null : (
+              <SummaryRow label={holdingBreakdown ? "Reach planet" : "Arrival"} subvalue={timingSummary.arrivalClock} value={timingSummary.arrivalDuration} />
+              {holdingBreakdown ? null : (
                 <SummaryRow label="Return" subvalue={timingSummary.returnClock} value={timingSummary.returnDuration} />
               )}
             </>
@@ -402,10 +464,11 @@ export function MissionCreationPage({
               lootRatio: lootRatioActive ? { ...lootRatio } : undefined,
               primaryTargetId,
               quantity,
+              holdSeconds: defenseHoldActive ? defenseHoldSeconds : undefined,
             })}
             type="button"
           >
-            {joinAttackMode ? "Join Attack" : acsDefendMode ? "Coordinate defense" : "Confirm Mission"}
+            {joinAttackMode ? "Join Attack" : acsDefendMode ? "Coordinate defense" : defenseHoldMode ? "Station defense" : "Confirm Mission"}
           </button>
         </aside>
       </div>
