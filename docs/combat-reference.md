@@ -14,6 +14,14 @@ The target model is OGame-style classic combat with Veydrift catalog values:
 - Rapidfire uses the same deterministic random stream as the contract. Small shot counts expand exact rapidfire chains; large shot counts use the same bounded deterministic sampling as the onchain implementation to stay gas-bounded.
 - ACS attack is represented by the primary attack group plus one joined attack group.
 - ACS defend and intercept are represented by one counterplay ship group on the defender side.
+- OGame-style ACS Defend (the `DefenseHold` mission) stations a fleet at a planet for a chosen hold
+  window. Distinct from the reactive `AcsDefend`/`Intercept` counterplay (which target one specific
+  in-flight attack by mission id), a held fleet automatically defends *any* attack that lands while
+  it is holding: at each attack's resolution every fleet stationed over that attack's arrival is
+  linked into the attack's counterplay roster and fights as a defender ship group, then keeps holding
+  until its window elapses (or returns home when sent back). Authorization (own planet or a
+  same-alliance member) and holding fuel, offset by the defended planet's Alliance Depot, mirror the
+  counterplay holding rules.
 - Ship losses create 30% metal/crystal debris. Defense losses do not create debris and 70% of destroyed defenses are repaired after the battle.
 
 The parity fixture suite compares onchain battle events, stored debris, ship
