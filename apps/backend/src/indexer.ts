@@ -84,6 +84,7 @@ import {
 import type { HighscoreEntry } from "./highscores";
 import { playerFallbackName, type PlayerProfile } from "./playerProfiles";
 import { planetArchetypeForTemperature } from "./universe";
+import { nowSeconds, withMissionAsOfNow, withQueueAsOfNow } from "./asOfNow";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
 export type IndexedMoonChanceReportEvent = MoonChanceReportEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
@@ -1064,15 +1065,15 @@ export class SettlementIndexer {
   }
 
   planetQueue(planetId: string, kind: "building" | "defense" | "ship"): QueueState | null {
-    return this.queueState(`${kind}:${planetId}`);
+    return withQueueAsOfNow(this.queueState(`${kind}:${planetId}`), nowSeconds());
   }
 
   moonQueue(planetId: string): QueueState | null {
-    return this.queueState(`moon-building:${planetId}`);
+    return withQueueAsOfNow(this.queueState(`moon-building:${planetId}`), nowSeconds());
   }
 
   researchQueue(wallet: `0x${string}`): QueueState | null {
-    return this.queueState(`research:${wallet.toLowerCase()}`);
+    return withQueueAsOfNow(this.queueState(`research:${wallet.toLowerCase()}`), nowSeconds());
   }
 
   moonState(wallet: `0x${string}`, planetId: string | null): MoonState {
@@ -3338,11 +3339,14 @@ export class SettlementIndexer {
   }
 
   private withFleetMissionPlanetReferences(mission: FleetMissionSummary): FleetMissionSummary {
-    return {
-      ...mission,
-      originPlanet: this.fleetMissionPlanetReference(mission.originPlanetId),
-      targetPlanet: this.fleetMissionPlanetReference(mission.targetPlanetId)
-    };
+    return withMissionAsOfNow(
+      {
+        ...mission,
+        originPlanet: this.fleetMissionPlanetReference(mission.originPlanetId),
+        targetPlanet: this.fleetMissionPlanetReference(mission.targetPlanetId)
+      },
+      nowSeconds()
+    );
   }
 
   private fleetMissionPlanetReference(planetId: string): FleetMissionPlanetReference | null {
