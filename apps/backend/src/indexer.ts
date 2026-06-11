@@ -2981,6 +2981,12 @@ export class SettlementIndexer {
         SET role_id = ?
         WHERE alliance_id = ? AND wallet = lower(?)
       `).run(event.roleId, event.allianceId, event.player);
+    } else if (event.eventName === "AllianceOwnershipTransferred") {
+      this.db.query(`
+        UPDATE contract_alliances
+        SET owner = lower(?)
+        WHERE alliance_id = ?
+      `).run(event.newOwner, event.allianceId);
     } else if (event.eventName === "AllianceDiplomacyUpdated") {
       this.db.query(`
         INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at)

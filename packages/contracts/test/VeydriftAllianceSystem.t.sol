@@ -489,6 +489,72 @@ contract VeydriftAllianceSystemTest is Test {
         assertTrue(scoreProtectionException);
     }
 
+    function testTransferAllianceOwnershipPromotesOfficer() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+
+        _inviteAndAccept(allianceId, member);
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        vm.expectEmit(true, true, true, true);
+        emit VeydriftAllianceSystem.AllianceOwnershipTransferred(allianceId, leader, member);
+        vm.prank(leader);
+        alliances.transferAllianceOwnership(allianceId, member);
+
+        assertEq(alliances.allianceProfile(allianceId).owner, member);
+        assertEq(
+            uint8(alliances.allianceOf(member).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Owner)
+        );
+        assertEq(
+            uint8(alliances.allianceOf(leader).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Officer)
+        );
+
+        // The new owner can now manage roles; the former owner can no longer.
+        vm.prank(leader);
+        vm.expectRevert();
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Member);
+
+        vm.prank(member);
+        alliances.setMemberRole(allianceId, leader, VeydriftAllianceSystem.AllianceRole.Member);
+        assertEq(
+            uint8(alliances.allianceOf(leader).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Member)
+        );
+    }
+
+    function testTransferAllianceOwnershipRejectsInvalidTargets() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+
+        _inviteAndAccept(allianceId, member);
+
+        // Officers cannot transfer ownership.
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+        vm.prank(member);
+        vm.expectRevert();
+        alliances.transferAllianceOwnership(allianceId, leader);
+
+        // Owner cannot transfer to themselves.
+        vm.prank(leader);
+        vm.expectRevert();
+        alliances.transferAllianceOwnership(allianceId, leader);
+
+        // Target must be a member of this alliance.
+        vm.prank(leader);
+        vm.expectRevert();
+        alliances.transferAllianceOwnership(allianceId, enemy);
+
+        // Target must be an officer, not a plain member.
+        _inviteAndAccept(allianceId, recruit);
+        vm.prank(leader);
+        vm.expectRevert();
+        alliances.transferAllianceOwnership(allianceId, recruit);
+    }
+
     function testAllianceDefenseIntentUsesHostileMissionCutoff() public {
         vm.prank(leader);
         uint256 allianceId = alliances.createAlliance("ACS", "Defense Wing", "");

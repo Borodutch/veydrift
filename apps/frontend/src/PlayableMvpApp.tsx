@@ -165,6 +165,7 @@ import {
   sendAllianceInviteTransaction,
   sendAllianceProfileTransaction,
   sendAllianceRoleTransaction,
+  sendAllianceTransferOwnershipTransaction,
   sendApproveAllianceJoinRequestTransaction,
   sendCancelAllianceJoinRequestTransaction,
   sendDismissAllianceJoinRequestTransaction,
@@ -4343,6 +4344,21 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     ));
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
+  const handleTransferAllianceOwnership = useCallback((playerAddress: string) => {
+    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+
+    void runAllianceTransaction("Alliance ownership transfer", () => sendAllianceTransferOwnershipTransaction(
+      provider,
+      account,
+      allianceContract,
+      allianceState.membership.allianceId,
+      playerAddress,
+    ));
+  }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+
   const handleResearch = useCallback((technologyId: number, key: ResearchKey) => {
     if (!provider || !account || !gameContract || !effectiveResearchState?.homePlanetId) {
       setResearchAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
@@ -5513,6 +5529,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onOpenPlayer={handleSelectPlayer}
           onRefresh={refreshAllianceState}
           onSetRole={handleSetAllianceRole}
+          onTransferOwnership={handleTransferAllianceOwnership}
           onUpdateProfile={handleUpdateAllianceProfile}
         />
       );
@@ -5535,6 +5552,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onOpenPlayer={handleSelectPlayer}
           onRefresh={refreshAllianceState}
           onSetRole={handleSetAllianceRole}
+          onTransferOwnership={handleTransferAllianceOwnership}
         />
       );
     }
