@@ -3246,11 +3246,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   ]);
   const buildingQueue = useMemo(() => {
     if (activeBuildingQueue?.active) {
-      return buildingQueueItemForDisplay(activeBuildingQueue, settledState.buildings, now);
+      return buildingQueueItemForDisplay(activeBuildingQueue, now);
     }
 
     return settledState.queue?.kind === "building" ? settledState.queue : undefined;
-  }, [activeBuildingQueue, now, settledState.buildings, settledState.queue]);
+  }, [activeBuildingQueue, now, settledState.queue]);
   const effectiveResearchState = useMemo(
     () => researchStateWithFallbackQueue(researchState, onChainQueues?.research),
     [onChainQueues?.research, researchState],
