@@ -105,9 +105,10 @@ function planetMissionLine(
     // A fleet inbound to this planet — arriving (outbound leg) or landing back home (return leg).
     if (returning) {
       // A returning fleet lands at its own origin, which it owns: always the planet owner's own fleet.
+      // Lead with "Own fleet" so the line reads as owner-originated at a glance, not just by inference.
       return {
         key: `${mission.missionId}-in`,
-        label: `Returning (${typeLabel}) · ${etaLabel}`,
+        label: `Own fleet returning (${typeLabel}) · ${etaLabel}`,
         title: `Owner's own ${typeLabel.toLowerCase()} fleet returning home · ${etaLabel}`,
         direction: "incoming",
         origin: "owner",
@@ -120,6 +121,7 @@ function planetMissionLine(
       return {
         key: `${mission.missionId}-in`,
         label: `Own ${typeLabel.toLowerCase()} arriving · ${etaLabel}`,
+        // Already explicitly owner-originated via the leading "Own".
         title: `Owner's own ${typeLabel.toLowerCase()} arriving · ${etaLabel}`,
         direction: "incoming",
         origin: "owner",
@@ -144,11 +146,12 @@ function planetMissionLine(
     // A fleet outbound from this planet toward its current destination.
     const destination = missionEndpointCoordinatesLabel(mission, returning ? "origin" : "target");
     if (returning && !isOwner) {
-      // A third party that struck this planet and is now heading home.
+      // A third party that struck this planet and is now heading home. Name the originator in the label
+      // so it reads as someone else's fleet, not the owner's own.
       const attacker = missionOwnerName(mission);
       return {
         key: `${mission.missionId}-out`,
-        label: `${typeLabel} returning → ${destination} · ${etaLabel}`,
+        label: `${typeLabel} from ${attacker} returning → ${destination} · ${etaLabel}`,
         title: `${hostile ? "Hostile" : "Third-party"} ${typeLabel.toLowerCase()} from ${attacker} returning home · ${etaLabel}`,
         direction: "outgoing",
         origin: "third-party",
@@ -156,10 +159,12 @@ function planetMissionLine(
         eta,
       };
     }
-    const prefix = returning ? `Returning (${typeLabel})` : typeLabel;
+    // The owner's own fleet leaving this planet (outbound) or heading home from it (returning). Lead with
+    // "Own" so the line is explicitly owner-originated rather than only implied by the bare type.
+    const ownPrefix = returning ? `Own fleet returning (${typeLabel})` : `Own ${typeLabel}`;
     return {
       key: `${mission.missionId}-out`,
-      label: `${prefix} → ${destination} · ${etaLabel}`,
+      label: `${ownPrefix} → ${destination} · ${etaLabel}`,
       title: `Owner's own ${typeLabel.toLowerCase()} → ${destination} · ${etaLabel}`,
       direction: "outgoing",
       origin: "owner",

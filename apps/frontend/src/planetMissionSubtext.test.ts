@@ -77,7 +77,8 @@ describe("planetMissionSubtext owner vs third-party classification", () => {
     expect(lines[0]?.origin).toBe("owner");
     expect(lines[0]?.direction).toBe("outgoing");
     expect(lines[0]?.hostile).toBe(false);
-    expect(lines[0]?.label).toContain("Attack → [7:396:3]");
+    // Owner-originated lines lead with "Own" so the fleet reads as the planet owner's, not a third party.
+    expect(lines[0]?.label).toContain("Own Attack → [7:396:3]");
   });
 
   test("owner fleet returning home names the mission type", () => {
@@ -92,7 +93,8 @@ describe("planetMissionSubtext owner vs third-party classification", () => {
     const { lines } = planetMissionSubtext("home", OWNER, [m], NOW);
     expect(lines[0]?.origin).toBe("owner");
     expect(lines[0]?.direction).toBe("incoming");
-    expect(lines[0]?.label).toContain("Returning (Attack)");
+    // Names the type AND explicitly states it is the owner's own fleet ("Own fleet returning (Attack)").
+    expect(lines[0]?.label).toContain("Own fleet returning (Attack)");
   });
 
   test("owner's own fleet arriving at one of their planets reads as own arrival", () => {
@@ -169,6 +171,8 @@ describe("planetMissionSubtext owner vs third-party classification", () => {
     expect(lines[0]?.origin).toBe("third-party");
     expect(lines[0]?.direction).toBe("outgoing");
     expect(lines[0]?.label).toContain("returning → [9:9:9]");
+    // The originator is named so the line cannot be mistaken for the owner's own fleet.
+    expect(lines[0]?.label).toContain("from ");
   });
 
   test("missing planet owner never misclassifies a fleet as third-party", () => {
@@ -181,6 +185,51 @@ describe("planetMissionSubtext owner vs third-party classification", () => {
     });
     const { lines } = planetMissionSubtext("victim", undefined, [m], NOW);
     expect(lines[0]?.origin).toBe("owner");
+  });
+});
+
+describe("planetMissionSubtext explicit ownership wording (VEY-448)", () => {
+  // Every owner-originated line must say "Own" in plain language; every third-party line must name the
+  // originator with "from". This is the QA-visible requirement: a reader can tell owner-own vs incoming
+  // third-party from the copy alone, without inferring it from direction or status.
+  const ownerCases: Array<{ name: string; m: FleetMissionSummary; planet: string }> = [
+    {
+      name: "owner outbound",
+      m: mission({ missionId: "1", owner: OWNER, status: "Outbound", originPlanetId: "home", targetPlanetId: "enemy" }),
+      planet: "home",
+    },
+    {
+      name: "owner returning home",
+      m: mission({ missionId: "2", owner: OWNER, status: "Returning", originPlanetId: "home", targetPlanetId: "enemy" }),
+      planet: "home",
+    },
+    {
+      name: "owner internal transport arriving",
+      m: mission({ missionId: "3", owner: OWNER, missionType: "Transport", originPlanetId: "homeA", targetPlanetId: "homeB" }),
+      planet: "homeB",
+    },
+  ];
+  for (const { name, m, planet } of ownerCases) {
+    test(`${name} label leads with "Own"`, () => {
+      const { lines } = planetMissionSubtext(planet, OWNER, [m], NOW);
+      expect(lines[0]?.origin).toBe("owner");
+      expect(lines[0]?.label).toContain("Own");
+    });
+  }
+
+  test("third-party lines always name the originator with \"from\"", () => {
+    const incoming = mission({
+      missionId: "1",
+      missionType: "Attack",
+      owner: THIRD_PARTY,
+      originPlanetId: "raiderHome",
+      targetPlanetId: "victim",
+      originPlanet: planetRef({ planetId: "raiderHome", owner: THIRD_PARTY, ownerDisplayName: "Dread Pirate" }),
+    });
+    const { lines } = planetMissionSubtext("victim", OWNER, [incoming], NOW);
+    expect(lines[0]?.origin).toBe("third-party");
+    expect(lines[0]?.label).toContain("from Dread Pirate");
+    expect(lines[0]?.label).not.toContain("Own");
   });
 });
 
