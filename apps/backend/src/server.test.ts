@@ -4163,6 +4163,52 @@ describe("Veydrift backend", () => {
     expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
   });
 
+  test("accrues production into highscore raidable loot so it matches the public planet read (VEY-KANEO-454)", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    // Same fixture as the accrued-resources fallback test: a metal mine + solar plant whose
+    // production has been accruing for two hours, lifting stored metal from 5000 to 5064.
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      lastSettledAt: (Math.floor(Date.now() / 1_000) - 7_200).toString()
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xmine",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xsolar",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(3n)],
+      data: abiWords(1n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const highscoreResponse = await handler(new Request("http://localhost/highscores?limit=10"));
+    const highscoreBody = await highscoreResponse.json();
+
+    expect(highscoreResponse.status).toBe(200);
+
+    const tacticalPlanet = highscoreBody.rankings.total[0].planets[0];
+    // The finder's raidable loot now reflects the accrued 5064 metal (~50% plunder => 2532),
+    // matching the accrued resources the public planet read exposes. Before the fix this used
+    // the stale stored 5000 and under-reported LOOT at 2500.
+    expect(tacticalPlanet.tactical.raidableResources.metal).toBe("2532");
+    expect(Number(tacticalPlanet.tactical.raidableResources.metal)).toBeGreaterThan(2500);
+  });
+
   test("paginates highscore rankings while preserving absolute ranks", async () => {
     const owners = [
       "0x3333333333333333333333333333333333333333",

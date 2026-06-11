@@ -41,7 +41,9 @@ export function TopBar({
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
       <div className="mx-auto flex min-h-10 max-w-[96rem] flex-wrap items-center justify-center gap-x-3 gap-y-1 px-2 py-1 sm:min-h-11 sm:justify-between sm:px-4 sm:py-1.5 lg:px-6">
         <div className="grid w-full min-w-0 grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_1.75rem] items-center gap-0.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
-          {resourceStatus === "loading" && !resources ? (
+          {!isWalletConnected ? (
+            <span className="text-xs text-slate-400">Connect wallet for resources</span>
+          ) : resourceStatus === "loading" && !resources ? (
             <span className="text-xs text-slate-400">Resources loading</span>
           ) : !resources ? (
             <span className="text-xs text-amber-200">Resources unavailable</span>
