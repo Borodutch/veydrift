@@ -11,6 +11,7 @@ import {
   DEFAULT_RAID_TARGET_SORT,
   buildRaidTargets,
   filterRaidTargets,
+  floatActiveMissionTargetsFirst,
   incomingThreats,
   raidTargetTotals,
   sortRaidTargets,
@@ -113,6 +114,26 @@ export function RaidTargetFinderPage({
   const totals = useMemo(() => raidTargetTotals(allTargets, visibleTargets), [allTargets, visibleTargets]);
   const threats = useMemo(() => incomingThreats(fleetVisibility), [fleetVisibility]);
   const missionsByPlanetId = useMemo(() => activeMissionsByPlanetId(activeMissions ?? []), [activeMissions]);
+  // Per-target mission subtext (VEY-KANEO-448), computed once so it can both order the list (float
+  // targets with active fleet activity up) and render each row without recomputing.
+  const subtextByPlanetId = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof planetMissionSubtext>>();
+    for (const target of visibleTargets) {
+      map.set(
+        target.planetId,
+        planetMissionSubtext(target.planetId, target.owner, missionsByPlanetId.get(target.planetId) ?? [], now),
+      );
+    }
+    return map;
+  }, [visibleTargets, missionsByPlanetId, now]);
+  const { ordered: orderedTargets, activeCount } = useMemo(
+    () =>
+      floatActiveMissionTargetsFirst(
+        visibleTargets,
+        (target) => (subtextByPlanetId.get(target.planetId)?.lines.length ?? 0) > 0,
+      ),
+    [visibleTargets, subtextByPlanetId],
+  );
 
   const toggleSort = (key: RaidTargetSortKey) => {
     setSort((current) =>
@@ -164,15 +185,12 @@ export function RaidTargetFinderPage({
               : "No raid targets loaded yet."}
           </div>
         ) : (
-          visibleTargets.map((target) => (
+          orderedTargets.map((target) => (
             <RaidTargetRow
               key={target.planetId}
-              missionSubtext={planetMissionSubtext(
-                target.planetId,
-                target.owner,
-                missionsByPlanetId.get(target.planetId) ?? [],
-                now,
-              )}
+              missionSubtext={
+                subtextByPlanetId.get(target.planetId) ?? planetMissionSubtext(target.planetId, target.owner, [], now)
+              }
               now={now}
               onSelectAlliance={onSelectAlliance}
               onSelectPlanet={onSelectPlanet}
@@ -186,6 +204,14 @@ export function RaidTargetFinderPage({
       <p className="text-xs leading-5 text-slate-500">
         Intel mirrors the public highscore feed (top {raidTargetFinderPageSize} commanders). Loot and combat reflect the
         last indexed state and may change before your fleet arrives.
+        {activeCount > 0 ? (
+          <>
+            {" "}
+            <span className="text-slate-400">
+              {activeCount} {activeCount === 1 ? "target has" : "targets have"} active fleet activity (shown first).
+            </span>
+          </>
+        ) : null}
       </p>
     </section>
   );
