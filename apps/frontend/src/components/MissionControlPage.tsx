@@ -278,11 +278,12 @@ export function StationedDefenseSection({
   // Mission endpoints render from each summary's embedded origin/target planet references (the backend
   // enriches them), so callers without a prebuilt lookup (e.g. the Defenses page) can omit it.
   planetLookup = EMPTY_PLANET_LOOKUP,
-  // VEY-KANEO-440: launching a DefenseHold lives on the Galaxy planet action, but players (and QA) look
-  // for it here, where the empty state already tells them to "choose Defend". Without an affordance on
-  // this panel the feature reads as missing (repeated QA "no Defend button anywhere" bounces). When
-  // provided, render a "Defend a planet" CTA that routes to Galaxy so the entry point is discoverable
-  // from the screen that describes it.
+  // VEY-KANEO-440: launching a DefenseHold lives on the per-planet Defend action, but players (and QA)
+  // look for it here, where the empty state already tells them to "choose Defend". Without an affordance
+  // on this panel the feature reads as missing (repeated QA "no Defend button anywhere" bounces). When
+  // provided, render a "Defend a planet" CTA that opens the player's planet detail, where the Defend
+  // control is rendered with a visible eligibility explanation — a deterministic, focused surface rather
+  // than hunting for a greyed button in the Galaxy grid (the previous routing QA kept bouncing).
   onDefendPlanet,
 }: {
   incoming: FleetMissionSummary[];
@@ -328,7 +329,7 @@ export function StationedDefenseSection({
           planet and choose <span className="text-violet-100">Defend</span>
           {onDefendPlanet ? (
             <>
-              {" "}(use{" "}
+              {" "}(tap{" "}
               <button
                 className="font-semibold text-violet-200 underline decoration-dotted underline-offset-2 hover:text-violet-100"
                 onClick={onDefendPlanet}
@@ -336,7 +337,7 @@ export function StationedDefenseSection({
               >
                 Defend a planet
               </button>{" "}
-              to open Galaxy and pick one)
+              to open the Defend control and see how to station a fleet)
             </>
           ) : null}{" "}
           to station a fleet that holds

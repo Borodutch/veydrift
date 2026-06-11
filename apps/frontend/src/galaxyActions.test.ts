@@ -1,7 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { galaxyActionsForSlot } from "./galaxyActions";
-import { planetDetailGalaxyActions } from "./components/PlanetDetail";
+import { planetDetailGalaxyActions, PlanetMissionControls } from "./components/PlanetDetail";
+import type { GalaxyAction } from "./galaxyActions";
 import type { Planet } from "./types";
+
+function collectVNodeText(node: unknown): string {
+  if (node === null || node === undefined || node === false || node === true) return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(collectVNodeText).join(" ");
+  const props = (node as { props?: { children?: unknown } }).props;
+  return props ? collectVNodeText(props.children) : "";
+}
 
 const account = "0x1111111111111111111111111111111111111111";
 
@@ -271,7 +280,75 @@ describe("galaxyActions", () => {
     ]);
     expect(emptyActions).toMatchObject([{ enabled: true, kind: "colonize", label: "Colonize" }]);
   });
+
+  test("planet detail renders the disabled Defend reason as visible inline text (VEY-KANEO-440)", () => {
+    const coords = { galaxy: 2, system: 44, position: 7 };
+    const disabledDefend: GalaxyAction = {
+      enabled: false,
+      kind: "defenseHold",
+      label: "Defend",
+      mode: "mission",
+      mission: "defenseHold",
+      reason:
+        "You can't station a defending fleet at the planet it launches from. Colonize another planet or join an alliance to defend one.",
+    };
+
+    const tree = PlanetMissionControls({
+      actions: [disabledDefend],
+      busy: false,
+      coords,
+      onAction: undefined,
+      planet: undefined,
+    });
+    // The "Defend a planet" CTA lands here; the eligibility reason must be visible inline (not only in the
+    // button's hover title) so it is readable on touch and to automated QA — the recurring "no Defend
+    // button anywhere" rework cause.
+    const text = collectVNodeText(tree);
+    expect(text).toContain("Defend:");
+    expect(text).toContain(
+      "You can't station a defending fleet at the planet it launches from. Colonize another planet or join an alliance to defend one."
+    );
+
+    // An enabled Defend (a coordinatable target) needs no inline explanation.
+    const enabledDefend: GalaxyAction = {
+      enabled: true,
+      kind: "defenseHold",
+      label: "Defend",
+      mode: "mission",
+      mission: "defenseHold",
+      ships: emptyMissionShipsForTest(),
+    };
+    const enabledText = collectVNodeText(
+      PlanetMissionControls({
+        actions: [enabledDefend],
+        busy: false,
+        coords,
+        onAction: undefined,
+        planet: undefined,
+      })
+    );
+    expect(enabledText).not.toContain("Defend:");
+  });
 });
+
+function emptyMissionShipsForTest() {
+  return {
+    smallCargo: 0,
+    lightFighter: 1,
+    recycler: 0,
+    colonyShip: 0,
+    largeCargo: 0,
+    heavyFighter: 0,
+    cruiser: 0,
+    battleship: 0,
+    bomber: 0,
+    destroyer: 0,
+    deathstar: 0,
+    battlecruiser: 0,
+    reaper: 0,
+    pathfinder: 0,
+  };
+}
 
 function planet(overrides: Partial<Planet> = {}): Planet {
   return {

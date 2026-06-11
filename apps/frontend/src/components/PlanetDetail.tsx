@@ -407,7 +407,7 @@ export function planetDetailGalaxyActions({
   });
 }
 
-function PlanetMissionControls({
+export function PlanetMissionControls({
   actions,
   busy,
   coords,
@@ -422,6 +422,17 @@ function PlanetMissionControls({
 }) {
   if (actions.length === 0) return null;
 
+  // VEY-KANEO-440: the proactive Defend (DefenseHold) action is the feature this screen exists to
+  // surface. When it is disabled — e.g. the home/launch planet, where launchDefenseHold reverts with
+  // SamePlanet — its reason otherwise lives only in the button's hover `title`, which is invisible on
+  // touch and to automated QA (the repeated "no Defend button anywhere" bounce). Render that reason as
+  // visible inline text so the affordance and the "explain when not coordinatable" prerequisite are
+  // unmistakable on the surface the "Defend a planet" CTA lands on.
+  const blockedDefend = actions.find(
+    (action): action is Extract<GalaxyAction, { enabled: false }> =>
+      action.kind === "defenseHold" && !action.enabled
+  );
+
   return (
     <div className="flex flex-col items-start gap-2 lg:items-end">
       <GalaxyActionButtons
@@ -431,6 +442,11 @@ function PlanetMissionControls({
         onAction={onAction}
         planet={planet}
       />
+      {blockedDefend ? (
+        <p className="max-w-xs text-xs text-violet-200/80 lg:text-right">
+          <span className="font-semibold text-violet-100">Defend:</span> {blockedDefend.reason}
+        </p>
+      ) : null}
     </div>
   );
 }
