@@ -81,6 +81,54 @@ export function planetMissionSubtext(
   return { lines, overflow: Math.max(0, resolved.length - lines.length) };
 }
 
+// One enriched line per active mission, framed from the mission's TARGET planet — i.e. who is being
+// flown to — so the most time-sensitive signal (an incoming third-party attack/transport, or an
+// owner's own fleet arriving) surfaces with the same owner-vs-third-party classification used per row.
+export type UniverseMissionLine = PlanetMissionLine & {
+  // Coordinate label of the planet this line concerns (the mission's target planet) for a banner
+  // prefix, or null when the feed carries no resolved/decodable target reference.
+  planetCoordinates: string | null;
+};
+
+export type UniverseActiveMissions = {
+  lines: UniverseMissionLine[];
+  overflow: number;
+};
+
+// Max enriched lines surfaced in the always-visible "active fleet movements" banner before collapsing
+// the rest into a "+N more" tail (VEY-KANEO-448).
+export const maxUniverseMissionBannerLines = 6;
+
+// Universe-level enriched mission lines for the Rankings + Raid Finder "active fleet movements" banner.
+//
+// The per-planet subtext only renders on the row of an involved planet. With sparse live traffic plus
+// pagination (Rankings shows 50 commanders/page) or sorting (Raid Finder orders by loot/distance), the
+// involved planet can fall on a later page or far down the list, leaving the enrichment effectively
+// invisible — the recurring QA "Rankings shows no mission information" bounce. This hoists the same
+// classified lines to an always-visible banner so they stay discoverable regardless of list position.
+// Each mission is framed from its target planet, reusing the exact per-planet classification, and the
+// lines are sorted soonest-first and capped with an overflow count.
+export function universeActiveMissionLines(
+  missions: readonly FleetMissionSummary[],
+  now: number,
+): UniverseActiveMissions {
+  const resolved = missions
+    .map((mission) => {
+      const line = planetMissionLine(mission.targetPlanetId, mission.targetPlanet?.owner, mission, now);
+      if (line === null) return null;
+      const coordinates = mission.targetPlanet?.coordinates
+        ?? decodeColonizationTargetId(mission.targetPlanetId)?.coordinates
+        ?? null;
+      return { ...line, planetCoordinates: coordinates };
+    })
+    .filter((line): line is UniverseMissionLine & { eta: number } => line !== null)
+    .sort((left, right) => left.eta - right.eta);
+  const lines = resolved
+    .slice(0, maxUniverseMissionBannerLines)
+    .map(({ eta: _eta, ...line }) => line);
+  return { lines, overflow: Math.max(0, resolved.length - lines.length) };
+}
+
 function planetMissionLine(
   planetId: string,
   planetOwner: string | null | undefined,

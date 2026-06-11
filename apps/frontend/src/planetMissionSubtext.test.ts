@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   activeMissionsByPlanetId,
   maxPlanetMissionLines,
+  maxUniverseMissionBannerLines,
   planetMissionSubtext,
+  universeActiveMissionLines,
 } from "./planetMissionSubtext";
 import type { FleetMissionPlanetReference, FleetMissionSummary } from "./walletFlow";
 
@@ -219,6 +221,76 @@ describe("planetMissionSubtext real-universe shared scenario (VEY-448 Rankings +
     expect(lines[0]?.hostile).toBe(true);
     expect(lines[0]?.label).toContain("Attack from Jabba returning → [2:72:5]");
     expect(lines[0]?.label).not.toContain("Own");
+  });
+});
+
+describe("universeActiveMissionLines (Rankings + Raid Finder active-fleet banner, VEY-448)", () => {
+  test("frames an outbound third-party attack from the target planet so it reads as an incoming attack", () => {
+    // Mirrors the live feed: an Outbound Attack from the attacker's planet (rank #2) to a victim whose
+    // owner sits on a later rankings page — the case where the per-row subtext is off-page-1.
+    const m = mission({
+      missionId: "231",
+      missionType: "Attack",
+      status: "Outbound",
+      owner: THIRD_PARTY,
+      originPlanetId: "23",
+      targetPlanetId: "2",
+      originPlanet: planetRef({ planetId: "23", owner: THIRD_PARTY, ownerDisplayName: "Illusive Man", coordinates: "2:477:7" }),
+      targetPlanet: planetRef({ planetId: "2", owner: OWNER, coordinates: "1:132:7" }),
+    });
+    const { lines, overflow } = universeActiveMissionLines([m], NOW);
+    expect(lines).toHaveLength(1);
+    expect(overflow).toBe(0);
+    expect(lines[0]?.origin).toBe("third-party");
+    expect(lines[0]?.hostile).toBe(true);
+    expect(lines[0]?.direction).toBe("incoming");
+    expect(lines[0]?.planetCoordinates).toBe("1:132:7");
+    expect(lines[0]?.label).toContain("Incoming Attack from Illusive Man");
+  });
+
+  test("frames an owner's own internal transport as an own arrival", () => {
+    const m = mission({
+      missionId: "1",
+      missionType: "Transport",
+      status: "Outbound",
+      owner: OWNER,
+      originPlanetId: "homeA",
+      targetPlanetId: "homeB",
+      targetPlanet: planetRef({ planetId: "homeB", owner: OWNER, coordinates: "3:3:3" }),
+    });
+    const { lines } = universeActiveMissionLines([m], NOW);
+    expect(lines[0]?.origin).toBe("owner");
+    expect(lines[0]?.hostile).toBe(false);
+    expect(lines[0]?.planetCoordinates).toBe("3:3:3");
+    expect(lines[0]?.label).toContain("Own Transport arriving");
+  });
+
+  test("returns no lines for an empty feed", () => {
+    expect(universeActiveMissionLines([], NOW)).toEqual({ lines: [], overflow: 0 });
+  });
+
+  test("sorts soonest-first and caps with an overflow count", () => {
+    const missions: FleetMissionSummary[] = Array.from({ length: maxUniverseMissionBannerLines + 2 }, (_unused, index) =>
+      mission({
+        missionId: `m${index}`,
+        owner: THIRD_PARTY,
+        originPlanetId: `o${index}`,
+        targetPlanetId: `t${index}`,
+        arrivalAt: String((index + 1) * 1000),
+        originPlanet: planetRef({ planetId: `o${index}`, owner: THIRD_PARTY, ownerDisplayName: `Raider ${index}` }),
+        targetPlanet: planetRef({ planetId: `t${index}`, owner: OWNER, coordinates: `9:9:${index}` }),
+      }),
+    );
+    const { lines, overflow } = universeActiveMissionLines(missions, NOW);
+    expect(lines).toHaveLength(maxUniverseMissionBannerLines);
+    expect(overflow).toBe(2);
+    expect(lines[0]?.planetCoordinates).toBe("9:9:0");
+    expect(lines.at(-1)?.planetCoordinates).toBe(`9:9:${maxUniverseMissionBannerLines - 1}`);
+  });
+
+  test("drops missions without a resolvable event timestamp", () => {
+    const m = mission({ missionId: "1", owner: THIRD_PARTY, originPlanetId: "o", targetPlanetId: "t", arrivalAt: "0" });
+    expect(universeActiveMissionLines([m], NOW)).toEqual({ lines: [], overflow: 0 });
   });
 });
 

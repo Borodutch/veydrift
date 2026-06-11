@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { ChevronLeft, ChevronRight, UserRound } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import { fleetMissionDistance } from "../fleetMissionRules";
-import { activeMissionsByPlanetId, planetMissionSubtext } from "../planetMissionSubtext";
+import { activeMissionsByPlanetId, planetMissionSubtext, universeActiveMissionLines } from "../planetMissionSubtext";
 import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
+import { ActiveFleetMovementsBanner } from "./ActiveFleetMovementsBanner";
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { PlanetMissionLines } from "./PlanetMissionLines";
@@ -98,6 +99,10 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
 
   const missionsByPlanetId = useMemo(() => activeMissionsByPlanetId(activeMissions ?? []), [activeMissions]);
   const nowMs = now ?? Date.now();
+  // VEY-KANEO-448: an active mission's planet can sit on a later rankings page (50/page), so the
+  // eye-catching incoming-attack subtext is easily missed on page 1. Surface the universe-wide active
+  // feed in an always-visible banner so the enrichment is discoverable regardless of pagination.
+  const universeMissions = useMemo(() => universeActiveMissionLines(activeMissions ?? [], nowMs), [activeMissions, nowMs]);
   const entries = data?.rankings[active] ?? [];
   const pagination = data?.pagination ?? null;
   const currentPlayerPage = data?.currentPlayer?.rankings[active] ?? null;
@@ -118,6 +123,8 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
         loading={loading}
         onCurrentPlayer={() => currentPlayerPage ? setPage(currentPlayerPage.page) : undefined}
       />
+
+      <ActiveFleetMovementsBanner missions={universeMissions} />
 
       {error ? (
         <div className="rounded border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">

@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { AlertTriangle, ArrowDown, ArrowUp, Crosshair, ShieldAlert, Swords } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
-import { activeMissionsByPlanetId, planetMissionSubtext } from "../planetMissionSubtext";
+import { activeMissionsByPlanetId, planetMissionSubtext, universeActiveMissionLines } from "../planetMissionSubtext";
 import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreEntry } from "../walletFlow";
 import type { FleetMissionVisibilityResponse } from "../walletFlow";
+import { ActiveFleetMovementsBanner } from "./ActiveFleetMovementsBanner";
 import {
   DEFAULT_RAID_TARGET_FILTERS,
   DEFAULT_RAID_TARGET_SORT,
@@ -134,6 +135,9 @@ export function RaidTargetFinderPage({
       ),
     [visibleTargets, subtextByPlanetId],
   );
+  // VEY-KANEO-448: the same always-visible universe summary shown on Rankings, so both surfaces
+  // surface active fleet movements identically even when a target is filtered out or scrolled past.
+  const universeMissions = useMemo(() => universeActiveMissionLines(activeMissions ?? [], now), [activeMissions, now]);
 
   const toggleSort = (key: RaidTargetSortKey) => {
     setSort((current) =>
@@ -161,6 +165,8 @@ export function RaidTargetFinderPage({
       ) : null}
 
       <IncomingThreatsBanner now={now} threats={threats} />
+
+      <ActiveFleetMovementsBanner missions={universeMissions} />
 
       {error ? (
         <div className="rounded border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
