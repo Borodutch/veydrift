@@ -344,6 +344,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             _buildingLevels[planetId][Building.SolarPlant],
             _buildingLevels[planetId][Building.FusionReactor],
             _shipCounts[planetId][Ship.SolarSatellite],
+            _shipCounts[planetId][Ship.Crawler],
             planetRef.temperature,
             _technologyLevels[planetRef.owner][Technology.Energy],
             planetRef.metalMultiplierBps,
