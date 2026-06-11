@@ -39,6 +39,7 @@ const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d2
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
+const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
 const planet: SettledPlanetEvent = {
   eventName: "PlanetStarted",
   transactionHash: "0xabc",
@@ -991,6 +992,168 @@ describe("SettlementIndexer", () => {
     // Launchable roster still excludes the 3 departed ships, matching the authoritative on-chain count of 1
     // — no phantom ships, so the launch no longer reverts. The next reconcile restores any that survived.
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(1);
+  });
+
+  test("credits a returned non-combat fleet back to the launchable roster from events alone (VEY-KANEO-461/460)", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    // 4 small cargo (ship id 0) on planet 7.
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-sc",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(4n, 4n)
+    });
+
+    // Launch a Transport (mission type 0 — no combat losses possible) carrying 3 small cargo.
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(80n), addressTopic(player), topic(0n)],
+      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch",
+      logIndex: "0x1",
+      topics: [fleetMissionShipsTopic, topic(80n)],
+      data: abiWords(3n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    // In flight: the 3 are debited, 1 launchable.
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(1);
+
+    // The fleet physically returns home. A non-combat return brought every ship back (the contract
+    // credited them), so the launchable roster must restore the full 4 from event integration alone
+    // — no canonical reconcile / on-chain read involved (this is the New Zion 6:9:1 case).
+    indexer.applyLog({
+      blockNumber: "0x95",
+      transactionHash: "0xreturn",
+      logIndex: "0x0",
+      topics: [fleetMissionReturnedTopic, topic(80n), addressTopic(player), topic(7n)],
+      data: "0x"
+    });
+
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(4);
+    // A returned non-combat mission needs no bounded reconcile.
+    expect(indexer.drainFleetMissionReconcilePlanets()).toEqual([]);
+  });
+
+  test("keeps a returned combat fleet debited until a bounded reconcile pins survivors (VEY-KANEO-461)", async () => {
+    let onchainSmallCargo = 4;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async getShipyardState() {
+        return {
+          wallet: player,
+          homePlanetId: planet.planetId,
+          planetId: planet.planetId,
+          productionAvailable: true,
+          resources: planet.resources,
+          fleetSlots: { active: 0, limit: 1 },
+          shipyardLevel: 0,
+          naniteLevel: 0,
+          technologyLevels: {},
+          // On-chain survivor count after the battle: 2 of the 3 attackers came home (1 lost).
+          ships: [{ id: 0, count: onchainSmallCargo, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+          queue: null
+        };
+      }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    // 4 small cargo built, then an Attack (mission type 3) launches with 3 of them.
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-sc",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(4n, 4n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(81n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch",
+      logIndex: "0x1",
+      topics: [fleetMissionShipsTopic, topic(81n)],
+      data: abiWords(3n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    // Combat resolves then the survivors come home. A combat return can have lost ships the contract
+    // emits no count event for, so the projection must KEEP subtracting the full launch — never
+    // over-report — until a bounded canonical read learns the real survivor count.
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: "0xresolve",
+      logIndex: "0x0",
+      topics: [fleetMissionResolvedTopic, topic(81n)],
+      data: abiWords(1770002400n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x95",
+      transactionHash: "0xreturn",
+      logIndex: "0x0",
+      topics: [fleetMissionReturnedTopic, topic(81n), addressTopic(player), topic(7n)],
+      data: "0x"
+    });
+
+    // Still debited (1 launchable) — no phantom ships even after the combat fleet is "home".
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(1);
+
+    // The settled combat mission queued its origin + target for a bounded reconcile.
+    const targets = indexer.drainFleetMissionReconcilePlanets();
+    expect(targets).toContain("7");
+    expect(targets).toContain("99");
+
+    // The bounded reconcile reads just this planet's authoritative survivor count (2) and advances its
+    // reconcile baseline, so the launchable roster lands exactly on chain — no universe sweep.
+    onchainSmallCargo = 2;
+    const report = await indexer.reconcilePlanetState("7");
+    expect(report?.reachedChain).toBe(true);
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(2);
+  });
+
+  test("drainFleetMissionReconcilePlanets ignores non-combat settlements and dedupes (VEY-KANEO-461)", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    // A non-combat Transport that settles must not trigger any on-chain reconcile.
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xt-launch",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(90n), addressTopic(player), topic(0n)],
+      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x95",
+      transactionHash: "0xt-return",
+      logIndex: "0x0",
+      topics: [fleetMissionReturnedTopic, topic(90n), addressTopic(player), topic(7n)],
+      data: "0x"
+    });
+    expect(indexer.drainFleetMissionReconcilePlanets()).toEqual([]);
+    // Draining clears the queue.
+    expect(indexer.drainFleetMissionReconcilePlanets()).toEqual([]);
   });
 
   test("applies duplicate webhook logs only once", () => {
