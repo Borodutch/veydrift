@@ -36,6 +36,11 @@ type BuildingKey =
 
 const BPS = 10_000;
 const RAID_PROTECTED_STORAGE_BPS = 0;
+// Share of (unprotected) resources an attacker can actually haul away in a raid.
+// Mirrors the on-chain default plunder rate (plunderBps = 5000 = 50%, see
+// VeydriftClient.getAttackProtectionStatus in evm.ts). Without this, raidable loot
+// shown on Rankings/Raid Finder reported 100% of resources — ~2x the real haul (VEY-451).
+const RAID_PLUNDER_BPS = 5000;
 
 export const buildingCount = 16;
 export const defenseCount = 10;
@@ -240,7 +245,10 @@ export function deriveInfrastructureFields(
     },
     productionPerHour: productionPerHour(levels, planet, energy),
     protectedResources,
-    raidableResources: subtractResources(planet.resources, protectedResources),
+    raidableResources: scaleResources(
+      subtractResources(planet.resources, protectedResources),
+      RAID_PLUNDER_BPS
+    ),
     storageCaps: caps
   };
 }
