@@ -8,7 +8,8 @@ import { formatCost } from "../buildingDetails";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../moonActions";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { PageHeader, RefreshButton } from "./PageHeader";
-import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
+import { InlineSyncIndicator } from "./VeydriftLoader";
+import { MoonSkeleton } from "./LoadingSkeletons";
 
 interface MoonPageProps {
   action?: { status: "idle" | "pending" | "success" | "error"; label?: string } | undefined;
@@ -66,7 +67,7 @@ export function MoonPage({
           />
         </>
       ) : loading ? (
-        <VeydriftLoader label="Reading lunar telemetry" />
+        <MoonSkeleton />
       ) : moonUnavailable ? (
         <MoonStatusPanel
           title={moonState?.indexedNotReady ? "Moon state is indexing" : "Moon systems unavailable"}

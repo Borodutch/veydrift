@@ -82,7 +82,8 @@ describe("HTTP JSON-RPC transport", () => {
         callsByMethod: {
           eth_call: 2
         },
-        httpRequests: 1
+        httpRequests: 1,
+        timeouts: 0
       });
     } finally {
       globalThis.fetch = previousFetch;
@@ -117,8 +118,94 @@ describe("HTTP JSON-RPC transport", () => {
         callsByMethod: {
           eth_call: 2
         },
-        httpRequests: 1
+        httpRequests: 1,
+        timeouts: 0
       });
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  test("aborts a hung RPC fetch at the request timeout and retries before failing", async () => {
+    const previousFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    let abortedCalls = 0;
+
+    // A fetch that never resolves on its own — it only settles when the transport aborts the signal,
+    // reproducing the Alchemy live-read timeout storm where the socket hangs indefinitely.
+    globalThis.fetch = ((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
+      new Promise((_resolve, reject) => {
+        fetchCalls += 1;
+        const signal = init?.signal;
+        const onAbort = () => {
+          abortedCalls += 1;
+          reject(new DOMException("The operation was aborted.", "AbortError"));
+        };
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
+        signal?.addEventListener("abort", onAbort, { once: true });
+      })) as unknown as typeof fetch;
+
+    try {
+      const transport = new HttpJsonRpcTransport("https://rpc.example", {
+        cacheTtlMs: 0,
+        minRequestIntervalMs: 0,
+        requestTimeoutMs: 20
+      });
+
+      await expect(
+        transport.request<string>("eth_call", [
+          { to: "0x0000000000000000000000000000000000000001", data: "0x181c1bc4" },
+          "latest"
+        ])
+      ).rejects.toThrow(/timed out after 20ms/i);
+
+      // Three attempts, each aborted at the deadline — no fetch is left hanging.
+      expect(fetchCalls).toBe(3);
+      expect(abortedCalls).toBe(3);
+      // The storm is observable on the metrics surfaced by /health and /debug/indexer.
+      expect(transport.snapshot().timeouts).toBe(3);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  test("recovers when a slow RPC fetch times out once then succeeds on retry", async () => {
+    const previousFetch = globalThis.fetch;
+    let fetchCalls = 0;
+
+    globalThis.fetch = ((_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      fetchCalls += 1;
+      if (fetchCalls === 1) {
+        return new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("The operation was aborted.", "AbortError")),
+            { once: true }
+          );
+        });
+      }
+      return Promise.resolve(
+        Response.json({ jsonrpc: "2.0", id: 1, result: "0x1234" })
+      );
+    }) as unknown as typeof fetch;
+
+    try {
+      const transport = new HttpJsonRpcTransport("https://rpc.example", {
+        cacheTtlMs: 0,
+        minRequestIntervalMs: 0,
+        requestTimeoutMs: 20
+      });
+
+      await expect(
+        transport.request<string>("eth_call", [
+          { to: "0x0000000000000000000000000000000000000001", data: "0x181c1bc4" },
+          "latest"
+        ])
+      ).resolves.toBe("0x1234");
+      expect(fetchCalls).toBe(2);
     } finally {
       globalThis.fetch = previousFetch;
     }

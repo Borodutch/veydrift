@@ -23,7 +23,7 @@ import {
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton } from "./PageHeader";
 import { PlanetMissionLines } from "./PlanetMissionLines";
-import { VeydriftLoader } from "./VeydriftLoader";
+import { RaidTargetsSkeleton } from "./LoadingSkeletons";
 
 type RaidTargetFinderPageProps = {
   // Universe-wide active fleet missions (the unfiltered `/missions?status=active` feed). Drives the
@@ -173,9 +173,7 @@ export function RaidTargetFinderPage({
       <div className="min-w-0 max-w-full overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
         <RaidTargetTableHeader onSort={toggleSort} sort={sort} />
         {loading && !hasLoaded ? (
-          <div className="p-3">
-            <VeydriftLoader label="Scanning for raid targets" />
-          </div>
+          <RaidTargetsSkeleton />
         ) : visibleTargets.length === 0 ? (
           <div className="px-3 py-8 text-center text-sm text-slate-500">
             {hasLoaded
