@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   activeMissionsByPlanetId,
+  countPlanetsWithActiveMissions,
   maxPlanetMissionLines,
   planetMissionSubtext,
 } from "./planetMissionSubtext";
@@ -241,5 +242,39 @@ describe("planetMissionSubtext sorting and overflow", () => {
     const subtext = planetMissionSubtext("home", OWNER, [m], NOW);
     expect(subtext.lines).toHaveLength(0);
     expect(subtext.overflow).toBe(0);
+  });
+});
+
+describe("countPlanetsWithActiveMissions (Rankings discoverability signal)", () => {
+  test("counts each distinct planet that carries at least one active mission line", () => {
+    // Mirrors live mission #231: Illusive Man (planet 23) attacking planet 2. Both endpoints get a line.
+    const attack = mission({ missionId: "231", owner: "0xIllusive", originPlanetId: "23", targetPlanetId: "2" });
+    const byPlanet = activeMissionsByPlanetId([attack]);
+    const planets = [
+      { planetId: "23", owner: "0xIllusive" }, // attacker's planet -> "Own Attack" line
+      { planetId: "2", owner: "0xVictim" }, // victim's planet -> "Incoming Attack from …" line
+      { planetId: "99", owner: "0xQuiet" }, // no missions -> not counted
+    ];
+    expect(countPlanetsWithActiveMissions(planets, byPlanet, NOW)).toBe(2);
+  });
+
+  test("does not double-count a planet listed twice", () => {
+    const attack = mission({ missionId: "1", owner: "0xA", originPlanetId: "A", targetPlanetId: "B" });
+    const byPlanet = activeMissionsByPlanetId([attack]);
+    const planets = [
+      { planetId: "A", owner: "0xA" },
+      { planetId: "A", owner: "0xA" },
+    ];
+    expect(countPlanetsWithActiveMissions(planets, byPlanet, NOW)).toBe(1);
+  });
+
+  test("ignores planets whose only mission has no resolvable event timestamp", () => {
+    const stale = mission({ missionId: "1", owner: "0xA", originPlanetId: "A", targetPlanetId: "B", arrivalAt: "0", returnAt: "0" });
+    const byPlanet = activeMissionsByPlanetId([stale]);
+    expect(countPlanetsWithActiveMissions([{ planetId: "A" }, { planetId: "B" }], byPlanet, NOW)).toBe(0);
+  });
+
+  test("returns 0 for an empty feed", () => {
+    expect(countPlanetsWithActiveMissions([{ planetId: "A", owner: "0xA" }], new Map(), NOW)).toBe(0);
   });
 });
