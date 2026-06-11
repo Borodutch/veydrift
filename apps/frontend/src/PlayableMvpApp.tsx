@@ -40,11 +40,8 @@ import {
 } from "./data/mockUniverse";
 import {
   buildingContractIds,
-  energyBalance,
-  productionPerHour,
   progress,
   researchCatalog,
-  storageCaps,
   type BuildingKey,
   type DefenseKey,
   type EnergyBalance,
@@ -1053,29 +1050,19 @@ export function homePlanetIdentityRefreshKey({
 export function topBarEnergyFor({
   infrastructureChainState,
   isWalletConnected,
-  planetProductionProfile,
-  settledState,
 }: {
   infrastructureChainState: ChainInfrastructureState | null;
   isWalletConnected: boolean;
-  planetProductionProfile?: PlanetProductionProfile | undefined;
-  settledState: PlayableState;
 }): EnergyBalance | undefined {
+  // VEY-KANEO-465: energy balance is backend-derived (`energyBalance` on
+  // /infrastructure, with the full source breakdown, VEY-KANEO-464). The frontend
+  // displays it directly and no longer recomputes it from indexed building levels;
+  // when the backend has not provided it, show nothing rather than inventing a
+  // value.
   if (!isWalletConnected || !infrastructureChainState) {
     return undefined;
   }
-
-  const localEnergy = energyBalance(
-    settledState.buildings,
-    settledState.research.energy,
-    settledState.ships.solarSatellite,
-    planetProductionProfile,
-  );
-  const chainEnergy = energyBalanceFromChain(infrastructureChainState.energyBalance);
-
-  if (!chainEnergy) return localEnergy;
-  if (chainEnergy.sources) return chainEnergy;
-  return localEnergy.sources ? { ...chainEnergy, sources: localEnergy.sources } : chainEnergy;
+  return energyBalanceFromChain(infrastructureChainState.energyBalance) ?? undefined;
 }
 
 export function infrastructureUnavailableReasonFor({
@@ -3147,36 +3134,28 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     onChainSettlement?.planet?.metalMultiplierBps,
     onChainSettlement?.planet?.temperature,
   ]);
+  // VEY-KANEO-465: production rate is backend-derived (`productionPerHour` on
+  // /infrastructure, VEY-KANEO-464) — no client recomputation. Zeros until the
+  // backend value has loaded; skeleton loaders cover the initial load and React
+  // Query keeps the last value during a background refresh.
   const rates = useMemo(() => {
     const production = infrastructureChainState?.productionPerHour;
-    if (!production) {
-      return productionPerHour(
-        settledState.buildings,
-        planetProductionProfile,
-        settledState.research.energy,
-        settledState.ships.solarSatellite,
-      );
-    }
     return {
-      metal: Number(production.metal),
-      crystal: Number(production.crystal),
-      deuterium: Number(production.deuterium),
+      metal: production ? Number(production.metal) : 0,
+      crystal: production ? Number(production.crystal) : 0,
+      deuterium: production ? Number(production.deuterium) : 0,
     };
-  }, [
-    infrastructureChainState?.productionPerHour,
-    planetProductionProfile,
-    settledState.buildings,
-    settledState.research.energy,
-  ]);
+  }, [infrastructureChainState?.productionPerHour]);
+  // VEY-KANEO-465: storage caps are backend-derived (`storageCaps` on
+  // /infrastructure) — no client recomputation.
   const caps = useMemo(() => {
     const nextCaps = infrastructureChainState?.storageCaps;
-    if (!nextCaps) return storageCaps(settledState.buildings);
     return {
-      metal: Number(nextCaps.metal),
-      crystal: Number(nextCaps.crystal),
-      deuterium: Number(nextCaps.deuterium),
+      metal: nextCaps ? Number(nextCaps.metal) : 0,
+      crystal: nextCaps ? Number(nextCaps.crystal) : 0,
+      deuterium: nextCaps ? Number(nextCaps.deuterium) : 0,
     };
-  }, [infrastructureChainState?.storageCaps, settledState.buildings]);
+  }, [infrastructureChainState?.storageCaps]);
   // VEY-KANEO-465: display backend-derived resource state only — the frontend no
   // longer projects/accrues resources against its own clock, takes an
   // element-wise minimum of two snapshots, or freezes a free-running projection.
@@ -3349,14 +3328,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     return topBarEnergyFor({
       infrastructureChainState,
       isWalletConnected,
-      planetProductionProfile,
-      settledState,
     });
   }, [
     infrastructureChainState,
     isWalletConnected,
-    planetProductionProfile,
-    settledState,
   ]);
 
   useEffect(() => {
