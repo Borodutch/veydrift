@@ -16,7 +16,7 @@ import {
 import { StationedDefenseSection } from "./MissionControlPage";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import type { RequirementTarget } from "./RequirementFlairs";
-import { VeydriftLoader } from "./VeydriftLoader";
+import { CatalogSkeleton } from "./LoadingSkeletons";
 
 type DefenseActionState =
   | { status: "idle" }
@@ -130,7 +130,7 @@ export function DefensePage({
       ) : null}
 
       {initialLoading ? (
-        <VeydriftLoader label="Reading defenses" />
+        <CatalogSkeleton label="Loading defenses" />
       ) : (
         <ProductionCatalog
           actionPending={actionState.status === "pending"}

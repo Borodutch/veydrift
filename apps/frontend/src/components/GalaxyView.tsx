@@ -36,7 +36,8 @@ import {
 import { isImageReady } from "../imageLoadState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
-import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
+import { InlineSyncIndicator } from "./VeydriftLoader";
+import { GalaxyRowsSkeleton } from "./LoadingSkeletons";
 
 const SMALL_CARGO_SHIP_ID = 0;
 const defaultMissionShips = (): Partial<MissionShips> => ({ smallCargo: 1 });
@@ -374,7 +375,7 @@ export function GalaxyView({
         ) : null}
 
         <div className="grid gap-1.5">
-          {showInitialGalaxyLoader ? <VeydriftLoader label="Mapping galaxy" /> : null}
+          {showInitialGalaxyLoader ? <GalaxyRowsSkeleton /> : null}
           {loading && hasCurrentSystemData ? <InlineSyncIndicator label="Refreshing galaxy" /> : null}
 
           {showInitialLoadError ? (

@@ -4,7 +4,8 @@ import { formatUserTimestamp } from "../timestampFormat";
 import type { ChainRiftState, PendingWithdrawal, RiftResourceKey, RiftResourceState } from "../walletFlow";
 import { PageHeader, RefreshButton } from "./PageHeader";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
-import { InlineSyncIndicator, VeydriftLoader } from "./VeydriftLoader";
+import { InlineSyncIndicator } from "./VeydriftLoader";
+import { RiftSkeleton } from "./LoadingSkeletons";
 
 type RiftActionState =
   | { status: "idle" }
@@ -82,7 +83,7 @@ export function RiftPage({
       {loading && riftState ? <InlineSyncIndicator label="Refreshing Rift" /> : null}
 
       {initialLoading ? (
-        <VeydriftLoader label="Stabilizing Rift" />
+        <RiftSkeleton />
       ) : locked ? (
         <LockedRiftState
           onOpenRequirement={onOpenRequirement}
