@@ -855,6 +855,68 @@ describe("ChainSyncService", () => {
     expect(service.snapshot().selfHealRecoveredEvents).toBe(0);
     service.stop();
   });
+
+  test("periodically reconciles the canonical read-model against on-chain getters", async () => {
+    MockWebSocket.instances = [];
+    const reconcileReasons: string[] = [];
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      markStale() {},
+      async reconcile(reason: string) {
+        reconcileReasons.push(reason);
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      canonicalReconcileIntervalMs: 2
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The bounded periodic timer refreshes canonical state from the authoritative getters
+    // even when no gap, reorg, or dropped log was ever detected.
+    expect(reconcileReasons).toContain("periodic canonical reconcile");
+    service.stop();
+  });
+
+  test("periodic canonical reconcile is disabled when the interval is zero", async () => {
+    MockWebSocket.instances = [];
+    const reconcileReasons: string[] = [];
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      markStale() {},
+      async reconcile(reason: string) {
+        reconcileReasons.push(reason);
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      canonicalReconcileIntervalMs: 0
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(reconcileReasons).not.toContain("periodic canonical reconcile");
+    service.stop();
+  });
 });
 
 function abiWords(...values: bigint[]): string {

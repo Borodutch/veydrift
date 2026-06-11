@@ -636,6 +636,66 @@ describe("SettlementIndexer", () => {
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(4);
   });
 
+  test("rebuild surfaces and self-heals canonical drift from the authoritative on-chain getters (VEY-452)", async () => {
+    // Authoritative on-chain light-fighter (ship id 1) count, mutated between reconciles to
+    // simulate a state-changing event (e.g. ships lost in combat) the live feed never delivered.
+    let onchainShipCount = 5;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async getShipyardState() {
+        return {
+          wallet: player,
+          homePlanetId: planet.planetId,
+          planetId: planet.planetId,
+          productionAvailable: true,
+          resources: planet.resources,
+          fleetSlots: { active: 0, limit: 1 },
+          shipyardLevel: 1,
+          naniteLevel: 0,
+          technologyLevels: {},
+          ships: [{ id: 1, count: onchainShipCount, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+          queue: null
+        };
+      }
+    }, 100n);
+
+    // First reconcile seeds the read-model from chain: 5 light fighters.
+    await indexer.rebuild();
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
+
+    // On-chain the count drops to 3, but no live event reached the backend — the served
+    // read-model is now stale-high, exactly the VEY-447 phantom/lost-ship divergence.
+    onchainShipCount = 3;
+
+    const warnings: Array<{ message: unknown; payload: unknown }> = [];
+    const originalWarn = console.warn;
+    console.warn = (message?: unknown, payload?: unknown) => {
+      warnings.push({ message, payload });
+    };
+    try {
+      await indexer.rebuild();
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    // The periodic reconcile overwrites the read-model with the authoritative count — drift self-heals.
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(3);
+
+    // The divergence was surfaced as an invariant/validation warning before it was corrected.
+    const driftWarning = warnings.find((entry) => entry.message === "Veydrift canonical state drift self-healed");
+    expect(driftWarning).toBeDefined();
+    const payload = driftWarning?.payload as {
+      total: number;
+      byKind: Record<string, number>;
+      samples: Array<{ kind: string; itemId?: number; served: string; onchain: string }>;
+    };
+    expect(payload.byKind.ship).toBeGreaterThanOrEqual(1);
+    expect(payload.samples.find((sample) => sample.kind === "ship" && sample.itemId === 1))
+      .toMatchObject({ served: "5", onchain: "3" });
+  });
+
   test("availableShipRows does not double-subtract a mission the reconcile baseline already absorbed (VEY-KANEO-447)", async () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

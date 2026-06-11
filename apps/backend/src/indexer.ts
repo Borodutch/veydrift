@@ -1189,7 +1189,11 @@ export class SettlementIndexer {
     const allianceDirectory = this.chainReader.listAllianceDirectoryState
       ? await this.chainReader.listAllianceDirectoryState()
       : [];
+    let driftReport: CanonicalDriftReport | null = null;
     const rebuild = this.db.transaction(() => {
+      // Capture how far the live-event derivation drifted from the authoritative getters
+      // before we overwrite it, so the correction is observable (invariant/validation).
+      driftReport = this.detectCanonicalDrift(canonicalState);
       this.db.query("DELETE FROM indexed_planets").run();
       this.db.query("DELETE FROM indexed_debris_fields").run();
       this.db.query("DELETE FROM indexed_moon_chance_reports").run();
@@ -1216,6 +1220,9 @@ export class SettlementIndexer {
       this.recordSuccessfulReconciliation(latestBlock);
     });
     rebuild();
+    if (driftReport) {
+      this.reportCanonicalDrift(driftReport, "reconcile");
+    }
     return this.snapshot();
   }
 
@@ -1841,6 +1848,93 @@ export class SettlementIndexer {
     }));
 
     return state;
+  }
+
+  /**
+   * Compare the currently-served canonical read-model against the freshly-read authoritative
+   * on-chain state, BEFORE it is overwritten. Discrete quantities (building levels, ship and
+   * defense counts, research levels) come straight from contract getters with no time
+   * component, so any mismatch is genuine drift the live-event derivation introduced since the
+   * last reconcile. Resources accrue continuously, so they are only flagged past a generous
+   * relative threshold. The returned report is the invariant/validation signal the keystone
+   * ticket asks for: it makes divergence observable and proves the reconcile self-heals it.
+   */
+  private detectCanonicalDrift(state: CanonicalReconciliationState): CanonicalDriftReport {
+    const report: CanonicalDriftReport = {
+      total: 0,
+      byKind: { building: 0, ship: 0, defense: 0, research: 0, resources: 0 },
+      samples: []
+    };
+    const record = (entry: CanonicalDriftEntry): void => {
+      report.total += 1;
+      report.byKind[entry.kind] += 1;
+      if (report.samples.length < CANONICAL_DRIFT_SAMPLE_LIMIT) {
+        report.samples.push(entry);
+      }
+    };
+
+    for (const [planetId, buildings] of state.buildings) {
+      for (const building of buildings) {
+        const served = this.indexedLevel("contract_building_levels", "building_id", planetId, building.id);
+        if (served !== building.level) {
+          record({ scope: planetId, kind: "building", itemId: building.id, served: String(served), onchain: String(building.level) });
+        }
+      }
+    }
+    for (const [planetId, ships] of state.ships) {
+      for (const ship of ships) {
+        const served = this.indexedLevel("contract_ship_counts", "ship_id", planetId, ship.id);
+        if (served !== ship.count) {
+          record({ scope: planetId, kind: "ship", itemId: ship.id, served: String(served), onchain: String(ship.count) });
+        }
+      }
+    }
+    for (const [planetId, defenses] of state.defenses) {
+      for (const defense of defenses) {
+        const served = this.indexedLevel("contract_defense_counts", "defense_id", planetId, defense.id);
+        if (served !== defense.count) {
+          record({ scope: planetId, kind: "defense", itemId: defense.id, served: String(served), onchain: String(defense.count) });
+        }
+      }
+    }
+    for (const [owner, technologies] of state.research) {
+      for (const technology of technologies) {
+        const served = this.technologyLevel(owner, technology.id);
+        if (served !== technology.level) {
+          record({ scope: owner, kind: "research", itemId: technology.id, served: String(served), onchain: String(technology.level) });
+        }
+      }
+    }
+    for (const [planetId, resources] of state.resources) {
+      const served = this.planetResourceSnapshot(planetId);
+      if (!served) continue;
+      for (const field of ["metal", "crystal", "deuterium"] as const) {
+        if (resourceDrifts(served[field], resources[field])) {
+          record({ scope: planetId, kind: "resources", field, served: served[field], onchain: resources[field] });
+        }
+      }
+    }
+
+    return report;
+  }
+
+  private technologyLevel(owner: string, technologyId: number): number {
+    const row = this.db.query(`
+      SELECT level AS value
+      FROM contract_technology_levels
+      WHERE owner = lower(?) AND technology_id = ?
+    `).get(owner, technologyId) as { value: number } | null;
+    return row?.value ?? 0;
+  }
+
+  private reportCanonicalDrift(report: CanonicalDriftReport, reason: string): void {
+    if (report.total === 0) return;
+    console.warn("Veydrift canonical state drift self-healed", {
+      reason,
+      total: report.total,
+      byKind: report.byKind,
+      samples: report.samples
+    });
   }
 
   private clearCanonicalState(): void {
@@ -3098,6 +3192,33 @@ type CanonicalReconciliationState = {
   verifiedEmptyQueues: Set<string>;
 };
 
+type CanonicalDriftKind = "building" | "ship" | "defense" | "research" | "resources";
+
+type CanonicalDriftEntry = {
+  scope: string;
+  kind: CanonicalDriftKind;
+  itemId?: number;
+  field?: string;
+  served: string;
+  onchain: string;
+};
+
+type CanonicalDriftReport = {
+  total: number;
+  byKind: Record<CanonicalDriftKind, number>;
+  samples: CanonicalDriftEntry[];
+};
+
+// How many drift entries to keep as a sample in the logged report (avoid log spam on a
+// cold start where every planet legitimately differs from the empty read-model).
+const CANONICAL_DRIFT_SAMPLE_LIMIT = 20;
+// Resources accrue continuously on-chain, so the stored baseline always trails
+// `previewResources` by one accrual window. Only flag a divergence when it is far larger
+// than that window — a relative gap this big means a real derivation bug (e.g. the 3x
+// over-report in VEY-429), not accrual lag.
+const CANONICAL_DRIFT_RESOURCE_RELATIVE_BPS = 500n; // 5%
+const CANONICAL_DRIFT_RESOURCE_MIN_ABSOLUTE = 100n;
+
 function moonChanceReportKey(event: MoonChanceReportEvent): string {
   return event.outcomeId ? `outcome:${event.outcomeId}` : `battle:${event.battleId}:${event.targetPlanetId}`;
 }
@@ -3112,6 +3233,27 @@ function queueKey(event: Pick<IndexedQueueStartedEvent | IndexedQueueCompletedEv
 
 function isPlanetQueueKind(value: string): value is "building" | "defense" | "ship" {
   return value === "building" || value === "defense" || value === "ship";
+}
+
+function safeBigInt(value: string): bigint | null {
+  try {
+    return BigInt(value);
+  } catch {
+    return null;
+  }
+}
+
+// A served resource baseline "drifts" from the authoritative on-chain value only when the
+// gap is both absolutely and relatively large enough that accrual lag cannot explain it.
+function resourceDrifts(served: string, onchain: string): boolean {
+  const a = safeBigInt(served);
+  const b = safeBigInt(onchain);
+  if (a === null || b === null) return false;
+  const diff = a > b ? a - b : b - a;
+  if (diff < CANONICAL_DRIFT_RESOURCE_MIN_ABSOLUTE) return false;
+  const magnitude = b > a ? b : a;
+  if (magnitude === 0n) return diff >= CANONICAL_DRIFT_RESOURCE_MIN_ABSOLUTE;
+  return diff * 10_000n > magnitude * CANONICAL_DRIFT_RESOURCE_RELATIVE_BPS;
 }
 
 function openIndexerDatabase(databasePath: string): Database {

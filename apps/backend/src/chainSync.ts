@@ -103,6 +103,7 @@ export class ChainSyncService {
   private selfHealTimer: ReturnType<typeof setInterval> | undefined;
   private lastSelfHealAt: string | null = null;
   private selfHealRecoveredEvents = 0;
+  private canonicalReconcileTimer: ReturnType<typeof setInterval> | undefined;
 
   constructor(
     private readonly config: BackendConfig,
@@ -116,6 +117,7 @@ export class ChainSyncService {
       reconcileThrottleMs?: number;
       selfHealIntervalMs?: number;
       selfHealDepthBlocks?: number;
+      canonicalReconcileIntervalMs?: number;
     } = {}
   ) {}
 
@@ -141,6 +143,10 @@ export class ChainSyncService {
       return 256n;
     }
     return BigInt(Math.floor(configured));
+  }
+
+  private canonicalReconcileIntervalMs(): number {
+    return this.options.canonicalReconcileIntervalMs ?? 180_000;
   }
 
   snapshot(): ChainSyncSnapshot {
@@ -201,6 +207,7 @@ export class ChainSyncService {
     this.pendingReconcileReason = null;
     this.stopHeartbeat();
     this.stopSelfHeal();
+    this.stopCanonicalReconcile();
     const socket = this.socket;
     this.socket = null;
     socket?.close();
@@ -242,6 +249,7 @@ export class ChainSyncService {
     this.lastActivityAt = Date.now();
     this.startHeartbeat();
     this.startSelfHeal();
+    this.startCanonicalReconcile();
     this.subscribe("logs");
     this.subscribe("newHeads");
     if (reconnectingAfterProgress) {
@@ -258,6 +266,7 @@ export class ChainSyncService {
     this.requestKinds.clear();
     this.stopHeartbeat();
     this.stopSelfHeal();
+    this.stopCanonicalReconcile();
     if (!this.stopped) {
       this.scheduleReconnect();
     }
@@ -641,6 +650,41 @@ export class ChainSyncService {
     if (fromBlock > latest) return;
 
     void this.backfillRange(backfiller, fromBlock, "latest", "periodic self-heal", { selfHeal: true });
+  }
+
+  /**
+   * Periodically reconcile the canonical read-model against the authoritative on-chain
+   * getters (previewResources / shipCount / buildingLevel / defenseCount / technologyLevel).
+   *
+   * Self-heal backfill only replays dropped *event logs* back through the (event-derived)
+   * derivation — it cannot correct a derivation that is itself wrong (bad accrual, missed
+   * loot/spend, storage-cap handling). A bounded periodic full reconcile re-reads the
+   * authoritative contract views and overwrites the canonical tables, so any drift in
+   * either direction self-corrects within one cycle. It is rate-limited by
+   * `reconcileThrottleMs` (and the indexer's own batched, cached eth_calls), so this is a
+   * coarse heartbeat — NOT a per-block storm.
+   */
+  private startCanonicalReconcile(): void {
+    this.stopCanonicalReconcile();
+    const interval = this.canonicalReconcileIntervalMs();
+    if (interval <= 0) return;
+    if (!this.indexer?.reconcile && !this.indexer?.rebuild) return;
+    this.canonicalReconcileTimer = setInterval(() => this.canonicalReconcileTick(), interval);
+  }
+
+  private stopCanonicalReconcile(): void {
+    if (this.canonicalReconcileTimer) {
+      clearInterval(this.canonicalReconcileTimer);
+      this.canonicalReconcileTimer = undefined;
+    }
+  }
+
+  private canonicalReconcileTick(): void {
+    if (this.stopped || !this.connected) return;
+    if (!this.indexer?.reconcile && !this.indexer?.rebuild) return;
+    // Route through the throttled path so a periodic reconcile and a gap/reorg-driven
+    // reconcile collapse into a single pass instead of stacking rebuilds.
+    this.requestReconciliation("periodic canonical reconcile");
   }
 
   private startHeartbeat(): void {
