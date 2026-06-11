@@ -5174,13 +5174,15 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     />
   );
 
-  const mobilePlanetSelector = walletPlanets.length > 0 ? (
-    <PlanetSelector
-      layout="mobile"
-      onSelect={handleSelectManagedPlanet}
-      planets={walletPlanets}
-      selectedPlanetId={activePlanetId}
-    />
+  const compactPlanetSelector = walletPlanets.length > 0 ? (
+    <div className="mb-3 lg:hidden">
+      <PlanetSelector
+        layout="mobile"
+        onSelect={handleSelectManagedPlanet}
+        planets={walletPlanets}
+        selectedPlanetId={activePlanetId}
+      />
+    </div>
   ) : null;
 
   const planetSidebar = walletPlanets.length > 0 ? (
@@ -5688,11 +5690,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           account={account}
           active={page}
           coordinates={homeCoordinateLabel}
-          mobilePlanetSelector={walletPlanets.length > 1 ? mobilePlanetSelector : undefined}
           onNavigate={handleNavigate}
         />
 
         <main className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">
+          {compactPlanetSelector}
           {content}
         </main>
 
@@ -5721,8 +5723,6 @@ function PlanetSelector({
   if (!selectedPlanet) return null;
 
   if (layout === "mobile") {
-    if (planets.length < 2) return null;
-
     return (
       <section aria-label="Select planet" className="overflow-x-auto">
         <div className="flex min-w-max gap-2 pb-1">
@@ -5792,6 +5792,9 @@ function PlanetSelectorButton({
       </span>
       <span className="block max-w-full truncate text-[0.68rem] font-medium leading-4 text-slate-200">
         {planetDisplayName(planet)}
+      </span>
+      <span className="block max-w-full truncate font-mono text-[0.6rem] leading-3 text-slate-400">
+        {planet.coordinates}
       </span>
     </button>
   );

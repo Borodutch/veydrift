@@ -1,4 +1,3 @@
-import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
 import { ArrowLeftRight, Crosshair, Factory, FlaskConical, Menu, Moon, Orbit, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
@@ -27,7 +26,6 @@ interface NavBarProps {
   active: Page;
   coordinates?: string | undefined;
   account?: string | undefined;
-  mobilePlanetSelector?: ComponentChildren | undefined;
   onNavigate: (page: Page) => void;
 }
 
@@ -46,7 +44,7 @@ const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: Lucide
   { key: "raid-target-finder", label: "Raid Finder", mobileLabel: "Raids", icon: Crosshair },
 ];
 
-export function NavBar({ active, account, coordinates, mobilePlanetSelector, onNavigate }: NavBarProps) {
+export function NavBar({ active, account, coordinates, onNavigate }: NavBarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -135,7 +133,6 @@ export function NavBar({ active, account, coordinates, mobilePlanetSelector, onN
             className="grid gap-3 border-t border-white/10 bg-[#08101d]/98 p-3 shadow-2xl shadow-black/30"
             id="mobile-navigation-menu"
           >
-            {mobilePlanetSelector}
             <nav aria-label="Mobile app sections" className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
               {pages.map((page) => (
                 <MobileTab
