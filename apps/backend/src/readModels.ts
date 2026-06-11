@@ -37,6 +37,13 @@ type BuildingKey =
 const BPS = 10_000;
 const RAID_PROTECTED_STORAGE_BPS = 0;
 
+// Mirror of VeydriftAntiRaidPrimitives.BASE_RAID_LOOT_BPS (= VeydriftGameStorage.RAID_LOOT_BPS):
+// an attacker only carries off a fraction of a planet's exposed (unprotected) balance per raid.
+// On-chain, _selectRaidLoot / maxRaidLoot caps each resource at exposed * RAID_BASE_LOOT_BPS / BPS,
+// so the LOOT surfaced on Rankings / Raid Finder must reflect that fraction rather than the full
+// exposed balance, which previously overstated real raidable resources by ~2x. (VEY-KANEO-451)
+export const RAID_BASE_LOOT_BPS = 5_000;
+
 export const buildingCount = 16;
 export const defenseCount = 10;
 export const supportedShipIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] as const;
@@ -448,6 +455,15 @@ function scaleResources(resources: Resources, bps: number): Resources {
     crystal: scaleByBps(Number(resources.crystal), bps),
     deuterium: scaleByBps(Number(resources.deuterium), bps)
   });
+}
+
+// Convert a planet's exposed (unprotected) balance into the resources an attacker can actually
+// loot, applying the on-chain raid loot fraction (RAID_BASE_LOOT_BPS). Each resource is floored
+// independently, matching VeydriftPlanetManagementModule._selectRaidLoot. The on-chain cargo
+// capacity cap is intentionally omitted here: the indexed tactical summary has no attacker fleet
+// context, so it surfaces the per-resource loot cap (~50% of exposed) as the Raid Finder LOOT.
+export function raidLootFromExposed(exposed: Resources): Resources {
+  return scaleResources(exposed, RAID_BASE_LOOT_BPS);
 }
 
 function subtractResources(left: Resources, right: Resources): Resources {

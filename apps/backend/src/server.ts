@@ -47,7 +47,7 @@ import {
   verifyPlayerDisplayNameSignature,
   type PlayerProfile
 } from "./playerProfiles";
-import { deriveInfrastructureFields, isCombatShipId } from "./readModels";
+import { deriveInfrastructureFields, isCombatShipId, raidLootFromExposed } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
 const jsonHeaders = {
@@ -2140,9 +2140,13 @@ export function indexedPlanetTacticalSummary(
   technologyLevels: Record<string, number>
 ): RankedHighscorePlanet["tactical"] {
   const fallbackResources = planet.resources ?? { metal: "0", crystal: "0", deuterium: "0" };
-  const raidableResources = buildings.length > 0
+  const exposedResources = buildings.length > 0
     ? deriveInfrastructureFields(planet, buildings, ships, technologyLevels).raidableResources ?? fallbackResources
     : fallbackResources;
+  // LOOT on Rankings / Raid Finder must reflect what an attacker can actually carry off, which is
+  // the on-chain raid loot fraction (~50%) of the exposed balance, not the full exposed balance.
+  // Surfacing the unscaled exposed resources overstated real raidable loot by ~2x. (VEY-KANEO-451)
+  const raidableResources = raidLootFromExposed(exposedResources);
   const shipSummary = tacticalUnitSummary(ships);
   const defenseSummary = tacticalUnitSummary(defenses);
   // COMBAT is a fighting-strength figure, not an inventory value: non-combat ships

@@ -26,7 +26,7 @@ import type {
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import { VeydriftGameReader, riftRequirements } from "./evm";
 import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
-import { createRequestHandler, deriveLogBackfiller } from "./server";
+import { createRequestHandler, deriveLogBackfiller, indexedPlanetTacticalSummary } from "./server";
 
 const configuredTestConfig: BackendConfig = {
   chainId: 84532,
@@ -86,6 +86,21 @@ const planet: PlanetState = {
     deuterium: "4800"
   }
 };
+
+describe("Raid Finder / Rankings loot (VEY-KANEO-451)", () => {
+  test("surfaces only the on-chain raid loot fraction (~50%) of exposed resources, not the full balance", () => {
+    const tactical = indexedPlanetTacticalSummary(planet, [], [], [], {});
+
+    // planet.resources = 5000 / 4900 / 4800. Storage protection is currently 0 bps, so the
+    // exposed balance equals the full balance; LOOT must reflect RAID_BASE_LOOT_BPS (50%) of it.
+    expect(tactical.raidableResources).toEqual({
+      metal: "2500",
+      crystal: "2450",
+      deuterium: "2400"
+    });
+    expect(tactical.raidableResourceTotal).toBe("7350");
+  });
+});
 
 describe("Rift requirement projection", () => {
   test("matches the current Interdimensional Rift Stabilizer build dependencies", () => {
@@ -1314,11 +1329,11 @@ describe("Veydrift backend", () => {
           },
           tactical: {
             raidableResources: {
-              metal: "5000",
-              crystal: "4900",
-              deuterium: "4800"
+              metal: "2500",
+              crystal: "2450",
+              deuterium: "2400"
             },
-            raidableResourceTotal: "14700",
+            raidableResourceTotal: "7350",
             ships: {
               count: 2,
               power: expect.any(String)
@@ -3876,11 +3891,11 @@ describe("Veydrift backend", () => {
           archetype: "temperate-ocean",
           tactical: {
             raidableResources: {
-              metal: "5000",
-              crystal: "4900",
-              deuterium: "4800"
+              metal: "2500",
+              crystal: "2450",
+              deuterium: "2400"
             },
-            raidableResourceTotal: "14700",
+            raidableResourceTotal: "7350",
             ships: {
               count: expect.any(Number),
               power: expect.any(String)
