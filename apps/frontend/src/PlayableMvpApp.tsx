@@ -5377,6 +5377,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           now={now}
           onCompleteReturn={handleCompleteMissionReturn}
           onCounterplay={handleMissionCounterplay}
+          onDefendPlanet={homeCoords ? () => handleSelectPlanet(homeCoords) : undefined}
           onJoinAttack={handleJoinAttack}
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}
@@ -5427,6 +5428,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           loading={defenseLoading}
           now={now}
           onBuild={handleBuildDefense}
+          onDefendPlanet={homeCoords ? () => handleSelectPlanet(homeCoords) : undefined}
           onFinish={handleFinishDefenseProduction}
           onOpenMission={handleOpenMissionReport}
           onOpenRequirement={handleOpenRequirement}

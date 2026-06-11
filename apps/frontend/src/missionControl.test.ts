@@ -321,6 +321,39 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("allied fleets stationed in defense");
   });
 
+  test("VEY-KANEO-440: surfaces an actionable 'Defend a planet' button in the Stationed defenses panel", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // The repeated QA bounce was that the panel only *told* players to "choose Defend" but offered no
+    // control on the surfaces QA inspects (Mission Control + Defenses). With an onDefendPlanet handler
+    // the panel must render a clickable entry that opens the proactive Defend flow.
+    let defendOpens = 0;
+    const tree = MissionControlPage({
+      ...missionControlProps(now, {}),
+      onDefendPlanet: () => { defendOpens += 1; },
+    });
+
+    const text = collectText(tree).join(" ").replace(/\s+/g, " ");
+    expect(text).toContain("Defend a planet");
+    // Copy now references the button it sits beside rather than a bare instruction.
+    expect(text).toContain("Use Defend a planet above to open a planet");
+
+    const defendButton = findElements(tree, "button").find(
+      (element) => collectText(element.props?.children).join(" ").includes("Defend a planet"),
+    );
+    expect(defendButton).toBeDefined();
+    (defendButton?.props?.onClick as (() => void) | undefined)?.();
+    expect(defendOpens).toBe(1);
+  });
+
+  test("VEY-KANEO-440: omits the Defend CTA when no Defend entry point is available", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    // Without an onDefendPlanet handler (e.g. wallet/home planet unavailable) the button is hidden and
+    // the panel falls back to the instructional copy — no dead control.
+    const text = collectText(MissionControlPage(missionControlProps(now, {}))).join(" ").replace(/\s+/g, " ");
+    expect(text).not.toContain("Defend a planet");
+    expect(text).toContain("Pick one of your other colonies or an alliance member's planet");
+  });
+
   test("active missions render as cards with no table column headers (VEY-400)", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionControlPage(missionControlProps(now, {

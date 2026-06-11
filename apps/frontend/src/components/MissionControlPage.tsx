@@ -69,6 +69,9 @@ interface MissionControlPageProps {
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
+  // VEY-KANEO-440: opens the proactive Defend flow from the Stationed Defenses panel so the feature
+  // is discoverable from a top-level page, not just per-planet inspect. Optional for existing tests.
+  onDefendPlanet?: (() => void) | undefined;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
@@ -98,6 +101,7 @@ export function MissionControlPage({
   now,
   onCompleteReturn,
   onCounterplay,
+  onDefendPlanet,
   onJoinAttack,
   onOpenReport,
   onOpenReportList,
@@ -225,6 +229,7 @@ export function MissionControlPage({
           <StationedDefenseSection
             incoming={incoming}
             now={now}
+            onDefendPlanet={onDefendPlanet}
             onOpenReport={onOpenReport}
             outgoing={outgoing}
             planetLookup={planetLookup}
@@ -269,6 +274,7 @@ const EMPTY_PLANET_LOOKUP: ReadonlyMap<string, MissionPlanetIdentity> = new Map(
 export function StationedDefenseSection({
   incoming,
   now,
+  onDefendPlanet,
   onOpenReport,
   outgoing,
   // Mission endpoints render from each summary's embedded origin/target planet references (the backend
@@ -277,6 +283,12 @@ export function StationedDefenseSection({
 }: {
   incoming: FleetMissionSummary[];
   now: number;
+  // VEY-KANEO-440: a top-level entry point into the proactive Defend flow. Opens a planet where the
+  // Defend control is visible (the home planet always shows it — enabled for a coordinatable target,
+  // or disabled+explained on a single-colony wallet). Without this, the only Defend affordance lived
+  // inside per-planet inspect, a surface players never drill into, so the feature kept reading as
+  // missing in QA. Optional so non-interactive callers can omit it.
+  onDefendPlanet?: (() => void) | undefined;
   onOpenReport: (missionId: string) => void;
   outgoing: FleetMissionSummary[];
   planetLookup?: ReadonlyMap<string, MissionPlanetIdentity>;
@@ -298,12 +310,23 @@ export function StationedDefenseSection({
     <section className="grid gap-3 rounded-lg border border-violet-300/15 bg-violet-300/[0.03] p-4">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-violet-100">Stationed defenses</h2>
-        <span className="text-[11px] tabular-nums text-slate-400">{total}</span>
+        <div className="flex items-center gap-2">
+          {onDefendPlanet ? (
+            <button
+              className="rounded border border-violet-300/40 bg-violet-300/10 px-2.5 py-1 text-[11px] font-semibold text-violet-100 transition-colors hover:bg-violet-300/20"
+              onClick={onDefendPlanet}
+              type="button"
+            >
+              Defend a planet
+            </button>
+          ) : null}
+          <span className="text-[11px] tabular-nums text-slate-400">{total}</span>
+        </div>
       </div>
       {total === 0 ? (
         <p className="text-xs text-slate-400">
-          No fleets are stationed in defense yet. Pick one of your other colonies or an alliance member's
-          planet and choose <span className="text-violet-100">Defend</span> to station a fleet that holds
+          No fleets are stationed in defense yet.{onDefendPlanet ? <> Use <span className="text-violet-100">Defend a planet</span> above to open a planet, then choose </> : <> Pick one of your other colonies or an alliance member's planet and choose </>}
+          <span className="text-violet-100">Defend</span> to station a fleet that holds
           for a chosen duration, fighting any attack that lands while it holds. Defending another planet
           requires a second colony or an alliance member's planet to send the fleet to.
         </p>

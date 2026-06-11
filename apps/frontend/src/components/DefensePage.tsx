@@ -36,6 +36,9 @@ interface DefensePageProps {
   loading: boolean;
   now?: number | undefined;
   onBuild: (defenseId: number, key: DefenseKey, quantity: number) => void;
+  // VEY-KANEO-440: opens the proactive Defend flow from the Stationed Defenses panel so the feature
+  // is discoverable directly from the Defenses page, not just per-planet inspect.
+  onDefendPlanet?: (() => void) | undefined;
   onFinish: () => void;
   onOpenMission?: ((missionId: string) => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
@@ -77,6 +80,7 @@ export function DefensePage({
   loading,
   now,
   onBuild,
+  onDefendPlanet,
   onFinish,
   onOpenMission,
   onOpenRequirement,
@@ -119,6 +123,7 @@ export function DefensePage({
         <StationedDefenseSection
           incoming={fleetVisibility.incoming}
           now={now ?? 0}
+          onDefendPlanet={onDefendPlanet}
           onOpenReport={onOpenMission ?? (() => undefined)}
           outgoing={fleetVisibility.outgoing}
         />
