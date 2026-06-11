@@ -2143,18 +2143,21 @@ export function indexedPlanetTacticalSummary(
   const raidableResources = buildings.length > 0
     ? deriveInfrastructureFields(planet, buildings, ships, technologyLevels).raidableResources ?? fallbackResources
     : fallbackResources;
-  // The COMBAT metric is a fighting-strength proxy, so non-combat ships (Solar
-  // Satellites, Crawlers) must not contribute their build cost to it. (VEY-KANEO-450)
-  const combatShips = ships.filter((ship) => isCombatShipId(ship.id));
-  const shipSummary = tacticalUnitSummary(combatShips);
+  const shipSummary = tacticalUnitSummary(ships);
   const defenseSummary = tacticalUnitSummary(defenses);
+  // COMBAT is a fighting-strength figure, not an inventory value: non-combat ships
+  // (Solar Satellites, cargo, recyclers, colony ships, crawlers) carry a build cost but
+  // do not fight, so they are excluded from combat power even though they remain in the
+  // ship totals above. This keeps satellite-only / undefended planets reading as soft
+  // targets in the Raid Finder and Rankings COMBAT column. (VEY-KANEO-450)
+  const combatShipSummary = tacticalUnitSummary(ships.filter((ship) => isCombatShipId(ship.id)));
 
   return {
     raidableResources,
     raidableResourceTotal: resourceTotal(raidableResources).toString(),
     ships: shipSummary,
     defenses: defenseSummary,
-    combatPower: (BigInt(shipSummary.power) + BigInt(defenseSummary.power)).toString()
+    combatPower: (BigInt(combatShipSummary.power) + BigInt(defenseSummary.power)).toString()
   };
 }
 
