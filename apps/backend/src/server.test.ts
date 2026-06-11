@@ -2524,6 +2524,41 @@ describe("Veydrift backend", () => {
     expect(chainReader.rebuildCalls).toBe(1);
   });
 
+  test("cold-starts exactly one canonical rebuild, then serves pages without re-reading chain (VEY-KANEO-461)", async () => {
+    const chainReader = new MockChainReader();
+    const chainSync = {
+      start() {},
+      snapshot() {
+        return { connected: true, subscribedToHeads: true, subscribedToLogs: true };
+      },
+      addListener() {
+        return () => {};
+      }
+    } as unknown as import("./chainSync").ChainSyncService;
+    // No injected indexer → createRequestHandler builds one over a fresh (cold) in-memory DB and must
+    // fire a single background canonical rebuild to bootstrap it (VEY-KANEO-461). The old code also
+    // ran a 30s sweep + per-request reads on top; this asserts neither happens.
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      chainSync
+    });
+
+    // Let the fire-and-forget cold-start rebuild settle.
+    for (let i = 0; i < 50 && chainReader.rebuildCalls === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(chainReader.rebuildCalls).toBe(1);
+
+    // Serving player pages must not trigger any further chain history reads — steady state is the
+    // event-synced index only.
+    await handler(new Request(`http://localhost/wallet/${player}/shipyard`));
+    await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    await handler(new Request(`http://localhost/wallet/${player}/defenses`));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(chainReader.rebuildCalls).toBe(1);
+  });
+
   test("verifies and self-heals a planet's canonical state via /index/verify (VEY-KANEO-452)", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
@@ -2779,9 +2814,9 @@ describe("Veydrift backend", () => {
     expect(infrastructureBody.raidableResources.metal).toBe("2532");
   });
 
-  test("serves selected infrastructure planet resources from the authoritative chain previewResources read over stale indexed state", async () => {
+  test("serves selected infrastructure planet resources from the indexed DB without a per-request chain read (VEY-KANEO-461)", async () => {
     const wallet = "0x9ea58b89140f60b7a706e88128c56b9de62c8bd8" as Address;
-    const stalePlanet: SettledPlanetEvent = {
+    const indexedPlanet: SettledPlanetEvent = {
       ...planet,
       planetId: "10",
       owner: wallet,
@@ -2798,57 +2833,16 @@ describe("Veydrift backend", () => {
       transactionHash: "0xstale",
       blockNumber: "321"
     };
-    const previewResources = {
-      metal: "14214",
-      crystal: "3389",
-      deuterium: "1934"
-    };
     const chainReader = new MockChainReader();
-    chainReader.getInfrastructureState = (async (requestWallet: Address, selectedPlanetId?: bigint) => {
-      expect(requestWallet).toBe(wallet);
-      expect(selectedPlanetId).toBe(10n);
-      return {
-        wallet,
-        homePlanetId: "7",
-        planetId: "10",
-        planetLastSettledAt: "1780716473",
-        infrastructureAvailable: true,
-        resources: previewResources,
-        productionPerHour: {
-          metal: "1594",
-          crystal: "627",
-          deuterium: "148"
-        },
-        energyBalance: {
-          produced: "1000",
-          required: "800",
-          scaleBps: "10000"
-        },
-        storageCaps: {
-          metal: "20000",
-          crystal: "20000",
-          deuterium: "10000"
-        },
-        protectedResources: {
-          metal: "1000",
-          crystal: "1000",
-          deuterium: "1000"
-        },
-        raidableResources: {
-          metal: "6607",
-          crystal: "1194",
-          deuterium: "467"
-        },
-        technologyLevels: {},
-        buildings: [],
-        queue: null
-      };
+    // No authoritative read-through any more: opening a page must never hit the contract (AC2).
+    chainReader.getInfrastructureState = (async () => {
+      throw new Error("infrastructure page must be served from the indexed DB, never a live eth_call");
     }) as ChainReader["getInfrastructureState"];
     chainReader.listSettledPlanetEvents = async () => {
       throw new Error("warm resource endpoint should not rebuild from chain");
     };
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
-    indexer.applyEvent(stalePlanet);
+    indexer.applyEvent(indexedPlanet);
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
@@ -2859,75 +2853,18 @@ describe("Veydrift backend", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    // The served balance is the contract's authoritative previewResources read, NOT the
-    // drifted indexed snapshot — this is the upgrade-gate divergence fix (VEY-452).
-    expect(body.resources).toEqual(previewResources);
+    // The served balance is the indexed snapshot (no buildings → zero accrual), proving the page
+    // is answered from SQLite rather than a contract read.
+    expect(body.resources).toEqual(indexedPlanet.resources);
     expect(body.source).toBe("contract-state-indexer");
   });
 
-  test("uses fast authoritative infrastructure fields instead of the full page read when the index is warm", async () => {
-    const wallet = "0x9ea58b89140f60b7a706e88128c56b9de62c8bd8" as Address;
-    const stalePlanet: SettledPlanetEvent = {
-      ...planet,
-      planetId: "10",
-      owner: wallet,
-      eventName: "ColonyCreated",
-      transactionHash: "0xstale",
-      blockNumber: "321"
-    };
-    const previewResources = {
-      metal: "14214",
-      crystal: "3389",
-      deuterium: "1934"
-    };
+  test("serves shipyard ships from the indexed roster without a per-request chain read (VEY-KANEO-461)", async () => {
+    // The shipyard page is now served straight from the event-synced indexed roster; the contract
+    // getter must not be invoked per request (AC2).
     const chainReader = new MockChainReader();
-    chainReader.getInfrastructureState = async () => {
-      throw new Error("full infrastructure read should not run for warm indexed overlays");
-    };
-    (chainReader as ChainReader).getInfrastructureAuthoritativeFields = async (planetId: bigint) => {
-      expect(planetId).toBe(10n);
-      return {
-        resources: previewResources
-      };
-    };
-    chainReader.listSettledPlanetEvents = async () => {
-      throw new Error("warm resource endpoint should not rebuild from chain");
-    };
-    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
-    indexer.applyEvent(stalePlanet);
-    const handler = createRequestHandler({
-      config: configuredTestConfig,
-      chainReader,
-      indexer
-    });
-
-    const response = await handler(new Request(`http://localhost/wallet/${wallet}/infrastructure?planetId=10`));
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(body.resources).toEqual(previewResources);
-  });
-
-  test("serves shipyard ships from the authoritative on-chain shipCount over a drifted indexed roster", async () => {
-    // The contract emits no events for mission ship debits/credits, so the indexed roster
-    // drifts (the "I don't see my ships" / phantom-launch report, VEY-447). The served
-    // ships must be the contract's real shipCount, not the event-derived count.
-    const chainReader = new MockChainReader();
-    chainReader.getShipyardState = (async (requestWallet: Address) => {
-      expect(requestWallet).toBe(player);
-      return {
-        wallet: player,
-        homePlanetId: planet.planetId,
-        planetId: planet.planetId,
-        productionAvailable: true,
-        resources: planet.resources,
-        fleetSlots: { active: 0, limit: 1 },
-        shipyardLevel: 3,
-        naniteLevel: 0,
-        technologyLevels: {},
-        ships: [{ id: 0, count: 4, cost: { metal: "2000", crystal: "2000", deuterium: "0" } }],
-        queue: null
-      };
+    chainReader.getShipyardState = (async () => {
+      throw new Error("shipyard page must be served from the indexed DB, never a live eth_call");
     }) as ChainReader["getShipyardState"];
     chainReader.listSettledPlanetEvents = async () => {
       throw new Error("warm shipyard endpoint should not rebuild from chain");
@@ -2939,7 +2876,14 @@ describe("Veydrift backend", () => {
       transactionHash: "0xabc",
       blockNumber: "123"
     });
-    // Indexed roster says 0 of ship 0; the authoritative chain read says 4.
+    // A build completion the event indexer records — the roster the page serves comes from here.
+    indexer.applyLog({
+      blockNumber: "0x7d",
+      transactionHash: "0xship",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(4n)
+    });
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
@@ -2951,51 +2895,7 @@ describe("Veydrift backend", () => {
 
     expect(response.status).toBe(200);
     expect(body.ships).toContainEqual(expect.objectContaining({ id: 0, count: 4 }));
-    expect(body.shipyardLevel).toBe(3);
     expect(body.source).toBe("contract-state-indexer");
-  });
-
-  test("uses fast authoritative shipyard fields instead of the full page read when the index is warm", async () => {
-    const chainReader = new MockChainReader();
-    chainReader.getShipyardState = async () => {
-      throw new Error("full shipyard read should not run for warm indexed overlays");
-    };
-    (chainReader as ChainReader).getShipyardAuthoritativeFields = async (planetId: bigint, maxTemperature?: number) => {
-      expect(planetId).toBe(BigInt(planet.planetId));
-      expect(maxTemperature).toBe(planet.temperature);
-      return {
-        resources: { metal: "10455", crystal: "5070", deuterium: "1973" },
-        shipyardLevel: 3,
-        naniteLevel: 0,
-        ships: [
-          { id: 0, count: 5, cost: { metal: "2000", crystal: "2000", deuterium: "0" } },
-          { id: 1, count: 1, cost: { metal: "3000", crystal: "1000", deuterium: "0" } }
-        ]
-      };
-    };
-    chainReader.listSettledPlanetEvents = async () => {
-      throw new Error("warm shipyard endpoint should not rebuild from chain");
-    };
-    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
-    indexer.applyEvent({
-      ...planet,
-      eventName: "PlanetStarted",
-      transactionHash: "0xabc",
-      blockNumber: "123"
-    });
-    const handler = createRequestHandler({
-      config: configuredTestConfig,
-      chainReader,
-      indexer
-    });
-
-    const response = await handler(new Request(`http://localhost/wallet/${player}/shipyard`));
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(body.resources).toEqual({ metal: "10455", crystal: "5070", deuterium: "1973" });
-    expect(body.ships).toContainEqual(expect.objectContaining({ id: 0, count: 5 }));
-    expect(body.ships).toContainEqual(expect.objectContaining({ id: 1, count: 1 }));
   });
 
   test("serves post-spend indexed resources after multiple active queued spends", async () => {
@@ -3500,12 +3400,12 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("falls back to indexed infrastructure resources when the authoritative chain read fails", async () => {
+  test("serves indexed infrastructure resources without attempting an authoritative chain read", async () => {
     const chainReader = new MockChainReader();
     let liveReadCalled = false;
     chainReader.getInfrastructureState = async () => {
       liveReadCalled = true;
-      throw new Error("RPC HTTP 503");
+      throw new Error("infrastructure page must be served from the indexed DB, never a live eth_call");
     };
     chainReader.listSettledPlanetEvents = async () => {
       throw new Error("warm infrastructure index should not rebuild from chain");
@@ -3528,9 +3428,9 @@ describe("Veydrift backend", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-veydrift-index-state")).toBe("stale");
-    // The authoritative chain read is attempted first; on failure we fall back to the
-    // persisted indexed snapshot so the surface stays serveable during an RPC outage.
-    expect(liveReadCalled).toBe(true);
+    // No per-request chain read happens at all — the page is answered from the indexed snapshot
+    // (VEY-KANEO-461). The stubbed getter would throw if it were ever called.
+    expect(liveReadCalled).toBe(false);
     expect(body).toMatchObject({
       wallet: player,
       homePlanetId: planet.planetId,
@@ -3631,7 +3531,7 @@ describe("Veydrift backend", () => {
     await indexer.rebuild();
     chainReader.getInfrastructureState = async () => {
       liveReadCalled = true;
-      throw new Error("RPC HTTP 503");
+      throw new Error("infrastructure page must be served from the indexed DB, never a live eth_call");
     };
     indexer.applyLog({
       blockNumber: "0x83",
@@ -3655,8 +3555,8 @@ describe("Veydrift backend", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("x-veydrift-index-state")).toBe("healthy");
-    // Chain read attempted first; on failure the indexed (still-warming) snapshot is served.
-    expect(liveReadCalled).toBe(true);
+    // No chain read at all; the still-warming indexed snapshot is served directly (VEY-KANEO-461).
+    expect(liveReadCalled).toBe(false);
     expect(body).toMatchObject({
       wallet: player,
       homePlanetId: "125",
@@ -3676,7 +3576,7 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("attempts authoritative chain reads for player surfaces and falls back to indexed page state", async () => {
+  test("serves every player surface from indexed page state with no per-request chain reads (VEY-KANEO-461)", async () => {
     const chainReader = new MockChainReader();
     const liveReads: string[] = [];
     chainReader.getShipyardState = async () => {
@@ -3735,14 +3635,15 @@ describe("Veydrift backend", () => {
         detail: `${surface} loaded from DB-indexed contract state.`
       });
     }
-    // shipyard/defenses/research are now served authoritatively read-through (attempted,
-    // then fell back to indexed here because the stubs throw); moon/rift remain indexer-served.
-    expect(liveReads).toEqual(["shipyard", "defenses", "research"]);
+    // Every surface — shipyard/defenses/research included — is served from the indexed DB now;
+    // none of them issue a per-request chain read (VEY-KANEO-461).
+    expect(liveReads).toEqual([]);
   });
 
-  test("bounds hung authoritative shipyard reads and falls back to indexed page state", async () => {
+  test("serves the indexed shipyard page instantly and never waits on a chain read (VEY-KANEO-461)", async () => {
     const chainReader = new MockChainReader();
     let liveReadCalled = false;
+    // A getter that would hang forever — proving the page never awaits it.
     chainReader.getShipyardState = async () => {
       liveReadCalled = true;
       return new Promise<ShipyardState>(() => {});
@@ -3769,7 +3670,6 @@ describe("Veydrift backend", () => {
       data: abiWords(1n)
     });
     const handler = createRequestHandler({
-      authoritativeReadTimeoutMs: 5,
       config: configuredTestConfig,
       chainReader,
       indexer
@@ -3780,7 +3680,7 @@ describe("Veydrift backend", () => {
     const body = await response.json();
 
     expect(Date.now() - startedAt).toBeLessThan(500);
-    expect(liveReadCalled).toBe(true);
+    expect(liveReadCalled).toBe(false);
     expect(response.status).toBe(200);
     expect(response.headers.get("x-veydrift-index-state")).toBe("stale");
     expect(body).toMatchObject({
@@ -3950,18 +3850,10 @@ describe("Veydrift backend", () => {
     expect(riftBody).toMatchObject({ source: "contract-state-indexer", riftAvailable: true, unlocked: false });
   });
 
-  test("serves authoritative chain resources for planet detail when the index is warm", async () => {
+  test("serves planet detail from the indexed snapshot without a per-request chain read (VEY-KANEO-461)", async () => {
     const chainReader = new MockChainReader();
-    chainReader.getPlanet = async (planetId) => {
-      expect(planetId).toBe(7n);
-      return {
-        ...planet,
-        resources: {
-          metal: "14214",
-          crystal: "3389",
-          deuterium: "1934"
-        }
-      };
+    chainReader.getPlanet = async () => {
+      throw new Error("planet detail must be served from the indexed DB, never a live eth_call");
     };
     chainReader.listSettledPlanetEvents = async () => {
       throw new Error("warm planet index should not rebuild from chain");
@@ -3983,12 +3875,8 @@ describe("Veydrift backend", () => {
     await expect(response.json()).resolves.toMatchObject({
       planetId: planet.planetId,
       owner: player,
-      // Authoritative on-chain previewResources, not the stale indexed snapshot.
-      resources: {
-        metal: "14214",
-        crystal: "3389",
-        deuterium: "1934"
-      }
+      // The indexed snapshot's resources (no buildings → zero accrual), not a contract read.
+      resources: planet.resources
     });
     expect(response.status).toBe(200);
   });
