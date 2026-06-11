@@ -347,6 +347,16 @@ export class SettlementIndexer {
   // Planets with a bounded canonical reconcile currently in flight, so overlapping settlement events
   // don't fire duplicate eth_call sweeps for the same planet.
   private readonly planetReconcileInFlight = new Set<string>();
+  // Monotonic counter bumped by touch() on every applied state mutation. Read paths memoize
+  // whole-universe derivations against it and recompute only when integrated events actually
+  // changed state — never per request (VEY-KANEO-467).
+  private stateGeneration = 0;
+  // Memoized full highscore leaderboard (every owner's score + their planets). The leaderboard is a
+  // pure function of indexed state (no time/accrual component), so it is valid until the next
+  // touch(); see highscoreLeaderboard / stateVersion.
+  private leaderboardCache:
+    | { generation: number; planetsByOwner: Map<string, SettledPlanetEvent[]>; entries: HighscoreEntry[] }
+    | null = null;
 
   constructor(
     private readonly chainReader: Pick<
@@ -1033,6 +1043,29 @@ export class SettlementIndexer {
         technologies: levelRows(technologiesByOwner.get(owner.toLowerCase()))
       });
     });
+  }
+
+  // Whole-universe highscore leaderboard, memoized against the indexer's state generation. The
+  // scores depend only on integrated (completed) state, so the same result is valid for every
+  // request until the next touch() — turning the rankings / raid-finder hot path from an
+  // O(all-planets) recompute per request into an O(1) lookup between block integrations
+  // (VEY-KANEO-467). The accrual-to-now projection still runs per request, but only for the
+  // bounded set of planets visible on the requested page (see rankedHighscorePlanets).
+  highscoreLeaderboard(): { planetsByOwner: Map<string, SettledPlanetEvent[]>; entries: HighscoreEntry[] } {
+    const cached = this.leaderboardCache;
+    if (cached && cached.generation === this.stateGeneration) {
+      return cached;
+    }
+    const planetsByOwner = this.settledPlanetsByOwner();
+    const entries = this.highscoreEntriesForOwners(planetsByOwner);
+    this.leaderboardCache = { generation: this.stateGeneration, planetsByOwner, entries };
+    return this.leaderboardCache;
+  }
+
+  // Monotonic state version, bumped on every applied mutation. Lets read paths key their own
+  // memoization off "has the indexed state changed since I last computed this?" (VEY-KANEO-467).
+  stateVersion(): number {
+    return this.stateGeneration;
   }
 
   private indexedPlanetLevelRows(
@@ -3185,6 +3218,7 @@ export class SettlementIndexer {
   }
 
   private touch(): void {
+    this.stateGeneration += 1;
     this.setMetadata("lastRebuiltAt", new Date().toISOString());
   }
 
@@ -3515,7 +3549,15 @@ function openIndexerDatabase(databasePath: string): Database {
   const database = new Database(databasePath);
   database.exec("PRAGMA busy_timeout = 10000;");
   if (databasePath !== ":memory:") {
+    // Read-concurrency tuning for the API's read-heavy traffic (VEY-KANEO-467):
+    // - WAL lets readers run without blocking the background event-integration writer.
+    // - synchronous = NORMAL is the WAL-safe default (durable across app crashes; only a power
+    //   loss can lose the last commit, which the chain re-supplies on the next sync).
+    // - mmap_size / cache_size keep the hot read-model tables resident so warm reads avoid disk.
     database.exec("PRAGMA journal_mode = WAL;");
+    database.exec("PRAGMA synchronous = NORMAL;");
+    database.exec("PRAGMA mmap_size = 268435456;");
+    database.exec("PRAGMA cache_size = -16384;");
   }
   return database;
 }

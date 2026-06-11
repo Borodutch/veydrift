@@ -3694,6 +3694,45 @@ describe("SettlementIndexer", () => {
       staleReason: null
     });
   });
+
+  test("memoizes the highscore leaderboard against the state version and invalidates on mutation (VEY-KANEO-467)", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xlevel",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(5n)
+    });
+
+    const versionBefore = indexer.stateVersion();
+    const first = indexer.highscoreLeaderboard();
+    const second = indexer.highscoreLeaderboard();
+    // Repeated reads between block integrations return the SAME memoized object (no recompute).
+    expect(second).toBe(first);
+    expect(indexer.stateVersion()).toBe(versionBefore);
+    // The memoized entries match a direct, un-cached computation.
+    expect(first.entries).toEqual(indexer.highscoreEntriesForOwners(indexer.settledPlanetsByOwner()));
+    expect(first.entries.length).toBe(1);
+
+    // Integrating another event bumps the state version and invalidates the cache.
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xlevel2",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(1n)],
+      data: abiWords(7n)
+    });
+    expect(indexer.stateVersion()).toBeGreaterThan(versionBefore);
+    const third = indexer.highscoreLeaderboard();
+    expect(third).not.toBe(first);
+    expect(third.entries).toEqual(indexer.highscoreEntriesForOwners(indexer.settledPlanetsByOwner()));
+  });
 });
 
 function abiWords(...values: bigint[]): string {
