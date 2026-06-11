@@ -1174,7 +1174,18 @@ export class SettlementIndexer {
     return this.snapshot();
   }
 
+  // Recording the log, advancing the indexed head, and applying the event's side effects must commit as
+  // ONE atomic unit. Each was previously a separate auto-committed statement, so a handler that threw mid
+  // way (e.g. a decode failure) left the event row already inserted — which reads as a permanent duplicate
+  // on retry, so the side effect was lost forever — and left `latestIndexedBlock` advanced past an event
+  // whose state never applied. That ahead-of-state head then froze the reconcile baseline above
+  // already-returned fleets, hiding their ships from the shipyard. Wrapping the body in a transaction
+  // means a throw rolls back the row and the head together, so the sync layer can re-apply the log cleanly.
   applyLog(log: IndexedRpcLog): ApplyLogResult {
+    return this.db.transaction(() => this.applyLogAtomic(log))();
+  }
+
+  private applyLogAtomic(log: IndexedRpcLog): ApplyLogResult {
     const eventId = indexedLogKey(log);
     const existing = this.db.query("SELECT event_json FROM indexed_event_logs WHERE event_id = ?").get(eventId) as EventRow | null;
     if (existing) {
@@ -3207,8 +3218,24 @@ export class SettlementIndexer {
     this.setMetadata("reorgDetectedAt", new Date().toISOString());
   }
 
+  // `latestIndexedBlock` is the high-water mark of indexed blocks and the snapshot the departed-ships
+  // reconcile baseline is pinned to (refreshCanonicalStateUncached). It MUST only ever move forward.
+  // Logs do not always reach us in block order — a gap/reorg recovery or self-heal backfill can re-apply
+  // an older range after the live head feed has already advanced — and a non-monotonic write would drag
+  // the head backwards. A regressed head freezes the reconcile baseline below missions that have already
+  // launched AND returned, so the debit-only projection keeps subtracting them and their ships vanish
+  // from the shipyard (at-planet shows 0). Clamp to the max so a stale write can never lower it.
   private recordLatestBlock(blockNumber: string): void {
-    this.setMetadata("latestIndexedBlock", blockNumberToDecimal(blockNumber));
+    const next = blockNumberToDecimal(blockNumber);
+    const current = this.metadata("latestIndexedBlock");
+    if (current !== null) {
+      try {
+        if (BigInt(next) <= BigInt(current)) return;
+      } catch {
+        // If either value isn't a parseable integer, fall through and overwrite with the latest write.
+      }
+    }
+    this.setMetadata("latestIndexedBlock", next);
   }
 
   private recordSuccessfulReconciliation(latestBlock: string | null): void {

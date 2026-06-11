@@ -827,6 +827,110 @@ describe("SettlementIndexer", () => {
     await rebuilding;
   });
 
+  test("an out-of-order/backfilled older log cannot drag the indexed head back and freeze the reconcile baseline, hiding returned ships (VEY-KANEO-460)", async () => {
+    let onchainShipCount = 2;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async listCurrentPlanets() { return [planet]; },
+      async getShipyardState() {
+        return {
+          wallet: player,
+          homePlanetId: planet.planetId,
+          planetId: planet.planetId,
+          productionAvailable: true,
+          resources: planet.resources,
+          fleetSlots: { active: 1, limit: 1 },
+          shipyardLevel: 1,
+          naniteLevel: 0,
+          technologyLevels: {},
+          ships: [{ id: 1, count: onchainShipCount, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+          queue: null
+        };
+      }
+    }, 100n);
+
+    // Reconcile from the planet event (block 123) → lastReconciledBlock = "123", stored id1 = 2.
+    await indexer.rebuild();
+
+    // A mission launches AFTER the baseline at block 0x90 (144) with 1 light fighter; applyLog advances the
+    // indexed head to 144 and the debit-only projection nets the launch out → 1 launchable.
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch-460",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(61n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch-460",
+      logIndex: "0x1",
+      topics: [fleetMissionShipsTopic, topic(61n)],
+      data: abiWords(0n, 1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+    expect(indexer.snapshot().latestIndexedBlock).toBe("144");
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(1);
+
+    // A gap/self-heal backfill re-applies a previously-missed OLDER log (block 0x80 = 128 — here a ship
+    // build completion). A non-monotonic head write would drag latestIndexedBlock back to 128; the
+    // monotonic clamp must keep it at 144.
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xbackfill-460",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(4n, 4n)
+    });
+    expect(indexer.snapshot().latestIndexedBlock).toBe("144");
+
+    // The fleet comes home and the contract now reports 5 at the planet. The canonical refresh re-pins the
+    // roster to chain AND snapshots the indexed head (144) as the new baseline. With a head regressed to
+    // 128 the mission at 144 would still be subtracted (shipyard shows 4, the missing-ships bug); with the
+    // monotonic head it is absorbed and the full 5 are launchable.
+    onchainShipCount = 5;
+    await indexer.refreshCanonicalState();
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
+  });
+
+  test("applyLog is atomic: a handler that throws rolls back the event row and the indexed head, so the log is not poisoned as a duplicate (VEY-KANEO-460)", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    // Index one valid event so the head sits at a known block (0x83 = 131).
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-sc",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(4n, 4n)
+    });
+    expect(indexer.snapshot().indexedEventLogs).toBe(1);
+    expect(indexer.snapshot().latestIndexedBlock).toBe("131");
+
+    // A malformed PlanetShipCountChanged log at a LATER block (0x90 = 144): the topic matches so the
+    // handler runs, but the empty data payload makes the decoder throw partway through application.
+    const malformed = {
+      blockNumber: "0x90",
+      transactionHash: "0xmalformed",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(7n), topic(1n)],
+      data: "0x"
+    };
+    expect(() => indexer.applyLog(malformed)).toThrow();
+
+    // The transaction rolled back: the event row was NOT committed (so a retry will re-process it rather
+    // than skip it as a duplicate) and the indexed head did NOT advance past the unapplied event.
+    expect(indexer.snapshot().indexedEventLogs).toBe(1);
+    expect(indexer.snapshot().latestIndexedBlock).toBe("131");
+  });
+
   test("availableShipRows keeps subtracting a departed mission that already returned/was lost — reporter repro, 0 in flight (VEY-KANEO-447)", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

@@ -31,7 +31,7 @@ import {
 } from "./AlliancePage";
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton } from "./PageHeader";
-import { VeydriftLoader } from "./VeydriftLoader";
+import { InspectPanelSkeleton } from "./LoadingSkeletons";
 
 type PlayerInspectState =
   | { status: "loading" }
@@ -112,7 +112,7 @@ export function PlayerInspectPage({
       ) : null}
       onBack={onBack}
     >
-      {state.status === "loading" ? <VeydriftLoader label="Loading player" /> : null}
+      {state.status === "loading" ? <InspectPanelSkeleton label="Loading player" /> : null}
       {state.status === "error" ? <Notice tone="error">{state.label}</Notice> : null}
       {state.status === "loaded" ? (
         <div className="grid gap-4">
@@ -282,7 +282,7 @@ export function AllianceInspectPage({
         <RefreshButton disabled={actionBusy} loading={disabled} onRefresh={onRefresh} title="Refresh alliance state" />
       )}
     >
-      {!allianceState ? <VeydriftLoader label="Loading alliance" /> : null}
+      {!allianceState ? <InspectPanelSkeleton label="Loading alliance" /> : null}
       {allianceState && !alliance ? <Notice tone="error">Alliance details are not indexed for this id yet.</Notice> : null}
       {alliance ? (
         <div className="grid gap-4">

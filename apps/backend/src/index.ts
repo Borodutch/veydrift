@@ -1,4 +1,9 @@
+import { installCrashDiagnostics } from "./crashDiagnostics";
 import { createRequestHandler } from "./server";
+
+// Install before binding the port so a startup-time unhandled rejection or signal is captured with a
+// structured reason + memory snapshot (VEY-KANEO-459).
+installCrashDiagnostics();
 
 const port = Number.parseInt(process.env.PORT ?? "4000", 10);
 

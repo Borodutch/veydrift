@@ -4,7 +4,6 @@ import {
   assertWalletUnlocked,
   decodeBoolResult,
   decodeColonizationTargetId,
-  decodeResourcesResult,
   decodeUintResult,
   encodeQuantity,
   encodeAddressUintCall,
@@ -26,7 +25,6 @@ import {
   fetchInfrastructureState,
   fetchMoonState,
   fetchPlayerProfile,
-  fetchPreviewResources,
   fetchResearchState,
   fetchShipyardState,
   fetchWalletPlanets,
@@ -676,15 +674,8 @@ describe("walletFlow", () => {
     expect(missionData).toContain("0000000000000000000000000000000000000000000000000000000000000007");
     expect(missionData).toContain("0000000000000000000000000000000000000000000000000000000000000009");
     expect(missionData).not.toContain("0000000000000000000000000000000000000000000000000000000000000063");
+    // VEY-KANEO-463: no preflight eth_call — the launch goes straight to eth_sendTransaction.
     expect(requests).toEqual([
-      {
-        method: "eth_call",
-        params: [{
-          from: account,
-          to: contract,
-          data: missionData,
-        }, "latest"],
-      },
       {
         method: "eth_sendTransaction",
         params: [{
@@ -692,14 +683,6 @@ describe("walletFlow", () => {
           to: contract,
           data: missionData,
         }],
-      },
-      {
-        method: "eth_call",
-        params: [{
-          from: account,
-          to: contract,
-          data: colonyData,
-        }, "latest"],
       },
       {
         method: "eth_sendTransaction",
@@ -728,18 +711,20 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("preflights public Galaxy colonize attempts and reports missing colony ships before wallet submit", async () => {
+  // VEY-KANEO-463: no preflight eth_call — contract reverts surface from the eth_sendTransaction
+  // error path instead (the wallet simulates before signing; the same revert decoding applies).
+  test("reports missing colony ships from the colonize send revert", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
-      if (method === "eth_call") {
+      if (method === "eth_sendTransaction") {
         throw {
           code: 3,
           message: "execution reverted",
           data: customErrorData("0x705f508b", [3, 0, 1]),
         };
       }
-      throw new Error("eth_sendTransaction should not be called");
+      throw new Error(`Unexpected method ${method}`);
     });
 
     await expect(sendCreateColonyTransaction(provider, account, contract, "7", 2, 44, 10, 40))
@@ -747,7 +732,7 @@ describe("walletFlow", () => {
 
     expect(requests).toEqual([
       {
-        method: "eth_call",
+        method: "eth_sendTransaction",
         params: [{
           from: account,
           to: contract,
@@ -773,24 +758,24 @@ describe("walletFlow", () => {
             },
             speedPercent: 40,
           }),
-        }, "latest"],
+        }],
       },
     ]);
   });
 
-  test("reports occupied Galaxy colony slots before opening wallet submit", async () => {
+  test("reports occupied Galaxy colony slots from the send revert", async () => {
     const provider = mockProvider(async ({ method }) => {
-      if (method === "eth_call") {
+      if (method === "eth_sendTransaction") {
         throw { code: 3, message: "execution reverted", data: "0x13b7fff2" };
       }
-      throw new Error("eth_sendTransaction should not be called");
+      throw new Error(`Unexpected method ${method}`);
     });
 
     await expect(sendCreateColonyTransaction(provider, account, contract, "7", 2, 44, 10, 40))
       .rejects.toThrow("This position is already occupied");
   });
 
-  test("preflights fleet launches and reports stale ship counts before opening wallet submit", async () => {
+  test("reports stale ship counts from the fleet launch send revert", async () => {
     const ships = {
       smallCargo: 1,
       lightFighter: 0,
@@ -810,10 +795,10 @@ describe("walletFlow", () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
-      if (method === "eth_call") {
+      if (method === "eth_sendTransaction") {
         throw { code: 3, message: "execution reverted", data: "0x705f508b" };
       }
-      throw new Error("eth_sendTransaction should not be called");
+      throw new Error(`Unexpected method ${method}`);
     });
 
     await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
@@ -825,7 +810,7 @@ describe("walletFlow", () => {
 
     expect(requests).toEqual([
       {
-        method: "eth_call",
+        method: "eth_sendTransaction",
         params: [{
           from: account,
           to: contract,
@@ -835,12 +820,12 @@ describe("walletFlow", () => {
             missionType: 3,
             ships,
           }),
-        }, "latest"],
+        }],
       },
     ]);
   });
 
-  test("preflights fleet launches and reports cargo capacity failures before wallet submit", async () => {
+  test("reports cargo capacity failures from the fleet launch send revert", async () => {
     const ships = {
       smallCargo: 0,
       lightFighter: 1,
@@ -860,10 +845,10 @@ describe("walletFlow", () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
-      if (method === "eth_call") {
+      if (method === "eth_sendTransaction") {
         throw { code: 3, message: "execution reverted", data: "0xd7c35576" };
       }
-      throw new Error("eth_sendTransaction should not be called");
+      throw new Error(`Unexpected method ${method}`);
     });
 
     await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
@@ -875,7 +860,7 @@ describe("walletFlow", () => {
 
     expect(requests).toEqual([
       {
-        method: "eth_call",
+        method: "eth_sendTransaction",
         params: [{
           from: account,
           to: contract,
@@ -885,12 +870,12 @@ describe("walletFlow", () => {
             missionType: 3,
             ships,
           }),
-        }, "latest"],
+        }],
       },
     ]);
   });
 
-  test("submits fleet launches after successful preflight", async () => {
+  test("submits fleet launches straight to the wallet without a preflight read", async () => {
     const ships = {
       smallCargo: 1,
       lightFighter: 0,
@@ -916,8 +901,8 @@ describe("walletFlow", () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
-      if (method === "eth_call") return "0x";
-      return "0xfleet";
+      if (method === "eth_sendTransaction") return "0xfleet";
+      throw new Error(`Unexpected method ${method}`);
     });
 
     await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
@@ -928,61 +913,6 @@ describe("walletFlow", () => {
     })).resolves.toBe("0xfleet");
 
     expect(requests).toEqual([
-      {
-        method: "eth_call",
-        params: [{ from: account, to: contract, data }, "latest"],
-      },
-      {
-        method: "eth_sendTransaction",
-        params: [{ from: account, to: contract, data }],
-      },
-    ]);
-  });
-
-  test("submits fleet launches when the preflight simulation cannot reach the RPC", async () => {
-    const ships = {
-      smallCargo: 1,
-      lightFighter: 0,
-      recycler: 0,
-      colonyShip: 0,
-      largeCargo: 0,
-      heavyFighter: 0,
-      cruiser: 0,
-      battleship: 0,
-      bomber: 0,
-      destroyer: 0,
-      deathstar: 0,
-      battlecruiser: 0,
-      reaper: 0,
-      pathfinder: 0,
-    };
-    const data = encodeLaunchFleetMissionCall({
-      originPlanetId: 7,
-      targetPlanetId: 9,
-      missionType: 3,
-      ships,
-    });
-    const requests: unknown[] = [];
-    const provider = mockProvider(async ({ method, params }) => {
-      requests.push({ method, params });
-      if (method === "eth_call") {
-        throw { code: -32603, message: "Internal JSON-RPC error." };
-      }
-      return "0xfleet";
-    });
-
-    await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
-      originPlanetId: 7,
-      targetPlanetId: 9,
-      missionType: 3,
-      ships,
-    })).resolves.toBe("0xfleet");
-
-    expect(requests).toEqual([
-      {
-        method: "eth_call",
-        params: [{ from: account, to: contract, data }, "latest"],
-      },
       {
         method: "eth_sendTransaction",
         params: [{ from: account, to: contract, data }],
@@ -1016,7 +946,6 @@ describe("walletFlow", () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
-      if (method === "eth_call") return "0x";
       if (method === "eth_sendTransaction") {
         throw {
           code: -32603,
@@ -1041,10 +970,6 @@ describe("walletFlow", () => {
     })).rejects.toThrow("Selected origin planet does not have the requested ships");
 
     expect(requests).toEqual([
-      {
-        method: "eth_call",
-        params: [{ from: account, to: contract, data }, "latest"],
-      },
       {
         method: "eth_sendTransaction",
         params: [{ from: account, to: contract, data }],
@@ -1088,7 +1013,7 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("still blocks fleet launches when the preflight reverts without a known selector", async () => {
+  test("still surfaces a generic rejection when the fleet launch send reverts without a known selector", async () => {
     const ships = {
       smallCargo: 1,
       lightFighter: 0,
@@ -1106,10 +1031,10 @@ describe("walletFlow", () => {
       pathfinder: 0,
     };
     const provider = mockProvider(async ({ method }) => {
-      if (method === "eth_call") {
+      if (method === "eth_sendTransaction") {
         throw { code: 3, message: "execution reverted", data: "0xdeadbeef" };
       }
-      throw new Error("eth_sendTransaction should not be called");
+      throw new Error(`Unexpected method ${method}`);
     });
 
     await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
@@ -1362,39 +1287,6 @@ describe("walletFlow", () => {
     expect(decodeUintResult(`0x${"0".repeat(63)}7`)).toBe(7n);
   });
 
-  test("decodes a Resources struct (metal/crystal/deuterium words)", () => {
-    // Live `previewResources(1)` on game contract 0xf12f… (VEY-318 evidence):
-    // metal 0x2ead, crystal 0x288c, deuterium 0xfd3.
-    const hex = `0x${(0x2ead).toString(16).padStart(64, "0")}${(0x288c)
-      .toString(16)
-      .padStart(64, "0")}${(0xfd3).toString(16).padStart(64, "0")}`;
-    expect(decodeResourcesResult(hex)).toEqual({ metal: 11_949n, crystal: 10_380n, deuterium: 4_051n });
-  });
-
-  test("fetchPreviewResources eth_calls the previewResources selector and decodes the result", async () => {
-    const calls: Array<{ method: string; params?: unknown[] }> = [];
-    const provider = mockProvider(async (args) => {
-      calls.push(args);
-      return `0x${(1_000).toString(16).padStart(64, "0")}${(2_000)
-        .toString(16)
-        .padStart(64, "0")}${(3_000).toString(16).padStart(64, "0")}`;
-    });
-    const result = await fetchPreviewResources(provider, "0xf12f31734868F1089d9d6514D7F19a31Ec5e00e2", 1);
-    expect(result).toEqual({ metal: 1_000n, crystal: 2_000n, deuterium: 3_000n });
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.method).toBe("eth_call");
-    const callParams = calls[0]?.params as [{ to: string; data: string }, string];
-    expect(callParams[0].to).toBe("0xf12f31734868F1089d9d6514D7F19a31Ec5e00e2");
-    // Selector for previewResources(uint256) + planetId 1 (32-byte padded).
-    expect(callParams[0].data).toBe(`0x0adbf924${(1).toString(16).padStart(64, "0")}`);
-    expect(callParams[1]).toBe("latest");
-  });
-
-  test("fetchPreviewResources rejects an empty / short result instead of returning a 0 balance", async () => {
-    const provider = mockProvider(async () => "0x");
-    await expect(fetchPreviewResources(provider, "0xf12f", 1)).rejects.toThrow();
-  });
-
   test("switches to Base Sepolia when the wallet already knows the chain", async () => {
     const calls: string[] = [];
     const provider = mockProvider(async ({ method }) => {
@@ -1602,7 +1494,6 @@ describe("walletFlow", () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
-      if (method === "eth_call") return "0x";
       if (method === "eth_sendTransaction") {
         // A genuine on-chain revert with no decodable reason (no selector data),
         // wrapped in an internal JSON-RPC error.

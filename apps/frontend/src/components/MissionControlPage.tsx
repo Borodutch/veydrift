@@ -30,7 +30,7 @@ import {
   shortAddress,
 } from "./missionRoute";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
-import { VeydriftLoader } from "./VeydriftLoader";
+import { MissionControlSkeleton } from "./LoadingSkeletons";
 
 type MissionControlActionState =
   | { status: "idle" }
@@ -187,7 +187,7 @@ export function MissionControlPage({
         </Notice>
       )}
       {initialLoading ? (
-        <VeydriftLoader label="Mapping missions" />
+        <MissionControlSkeleton />
       ) : (
         <>
           {reportMissionId ? (
@@ -227,6 +227,7 @@ export function MissionControlPage({
           />
 
           <StationedDefenseSection
+            hideWhenEmpty
             incoming={incoming}
             now={now}
             onDefendPlanet={onDefendPlanet}
@@ -286,6 +287,11 @@ export function StationedDefenseSection({
   // shows the Defend control + its eligibility explanation — so the entry point is discoverable from the
   // screen that describes it.
   onDefendPlanet,
+  // VEY-KANEO-455: Mission Control aggregates many panels, so a "Stationed defenses" card showing only
+  // an empty state is noise there — hide the whole section until a fleet is actually stationed. The
+  // Defenses page (the dedicated defenses surface) leaves this off so its guidance/empty state stays
+  // visible, which is where the discoverable Defend entry point belongs.
+  hideWhenEmpty = false,
 }: {
   incoming: FleetMissionSummary[];
   now: number;
@@ -293,6 +299,7 @@ export function StationedDefenseSection({
   outgoing: FleetMissionSummary[];
   planetLookup?: ReadonlyMap<string, MissionPlanetIdentity>;
   onDefendPlanet?: (() => void) | undefined;
+  hideWhenEmpty?: boolean;
 }) {
   // Both the reactive AcsDefend (keyed to a specific attack) and the DefenseHold mission (stationed
   // for a chosen window, VEY-KANEO-441) count as fleets the player has stationed in defense.
@@ -306,6 +313,9 @@ export function StationedDefenseSection({
     .filter((mission) => (mission.counterplayDefenderMissionIds?.length ?? 0) > 0)
     .sort((left, right) => Number(left.arrivalAt) - Number(right.arrivalAt));
   const total = myStationed.length + defendedPlanets.length;
+
+  // VEY-KANEO-455: on Mission Control, render nothing until allied defenses are actually stationed.
+  if (hideWhenEmpty && total === 0) return null;
 
   return (
     <section className="grid gap-3 rounded-lg border border-violet-300/15 bg-violet-300/[0.03] p-4">

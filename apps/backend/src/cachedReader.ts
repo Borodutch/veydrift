@@ -217,7 +217,8 @@ export class CachedChainReader implements ChainReader {
     return this.inner.rpcMetrics?.() ?? {
       batchRequests: 0,
       callsByMethod: {},
-      httpRequests: 0
+      httpRequests: 0,
+      timeouts: 0
     };
   }
 

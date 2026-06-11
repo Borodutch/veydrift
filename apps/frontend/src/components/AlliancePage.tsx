@@ -7,6 +7,7 @@ import type { AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsRes
 import { fetchWalletPlanets, shortAddress } from "../walletFlow";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { VeydriftLoader } from "./VeydriftLoader";
+import { AllianceSkeleton } from "./LoadingSkeletons";
 
 export const allianceRosterPageSize = 10;
 export const allianceDirectoryPageSize = 10;
@@ -182,7 +183,7 @@ export function AlliancePage({
       {actionState.status !== "idle" ? <Notice tone={actionState.status === "error" ? "error" : "info"}>{actionState.label}</Notice> : null}
 
       {initialLoading ? (
-        <VeydriftLoader label="Loading alliance data" />
+        <AllianceSkeleton />
       ) : (
         <div className={`grid min-w-0 gap-4 ${!onOpenPlayer && playerProfile.status !== "idle" ? "xl:grid-cols-[minmax(0,1fr)_360px]" : ""}`}>
           <div className="grid gap-4">

@@ -786,6 +786,10 @@ export type RpcMetrics = {
   batchRequests: number;
   callsByMethod: Record<string, number>;
   httpRequests: number;
+  // Count of upstream RPC fetches aborted for exceeding the per-request deadline. Surfaced on /health
+  // and /debug/indexer so an Alchemy live-read timeout storm is visible before it escalates to a crash
+  // (VEY-KANEO-459).
+  timeouts: number;
 };
 
 export type VeydriftGameReaderOptions = {
@@ -833,20 +837,23 @@ export class HttpJsonRpcTransport {
   private readonly metrics: RpcMetrics = {
     batchRequests: 0,
     callsByMethod: {},
-    httpRequests: 0
+    httpRequests: 0,
+    timeouts: 0
   };
   private readonly cache = new Map<string, RpcCacheEntry<unknown>>();
   private readonly cacheTtlMs: number;
   private readonly minRequestIntervalMs: number;
+  private readonly requestTimeoutMs: number;
   private nextRequestAt = 0;
   private requestQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly rpcUrl: string,
-    options: { cacheTtlMs?: number; minRequestIntervalMs?: number } = {}
+    options: { cacheTtlMs?: number; minRequestIntervalMs?: number; requestTimeoutMs?: number } = {}
   ) {
     this.cacheTtlMs = options.cacheTtlMs ?? 2_000;
     this.minRequestIntervalMs = options.minRequestIntervalMs ?? 300;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? defaultRpcRequestTimeoutMs();
   }
 
   async request<T>(method: string, params: unknown[]): Promise<T> {
@@ -862,18 +869,27 @@ export class HttpJsonRpcTransport {
   private async requestUncached<T>(method: string, params: unknown[]): Promise<T> {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       this.metrics.httpRequests += 1;
-      const response = await this.fetchRpc({
-        method: "POST",
-        headers: {
-          "content-type": "application/json"
-        },
-        body: JSON.stringify({
-          jsonrpc: "2.0",
-          id: 1,
-          method,
-          params
-        })
-      });
+      let response: Response;
+      try {
+        response = await this.fetchRpc({
+          method: "POST",
+          headers: {
+            "content-type": "application/json"
+          },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method,
+            params
+          })
+        });
+      } catch (error) {
+        if (isRetryableTransportError(error) && attempt < 2) {
+          await retryDelay(attempt);
+          continue;
+        }
+        throw error;
+      }
 
       if (!response.ok) {
         if (isRetryableRpcHttpStatus(response.status) && attempt < 2) {
@@ -973,18 +989,27 @@ export class HttpJsonRpcTransport {
       this.metrics.batchRequests += 1;
       this.metrics.httpRequests += 1;
 
-      const response = await this.fetchRpc({
-        method: "POST",
-        headers: {
-          "content-type": "application/json"
-        },
-        body: JSON.stringify(requests.map((request, index) => ({
-          jsonrpc: "2.0",
-          id: index + 1,
-          method: request.method,
-          params: request.params
-        })))
-      });
+      let response: Response;
+      try {
+        response = await this.fetchRpc({
+          method: "POST",
+          headers: {
+            "content-type": "application/json"
+          },
+          body: JSON.stringify(requests.map((request, index) => ({
+            jsonrpc: "2.0",
+            id: index + 1,
+            method: request.method,
+            params: request.params
+          })))
+        });
+      } catch (error) {
+        if (isRetryableTransportError(error) && attempt < 2) {
+          await retryDelay(attempt);
+          continue;
+        }
+        throw error;
+      }
 
       if (!response.ok) {
         if (isRetryableRpcHttpStatus(response.status) && attempt < 2) {
@@ -1036,7 +1061,8 @@ export class HttpJsonRpcTransport {
     return {
       batchRequests: this.metrics.batchRequests,
       callsByMethod: { ...this.metrics.callsByMethod },
-      httpRequests: this.metrics.httpRequests
+      httpRequests: this.metrics.httpRequests,
+      timeouts: this.metrics.timeouts
     };
   }
 
@@ -1051,13 +1077,42 @@ export class HttpJsonRpcTransport {
         await retryDelayMs(waitMs);
       }
       this.nextRequestAt = Date.now() + this.minRequestIntervalMs;
-      return fetch(this.rpcUrl, init);
+      return this.fetchWithTimeout(init);
     });
     this.requestQueue = scheduled.then(
       () => undefined,
       () => undefined
     );
     return scheduled;
+  }
+
+  // Bound every upstream RPC fetch with an AbortController-backed deadline. Without this, a slow or
+  // hung Alchemy connection during a live-read timeout storm keeps its socket and promise alive
+  // indefinitely; the server-side withTimeout only stops *awaiting* the read, leaving the underlying
+  // fetch orphaned. Under a sustained storm those orphans accumulate without bound (sockets, file
+  // descriptors, buffered response bodies) until the Bun runtime crashes with SIGSEGV (139). Aborting
+  // at the deadline frees the socket promptly and surfaces a retryable timeout error (VEY-KANEO-459).
+  private async fetchWithTimeout(init: RequestInit): Promise<Response> {
+    if (!Number.isFinite(this.requestTimeoutMs) || this.requestTimeoutMs <= 0) {
+      return fetch(this.rpcUrl, init);
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+    timer.unref?.();
+    try {
+      return await fetch(this.rpcUrl, { ...init, signal: controller.signal });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        this.metrics.timeouts += 1;
+        throw new RpcRequestTimeoutError(this.requestTimeoutMs);
+      }
+      // Wrap raw network failures (connection reset, DNS, TLS) so the retry loop treats them as the
+      // transient transport faults they are instead of letting them escape as opaque fetch errors.
+      throw new RpcTransportError(error);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private cached<T>(key: string, load: () => Promise<T>): Promise<T> {
@@ -1149,7 +1204,8 @@ export class VeydriftGameReader implements ChainReader {
     return this.transport.snapshot?.() ?? {
       batchRequests: 0,
       callsByMethod: {},
-      httpRequests: 0
+      httpRequests: 0,
+      timeouts: 0
     };
   }
 
@@ -4810,6 +4866,48 @@ function shouldChunkLogQuery(error: unknown): boolean {
 
 function shouldRetryWithoutBatch(error: unknown): boolean {
   return error instanceof Error && /RPC HTTP (400|413)/i.test(error.message);
+}
+
+const defaultRpcRequestTimeoutMsValue = 10_000;
+
+// Per-fetch deadline for upstream RPC calls. Configurable so operators can tighten/loosen the abort
+// window without a redeploy during an Alchemy incident; falls back to 10s (well under the typical
+// load-balancer/socket idle limits) and ignores non-positive or unparseable overrides.
+export function defaultRpcRequestTimeoutMs(
+  env: Record<string, string | undefined> = process.env
+): number {
+  const raw = env.VEYDRIFT_RPC_HTTP_TIMEOUT_MS;
+  if (!raw) return defaultRpcRequestTimeoutMsValue;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return defaultRpcRequestTimeoutMsValue;
+  return parsed;
+}
+
+// Raised when an upstream RPC fetch is aborted because it exceeded the per-request deadline.
+export class RpcRequestTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`RPC request timed out after ${timeoutMs}ms`);
+    this.name = "RpcRequestTimeoutError";
+  }
+}
+
+// Wraps a raw network-layer fetch failure (connection reset, DNS, TLS) so the retry loop can treat it
+// as a transient transport fault rather than a permanent error.
+export class RpcTransportError extends Error {
+  constructor(cause: unknown) {
+    super(`RPC transport error: ${reasonText(cause)}`);
+    this.name = "RpcTransportError";
+    this.cause = cause;
+  }
+}
+
+function isRetryableTransportError(error: unknown): boolean {
+  return error instanceof RpcRequestTimeoutError || error instanceof RpcTransportError;
+}
+
+function reasonText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 function isRetryableRpcHttpStatus(status: number): boolean {
