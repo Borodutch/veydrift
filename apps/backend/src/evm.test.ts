@@ -800,6 +800,59 @@ describe("player queue startedAt", () => {
     });
     expect((getLogsTopics as string[])?.[0]).toBe(shipQueuedTopic);
   });
+
+  test("can skip queue startedAt log hydration for fast authoritative read-through", async () => {
+    const wallet = "0x0000000000000000000000000000000000000def" as Address;
+    const abiWords = (...values: bigint[]) => dataWords(values.map(word));
+    const itemId = 0n;
+    const quantity = 2n;
+    const readyAt = 1_700_000_600n;
+    const cost = { metal: 4_000n, crystal: 4_000n, deuterium: 0n };
+    let getLogsCalled = false;
+
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(method: string, params: unknown[]): Promise<T> {
+        if (method === "eth_call") {
+          const selector = (params[0] as { data: string }).data.slice(0, 10);
+          if (selector === "0xb8e835ab") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+          if (selector === "0x5758361d") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+          if (selector === "0x4f5ed437") return abiWords(0n, 0n) as T;
+          if (selector === "0xb6f4b7b7") {
+            return abiWords(1n, itemId, quantity, readyAt, cost.metal, cost.crystal, cost.deuterium) as T;
+          }
+          if (selector === "0x52b55205") return abiWords(0n, 0n) as T;
+          if (selector === "0x2b98afc7") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+          throw new Error(`Unexpected eth_call selector ${selector}`);
+        }
+        if (method === "eth_getLogs") {
+          getLogsCalled = true;
+          throw new Error("startedAt log scans should be skipped");
+        }
+        throw new Error(`Unexpected method ${method}`);
+      }
+    }, { hydrateQueueStartedAt: false });
+    (reader as unknown as {
+      getGameSettlement: (wallet: Address) => Promise<unknown>;
+    }).getGameSettlement = async () => ({
+      wallet,
+      hasFirstPlanet: true,
+      homePlanetId: "7",
+      planet: null,
+      contractKind: "game"
+    });
+
+    const queues = await reader.getPlayerQueues(wallet);
+
+    expect(getLogsCalled).toBe(false);
+    expect(queues.ship).toMatchObject({
+      active: true,
+      kind: "ship",
+      itemId: 0,
+      quantity: 2,
+      readyAt: readyAt.toString()
+    });
+    expect(queues.ship?.startedAt).toBeUndefined();
+  });
 });
 
 describe("fleet mission visibility", () => {

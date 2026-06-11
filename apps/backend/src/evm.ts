@@ -775,6 +775,10 @@ export type RpcMetrics = {
   httpRequests: number;
 };
 
+export type VeydriftGameReaderOptions = {
+  hydrateQueueStartedAt?: boolean;
+};
+
 type RpcCacheEntry<T> = {
   expiresAt: number;
   value: Promise<T>;
@@ -1102,10 +1106,12 @@ export class VeydriftGameReader implements ChainReader {
   private readonly logChunkSpan: bigint;
   private readonly resourceTokenAddresses: Partial<Record<RiftResourceKey, Address>>;
   private readonly settlementContractAddress: Address | undefined;
+  private readonly hydrateQueueStartedAt: boolean;
 
   constructor(
     config: BackendConfig,
-    transport?: Pick<HttpJsonRpcTransport, "request"> & Partial<Pick<HttpJsonRpcTransport, "requestBatch" | "snapshot">>
+    transport?: Pick<HttpJsonRpcTransport, "request"> & Partial<Pick<HttpJsonRpcTransport, "requestBatch" | "snapshot">>,
+    options: VeydriftGameReaderOptions = {}
   ) {
     if (!config.rpcUrl) {
       throw new Error("RPC URL is required.");
@@ -1123,6 +1129,7 @@ export class VeydriftGameReader implements ChainReader {
     this.logChunkSpan = config.logChunkSpan && config.logChunkSpan > 0n ? config.logChunkSpan : 2_000n;
     this.resourceTokenAddresses = config.resourceTokenAddresses ?? {};
     this.settlementContractAddress = config.settlementContractAddress;
+    this.hydrateQueueStartedAt = options.hydrateQueueStartedAt ?? true;
   }
 
   rpcMetrics(): RpcMetrics {
@@ -2373,11 +2380,15 @@ export class VeydriftGameReader implements ChainReader {
       cost: decodeResources(words.slice(4, 7))
     };
 
-    if (kind === "building" && active) {
+    if (!this.hydrateQueueStartedAt || !active) {
+      return queue;
+    }
+
+    if (kind === "building") {
       queue.startedAt = await this.readBuildingStartedAt(planetId, queue);
-    } else if (kind === "defense" && active) {
+    } else if (kind === "defense") {
       queue.startedAt = await this.readDefenseStartedAt(planetId, queue);
-    } else if (kind === "ship" && active) {
+    } else if (kind === "ship") {
       queue.startedAt = await this.readShipStartedAt(planetId, queue);
     }
 
