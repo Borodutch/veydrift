@@ -245,8 +245,13 @@ export function OverviewPage({
     buildingFinishAction,
   );
 
-  const planetName = homePlanet?.name
-    ?? (isWalletConnected && planet?.coordinates ? `Planet ${planet.coordinates}` : "Eos Relay");
+  // Only ever derive the planet name from real data: the loaded home planet's name, or a
+  // coordinate-derived label once coordinates hydrate. Never fall back to a hardcoded fake planet
+  // name; the hero renders a skeleton until a real name exists, and the disconnected state shows a
+  // connect-wallet card instead of a fabricated home planet (VEY-KANEO-458).
+  const livePlanetName = homePlanet?.name
+    ?? (planet?.coordinates ? `Planet ${planet.coordinates}` : undefined);
+  const planetName = livePlanetName ?? "";
   const [renameDraft, setRenameDraft] = useState(planetName);
   const [renamePanelOpen, setRenamePanelOpen] = useState(false);
   const [renameValidation, setRenameValidation] = useState<string | undefined>(undefined);
@@ -279,7 +284,7 @@ export function OverviewPage({
     }
   }, [currentPlanetKey, homePlanet?.image]);
 
-  const heroImage = overviewHeroImage(homePlanet, isWalletConnected, lastKnownHeroImage, currentPlanetKey);
+  const heroImage = overviewHeroImage(homePlanet, lastKnownHeroImage, currentPlanetKey);
 
   useLayoutEffect(() => {
     setHeroImageLoaded(isImageReady(heroImageRef.current));
@@ -435,7 +440,18 @@ export function OverviewPage({
         </div>
       )}
 
-      {/* Planet hero — compact, no wasted space */}
+      {/* Planet hero — compact, no wasted space. When the wallet is disconnected we show a clear
+          connect-wallet card instead of a fabricated home planet (VEY-KANEO-458). */}
+      {!isWalletConnected ? (
+        <div className="overflow-hidden rounded-lg border border-white/10 bg-[#101624] p-4 sm:p-5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Home planet</p>
+          <h2 className="mt-1 text-base font-semibold text-white">Connect your wallet</h2>
+          <p className="mt-2 max-w-prose text-sm leading-6 text-slate-300">
+            Connect your wallet to load your home planet, resources, and live game state. No planet
+            data is shown until your wallet is connected.
+          </p>
+        </div>
+      ) : (
       <div className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
         <div className={`relative ${renamePanelOpen ? "min-h-56" : "h-28 sm:h-32"}`}>
           {(!heroImage || !heroImageLoaded) && (
@@ -460,7 +476,12 @@ export function OverviewPage({
             <p className="text-[11px] font-medium text-slate-400">{planetSubhead}</p>
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="m-0 min-w-0 break-words text-base font-semibold text-white">
-                {planetName}
+                {livePlanetName ?? (
+                  <span
+                    aria-label="Loading planet name"
+                    className="inline-block h-4 w-32 animate-pulse rounded bg-white/10 align-middle"
+                  />
+                )}
               </h2>
               <div className="flex shrink-0 items-center gap-1.5">
                 {canShowRename && (
@@ -586,6 +607,7 @@ export function OverviewPage({
           ) : null}
         </div>
       </div>
+      )}
 
       {isWalletConnected && onChainStatus === "error" && (
         <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-3 text-xs leading-5 text-amber-100 sm:p-4">

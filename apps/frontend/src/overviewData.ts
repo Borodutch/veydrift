@@ -147,7 +147,10 @@ export function displayPlanetStats(
       fields: "Unavailable",
       temperature: "Unavailable",
       diameter: "Unavailable",
-      status: status === "ready" ? "No game planet" : "Local",
+      // A connected wallet with no settled planet is a real "no planet" state, not a fabricated
+      // local preview. The disconnected case never reaches this — it renders a connect-wallet card
+      // instead of planet stats (VEY-KANEO-458).
+      status: "No game planet",
     };
   }
 

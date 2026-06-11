@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  DISCONNECTED_HERO_IMAGE,
   overviewHeroImage,
 } from "../src/overviewHeroImage";
 import { productionQueueViewModel } from "../src/components/ProductionCatalog";
@@ -73,16 +72,17 @@ describe("overview planet hero image", () => {
     expect(planetHeroIndex).toBeLessThan(fleetsSummaryIndex);
   });
 
-  test("uses the disconnected default only for local preview state", () => {
-    expect(overviewHeroImage(undefined, false, undefined, undefined)).toBe(DISCONNECTED_HERO_IMAGE);
-    expect(overviewHeroImage(undefined, true, undefined, "1:42:7")).toBeUndefined();
+  test("never fabricates a planet hero image without real planet data", () => {
+    // Disconnected / pre-load must not invent a planet image; the caller renders a
+    // skeleton/connect-wallet state instead (VEY-KANEO-458).
+    expect(overviewHeroImage(undefined, undefined, undefined)).toBeUndefined();
+    expect(overviewHeroImage(undefined, undefined, "1:42:7")).toBeUndefined();
   });
 
   test("keeps a real connected home image during rehydration", () => {
-    expect(overviewHeroImage(homePlanet, true, undefined, "1:42:7")).toBe(homePlanet.image);
+    expect(overviewHeroImage(homePlanet, undefined, "1:42:7")).toBe(homePlanet.image);
     expect(overviewHeroImage(
       undefined,
-      true,
       { image: homePlanet.image, planetKey: "1:42:7" },
       "1:42:7"
     )).toBe(homePlanet.image);
@@ -91,10 +91,16 @@ describe("overview planet hero image", () => {
   test("does not reuse a last-known image for a different current planet", () => {
     expect(overviewHeroImage(
       undefined,
-      true,
       { image: homePlanet.image, planetKey: "1:42:7" },
       "1:42:8"
     )).toBeUndefined();
+  });
+
+  test("does not render a fabricated planet identity; disconnected shows a connect-wallet state", () => {
+    // Guard for VEY-KANEO-458: the Overview must never hardcode a fake planet name/image, and the
+    // disconnected state must prompt to connect a wallet rather than showing a fake home planet.
+    expect(overviewSource).not.toContain("Eos Relay");
+    expect(overviewSource).toContain("Connect your wallet");
   });
 });
 
