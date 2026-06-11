@@ -1248,10 +1248,14 @@ function accruedPlanetState<T extends PlanetState | null>(
 // storage. Returns null when the planet (or its derivation) is unavailable. Mirrors
 // the accrual the public planet reads (`GET /planets/{id}`) already apply, so the
 // personal state endpoints expose the same live value alongside canonical resources.
+// Returns null while the planet's indexed resources are still warming, matching the
+// infrastructure endpoint — projecting forward off a zero placeholder baseline would
+// invent resources that were never produced.
 function accruedResourcesFor(
   indexer: SettlementIndexer,
   planet: SettledPlanetEvent | null
 ): Resources | null {
+  if (!planet || indexer.hasPendingPlanetResources(planet.planetId)) return null;
   return accruedPlanetState(indexer, planet)?.resources ?? null;
 }
 
