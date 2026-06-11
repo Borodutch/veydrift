@@ -2516,7 +2516,13 @@ describe("Veydrift backend", () => {
           active: true,
           kind: "building",
           targetLevel: 2,
-          readyAt: "1770000060"
+          readyAt: "1770000060",
+          // As-of-now derivation is served on all-players public state too, not just
+          // the owner's own endpoints (VEY-KANEO-464). readyAt is in the past here.
+          asOfNow: {
+            secondsRemaining: 0,
+            complete: true
+          }
         }
       }
     });
