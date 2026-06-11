@@ -194,7 +194,6 @@ describe("Shipyard page display helpers", () => {
               value: "4",
               hint: "Ships stationed at this planet now. Fleets in flight on missions are not counted here.",
             },
-            { label: "Build time", value: "48m" },
             { label: "Price", value: "Metal 6,000, Crystal 6,000", wide: true },
           ],
         },
@@ -443,7 +442,6 @@ describe("Shipyard page display helpers", () => {
       actionPending: false,
       canTransact: true,
       productionAvailable: true,
-      productionRates: { metal: 500, crystal: 250, deuterium: 0 },
       quantities: { smallCargo: 2 },
       queue: undefined,
       resources: {
@@ -456,7 +454,7 @@ describe("Shipyard page display helpers", () => {
     });
 
     expect(items.find((item) => item.key === "smallCargo")).toMatchObject({
-      blockedReason: "Requires 500 more Metal, 100 more Crystal (affordable in 1h)",
+      blockedReason: "Requires 500 more Metal, 100 more Crystal",
       disabled: true,
     });
   });

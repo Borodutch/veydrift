@@ -176,9 +176,9 @@ describe("Defense page display helpers", () => {
       countLabel: "Deployed",
       countValue: 12,
       detailNote: "Attack 80 · Shield 20 · Hull 200",
-      durationSeconds: 960,
       status: "ready",
     });
+    expect(items.find((item) => item.key === "rocketLauncher")).not.toHaveProperty("durationSeconds");
     expect(items.find((item) => item.key === "rocketLauncher")).not.toHaveProperty("description");
     expect(items.find((item) => item.key === "rocketLauncher")?.notes).toBeUndefined();
     expect(items.find((item) => item.key === "lightLaser")).toMatchObject({
@@ -459,7 +459,6 @@ describe("Defense page display helpers", () => {
         ],
       }),
       productionAvailable: true,
-      productionRates: { metal: 500, crystal: 0, deuterium: 0 },
       quantities: { rocketLauncher: 2 },
       queue: undefined,
       resources: {
@@ -470,7 +469,7 @@ describe("Defense page display helpers", () => {
     });
 
     expect(items.find((item) => item.key === "rocketLauncher")).toMatchObject({
-      blockedReason: "Requires 500 more Metal (affordable in 1h)",
+      blockedReason: "Requires 500 more Metal",
       disabled: true,
     });
   });

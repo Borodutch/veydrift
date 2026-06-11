@@ -38,14 +38,14 @@ describe("MissionControlPage", () => {
       ["resolve", true],
     ]);
 
+    // VEY-KANEO-465: returns reconcile automatically via the backend resolver, so a
+    // returning fleet exposes no manual "Land fleet" action.
     expect(missionLifecycleActions({
       canTransact: true,
       context: "returning",
       mission: mission({ missionId: "3", returnAt: "1770000000", status: "Returning" }),
       now,
-    }).map((action) => [action.kind, action.enabled])).toEqual([
-      ["completeReturn", true],
-    ]);
+    }).map((action) => [action.kind, action.enabled])).toEqual([]);
 
     expect(missionLifecycleActions({
       canTransact: true,
@@ -175,7 +175,6 @@ describe("MissionControlPage", () => {
       },
       loading: false,
       now: 1_770_000_700_000,
-      onCompleteReturn: () => undefined,
       onCounterplay: () => undefined,
       onJoinAttack: () => undefined,
       onOpenReport: () => undefined,
@@ -217,7 +216,8 @@ describe("MissionControlPage", () => {
     expect(text).toContain("New Eos");
     expect(text).toContain("Planet #9");
     expect(text).toContain("Transport # 9");
-    expect(text).toContain("Land fleet");
+    // VEY-KANEO-465: the manual "Land fleet" action is gone; returns land automatically.
+    expect(text).not.toContain("Land fleet");
     // Every card exposes the single shared "Open" action into the mission detail screen.
     expect(text).toContain("Open");
     // The fleet block shows the cargo line alongside the ship icons (VEY-400 card spec).
@@ -829,7 +829,6 @@ function missionControlPage(overrides: Partial<Parameters<typeof MissionControlP
     },
     loading: false,
     now: 1_770_000_700_000,
-    onCompleteReturn: () => undefined,
     onCounterplay: () => undefined,
     onJoinAttack: () => undefined,
     onOpenReport: () => undefined,

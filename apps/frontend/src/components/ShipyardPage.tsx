@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } from "../playableMvp";
-import { canAfford, missingUnlockRequirements, shipCatalog, shipyardCatalog, shipCombatStats, shipDurationEstimate, shipSpecRows } from "../playableMvp";
+import { canAfford, missingUnlockRequirements, shipCatalog, shipyardCatalog, shipCombatStats, shipSpecRows } from "../playableMvp";
 import { formatMissingResources } from "../buildingDetails";
 import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainShipyardState } from "../walletFlow";
@@ -38,7 +38,6 @@ interface ShipyardPageProps {
   onRefresh: () => void;
   onSelectShip?: ((key: ShipKey) => void) | undefined;
   overviewQueue?: ChainShipyardState["queue"] | undefined;
-  productionRates?: Resources | undefined;
   selectedShipKey?: ShipKey | undefined;
   shipyardState: ChainShipyardState | null;
   spendableResources?: Resources | undefined;
@@ -77,7 +76,6 @@ export function ShipyardPage({
   onRefresh,
   onSelectShip,
   overviewQueue,
-  productionRates,
   selectedShipKey,
   shipyardState,
   spendableResources,
@@ -121,7 +119,6 @@ export function ShipyardPage({
             actionPending: actionState.status === "pending",
             canTransact,
             productionAvailable,
-            productionRates,
             quantities,
             queue,
             resources: spendableResources ?? resources,
@@ -213,7 +210,6 @@ export function shipProductionItems({
   actionPending,
   canTransact,
   productionAvailable,
-  productionRates,
   quantities,
   queue,
   resources,
@@ -223,7 +219,6 @@ export function shipProductionItems({
   actionPending: boolean;
   canTransact: boolean;
   productionAvailable: boolean;
-  productionRates?: Resources | undefined;
   quantities: Record<string, ProductionQuantityInput>;
   queue?: ChainShipyardState["queue"] | undefined;
   resources: Resources | undefined;
@@ -242,9 +237,6 @@ export function shipProductionItems({
     const parsedQuantity = parseProductionQuantity(quantityInput);
     const quantity = parsedQuantity ?? 1;
     const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
-    const durationSeconds = baseCost
-      ? shipDurationEstimate(shipyardLevel, shipyardState?.naniteLevel ?? 0, baseCost, quantity)
-      : undefined;
     const missing = shipUnavailable ? ["Unavailable on current deployment"] : getMissingRequirements(ship, shipyardState);
     const requirements = getShipRequirementStates(ship, shipyardState);
     const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
@@ -254,7 +246,6 @@ export function shipProductionItems({
       canTransact,
       hasPlanet: Boolean(shipyardState?.homePlanetId),
       missing,
-      productionRates,
       resources,
       shipUnavailable,
       shipyardState,
@@ -273,13 +264,11 @@ export function shipProductionItems({
       countValue: owned,
       detailSections: shipDetailSections({
         cost: totalCost,
-        durationSeconds,
         owned,
         ship,
       }),
       detailNote: stats || "Production unit",
       disabled,
-      durationSeconds,
       group: ship.group,
       groupLabel: groupLabels[ship.group],
       id: ship.id,
@@ -318,12 +307,10 @@ function shipNotes(ship: (typeof shipCatalog)[number]): string[] {
 
 function shipDetailSections({
   cost,
-  durationSeconds,
   owned,
   ship,
 }: {
   cost: Resources | undefined;
-  durationSeconds: number | undefined;
   owned: number | undefined;
   ship: (typeof shipCatalog)[number];
 }): ProductionDetailSection[] {
@@ -346,7 +333,6 @@ function shipDetailSections({
           value: owned === undefined ? "unavailable" : owned.toLocaleString("en-US"),
           hint: "Ships stationed at this planet now. Fleets in flight on missions are not counted here.",
         },
-        { label: "Build time", value: durationSeconds === undefined ? "-" : formatShipyardDuration(durationSeconds) },
         { label: "Price", value: cost ? formatProductionPrice(cost) : "-", wide: true },
       ],
     },
@@ -366,18 +352,6 @@ function formatShipSpecValue(ship: (typeof shipCatalog)[number], label: string, 
 
 function formatStatValue(value: number | string): string {
   return typeof value === "number" ? value.toLocaleString("en-US") : value;
-}
-
-function formatShipyardDuration(seconds: number): string {
-  if (seconds < 3_600) {
-    return `${Math.ceil(seconds / 60)}m`;
-  }
-
-  if (seconds < 86_400) {
-    return `${Math.floor(seconds / 3_600)}h ${Math.ceil((seconds % 3_600) / 60)}m`;
-  }
-
-  return `${Math.floor(seconds / 86_400)}d ${Math.ceil((seconds % 86_400) / 3_600)}h`;
 }
 
 export function getMissingRequirements(
@@ -431,7 +405,6 @@ export function getBlockedReason({
   canTransact,
   hasPlanet,
   missing,
-  productionRates,
   resources,
   shipUnavailable,
   shipyardState,
@@ -441,7 +414,6 @@ export function getBlockedReason({
   canTransact: boolean;
   hasPlanet: boolean;
   missing: string[];
-  productionRates?: Resources | undefined;
   resources: Resources | undefined;
   shipUnavailable: boolean;
   shipyardState?: ChainShipyardState | null | undefined;
@@ -454,7 +426,7 @@ export function getBlockedReason({
   if (!hasPlanet) return "No game planet";
   if (missing.length > 0) return missing[0];
   if (!resources) return "Resources unavailable";
-  if (!affordable && totalCost) return formatMissingResources(resources, totalCost, productionRates);
+  if (!affordable && totalCost) return formatMissingResources(resources, totalCost);
   if (!affordable) return "Insufficient resources";
   return undefined;
 }

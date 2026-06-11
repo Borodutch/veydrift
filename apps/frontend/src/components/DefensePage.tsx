@@ -1,6 +1,6 @@
 import { useState } from "preact/hooks";
 import type { BuildingKey, DefenseKey, ResearchKey, Resources, UnlockRequirement } from "../playableMvp";
-import { canAfford, defenseCatalog, defenseCombatStats, defenseDurationEstimate, missingUnlockRequirements } from "../playableMvp";
+import { canAfford, defenseCatalog, defenseCombatStats, missingUnlockRequirements } from "../playableMvp";
 import { formatMissingResources } from "../buildingDetails";
 import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainDefenseState, FleetMissionVisibilityResponse } from "../walletFlow";
@@ -45,7 +45,6 @@ interface DefensePageProps {
   onRefresh: () => void;
   onSelectDefense?: ((key: DefenseKey) => void) | undefined;
   overviewQueue?: ChainDefenseState["queue"] | undefined;
-  productionRates?: Resources | undefined;
   selectedDefenseKey?: DefenseKey | undefined;
   spendableResources?: Resources | undefined;
 }
@@ -87,7 +86,6 @@ export function DefensePage({
   onRefresh,
   onSelectDefense,
   overviewQueue,
-  productionRates,
   selectedDefenseKey,
   spendableResources,
 }: DefensePageProps) {
@@ -141,7 +139,6 @@ export function DefensePage({
             canTransact,
             defenseState,
             productionAvailable,
-            productionRates,
             quantities,
             queue,
             resources: spendableResources ?? resources,
@@ -218,7 +215,6 @@ export function defenseProductionItems({
   canTransact,
   defenseState,
   productionAvailable,
-  productionRates,
   quantities,
   queue,
   resources,
@@ -227,7 +223,6 @@ export function defenseProductionItems({
   canTransact: boolean;
   defenseState: ChainDefenseState | null;
   productionAvailable: boolean;
-  productionRates?: Resources | undefined;
   quantities: Record<string, ProductionQuantityInput>;
   queue?: ChainDefenseState["queue"] | undefined;
   resources: Resources | undefined;
@@ -240,9 +235,6 @@ export function defenseProductionItems({
     const parsedQuantity = parseProductionQuantity(quantityInput);
     const quantity = parsedQuantity ?? 1;
     const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
-    const durationSeconds = baseCost
-      ? defenseDurationEstimate(defenseState?.shipyardLevel ?? 0, defenseState?.naniteLevel ?? 0, baseCost, quantity)
-      : undefined;
     const missing = getMissingRequirements(defense, defenseState);
     const requirements = getDefenseRequirementStates(defense, defenseState);
     const limitReason = getDefenseLimitReason(defense.key, quantity, defenseState, queue);
@@ -254,7 +246,6 @@ export function defenseProductionItems({
       hasPlanet: Boolean(defenseState?.homePlanetId),
       limitReason,
       missing,
-      productionRates,
       resources,
       totalCost,
     });
@@ -272,7 +263,6 @@ export function defenseProductionItems({
       countValue: deployed,
       detailNote: stats || (defense.group === "missile" ? "Missile support system" : "Planetary defense"),
       disabled,
-      durationSeconds,
       group: defense.group,
       groupLabel: groupLabels[defense.group],
       id: defense.id,
@@ -384,7 +374,6 @@ function getBlockedReason({
   hasPlanet,
   limitReason,
   missing,
-  productionRates,
   resources,
   totalCost,
 }: {
@@ -394,7 +383,6 @@ function getBlockedReason({
   hasPlanet: boolean;
   limitReason?: string | undefined;
   missing: string[];
-  productionRates?: Resources | undefined;
   resources: Resources | undefined;
   totalCost?: Resources | undefined;
 }): string | undefined {
@@ -405,7 +393,7 @@ function getBlockedReason({
   if (missing.length > 0) return missing[0];
   if (limitReason) return limitReason;
   if (!resources) return "Resources unavailable";
-  if (!affordable && totalCost) return formatMissingResources(resources, totalCost, productionRates);
+  if (!affordable && totalCost) return formatMissingResources(resources, totalCost);
   if (!affordable) return "Insufficient resources";
   return undefined;
 }

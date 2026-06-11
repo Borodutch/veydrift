@@ -36,9 +36,7 @@ interface MissionDetailPageProps {
   loading: boolean;
   missionId: string | null;
   now: number;
-  onBack: () => void;
-  onCompleteReturn: (missionId: string) => void;
-  // Opens the in-app battle-report share dialog (link + copy + social targets). The control is a
+  onBack: () => void;  // Opens the in-app battle-report share dialog (link + copy + social targets). The control is a
   // plain button, so it presents the dialog and never navigates the viewer away (VEY-KANEO-339).
   onShareReport: () => void;
   onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
@@ -58,9 +56,7 @@ export function MissionDetailPage({
   loading,
   missionId,
   now,
-  onBack,
-  onCompleteReturn,
-  onShareReport,
+  onBack,  onShareReport,
   onCounterplay,
   onRecall,
   onResolve,
@@ -123,7 +119,6 @@ export function MissionDetailPage({
             fleetVisibility={fleetVisibility}
             mission={mission}
             now={now}
-            onCompleteReturn={onCompleteReturn}
             onCounterplay={onCounterplay}
             onRecall={onRecall}
             onResolve={onResolve}
@@ -154,18 +149,14 @@ function MissionActions({
   canTransact,
   fleetVisibility,
   mission,
-  now,
-  onCompleteReturn,
-  onCounterplay,
+  now,  onCounterplay,
   onRecall,
   onResolve,
 }: {
   canTransact: boolean;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   mission: FleetMissionSummary;
-  now: number;
-  onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
+  now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
 }) {
@@ -199,7 +190,6 @@ function MissionActions({
             onClick={() => {
               if (action.kind === "resolve") onResolve(mission.missionId);
               if (action.kind === "recall") onRecall(mission.missionId);
-              if (action.kind === "completeReturn") onCompleteReturn(mission.missionId);
             }}
           />
         ))}
@@ -613,7 +603,7 @@ function Notice({ children, tone = "neutral" }: { children: preact.ComponentChil
   return <div className={`rounded-lg border p-4 text-sm ${className}`}>{children}</div>;
 }
 
-// The detail page must authorize orders (Recall / Resolve / Group defend / Land fleet)
+// The detail page must authorize orders (Recall / Resolve / Group defend)
 // the same way the Mission Control list does, or the two screens disagree for the same fleet
 // (VEY-KANEO-424). Mission Control gets that classification from the backend's wallet-scoped
 // fleet-visibility lists; the detail page reuses those same lists by mission id rather than

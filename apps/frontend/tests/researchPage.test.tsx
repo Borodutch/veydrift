@@ -308,7 +308,7 @@ describe("Research page load-error display", () => {
     expect(text).not.toContain("Current Next");
   });
 
-  test("builds research level info rows with costs, timing, requirements, and effects", () => {
+  test("builds research level info rows with costs, requirements, and effects", () => {
     const base = createInitialPlayableState(10_000);
     const state = {
       ...base,
@@ -349,14 +349,14 @@ describe("Research page load-error display", () => {
         requirementStatus: "Met",
       },
     ]);
-    expect(rows[0]!.durationSeconds).toBeGreaterThan(0);
+    // VEY-KANEO-465: research duration is backend-owned; rows no longer carry durationSeconds.
+    expect(rows.every((row) => !("durationSeconds" in row))).toBe(true);
   });
 
   test("marks locked research level rows with unmet prerequisites", () => {
     const state = createInitialPlayableState(10_000);
 
     expect(researchLevelInfoRows(state, "laser", { maxLevel: 1 })[0]).toMatchObject({
-      durationSeconds: undefined,
       requirementStatus: "Requires Research Lab 1, Requires Energy Technology 2",
     });
   });
@@ -386,7 +386,8 @@ describe("Research page load-error display", () => {
     expect(text).toContain("Energy Technology levels");
     expect(text).toContain("Current Level 1");
     expect(text).toContain("Research cost");
-    expect(text).toContain("Research time");
+    // VEY-KANEO-465: client-derived research time column removed.
+    expect(text).not.toContain("Research time");
     expect(text).toContain("Requirements");
     expect(text).toContain("Effect");
     expect(text).toContain("Level 1");
@@ -580,7 +581,8 @@ describe("Research page load-error display", () => {
     });
   });
 
-  test("shows time to afford for research actions when production rates are available", () => {
+  test("omits client-derived time-to-afford from research affordability copy", () => {
+    // VEY-KANEO-465: time-to-afford is game-state math the frontend no longer derives.
     const state = {
       ...createInitialPlayableState(10_000),
       buildings: {
@@ -598,7 +600,6 @@ describe("Research page load-error display", () => {
       key: "energy",
       loading: false,
       now: 1_700_000_000_000,
-      productionRates: { metal: 300, crystal: 600, deuterium: 0 },
       researchState: researchState({
         resources: { metal: "700", crystal: "2000", deuterium: "1000" },
       }),
@@ -607,11 +608,11 @@ describe("Research page load-error display", () => {
 
     expect(status).toMatchObject({
       disabled: true,
-      reason: "Requires 900 more Metal, 300 more Crystal (affordable in 3h)",
+      reason: "Requires 900 more Metal, 300 more Crystal",
     });
   });
 
-  test("uses spendable accrued resources for research affordability and ETA", () => {
+  test("uses spendable accrued resources for research affordability", () => {
     const state = {
       ...createInitialPlayableState(10_000),
       buildings: {
@@ -647,7 +648,6 @@ describe("Research page load-error display", () => {
       key: "energy",
       loading: false,
       now: 1_700_000_000_000,
-      productionRates: { metal: 300, crystal: 600, deuterium: 0 },
       researchState: researchState({
         resources: { metal: "700", crystal: "2000", deuterium: "1000" },
       }),
@@ -655,7 +655,7 @@ describe("Research page load-error display", () => {
       state,
     })).toMatchObject({
       disabled: true,
-      reason: "Requires 600 more Metal, 50 more Crystal (affordable in 2h)",
+      reason: "Requires 600 more Metal, 50 more Crystal",
     });
   });
 
