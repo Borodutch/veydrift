@@ -146,8 +146,14 @@ export function isBuildingQueueReadyToFinish(
   queue: QueueStateResponse | null | undefined,
   now = Date.now(),
 ): boolean {
-  const readyAt = queueTimestampMs(queue?.readyAt);
-  return Boolean(queue?.active && readyAt !== undefined && readyAt <= now);
+  if (!queue?.active) return false;
+  // VEY-KANEO-465: use the backend-derived readiness (`asOfNow.complete`,
+  // VEY-KANEO-464) instead of comparing `readyAt` to the client clock. Fall back
+  // to the timestamp comparison only when the backend has not populated `asOfNow`
+  // (older deploy), so readiness still resolves during the transition.
+  if (queue.asOfNow) return queue.asOfNow.complete;
+  const readyAt = queueTimestampMs(queue.readyAt);
+  return readyAt !== undefined && readyAt <= now;
 }
 
 export function buildingQueueItemForDisplay(
