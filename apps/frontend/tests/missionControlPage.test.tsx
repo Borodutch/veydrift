@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionControlPage, formatMissionTime, missionControlRefreshButtonState, missionLifecycleActions, returnPhaseLoot } from "../src/components/MissionControlPage";
+import { MissionControlPage, formatMissionTime, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseLoot } from "../src/components/MissionControlPage";
 import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
@@ -135,9 +135,12 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Mission Route Fleet");
     expect(text).not.toContain("Origin -> Target");
     // Status reads as a header pill with the live ETA (outbound) / return (returning) countdown.
-    expect(text).toContain("En route");
+    // VEY-KANEO-433: the pill tracks the live clock — this fixture's `now` (…700_000) is past the
+    // outbound arrival (…300) and the return landing (…600), so the fleets read "Arrived"/"Returned"
+    // rather than the stale backend "Outbound"/"Returning" (see the dedicated pill test below).
+    expect(text).toContain("Arrived");
     expect(text).toContain("ETA");
-    expect(text).toContain("Returning");
+    expect(text).toContain("Returned");
     expect(text).toContain("Returns");
     // Hostile inbound missions read "Incoming attack"; the player's own launches stay bare.
     expect(text).toContain("Incoming attack # 8");
@@ -706,6 +709,40 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Active missions 1");
     expect(text).toContain("My missions (0)");
     expect(text).toContain("Alliance (1)");
+  });
+});
+
+describe("VEY-KANEO-433 time-aware mission status", () => {
+  // arrivalAt 1770000300 (ms 1_770_000_300_000), returnAt 1770000600 (ms 1_770_000_600_000).
+  const beforeArrival = 1_770_000_200_000;
+  const afterArrival = 1_770_000_400_000;
+  const afterReturn = 1_770_000_700_000;
+
+  test("Outbound pill flips from En route to Arrived once arrival passes", () => {
+    const fleet = mission({ status: "Outbound" });
+    expect(missionStatusPill(fleet, beforeArrival).label).toBe("En route");
+    expect(missionStatusPill(fleet, afterArrival).label).toBe("Arrived");
+  });
+
+  test("Returning/Recalled pill flips to Returned once the fleet has landed", () => {
+    const returning = mission({ status: "Returning" });
+    const recalled = mission({ status: "Recalled" });
+    expect(missionStatusPill(returning, afterArrival).label).toBe("Returning");
+    expect(missionStatusPill(returning, afterReturn).label).toBe("Returned");
+    expect(missionStatusPill(recalled, afterArrival).label).toBe("Recalled");
+    expect(missionStatusPill(recalled, afterReturn).label).toBe("Returned");
+  });
+
+  test("terminal backend statuses pass through unchanged", () => {
+    expect(missionStatusPill(mission({ status: "Returned" }), afterReturn).label).toBe("Returned");
+    expect(missionStatusPill(mission({ status: "Resolved" }), afterReturn).label).toBe("Resolved");
+  });
+
+  test("the text label mirrors the pill for the report card and shared report", () => {
+    const fleet = mission({ status: "Outbound" });
+    expect(missionDisplayStatusLabel(fleet, beforeArrival)).toBe("en route");
+    expect(missionDisplayStatusLabel(fleet, afterArrival)).toBe("arrived");
+    expect(missionDisplayStatusLabel(mission({ status: "Returning" }), afterReturn)).toBe("returned");
   });
 });
 
