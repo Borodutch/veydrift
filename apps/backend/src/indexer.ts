@@ -285,6 +285,7 @@ export class SettlementIndexer {
   private readonly db: Database;
   private planetRebuildPromise: Promise<IndexerSnapshot> | null = null;
   private rebuildPromise: Promise<IndexerSnapshot> | null = null;
+  private canonicalRefreshPromise: Promise<void> | null = null;
 
   constructor(
     private readonly chainReader: Pick<
@@ -1151,6 +1152,55 @@ export class SettlementIndexer {
   async reconcile(reason = "requested"): Promise<IndexerSnapshot> {
     this.markStale(reason);
     return this.rebuild();
+  }
+
+  // Lightweight, frequent on-chain state refresh — decoupled from the heavy full rebuild(). The full
+  // rebuild re-scans the entire getLogs history (slow, occasionally OOMs/hangs) and is the ONLY place the
+  // canonical chain reads run, so between rebuilds the served contract_* tables drift: event handlers
+  // mutate them with derivation that the contract emits no events for (mission ship debits/credits, loot,
+  // spend), and the departed-ships projection keeps subtracting fleets that already returned because its
+  // `lastReconciledBlock` baseline is stale — that is why resources read wrong and the shipyard shows 0.
+  //
+  // This reads each live planet's authoritative state straight from the contract (previewResources /
+  // shipyard / infrastructure / defenses / research) via readCanonicalState and overwrites contract_* with
+  // it, then advances the reconcile baseline to the current chain head so the departed-ships projection
+  // only nets out genuinely in-flight fleets. Run on a short interval it keeps every served number pinned
+  // to chain. Never throws; skips while a full rebuild is in flight (the rebuild does the same work).
+  async refreshCanonicalState(): Promise<void> {
+    if (this.canonicalRefreshPromise) return this.canonicalRefreshPromise;
+    if (this.rebuildPromise || this.planetRebuildPromise) return;
+    if (!this.chainReader.listCurrentPlanets) return;
+    this.canonicalRefreshPromise = this.refreshCanonicalStateUncached()
+      .catch((error) => {
+        // A refresh miss is non-fatal: the persisted snapshot stays serveable and the next tick retries.
+        // Deliberately do NOT set lastReconciliationError here — that would flip serve-stale/health gating.
+        console.error("Veydrift canonical state refresh failed", error);
+      })
+      .finally(() => {
+        this.canonicalRefreshPromise = null;
+      });
+    return this.canonicalRefreshPromise;
+  }
+
+  private async refreshCanonicalStateUncached(): Promise<void> {
+    const planets = await this.chainReader.listCurrentPlanets!();
+    if (planets.length === 0) return;
+    // Snapshot the head BEFORE the chain reads. Used as the departed-ships baseline: any mission whose
+    // launch block is <= head is already reflected in the shipCount we just read, so it must not be
+    // subtracted again. Reading head-before-state keeps the projection on the safe (never-over-report)
+    // side if a fleet departs mid-refresh. latestIndexedBlock is maintained by the websocket head feed.
+    const head = this.metadata("latestIndexedBlock")
+      ?? this.metadata("lastReconciledBlock")
+      ?? this.fromBlock.toString();
+    const state = await this.readCanonicalState(planets);
+    const now = new Date().toISOString();
+    const apply = this.db.transaction(() => {
+      this.setMetadata("lastReconciledBlock", head);
+      this.applyCanonicalState(state);
+      this.setMetadata("lastReconciledAt", now);
+      this.touch();
+    });
+    apply();
   }
 
   markStale(reason: string): IndexerSnapshot {
