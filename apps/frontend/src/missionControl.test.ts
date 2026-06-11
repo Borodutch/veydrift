@@ -304,11 +304,28 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("New Zion");
   });
 
-  test("VEY-KANEO-440: stationed-defense panel shows a discoverable empty state when nothing is stationed", () => {
+  test("VEY-KANEO-455: Mission Control hides the Stationed defenses section until allied defenses are stationed", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionControlPage(missionControlProps(now, {
       outgoing: [mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
     }))).join(" ");
+
+    // With no stationed defenses, Mission Control omits the section entirely (VEY-KANEO-455) — the
+    // dedicated Defenses page keeps the discoverable empty state / Defend entry point instead.
+    expect(text).not.toContain("Stationed defenses");
+    expect(text).not.toContain("No fleets are stationed in defense");
+    // A Transport mission must never be mistaken for a stationed defense.
+    expect(text).not.toContain("allied fleets stationed in defense");
+  });
+
+  test("VEY-KANEO-455: Defenses-style reuse (no hideWhenEmpty) still shows the discoverable empty state", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(StationedDefenseSection({
+      incoming: [],
+      now,
+      outgoing: [],
+      onOpenReport: () => undefined,
+    })).join(" ");
 
     expect(text).toContain("Stationed defenses");
     expect(text).toContain("No fleets are stationed in defense");
@@ -317,8 +334,6 @@ describe("Mission Control battle reports", () => {
     // reading as missing — the repeated QA "no Defend button anywhere" rework cause (VEY-KANEO-440).
     expect(text).toContain("Defend");
     expect(text).toContain("requires a second colony or an alliance member's planet");
-    // A Transport mission must never be mistaken for a stationed defense.
-    expect(text).not.toContain("allied fleets stationed in defense");
   });
 
   test("VEY-KANEO-440: stationed-defense panel renders a clickable Defend-a-planet CTA wired to navigation", () => {
