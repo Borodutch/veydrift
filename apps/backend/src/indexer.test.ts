@@ -578,6 +578,144 @@ describe("SettlementIndexer", () => {
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 9)?.count).toBe(2);
   });
 
+  test("availableShipRows excludes ships still away on an active mission (VEY-KANEO-447)", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    // Build 5 light fighters (ship id 1) and 4 small cargo (ship id 0) on planet 7.
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-lf",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(1n)],
+      data: abiWords(5n, 5n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-sc",
+      logIndex: "0x1",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(4n, 4n)
+    });
+
+    // Launch an Outbound mission from planet 7 carrying 3 light fighters. The contract debits them from
+    // the planet at launch but emits no ship-count event, so the stored roster still shows all 5.
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(50n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(50n)],
+      data: abiWords(0n, 0n, 0n, 10n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch",
+      logIndex: "0x2",
+      // Word index 1 is lightFighter (ship id 1) = 3 ships committed to the mission.
+      topics: [fleetMissionShipsTopic, topic(50n)],
+      data: abiWords(0n, 3n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    // Full owned roster is unchanged (used by highscores).
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
+    // Launchable roster drops the 3 light fighters currently away on the mission (no phantom ships).
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(2);
+    // Ship types not committed to the mission are untouched.
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(4);
+  });
+
+  test("availableShipRows does not double-subtract a mission the reconcile baseline already absorbed (VEY-KANEO-447)", async () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async getShipyardState() {
+        return {
+          wallet: player,
+          homePlanetId: planet.planetId,
+          planetId: planet.planetId,
+          productionAvailable: true,
+          resources: planet.resources,
+          fleetSlots: { active: 1, limit: 1 },
+          shipyardLevel: 1,
+          naniteLevel: 0,
+          technologyLevels: {},
+          // On-chain count the contract returns already excludes the 3 light fighters away on the
+          // pre-baseline mission below — the reconcile reads the live, debited count.
+          ships: [{ id: 1, count: 2, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+          queue: null
+        };
+      }
+    }, 100n);
+
+    // Reconcile from the planet event (block 123) → lastReconciledBlock = "123", stored count id1 = 2.
+    await indexer.rebuild();
+
+    // A mission that launched BEFORE the reconcile baseline (block 0x70 = 112). Its debit is already
+    // reflected in the reconciled count, so it must not be subtracted again.
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xold-launch",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(60n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xold-launch",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(60n)],
+      data: abiWords(0n, 0n, 0n, 10n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xold-launch",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(60n)],
+      data: abiWords(0n, 3n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    // Already absorbed by the reconcile baseline → stays at the reconciled count, not 2 - 3.
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(2);
+
+    // A mission launched AFTER the baseline (block 0x90 = 144) is not yet in the stored count, so its
+    // 1 light fighter is subtracted.
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xnew-launch",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(61n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xnew-launch",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(61n)],
+      data: abiWords(0n, 0n, 0n, 10n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xnew-launch",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(61n)],
+      data: abiWords(0n, 1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(1);
+  });
+
   test("applies duplicate webhook logs only once", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

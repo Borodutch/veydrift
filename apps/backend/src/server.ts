@@ -1373,7 +1373,9 @@ function indexedShipyardState(
     shipyardLevel,
     naniteLevel,
     technologyLevels: indexer.technologyLevels(wallet),
-    ships: planet ? indexer.shipRows(planet.planetId) : [],
+    // Launchable ships only: exclude fleets already away on missions so Mission Compose stops offering
+    // phantom ships that revert at launch (VEY-KANEO-447).
+    ships: planet ? indexer.availableShipRows(planet.planetId) : [],
     queue: planet ? indexer.planetQueue(planet.planetId, "ship") : null
   };
 }

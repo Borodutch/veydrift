@@ -344,6 +344,13 @@ export type FleetMissionSummary = {
   ships: Record<string, string>;
   transactionHash: string;
   blockNumber: string;
+  // Block of the FleetMissionLaunched event specifically, i.e. when the contract debited these ships
+  // from the origin planet (VeydriftGameplayModule._debitMissionShips). `blockNumber` tracks the LAST
+  // event for the mission (recall/resolve/return) and so drifts forward over the fleet's life; the
+  // ship-count read model needs the immutable launch block to tell whether a still-away fleet's debit
+  // has already been absorbed by the canonical reconcile baseline (VEY-KANEO-447). Defaults to "0" for
+  // missions reconstructed without a launch event.
+  launchBlockNumber: string;
   needsResolution: boolean;
 };
 
@@ -3320,7 +3327,8 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
         joinedAttackMissionIds: [],
         needsResolution: false,
         transactionHash: log.transactionHash,
-        blockNumber: BigInt(log.blockNumber).toString()
+        blockNumber: BigInt(log.blockNumber).toString(),
+        launchBlockNumber: "0"
       };
       attack.attackGroupId = attackMissionId;
       attack.joinedAttackMissionIds = [
@@ -3339,7 +3347,8 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
         joinedAttackMissionIds: [],
         needsResolution: false,
         transactionHash: log.transactionHash,
-        blockNumber: BigInt(log.blockNumber).toString()
+        blockNumber: BigInt(log.blockNumber).toString(),
+        launchBlockNumber: "0"
       };
       joined.attackGroupId = attackMissionId;
       missions.set(joinedMissionId, joined);
@@ -3360,7 +3369,8 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       counterplayDefenderMissionIds: [],
       needsResolution: false,
       transactionHash: log.transactionHash,
-      blockNumber: BigInt(log.blockNumber).toString()
+      blockNumber: BigInt(log.blockNumber).toString(),
+      launchBlockNumber: "0"
     };
     mission.transactionHash = log.transactionHash;
     mission.blockNumber = BigInt(log.blockNumber).toString();
@@ -3370,6 +3380,9 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       mission.owner = decodeAddressWord(topicAt(log.topics, 2));
       mission.missionType = missionTypeLabel(decodeUint(topicAt(log.topics, 3)));
       mission.status = "Outbound";
+      // Capture the launch block here (not the rolling `blockNumber`) so the ship-count read model can
+      // later tell whether this departure's debit predates the canonical reconcile baseline (VEY-KANEO-447).
+      mission.launchBlockNumber = BigInt(log.blockNumber).toString();
       mission.originPlanetId = decodeUintWord(wordAt(words, 0)).toString();
       mission.targetPlanetId = decodeUintWord(wordAt(words, 1)).toString();
       mission.arrivalAt = decodeUintWord(wordAt(words, 2)).toString();
@@ -3390,7 +3403,8 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
           counterplayDefenderMissionIds: [],
           needsResolution: false,
           transactionHash: log.transactionHash,
-          blockNumber: BigInt(log.blockNumber).toString()
+          blockNumber: BigInt(log.blockNumber).toString(),
+          launchBlockNumber: "0"
         };
         attack.attackGroupId = attackMissionId;
         attack.joinedAttackMissionIds = [
@@ -3419,7 +3433,8 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
           counterplayDefenderMissionIds: [],
           needsResolution: false,
           transactionHash: log.transactionHash,
-          blockNumber: BigInt(log.blockNumber).toString()
+          blockNumber: BigInt(log.blockNumber).toString(),
+          launchBlockNumber: "0"
         };
         attack.counterplayDefenderMissionIds = [
           ...new Set([...(attack.counterplayDefenderMissionIds ?? []), missionId])
