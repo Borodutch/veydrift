@@ -114,7 +114,8 @@ describe("Infrastructure page display helpers", () => {
     expect(button.props.title).toBe("Level table");
   });
 
-  test("renders Metal Mine modal rows with cost, production, energy use, and current/next markers", () => {
+  test("renders Metal Mine modal rows with cost and energy use, no client production/build time", () => {
+    // VEY-KANEO-465: per-building production rate and upgrade build time are backend-owned.
     const state = {
       ...createInitialPlayableState(1_000),
       buildings: {
@@ -131,15 +132,14 @@ describe("Infrastructure page display helpers", () => {
     const text = visibleText(modal);
 
     expect(text).toContain("Metal Mine levels");
-    expect(text).toContain("Build time");
-    expect(text).toContain("Production");
     expect(text).toContain("Energy use");
     expect(text).toContain("Level 1 Current");
     expect(text).toContain("Level 2 Next");
     expect(text).toContain("Metal 90, Crystal 22");
-    expect(text).toContain("2m 41s");
-    expect(text).toContain("72 Metal/h");
     expect(text).toContain("24 required");
+    expect(text).not.toContain("Build time");
+    expect(text).not.toContain("Production");
+    expect(text).not.toContain("Metal/h");
   });
 
   test("keeps double-digit level labels separate from current and next badges", () => {
@@ -410,7 +410,9 @@ describe("Infrastructure page display helpers", () => {
     expect(infrastructureCatalogStatusText(state, "fusionReactor")).toBe("32 energy");
   });
 
-  test("keeps build-level production capacity positive when current power would throttle output", () => {
+  test("omits the client-derived production-capacity row but keeps energy required for mines", () => {
+    // VEY-KANEO-465: per-building production rate is backend-owned game state; the
+    // detail panel no longer derives or shows a client "/h" production-capacity row.
     const state = createInitialPlayableState(1_000);
     const unpoweredMineBuild = {
       ...state.buildings,
@@ -421,12 +423,7 @@ describe("Infrastructure page display helpers", () => {
     const mineEffect = buildingEffectMetrics(unpoweredMineBuild, "metalMine");
     const rows = detailEffectRows(mineEffect, buildingEnergyDetail(unpoweredMineBuild, "metalMine"));
 
-    expect(rows).toContainEqual({
-      delta: "+33/h",
-      label: "Production capacity",
-      next: "33 Metal/h",
-      value: "0 Metal/h",
-    });
+    expect(rows.some((row) => row.label === "Production capacity")).toBe(false);
     expect(rows).toContainEqual({
       delta: "+11",
       label: "Energy required",

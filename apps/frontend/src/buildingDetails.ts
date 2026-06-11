@@ -2,20 +2,18 @@ import type { BuildingKey, PlayableState, ResearchKey, Resources } from "./playa
 import {
   buildingEnergyProduction,
   buildingCost,
-  buildingDurationEstimate,
   buildingRequirementsFor,
   canAfford,
   allianceDepotSupportCapacity,
   isBinaryBuilding,
   fusionReactorDeuteriumConsumption,
   missileSiloCapacity,
-  productionCapacityPerHour,
   storageCaps,
   unmetBuildingRequirement,
   type PlanetProductionProfile,
 } from "./playableMvp";
-import { formatDuration } from "./durationFormat";
-export { formatDuration };
+// Re-exported for callers that render backend-provided timestamps/durations.
+export { formatDuration } from "./durationFormat";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 export const MAX_BUILDING_LEVEL = 50;
@@ -29,7 +27,6 @@ const resourceLabels: Record<keyof Resources, string> = {
 export type BuildingUpgradeStatus = {
   cost: Resources;
   disabled: boolean;
-  durationSeconds: number;
   reason: string;
   targetLevel: number;
 };
@@ -60,17 +57,12 @@ const solarPrerequisiteMineKeys = new Set<BuildingKey>([
 export type BuildingLevelInfoRow = {
   cost: Resources;
   current: boolean;
-  durationSeconds: number;
   effect?: string;
   energyProduced?: number;
   energyRequired?: number;
   deuteriumConsumed?: number;
   level: number;
   next: boolean;
-  production?: {
-    resource: keyof Resources;
-    perHour: number;
-  };
   storage?: {
     resource: keyof Resources;
     capacity: number;
@@ -78,12 +70,10 @@ export type BuildingLevelInfoRow = {
 };
 
 export type BuildingLevelInfoColumns = {
-  constructionTime: boolean;
   effect: boolean;
   deuteriumConsumed: boolean;
   energyProduced: boolean;
   energyRequired: boolean;
-  production: boolean;
   storage: boolean;
 };
 
@@ -94,7 +84,6 @@ export function buildingUpgradeStatus(
     actionUnavailableReason?: string | undefined;
     chainCost?: Resources | undefined;
     now?: number | undefined;
-    productionRates?: Resources | undefined;
     spendableResources?: Resources | undefined;
   } = {},
 ): BuildingUpgradeStatus {
@@ -103,13 +92,11 @@ export function buildingUpgradeStatus(
   const binary = isBinaryBuilding(key);
   const currentLevel = state.buildings[key];
   const targetLevel = binary ? 1 : currentLevel + 1;
-  const durationSeconds = buildingDurationEstimate(state.buildings, cost);
 
   if (binary && currentLevel > 0) {
     return {
       cost,
       disabled: true,
-      durationSeconds,
       reason: "Rift bridge built on this planet",
       targetLevel,
     };
@@ -119,7 +106,6 @@ export function buildingUpgradeStatus(
     return {
       cost,
       disabled: true,
-      durationSeconds,
       reason: options.actionUnavailableReason,
       targetLevel,
     };
@@ -132,7 +118,6 @@ export function buildingUpgradeStatus(
     return {
       cost,
       disabled: true,
-      durationSeconds,
       reason: queueReady
         ? `${queuedBuildingLabel} is ready to finish`
         : state.queue.key === key
@@ -147,7 +132,6 @@ export function buildingUpgradeStatus(
     return {
       cost,
       disabled: true,
-      durationSeconds,
       reason: `Requires ${solarPrerequisite}`,
       targetLevel,
     };
@@ -158,7 +142,6 @@ export function buildingUpgradeStatus(
     return {
       cost,
       disabled: true,
-      durationSeconds,
       reason: `Requires ${formatBuildingRequirement(missingRequirement)}`,
       targetLevel,
     };
@@ -168,8 +151,7 @@ export function buildingUpgradeStatus(
     return {
       cost,
       disabled: true,
-      durationSeconds,
-      reason: formatMissingResources(spendable, cost, options.productionRates),
+      reason: formatMissingResources(spendable, cost),
       targetLevel,
     };
   }
@@ -177,7 +159,6 @@ export function buildingUpgradeStatus(
   return {
     cost,
     disabled: false,
-    durationSeconds,
     reason: binary ? "Ready to build Rift bridge" : `Ready for Level ${targetLevel}`,
     targetLevel,
   };
@@ -201,17 +182,11 @@ export function buildingLevelInfoRows(
     const row: BuildingLevelInfoRow = {
       cost,
       current: currentLevel === level,
-      durationSeconds: buildingDurationEstimate(preUpgradeBuildings, cost),
       level,
       next: currentLevel + 1 === level,
     };
 
     if (key === "metalMine" || key === "crystalMine" || key === "deuteriumSynthesizer") {
-      const resource = productionResourceForBuilding(key);
-      row.production = {
-        resource,
-        perHour: productionCapacityPerHour(rowBuildings, profile)[resource],
-      };
       const energyRequired = energyRequiredForBuildingLevel(key, level);
       if (energyRequired !== undefined) {
         row.energyRequired = energyRequired;
@@ -243,12 +218,10 @@ export function buildingLevelInfoRows(
 
 export function buildingLevelInfoColumns(rows: BuildingLevelInfoRow[]): BuildingLevelInfoColumns {
   return {
-    constructionTime: rows.some((row) => row.durationSeconds !== undefined),
     deuteriumConsumed: rows.some((row) => row.deuteriumConsumed !== undefined),
     effect: rows.some((row) => row.effect !== undefined),
     energyProduced: rows.some((row) => row.energyProduced !== undefined),
     energyRequired: rows.some((row) => row.energyRequired !== undefined),
-    production: rows.some((row) => row.production !== undefined),
     storage: rows.some((row) => row.storage !== undefined),
   };
 }
@@ -334,41 +307,19 @@ export function formatCost(cost: Resources): string {
     .join(", ") || "No resource cost";
 }
 
-export function formatMissingResources(resources: Resources, cost: Resources, productionRates?: Resources | undefined): string {
+export function formatMissingResources(resources: Resources, cost: Resources): string {
   const missing = resourceEntries(cost)
     .map(([resource, required]) => [resource, required - resources[resource]] as const)
     .filter(([, deficit]) => deficit > 0);
-  const timeToAfford = productionRates ? formatTimeToAfford(missing, productionRates) : "";
 
   if (missing.length === 1) {
     const [resource, deficit] = missing[0]!;
-    return `Requires ${formatNumber(deficit)} more ${resourceLabels[resource]}${timeToAfford}`;
+    return `Requires ${formatNumber(deficit)} more ${resourceLabels[resource]}`;
   }
 
   return `Requires ${missing
     .map(([resource, deficit]) => `${formatNumber(deficit)} more ${resourceLabels[resource]}`)
-    .join(", ")}${timeToAfford}`;
-}
-
-function formatTimeToAfford(
-  missing: Array<readonly [keyof Resources, number]>,
-  productionRates: Resources,
-): string {
-  if (missing.length === 0) return "";
-
-  const blocked = missing
-    .filter(([resource]) => productionRates[resource] <= 0)
-    .map(([resource]) => resourceLabels[resource]);
-
-  if (blocked.length > 0) {
-    return ` (time unavailable: no ${blocked.join(" or ")} production)`;
-  }
-
-  const seconds = Math.max(
-    ...missing.map(([resource, deficit]) => Math.ceil((deficit / productionRates[resource]) * 3_600)),
-  );
-
-  return ` (affordable in ${formatDuration(seconds)})`;
+    .join(", ")}`;
 }
 
 function formatBuildingQueueLabel(key: BuildingKey, label: string, targetLevel: number | undefined): string {
@@ -399,18 +350,6 @@ function energyRequiredForBuildingLevel(key: BuildingKey, level: number): number
 function scaledLevelValue(base: number, level: number): number {
   if (level === 0) return 0;
   return Math.floor((base * level * (11 ** level)) / (10 ** level));
-}
-
-function productionResourceForBuilding(key: BuildingKey): keyof Resources {
-  if (key === "metalMine") {
-    return "metal";
-  }
-
-  if (key === "crystalMine") {
-    return "crystal";
-  }
-
-  return "deuterium";
 }
 
 function storageResourceForBuilding(key: BuildingKey): keyof Resources {

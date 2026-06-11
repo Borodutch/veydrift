@@ -44,21 +44,20 @@ describe("building detail helpers", () => {
     });
   });
 
-  test("appends time to afford when production rates are available", () => {
+  test("lists missing resources without a client-derived time-to-afford estimate", () => {
+    // VEY-KANEO-465: time-to-afford is game-state math the frontend no longer derives.
     expect(formatMissingResources(
       { metal: 20, crystal: 50, deuterium: 0 },
       { metal: 80, crystal: 80, deuterium: 0 },
-      { metal: 30, crystal: 60, deuterium: 0 },
-    )).toBe("Requires 60 more Metal, 30 more Crystal (affordable in 2h)");
+    )).toBe("Requires 60 more Metal, 30 more Crystal");
 
     expect(formatMissingResources(
       { metal: 20, crystal: 50, deuterium: 0 },
       { metal: 80, crystal: 50, deuterium: 10 },
-      { metal: 30, crystal: 60, deuterium: 0 },
-    )).toBe("Requires 60 more Metal, 10 more Deuterium (time unavailable: no Deuterium production)");
+    )).toBe("Requires 60 more Metal, 10 more Deuterium");
   });
 
-  test("uses spendable accrued resources for building affordability and ETA", () => {
+  test("uses spendable accrued resources for building affordability", () => {
     const state = {
       ...createInitialPlayableState(1_000),
       buildings: {
@@ -76,11 +75,10 @@ describe("building detail helpers", () => {
     });
 
     expect(buildingUpgradeStatus(state, "metalMine", {
-      productionRates: { metal: 25, crystal: 0, deuterium: 0 },
       spendableResources: { metal: 35, crystal: 5_000, deuterium: 5_000 },
     })).toMatchObject({
       disabled: true,
-      reason: "Requires 25 more Metal (affordable in 1h)",
+      reason: "Requires 25 more Metal",
     });
   });
 
@@ -330,7 +328,9 @@ describe("building detail helpers", () => {
     });
   });
 
-  test("builds Metal Mine level table rows with costs, production, and energy use", () => {
+  test("builds Metal Mine level table rows with costs and energy use (no client production/duration)", () => {
+    // VEY-KANEO-465: per-building production rate and upgrade duration are backend-owned
+    // game state — the level table no longer derives or exposes them.
     const state = {
       ...createInitialPlayableState(1_000),
       buildings: {
@@ -341,49 +341,41 @@ describe("building detail helpers", () => {
     const rows = buildingLevelInfoRows(state.buildings, "metalMine", undefined, 3);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
-      constructionTime: true,
       deuteriumConsumed: false,
       effect: false,
       energyProduced: false,
       energyRequired: true,
-      production: true,
       storage: false,
     });
     expect(rows[0]).toMatchObject({
       cost: { metal: 60, crystal: 15, deuterium: 0 },
       current: true,
-      durationSeconds: 108,
       energyRequired: 11,
       level: 1,
       next: false,
-      production: { resource: "metal", perHour: 33 },
     });
     expect(rows[1]).toMatchObject({
       cost: { metal: 90, crystal: 22, deuterium: 0 },
       current: false,
-      durationSeconds: 161,
       energyRequired: 24,
       level: 2,
       next: true,
-      production: { resource: "metal", perHour: 72 },
     });
+    expect(rows.every((row) => !("production" in row) && !("durationSeconds" in row))).toBe(true);
   });
 
   test("builds Solar Plant level table rows with energy output", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "solarPlant", undefined, 2);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
-      constructionTime: true,
       deuteriumConsumed: false,
       effect: false,
       energyProduced: true,
       energyRequired: false,
-      production: false,
       storage: false,
     });
     expect(rows[0]).toMatchObject({
       cost: { metal: 75, crystal: 30, deuterium: 0 },
-      durationSeconds: 151,
       energyProduced: 22,
       level: 1,
       next: true,
@@ -429,12 +421,10 @@ describe("building detail helpers", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "fusionReactor", undefined, 2, 3);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
-      constructionTime: true,
       deuteriumConsumed: true,
       effect: false,
       energyProduced: true,
       energyRequired: false,
-      production: false,
       storage: false,
     });
     expect(rows[0]).toMatchObject({
@@ -479,32 +469,17 @@ describe("building detail helpers", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "metalStorage", undefined, 2);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
-      constructionTime: true,
       deuteriumConsumed: false,
       effect: false,
       energyProduced: false,
       energyRequired: false,
-      production: false,
       storage: true,
     });
     expect(rows[0]).toMatchObject({
       cost: { metal: 1000, crystal: 0, deuterium: 0 },
-      durationSeconds: 1440,
       level: 1,
       storage: { resource: "metal", capacity: 20_000 },
     });
-  });
-
-  test("adjusts level table construction times with Robotics and Nanite levels", () => {
-    const buildings = {
-      ...createInitialPlayableState(1_000).buildings,
-      roboticsFactory: 1,
-      naniteFactory: 1,
-    };
-
-    const rows = buildingLevelInfoRows(buildings, "metalStorage", undefined, 2);
-
-    expect(rows.map((row) => row.durationSeconds)).toEqual([360, 720]);
   });
 
   test("builds Missile Silo rows with Veydrift missile slot capacity", () => {
@@ -518,12 +493,10 @@ describe("building detail helpers", () => {
     const rows = buildingLevelInfoRows(state.buildings, "missileSilo", undefined, 4);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
-      constructionTime: true,
       deuteriumConsumed: false,
       effect: true,
       energyProduced: false,
       energyRequired: false,
-      production: false,
       storage: false,
     });
     expect(rows.map(({ effect, level }) => ({ effect, level }))).toEqual([
@@ -556,19 +529,4 @@ describe("building detail helpers", () => {
     expect(rows[1]).toMatchObject({ current: false, next: true });
   });
 
-  test("builds level table rows with the current construction-time divisor", () => {
-    const state = {
-      ...createInitialPlayableState(1_000),
-      buildings: {
-        ...createInitialPlayableState(1_000).buildings,
-        roboticsFactory: 1,
-      },
-    };
-    const rows = buildingLevelInfoRows(state.buildings, "metalMine", undefined, 2);
-
-    expect(rows.map(({ durationSeconds, level }) => ({ durationSeconds, level }))).toEqual([
-      { durationSeconds: 54, level: 1 },
-      { durationSeconds: 80, level: 2 },
-    ]);
-  });
 });

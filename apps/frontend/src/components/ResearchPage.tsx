@@ -9,8 +9,6 @@ import {
   researchEffectRows,
   researchCatalog,
   researchCost,
-  researchDurationEstimate,
-  researchLabRequirementFor,
   researchRequirementsFor,
   researchUnlockRows,
   unmetResearchRequirement,
@@ -18,7 +16,7 @@ import {
 import type { ChainResearchState } from "../walletFlow";
 import { researchQueueForDisplay as chainResearchQueueForDisplay } from "../chainState";
 import { formatMissingResources } from "../buildingDetails";
-import { formatDuration, formatDurationUntil } from "../durationFormat";
+import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import {
   InspectCatalogTile,
@@ -77,7 +75,6 @@ interface ResearchPageProps {
   onRefresh: () => void;
   onResearch: (technologyId: number, key: ResearchKey) => void;
   onSelectResearch?: ((key: ResearchKey) => void) | undefined;
-  productionRates?: Resources | undefined;
   researchState: ChainResearchState | null;
   selectedResearchKey?: ResearchKey | undefined;
   spendableResources?: Resources | undefined;
@@ -97,7 +94,6 @@ export function ResearchPage({
   onRefresh,
   onResearch,
   onSelectResearch,
-  productionRates,
   researchState,
   selectedResearchKey,
   spendableResources,
@@ -185,7 +181,6 @@ export function ResearchPage({
                     key: research.key,
                     loading,
                     now,
-                    productionRates,
                     researchState,
                     spendableResources,
                     state: viewState,
@@ -221,7 +216,6 @@ export function ResearchPage({
             onResearch={() => onResearch(selectedResearch.id, selectedResearch.key)}
             onOpenRequirement={onOpenRequirement}
             queue={queue}
-            productionRates={productionRates}
             research={selectedResearch}
             researchState={researchState}
             spendableResources={spendableResources}
@@ -395,7 +389,6 @@ function ResearchDetailPanel({
   onResearch,
   onOpenRequirement,
   queue,
-  productionRates,
   research,
   researchState,
   spendableResources,
@@ -411,7 +404,6 @@ function ResearchDetailPanel({
   onResearch: () => void;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   queue: ReturnType<typeof researchQueueForDisplay>;
-  productionRates?: Resources | undefined;
   research: (typeof researchCatalog)[number];
   researchState: ChainResearchState | null;
   spendableResources?: Resources | undefined;
@@ -426,7 +418,6 @@ function ResearchDetailPanel({
     key: research.key,
     loading,
     now,
-    productionRates,
     researchState,
     spendableResources,
     state,
@@ -480,16 +471,6 @@ function ResearchDetailPanel({
           <RequirementFlairs onOpenRequirement={onOpenRequirement} requirements={requirementStates} />
         </InspectInfoRow>
         <InspectInfoRow label="Research cost" value={status.cost ? formatCost(status.cost) : "Unavailable until chain state loads"} />
-        <InspectInfoRow
-          label="Research time"
-          value={
-            status.durationSeconds
-              ? formatDuration(status.durationSeconds)
-              : status.hasMissingRequirement
-                ? "Unavailable until prerequisites are met"
-                : "Unavailable until chain state loads"
-          }
-        />
       </dl>
 
       <ResearchEffectsSection effectRows={effectRows} unlockRows={unlockRows} />
@@ -533,7 +514,6 @@ function ResearchDetailPanel({
 export type ResearchLevelInfoRow = {
   cost: Resources;
   current: boolean;
-  durationSeconds?: number | undefined;
   effect: string;
   level: number;
   next: boolean;
@@ -565,19 +545,10 @@ export function researchLevelInfoRows(
     };
     const cost = researchCost(preResearch, key);
     const requirementStatus = researchLevelRequirementStatus(targetState, key, level);
-    const locked = requirementStatus !== "Met";
-    const durationSeconds = locked
-      ? undefined
-      : researchDurationEstimate(state.buildings, cost, {
-          networkLevel: preResearch.intergalacticResearchNetwork,
-          requiredLabLevel: researchLabRequirementFor(key),
-          researchNetworkLabLevels: options.researchNetworkLabLevels,
-        });
 
     return {
       cost,
       current: currentLevel === level,
-      durationSeconds,
       effect: researchLevelEffectSummary(state, key, level, options.researchNetworkLabLevels),
       level,
       next: currentLevel + 1 === level,
@@ -651,7 +622,6 @@ export function ResearchLevelInfoModal({
                 <ResearchLevelInfoHeader className="min-w-24 whitespace-nowrap">Level</ResearchLevelInfoHeader>
                 <ResearchLevelInfoHeader className="min-w-24 whitespace-nowrap">Status</ResearchLevelInfoHeader>
                 <ResearchLevelInfoHeader className="min-w-52">Research cost</ResearchLevelInfoHeader>
-                <ResearchLevelInfoHeader className="min-w-32">Research time</ResearchLevelInfoHeader>
                 <ResearchLevelInfoHeader className="min-w-52">Requirements</ResearchLevelInfoHeader>
                 <ResearchLevelInfoHeader className="min-w-60">Effect</ResearchLevelInfoHeader>
               </tr>
@@ -681,9 +651,6 @@ export function ResearchLevelInfoModal({
                     </div>
                   </ResearchLevelInfoCell>
                   <ResearchLevelInfoCell>{formatCost(row.cost)}</ResearchLevelInfoCell>
-                  <ResearchLevelInfoCell>
-                    {row.durationSeconds === undefined ? "Unavailable until prerequisites are met" : formatDuration(row.durationSeconds)}
-                  </ResearchLevelInfoCell>
                   <ResearchLevelInfoCell>{row.requirementStatus}</ResearchLevelInfoCell>
                   <ResearchLevelInfoCell>{row.effect}</ResearchLevelInfoCell>
                 </tr>
@@ -918,7 +885,6 @@ export function researchActionStatus({
   key,
   loading,
   now,
-  productionRates,
   researchState,
   spendableResources,
   state,
@@ -931,7 +897,6 @@ export function researchActionStatus({
   key: ResearchKey;
   loading: boolean;
   now: number;
-  productionRates?: Resources | undefined;
   researchState: ChainResearchState | null;
   spendableResources?: Resources | undefined;
   state: PlayableState;
@@ -954,15 +919,6 @@ export function researchActionStatus({
   const activeReady = active && Boolean(activeReadyAt && activeReadyAt <= now);
   const queueOccupied = (Boolean(state.researchQueue) || Boolean(activeQueue)) && !active;
   const occupiedQueueLabel = state.researchQueue?.label ?? activeQueueResearch?.label;
-  const labMissing = state.buildings.researchLab === 0;
-  const durationSeconds = !labMissing && cost
-    ? researchDurationEstimate(state.buildings, cost, {
-        networkLevel: state.research.intergalacticResearchNetwork,
-        requiredLabLevel: researchLabRequirementFor(key),
-        researchNetworkLabLevels: researchState?.researchNetworkLabLevels,
-      })
-    : undefined;
-
   const reason = actionPending
     ? actionPendingLabel ?? "Awaiting wallet"
     : loading
@@ -990,7 +946,7 @@ export function researchActionStatus({
                     : !cost
                       ? "Research cost unavailable"
                       : !affordable
-                        ? formatMissingResources(spendable, cost, productionRates)
+                        ? formatMissingResources(spendable, cost)
                         : `Ready for Level ${targetLevel}`;
 
   const completionReady = reason === `Ready to complete Level ${targetLevel}`;
@@ -1005,7 +961,6 @@ export function researchActionStatus({
     cost,
     currentLevel,
     disabled,
-    durationSeconds,
     hasMissingRequirement: Boolean(missingRequirement),
     reason,
     targetLevel,
