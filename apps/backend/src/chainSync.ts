@@ -554,7 +554,15 @@ export class ChainSyncService {
       this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : "Failed to backfill chain logs.";
-      this.requestReconciliation(reason);
+      // A periodic self-heal pass is best-effort: if its recent-range re-scan RPC fails (e.g. a
+      // truncated/empty RPC body — "Unexpected end of JSON input"), record it and let the next
+      // interval retry. Do NOT escalate to a full canonical reconcile: that heavy batched read is
+      // the SIGSEGV-prone path, and a flaky RPC must never trigger a rebuild that could fail and
+      // take the service down (VEY-KANEO-461). Gap/reconnect recovery (non-self-heal) is a KNOWN
+      // missed range and must still escalate so it is not silently dropped.
+      if (!options.selfHeal) {
+        this.requestReconciliation(reason);
+      }
     } finally {
       this.backfillInProgress = false;
     }

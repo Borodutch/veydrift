@@ -657,6 +657,56 @@ describe("ChainSyncService", () => {
     service.stop();
   });
 
+  test("a failing periodic self-heal pass never escalates to a full canonical reconcile (VEY-KANEO-461)", async () => {
+    MockWebSocket.instances = [];
+    const reconcileReasons: string[] = [];
+    let backfillAttempts = 0;
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog() {
+        return { applied: false, duplicate: true, ignored: false, removed: false, snapshot: {} };
+      },
+      markStale() {},
+      async reconcile(reason: string) {
+        reconcileReasons.push(reason);
+      }
+    };
+    const backfiller = {
+      async listContractLogs() {
+        backfillAttempts += 1;
+        // Simulate the truncated/empty RPC body that took prod down: the heavy read returns a
+        // malformed response that JSON.parse rejects.
+        throw new Error("Unexpected end of JSON input");
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      logBackfiller: backfiller,
+      selfHealIntervalMs: 2,
+      selfHealDepthBlocks: 50
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x190" } } });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The self-heal pass ran and failed on the flaky RPC...
+    expect(backfillAttempts).toBeGreaterThanOrEqual(1);
+    expect(service.snapshot().lastError).toBe("Unexpected end of JSON input");
+    // ...but it must NOT have escalated to a full canonical reconcile (the SIGSEGV-prone read).
+    // A best-effort self-heal simply retries on the next interval.
+    expect(reconcileReasons).toEqual([]);
+    service.stop();
+  });
+
   test("self-heal stays quiet when no live events were dropped", async () => {
     MockWebSocket.instances = [];
     const backfillCalls: bigint[] = [];
