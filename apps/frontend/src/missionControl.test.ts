@@ -545,7 +545,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -561,7 +561,9 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Resolve battle");
     // VEY-395 rework: the mission-detail page subtitle was removed.
     expect(text).not.toContain("Shareable mission state");
-    expect(text).toContain("Copy link");
+    // VEY-KANEO-339: the report header control is a share affordance (native share dialog + clipboard
+    // fallback), exposed via its accessible label, not the old copy-only "Copy link" button.
+    expect(text).toContain("Share battle report");
     expect(text).toContain("Battle Report");
     expect(text).toContain("Attacker victory");
     // VEY-KANEO-396 rework (#9636): the "Reconstructed from the on-chain combat log" subtext and the
@@ -639,7 +641,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -726,7 +728,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -772,7 +774,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -820,7 +822,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -858,7 +860,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -955,7 +957,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -970,7 +972,7 @@ describe("Mission Control battle reports", () => {
       copyState: "copied",
     })).join(" ");
     expect(copied).toContain("Copied!");
-    expect(copied).not.toContain("Copy link");
+    expect(copied).not.toContain("Share battle report");
 
     const pending = collectText(MissionDetailPage({
       ...baseProps,
@@ -985,7 +987,7 @@ describe("Mission Control battle reports", () => {
       copyState: "error",
     })).join(" ");
     expect(failed).toContain("transaction failed");
-    expect(failed).toContain("Copy failed");
+    expect(failed).toContain("Share failed");
   });
 
   test("renders the route as origin -> target with clickable coordinates and commanders", () => {
@@ -1019,7 +1021,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -1084,7 +1086,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -1382,7 +1384,7 @@ function missionDetailProps(
     now,
     onBack: () => undefined,
     onCompleteReturn: () => undefined,
-    onCopyShareUrl: () => undefined,
+    onShareReport: () => undefined,
     onCounterplay: () => undefined,
     onRecall: () => undefined,
     onResolve: () => undefined,

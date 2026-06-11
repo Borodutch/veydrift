@@ -41,7 +41,9 @@ interface MissionDetailPageProps {
   now: number;
   onBack: () => void;
   onCompleteReturn: (missionId: string) => void;
-  onCopyShareUrl: () => void;
+  // Triggers the battle-report share affordance: a native share dialog when the browser supports the
+  // Web Share API, otherwise a clipboard copy of the shareable report URL (VEY-KANEO-339).
+  onShareReport: () => void;
   onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
@@ -62,7 +64,7 @@ export function MissionDetailPage({
   now,
   onBack,
   onCompleteReturn,
-  onCopyShareUrl,
+  onShareReport,
   onCounterplay,
   onRecall,
   onResolve,
@@ -72,7 +74,9 @@ export function MissionDetailPage({
 }: MissionDetailPageProps) {
   const mission = detail?.mission;
   const report = detail?.battleReport ?? undefined;
-  const copyLabel = copyState === "copied" ? "Copied!" : copyState === "error" ? "Copy failed" : "Copy link";
+  // The share control opens a native share dialog (Web Share API) where available and copies the link
+  // otherwise; the copied/error labels describe that clipboard fallback (VEY-KANEO-339).
+  const shareLabel = copyState === "copied" ? "Copied!" : copyState === "error" ? "Share failed" : "Share battle report";
 
   return (
     <section className="grid gap-4">
@@ -87,7 +91,7 @@ export function MissionDetailPage({
           <>
             <RefreshButton loading={loading} onRefresh={onRetry} title="Refresh mission" />
             <button
-              aria-label={copyLabel}
+              aria-label={shareLabel}
               aria-live="polite"
               className={`inline-flex h-9 w-9 items-center justify-center rounded border text-sm font-medium transition ${
                 copyState === "copied"
@@ -96,8 +100,8 @@ export function MissionDetailPage({
                     ? "border-red-300/40 bg-red-400/15 text-red-100"
                     : "border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
               }`}
-              onClick={onCopyShareUrl}
-              title={copyLabel}
+              onClick={onShareReport}
+              title={shareLabel}
               type="button"
             >
               {copyState === "copied" ? <Check aria-hidden="true" size={15} /> : <Share2 aria-hidden="true" size={15} />}

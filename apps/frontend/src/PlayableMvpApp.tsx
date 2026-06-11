@@ -21,6 +21,7 @@ import { RankingsPage } from "./components/RankingsPage";
 import { RaidTargetFinderPage } from "./components/RaidTargetFinderPage";
 import { AllianceInspectPage, PlayerInspectPage } from "./components/InspectPages";
 import { buildInspectHash, parseInspectRoute, type InspectRoute } from "./inspectRoutes";
+import { shareReportUrl } from "./shareReport";
 import {
   buildingKeyForContractId,
   infrastructureActionNoticeFor,
@@ -4929,14 +4930,15 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     ));
   }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingAcsDefend, provider, runGalaxyTransaction]);
 
-  const handleCopyMissionShareUrl = useCallback((url: string) => {
-    if (!url || typeof navigator === "undefined" || !navigator.clipboard) {
-      setMissionShareCopyState("error");
-      return;
-    }
-    navigator.clipboard.writeText(url)
-      .then(() => setMissionShareCopyState("copied"))
-      .catch(() => setMissionShareCopyState("error"));
+  const handleShareMissionReport = useCallback((url: string) => {
+    // Open the native share dialog when the browser supports the Web Share API, otherwise copy the
+    // shareable battle-report URL to the clipboard. The helper never touches the route, so the share
+    // control stays on the battle report instead of dropping back to the overview (VEY-KANEO-339).
+    void shareReportUrl(typeof navigator === "undefined" ? undefined : navigator, url).then((outcome) => {
+      // A successful native share leaves no inline feedback (the OS dialog is its own confirmation);
+      // the clipboard fallback flips to "copied", and a hard failure surfaces the error pill.
+      setMissionShareCopyState(outcome === "copied" ? "copied" : outcome === "error" ? "error" : "idle");
+    });
   }, []);
 
   const handleJoinAttack = useCallback((attackMissionId: string, targetPlanetId: string, targetCoords: Coordinates | null) => {
@@ -5148,7 +5150,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           now={now}
           onBack={() => handleNavigate("mission-control")}
           onCompleteReturn={handleCompleteMissionReturn}
-          onCopyShareUrl={() => handleCopyMissionShareUrl(missionDetailShareUrl)}
+          onShareReport={() => handleShareMissionReport(missionDetailShareUrl)}
           onCounterplay={handleMissionCounterplay}
           onRecall={handleRecallMission}
           onResolve={handleResolveMission}

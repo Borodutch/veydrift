@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionDetailPage, type MissionDetailActionState } from "../src/components/MissionDetailPage";
+import { MissionDetailPage, type MissionDetailActionState, type MissionShareCopyState } from "../src/components/MissionDetailPage";
 import type { BattleReport, DefenderPlanetState, FleetMissionSummary, FleetMissionVisibilityResponse, MissionDetailResponse } from "../src/walletFlow";
 
 // VEY-401: the Battle Report defender block must show the defender planet's indexed fleet/defenses
@@ -87,7 +87,7 @@ function renderDetailText(detail: MissionDetailResponse, fleetVisibility = visib
     now: 1_770_001_000_000,
     onBack: noop,
     onCompleteReturn: noop,
-    onCopyShareUrl: noop,
+    onShareReport: noop,
     onCounterplay: noop,
     onRecall: noop,
     onResolve: noop,
@@ -402,6 +402,82 @@ describe("MissionDetailPage order authorization (matches Mission Control)", () =
     expect(text).not.toContain("Intercept");
   });
 });
+
+// VEY-KANEO-339: the battle-report header Share button must be a real button wired to the share
+// affordance (not a link), so it presents a share dialog / copies the link and never navigates the
+// viewer away from the report. These tests assert the rendered control's wiring directly.
+describe("MissionDetailPage Share control", () => {
+  function renderShareButton(copyState: MissionShareCopyState, onShareReport: () => void) {
+    const noop = () => {};
+    const page = MissionDetailPage({
+      actionState: { status: "idle" },
+      canTransact: false,
+      copyState,
+      detail: { mission: combatMission(), battleReport: battleReport(), defenderPlanetState: null },
+      error: undefined,
+      fleetVisibility: visibilityFor(combatMission()),
+      loading: false,
+      missionId: "1",
+      now: 1_770_001_000_000,
+      onBack: noop,
+      onCompleteReturn: noop,
+      onShareReport,
+      onCounterplay: noop,
+      onRecall: noop,
+      onResolve: noop,
+      onRetry: noop,
+      onSelectCoordinates: noop,
+      onSelectPlayer: noop,
+    });
+    const buttons = findElements(page, "button");
+    // The share control is the only button carrying a "Share..."/"Copied!" accessible label.
+    return buttons.find((button) => {
+      const label = String(button.props?.title ?? "");
+      return label.startsWith("Share") || label === "Copied!";
+    });
+  }
+
+  test("renders the share control as a button (never an anchor) so clicking it cannot navigate", () => {
+    const shareButton = renderShareButton("idle", () => {});
+    expect(shareButton).toBeDefined();
+    expect(shareButton?.type).toBe("button");
+    expect(shareButton?.props?.type).toBe("button");
+    // A bare onClick handler with no href means there is no navigation target at all.
+    expect(shareButton?.props?.href).toBeUndefined();
+  });
+
+  test("invokes onShareReport when the share control is clicked", () => {
+    let shared = 0;
+    const shareButton = renderShareButton("idle", () => {
+      shared += 1;
+    });
+    (shareButton?.props?.onClick as (() => void) | undefined)?.();
+    expect(shared).toBe(1);
+  });
+
+  test("labels the control as Share by default and reflects the clipboard fallback states", () => {
+    expect(String(renderShareButton("idle", () => {})?.props?.title)).toBe("Share battle report");
+    expect(String(renderShareButton("copied", () => {})?.props?.title)).toBe("Copied!");
+    expect(String(renderShareButton("error", () => {})?.props?.title)).toBe("Share failed");
+  });
+});
+
+type FoundElement = { type?: unknown; props?: Record<string, unknown> & { children?: unknown } };
+
+function findElements(node: unknown, tag: string): FoundElement[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (Array.isArray(node)) return node.flatMap((child) => findElements(child, tag));
+  if (typeof node !== "object") return [];
+
+  const vnode = node as { type?: unknown; props?: Record<string, unknown> & { children?: unknown } };
+  if (typeof vnode.type === "function") {
+    if ("size" in (vnode.props ?? {}) || "strokeWidth" in (vnode.props ?? {})) return [];
+    const render = vnode.type as (props: Record<string, unknown>) => unknown;
+    return findElements(render({ ...(vnode.props ?? {}) }), tag);
+  }
+  const self = vnode.type === tag ? [vnode] : [];
+  return self.concat(findElements(vnode.props?.children, tag));
+}
 
 function visibleText(node: ComponentChildren): string {
   return textParts(node).join(" ").replace(/\s+/g, " ").trim();
