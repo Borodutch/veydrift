@@ -177,9 +177,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     // too heavy/fragile to run often, so without this the read model drifts (wrong resources, shipyard
     // shows 0, etc). This is a cheap batched eth_call sweep of live planets — see
     // SettlementIndexer.refreshCanonicalState. Skips itself while a rebuild is running; never throws.
-    const canonicalRefresh = setInterval(() => {
+    const refreshCanonicalState = () => {
       void indexer.refreshCanonicalState();
-    }, CANONICAL_STATE_REFRESH_INTERVAL_MS);
+    };
+    refreshCanonicalState();
+    const canonicalRefresh = setInterval(refreshCanonicalState, CANONICAL_STATE_REFRESH_INTERVAL_MS);
     canonicalRefresh.unref?.();
   }
   if (cacheReader) {
@@ -839,6 +841,26 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         return Response.json(await indexer.rebuild(), {
+          headers: jsonHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 502);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname.startsWith("/index/verify/")) {
+      if (!indexer) {
+        return unavailableResponse(loaded.problems);
+      }
+
+      const planetId = decodeURIComponent(url.pathname.slice("/index/verify/".length));
+      if (!planetId) {
+        return errorResponse(new Error("Missing planetId"), 400);
+      }
+
+      const heal = url.searchParams.get("heal") === "true";
+      try {
+        return Response.json(await indexer.verifyCanonicalState(planetId, { heal }), {
           headers: jsonHeaders
         });
       } catch (error) {

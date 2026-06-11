@@ -2524,6 +2524,51 @@ describe("Veydrift backend", () => {
     expect(chainReader.rebuildCalls).toBe(1);
   });
 
+  test("verifies and self-heals a planet's canonical state via /index/verify (VEY-KANEO-452)", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    await indexer.rebuild();
+
+    // Drift the on-chain ship roster after the canonical mirror was built so the
+    // stored count (2) no longer matches what shipCount now returns (1).
+    chainReader.getShipyardState = async (wallet: Address): Promise<ShipyardState> => ({
+      wallet,
+      homePlanetId: planet.planetId,
+      planetId: planet.planetId,
+      productionAvailable: true,
+      resources: planet.resources,
+      fleetSlots: { active: 0, limit: 2 },
+      shipyardLevel: 1,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: [{ id: 0, count: 1, cost: { metal: "2000", crystal: "2000", deuterium: "0" } }],
+      queue: null
+    });
+
+    const detect = await handler(new Request("http://localhost/index/verify/7", { method: "POST" }));
+    expect(detect.status).toBe(200);
+    const detectBody = await detect.json();
+    expect(detectBody).toMatchObject({ planetId: "7", reachedChain: true, divergent: true, healed: false });
+    expect(detectBody.divergences).toEqual(expect.arrayContaining([
+      { field: "ship", id: 0, key: null, stored: "2", onChain: "1" }
+    ]));
+    // Read-only verify left the stored roster untouched.
+    expect(indexer.shipRows("7").find((row) => row.id === 0)?.count).toBe(2);
+
+    const heal = await handler(new Request("http://localhost/index/verify/7?heal=true", { method: "POST" }));
+    await expect(heal.json()).resolves.toMatchObject({ planetId: "7", divergent: true, healed: true });
+    expect(indexer.shipRows("7").find((row) => row.id === 0)?.count).toBe(1);
+
+    const reverify = await handler(new Request("http://localhost/index/verify/7", { method: "POST" }));
+    await expect(reverify.json()).resolves.toMatchObject({ divergent: false, healed: false });
+  });
+
   test("coalesces concurrent index rebuilds", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
