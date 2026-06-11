@@ -785,7 +785,18 @@ describe("tester universe display data", () => {
       mode: "mission",
       mission: "defenseHold",
     });
-    expect(originActions).toEqual([]);
+    // The home/launch planet keeps the proactive Defend action visible but disabled (launchDefenseHold
+    // reverts with SamePlanet on origin == target) so single-colony wallets still discover the feature
+    // and see the eligibility prerequisite (VEY-KANEO-440).
+    expect(originActions).toMatchObject([
+      {
+        kind: "defenseHold",
+        enabled: false,
+        label: "Defend",
+        reason:
+          "You can't station a defending fleet at the planet it launches from. Colonize another planet or join an alliance to defend one.",
+      },
+    ]);
     expect(emptyActions).toMatchObject([{ enabled: true, kind: "colonize", label: "Colonize" }]);
     expect(noCargoActions).toMatchObject([
       { enabled: false, kind: "transport", reason: "Requires a cargo-capable ship on your home planet." },
