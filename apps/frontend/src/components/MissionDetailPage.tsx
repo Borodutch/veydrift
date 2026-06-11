@@ -96,7 +96,13 @@ export function MissionDetailPage({
                     ? "border-red-300/40 bg-red-400/15 text-red-100"
                     : "border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
               }`}
-              onClick={onCopyShareUrl}
+              onClick={(event) => {
+                // Defensive: keep the share trigger from ever bubbling into a
+                // navigation/default action so it can only invoke the share
+                // handler (VEY-339 reported the share button leaving the page).
+                event.preventDefault();
+                onCopyShareUrl();
+              }}
               title={copyLabel}
               type="button"
             >

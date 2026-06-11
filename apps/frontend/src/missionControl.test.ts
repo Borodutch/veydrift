@@ -988,6 +988,34 @@ describe("Mission Control battle reports", () => {
     expect(failed).toContain("Copy failed");
   });
 
+  test("share button is a non-navigating trigger that preventDefaults and calls the share handler", () => {
+    // VEY-339 rework: QA reported the battle-report share control navigating
+    // away from the page. The control must stay a type="button" that only
+    // invokes the share handler and swallows any default/navigation action.
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    let shareCalls = 0;
+    let defaultPrevented = false;
+
+    const tree = MissionDetailPage({
+      ...missionDetailProps(now, { mission: mission("228"), battleReport: battleReport("228") }),
+      copyState: "idle",
+      onCopyShareUrl: () => { shareCalls += 1; },
+    });
+
+    const shareButton = findElements(tree, "button").find(
+      (node) => node.props?.["aria-label"] === "Copy link",
+    );
+    expect(shareButton).toBeDefined();
+    expect(shareButton?.props?.type).toBe("button");
+
+    const onClick = shareButton?.props?.onClick as ((event: { preventDefault: () => void }) => void) | undefined;
+    expect(onClick).toBeDefined();
+    onClick?.({ preventDefault: () => { defaultPrevented = true; } });
+
+    expect(defaultPrevented).toBe(true);
+    expect(shareCalls).toBe(1);
+  });
+
   test("renders the route as origin -> target with clickable coordinates and commanders", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const owner = "0x1111111111111111111111111111111111111111";
