@@ -4,6 +4,7 @@ import {
   DEFAULT_RAID_TARGET_SORT,
   buildRaidTargets,
   filterRaidTargets,
+  floatActiveMissionTargetsFirst,
   inboundFleetsByTarget,
   incomingThreats,
   prepareRaidTargets,
@@ -374,5 +375,39 @@ describe("incomingThreats", () => {
     expect(incomingThreats(undefined)).toEqual([]);
     const threats = incomingThreats(visibility({ incoming: [mission({ missionId: "done", status: "Resolved" })] }));
     expect(threats).toEqual([]);
+  });
+});
+
+describe("floatActiveMissionTargetsFirst", () => {
+  const targets = buildRaidTargets({
+    entries: [
+      entry({ wallet: "0xa", planets: [planet({ planetId: "1" })] }),
+      entry({ wallet: "0xb", planets: [planet({ planetId: "2" })] }),
+      entry({ wallet: "0xc", planets: [planet({ planetId: "3" })] }),
+    ],
+  });
+
+  test("floats targets with active fleet activity to the top, preserving order within each group", () => {
+    const { ordered, activeCount } = floatActiveMissionTargetsFirst(
+      targets,
+      (target) => target.planetId === "3",
+    );
+    expect(ordered.map((target) => target.planetId)).toEqual(["3", "1", "2"]);
+    expect(activeCount).toBe(1);
+  });
+
+  test("keeps the original order and reports zero when nothing is active", () => {
+    const { ordered, activeCount } = floatActiveMissionTargetsFirst(targets, () => false);
+    expect(ordered.map((target) => target.planetId)).toEqual(["1", "2", "3"]);
+    expect(activeCount).toBe(0);
+  });
+
+  test("does not drop or duplicate targets when several are active", () => {
+    const { ordered, activeCount } = floatActiveMissionTargetsFirst(
+      targets,
+      (target) => target.planetId !== "1",
+    );
+    expect(ordered.map((target) => target.planetId)).toEqual(["2", "3", "1"]);
+    expect(activeCount).toBe(2);
   });
 });
