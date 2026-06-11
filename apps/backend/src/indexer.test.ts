@@ -3194,6 +3194,40 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("a failed reconcile never takes a previously reconciled index out of service (VEY-KANEO-461)", async () => {
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n);
+
+    // A baseline reconciliation succeeds: the websocket-synced read model is now authoritative.
+    await indexer.rebuild();
+    expect(indexer.snapshot()).toMatchObject({
+      indexedState: "healthy",
+      safeToServeIndexedState: true,
+      safeToServeAllianceState: true,
+      lastReconciliationError: null
+    });
+
+    // A later background reconcile hits a transient truncated/empty RPC body and throws.
+    reader.listSettledPlanetEvents = async () => {
+      throw new Error("Unexpected end of JSON input");
+    };
+    await expect(indexer.reconcile("periodic self-heal")).rejects.toThrow("Unexpected end of JSON input");
+
+    // The flaky reconcile must NOT take the service down: the indexed state stays serveable, the
+    // error is surfaced for visibility, and the reconcile simply retries in the background.
+    expect(indexer.snapshot()).toMatchObject({
+      indexedState: "healthy",
+      safeToServeIndexedState: true,
+      safeToServeAllianceState: true,
+      lastReconciliationError: "Unexpected end of JSON input",
+      staleReason: null
+    });
+  });
+
   test("keeps a previously reconciled index serveable while background reconciliation runs", async () => {
     let releaseRebuild = () => {};
     const reader = {
