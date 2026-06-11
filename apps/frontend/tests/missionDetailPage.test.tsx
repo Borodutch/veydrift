@@ -78,7 +78,6 @@ function renderDetailText(detail: MissionDetailResponse, fleetVisibility = visib
   const page = MissionDetailPage({
     actionState,
     canTransact: false,
-    copyState: "idle",
     detail,
     error: undefined,
     fleetVisibility,
@@ -87,7 +86,7 @@ function renderDetailText(detail: MissionDetailResponse, fleetVisibility = visib
     now: 1_770_001_000_000,
     onBack: noop,
     onCompleteReturn: noop,
-    onCopyShareUrl: noop,
+    onShareReport: noop,
     onCounterplay: noop,
     onRecall: noop,
     onResolve: noop,
@@ -402,6 +401,83 @@ describe("MissionDetailPage order authorization (matches Mission Control)", () =
     expect(text).not.toContain("Intercept");
   });
 });
+
+// VEY-KANEO-339: the battle-report header Share button must be a real button (not a link) wired to
+// open the in-app share dialog, so clicking it can never navigate the viewer away from the report.
+// These tests assert the rendered control's wiring directly.
+describe("MissionDetailPage Share control", () => {
+  function renderShareButton(onShareReport: () => void) {
+    const noop = () => {};
+    const page = MissionDetailPage({
+      actionState: { status: "idle" },
+      canTransact: false,
+      detail: { mission: combatMission(), battleReport: battleReport(), defenderPlanetState: null },
+      error: undefined,
+      fleetVisibility: visibilityFor(combatMission()),
+      loading: false,
+      missionId: "1",
+      now: 1_770_001_000_000,
+      onBack: noop,
+      onCompleteReturn: noop,
+      onShareReport,
+      onCounterplay: noop,
+      onRecall: noop,
+      onResolve: noop,
+      onRetry: noop,
+      onSelectCoordinates: noop,
+      onSelectPlayer: noop,
+    });
+    const buttons = findElements(page, "button");
+    // The share control is the only button carrying the "Share battle report" accessible label.
+    return buttons.find((button) => String(button.props?.title ?? "") === "Share battle report");
+  }
+
+  test("renders the share control as a button (never an anchor) so clicking it cannot navigate", () => {
+    const shareButton = renderShareButton(() => {});
+    expect(shareButton).toBeDefined();
+    expect(shareButton?.type).toBe("button");
+    expect(shareButton?.props?.type).toBe("button");
+    // A bare onClick handler with no href means there is no navigation target at all.
+    expect(shareButton?.props?.href).toBeUndefined();
+  });
+
+  test("opens the share dialog (and suppresses default/propagation) when clicked", () => {
+    let shared = 0;
+    let prevented = 0;
+    let stopped = 0;
+    const shareButton = renderShareButton(() => {
+      shared += 1;
+    });
+    const onClick = shareButton?.props?.onClick as ((event: unknown) => void) | undefined;
+    onClick?.({ preventDefault: () => { prevented += 1; }, stopPropagation: () => { stopped += 1; } });
+    expect(shared).toBe(1);
+    // Hardened against any ancestor navigation handler (the QA symptom was dropping to the overview).
+    expect(prevented).toBe(1);
+    expect(stopped).toBe(1);
+  });
+
+  test("labels the control as Share battle report", () => {
+    expect(String(renderShareButton(() => {})?.props?.title)).toBe("Share battle report");
+    expect(String(renderShareButton(() => {})?.props?.["aria-label"])).toBe("Share battle report");
+  });
+});
+
+type FoundElement = { type?: unknown; props?: Record<string, unknown> & { children?: unknown } };
+
+function findElements(node: unknown, tag: string): FoundElement[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (Array.isArray(node)) return node.flatMap((child) => findElements(child, tag));
+  if (typeof node !== "object") return [];
+
+  const vnode = node as { type?: unknown; props?: Record<string, unknown> & { children?: unknown } };
+  if (typeof vnode.type === "function") {
+    if ("size" in (vnode.props ?? {}) || "strokeWidth" in (vnode.props ?? {})) return [];
+    const render = vnode.type as (props: Record<string, unknown>) => unknown;
+    return findElements(render({ ...(vnode.props ?? {}) }), tag);
+  }
+  const self = vnode.type === tag ? [vnode] : [];
+  return self.concat(findElements(vnode.props?.children, tag));
+}
 
 function visibleText(node: ComponentChildren): string {
   return textParts(node).join(" ").replace(/\s+/g, " ").trim();

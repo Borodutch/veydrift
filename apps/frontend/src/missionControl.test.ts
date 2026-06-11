@@ -566,7 +566,6 @@ describe("Mission Control battle reports", () => {
       fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
-      copyState: "idle",
       detail: {
         mission: {
           ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
@@ -581,7 +580,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -597,7 +596,9 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Resolve battle");
     // VEY-395 rework: the mission-detail page subtitle was removed.
     expect(text).not.toContain("Shareable mission state");
-    expect(text).toContain("Copy link");
+    // VEY-KANEO-339: the report header control is a share affordance (native share dialog + clipboard
+    // fallback), exposed via its accessible label, not the old copy-only "Copy link" button.
+    expect(text).toContain("Share battle report");
     expect(text).toContain("Battle Report");
     expect(text).toContain("Attacker victory");
     // VEY-KANEO-396 rework (#9636): the "Reconstructed from the on-chain combat log" subtext and the
@@ -665,7 +666,6 @@ describe("Mission Control battle reports", () => {
       fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
-      copyState: "idle",
       detail: {
         mission: mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 60_000),
         battleReport: null,
@@ -675,7 +675,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -738,7 +738,6 @@ describe("Mission Control battle reports", () => {
       fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
-      copyState: "idle",
       detail: {
         mission: {
           ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
@@ -762,7 +761,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -786,7 +785,6 @@ describe("Mission Control battle reports", () => {
       fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
-      copyState: "idle",
       detail: {
         mission: {
           ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
@@ -808,7 +806,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -843,7 +841,6 @@ describe("Mission Control battle reports", () => {
       fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
-      copyState: "idle",
       detail: {
         mission: {
           ...mission("51", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 60_000),
@@ -856,7 +853,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -880,7 +877,6 @@ describe("Mission Control battle reports", () => {
       fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
-      copyState: "idle",
       detail: {
         mission: {
           ...mission("52", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000),
@@ -894,7 +890,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -974,7 +970,7 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Battle Report");
   });
 
-  test("surfaces share-link copy feedback and mission action status on the detail page", () => {
+  test("surfaces the share control and mission action status on the detail page", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const baseProps = {
       fleetVisibility: ownerVisibility,
@@ -991,7 +987,7 @@ describe("Mission Control battle reports", () => {
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -1000,56 +996,25 @@ describe("Mission Control battle reports", () => {
       onSelectPlayer: () => undefined,
     } as const;
 
-    const copied = collectText(MissionDetailPage({
-      ...baseProps,
-      actionState: { status: "idle" },
-      copyState: "copied",
-    })).join(" ");
-    expect(copied).toContain("Copied!");
-    expect(copied).not.toContain("Copy link");
+    // VEY-KANEO-339: the share control is now a static "Share battle report" button that opens the
+    // in-app share dialog (the copy/social feedback moved into that dialog), so the button label is
+    // constant regardless of action state.
+    const idle = MissionDetailPage({ ...baseProps, actionState: { status: "idle" } });
+    const shareButton = findElements(idle, "button").find((node) => String(node.props?.title ?? "") === "Share battle report");
+    expect(shareButton).toBeDefined();
+    expect(shareButton?.props?.type).toBe("button");
 
     const pending = collectText(MissionDetailPage({
       ...baseProps,
       actionState: { status: "pending", label: "Resolve mission #42: waiting for wallet confirmation." },
-      copyState: "idle",
     })).join(" ");
     expect(pending).toContain("waiting for wallet confirmation");
 
     const failed = collectText(MissionDetailPage({
       ...baseProps,
       actionState: { status: "error", label: "Resolve mission #42 transaction failed." },
-      copyState: "error",
     })).join(" ");
     expect(failed).toContain("transaction failed");
-    expect(failed).toContain("Copy failed");
-  });
-
-  test("share button is a non-navigating trigger that preventDefaults and calls the share handler", () => {
-    // VEY-339 rework: QA reported the battle-report share control navigating
-    // away from the page. The control must stay a type="button" that only
-    // invokes the share handler and swallows any default/navigation action.
-    const now = Date.parse("2026-06-05T12:00:00.000Z");
-    let shareCalls = 0;
-    let defaultPrevented = false;
-
-    const tree = MissionDetailPage({
-      ...missionDetailProps(now, { mission: mission("228"), battleReport: battleReport("228") }),
-      copyState: "idle",
-      onCopyShareUrl: () => { shareCalls += 1; },
-    });
-
-    const shareButton = findElements(tree, "button").find(
-      (node) => node.props?.["aria-label"] === "Copy link",
-    );
-    expect(shareButton).toBeDefined();
-    expect(shareButton?.props?.type).toBe("button");
-
-    const onClick = shareButton?.props?.onClick as ((event: { preventDefault: () => void }) => void) | undefined;
-    expect(onClick).toBeDefined();
-    onClick?.({ preventDefault: () => { defaultPrevented = true; } });
-
-    expect(defaultPrevented).toBe(true);
-    expect(shareCalls).toBe(1);
   });
 
   test("renders the route as origin -> target with clickable coordinates and commanders", () => {
@@ -1076,14 +1041,13 @@ describe("Mission Control battle reports", () => {
       fleetVisibility: ownerVisibility,
       actionState: { status: "idle" } as const,
       canTransact: true,
-      copyState: "idle" as const,
       detail: { mission: detailMission, battleReport: null },
       loading: false,
       missionId: "42",
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -1141,14 +1105,13 @@ describe("Mission Control battle reports", () => {
       fleetVisibility: ownerVisibility,
       actionState: { status: "idle" },
       canTransact: true,
-      copyState: "idle",
       detail: { mission: detailMission, battleReport: null },
       loading: false,
       missionId: "43",
       now,
       onBack: () => undefined,
       onCompleteReturn: () => undefined,
-      onCopyShareUrl: () => undefined,
+      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
       onResolve: () => undefined,
@@ -1440,14 +1403,13 @@ function missionDetailProps(
     fleetVisibility: ownerVisibility,
     actionState: { status: "idle" },
     canTransact: true,
-    copyState: "idle",
     detail,
     loading: false,
     missionId: detail?.mission?.missionId ?? null,
     now,
     onBack: () => undefined,
     onCompleteReturn: () => undefined,
-    onCopyShareUrl: () => undefined,
+    onShareReport: () => undefined,
     onCounterplay: () => undefined,
     onRecall: () => undefined,
     onResolve: () => undefined,

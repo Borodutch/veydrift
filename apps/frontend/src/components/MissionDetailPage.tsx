@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, RefreshCw, Share2, Swords } from "lucide-preact";
+import { ArrowLeft, RefreshCw, Share2, Swords } from "lucide-preact";
 
 import { formatDurationUntil } from "../durationFormat";
 import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
@@ -25,12 +25,9 @@ export type MissionDetailActionState =
   | { status: "success"; label: string }
   | { status: "error"; label: string };
 
-export type MissionShareCopyState = "copied" | "error" | "idle";
-
 interface MissionDetailPageProps {
   actionState: MissionDetailActionState;
   canTransact: boolean;
-  copyState: MissionShareCopyState;
   detail?: MissionDetailResponse | undefined;
   error?: string | undefined;
   // The wallet-scoped mission classification the Mission Control list is built from. The detail page
@@ -41,7 +38,9 @@ interface MissionDetailPageProps {
   now: number;
   onBack: () => void;
   onCompleteReturn: (missionId: string) => void;
-  onCopyShareUrl: () => void;
+  // Opens the in-app battle-report share dialog (link + copy + social targets). The control is a
+  // plain button, so it presents the dialog and never navigates the viewer away (VEY-KANEO-339).
+  onShareReport: () => void;
   onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onRecall: (missionId: string) => void;
   onResolve: (missionId: string) => void;
@@ -53,7 +52,6 @@ interface MissionDetailPageProps {
 export function MissionDetailPage({
   actionState,
   canTransact,
-  copyState,
   detail,
   error,
   fleetVisibility,
@@ -62,7 +60,7 @@ export function MissionDetailPage({
   now,
   onBack,
   onCompleteReturn,
-  onCopyShareUrl,
+  onShareReport,
   onCounterplay,
   onRecall,
   onResolve,
@@ -72,7 +70,6 @@ export function MissionDetailPage({
 }: MissionDetailPageProps) {
   const mission = detail?.mission;
   const report = detail?.battleReport ?? undefined;
-  const copyLabel = copyState === "copied" ? "Copied!" : copyState === "error" ? "Copy failed" : "Copy link";
 
   return (
     <section className="grid gap-4">
@@ -87,26 +84,19 @@ export function MissionDetailPage({
           <>
             <RefreshButton loading={loading} onRefresh={onRetry} title="Refresh mission" />
             <button
-              aria-label={copyLabel}
-              aria-live="polite"
-              className={`inline-flex h-9 w-9 items-center justify-center rounded border text-sm font-medium transition ${
-                copyState === "copied"
-                  ? "border-emerald-300/40 bg-emerald-300/15 text-emerald-100"
-                  : copyState === "error"
-                    ? "border-red-300/40 bg-red-400/15 text-red-100"
-                    : "border-cyan-300/30 bg-cyan-300/10 text-cyan-100 hover:bg-cyan-300/20"
-              }`}
+              aria-label="Share battle report"
+              className="inline-flex h-9 w-9 items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 text-sm font-medium text-cyan-100 transition hover:bg-cyan-300/20"
               onClick={(event) => {
-                // Defensive: keep the share trigger from ever bubbling into a
-                // navigation/default action so it can only invoke the share
-                // handler (VEY-339 reported the share button leaving the page).
+                // A plain button never navigates, but stop the event before any ancestor handler can
+                // act on it — the QA symptom was the viewer dropping to the overview on share click.
                 event.preventDefault();
-                onCopyShareUrl();
+                event.stopPropagation();
+                onShareReport();
               }}
-              title={copyLabel}
+              title="Share battle report"
               type="button"
             >
-              {copyState === "copied" ? <Check aria-hidden="true" size={15} /> : <Share2 aria-hidden="true" size={15} />}
+              <Share2 aria-hidden="true" size={15} />
             </button>
           </>
         )}
