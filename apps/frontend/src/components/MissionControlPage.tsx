@@ -258,6 +258,8 @@ export function MissionControlPage({
   );
 }
 
+const EMPTY_PLANET_LOOKUP: ReadonlyMap<string, MissionPlanetIdentity> = new Map();
+
 // VEY-KANEO-440 stationed-defense display. ACS Defend stations a fleet at a planet to defend it
 // against a specific incoming attack (the only stationing today's contract supports), so this panel
 // surfaces both sides of that arrangement: (a) the defense fleets the player currently has stationed
@@ -269,13 +271,15 @@ export function StationedDefenseSection({
   now,
   onOpenReport,
   outgoing,
-  planetLookup,
+  // Mission endpoints render from each summary's embedded origin/target planet references (the backend
+  // enriches them), so callers without a prebuilt lookup (e.g. the Defenses page) can omit it.
+  planetLookup = EMPTY_PLANET_LOOKUP,
 }: {
   incoming: FleetMissionSummary[];
   now: number;
   onOpenReport: (missionId: string) => void;
   outgoing: FleetMissionSummary[];
-  planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
+  planetLookup?: ReadonlyMap<string, MissionPlanetIdentity>;
 }) {
   const myStationed = outgoing
     .filter((mission) => mission.missionType === "AcsDefend" && mission.status === "Outbound")

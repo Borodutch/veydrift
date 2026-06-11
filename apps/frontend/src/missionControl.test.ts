@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage, allActiveMissionRows, buildMissionControlViewQuery, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
+import { MissionControlPage, StationedDefenseSection, allActiveMissionRows, buildMissionControlViewQuery, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
@@ -277,6 +277,31 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Holds");
     // Allied defenders at the player's planet are summarised by count.
     expect(text).toContain("2 allied fleets stationed in defense");
+  });
+
+  test("VEY-KANEO-440: stationed-defense section renders from embedded planet refs without a lookup (Defenses-page reuse)", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const attacker = "0x2222222222222222222222222222222222222222";
+    const stationed: FleetMissionSummary = {
+      ...mission("90", "AcsDefend", "Outbound", owner, "7", "9", now + 120_000),
+      defendsMissionId: "55",
+      originPlanet: planetReference("7", owner, "New Zion", "6:9:1", "temperate-ocean"),
+      targetPlanet: planetReference("9", attacker, "Borealis", "5:407:4", "frozen-ice"),
+    };
+    // The Defenses page reuses StationedDefenseSection without a prebuilt planet lookup; endpoints must
+    // still resolve from each summary's embedded origin/target planet references.
+    const text = collectText(StationedDefenseSection({
+      incoming: [],
+      now,
+      onOpenReport: () => undefined,
+      outgoing: [stationed],
+    })).join(" ");
+
+    expect(text).toContain("Stationed defenses");
+    expect(text).toContain("Defending");
+    expect(text).toContain("Borealis");
+    expect(text).toContain("New Zion");
   });
 
   test("VEY-KANEO-440: stationed-defense panel shows a discoverable empty state when nothing is stationed", () => {
