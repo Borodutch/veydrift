@@ -746,9 +746,14 @@ export interface ChainReader {
   getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility>;
   listBattleReports(): Promise<BattleReport[]>;
   getBattleReport(missionId: bigint): Promise<BattleReport | null>;
+  getInfrastructureAuthoritativeFields?(planetId: bigint): Promise<Partial<Pick<InfrastructureState, "buildings" | "resources">>>;
   getInfrastructureState(wallet: Address, planetId?: bigint): Promise<InfrastructureState>;
   getMoonState(wallet: Address, planetId?: bigint): Promise<MoonState>;
   getDefenseState(wallet: Address, planetId?: bigint): Promise<DefenseState>;
+  getShipyardAuthoritativeFields?(
+    planetId: bigint,
+    maxTemperature?: number
+  ): Promise<Partial<Pick<ShipyardState, "naniteLevel" | "resources" | "ships" | "shipyardLevel">>>;
   getShipyardState(wallet: Address, planetId?: bigint): Promise<ShipyardState>;
   getResearchState(wallet: Address, planetId?: bigint): Promise<ResearchState>;
   getRiftState(wallet: Address, planetId?: bigint): Promise<RiftState>;
@@ -1467,6 +1472,15 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
+  async getInfrastructureAuthoritativeFields(planetId: bigint): Promise<Partial<Pick<InfrastructureState, "buildings" | "resources">>> {
+    const [resources, buildings] = await Promise.all([
+      this.readResources("0x0adbf924", planetId),
+      this.readBuildingRows(planetId)
+    ]);
+
+    return { resources, buildings };
+  }
+
   async getMoonState(wallet: Address, selectedPlanetId?: bigint): Promise<MoonState> {
     let settlement: WalletSettlement;
     try {
@@ -1595,6 +1609,25 @@ export class VeydriftGameReader implements ChainReader {
       technologyLevels,
       ships,
       queue
+    };
+  }
+
+  async getShipyardAuthoritativeFields(
+    planetId: bigint,
+    maxTemperature?: number
+  ): Promise<Partial<Pick<ShipyardState, "naniteLevel" | "resources" | "ships" | "shipyardLevel">>> {
+    const [resources, shipyardLevel, naniteLevel, ships] = await Promise.all([
+      this.readResources("0x0adbf924", planetId),
+      this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(5n)]),
+      this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(11n)]),
+      this.readShipRows(planetId, maxTemperature)
+    ]);
+
+    return {
+      resources,
+      shipyardLevel: Number(shipyardLevel),
+      naniteLevel: Number(naniteLevel),
+      ships
     };
   }
 
