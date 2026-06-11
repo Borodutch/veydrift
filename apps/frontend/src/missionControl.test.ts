@@ -648,6 +648,49 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Resolve");
   });
 
+  test("VEY-KANEO-424: owner's outbound recallable mission shows the Recall button and the projected cost, not 'Not recallable'", () => {
+    // The ticket: for the same outbound mission Mission Control showed a Recall fleet button while
+    // Mission Detail showed neither the button nor the cost ("Not recallable") because the single
+    // -mission read returned recallCost: null. The fix projects recallCost for outbound fleets and
+    // gates the button on the owner's wallet-scoped fleet-visibility (outgoing), not on recallCost.
+    // Here the owner (ownerVisibility.outgoing includes "42") views their own outbound Attack that is
+    // still more than the 60s cutoff from arrival, so it is genuinely recallable: the detail page must
+    // surface both the Recall button and the projected cost, matching Mission Control.
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: {
+        ...mission("42", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 600_000),
+        recallCost: "50",
+      },
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).toContain("Available Orders");
+    expect(text).toContain("Recall fleet");
+    expect(text).toContain("Recall cost");
+    expect(text).toContain("50 deuterium");
+    expect(text).not.toContain("Not recallable");
+  });
+
+  test("VEY-KANEO-424: owner's outbound mission past the 60s cutoff reads 'Not recallable', matching Mission Control", () => {
+    // Acceptance criterion's second half: past the recall cutoff (within 60s of arrival) the fleet can
+    // no longer be recalled, so both screens consistently show it as not recallable. The recall-cost
+    // row reads "Not recallable" even though the projected cost is present, keeping the cost row honest
+    // about whether recall is actually possible.
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: {
+        ...mission("43", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 30_000),
+        recallCost: "50",
+      },
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).toContain("Recall cost");
+    expect(text).toContain("Not recallable");
+    expect(text).not.toContain("50 deuterium");
+  });
+
   test("renders the round-by-round block only when indexed round snapshots exist", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage({
