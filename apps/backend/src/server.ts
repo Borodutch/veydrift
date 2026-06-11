@@ -47,7 +47,7 @@ import {
   verifyPlayerDisplayNameSignature,
   type PlayerProfile
 } from "./playerProfiles";
-import { deriveInfrastructureFields } from "./readModels";
+import { deriveInfrastructureFields, isCombatShipId } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
 const jsonHeaders = {
@@ -2132,7 +2132,7 @@ function rankedHighscorePlanets(
   });
 }
 
-function indexedPlanetTacticalSummary(
+export function indexedPlanetTacticalSummary(
   planet: PlanetState,
   buildings: InfrastructureState["buildings"],
   ships: ShipyardState["ships"],
@@ -2143,7 +2143,10 @@ function indexedPlanetTacticalSummary(
   const raidableResources = buildings.length > 0
     ? deriveInfrastructureFields(planet, buildings, ships, technologyLevels).raidableResources ?? fallbackResources
     : fallbackResources;
-  const shipSummary = tacticalUnitSummary(ships);
+  // The COMBAT metric is a fighting-strength proxy, so non-combat ships (Solar
+  // Satellites, Crawlers) must not contribute their build cost to it. (VEY-KANEO-450)
+  const combatShips = ships.filter((ship) => isCombatShipId(ship.id));
+  const shipSummary = tacticalUnitSummary(combatShips);
   const defenseSummary = tacticalUnitSummary(defenses);
 
   return {

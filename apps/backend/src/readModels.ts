@@ -42,6 +42,16 @@ export const defenseCount = 10;
 export const supportedShipIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] as const;
 export const supportedTechnologyIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] as const;
 
+// Ships with no meaningful combat role. Solar Satellites (id 9) are orbital energy
+// platforms and Crawlers (id 15) are stationary mining-support units; neither fights,
+// so their build cost must not count toward the COMBAT / fighting-strength figure that
+// the Raid Finder and Rankings surface. (VEY-KANEO-450)
+export const nonCombatShipIds: ReadonlySet<number> = new Set([9, 15]);
+
+export function isCombatShipId(id: number): boolean {
+  return !nonCombatShipIds.has(id);
+}
+
 export const riftResourceCatalog: Array<Pick<RiftResourceState, "key" | "label" | "resourceId">> = [
   { key: "metal", label: "Metal", resourceId: 0 },
   { key: "crystal", label: "Crystal", resourceId: 1 },
