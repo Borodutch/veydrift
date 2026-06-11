@@ -500,6 +500,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         return await authoritativeWalletStateResponse(
           url, indexer, chainReader, "infrastructure", indexedInfrastructureState,
           (reader, wallet, planetId) => reader.getInfrastructureState(wallet, planetId),
+          (reader, wallet, planetId, indexed) =>
+            reader.getInfrastructureAuthoritativeFields
+              ? reader.getInfrastructureAuthoritativeFields(BigInt(indexed.planet.planetId))
+              : reader.getInfrastructureState(wallet, planetId),
           authoritativeReadTimeoutMs
         );
       } catch (error) {
@@ -528,6 +532,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         return await authoritativeWalletStateResponse(
           url, indexer, chainReader, "shipyard", indexedShipyardState,
           (reader, wallet, planetId) => reader.getShipyardState(wallet, planetId),
+          (reader, wallet, planetId, indexed) =>
+            reader.getShipyardAuthoritativeFields
+              ? reader.getShipyardAuthoritativeFields(BigInt(indexed.planet.planetId), indexed.planet.temperature)
+              : reader.getShipyardState(wallet, planetId),
           authoritativeReadTimeoutMs
         );
       } catch (error) {
@@ -540,6 +548,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         return await authoritativeWalletStateResponse(
           url, indexer, chainReader, "defenses", indexedDefenseState,
           (reader, wallet, planetId) => reader.getDefenseState(wallet, planetId),
+          undefined,
           authoritativeReadTimeoutMs
         );
       } catch (error) {
@@ -552,6 +561,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         return await authoritativeWalletStateResponse(
           url, indexer, chainReader, "research", indexedResearchState,
           (reader, wallet, planetId) => reader.getResearchState(wallet, planetId),
+          undefined,
           authoritativeReadTimeoutMs
         );
       } catch (error) {
@@ -1136,6 +1146,12 @@ async function authoritativeWalletStateResponse<T extends object>(
   surface: AuthoritativeSurface,
   build: IndexedWarmBuilder<T>,
   readChain: (reader: ChainReader, wallet: Address, planetId: bigint | undefined) => Promise<T>,
+  readFastChain: ((
+    reader: ChainReader,
+    wallet: Address,
+    planetId: bigint | undefined,
+    indexed: { body: T; planet: SettledPlanetEvent }
+  ) => Promise<Partial<T>>) | undefined,
   readTimeoutMs: number
 ): Promise<Response> {
   const wallet = walletAddressFromPath(url);
@@ -1152,8 +1168,11 @@ async function authoritativeWalletStateResponse<T extends object>(
 
   if (chainReader) {
     try {
+      const chainRead = indexedBody && settlement?.planet && readFastChain
+        ? readFastChain(chainReader, wallet, planetId, { body: indexedBody, planet: settlement.planet })
+        : readChain(chainReader, wallet, planetId);
       const chain = await withTimeout(
-        readChain(chainReader, wallet, planetId),
+        chainRead,
         readTimeoutMs,
         () => new Error(`Timed out reading ${surface} from live chain state after ${Math.ceil(readTimeoutMs / 1_000)} seconds.`)
       );

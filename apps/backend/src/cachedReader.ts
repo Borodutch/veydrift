@@ -66,6 +66,17 @@ export class CachedChainReader implements ChainReader {
     return this.cached(`infrastructure:${wallet.toLowerCase()}:${planetId?.toString() ?? "home"}`, () => this.inner.getInfrastructureState(wallet, planetId));
   }
 
+  getInfrastructureAuthoritativeFields(planetId: bigint): Promise<Partial<Pick<InfrastructureState, "buildings" | "resources">>> {
+    if (!this.inner.getInfrastructureAuthoritativeFields) {
+      return Promise.resolve({});
+    }
+
+    return this.cached(
+      `infrastructure-authoritative:${planetId.toString()}`,
+      () => this.inner.getInfrastructureAuthoritativeFields!(planetId)
+    );
+  }
+
   getFleetMissionVisibility(wallet: Address): Promise<FleetMissionVisibility> {
     return this.cached(`fleet-visibility:${wallet.toLowerCase()}`, () => this.inner.getFleetMissionVisibility(wallet));
   }
@@ -88,6 +99,20 @@ export class CachedChainReader implements ChainReader {
 
   getShipyardState(wallet: Address, planetId?: bigint): Promise<ShipyardState> {
     return this.cached(`shipyard:${wallet.toLowerCase()}:${planetId?.toString() ?? "home"}`, () => this.inner.getShipyardState(wallet, planetId));
+  }
+
+  getShipyardAuthoritativeFields(
+    planetId: bigint,
+    maxTemperature?: number
+  ): Promise<Partial<Pick<ShipyardState, "naniteLevel" | "resources" | "ships" | "shipyardLevel">>> {
+    if (!this.inner.getShipyardAuthoritativeFields) {
+      return Promise.resolve({});
+    }
+
+    return this.cached(
+      `shipyard-authoritative:${planetId.toString()}:${maxTemperature ?? "unknown"}`,
+      () => this.inner.getShipyardAuthoritativeFields!(planetId, maxTemperature)
+    );
   }
 
   getResearchState(wallet: Address, planetId?: bigint): Promise<ResearchState> {
