@@ -159,6 +159,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   missionResolver?.start();
   randomnessCommitter?.start();
   if (!dependencies.indexer && indexer && loaded.problems.length === 0) {
+    // Keep boot reconcile off the readiness path: the index DB is already opened
+    // synchronously in the SettlementIndexer constructor above, so persisted
+    // indexed reads are serveable the moment Bun binds the port. Fire the chain
+    // reconcile in the background (never await it) so GET /health answers within
+    // a second or two of process start — this is what gates start-first redeploys
+    // (see README "Backend redeploy health gate"). Do not turn this into an await.
     void indexer.rebuild().catch((error) => {
       console.error("Veydrift index reconciliation failed", error);
     });
