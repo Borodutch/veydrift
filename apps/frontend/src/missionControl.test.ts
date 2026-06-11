@@ -312,6 +312,11 @@ describe("Mission Control battle reports", () => {
 
     expect(text).toContain("Stationed defenses");
     expect(text).toContain("No fleets are stationed in defense");
+    // The empty state must point players to the proactive Defend entry point (Galaxy → own colony /
+    // ally planet → Defend) and explain the prerequisite, so the feature is discoverable rather than
+    // reading as missing — the repeated QA "no Defend button anywhere" rework cause (VEY-KANEO-440).
+    expect(text).toContain("Defend");
+    expect(text).toContain("requires a second colony or an alliance member's planet");
     // A Transport mission must never be mistaken for a stationed defense.
     expect(text).not.toContain("allied fleets stationed in defense");
   });

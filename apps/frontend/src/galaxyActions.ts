@@ -143,7 +143,18 @@ export function galaxyActionsForSlot({
 
   if (isOwnTarget) {
     if (isOrigin) {
-      return [];
+      // The home/launch planet is where every wallet starts and the slot players inspect first, so the
+      // proactive Defend action is surfaced here (disabled) rather than hidden — otherwise a player with
+      // a single colony and no alliance sees no Defend affordance anywhere and the feature reads as
+      // missing. launchDefenseHold reverts with SamePlanet when origin == target, so the reason explains
+      // the prerequisite (a second colony or an alliance member's planet to station the fleet at).
+      return [
+        defenseHoldAction(
+          commonBlocker,
+          shipyardState,
+          "You can't station a defending fleet at the planet it launches from. Colonize another planet or join an alliance to defend one.",
+        ),
+      ];
     }
 
     const cargoBlocker = commonBlocker ?? firstAvailableCargoShipBlocker(shipyardState);
@@ -270,13 +281,17 @@ export function missionTypeId(mission: GalaxyMissionKind): number {
 
 // VEY-KANEO-440: proactive "Defend" action — station a fleet at an own/ally planet. Enabled once the
 // active planet has a movable ship; the planet-eligibility check (own/ally) is enforced by the call
-// sites that emit this action and re-validated on-chain by launchDefenseHold.
+// sites that emit this action and re-validated on-chain by launchDefenseHold. A call site may pass an
+// `eligibilityBlocker` to surface the action in a disabled+explained state (e.g. on the launch planet
+// itself, where launchDefenseHold reverts with SamePlanet) so the feature stays discoverable and the
+// "explain when not coordinatable" acceptance criterion is met instead of the action silently vanishing.
 function defenseHoldAction(
   commonBlocker: string | undefined,
-  shipyardState: ChainShipyardState | null
+  shipyardState: ChainShipyardState | null,
+  eligibilityBlocker?: string
 ): GalaxyAction {
   return enabledOrDisabled({
-    blocker: commonBlocker ?? firstAvailableFleetShipBlocker(shipyardState),
+    blocker: eligibilityBlocker ?? commonBlocker ?? firstAvailableFleetShipBlocker(shipyardState),
     enabled: {
       enabled: true,
       kind: "defenseHold",

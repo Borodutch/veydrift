@@ -150,6 +150,33 @@ describe("galaxyActions", () => {
     expect(hostileDefend).toBeUndefined();
   });
 
+  test("surfaces a disabled, explained Defend on the home/launch planet so it stays discoverable", () => {
+    const homePlanet = planet({
+      position: 7,
+      ownerId: account,
+      occupiedBy: { owner: account, planetId: "7" },
+    });
+    const actions = galaxyActionsForSlot({
+      account,
+      homePlanetId: "7",
+      isOrigin: true,
+      planet: homePlanet,
+      shipyardState: shipyardState([{ id: 1, count: 5 }]),
+    });
+
+    // A single-colony, no-alliance wallet only ever inspects its home planet; the Defend action must be
+    // visible (disabled) with the eligibility prerequisite explained, not omitted entirely.
+    expect(actions).toMatchObject([
+      {
+        kind: "defenseHold",
+        enabled: false,
+        label: "Defend",
+        reason:
+          "You can't station a defending fleet at the planet it launches from. Colonize another planet or join an alliance to defend one.",
+      },
+    ]);
+  });
+
   test("blocks proactive Defend with a clear reason when no movable ship is available", () => {
     const ownColony = planet({
       ownerId: account,
@@ -231,7 +258,17 @@ describe("galaxyActions", () => {
 
     expect(enemyActions.map((action) => action.label)).toEqual(["Attack", "Harvest", "Missile"]);
     expect(ownActions.map((action) => action.label)).toEqual(["Transport", "Deploy", "Defend"]);
-    expect(originActions).toEqual([]);
+    // The launch/home planet surfaces Defend in a disabled, explained state (launchDefenseHold reverts
+    // with SamePlanet on origin == target) so the feature stays discoverable for single-colony wallets.
+    expect(originActions).toMatchObject([
+      {
+        kind: "defenseHold",
+        enabled: false,
+        label: "Defend",
+        reason:
+          "You can't station a defending fleet at the planet it launches from. Colonize another planet or join an alliance to defend one.",
+      },
+    ]);
     expect(emptyActions).toMatchObject([{ enabled: true, kind: "colonize", label: "Colonize" }]);
   });
 });

@@ -302,8 +302,10 @@ export function StationedDefenseSection({
       </div>
       {total === 0 ? (
         <p className="text-xs text-slate-400">
-          No fleets are stationed in defense. When your own or an allied planet has an incoming attack,
-          defend it to station a fleet that holds until the attack lands.
+          No fleets are stationed in defense yet. Pick one of your other colonies or an alliance member's
+          planet and choose <span className="text-violet-100">Defend</span> to station a fleet that holds
+          for a chosen duration, fighting any attack that lands while it holds. Defending another planet
+          requires a second colony or an alliance member's planet to send the fleet to.
         </p>
       ) : (
         <div className="grid gap-2">
