@@ -405,7 +405,7 @@ function StationedDefenseCard({
       missionId={mission.missionId}
       origin={missionEndpoint(mission, "origin", planetLookup)}
       progressPercent={missionProgressPercent(mission, now)}
-      statusPill={missionStatusPill(mission.status)}
+      statusPill={missionStatusPill(mission, now)}
       target={missionEndpoint(mission, "target", planetLookup)}
     />
   );
@@ -812,7 +812,7 @@ function MissionRow({
       origin={origin}
       progressPercent={missionProgressPercent(mission, now)}
       routeSubtext={directionSubtext}
-      statusPill={missionStatusPill(mission.status)}
+      statusPill={missionStatusPill(mission, now)}
       target={target}
     />
   );
@@ -867,11 +867,29 @@ export function returnPhaseLoot(
 // Status pill shown in every card header (VEY-400): "En route" for outbound fleets, "Returning"/
 // "Recalled" while a fleet heads home, and the terminal status ("Returned"/"Resolved"/…) for past
 // missions. This folds in the VEY-399 rework intent — status reads as a pill, never a raw timestamp.
-function missionStatusPill(status: string): MissionStatusPill {
-  if (status === "Outbound") return { label: "En route", tone: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100" };
-  if (status === "Returning") return { label: "Returning", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
-  if (status === "Recalled") return { label: "Recalled", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
-  return { label: status, tone: "border-slate-300/20 bg-slate-300/10 text-slate-300" };
+// VEY-KANEO-433: the status pill reflects a mission's progress against the live clock, not only the
+// indexed backend status. Mission resolution can lag well behind arrival (and on some deployments the
+// resolver runs only on demand), so an arrived fleet keeps a stale "Outbound" backend status; showing
+// "En route" then contradicts both the live ETA (already at zero) and the mission-detail timeline,
+// which derives "Arrived"/"Returned" from the timestamps. Flipping the pill once the matching moment
+// passes keeps Mission Control consistent with reality and updates on the 1s `now` tick — no manual
+// refresh — which is the heart of this ticket. The auto-poll (#744) then folds in loot/battle reports
+// once the backend actually resolves the mission.
+export function missionStatusPill(mission: FleetMissionSummary, now: number): MissionStatusPill {
+  if (mission.status === "Outbound") {
+    return isMissionDue(mission, now)
+      ? { label: "Arrived", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" }
+      : { label: "En route", tone: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100" };
+  }
+  if (mission.status === "Returning" || mission.status === "Recalled") {
+    if (isMissionReturned(mission, now)) {
+      return { label: "Returned", tone: "border-emerald-300/25 bg-emerald-300/10 text-emerald-100" };
+    }
+    return mission.status === "Returning"
+      ? { label: "Returning", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" }
+      : { label: "Recalled", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
+  }
+  return { label: mission.status, tone: "border-slate-300/20 bg-slate-300/10 text-slate-300" };
 }
 
 // Shared style for the "Open" and "Join" row actions (VEY-397#14).
@@ -1065,7 +1083,7 @@ function MissionReportDetail({
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         <ReportPanel title="Battle time">
           <ReportLine label="Arrival" value={report.battleTime} />
-          <ReportLine label="Status" value={missionStatusLabel(mission.status)} />
+          <ReportLine label="Status" value={missionDisplayStatusLabel(mission, now)} />
           <ReportLine label="Outcome" value={report.outcome} />
         </ReportPanel>
         <ReportPanel title="Commanders">
@@ -1546,7 +1564,7 @@ function PastMissionSummaryRow({
       origin={origin}
       // VEY-400: the terminal status (e.g. "Returned") reads as the header pill, folding in the
       // VEY-399 rework intent (status as a pill, no raw timestamp) now that cards have no columns.
-      statusPill={missionStatusPill(mission.status)}
+      statusPill={missionStatusPill(mission, now)}
       target={target}
     />
   );
@@ -2020,6 +2038,20 @@ function missionStatusLabel(status: string): string {
   return status;
 }
 
+// VEY-KANEO-433: the text-label counterpart to `missionStatusPill` — a phase label that tracks the
+// live clock so the mission report card and shared battle-report text never read "en route" for a
+// fleet that has already arrived (or "returning" for one that has already landed). Keeps the report
+// surfaces consistent with the time-aware list pills and the mission-detail timeline.
+export function missionDisplayStatusLabel(mission: FleetMissionSummary, now: number): string {
+  if (mission.status === "Outbound" && isMissionDue(mission, now)) {
+    return "arrived";
+  }
+  if ((mission.status === "Returning" || mission.status === "Recalled") && isMissionReturned(mission, now)) {
+    return "returned";
+  }
+  return missionStatusLabel(mission.status);
+}
+
 function uniqueMissions(missions: FleetMissionSummary[]): FleetMissionSummary[] {
   const seen = new Set<string>();
   return missions.filter((mission) => {
@@ -2189,7 +2221,7 @@ function missionReport(
       : "External commander unavailable",
     losses: mission.status === "Resolved" ? "Resolved combat losses are not exposed in this mission feed." : "Pending battle resolution.",
     origin,
-    outcome: mission.needsResolution || isMissionDue(mission, now) ? "Ready to resolve." : missionStatusLabel(mission.status),
+    outcome: mission.needsResolution || isMissionDue(mission, now) ? "Ready to resolve." : missionDisplayStatusLabel(mission, now),
     routeSummary: `${origin} -> ${target}`,
     target,
     title: `${missionTypeLabel(mission.missionType)} #${mission.missionId}`,
@@ -2206,7 +2238,7 @@ function missionReportText(
   return [
     `Veydrift battle report: ${report.title}`,
     `Battle time: ${report.battleTime}`,
-    `Status: ${missionStatusLabel(mission.status)}`,
+    `Status: ${missionDisplayStatusLabel(mission, now)}`,
     `Route: ${report.routeSummary}`,
     `Attacker: ${report.attacker}`,
     `Defender: ${report.defender}`,
