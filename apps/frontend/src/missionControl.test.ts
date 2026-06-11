@@ -324,9 +324,9 @@ describe("Mission Control battle reports", () => {
   test("VEY-KANEO-440: stationed-defense panel renders a clickable Defend-a-planet CTA wired to navigation", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     let defendOpened = 0;
-    // The Defend launch lives on the Galaxy planet action, but players/QA look for it on this panel
+    // The Defend launch lives on a planet's Defend action, but players/QA look for it on this panel
     // (the empty state literally tells them to "choose Defend"). The CTA must be present and invoke the
-    // navigate-to-Galaxy callback so the entry point is discoverable from the screen that describes it —
+    // open-my-planet callback so the entry point is discoverable from the screen that describes it —
     // this is the recurring "no Defend button anywhere" QA rework cause.
     const tree = StationedDefenseSection({
       incoming: [],

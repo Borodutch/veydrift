@@ -152,7 +152,7 @@ export function galaxyActionsForSlot({
         defenseHoldAction(
           commonBlocker,
           shipyardState,
-          "You can't station a defending fleet at the planet it launches from. Colonize another planet or join an alliance to defend one.",
+          "You can't station a defending fleet at the planet it launches from. Open another colony or an alliance member's planet to defend it.",
         ),
       ];
     }

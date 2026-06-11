@@ -36,7 +36,8 @@ interface DefensePageProps {
   loading: boolean;
   now?: number | undefined;
   onBuild: (defenseId: number, key: DefenseKey, quantity: number) => void;
-  // VEY-KANEO-440: route to Galaxy so a player can pick an own/ally planet and choose Defend.
+  // VEY-KANEO-440: opens the player's own planet detail, where the Defend control is always shown
+  // (enabled+explained where eligible, or disabled+explained on the launch planet itself).
   onDefendPlanet?: (() => void) | undefined;
   onFinish: () => void;
   onOpenMission?: ((missionId: string) => void) | undefined;

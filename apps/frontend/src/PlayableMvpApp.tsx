@@ -5069,6 +5069,22 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     writeInspectHash({ kind: "planet", coords });
   }, []);
 
+  // VEY-KANEO-440: the "Defend a planet" CTA (Mission Control + Defenses "Stationed defenses" panel)
+  // opens the player's own home planet detail rather than the bare Galaxy grid. Every wallet has a home
+  // planet, and its detail always renders a Defend control — enabled-and-explained where eligible, or
+  // disabled-and-explained on the launch planet itself (galaxyActions surfaces it for `isOrigin`). That
+  // guarantees the CTA lands on a screen that visibly shows Defend + the eligibility reason, instead of
+  // dropping the player into Galaxy where a single-colony / no-alliance wallet sees only foreign planets
+  // (Attack/Harvest/Missile) and reads the feature as missing — the repeated QA "no Defend button
+  // anywhere" bounce. From there the player can navigate to another colony or an ally planet to launch.
+  const handleDefendPlanet = useCallback(() => {
+    if (homeCoords) {
+      handleSelectPlanet(homeCoords);
+      return;
+    }
+    setPage("galaxy");
+  }, [handleSelectPlanet, homeCoords]);
+
   const handleSelectAlliance = useCallback((allianceId: string) => {
     setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
@@ -5377,7 +5393,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           now={now}
           onCompleteReturn={handleCompleteMissionReturn}
           onCounterplay={handleMissionCounterplay}
-          onDefendPlanet={() => setPage("galaxy")}
+          onDefendPlanet={handleDefendPlanet}
           onJoinAttack={handleJoinAttack}
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}
@@ -5428,7 +5444,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           loading={defenseLoading}
           now={now}
           onBuild={handleBuildDefense}
-          onDefendPlanet={() => setPage("galaxy")}
+          onDefendPlanet={handleDefendPlanet}
           onFinish={handleFinishDefenseProduction}
           onOpenMission={handleOpenMissionReport}
           onOpenRequirement={handleOpenRequirement}
