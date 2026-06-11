@@ -139,7 +139,8 @@ abstract contract VeydriftGameStorage {
         AcsDefend,
         Intercept,
         MissileAttack,
-        AcsAttack
+        AcsAttack,
+        DefenseHold
     }
 
     enum FleetMissionStatus {
@@ -282,6 +283,12 @@ abstract contract VeydriftGameStorage {
         _phalanxMissionIndexBySystem;
     mapping(uint256 planetId => DefenseQueue[] queue) internal _defenseQueueBacklogs;
     mapping(uint256 planetId => ShipQueue[] queue) internal _shipQueueBacklogs;
+    // OGame-style ACS Defend (DefenseHold): fleets stationed at a planet for a chosen hold window
+    // automatically defend any attack that lands while they are holding.
+    mapping(uint256 defenderPlanetId => uint256[] missionIds) internal _stationedDefenseMissions;
+    mapping(uint256 defenderPlanetId => mapping(uint256 missionId => uint256 indexPlusOne)) internal
+        _stationedDefenseMissionIndex;
+    mapping(uint256 missionId => uint64 holdUntil) internal _defenseHoldUntil;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -346,6 +353,9 @@ abstract contract VeydriftGameStorage {
     error CannotJoinOwnAttackTarget();
     error RandomnessEngineUnset();
     error InvalidLootRatio();
+    error InvalidHoldWindow(uint256 holdSeconds);
+    error DefenseHoldNotAuthorized(uint256 defenderPlanetId);
+    error DefenseHoldStillActive(uint64 holdUntil);
 
     event StartPriceUpdated(uint256 oldPrice, uint256 newPrice);
     event PlanetStarted(
@@ -563,6 +573,18 @@ abstract contract VeydriftGameStorage {
     );
     event FleetMissionReturned(
         uint256 indexed missionId, address indexed owner, uint256 indexed planetId
+    );
+    event DefenseHoldStationed(
+        uint256 indexed missionId,
+        address indexed owner,
+        uint256 indexed defenderPlanetId,
+        uint256 originPlanetId,
+        uint64 arrivalAt,
+        uint64 holdUntil,
+        uint64 returnAt
+    );
+    event DefenseHoldEnded(
+        uint256 indexed missionId, uint256 indexed defenderPlanetId, FleetMissionStatus status
     );
     event DebrisFieldUpdated(uint256 indexed planetId, uint128 metal, uint128 crystal);
     event InterplanetaryMissileAttack(

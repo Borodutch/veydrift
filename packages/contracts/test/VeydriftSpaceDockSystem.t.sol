@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
+import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
@@ -37,12 +38,14 @@ contract VeydriftSpaceDockSystemTest is Test {
         VeydriftPlanetManagementModule planetManagementModule = new VeydriftPlanetManagementModule();
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
+        VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
         game = new VeydriftGame(
             admin,
             address(gameplayModule),
             address(planetManagementModule),
             address(attackProtectionModule),
-            address(colonizationModule)
+            address(colonizationModule),
+            address(defenseHoldModule)
         );
         spaceDock = new VeydriftSpaceDockSystem(address(game), admin);
         _fundGameReserves();

@@ -615,6 +615,38 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         netHoldingFuelCost = holdingFuelCost - depotSupport;
     }
 
+    /// @notice Authorization and holding-fuel context for an OGame-style ACS Defend (DefenseHold)
+    ///         stationing mission. Unlike counterplay defense, this is not tied to a specific hostile
+    ///         mission: a player may station a fleet at their own planet or at any same-alliance
+    ///         member's planet for a chosen hold window. Holding fuel scales with the hold duration
+    ///         and is offset by the defended planet's Alliance Depot, mirroring counterplay holding.
+    function defenseHoldFuelContext(
+        address viewer,
+        uint256 defenderPlanetId,
+        VeydriftGameStorage.MissionShips calldata ships,
+        uint256 holdSeconds
+    ) external view returns (bool canCoordinate, uint128 netHoldingFuelCost, uint128 depotSupport) {
+        VeydriftGameStorage.Planet memory target = game.planet(defenderPlanetId);
+        if (target.owner == address(0)) return (false, 0, 0);
+
+        if (target.owner != viewer) {
+            uint256 targetAllianceId = _memberships[target.owner].allianceId;
+            uint256 viewerAllianceId = _memberships[viewer].allianceId;
+            if (targetAllianceId == 0 || targetAllianceId != viewerAllianceId) {
+                return (false, 0, 0);
+            }
+        }
+        canCoordinate = true;
+
+        uint128 holdingFuelCost = _acsHoldingFuelCost(ships, holdSeconds);
+        uint128 supportCapacity = uint128(
+            uint256(game.buildingLevel(defenderPlanetId, Building.AllianceDepot))
+                * ALLIANCE_DEPOT_SUPPORT_DEUTERIUM_PER_LEVEL
+        );
+        depotSupport = holdingFuelCost < supportCapacity ? holdingFuelCost : supportCapacity;
+        netHoldingFuelCost = holdingFuelCost - depotSupport;
+    }
+
     function _canCoordinateDefense(
         address viewer,
         uint256 defenderPlanetId,

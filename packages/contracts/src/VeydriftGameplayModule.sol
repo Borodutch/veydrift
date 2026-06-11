@@ -6,6 +6,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
+import {VeydriftDefenseHoldStorage} from "./libraries/VeydriftDefenseHoldStorage.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {IVeydriftAttackRandomnessEngine} from "./interfaces/IVeydriftAttackRandomnessEngine.sol";
 import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
@@ -175,7 +176,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             missionType == FleetMissionType.MissileAttack
                 || missionType == FleetMissionType.AcsAttack
                 || missionType == FleetMissionType.Colonize
+                || missionType == FleetMissionType.DefenseHold
         ) {
+            // DefenseHold (OGame-style ACS Defend) is launched via the planet-management module.
             revert InvalidMissionType(missionType);
         }
         if (missionType == FleetMissionType.Attack) {
@@ -506,6 +509,15 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
         if (mission.missionType == FleetMissionType.Attack) {
             _settleAttackTargetSnapshot(mission.targetPlanetId, mission.arrivalAt);
+            // OGame-style ACS Defend: pull every fleet stationed over this attack's arrival into the
+            // attack's counterplay roster so the battle machinery fights them as defenders.
+            VeydriftDefenseHoldStorage.linkQualifiedDefenders(
+                _stationedDefenseMissions[mission.targetPlanetId],
+                _fleetCounterplayMissions[missionId],
+                _fleetMissions,
+                _defenseHoldUntil,
+                mission.arrivalAt
+            );
         } else {
             _settleResources(mission.targetPlanetId);
         }
@@ -816,10 +828,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             : uint256(destination.position - origin.position);
         if (positionDistance != 0) return 1_000 + positionDistance * 5;
         return 0;
-    }
-
-    function _max(uint256 a, uint256 b) private pure returns (uint256) {
-        return a > b ? a : b;
     }
 
     function _currentTimestamp() private view returns (uint64) {
