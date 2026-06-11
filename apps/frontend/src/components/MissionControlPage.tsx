@@ -1,7 +1,8 @@
 import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List } from "lucide-preact";
 
 import { planetTypeFromCoordinates, planetTypeFromTemperature } from "../data/mockUniverse";
-import { formatDurationUntil } from "../durationFormat";
+import { formatDuration, formatDurationUntil } from "../durationFormat";
+import { acsHoldingFuelRatePerHour, allianceDepotSustainSeconds } from "../fleetMissionRules";
 import { shipAssetByKey } from "../gameAssets";
 import type { ShipKey } from "../playableMvp";
 import type { PlanetType } from "../types";
@@ -16,6 +17,7 @@ import {
   type FleetMissionVisibilityResponse,
   type GlobalMissionArchiveResponse,
   type ManagedPlanetResponse,
+  type StationedDefenderSummary,
   decodeColonizationTargetId,
 } from "../walletFlow";
 import {
@@ -309,8 +311,15 @@ export function StationedDefenseSection({
         && mission.status === "Outbound")
     .sort((left, right) => Number(left.arrivalAt) - Number(right.arrivalAt));
   // Incoming hostile attacks on the player's own planets that already have allied defenders stationed.
+  // VEY-KANEO-456: prefer the backend's reconciled `stationedDefenders` (already filtered to holds that
+  // are still active as-of-now); fall back to the raw `counterplayDefenderMissionIds` count for feeds
+  // predating that enrichment. An attack whose defenders have all withdrawn/elapsed drops out here, so
+  // the panel never shows an emptied "Defended" card.
   const defendedPlanets = incoming
-    .filter((mission) => (mission.counterplayDefenderMissionIds?.length ?? 0) > 0)
+    .filter((mission) =>
+      mission.stationedDefenders
+        ? mission.stationedDefenders.length > 0
+        : (mission.counterplayDefenderMissionIds?.length ?? 0) > 0)
     .sort((left, right) => Number(left.arrivalAt) - Number(right.arrivalAt));
   const total = myStationed.length + defendedPlanets.length;
 
@@ -422,8 +431,11 @@ function StationedDefenseCard({
 }
 
 // One of the player's own planets that is under attack but already has allied fleets stationed to
-// defend it. The defenders belong to alliance members, so only their count is known here (the read
-// model links them by id, not full composition); the countdown holds until the attack lands.
+// defend it. VEY-KANEO-456: the backend resolves each stationed defender into full detail
+// (`attack.stationedDefenders`), so this card lists every defender — which alliance player owns it,
+// the exact ships they brought (with image assets + counts), a live "stays until" countdown, and the
+// deuterium upkeep the defended planet's Alliance Depot covers — instead of a bare count. For feeds
+// predating that enrichment it falls back to the old count-only line.
 function DefendedPlanetCard({
   attack,
   now,
@@ -435,7 +447,8 @@ function DefendedPlanetCard({
   onOpenReport: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
 }) {
-  const defenderCount = attack.counterplayDefenderMissionIds?.length ?? 0;
+  const defenders = attack.stationedDefenders;
+  const fallbackCount = attack.counterplayDefenderMissionIds?.length ?? 0;
   return (
     <MissionCard
       actions={
@@ -453,9 +466,17 @@ function DefendedPlanetCard({
       badgeTone={missionTypeTone("AcsDefend")}
       direction={missionRouteLeg(attack.status)}
       fleet={
-        <p className="text-[11px] font-medium text-violet-100">
-          {`${defenderCount} allied ${defenderCount === 1 ? "fleet" : "fleets"} stationed in defense`}
-        </p>
+        defenders && defenders.length > 0 ? (
+          <div className="grid gap-2">
+            {defenders.map((defender) => (
+              <StationedDefenderRow defender={defender} key={defender.missionId} now={now} />
+            ))}
+          </div>
+        ) : (
+          <p className="text-[11px] font-medium text-violet-100">
+            {`${fallbackCount} allied ${fallbackCount === 1 ? "fleet" : "fleets"} stationed in defense`}
+          </p>
+        )
       }
       headerTiming={{ label: "Holds", value: missionEndpointTiming(attack.arrivalAt, now) }}
       missionId={attack.missionId}
@@ -465,6 +486,69 @@ function DefendedPlanetCard({
       target={missionEndpoint(attack, "target", planetLookup)}
     />
   );
+}
+
+// VEY-KANEO-456: one allied fleet stationed to defend the attacked planet. Shows the defender player,
+// their fleet (ship art + counts), a live hold countdown to the fleet's own expiry, and the deuterium
+// upkeep the planet's Alliance Depot funds. Upkeep rate + how long the depot sustains the hold are
+// derived as-of-now on the client (no extra request, no poller), matching the backend's lazy
+// reconciliation that already dropped any defender whose hold elapsed.
+function StationedDefenderRow({
+  defender,
+  now,
+}: {
+  defender: StationedDefenderSummary;
+  now: number;
+}) {
+  const shipCounts = shipCountsToNumbers(defender.ships);
+  const upkeepPerHour = acsHoldingFuelRatePerHour(shipCounts);
+  const holdUntilMs = timestampToMs(defender.holdUntil);
+  const holdRemainingSeconds = holdUntilMs === undefined ? 0 : Math.max(0, (holdUntilMs - now) / 1_000);
+  const sustainSeconds = allianceDepotSustainSeconds(shipCounts, defender.allianceDepotLevel);
+  const depotCoversFullHold = sustainSeconds >= holdRemainingSeconds;
+  const depotSummary =
+    defender.allianceDepotLevel <= 0
+      ? "No Alliance Depot support"
+      : depotCoversFullHold
+        ? `Alliance Depot Lv ${defender.allianceDepotLevel} covers the full hold`
+        : `Alliance Depot Lv ${defender.allianceDepotLevel} sustains ${formatDuration(sustainSeconds)}`;
+  return (
+    <div className="grid gap-1 rounded border border-violet-300/15 bg-black/20 p-2">
+      <div className="flex flex-wrap items-center justify-between gap-1.5">
+        <span className="text-[11px] font-semibold text-violet-100" title={defender.defender}>
+          {stationedDefenderName(defender)}
+        </span>
+        <span className="text-[11px] tabular-nums text-slate-400">
+          <span className="font-semibold uppercase tracking-[0.1em] text-slate-600">Holds</span>{" "}
+          {missionEndpointTiming(defender.holdUntil, now)}
+        </span>
+      </div>
+      <FleetIcons ships={defender.ships} />
+      <p className="text-[11px] text-slate-400">
+        {`Upkeep ${formatResource(String(upkeepPerHour))} deut/h`} · {depotSummary}
+      </p>
+    </div>
+  );
+}
+
+// A defender is an alliance member identified on-chain by address; show their profile display name when
+// the read model resolved one, otherwise a shortened address so the player is still identifiable.
+function stationedDefenderName(defender: StationedDefenderSummary): string {
+  if (defender.defenderDisplayName && defender.defenderDisplayName.trim().length > 0) {
+    return defender.defenderDisplayName;
+  }
+  const address = defender.defender;
+  return address.length > 10 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address;
+}
+
+// Coerce a mission's on-chain ship counts (string-encoded) into the numeric shape the holding-fuel
+// helpers expect; unknown/blank counts collapse to 0.
+function shipCountsToNumbers(ships: Record<string, string>): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const [key, value] of Object.entries(ships)) {
+    counts[key] = Math.max(0, Math.trunc(Number(value) || 0));
+  }
+  return counts;
 }
 
 export function missionLifecycleActions({

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionControlPage, formatMissionTime, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseLoot } from "../src/components/MissionControlPage";
+import { MissionControlPage, StationedDefenseSection, formatMissionTime, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseLoot } from "../src/components/MissionControlPage";
 import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
@@ -90,6 +90,73 @@ describe("MissionControlPage", () => {
     }).find((action) => action.kind === "recall");
     expect(recall?.enabled).toBe(false);
     expect(recall?.reason).toContain("recall cutoff");
+  });
+
+  // VEY-KANEO-456: the Stationed defenses panel must show, per stationed allied defender, which player
+  // owns it, the exact fleet (ship counts), a live hold countdown, and the deuterium upkeep the
+  // defended planet's Alliance Depot covers — not just a defender count.
+  test("renders each stationed defender's player, fleet, hold countdown, and Alliance Depot upkeep", () => {
+    const now = 1_770_000_000_000;
+    const attack = mission({
+      missionId: "70",
+      missionType: "Attack",
+      owner: "0x3333333333333333333333333333333333333333",
+      targetPlanetId: "7",
+      arrivalAt: "1770000900",
+      counterplayDefenderMissionIds: ["71"],
+      stationedDefenders: [
+        {
+          missionId: "71",
+          defender: "0x4444444444444444444444444444444444444444",
+          defenderDisplayName: "Aegis",
+          ships: { battleship: "2", lightFighter: "5" },
+          holdUntil: "1770000900",
+          allianceDepotLevel: 2,
+        },
+      ],
+    });
+    const text = visibleText(
+      StationedDefenseSection({ incoming: [attack], outgoing: [], now, onOpenReport: () => undefined }),
+    );
+
+    expect(text).toContain("Defended");
+    // Defender player identity (profile name, falling back to a shortened address when absent).
+    expect(text).toContain("Aegis");
+    // Full ship composition with counts (icons render the art; the count travels as text).
+    expect(text).toContain("x2");
+    expect(text).toContain("x5");
+    // Live hold countdown.
+    expect(text).toContain("Holds");
+    // Deuterium upkeep rate: 2 battleships (1000 tenths/h) + 5 light fighters (100) = 1100 => 110 deut/h.
+    expect(text).toContain("Upkeep 110 deut/h");
+    // Alliance Depot upkeep coverage.
+    expect(text).toContain("Alliance Depot Lv 2");
+    expect(text).toContain("covers the full hold");
+  });
+
+  // VEY-KANEO-456: when an attack's stationed defenders all withdrew (reconciled to empty), the panel
+  // must not show a stale "Defended" card; on Mission Control the whole section hides when nothing holds.
+  test("hides a Defended card whose stationed defenders have all withdrawn", () => {
+    const attack = mission({
+      missionId: "72",
+      missionType: "Attack",
+      targetPlanetId: "7",
+      counterplayDefenderMissionIds: ["73"],
+      stationedDefenders: [],
+    });
+    const withdrawn = visibleText(
+      StationedDefenseSection({ incoming: [attack], outgoing: [], now: 1_770_000_000_000, onOpenReport: () => undefined }),
+    );
+    expect(withdrawn).not.toContain("Defended");
+    expect(
+      StationedDefenseSection({
+        incoming: [attack],
+        outgoing: [],
+        now: 1_770_000_000_000,
+        onOpenReport: () => undefined,
+        hideWhenEmpty: true,
+      }),
+    ).toBeNull();
   });
 
   test("renders player-facing mission control rows without implementation copy", () => {
