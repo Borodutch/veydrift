@@ -725,7 +725,6 @@ const GAME_SELECTORS = {
   // launchDefenseHold(uint256,uint256,(uint32 x14 MissionShips),(uint128 x3 Resources),uint16,uint256).
   launchDefenseHold: "0xd3ad415f",
   launchFleetMission: "0x60eac16f",
-  previewResources: "0x0adbf924",
   resolveFleetMission: "0xde09e7cf",
   startBuildingUpgrade: "0x165715e3",
   finishShipProduction: "0x7bd93154",
@@ -1666,50 +1665,6 @@ export function decodeUintResult(hex: string): bigint {
   }
 
   return BigInt(`0x${clean.slice(-64)}`);
-}
-
-/**
- * Decode a `Resources` struct (`(uint128,uint128,uint128)`) returned by a game
- * contract read such as `previewResources(uint256)`. Each field is ABI-encoded
- * as a 32-byte word in metal/crystal/deuterium order.
- */
-export function decodeResourcesResult(hex: string): {
-  metal: bigint;
-  crystal: bigint;
-  deuterium: bigint;
-} {
-  const clean = hex.replace(/^0x/, "");
-  const word = (index: number): bigint => {
-    const slice = clean.slice(index * 64, index * 64 + 64);
-    return slice ? BigInt(`0x${slice}`) : 0n;
-  };
-  return { metal: word(0), crystal: word(1), deuterium: word(2) };
-}
-
-/**
- * Read the contract's authoritative current spendable balance for a planet via
- * a direct `previewResources(planetId)` `eth_call`. This is stored resources +
- * uncollected production accrued to the latest block, capped at storage — the
- * exact value a spend would have available — so the UI can anchor the displayed
- * balance to it and never over-report (VEY-318).
- */
-export async function fetchPreviewResources(
-  provider: Eip1193Provider,
-  gameContract: string,
-  planetId: bigint | number | string,
-): Promise<{ metal: bigint; crystal: bigint; deuterium: bigint }> {
-  const data = encodeUintCall(GAME_SELECTORS.previewResources, planetId);
-  const result = await provider.request<string>({
-    method: "eth_call",
-    params: [{ to: gameContract, data }, "latest"],
-  });
-  // A valid `Resources` return is three 32-byte words. An empty / short result
-  // means the call did not return resources (revert, missing planet, RPC error);
-  // throw so the caller falls back instead of treating it as a 0 balance.
-  if (typeof result !== "string" || result.replace(/^0x/, "").length < 192) {
-    throw new Error("previewResources returned an unexpected result");
-  }
-  return decodeResourcesResult(result);
 }
 
 export function encodeQuantity(value: bigint | number | string): string {

@@ -4,7 +4,6 @@ import {
   assertWalletUnlocked,
   decodeBoolResult,
   decodeColonizationTargetId,
-  decodeResourcesResult,
   decodeUintResult,
   encodeQuantity,
   encodeAddressUintCall,
@@ -26,7 +25,6 @@ import {
   fetchInfrastructureState,
   fetchMoonState,
   fetchPlayerProfile,
-  fetchPreviewResources,
   fetchResearchState,
   fetchShipyardState,
   fetchWalletPlanets,
@@ -1360,39 +1358,6 @@ describe("walletFlow", () => {
     expect(decodeBoolResult(`0x${"0".repeat(64)}`)).toBe(false);
     expect(decodeBoolResult("0x")).toBe(false);
     expect(decodeUintResult(`0x${"0".repeat(63)}7`)).toBe(7n);
-  });
-
-  test("decodes a Resources struct (metal/crystal/deuterium words)", () => {
-    // Live `previewResources(1)` on game contract 0xf12f… (VEY-318 evidence):
-    // metal 0x2ead, crystal 0x288c, deuterium 0xfd3.
-    const hex = `0x${(0x2ead).toString(16).padStart(64, "0")}${(0x288c)
-      .toString(16)
-      .padStart(64, "0")}${(0xfd3).toString(16).padStart(64, "0")}`;
-    expect(decodeResourcesResult(hex)).toEqual({ metal: 11_949n, crystal: 10_380n, deuterium: 4_051n });
-  });
-
-  test("fetchPreviewResources eth_calls the previewResources selector and decodes the result", async () => {
-    const calls: Array<{ method: string; params?: unknown[] }> = [];
-    const provider = mockProvider(async (args) => {
-      calls.push(args);
-      return `0x${(1_000).toString(16).padStart(64, "0")}${(2_000)
-        .toString(16)
-        .padStart(64, "0")}${(3_000).toString(16).padStart(64, "0")}`;
-    });
-    const result = await fetchPreviewResources(provider, "0xf12f31734868F1089d9d6514D7F19a31Ec5e00e2", 1);
-    expect(result).toEqual({ metal: 1_000n, crystal: 2_000n, deuterium: 3_000n });
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.method).toBe("eth_call");
-    const callParams = calls[0]?.params as [{ to: string; data: string }, string];
-    expect(callParams[0].to).toBe("0xf12f31734868F1089d9d6514D7F19a31Ec5e00e2");
-    // Selector for previewResources(uint256) + planetId 1 (32-byte padded).
-    expect(callParams[0].data).toBe(`0x0adbf924${(1).toString(16).padStart(64, "0")}`);
-    expect(callParams[1]).toBe("latest");
-  });
-
-  test("fetchPreviewResources rejects an empty / short result instead of returning a 0 balance", async () => {
-    const provider = mockProvider(async () => "0x");
-    await expect(fetchPreviewResources(provider, "0xf12f", 1)).rejects.toThrow();
   });
 
   test("switches to Base Sepolia when the wallet already knows the chain", async () => {
