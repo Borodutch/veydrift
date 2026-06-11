@@ -560,6 +560,19 @@ describe("Playable MVP app display helpers", () => {
     })).toEqual({ metal: 12_000, crystal: 8_000, deuterium: 3_062 });
   });
 
+  test("mission origin resources resolve to the canonical balance even when the wallet-planet snapshot is absent", () => {
+    // VEY-KANEO-453 (sharpened root cause): the original block fired when `walletPlanets` was empty
+    // or not yet hydrated, leaving `selectedManagedPlanet === undefined` and therefore no backend
+    // planet snapshot. The gate must NOT depend on that snapshot (or the planet selector) being
+    // present — it falls back to the same authoritative balance the header uses, so Confirm is enabled
+    // whenever the real deuterium covers the fuel cost.
+    expect(missionOriginResources({
+      isWalletConnected: true,
+      spendableResources: { metal: 12_000, crystal: 8_000, deuterium: 3_062 },
+      planetResources: undefined,
+    })).toEqual({ metal: 12_000, crystal: 8_000, deuterium: 3_062 });
+  });
+
   test("mission origin resources fall back to the backend snapshot when no wallet spendable balance is available", () => {
     // No wallet connected: there is no on-chain spendable read, so the validated backend snapshot
     // (string-valued) is the only available source.
