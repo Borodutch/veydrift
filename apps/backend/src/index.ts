@@ -1,10 +1,13 @@
 import { installCrashDiagnostics } from "./crashDiagnostics";
 import { createRequestHandler } from "./server";
 import {
+  createForwardingFetch,
   resolveWorkerAssignment,
+  resolveWriterInternalPort,
   roleForIndex,
   WORKER_INDEX_ENV,
   WORKER_ROLE_ENV,
+  WRITER_INTERNAL_PORT_ENV,
   type WorkerRole
 } from "./workerPool";
 
@@ -20,13 +23,49 @@ const idleTimeout = Number.parseInt(process.env.VEYDRIFT_HTTP_IDLE_TIMEOUT_SECON
 // across all workers — a slow request handled by one worker never blocks the others (VEY-KANEO-466).
 // The writer worker (index 0) also runs chain-sync ingestion + the on-chain committers; reader workers
 // serve from the shared WAL database and skip those background loops (see server.ts role gating).
-function serveWorker(role: WorkerRole, index: number): void {
+//
+// `writerInternalPort` is set only when running as a pool (more than one worker). The writer also binds
+// a private loopback listener on that port; readers forward every mutating request there so the writer
+// remains the sole mutator of the SQLite index and the only holder of the in-memory indexer state.
+function serveWorker(role: WorkerRole, index: number, writerInternalPort?: number): void {
+  const handler = createRequestHandler({ role });
+
+  if (role === "reader" && writerInternalPort !== undefined) {
+    Bun.serve({
+      idleTimeout,
+      port,
+      reusePort: true,
+      fetch: createForwardingFetch(handler, `http://127.0.0.1:${writerInternalPort}`)
+    });
+    console.log(
+      `Veydrift backend worker ${index} (reader) listening on http://localhost:${port} [reusePort]; ` +
+        `forwarding writes to http://127.0.0.1:${writerInternalPort}`
+    );
+    return;
+  }
+
   Bun.serve({
     idleTimeout,
     port,
     reusePort: true,
-    fetch: createRequestHandler({ role })
+    fetch: handler
   });
+
+  if (role === "writer" && writerInternalPort !== undefined) {
+    // Writer-only private listener (no reusePort, loopback) that readers forward mutating requests to.
+    Bun.serve({
+      idleTimeout,
+      port: writerInternalPort,
+      hostname: "127.0.0.1",
+      fetch: handler
+    });
+    console.log(
+      `Veydrift backend worker ${index} (writer) listening on http://localhost:${port} [reusePort]; ` +
+        `private write listener on http://127.0.0.1:${writerInternalPort}`
+    );
+    return;
+  }
+
   console.log(`Veydrift backend worker ${index} (${role}) listening on http://localhost:${port} [reusePort]`);
 }
 
@@ -40,6 +79,7 @@ function superviseWorkers(workerCount: number): void {
     return;
   }
 
+  const writerInternalPort = resolveWriterInternalPort(process.env, port);
   const children = new Map<number, ReturnType<typeof Bun.spawn>>();
   let shuttingDown = false;
 
@@ -50,7 +90,8 @@ function superviseWorkers(workerCount: number): void {
       env: {
         ...process.env,
         [WORKER_ROLE_ENV]: role,
-        [WORKER_INDEX_ENV]: String(index)
+        [WORKER_INDEX_ENV]: String(index),
+        [WRITER_INTERNAL_PORT_ENV]: String(writerInternalPort)
       },
       stdio: ["inherit", "inherit", "inherit"]
     });
@@ -88,7 +129,7 @@ function superviseWorkers(workerCount: number): void {
 
 const assignment = resolveWorkerAssignment(process.env, navigator.hardwareConcurrency);
 if (assignment.kind === "worker") {
-  serveWorker(assignment.role, assignment.index);
+  serveWorker(assignment.role, assignment.index, resolveWriterInternalPort(process.env, port));
 } else {
   superviseWorkers(assignment.workerCount);
 }

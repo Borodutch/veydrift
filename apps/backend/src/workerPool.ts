@@ -18,8 +18,18 @@
 export const WORKER_ROLE_ENV = "VEYDRIFT_WORKER_ROLE";
 export const WORKER_INDEX_ENV = "VEYDRIFT_WORKER_INDEX";
 export const WORKER_COUNT_ENV = "VEYDRIFT_WORKER_COUNT";
+export const WRITER_INTERNAL_PORT_ENV = "VEYDRIFT_WRITER_INTERNAL_PORT";
 
 export type WorkerRole = "writer" | "reader";
+
+// Methods that never mutate state are served locally by a reader. Everything else is forwarded to the
+// single writer so all DB writes — and the writer's in-memory indexer bookkeeping (e.g. the bounded
+// fleet-mission reconcile queue drained after applyLog) — happen on exactly one process.
+const READ_ONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+// Request headers that must not be copied verbatim when re-issuing a forwarded request: the body is
+// re-encoded by fetch (content-length) and the connection is to the writer's loopback listener (host).
+const STRIPPED_FORWARD_REQUEST_HEADERS = ["content-length", "host", "connection"];
 
 export type WorkerAssignment =
   | { kind: "supervisor"; workerCount: number }
@@ -64,4 +74,76 @@ export function resolveWorkerAssignment(
   }
 
   return { kind: "supervisor", workerCount: resolveWorkerCount(env, hardwareConcurrency) };
+}
+
+// Private loopback port the writer also listens on (in addition to the shared reusePort socket) so
+// readers can forward writes to it deterministically. Defaults to mainPort + 1; override with
+// VEYDRIFT_WRITER_INTERNAL_PORT if that collides with another service.
+export function resolveWriterInternalPort(
+  env: Record<string, string | undefined>,
+  mainPort: number
+): number {
+  const override = env[WRITER_INTERNAL_PORT_ENV];
+  if (override !== undefined && override.trim() !== "") {
+    const parsed = Number.parseInt(override, 10);
+    if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 65535) {
+      return parsed;
+    }
+  }
+
+  return mainPort + 1;
+}
+
+// Wrap a reader's request handler so it serves read-only methods locally and forwards every mutating
+// request to the single writer's loopback listener at `writerOrigin` (e.g. "http://127.0.0.1:4001").
+// This keeps readers as pure WAL read-replicas: the writer is the sole mutator of the SQLite index and
+// the only holder of the in-memory indexer state, so cross-process state never diverges (VEY-KANEO-466).
+export function createForwardingFetch(
+  localHandler: (request: Request) => Promise<Response>,
+  writerOrigin: string,
+  fetchImpl: typeof fetch = fetch
+): (request: Request) => Promise<Response> {
+  return async (request: Request): Promise<Response> => {
+    if (READ_ONLY_METHODS.has(request.method)) {
+      return localHandler(request);
+    }
+
+    const url = new URL(request.url);
+    const target = `${writerOrigin}${url.pathname}${url.search}`;
+    const headers = new Headers(request.headers);
+    for (const name of STRIPPED_FORWARD_REQUEST_HEADERS) {
+      headers.delete(name);
+    }
+    const body = await request.arrayBuffer();
+
+    let upstream: Response;
+    try {
+      upstream = await fetchImpl(target, {
+        method: request.method,
+        headers,
+        redirect: "manual",
+        ...(body.byteLength > 0 ? { body } : {})
+      });
+    } catch {
+      return Response.json(
+        {
+          error: "writer_unavailable",
+          message: "The write request could not be forwarded to the indexer/writer worker."
+        },
+        { status: 502, headers: { "access-control-allow-origin": "*" } }
+      );
+    }
+
+    // Re-emit the writer's response (status, headers including CORS, body) to the original client.
+    // content-length / content-encoding are dropped so the runtime recomputes them for the re-sent body.
+    const responseHeaders = new Headers(upstream.headers);
+    responseHeaders.delete("content-length");
+    responseHeaders.delete("content-encoding");
+    const responseBody = await upstream.arrayBuffer();
+    return new Response(responseBody.byteLength > 0 ? responseBody : null, {
+      status: upstream.status,
+      statusText: upstream.statusText,
+      headers: responseHeaders
+    });
+  };
 }
