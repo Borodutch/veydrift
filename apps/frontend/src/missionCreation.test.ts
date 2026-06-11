@@ -35,6 +35,30 @@ const missileAction: Extract<GalaxyAction, { enabled: true }> = {
   quantity: 1,
 };
 
+const defenseHoldAction: Extract<GalaxyAction, { enabled: true }> = {
+  enabled: true,
+  kind: "defenseHold",
+  label: "Defend",
+  mode: "mission",
+  mission: "defenseHold",
+  ships: {
+    smallCargo: 0,
+    lightFighter: 1,
+    recycler: 0,
+    colonyShip: 0,
+    largeCargo: 0,
+    heavyFighter: 0,
+    cruiser: 0,
+    battleship: 0,
+    bomber: 0,
+    destroyer: 0,
+    deathstar: 0,
+    battlecruiser: 0,
+    reaper: 0,
+    pathfinder: 0,
+  },
+};
+
 describe("mission creation", () => {
   test("requires an origin and selected ships for fleet missions", () => {
     expect(missionDraftBlocker({
@@ -121,6 +145,42 @@ describe("mission creation", () => {
       selectedShipCount: 0,
       totalCargoCapacity: 0,
     })).toBe("Choose at least one missile.");
+  });
+
+  test("gates a proactive DefenseHold on ship selection and total (travel + holding) fuel", () => {
+    const base = {
+      action: defenseHoldAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      cargoTotal: 0,
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 1,
+      totalCargoCapacity: 50_000,
+    } as const;
+
+    // No ships selected — blocked like any other fleet mission.
+    expect(missionDraftBlocker({
+      ...base,
+      fuelCost: 0,
+      resources: { metal: 0, crystal: 0, deuterium: 100_000 },
+      selectedShipCount: 0,
+    })).toBe("Choose at least one ship.");
+
+    // Travel fuel plus net holding fuel exceeds the deuterium balance — surfaced before submit.
+    expect(missionDraftBlocker({
+      ...base,
+      fuelCost: 12_000,
+      resources: { metal: 0, crystal: 0, deuterium: 5_000 },
+      selectedShipCount: 1,
+    })).toBe("Need 12,000 deuterium for fuel.");
+
+    // Enough deuterium and capacity — the proactive defend passes the draft gate.
+    expect(missionDraftBlocker({
+      ...base,
+      fuelCost: 3_000,
+      resources: { metal: 0, crystal: 0, deuterium: 50_000 },
+      selectedShipCount: 1,
+    })).toBeUndefined();
   });
 
   test("blocks fleet missions when fuel alone exceeds selected ship cargo capacity", () => {

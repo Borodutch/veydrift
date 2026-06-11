@@ -145,6 +145,7 @@ import {
   sendCreateColonyTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchAttackMissionTransaction,
+  sendLaunchDefenseHoldTransaction,
   sendLaunchFleetMissionTransaction,
   sendJoinAttackMissionTransaction,
   sendFinishMoonBuildingUpgradeTransaction,
@@ -1332,6 +1333,18 @@ function driveLevelsFromTechnologyLevels(levels: Record<string, number> | undefi
     impulseDrive: levels?.["9"] ?? 0,
     hyperspaceDrive: levels?.["10"] ?? 0,
   };
+}
+
+// VEY-KANEO-440: best-effort Alliance Depot level of a target planet for the DefenseHold holding-fuel
+// subsidy preview, read from the planet's public building state (Alliance Depot = building id 13).
+// The contract recomputes the real subsidy on launch, so an unknown level (no public state) previews
+// as 0 rather than blocking.
+const ALLIANCE_DEPOT_BUILDING_ID = 13;
+function allianceDepotLevelFromPlanet(planet: Planet | undefined): number {
+  const buildings = planet?.publicState?.buildings;
+  if (!buildings) return 0;
+  const depot = buildings.find((building) => building.id === ALLIANCE_DEPOT_BUILDING_ID);
+  return Math.max(0, Math.trunc(depot?.level ?? 0));
 }
 
 export async function loadWalletPlanetSyncSnapshot(
@@ -4687,6 +4700,24 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
     setPendingAcsDefend(null);
+    if (action.kind === "defenseHold") {
+      // VEY-KANEO-440: proactive ACS Defend — station the fleet at the target own/ally planet for the
+      // chosen hold window via launchDefenseHold (pre-flighted so ineligible / out-of-window /
+      // under-fuelled reverts surface as a clear message before the wallet prompt).
+      void runGalaxyTransaction("Stationed defense", () => sendLaunchDefenseHoldTransaction(
+        provider,
+        account,
+        gameContract,
+        {
+          originPlanetId,
+          targetPlanetId,
+          ships: draft.ships,
+          speedPercent: draft.speedPercent,
+          holdSeconds: draft.holdSeconds ?? 0,
+        },
+      ));
+      return;
+    }
     if (action.kind === "attack" && draft.lootRatio) {
       const { metal, crystal, deuterium } = draft.lootRatio;
       void runGalaxyTransaction(`${action.label} mission`, () => sendLaunchAttackMissionTransaction(
@@ -5137,6 +5168,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           action={pendingGalaxyMission.action}
           actionPending={galaxyAction.status === "pending"}
           coords={pendingGalaxyMission.coords}
+          defenseHoldContext={pendingGalaxyMission.action.kind === "defenseHold"
+            ? { depotLevel: allianceDepotLevelFromPlanet(pendingGalaxyMission.target) }
+            : undefined}
+          defenseHoldMode={pendingGalaxyMission.action.kind === "defenseHold"}
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
           onBack={() => setPendingGalaxyMission(null)}
           onConfirm={handleConfirmGalaxyMission}

@@ -13,6 +13,7 @@ import {
   encodeGameCall,
   encodeJoinAttackMissionCall,
   encodeLaunchAttackMissionCall,
+  encodeLaunchDefenseHoldCall,
   encodeLaunchInterplanetaryMissileAttackCall,
   encodeLaunchFleetMissionCall,
   encodeUintCall,
@@ -1155,6 +1156,42 @@ describe("walletFlow", () => {
           1, 2, 3, 4, 5, 6, 7,
           8, 9, 10, 11, 12, 13, 14,
           101, 202, 303, 50, 404,
+        ].map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")
+    );
+  });
+
+  test("VEY-KANEO-440/441: encodes a DefenseHold launch in contract ABI order (no missionType, holdSeconds last)", () => {
+    const ships = {
+      smallCargo: 1,
+      lightFighter: 2,
+      recycler: 3,
+      colonyShip: 4,
+      largeCargo: 5,
+      heavyFighter: 6,
+      cruiser: 7,
+      battleship: 8,
+      bomber: 9,
+      destroyer: 10,
+      deathstar: 11,
+      battlecruiser: 12,
+      reaper: 13,
+      pathfinder: 14,
+    };
+
+    expect(encodeLaunchDefenseHoldCall({
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      ships,
+      cargo: { metal: "101", crystal: "202", deuterium: "303" },
+      speedPercent: 50,
+      holdSeconds: 3600,
+    })).toBe(
+      "0xd3ad415f"
+        + [
+          7, 9,
+          1, 2, 3, 4, 5, 6, 7,
+          8, 9, 10, 11, 12, 13, 14,
+          101, 202, 303, 50, 3600,
         ].map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")
     );
   });

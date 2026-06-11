@@ -779,12 +779,19 @@ describe("tester universe display data", () => {
       enabled: false,
       reason: "Requires a recycler on your home planet.",
     });
-    expect(ownActions.map((action) => action.label)).toEqual(["Transport", "Deploy"]);
+    expect(ownActions.map((action) => action.label)).toEqual(["Transport", "Deploy", "Defend"]);
+    expect(ownActions.find((action) => action.kind === "defenseHold")).toMatchObject({
+      enabled: true,
+      mode: "mission",
+      mission: "defenseHold",
+    });
     expect(originActions).toEqual([]);
     expect(emptyActions).toMatchObject([{ enabled: true, kind: "colonize", label: "Colonize" }]);
     expect(noCargoActions).toMatchObject([
       { enabled: false, kind: "transport", reason: "Requires a cargo-capable ship on your home planet." },
       { enabled: false, kind: "deploy", reason: "Requires a cargo-capable ship on your home planet." },
+      // A lone Light Fighter cannot carry cargo but is movable, so proactive Defend stays available.
+      { enabled: true, kind: "defenseHold", label: "Defend" },
     ]);
     expect([...enemyActions, ...ownActions, ...emptyActions].map((action) => action.label).join(" ")).not.toMatch(/spy|espionage|probe/i);
     expect(PUBLIC_INTEL_SUMMARY_LABEL).toBe("Public intel");

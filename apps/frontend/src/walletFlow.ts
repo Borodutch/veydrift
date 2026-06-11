@@ -721,6 +721,9 @@ const GAME_SELECTORS = {
   joinAttackMission: "0x28260eb6",
   launchInterplanetaryMissileAttack: "0xa72cd29a",
   launchAttackMission: "0x19fec22b",
+  // VEY-KANEO-440/441: ACS Defend stationing. Selector for
+  // launchDefenseHold(uint256,uint256,(uint32 x14 MissionShips),(uint128 x3 Resources),uint16,uint256).
+  launchDefenseHold: "0xd3ad415f",
   launchFleetMission: "0x60eac16f",
   previewResources: "0x0adbf924",
   resolveFleetMission: "0xde09e7cf",
@@ -737,6 +740,10 @@ const GAME_SELECTORS = {
 const COLONIZATION_COORDINATE_FLAG = 1n << 255n;
 const COLONIZE_MISSION_TYPE = 2;
 const ATTACK_MISSION_TYPE = 3;
+// VEY-KANEO-440/441: FleetMissionType.DefenseHold (enum 9). DefenseHold has its own launch entrypoint
+// (launchDefenseHold) rather than going through launchFleetMission, but the indexed missions still carry
+// this type, so the UI keys stationed-defense rendering on it.
+export const DEFENSE_HOLD_MISSION_TYPE = 9;
 const MOON_SELECTORS = {
   finishMoonBuildingUpgrade: "0x713b9e66",
   jumpGateJump: "0x36aaf8f8",
@@ -1379,6 +1386,51 @@ export function encodeLaunchFleetMissionCall({
     cargo?.deuterium ?? 0,
     speedPercent,
     randomnessRequestId,
+  ]);
+}
+
+// VEY-KANEO-440/441: encode a launchDefenseHold call. Mirrors encodeLaunchFleetMissionCall's flat
+// layout (static MissionShips/Resources tuples inline to consecutive 32-byte words), but carries no
+// missionType (the selector is type-specific) and ends with the player-chosen `holdSeconds` (1h–32h)
+// instead of a randomness id. The fleet flies to `targetPlanetId` (the player's own other planet or a
+// same-alliance member's), holds for the window, and defends any attack landing during it.
+export function encodeLaunchDefenseHoldCall({
+  originPlanetId,
+  targetPlanetId,
+  ships,
+  cargo,
+  speedPercent = 100,
+  holdSeconds,
+}: {
+  originPlanetId: bigint | number | string;
+  targetPlanetId: bigint | number | string;
+  ships: MissionShips;
+  cargo?: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
+  speedPercent?: number | undefined;
+  holdSeconds: bigint | number | string;
+}): string {
+  return encodeGameCall(GAME_SELECTORS.launchDefenseHold, [
+    originPlanetId,
+    targetPlanetId,
+    ships.smallCargo,
+    ships.lightFighter,
+    ships.recycler,
+    ships.colonyShip,
+    ships.largeCargo,
+    ships.heavyFighter,
+    ships.cruiser,
+    ships.battleship,
+    ships.bomber,
+    ships.destroyer,
+    ships.deathstar,
+    ships.battlecruiser,
+    ships.reaper,
+    ships.pathfinder,
+    cargo?.metal ?? 0,
+    cargo?.crystal ?? 0,
+    cargo?.deuterium ?? 0,
+    speedPercent,
+    holdSeconds,
   ]);
 }
 
@@ -2257,6 +2309,25 @@ export async function sendJoinAttackMissionTransaction(
     from: account,
     to: contractAddress,
     data: encodeJoinAttackMissionCall(params)
+  });
+}
+
+// VEY-KANEO-440/441: launch a DefenseHold (ACS Defend stationing) mission. Pre-flights the
+// call so contract reverts — ineligible target (not own/ally), out-of-range hold window, under-fuelled
+// or over-capacity fleet — surface as a clear message before the wallet prompt rather than a raw revert.
+export async function sendLaunchDefenseHoldTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  params: Parameters<typeof encodeLaunchDefenseHoldCall>[0]
+): Promise<string> {
+  const data = encodeLaunchDefenseHoldCall(params);
+  await assertFleetMissionCallSucceeds(provider, account, contractAddress, data);
+
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data
   });
 }
 

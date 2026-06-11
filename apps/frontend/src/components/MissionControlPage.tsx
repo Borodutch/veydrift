@@ -281,8 +281,12 @@ export function StationedDefenseSection({
   outgoing: FleetMissionSummary[];
   planetLookup?: ReadonlyMap<string, MissionPlanetIdentity>;
 }) {
+  // Both the reactive AcsDefend (keyed to a specific attack) and the DefenseHold mission (stationed
+  // for a chosen window, VEY-KANEO-441) count as fleets the player has stationed in defense.
   const myStationed = outgoing
-    .filter((mission) => mission.missionType === "AcsDefend" && mission.status === "Outbound")
+    .filter((mission) =>
+      (mission.missionType === "AcsDefend" || mission.missionType === "DefenseHold")
+        && mission.status === "Outbound")
     .sort((left, right) => Number(left.arrivalAt) - Number(right.arrivalAt));
   // Incoming hostile attacks on the player's own planets that already have allied defenders stationed.
   const defendedPlanets = incoming
@@ -1945,7 +1949,7 @@ function missionTypeTone(missionType: string): string {
   if (missionType === "Transport") return "border-cyan-300/25 bg-cyan-300/10 text-cyan-100";
   if (missionType === "Deploy") return "border-emerald-300/25 bg-emerald-300/10 text-emerald-100";
   if (missionType === "Harvest") return "border-amber-300/25 bg-amber-300/10 text-amber-100";
-  if (["AcsDefend", "Intercept"].includes(missionType)) return "border-violet-300/25 bg-violet-300/10 text-violet-100";
+  if (["AcsDefend", "DefenseHold", "Intercept"].includes(missionType)) return "border-violet-300/25 bg-violet-300/10 text-violet-100";
   return "border-slate-300/20 bg-slate-300/10 text-slate-100";
 }
 
@@ -2043,6 +2047,7 @@ function identityFromMissionPlanet(planet: FleetMissionPlanetReference): Mission
 export function missionTypeLabel(missionType: string): string {
   if (missionType === "AcsAttack") return "Group attack";
   if (missionType === "AcsDefend") return "Group defense";
+  if (missionType === "DefenseHold") return "Stationed defense";
   return missionType.replace(/([A-Z])/g, " $1").trim();
 }
 
