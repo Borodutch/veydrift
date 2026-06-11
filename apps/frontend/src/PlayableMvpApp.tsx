@@ -135,7 +135,6 @@ import {
   parseRiftTokenAmount,
   sendApproveResourceTokenTransaction,
   sendFinishBuildingUpgradeTransaction,
-  sendCompleteFleetMissionReturnTransaction,
   sendFinishResourceWithdrawalTransaction,
   sendFinishShipProductionTransaction,
   sendFinishResearchTransaction,
@@ -4759,17 +4758,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     );
   }, [account, gameContract, provider, runMissionTransaction]);
 
-  const handleCompleteMissionReturn = useCallback((missionId: string) => {
-    if (!provider || !account || !gameContract) {
-      setMissionAction({ status: "error", label: "Wallet or game contract is unavailable." });
-      return;
-    }
-
-    runMissionTransaction(`Complete return #${missionId}`, () =>
-      sendCompleteFleetMissionReturnTransaction(provider, account, gameContract, missionId)
-    );
-  }, [account, gameContract, provider, runMissionTransaction]);
-
   // VEY-KANEO-440: ACS Defend ("Group defend") opens the full compose picker (fleet + speed +
   // hold/holding-fuel + Alliance Depot preview) instead of firing a default fleet. Intercept was
   // removed from the frontend (VEY-KANEO-439), so this is the only remaining counterplay path.
@@ -5053,7 +5041,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           missionId={missionDetailId}
           now={now}
           onBack={() => handleNavigate("mission-control")}
-          onCompleteReturn={handleCompleteMissionReturn}
           onShareReport={() => handleShareMissionReport(missionDetailShareUrl)}
           onCounterplay={handleMissionCounterplay}
           onRecall={handleRecallMission}
@@ -5246,7 +5233,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           missionArchiveError={missionArchiveError}
           missionArchiveLoading={missionArchiveLoading}
           now={now}
-          onCompleteReturn={handleCompleteMissionReturn}
           onCounterplay={handleMissionCounterplay}
           onDefendPlanet={handleDefendPlanet}
           onJoinAttack={handleJoinAttack}

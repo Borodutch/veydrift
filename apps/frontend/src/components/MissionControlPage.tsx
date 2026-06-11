@@ -40,7 +40,7 @@ type MissionControlActionState =
   | { status: "success"; label: string }
   | { status: "error"; label: string };
 
-export type MissionLifecycleActionKind = "completeReturn" | "counterplay" | "joinAttack" | "recall" | "resolve";
+export type MissionLifecycleActionKind = "counterplay" | "joinAttack" | "recall" | "resolve";
 
 export type MissionLifecycleAction = {
   kind: MissionLifecycleActionKind;
@@ -68,9 +68,7 @@ interface MissionControlPageProps {
   missionArchive?: FleetMissionArchiveResponse | undefined;
   missionArchiveError?: string | undefined;
   missionArchiveLoading?: boolean | undefined;
-  now: number;
-  onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
+  now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   // VEY-KANEO-440: opens the player's own planet detail, where the Defend control is always shown
   // (enabled+explained where eligible, or disabled+explained on the launch planet itself).
   onDefendPlanet?: (() => void) | undefined;
@@ -100,9 +98,7 @@ export function MissionControlPage({
   missionArchive,
   missionArchiveError,
   missionArchiveLoading = false,
-  now,
-  onCompleteReturn,
-  onCounterplay,
+  now,  onCounterplay,
   onDefendPlanet,
   onJoinAttack,
   onOpenReport,
@@ -217,7 +213,6 @@ export function MissionControlPage({
             lootByMissionId={lootByMissionId}
             myRows={myMissionRows}
             now={now}
-            onCompleteReturn={onCompleteReturn}
             onCounterplay={onCounterplay}
             onJoinAttack={onJoinAttack}
             onOpenReport={onOpenReport}
@@ -564,7 +559,6 @@ export function missionLifecycleActions({
 }): MissionLifecycleAction[] {
   const actions: MissionLifecycleAction[] = [];
   const due = isMissionDue(mission, now);
-  const returned = isMissionReturned(mission, now);
 
   if (mission.status === "Outbound" && context !== "observer") {
     actions.push({
@@ -588,14 +582,11 @@ export function missionLifecycleActions({
     });
   }
 
-  if (context === "returning" && (mission.status === "Returning" || mission.status === "Recalled")) {
-    actions.push({
-      enabled: canTransact && returned,
-      kind: "completeReturn",
-      label: "Land fleet",
-      reason: returned ? walletReason(canTransact) : "Fleet has not reached its origin yet.",
-    });
-  }
+  // VEY-KANEO-465: fleet returns reconcile automatically — the backend mission
+  // resolver (`missionResolution.ts`) submits `completeFleetMissionReturn` once
+  // a return is due, crediting ships/cargo without any manual action. The former
+  // "Land fleet" button is removed so the frontend never drives a non-lazy
+  // complete/land action; returning rows are read-only until the backend lands them.
 
   if (context === "incoming" && mission.status === "Outbound" && mission.missionType === "Attack") {
     actions.push({
@@ -649,9 +640,7 @@ function ActiveMissionSection({
   dueCount,
   lootByMissionId,
   myRows,
-  now,
-  onCompleteReturn,
-  onCounterplay,
+  now,  onCounterplay,
   onJoinAttack,
   onOpenReport,
   onRecall,
@@ -668,9 +657,7 @@ function ActiveMissionSection({
   dueCount: number;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   myRows: ActiveMissionRow[];
-  now: number;
-  onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
+  now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
@@ -684,7 +671,6 @@ function ActiveMissionSection({
     canTransact,
     lootByMissionId,
     now,
-    onCompleteReturn,
     onCounterplay,
     onJoinAttack,
     onOpenReport,
@@ -733,9 +719,7 @@ function ActiveMissionList({
   emptyLabel,
   initialPage = 0,
   lootByMissionId,
-  now,
-  onCompleteReturn,
-  onCounterplay,
+  now,  onCounterplay,
   onJoinAttack,
   onOpenReport,
   onRecall,
@@ -749,9 +733,7 @@ function ActiveMissionList({
   emptyLabel: string;
   initialPage?: number | undefined;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
-  now: number;
-  onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
+  now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
@@ -793,9 +775,7 @@ function ActiveMissionList({
               key={`${context}:${mission.missionId}`}
               loot={returnPhaseLoot(mission, lootByMissionId)}
               mission={mission}
-              now={now}
-              onCompleteReturn={onCompleteReturn}
-              onCounterplay={onCounterplay}
+              now={now}              onCounterplay={onCounterplay}
               onJoinAttack={onJoinAttack}
               onOpenReport={onOpenReport}
               onRecall={onRecall}
@@ -818,9 +798,7 @@ function MissionRow({
   direction,
   loot,
   mission,
-  now,
-  onCompleteReturn,
-  onCounterplay,
+  now,  onCounterplay,
   onJoinAttack,
   onOpenReport,
   onRecall,
@@ -834,9 +812,7 @@ function MissionRow({
   direction: string;
   loot?: BattleReport["loot"] | undefined;
   mission: FleetMissionSummary;
-  now: number;
-  onCompleteReturn: (missionId: string) => void;
-  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
+  now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
@@ -881,7 +857,6 @@ function MissionRow({
               onClick={() => {
                 if (action.kind === "resolve") onResolve(mission.missionId);
                 if (action.kind === "recall") onRecall(mission.missionId);
-                if (action.kind === "completeReturn") onCompleteReturn(mission.missionId);
               }}
             />
           ))}
