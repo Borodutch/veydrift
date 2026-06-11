@@ -56,6 +56,8 @@ export type ChainSyncSnapshot = {
   lastSelfHealAt: string | null;
   latestWebsocketBlock: string | null;
   latestSyncedBlock: string | null;
+  reconcileFailureCount: number;
+  reconcileBackoffUntil: string | null;
   reconnectAttempts: number;
   reorgDetectedAt: string | null;
   selfHealRecoveredEvents: number;
@@ -99,7 +101,19 @@ export class ChainSyncService {
   private lastFullReconcileAt = 0;
   private pendingReconcileReason: string | null = null;
   private throttledReconcileTimer: ReturnType<typeof setTimeout> | undefined;
+  // Exponential-backoff state for the heavy full canonical reconcile. A failing reconcile
+  // (e.g. a truncated/empty RPC body on the universe-wide batched read) must never be retried
+  // back-to-back: that pegs the single Bun core and starves all HTTP (VEY-KANEO-461). Each
+  // failure pushes nextReconcileEligibleAt further out; a success resets it.
+  private reconcileFailureCount = 0;
+  private nextReconcileEligibleAt = 0;
   private backfillInProgress = false;
+  // Exponential-backoff state for bounded gap/reconnect log backfill. A transient backfill RPC
+  // failure retries the SAME bounded range with backoff instead of escalating to the heavy
+  // canonical reconcile (VEY-KANEO-461).
+  private backfillRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  private backfillRetryFailureCount = 0;
+  private pendingBackfillRetry: { fromBlock: bigint; toBlock: bigint | "latest"; reason: string } | null = null;
   private selfHealTimer: ReturnType<typeof setInterval> | undefined;
   private lastSelfHealAt: string | null = null;
   private selfHealRecoveredEvents = 0;
@@ -114,6 +128,10 @@ export class ChainSyncService {
       heartbeatIntervalMs?: number;
       heartbeatTimeoutMs?: number;
       reconcileThrottleMs?: number;
+      reconcileBackoffBaseMs?: number;
+      reconcileBackoffMaxMs?: number;
+      backfillRetryBaseMs?: number;
+      backfillRetryMaxMs?: number;
       selfHealIntervalMs?: number;
       selfHealDepthBlocks?: number;
     } = {}
@@ -129,6 +147,29 @@ export class ChainSyncService {
 
   private reconcileThrottleMs(): number {
     return this.options.reconcileThrottleMs ?? 30_000;
+  }
+
+  private reconcileBackoffBaseMs(): number {
+    return this.options.reconcileBackoffBaseMs ?? 5_000;
+  }
+
+  private reconcileBackoffMaxMs(): number {
+    return this.options.reconcileBackoffMaxMs ?? 300_000;
+  }
+
+  private backfillRetryBaseMs(): number {
+    return this.options.backfillRetryBaseMs ?? 5_000;
+  }
+
+  private backfillRetryMaxMs(): number {
+    return this.options.backfillRetryMaxMs ?? 300_000;
+  }
+
+  // Exponential backoff capped at maxMs: base, 2·base, 4·base … The exponent is clamped so the
+  // 2 ** n shift can never overflow into Infinity on a long-lived failure streak.
+  private backoffDelayMs(failureCount: number, baseMs: number, maxMs: number): number {
+    const exponent = Math.min(Math.max(failureCount - 1, 0), 16);
+    return Math.min(baseMs * 2 ** exponent, maxMs);
   }
 
   private selfHealIntervalMs(): number {
@@ -156,6 +197,11 @@ export class ChainSyncService {
       lastSelfHealAt: this.lastSelfHealAt,
       latestWebsocketBlock: this.latestWebsocketBlock,
       latestSyncedBlock: this.latestSyncedBlock,
+      reconcileFailureCount: this.reconcileFailureCount,
+      reconcileBackoffUntil:
+        this.nextReconcileEligibleAt > Date.now()
+          ? new Date(this.nextReconcileEligibleAt).toISOString()
+          : null,
       reconnectAttempts: this.reconnectAttempts,
       reorgDetectedAt: this.reorgDetectedAt,
       selfHealRecoveredEvents: this.selfHealRecoveredEvents,
@@ -198,7 +244,12 @@ export class ChainSyncService {
       clearTimeout(this.throttledReconcileTimer);
       this.throttledReconcileTimer = undefined;
     }
+    if (this.backfillRetryTimer) {
+      clearTimeout(this.backfillRetryTimer);
+      this.backfillRetryTimer = undefined;
+    }
     this.pendingReconcileReason = null;
+    this.pendingBackfillRetry = null;
     this.stopHeartbeat();
     this.stopSelfHeal();
     const socket = this.socket;
@@ -498,10 +549,11 @@ export class ChainSyncService {
     if (this.backfillInProgress) {
       // The single backfill slot is busy (e.g. a periodic self-heal pass is running).
       // A self-heal tick is best-effort and simply retries next interval, but a gap/
-      // reconnect recovery is a KNOWN missed range — fall back to the throttled full
-      // reconcile so it is not silently dropped while the slot is occupied.
+      // reconnect recovery is a KNOWN missed range — re-queue the SAME bounded range for a
+      // backoff-delayed retry so it is not silently dropped while the slot is occupied. We
+      // deliberately do NOT escalate to the heavy canonical reconcile here (VEY-KANEO-461).
       if (!options.selfHeal) {
-        this.requestReconciliation(reason);
+        this.scheduleBackfillRetry(backfiller, fromBlock, toBlock, reason);
       }
       return;
     }
@@ -551,32 +603,76 @@ export class ChainSyncService {
           ...(lastRecoveredHash ? { transactionHash: lastRecoveredHash } : {})
         });
       }
+      // A clean backfill means the RPC is healthy again — clear the bounded-retry backoff.
+      this.backfillRetryFailureCount = 0;
       this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : "Failed to backfill chain logs.";
       // A periodic self-heal pass is best-effort: if its recent-range re-scan RPC fails (e.g. a
       // truncated/empty RPC body — "Unexpected end of JSON input"), record it and let the next
-      // interval retry. Do NOT escalate to a full canonical reconcile: that heavy batched read is
-      // the SIGSEGV-prone path, and a flaky RPC must never trigger a rebuild that could fail and
-      // take the service down (VEY-KANEO-461). Gap/reconnect recovery (non-self-heal) is a KNOWN
-      // missed range and must still escalate so it is not silently dropped.
+      // interval retry. Gap/reconnect recovery (non-self-heal) is a KNOWN missed range, but a
+      // transient RPC failure must NOT escalate to the heavy universe-wide canonical reconcile:
+      // retrying that heavy read back-to-back is exactly what pegged the single Bun core and took
+      // the service down (VEY-KANEO-461). Instead, retry the SAME bounded range with exponential
+      // backoff — event integration recovers when the RPC does. Genuine reorg/removed-log
+      // divergence is escalated separately (it sets needsReconcile / requestReconciliation above).
       if (!options.selfHeal) {
-        this.requestReconciliation(reason);
+        this.scheduleBackfillRetry(backfiller, fromBlock, toBlock, reason);
       }
     } finally {
       this.backfillInProgress = false;
     }
   }
 
+  // Re-queue a KNOWN missed block range for a backoff-delayed bounded backfill after a transient
+  // RPC failure (or a busy backfill slot). Multiple pending retries collapse into one pass that
+  // covers the widest missed range up to chain head, so a flaky RPC can never spawn a storm of
+  // overlapping reads. The full canonical reconcile is deliberately NOT used here (VEY-KANEO-461).
+  private scheduleBackfillRetry(
+    backfiller: LogBackfiller,
+    fromBlock: bigint,
+    toBlock: bigint | "latest",
+    reason: string
+  ): void {
+    const widenedFrom =
+      this.pendingBackfillRetry && this.pendingBackfillRetry.fromBlock < fromBlock
+        ? this.pendingBackfillRetry.fromBlock
+        : fromBlock;
+    // Always extend the retry to "latest": by the time it fires, the head has moved on and the
+    // bounded re-scan should cover everything missed since the gap, not just the original window.
+    void toBlock;
+    this.pendingBackfillRetry = { fromBlock: widenedFrom, toBlock: "latest", reason };
+    if (this.backfillRetryTimer) return;
+    this.backfillRetryFailureCount += 1;
+    const delay = this.backoffDelayMs(
+      this.backfillRetryFailureCount,
+      this.backfillRetryBaseMs(),
+      this.backfillRetryMaxMs()
+    );
+    this.backfillRetryTimer = setTimeout(() => {
+      this.backfillRetryTimer = undefined;
+      const pending = this.pendingBackfillRetry;
+      this.pendingBackfillRetry = null;
+      if (pending && !this.stopped && this.indexer?.applyLog) {
+        void this.backfillRange(backfiller, pending.fromBlock, pending.toBlock, pending.reason);
+      }
+    }, delay);
+  }
+
   private requestReconciliation(reason: string): void {
     const reconcile = this.indexer?.reconcile ?? this.indexer?.rebuild;
     if (!reconcile) return;
 
+    const now = Date.now();
     const throttleMs = this.reconcileThrottleMs();
-    const sinceLast = Date.now() - this.lastFullReconcileAt;
-    if (this.lastFullReconcileAt !== 0 && sinceLast < throttleMs) {
-      // A full reconcile ran recently; collapse this request into a single trailing
-      // pass so a flapping websocket cannot trigger a rebuild storm.
+    // Two gates collapse into one "not before" instant:
+    //  - throttle: a full reconcile ran recently, so a flapping websocket cannot storm rebuilds.
+    //  - failure backoff: consecutive reconcile failures push the next attempt out exponentially
+    //    so a flaky RPC cannot drive back-to-back heavy canonical reads that peg the core
+    //    (VEY-KANEO-461). nextReconcileEligibleAt is set in runReconciliation on each failure.
+    const throttleUntil = this.lastFullReconcileAt !== 0 ? this.lastFullReconcileAt + throttleMs : 0;
+    const notBefore = Math.max(throttleUntil, this.nextReconcileEligibleAt);
+    if (now < notBefore) {
       this.pendingReconcileReason = reason;
       if (!this.throttledReconcileTimer) {
         this.throttledReconcileTimer = setTimeout(() => {
@@ -584,9 +680,9 @@ export class ChainSyncService {
           const pending = this.pendingReconcileReason;
           this.pendingReconcileReason = null;
           if (pending && !this.stopped) {
-            this.runReconciliation(pending);
+            this.requestReconciliation(pending);
           }
-        }, throttleMs - sinceLast);
+        }, notBefore - now);
       }
       return;
     }
@@ -599,9 +695,28 @@ export class ChainSyncService {
     if (!reconcile) return;
     this.lastFullReconcileAt = Date.now();
     this.indexer?.markStale?.(reason);
-    void reconcile.call(this.indexer, reason).catch((error: unknown) => {
-      this.lastError = error instanceof Error ? error.message : "Failed to reconcile indexed state.";
-    });
+    void reconcile.call(this.indexer, reason).then(
+      () => {
+        // A successful canonical reconcile clears the failure backoff so normal recovery resumes.
+        this.reconcileFailureCount = 0;
+        this.nextReconcileEligibleAt = 0;
+      },
+      (error: unknown) => {
+        this.lastError = error instanceof Error ? error.message : "Failed to reconcile indexed state.";
+        // Back off exponentially before another reconcile may run. The reconcile is NOT
+        // re-scheduled here — it only re-runs when a real recovery trigger arrives, and
+        // requestReconciliation then honours this window. That keeps a failing reconcile from
+        // looping back-to-back and pegging the single-threaded event loop (VEY-KANEO-461).
+        this.reconcileFailureCount += 1;
+        this.nextReconcileEligibleAt =
+          Date.now() +
+          this.backoffDelayMs(
+            this.reconcileFailureCount,
+            this.reconcileBackoffBaseMs(),
+            this.reconcileBackoffMaxMs()
+          );
+      }
+    );
   }
 
   /**
