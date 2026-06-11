@@ -4930,13 +4930,47 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingAcsDefend, provider, runGalaxyTransaction]);
 
   const handleCopyMissionShareUrl = useCallback((url: string) => {
-    if (!url || typeof navigator === "undefined" || !navigator.clipboard) {
+    if (!url) {
       setMissionShareCopyState("error");
       return;
     }
-    navigator.clipboard.writeText(url)
-      .then(() => setMissionShareCopyState("copied"))
-      .catch(() => setMissionShareCopyState("error"));
+
+    // Fallback path: silently copy the shareable link to the clipboard.
+    const copyToClipboard = () => {
+      if (typeof navigator === "undefined" || !navigator.clipboard) {
+        setMissionShareCopyState("error");
+        return;
+      }
+      navigator.clipboard.writeText(url)
+        .then(() => setMissionShareCopyState("copied"))
+        .catch(() => setMissionShareCopyState("error"));
+    };
+
+    // VEY-339: prefer the native share sheet where it exists (mobile browsers
+    // and the Farcaster webview) so players get a real "share via..." dialog
+    // with copy/social options instead of a silent clipboard write that can
+    // fail unnoticed inside an embedded webview. Desktop browsers without the
+    // Web Share API fall back to the clipboard copy. Neither path navigates —
+    // the trigger stays a type="button" control.
+    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+      navigator.share({ title: "Veydrift battle report", url })
+        .then(() => setMissionShareCopyState("idle"))
+        .catch((error: unknown) => {
+          // Dismissing the share sheet rejects with AbortError; treat that as a
+          // no-op. Any other failure falls back to copying the link.
+          const name = typeof error === "object" && error !== null
+            ? (error as { name?: string }).name
+            : undefined;
+          if (name === "AbortError") {
+            setMissionShareCopyState("idle");
+            return;
+          }
+          copyToClipboard();
+        });
+      return;
+    }
+
+    copyToClipboard();
   }, []);
 
   const handleJoinAttack = useCallback((attackMissionId: string, targetPlanetId: string, targetCoords: Coordinates | null) => {
