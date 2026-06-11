@@ -262,12 +262,6 @@ export type ApplyLogResult = {
   snapshot: IndexerSnapshot;
 };
 
-// Fleet-mission statuses for which the launched ships are still absent from their origin planet, used to
-// project launchable ship counts (VEY-KANEO-447). Outbound/Returning/Recalled fleets are mid-flight; a
-// Deploy mission's terminal Resolved hands its ships to the target and they never return to the origin.
-// "Returned" is intentionally excluded: those ships have been credited back to the origin planet.
-const MISSION_AWAY_STATUSES = new Set(["Outbound", "Returning", "Recalled", "Resolved"]);
-
 // Maps each FleetMissionShips composition key to its on-chain Ship enum id (VeydriftTypes.Ship). The list
 // deliberately omits SolarSatellite (9) and Crawler (15) — the contract never lets those join a mission.
 const MISSION_SHIP_IDS: ReadonlyArray<readonly [string, number]> = [
@@ -783,40 +777,42 @@ export class SettlementIndexer {
     );
   }
 
-  // Ships physically docked at the planet and therefore launchable right now (mirrors the contract's
-  // on-chain `_shipCounts`), as opposed to `shipRows` which is the planet's full owned roster.
+  // Ships physically present at the planet and therefore launchable right now — the value the contract
+  // returns from `shipCount(planetId, ship)` — as opposed to `shipRows`, the planet's full owned roster.
   //
-  // The contract debits ships from the origin planet at launch (VeydriftGameplayModule._debitMissionShips)
-  // and credits survivors back on return, but emits NO PlanetShipCountChanged for either move — the only
-  // ship-count events are build completions and the combat solar-satellite wipe. So between a launch and
-  // the next canonical reconcile, `contract_ship_counts` still includes ships that have already left on a
-  // mission. Mission Compose read that stale roster and offered phantom ships, so a launch that exceeded
-  // the real on-chain count reverted (VEY-KANEO-447).
+  // The contract debits ships from the origin planet at launch (VeydriftGameplayModule._debitMissionShips),
+  // credits survivors back on return, and burns combat losses, but emits NO PlanetShipCountChanged for any
+  // of those moves — the only ship-count events are build completions and the combat solar-satellite wipe.
+  // So `contract_ship_counts` only re-syncs with on-chain on the next canonical reconcile; between
+  // reconciles it still counts ships that have already left (and may have died) on a mission. Mission
+  // Compose read that stale roster and offered phantom ships, so a launch exceeding the real on-chain count
+  // reverted (VEY-KANEO-447) — and the reporter saw it with the fleet already gone, not merely in flight.
   //
-  // The fleet-mission read model already knows every active mission's origin, ship composition, and launch
-  // block, so we subtract ships still away on missions launched AFTER the reconcile baseline. Missions that
-  // launched at/before `lastReconciledBlock` are already excluded from the stored count by the reconcile's
-  // fresh on-chain read, so subtracting them again would under-report; gating on the launch block avoids
-  // that double count. This never over-reports (the failure that caused reverts); the residual edge — a
-  // build completing or a fleet returning between reconciles — can transiently under-report and self-heals
-  // on the next reconcile, and only ever offers fewer ships than are truly available.
+  // We can't restore departures from events: FleetMissionReturned/ReturnExposed carry no surviving ship
+  // composition, so the read model never learns how many ships actually came home. We therefore apply a
+  // debit-only projection — subtract EVERY mission that has departed since the reconcile baseline (any
+  // status, including Returned/Resolved/lost), per its launch composition — and let the next reconcile's
+  // fresh on-chain read add survivors back. Gating on the launch block vs `lastReconciledBlock` keeps us
+  // from re-subtracting departures the baseline already excludes. This never over-reports (so no phantom
+  // ships, no launch revert); a fleet that returned intact transiently under-reports until the next
+  // reconcile, which only ever offers fewer ships than are truly present.
   availableShipRows(planetId: string): ShipyardState["ships"] {
-    const awayByShipId = this.shipsAwayOnActiveMissions(planetId);
+    const departedByShipId = this.shipsDepartedSinceReconcile(planetId);
     return deriveShipRows(
-      (id) => Math.max(0, this.indexedLevel("contract_ship_counts", "ship_id", planetId, id) - (awayByShipId.get(id) ?? 0)),
+      (id) => Math.max(0, this.indexedLevel("contract_ship_counts", "ship_id", planetId, id) - (departedByShipId.get(id) ?? 0)),
       this.planet(planetId)?.temperature
     );
   }
 
-  // Sum, per ship id, the ships that have left `planetId` on missions whose launch the canonical reconcile
-  // baseline has not yet absorbed. "Active" here means any non-returned leg (Outbound/Returning/Recalled,
-  // plus Deploy's terminal Resolved where the ships were handed to the target and never come home).
-  private shipsAwayOnActiveMissions(planetId: string): Map<number, number> {
+  // Sum, per ship id, the ships that have left `planetId` on missions the canonical reconcile baseline has
+  // not yet absorbed. Every complete fleet-mission summary has already departed (the contract debited it at
+  // launch), and we cannot know which ships returned, so we count them all regardless of current status —
+  // an intact return is restored by the next reconcile, a loss stays correctly subtracted.
+  private shipsDepartedSinceReconcile(planetId: string): Map<number, number> {
     const baselineBlock = BigInt(this.metadata("lastReconciledBlock") ?? "0");
-    const away = new Map<number, number>();
+    const departed = new Map<number, number>();
     for (const mission of this.indexedFleetMissionSummaries()) {
       if (mission.originPlanetId !== planetId) continue;
-      if (!MISSION_AWAY_STATUSES.has(mission.status)) continue;
       let launchBlock: bigint;
       try {
         launchBlock = BigInt(mission.launchBlockNumber ?? "0");
@@ -826,10 +822,10 @@ export class SettlementIndexer {
       if (launchBlock <= baselineBlock) continue;
       for (const [key, shipId] of MISSION_SHIP_IDS) {
         const quantity = Number(mission.ships[key] ?? "0");
-        if (quantity > 0) away.set(shipId, (away.get(shipId) ?? 0) + quantity);
+        if (quantity > 0) departed.set(shipId, (departed.get(shipId) ?? 0) + quantity);
       }
     }
-    return away;
+    return departed;
   }
 
   defenseRows(planetId: string): DefenseState["defenses"] {
