@@ -228,6 +228,12 @@ export type FleetMissionSummary = {
   recallCost: string | null;
   attackGroupId: string | null;
   joinedAttackMissionIds: string[];
+  // VEY-KANEO-442 stationed-defense links. For an AcsDefend mission, `defendsMissionId` is the hostile
+  // Attack mission it is stationed to defend (its fleet holds at the defended planet until that attack
+  // lands). On an Attack mission, `counterplayDefenderMissionIds` lists every AcsDefend mission stationed
+  // to defend against it. Optional for back-compat with feeds/fixtures predating the fields.
+  defendsMissionId?: string | null;
+  counterplayDefenderMissionIds?: string[];
   cargo: OnChainResources;
   ships: Record<string, string>;
   transactionHash: string;

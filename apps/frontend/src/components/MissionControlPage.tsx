@@ -222,6 +222,14 @@ export function MissionControlPage({
             walletPlanetIds={walletPlanetIds}
           />
 
+          <StationedDefenseSection
+            incoming={incoming}
+            now={now}
+            onOpenReport={onOpenReport}
+            outgoing={outgoing}
+            planetLookup={planetLookup}
+          />
+
           <PastMissionSection
             allCollapsedCount={globalPastCollapsedCount}
             allError={globalMissionArchiveError}
@@ -247,6 +255,157 @@ export function MissionControlPage({
         </>
       )}
     </section>
+  );
+}
+
+// VEY-KANEO-440 stationed-defense display. ACS Defend stations a fleet at a planet to defend it
+// against a specific incoming attack (the only stationing today's contract supports), so this panel
+// surfaces both sides of that arrangement: (a) the defense fleets the player currently has stationed
+// at allied planets, and (b) the allied fleets stationed at the player's own attacked planets. Each
+// "holds" until the defended attack lands, so the countdown is the defended attack's arrival. The panel
+// is read-only — the launch flow lives on the "Group defend" action of an incoming attack.
+export function StationedDefenseSection({
+  incoming,
+  now,
+  onOpenReport,
+  outgoing,
+  planetLookup,
+}: {
+  incoming: FleetMissionSummary[];
+  now: number;
+  onOpenReport: (missionId: string) => void;
+  outgoing: FleetMissionSummary[];
+  planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
+}) {
+  const myStationed = outgoing
+    .filter((mission) => mission.missionType === "AcsDefend" && mission.status === "Outbound")
+    .sort((left, right) => Number(left.arrivalAt) - Number(right.arrivalAt));
+  // Incoming hostile attacks on the player's own planets that already have allied defenders stationed.
+  const defendedPlanets = incoming
+    .filter((mission) => (mission.counterplayDefenderMissionIds?.length ?? 0) > 0)
+    .sort((left, right) => Number(left.arrivalAt) - Number(right.arrivalAt));
+  const total = myStationed.length + defendedPlanets.length;
+
+  return (
+    <section className="grid gap-3 rounded-lg border border-violet-300/15 bg-violet-300/[0.03] p-4">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold text-violet-100">Stationed defenses</h2>
+        <span className="text-[11px] tabular-nums text-slate-400">{total}</span>
+      </div>
+      {total === 0 ? (
+        <p className="text-xs text-slate-400">
+          No fleets are stationed in defense. When your own or an allied planet has an incoming attack,
+          defend it to station a fleet that holds until the attack lands.
+        </p>
+      ) : (
+        <div className="grid gap-2">
+          {myStationed.map((mission) => (
+            <StationedDefenseCard
+              key={mission.missionId}
+              mission={mission}
+              now={now}
+              onOpenReport={onOpenReport}
+              planetLookup={planetLookup}
+            />
+          ))}
+          {defendedPlanets.map((attack) => (
+            <DefendedPlanetCard
+              attack={attack}
+              key={attack.missionId}
+              now={now}
+              onOpenReport={onOpenReport}
+              planetLookup={planetLookup}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// A defense fleet the player has stationed at an allied planet: full route + ships, with the "Holds"
+// countdown running to the defended attack's arrival (the AcsDefend mission's arrival is pinned to it).
+function StationedDefenseCard({
+  mission,
+  now,
+  onOpenReport,
+  planetLookup,
+}: {
+  mission: FleetMissionSummary;
+  now: number;
+  onOpenReport: (missionId: string) => void;
+  planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
+}) {
+  return (
+    <MissionCard
+      actions={
+        <button
+          className={rowActionButtonClass}
+          onClick={() => onOpenReport(mission.missionId)}
+          title="Open the full mission detail screen"
+          type="button"
+        >
+          <ExternalLink aria-hidden="true" size={13} />
+          Open
+        </button>
+      }
+      badgeLabel="Defending"
+      badgeTone={missionTypeTone("AcsDefend")}
+      direction={missionRouteLeg(mission.status)}
+      fleet={<MissionFleet cargo={mission.cargo} ships={mission.ships} />}
+      headerTiming={{ label: "Holds", value: missionEndpointTiming(mission.arrivalAt, now) }}
+      missionId={mission.missionId}
+      origin={missionEndpoint(mission, "origin", planetLookup)}
+      progressPercent={missionProgressPercent(mission, now)}
+      statusPill={missionStatusPill(mission.status)}
+      target={missionEndpoint(mission, "target", planetLookup)}
+    />
+  );
+}
+
+// One of the player's own planets that is under attack but already has allied fleets stationed to
+// defend it. The defenders belong to alliance members, so only their count is known here (the read
+// model links them by id, not full composition); the countdown holds until the attack lands.
+function DefendedPlanetCard({
+  attack,
+  now,
+  onOpenReport,
+  planetLookup,
+}: {
+  attack: FleetMissionSummary;
+  now: number;
+  onOpenReport: (missionId: string) => void;
+  planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
+}) {
+  const defenderCount = attack.counterplayDefenderMissionIds?.length ?? 0;
+  return (
+    <MissionCard
+      actions={
+        <button
+          className={rowActionButtonClass}
+          onClick={() => onOpenReport(attack.missionId)}
+          title="Open the full mission detail screen"
+          type="button"
+        >
+          <ExternalLink aria-hidden="true" size={13} />
+          Open
+        </button>
+      }
+      badgeLabel="Defended"
+      badgeTone={missionTypeTone("AcsDefend")}
+      direction={missionRouteLeg(attack.status)}
+      fleet={
+        <p className="text-[11px] font-medium text-violet-100">
+          {`${defenderCount} allied ${defenderCount === 1 ? "fleet" : "fleets"} stationed in defense`}
+        </p>
+      }
+      headerTiming={{ label: "Holds", value: missionEndpointTiming(attack.arrivalAt, now) }}
+      missionId={attack.missionId}
+      origin={missionEndpoint(attack, "origin", planetLookup)}
+      progressPercent={missionProgressPercent(attack, now)}
+      statusPill={{ label: "Under attack", tone: "border-red-300/25 bg-red-400/10 text-red-100" }}
+      target={missionEndpoint(attack, "target", planetLookup)}
+    />
   );
 }
 
