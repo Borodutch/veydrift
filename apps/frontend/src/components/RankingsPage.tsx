@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "preact/hooks";
 import { ChevronLeft, ChevronRight, UserRound } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import { fleetMissionDistance } from "../fleetMissionRules";
-import { activeMissionsByPlanetId, planetMissionSubtext } from "../planetMissionSubtext";
+import { activeMissionsByPlanetId, countPlanetsWithActiveMissions, planetMissionSubtext } from "../planetMissionSubtext";
 import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
@@ -105,6 +105,18 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
     ? entries.find((entry) => entry.wallet.toLowerCase() === currentWallet.toLowerCase()) ?? null
     : null;
   const currentPlayerScore = currentPlayerEntry?.score[active] ?? null;
+  // VEY-KANEO-448: discoverability signal so the enriched per-planet mission subtext is never buried in
+  // a long rank-ordered page (mirrors the Raid Target Finder footer). Counts visible planets that carry
+  // at least one active mission line, using the same owner (entry wallet) the rows classify against.
+  const activeMissionPlanetCount = useMemo(
+    () =>
+      countPlanetsWithActiveMissions(
+        entries.flatMap((entry) => rankingPlanets(entry).map((planet) => ({ planetId: planet.planetId, owner: entry.wallet }))),
+        missionsByPlanetId,
+        nowMs,
+      ),
+    [entries, missionsByPlanetId, nowMs],
+  );
 
   return (
     <section className="space-y-4">
@@ -172,6 +184,14 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
       {data ? (
         <p className="text-xs leading-5 text-slate-500">
           {data.formula.summary}
+          {activeMissionPlanetCount > 0 ? (
+            <>
+              {" "}
+              <span className="text-slate-400">
+                {activeMissionPlanetCount} {activeMissionPlanetCount === 1 ? "planet has" : "planets have"} active fleet activity on this page — shown as mission subtext under the planet.
+              </span>
+            </>
+          ) : null}
         </p>
       ) : null}
     </section>

@@ -81,6 +81,30 @@ export function planetMissionSubtext(
   return { lines, overflow: Math.max(0, resolved.length - lines.length) };
 }
 
+// Discoverability signal (VEY-KANEO-448): count distinct planets in the given list that currently
+// carry at least one active mission subtext line. The Raid Target Finder floats such targets to the
+// top and prints a footer count, so QA always sees the enriched subtext there. The Rankings list is
+// rank-ordered (can't be reordered), so the subtext for the one/two active planets can be buried in a
+// long page — this count powers a matching footer note ("N planets have active fleet activity") so the
+// feature is never silently missed. `owner` does not affect whether a line exists (only its copy), so
+// it is optional here.
+export function countPlanetsWithActiveMissions(
+  planets: readonly { planetId: string; owner?: string | null | undefined }[],
+  missionsByPlanetId: ReadonlyMap<string, FleetMissionSummary[]>,
+  now: number,
+): number {
+  const seen = new Set<string>();
+  let count = 0;
+  for (const planet of planets) {
+    if (seen.has(planet.planetId)) continue;
+    seen.add(planet.planetId);
+    const missions = missionsByPlanetId.get(planet.planetId);
+    if (!missions || missions.length === 0) continue;
+    if (planetMissionSubtext(planet.planetId, planet.owner, missions, now).lines.length > 0) count += 1;
+  }
+  return count;
+}
+
 function planetMissionLine(
   planetId: string,
   planetOwner: string | null | undefined,
