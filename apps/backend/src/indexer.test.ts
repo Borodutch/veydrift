@@ -775,6 +775,56 @@ describe("SettlementIndexer", () => {
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
   });
 
+  test("refreshCanonicalState still re-pins chain state while a background rebuild is running (VEY-452)", async () => {
+    let onchainShipCount = 2;
+    let blockRebuild: (() => void) | null = null;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listCurrentPlanets() { return [planet]; },
+      async listSettledPlanetEvents() {
+        if (blockRebuild) {
+          await new Promise<void>((resolve) => {
+            blockRebuild = resolve;
+          });
+        }
+        return [planet];
+      },
+      async getShipyardState() {
+        return {
+          wallet: player,
+          homePlanetId: planet.planetId,
+          planetId: planet.planetId,
+          productionAvailable: true,
+          resources: planet.resources,
+          fleetSlots: { active: 0, limit: 1 },
+          shipyardLevel: 1,
+          naniteLevel: 0,
+          technologyLevels: {},
+          ships: [{ id: 1, count: onchainShipCount, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+          queue: null
+        };
+      }
+    }, 100n);
+
+    await indexer.rebuild();
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(2);
+
+    blockRebuild = () => {};
+    const rebuilding = indexer.reconcile("slow startup refresh");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(indexer.snapshot()).toMatchObject({
+      reconciliationInProgress: true
+    });
+
+    onchainShipCount = 4;
+    await indexer.refreshCanonicalState();
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(4);
+
+    blockRebuild();
+    await rebuilding;
+  });
+
   test("availableShipRows keeps subtracting a departed mission that already returned/was lost — reporter repro, 0 in flight (VEY-KANEO-447)", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
