@@ -403,7 +403,7 @@ function StationedDefenseCard({
       missionId={mission.missionId}
       origin={missionEndpoint(mission, "origin", planetLookup)}
       progressPercent={missionProgressPercent(mission, now)}
-      statusPill={missionStatusPill(mission.status)}
+      statusPill={missionStatusPill(missionDisplayStatus(mission, now))}
       target={missionEndpoint(mission, "target", planetLookup)}
     />
   );
@@ -810,7 +810,7 @@ function MissionRow({
       origin={origin}
       progressPercent={missionProgressPercent(mission, now)}
       routeSubtext={directionSubtext}
-      statusPill={missionStatusPill(mission.status)}
+      statusPill={missionStatusPill(missionDisplayStatus(mission, now))}
       target={target}
     />
   );
@@ -862,11 +862,30 @@ export function returnPhaseLoot(
   return lootByMissionId.get(mission.missionId);
 }
 
-// Status pill shown in every card header (VEY-400): "En route" for outbound fleets, "Returning"/
-// "Recalled" while a fleet heads home, and the terminal status ("Returned"/"Resolved"/…) for past
-// missions. This folds in the VEY-399 rework intent — status reads as a pill, never a raw timestamp.
+// The backend keeps a mission's stored status at "Outbound"/"Returning"/"Recalled" until the matching
+// on-chain resolution/return event is indexed, which can lag well past the fleet's ETA. The list cards
+// previously rendered that raw status, so an attack that had already arrived (and even returned, per
+// the Mission Detail legs) still read "En route" hours later until the chain caught up — the
+// VEY-KANEO-433 QA bounce. Derive the displayed status from the same arrival/return timing the detail
+// legs use (isMissionDue/isMissionReturned), so the list never claims a fleet is still in flight after
+// its arrival time. The auto/manual Refresh still carries the eventual resolved loot + battle report.
+export function missionDisplayStatus(mission: FleetMissionSummary, now: number): string {
+  if (mission.status === "Outbound" && isMissionDue(mission, now)) return "Arrived";
+  if ((mission.status === "Returning" || mission.status === "Recalled") && isMissionReturned(mission, now)) {
+    return "Returned";
+  }
+  return mission.status;
+}
+
+// Status pill shown in every card header (VEY-400): "En route" for outbound fleets still in flight,
+// "Arrived" once an outbound fleet has passed its arrival time but its resolution has not been indexed
+// yet (VEY-KANEO-433), "Returning"/"Recalled" while a fleet heads home, and the terminal status
+// ("Returned"/"Resolved"/…) for landed/past missions. Callers pass the timing-aware status from
+// missionDisplayStatus so the pill matches the detail legs. This folds in the VEY-399 rework intent —
+// status reads as a pill, never a raw timestamp.
 function missionStatusPill(status: string): MissionStatusPill {
   if (status === "Outbound") return { label: "En route", tone: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100" };
+  if (status === "Arrived") return { label: "Arrived", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
   if (status === "Returning") return { label: "Returning", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
   if (status === "Recalled") return { label: "Recalled", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
   return { label: status, tone: "border-slate-300/20 bg-slate-300/10 text-slate-300" };
@@ -1544,7 +1563,7 @@ function PastMissionSummaryRow({
       origin={origin}
       // VEY-400: the terminal status (e.g. "Returned") reads as the header pill, folding in the
       // VEY-399 rework intent (status as a pill, no raw timestamp) now that cards have no columns.
-      statusPill={missionStatusPill(mission.status)}
+      statusPill={missionStatusPill(missionDisplayStatus(mission, now))}
       target={target}
     />
   );

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionControlPage, formatMissionTime, missionControlRefreshButtonState, missionLifecycleActions, returnPhaseLoot } from "../src/components/MissionControlPage";
+import { MissionControlPage, formatMissionTime, missionControlRefreshButtonState, missionDisplayStatus, missionLifecycleActions, returnPhaseLoot } from "../src/components/MissionControlPage";
 import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
@@ -107,7 +107,11 @@ describe("MissionControlPage", () => {
         battleReports: [],
       },
       loading: false,
-      now: 1_770_000_700_000,
+      // Before the default arrival (1770000300) / return (1770000600) so these rows are genuinely
+      // in flight — the pills below assert the live "En route"/"Returning" states + countdowns. Once
+      // an arrival/return time passes the pill switches to "Arrived"/"Returned" (VEY-KANEO-433), which
+      // is covered by its own test below.
+      now: 1_770_000_100_000,
       onCompleteReturn: () => undefined,
       onCounterplay: () => undefined,
       onJoinAttack: () => undefined,
@@ -177,6 +181,53 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Protected storage");
     expect(text).not.toContain("Raid-exposed resources");
     expect(text).not.toContain("Contract raid protection");
+  });
+
+  // VEY-KANEO-433 rework: the backend keeps a mission "Outbound"/"Returning" until its on-chain
+  // resolution/return is indexed, which can lag long past the ETA. The list pill must follow the same
+  // arrival/return timing the Mission Detail legs use, so it never reads "En route" after the fleet has
+  // demonstrably arrived (the QA bounce: list "En route" while detail showed "Arrived"/"Returned").
+  test("derives the displayed status from arrival/return timing, not just the raw backend status", () => {
+    const outbound = mission({ arrivalAt: "1770000300", returnAt: "1770000600", status: "Outbound" });
+    const returning = mission({ arrivalAt: "1770000000", returnAt: "1770000600", status: "Returning" });
+
+    // Still in flight before the arrival/return times.
+    expect(missionDisplayStatus(outbound, 1_770_000_100_000)).toBe("Outbound");
+    expect(missionDisplayStatus(returning, 1_770_000_100_000)).toBe("Returning");
+
+    // Past arrival, an outbound fleet reads "Arrived" even while the backend status lags at "Outbound".
+    expect(missionDisplayStatus(outbound, 1_770_000_700_000)).toBe("Arrived");
+    // Past its return time, a returning/recalled fleet reads "Returned".
+    expect(missionDisplayStatus(returning, 1_770_000_700_000)).toBe("Returned");
+    expect(missionDisplayStatus(mission({ returnAt: "1770000600", status: "Recalled" }), 1_770_000_700_000)).toBe("Returned");
+
+    // Terminal statuses are passed through untouched.
+    expect(missionDisplayStatus(mission({ status: "Resolved" }), 1_770_000_700_000)).toBe("Resolved");
+  });
+
+  test("renders an arrived-but-unresolved outbound mission as Arrived, never En route", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        // arrival is in the past relative to `now` but the chain has not resolved it yet.
+        outgoing: [mission({ arrivalAt: "1770000000", missionId: "21", missionType: "Attack", status: "Outbound" })],
+        returning: [mission({ missionId: "22", returnAt: "1770000000", status: "Returning" })],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      now: 1_770_000_700_000,
+    });
+    const text = visibleText(page);
+
+    // The arrived outbound fleet's status pill reads "Arrived", not the stale "En route". (The route
+    // leg caption still reads "Outbound"/"Returning" — that describes the leg, not the status pill.)
+    expect(text).toContain("Arrived");
+    expect(text).not.toContain("En route");
+    // The returning fleet that has passed its return time reads "Returned".
+    expect(text).toContain("Returned");
   });
 
   test("uses the shared refresh button treatment", () => {
