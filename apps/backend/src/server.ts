@@ -125,7 +125,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const authoritativeReadTimeoutMs = dependencies.authoritativeReadTimeoutMs ?? AUTHORITATIVE_READ_TIMEOUT_MS;
   const rawChainReader =
     dependencies.chainReader ??
-    (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config) : undefined);
+    (loaded.problems.length === 0 ? new VeydriftGameReader(loaded.config, undefined, { hydrateQueueStartedAt: false }) : undefined);
   const cacheReader = rawChainReader && !dependencies.chainReader ? new CachedChainReader(rawChainReader) : undefined;
   const chainReader = cacheReader ?? rawChainReader;
   const indexerChainReader =
