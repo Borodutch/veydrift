@@ -8,7 +8,7 @@ import { fetchHighscores, shortAddress, type FleetMissionSummary, type Highscore
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { PlanetMissionLines } from "./PlanetMissionLines";
-import { VeydriftLoader } from "./VeydriftLoader";
+import { RankingsRowsSkeleton } from "./LoadingSkeletons";
 
 type RankingsPageProps = {
   // Universe-wide active fleet missions (the unfiltered `/missions?status=active` feed). Shown as
@@ -365,9 +365,7 @@ export function RankingsTable({
         ))}
       </div>
       {shouldShowRankingsInitialLoader({ hasLoadedData, loading }) ? (
-        <div className="p-3">
-          <VeydriftLoader label="Loading rankings" />
-        </div>
+        <RankingsRowsSkeleton />
       ) : entries.length === 0 ? (
         <RankingsMessage label="No settled commanders indexed yet" />
       ) : (

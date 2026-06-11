@@ -30,7 +30,7 @@ import {
   shortAddress,
 } from "./missionRoute";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
-import { VeydriftLoader } from "./VeydriftLoader";
+import { MissionControlSkeleton } from "./LoadingSkeletons";
 
 type MissionControlActionState =
   | { status: "idle" }
@@ -187,7 +187,7 @@ export function MissionControlPage({
         </Notice>
       )}
       {initialLoading ? (
-        <VeydriftLoader label="Mapping missions" />
+        <MissionControlSkeleton />
       ) : (
         <>
           {reportMissionId ? (

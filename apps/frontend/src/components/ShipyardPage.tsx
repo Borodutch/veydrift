@@ -17,7 +17,7 @@ import {
 } from "./ProductionCatalog";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import type { RequirementTarget } from "./RequirementFlairs";
-import { VeydriftLoader } from "./VeydriftLoader";
+import { CatalogSkeleton } from "./LoadingSkeletons";
 
 type ShipyardActionState =
   | { status: "idle" }
@@ -111,7 +111,7 @@ export function ShipyardPage({
       />
 
       {initialLoading ? (
-        <VeydriftLoader label="Syncing shipyard" />
+        <CatalogSkeleton label="Loading shipyard" />
       ) : (
         <ProductionCatalog
           actionPending={actionState.status === "pending"}

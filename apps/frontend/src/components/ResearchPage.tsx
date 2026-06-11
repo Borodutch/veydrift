@@ -33,7 +33,7 @@ import {
 } from "./InspectProgressLayout";
 import { RefreshButton, refreshButtonState } from "./PageHeader";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
-import { VeydriftLoader } from "./VeydriftLoader";
+import { CatalogSkeleton } from "./LoadingSkeletons";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const researchGroups = ["Basic", "Drive", "Advanced", "Combat"];
@@ -277,7 +277,7 @@ export function ResearchLoadErrorPanel({
   reason: string | undefined;
 }) {
   if (loading) {
-    return <VeydriftLoader label="Syncing research" />;
+    return <CatalogSkeleton label="Loading research" />;
   }
 
   return (
