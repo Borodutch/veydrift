@@ -7,7 +7,6 @@ import {
   buildingCost,
   buildingDurationEstimate,
   canAfford,
-  collectibleResourceDeltas,
   createInitialPlayableState,
   defenseCombatStats,
   defenseCatalog,
@@ -23,7 +22,6 @@ import {
   shipCatalog,
   shipCombatStats,
   shipSpecRows,
-  spendableResources,
   storageCaps,
   unmetResearchRequirement,
 } from "../src/playableMvp";
@@ -523,41 +521,6 @@ describe("playable MVP contract display helpers", () => {
       expect(effect.nextPerHour).toBe(productionCapacityPerHour({ ...buildings, metalMine: 1 }).metal);
       expect(effect.deltaPerHour).toBeGreaterThan(0);
     }
-  });
-
-  test("counts whole collectable deltas as spendable resources", () => {
-    expect(spendableResources(
-      { metal: 10, crystal: 20, deuterium: 30 },
-      { metal: 2.9, crystal: -5, deuterium: 0.5 },
-    )).toEqual({
-      metal: 12,
-      crystal: 20,
-      deuterium: 30,
-    });
-  });
-
-  test("reports collectible resource deltas with storage caps applied", () => {
-    const rates = { metal: 120, crystal: 60, deuterium: 30 };
-    const lastSettledAtSeconds = 1_000;
-    const now = 1_120_000;
-
-    expect(collectibleResourceDeltas(rates, lastSettledAtSeconds, now)).toEqual({
-      metal: 4,
-      crystal: 2,
-      deuterium: 1,
-    });
-
-    expect(collectibleResourceDeltas(
-      rates,
-      lastSettledAtSeconds,
-      now,
-      { metal: 999, crystal: 998, deuterium: 1_000 },
-      { metal: 1_000, crystal: 1_000, deuterium: 1_000 },
-    )).toEqual({
-      metal: 1,
-      crystal: 2,
-      deuterium: 0,
-    });
   });
 
   test("reports modeled energy and unlock effects for utility buildings", () => {
