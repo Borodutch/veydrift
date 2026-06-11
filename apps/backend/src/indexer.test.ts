@@ -37,6 +37,7 @@ const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a96
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
+const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const planet: SettledPlanetEvent = {
   eventName: "PlanetStarted",
   transactionHash: "0xabc",
@@ -714,6 +715,69 @@ describe("SettlementIndexer", () => {
     });
 
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(1);
+  });
+
+  test("availableShipRows keeps subtracting a departed mission that already returned/was lost — reporter repro, 0 in flight (VEY-KANEO-447)", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    // Built 4 small cargo (ship id 0) on planet 7.
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-sc",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(4n, 4n)
+    });
+
+    // A mission launched from planet 7 with 3 small cargo and has since RETURNED (no longer in flight).
+    // The contract debited the 3 at launch but emits no surviving-ship composition on return, so the read
+    // model cannot know whether they came home — the reporter saw on-chain shipCount = 1 with 0 ships in
+    // flight, i.e. the 3 were lost. The debit-only projection must still subtract them.
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(70n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(70n)],
+      data: abiWords(0n, 0n, 0n, 10n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch",
+      logIndex: "0x2",
+      // Word index 0 is smallCargo (ship id 0) = 3 ships.
+      topics: [fleetMissionShipsTopic, topic(70n)],
+      data: abiWords(3n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x95",
+      transactionHash: "0xreturn",
+      logIndex: "0x0",
+      // FleetMissionReturned(missionId, owner, planetId): owner=topic2, originPlanetId=topic3. All params
+      // are indexed, so the data payload is empty.
+      topics: [fleetMissionReturnedTopic, topic(70n), addressTopic(player), topic(7n)],
+      data: "0x"
+    });
+
+    // Sanity: the mission is no longer active (it has returned), so an active-only projection would miss it.
+    expect(indexer.allActiveFleetMissions().some((mission) => mission.missionId === "70")).toBe(false);
+
+    // Full owned roster is unchanged.
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(4);
+    // Launchable roster still excludes the 3 departed ships, matching the authoritative on-chain count of 1
+    // — no phantom ships, so the launch no longer reverts. The next reconcile restores any that survived.
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(1);
   });
 
   test("applies duplicate webhook logs only once", () => {

@@ -47,7 +47,7 @@ import {
   verifyPlayerDisplayNameSignature,
   type PlayerProfile
 } from "./playerProfiles";
-import { deriveInfrastructureFields } from "./readModels";
+import { deriveInfrastructureFields, isCombatShipId } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
 
 const jsonHeaders = {
@@ -2138,7 +2138,7 @@ function rankedHighscorePlanets(
   });
 }
 
-function indexedPlanetTacticalSummary(
+export function indexedPlanetTacticalSummary(
   planet: PlanetState,
   buildings: InfrastructureState["buildings"],
   ships: ShipyardState["ships"],
@@ -2151,13 +2151,19 @@ function indexedPlanetTacticalSummary(
     : fallbackResources;
   const shipSummary = tacticalUnitSummary(ships);
   const defenseSummary = tacticalUnitSummary(defenses);
+  // COMBAT is a fighting-strength figure, not an inventory value: non-combat ships
+  // (Solar Satellites, cargo, recyclers, colony ships, crawlers) carry a build cost but
+  // do not fight, so they are excluded from combat power even though they remain in the
+  // ship totals above. This keeps satellite-only / undefended planets reading as soft
+  // targets in the Raid Finder and Rankings COMBAT column. (VEY-KANEO-450)
+  const combatShipSummary = tacticalUnitSummary(ships.filter((ship) => isCombatShipId(ship.id)));
 
   return {
     raidableResources,
     raidableResourceTotal: resourceTotal(raidableResources).toString(),
     ships: shipSummary,
     defenses: defenseSummary,
-    combatPower: (BigInt(shipSummary.power) + BigInt(defenseSummary.power)).toString()
+    combatPower: (BigInt(combatShipSummary.power) + BigInt(defenseSummary.power)).toString()
   };
 }
 
