@@ -1670,9 +1670,17 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   // VEY-242: seed initial state from the previous session's snapshot so a full
   // page reload shows the last loaded data immediately (stale-while-revalidate)
   // instead of blanking into "Resources loading" / "Syncing planetfall".
+  //
+  // Hydration is intentionally NOT gated on `isWalletConnected`: on a hard reload
+  // the wallet provider/account reconnect asynchronously, so they are still
+  // undefined on the first render. Gating on the live connection would therefore
+  // suppress the snapshot for exactly the reload case this is meant to fix and
+  // re-blank the page into loaders. We hydrate optimistically (the snapshot is
+  // wallet-scoped and per-tab) and the effect below reconciles/clears it if the
+  // account that ultimately resolves differs from the snapshot's wallet.
   const [persistedGameSnapshot] = useState<GameStateSnapshot | undefined>(() => readGameStateSnapshot());
   const [hydratedGameState] = useState<PersistedGameState | undefined>(
-    () => (isWalletConnected ? hydrateGameStateForAccount(persistedGameSnapshot, account) : undefined)
+    () => hydrateGameStateForAccount(persistedGameSnapshot, account)
   );
   const [now, setNow] = useState(() => Date.now());
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigState>({ status: "loading" });
