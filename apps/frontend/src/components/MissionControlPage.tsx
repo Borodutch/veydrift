@@ -69,6 +69,8 @@ interface MissionControlPageProps {
   now: number;
   onCompleteReturn: (missionId: string) => void;
   onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
+  // VEY-KANEO-440: route to Galaxy so a player can pick an own/ally planet and choose Defend.
+  onDefendPlanet?: (() => void) | undefined;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
@@ -98,6 +100,7 @@ export function MissionControlPage({
   now,
   onCompleteReturn,
   onCounterplay,
+  onDefendPlanet,
   onJoinAttack,
   onOpenReport,
   onOpenReportList,
@@ -225,6 +228,7 @@ export function MissionControlPage({
           <StationedDefenseSection
             incoming={incoming}
             now={now}
+            onDefendPlanet={onDefendPlanet}
             onOpenReport={onOpenReport}
             outgoing={outgoing}
             planetLookup={planetLookup}
@@ -274,12 +278,19 @@ export function StationedDefenseSection({
   // Mission endpoints render from each summary's embedded origin/target planet references (the backend
   // enriches them), so callers without a prebuilt lookup (e.g. the Defenses page) can omit it.
   planetLookup = EMPTY_PLANET_LOOKUP,
+  // VEY-KANEO-440: launching a DefenseHold lives on the Galaxy planet action, but players (and QA) look
+  // for it here, where the empty state already tells them to "choose Defend". Without an affordance on
+  // this panel the feature reads as missing (repeated QA "no Defend button anywhere" bounces). When
+  // provided, render a "Defend a planet" CTA that routes to Galaxy so the entry point is discoverable
+  // from the screen that describes it.
+  onDefendPlanet,
 }: {
   incoming: FleetMissionSummary[];
   now: number;
   onOpenReport: (missionId: string) => void;
   outgoing: FleetMissionSummary[];
   planetLookup?: ReadonlyMap<string, MissionPlanetIdentity>;
+  onDefendPlanet?: (() => void) | undefined;
 }) {
   // Both the reactive AcsDefend (keyed to a specific attack) and the DefenseHold mission (stationed
   // for a chosen window, VEY-KANEO-441) count as fleets the player has stationed in defense.
@@ -298,12 +309,37 @@ export function StationedDefenseSection({
     <section className="grid gap-3 rounded-lg border border-violet-300/15 bg-violet-300/[0.03] p-4">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-violet-100">Stationed defenses</h2>
-        <span className="text-[11px] tabular-nums text-slate-400">{total}</span>
+        <div className="flex items-center gap-3">
+          {onDefendPlanet ? (
+            <button
+              className="rounded border border-violet-300/40 bg-violet-300/10 px-2.5 py-1 text-[11px] font-semibold text-violet-100 transition-colors hover:bg-violet-300/20"
+              onClick={onDefendPlanet}
+              type="button"
+            >
+              Defend a planet
+            </button>
+          ) : null}
+          <span className="text-[11px] tabular-nums text-slate-400">{total}</span>
+        </div>
       </div>
       {total === 0 ? (
         <p className="text-xs text-slate-400">
           No fleets are stationed in defense yet. Pick one of your other colonies or an alliance member's
-          planet and choose <span className="text-violet-100">Defend</span> to station a fleet that holds
+          planet and choose <span className="text-violet-100">Defend</span>
+          {onDefendPlanet ? (
+            <>
+              {" "}(use{" "}
+              <button
+                className="font-semibold text-violet-200 underline decoration-dotted underline-offset-2 hover:text-violet-100"
+                onClick={onDefendPlanet}
+                type="button"
+              >
+                Defend a planet
+              </button>{" "}
+              to open Galaxy and pick one)
+            </>
+          ) : null}{" "}
+          to station a fleet that holds
           for a chosen duration, fighting any attack that lands while it holds. Defending another planet
           requires a second colony or an alliance member's planet to send the fleet to.
         </p>

@@ -36,6 +36,8 @@ interface DefensePageProps {
   loading: boolean;
   now?: number | undefined;
   onBuild: (defenseId: number, key: DefenseKey, quantity: number) => void;
+  // VEY-KANEO-440: route to Galaxy so a player can pick an own/ally planet and choose Defend.
+  onDefendPlanet?: (() => void) | undefined;
   onFinish: () => void;
   onOpenMission?: ((missionId: string) => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
@@ -77,6 +79,7 @@ export function DefensePage({
   loading,
   now,
   onBuild,
+  onDefendPlanet,
   onFinish,
   onOpenMission,
   onOpenRequirement,
@@ -119,6 +122,7 @@ export function DefensePage({
         <StationedDefenseSection
           incoming={fleetVisibility.incoming}
           now={now ?? 0}
+          onDefendPlanet={onDefendPlanet}
           onOpenReport={onOpenMission ?? (() => undefined)}
           outgoing={fleetVisibility.outgoing}
         />

@@ -5377,6 +5377,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           now={now}
           onCompleteReturn={handleCompleteMissionReturn}
           onCounterplay={handleMissionCounterplay}
+          onDefendPlanet={() => setPage("galaxy")}
           onJoinAttack={handleJoinAttack}
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}
@@ -5427,6 +5428,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           loading={defenseLoading}
           now={now}
           onBuild={handleBuildDefense}
+          onDefendPlanet={() => setPage("galaxy")}
           onFinish={handleFinishDefenseProduction}
           onOpenMission={handleOpenMissionReport}
           onOpenRequirement={handleOpenRequirement}
