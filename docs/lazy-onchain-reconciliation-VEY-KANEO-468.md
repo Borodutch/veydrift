@@ -210,18 +210,26 @@ contracts from `VeydriftGame`.
    drain via `_settleResources` and research drain via `_settlePlayerDue`; keep `finish*` as thin
    wrappers that just trigger the reconcile (back-compat). Foundry tests: no finish tx, a later
    mutating call applies due research/ship/defense/building. Keeper + fleet flow untouched.
-   **Status — landed (partial coverage).** `_settleDuePlanet` / `_settleResearchDue` /
-   `_settleUnitQueuesDue` added to `VeydriftResourceReserves`; invoked from `_settleResources` in the
-   colonization, defense-production, planet-management, and defense-hold modules. So any module-routed
-   mutating call (start ship/defense/research, colony ops, defense-hold, any `_spend`) now settles due
-   research + ship + defense for the planet/owner with no finish tx; building already auto-settled.
-   `finish*` kept as back-compat. **Not yet covered (EIP-170 budget):** the facade entrypoints
-   (`collectResources` / `settlePlanet` / building / moon-spend — 54 B free) and the gameplay module
-   (fleet launch/resolve — 127 B free) cannot host the ~400 B reconcile bodies without first reclaiming
-   `finish*` dispatch, which is itself gated on removing the live frontend/keeper callers. Combat
-   (9 B free) is intentionally untouched. Foundry: `testMutatingCallSettlesDueShipAndDefenseWithout-
-   FinishTx`, `testMutatingCallSettlesDueResearchWithoutFinishTx`; suite green (259); storage layout
-   unchanged.
+   **Status — landed (broad coverage).** The reconcile is consolidated into the colonization
+   `completeAttackTargetSnapshotQueues` fan-out (research + ship there, defense via its delegate), so
+   the bodies live once and every caller pays only a cheap self-call (`_settleDuePlanet`). Research
+   settling takes a `cutoffAt`, so an attack's impact-time snapshot also settles the **defender's**
+   by-impact research before combat reads tech levels (cross-player counterparty reconcile). The
+   self-call is wired into `_settleResources` of the colonization, defense-production, planet-management,
+   defense-hold, **and gameplay** modules, plus the **facade** `_settleResources`. So every spend/start
+   path — start ship/defense/research, colony ops, defense-hold, fleet launch/recall, building start,
+   `_spend`, moon-spend — now settles due research + ship + defense for the planet/owner with no finish
+   tx; building already auto-settled. To fit the facade in EIP-170 the now-redundant
+   `finishBuildingUpgrade` became a thin reconcile wrapper (no longer reverts before `readyAt`).
+   Combat (9 B free) is intentionally untouched. **Remaining gap:** the pure passive-collect path
+   (`collectResources` / `settlePlanet` via `_collectPlanetResources`) still settles only resources +
+   building, not the unit/research queues — acceptable because the owner's next spend/start settles
+   them and reads already show them as-of-now. Foundry: `testMutatingCallSettlesDueShipAndDefense-
+   WithoutFinishTx`, `testMutatingCallSettlesDueResearchWithoutFinishTx`,
+   `testLazySettleDrainsFullProductionBacklogAndIsIdempotent`, `testAttackImpactSettlesDefenderDue-
+   Research`; suite green (261); storage layout unchanged; the `finish*` family is no longer required
+   for completion (`finishBuildingUpgrade` is now a thin wrapper; research/ship/defense `finish*`
+   remain as working back-compat).
 2. **Fleet lazy-settle.** Flip `_isPendingResolutionMission` to resolve-in-reconcile; resolve
    Transport/Deploy/Colonize + all returns synchronously; resolve Attack/Harvest with try/catch on
    randomness (skip when uncommitted). Cross-player counterparty reconcile. Foundry tests incl. the
