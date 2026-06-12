@@ -27,8 +27,6 @@ import {
   isDebrisFieldLog,
   isBattleReportLog,
   isFleetMissionLog,
-  isFleetMissionSettlementLog,
-  fleetMissionLogMissionId,
   isIndexedQueueCompletedLog,
   isIndexedQueueStartedLog,
   isAllianceLog,
@@ -309,29 +307,10 @@ export type ApplyLogResult = {
 // (VEY-KANEO-461). 25 keeps the reconcile completing without making it serial-slow.
 const CANONICAL_READ_PLANET_CHUNK = 25;
 
-// Mission types whose just-settled combat at a planet warrants a bounded canonical reconcile of the
-// planets involved (origin survivors / stationed-defender losses). Drives drainFleetMissionReconcilePlanets;
-// ship counts themselves are now authoritative from PlanetShipCountChanged events (VEY-KANEO-461).
-const COMBAT_MISSION_TYPES: ReadonlySet<string> = new Set([
-  "Attack",
-  "AcsAttack",
-  "AcsDefend",
-  "Intercept",
-  "MissileAttack"
-]);
-
 export class SettlementIndexer {
   private readonly db: Database;
   private planetRebuildPromise: Promise<IndexerSnapshot> | null = null;
   private rebuildPromise: Promise<IndexerSnapshot> | null = null;
-  private canonicalRefreshPromise: Promise<void> | null = null;
-  // Mission ids whose settlement log was just integrated and may need a bounded canonical reconcile
-  // of the planets involved (combat survivor/defender losses). Drained by the server on each chain
-  // event; see drainFleetMissionReconcilePlanets / reconcilePlanetState (VEY-KANEO-461).
-  private readonly pendingFleetMissionSettlements = new Set<string>();
-  // Planets with a bounded canonical reconcile currently in flight, so overlapping settlement events
-  // don't fire duplicate eth_call sweeps for the same planet.
-  private readonly planetReconcileInFlight = new Set<string>();
   // Monotonic counter bumped by touch() on every applied state mutation. Read paths memoize
   // whole-universe derivations against it and recompute only when integrated events actually
   // changed state — never per request (VEY-KANEO-467).
@@ -891,62 +870,6 @@ export class SettlementIndexer {
     );
   }
 
-  // The block height through which `contract_ship_counts` for this planet is known to match chain.
-  // Defaults to the global `lastReconciledBlock` (set by a full rebuild / canonical refresh) but a
-  // bounded per-planet reconcile can advance just this planet past it. Taking the max means a later
-  // global reconcile still supersedes a stale per-planet value. Missions launched at or before this
-  // block are already reflected in the stored count and must not be debited again (VEY-KANEO-447/461).
-  private planetReconcileBlock(planetId: string): bigint {
-    const globalBlock = safeBlockNumber(this.metadata("lastReconciledBlock"));
-    const perPlanet = this.metadata(`planetReconcileBlock:${planetId}`);
-    const planetBlock = perPlanet === null ? 0n : safeBlockNumber(perPlanet);
-    return planetBlock > globalBlock ? planetBlock : globalBlock;
-  }
-
-  private setPlanetReconcileBlock(planetId: string, block: string): void {
-    this.setMetadata(`planetReconcileBlock:${planetId}`, block);
-  }
-
-  // Planets whose just-settled combat missions need a bounded canonical reconcile. Resolving each
-  // pending settlement to its assembled summary lets us pick the exact origin/target planets and skip
-  // non-combat returns (already credited from events). Clears the queue; safe to call every chain event.
-  drainFleetMissionReconcilePlanets(): string[] {
-    if (this.pendingFleetMissionSettlements.size === 0) return [];
-    const missionIds = [...this.pendingFleetMissionSettlements];
-    this.pendingFleetMissionSettlements.clear();
-    const planets = new Set<string>();
-    for (const missionId of missionIds) {
-      const mission = this.fleetMission(missionId);
-      if (!mission || !COMBAT_MISSION_TYPES.has(mission.missionType)) continue;
-      if (mission.originPlanetId) planets.add(mission.originPlanetId);
-      if (mission.targetPlanetId) planets.add(mission.targetPlanetId);
-    }
-    return [...planets];
-  }
-
-  // Bounded, single-planet canonical reconcile: read just this planet's authoritative ship / defense /
-  // building / resource state from the contract, pin contract_* to it, and advance the planet's
-  // reconcile baseline to chain head so the departed-ships projection stops re-debiting fleets the
-  // fresh read already reflects. This is the only remaining steady-state on-chain read and runs only
-  // for planets with recent combat fleet activity — never a universe-wide sweep (VEY-KANEO-461).
-  async reconcilePlanetState(planetId: string): Promise<CanonicalDivergenceReport | null> {
-    if (this.planetReconcileInFlight.has(planetId)) return null;
-    this.planetReconcileInFlight.add(planetId);
-    try {
-      const head = this.metadata("latestIndexedBlock")
-        ?? this.metadata("lastReconciledBlock")
-        ?? this.fromBlock.toString();
-      const report = await this.verifyCanonicalState(planetId, { heal: true });
-      if (report.reachedChain) {
-        this.setPlanetReconcileBlock(planetId, head);
-        this.touch();
-      }
-      return report;
-    } finally {
-      this.planetReconcileInFlight.delete(planetId);
-    }
-  }
-
   defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
     return deriveDefenseRows((id) => this.asOfNowCount(
       this.indexedLevel("contract_defense_counts", "defense_id", planetId, id),
@@ -1309,13 +1232,12 @@ export class SettlementIndexer {
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isFleetMissionLog(log)) {
-      // Fleet-mission state is decoded from the event log on read, but a settlement (resolve / return)
-      // can have thinned a combat fleet's ships with no ship-count event. Queue the mission so the
-      // server can fire a bounded canonical reconcile of the planets involved (VEY-KANEO-461).
-      if (isFleetMissionSettlementLog(log)) {
-        const missionId = fleetMissionLogMissionId(log);
-        if (missionId) this.pendingFleetMissionSettlements.add(missionId);
-      }
+      // Fleet-mission state is decoded from the event log on read. Combat that thins a fleet (launch
+      // debit, survivor credit, defender losses) and any loot now route through the contract's
+      // _setPlanetShipCount / _setPlanetDefenseCount / _emitPlanetSettled sinks, so the resulting
+      // PlanetShipCountChanged / PlanetDefenseCountChanged / PlanetSettled events are applied directly
+      // and the served roster/resources stay authoritative from events alone — no on-the-fly canonical
+      // RPC reconcile of the planets involved (VEY-KANEO-476, EPIC VEY-KANEO-474 goal #1).
       this.touch();
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
@@ -1348,56 +1270,6 @@ export class SettlementIndexer {
   async reconcile(reason = "requested"): Promise<IndexerSnapshot> {
     this.markStale(reason);
     return this.rebuild();
-  }
-
-  // Lightweight, frequent on-chain state refresh — decoupled from the heavy full rebuild(). The full
-  // rebuild re-scans the entire getLogs history (slow, occasionally OOMs/hangs) and is the ONLY place the
-  // canonical chain reads run, so between rebuilds the served contract_* tables drift: event handlers
-  // mutate them with derivation that the contract emits no events for (mission ship debits/credits, loot,
-  // spend), and the departed-ships projection keeps subtracting fleets that already returned because its
-  // `lastReconciledBlock` baseline is stale — that is why resources read wrong and the shipyard shows 0.
-  //
-  // This reads each live planet's authoritative state straight from the contract (previewResources /
-  // shipyard / infrastructure / defenses / research) via readCanonicalState and overwrites contract_* with
-  // it, then advances the reconcile baseline to the current chain head so the departed-ships projection
-  // only nets out genuinely in-flight fleets. Run on a short interval it keeps every served number pinned
-  // to chain. Never throws; skips while a full rebuild is in flight (the rebuild does the same work).
-  async refreshCanonicalState(): Promise<void> {
-    if (this.canonicalRefreshPromise) return this.canonicalRefreshPromise;
-    const fullReconciliationInProgress = this.rebuildPromise || this.planetRebuildPromise;
-    if (fullReconciliationInProgress && !this.metadata("lastReconciledAt")) return;
-    if (!this.chainReader.listCurrentPlanets) return;
-    this.canonicalRefreshPromise = this.refreshCanonicalStateUncached()
-      .catch((error) => {
-        // A refresh miss is non-fatal: the persisted snapshot stays serveable and the next tick retries.
-        // Deliberately do NOT set lastReconciliationError here — that would flip serve-stale/health gating.
-        console.error("Veydrift canonical state refresh failed", error);
-      })
-      .finally(() => {
-        this.canonicalRefreshPromise = null;
-      });
-    return this.canonicalRefreshPromise;
-  }
-
-  private async refreshCanonicalStateUncached(): Promise<void> {
-    const planets = await this.chainReader.listCurrentPlanets!();
-    if (planets.length === 0) return;
-    // Snapshot the head BEFORE the chain reads. Used as the departed-ships baseline: any mission whose
-    // launch block is <= head is already reflected in the shipCount we just read, so it must not be
-    // subtracted again. Reading head-before-state keeps the projection on the safe (never-over-report)
-    // side if a fleet departs mid-refresh. latestIndexedBlock is maintained by the websocket head feed.
-    const head = this.metadata("latestIndexedBlock")
-      ?? this.metadata("lastReconciledBlock")
-      ?? this.fromBlock.toString();
-    const state = await this.readCanonicalState(planets);
-    const now = new Date().toISOString();
-    const apply = this.db.transaction(() => {
-      this.setMetadata("lastReconciledBlock", head);
-      this.applyCanonicalState(state);
-      this.setMetadata("lastReconciledAt", now);
-      this.touch();
-    });
-    apply();
   }
 
   markStale(reason: string): IndexerSnapshot {
@@ -3312,13 +3184,12 @@ export class SettlementIndexer {
     this.setMetadata("reorgDetectedAt", new Date().toISOString());
   }
 
-  // `latestIndexedBlock` is the high-water mark of indexed blocks and the snapshot the departed-ships
-  // reconcile baseline is pinned to (refreshCanonicalStateUncached). It MUST only ever move forward.
-  // Logs do not always reach us in block order — a gap/reorg recovery or self-heal backfill can re-apply
-  // an older range after the live head feed has already advanced — and a non-monotonic write would drag
-  // the head backwards. A regressed head freezes the reconcile baseline below missions that have already
-  // launched AND returned, so the debit-only projection keeps subtracting them and their ships vanish
-  // from the shipyard (at-planet shows 0). Clamp to the max so a stale write can never lower it.
+  // `latestIndexedBlock` is the high-water mark of indexed blocks: the boundary a gap/reorg recovery
+  // backfills from and the baseline the cold-start/downtime reconcile pins to. It MUST only ever move
+  // forward. Logs do not always reach us in block order — a gap/reorg recovery or self-heal backfill can
+  // re-apply an older range after the live head feed has already advanced — and a non-monotonic write
+  // would drag the head backwards, causing a gap recovery to refetch from a stale point. Clamp to the max
+  // so a stale write can never lower it.
   private recordLatestBlock(blockNumber: string): void {
     const next = blockNumberToDecimal(blockNumber);
     const current = this.metadata("latestIndexedBlock");
@@ -3941,17 +3812,6 @@ function subtractNonNegative(left: bigint, right: bigint): bigint {
 
 function riftWithdrawalKey(event: IndexedRiftResourceEvent): string {
   return `${event.transactionHash.toLowerCase()}:${event.planetId}:${event.resourceId}:${event.amount}`;
-}
-
-// Parse a stored block-height string to bigint, treating null/garbage as block 0 so callers can
-// compare reconcile baselines without each guarding the try/catch (VEY-KANEO-461).
-function safeBlockNumber(value: string | null): bigint {
-  if (value === null) return 0n;
-  try {
-    return BigInt(value);
-  } catch {
-    return 0n;
-  }
 }
 
 function latestEventBlock(events: Array<{ blockNumber: string }>): string | null {

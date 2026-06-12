@@ -775,112 +775,6 @@ describe("SettlementIndexer", () => {
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(1);
   });
 
-  test("refreshCanonicalState re-pins served ship counts to chain (VEY-452)", async () => {
-    let onchainShipCount = 2;
-    const indexer = new SettlementIndexer({
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; },
-      async listCurrentPlanets() { return [planet]; },
-      async getShipyardState() {
-        return {
-          wallet: player,
-          homePlanetId: planet.planetId,
-          planetId: planet.planetId,
-          productionAvailable: true,
-          resources: planet.resources,
-          fleetSlots: { active: 1, limit: 1 },
-          shipyardLevel: 1,
-          naniteLevel: 0,
-          technologyLevels: {},
-          ships: [{ id: 1, count: onchainShipCount, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
-          queue: null
-        };
-      }
-    }, 100n);
-
-    // Reconcile from the planet event (block 123) → stored id1 = 2.
-    await indexer.rebuild();
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(2);
-
-    // A mission launches and the contract debits 1 light fighter, emitting the new at-planet total of 1.
-    indexer.applyLog({
-      blockNumber: "0x90",
-      transactionHash: "0xlaunch-452",
-      logIndex: "0x0",
-      topics: [fleetMissionLaunchedTopic, topic(61n), addressTopic(player), topic(3n)],
-      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x90",
-      transactionHash: "0xlaunch-452-debit",
-      logIndex: "0x1",
-      topics: [planetShipCountChangedTopic, topic(7n), topic(1n)],
-      data: abiWords(1n)
-    });
-    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(1);
-
-    // The fleet comes home and the contract now reports 5 at the planet. A lightweight canonical refresh
-    // re-pins the stored roster to the live on-chain value; availableShipRows reads the same authoritative
-    // count, landing at 5.
-    onchainShipCount = 5;
-    await indexer.refreshCanonicalState();
-
-    // Re-pinned to chain (was 1).
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
-    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
-  });
-
-  test("refreshCanonicalState still re-pins chain state while a background rebuild is running (VEY-452)", async () => {
-    let onchainShipCount = 2;
-    let blockRebuild: (() => void) | null = null;
-    const indexer = new SettlementIndexer({
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listCurrentPlanets() { return [planet]; },
-      async listSettledPlanetEvents() {
-        if (blockRebuild) {
-          await new Promise<void>((resolve) => {
-            blockRebuild = resolve;
-          });
-        }
-        return [planet];
-      },
-      async getShipyardState() {
-        return {
-          wallet: player,
-          homePlanetId: planet.planetId,
-          planetId: planet.planetId,
-          productionAvailable: true,
-          resources: planet.resources,
-          fleetSlots: { active: 0, limit: 1 },
-          shipyardLevel: 1,
-          naniteLevel: 0,
-          technologyLevels: {},
-          ships: [{ id: 1, count: onchainShipCount, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
-          queue: null
-        };
-      }
-    }, 100n);
-
-    await indexer.rebuild();
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(2);
-
-    blockRebuild = () => {};
-    const rebuilding = indexer.reconcile("slow startup refresh");
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(indexer.snapshot()).toMatchObject({
-      reconciliationInProgress: true
-    });
-
-    onchainShipCount = 4;
-    await indexer.refreshCanonicalState();
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(4);
-
-    blockRebuild();
-    await rebuilding;
-  });
-
   test("an out-of-order/backfilled older log cannot drag the indexed head back, and returned ships are credited from events (VEY-KANEO-460)", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
@@ -1112,33 +1006,27 @@ describe("SettlementIndexer", () => {
     });
 
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(4);
-    // A returned non-combat mission needs no bounded reconcile.
-    expect(indexer.drainFleetMissionReconcilePlanets()).toEqual([]);
   });
 
-  test("credits a returned combat fleet's survivors from events, and a bounded reconcile confirms them (VEY-KANEO-461)", async () => {
-    let onchainSmallCargo = 4;
+  test("credits a returned combat fleet's survivors from events alone, with no on-the-fly canonical RPC (VEY-KANEO-476)", () => {
+    // Post the VeydriftGame events upgrade (VEY-KANEO-475), combat losses and survivor credits both route
+    // through the contract's _setPlanetShipCount sink, so the surviving at-planet total is emitted as a
+    // PlanetShipCountChanged event and applied directly. The served roster needs no bounded per-planet
+    // canonical reconcile (removed in VEY-KANEO-476) — this reader throws on every on-chain state read, so
+    // the test passing proves the survivor count was reconstructed from events alone.
+    const rpcForbidden = () => {
+      throw new Error("on-the-fly canonical RPC read is forbidden (VEY-KANEO-476)");
+    };
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; },
-      async getShipyardState() {
-        return {
-          wallet: player,
-          homePlanetId: planet.planetId,
-          planetId: planet.planetId,
-          productionAvailable: true,
-          resources: planet.resources,
-          fleetSlots: { active: 0, limit: 1 },
-          shipyardLevel: 0,
-          naniteLevel: 0,
-          technologyLevels: {},
-          // On-chain survivor count after the battle: 2 of the 3 attackers came home (1 lost).
-          ships: [{ id: 0, count: onchainSmallCargo, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
-          queue: null
-        };
-      }
-    }, 100n);
+      async listSettledPlanetEvents() { return []; },
+      getInfrastructureState: rpcForbidden,
+      getShipyardState: rpcForbidden,
+      getDefenseState: rpcForbidden,
+      getResearchState: rpcForbidden,
+      getPlayerQueues: rpcForbidden
+    } as never, 100n);
     indexer.applyEvent(planet);
 
     // 4 small cargo built, then an Attack (mission type 3) launches with 3 of them.
@@ -1199,47 +1087,86 @@ describe("SettlementIndexer", () => {
 
     // Survivors credited from events alone — 3 launchable (1 destroyed ship excluded), no on-chain read.
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(3);
-
-    // The settled combat mission still queues its origin + target for a bounded reconcile as a safety net.
-    const targets = indexer.drainFleetMissionReconcilePlanets();
-    expect(targets).toContain("7");
-    expect(targets).toContain("99");
-
-    // The bounded reconcile reads the planet's authoritative count and confirms the evented survivor count
-    // (3) — it finds no divergence to heal, since events already pinned the roster exactly.
-    onchainSmallCargo = 3;
-    const report = await indexer.reconcilePlanetState("7");
-    expect(report?.reachedChain).toBe(true);
-    expect(report?.divergent).toBe(false);
-    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(3);
   });
 
-  test("drainFleetMissionReconcilePlanets ignores non-combat settlements and dedupes (VEY-KANEO-461)", () => {
+  test("reconstructs a defender's combat ship/defense losses and loot from events alone, never an on-the-fly RPC read (VEY-KANEO-476)", () => {
+    // EPIC VEY-KANEO-474 goal #1: the indexer serves steady-state from event replay only. When a planet is
+    // raided, the contract debits the defender's surviving ships/defenses through the _setPlanetShipCount /
+    // _setPlanetDefenseCount sinks (emitting the authoritative absolute totals) and emits the looted
+    // resource balance via _emitPlanetSettled. The indexer applies all three directly; there is no bounded
+    // per-planet canonical reconcile re-pinning the roster from chain. This reader throws on every on-chain
+    // state read, so the test passing proves the post-raid served state came purely from events.
+    const rpcForbidden = () => {
+      throw new Error("on-the-fly canonical RPC read is forbidden (VEY-KANEO-476)");
+    };
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return []; }
-    }, 100n);
+      async listSettledPlanetEvents() { return []; },
+      getInfrastructureState: rpcForbidden,
+      getShipyardState: rpcForbidden,
+      getDefenseState: rpcForbidden,
+      getResearchState: rpcForbidden,
+      getPlayerQueues: rpcForbidden
+    } as never, 100n);
     indexer.applyEvent(planet);
 
-    // A non-combat Transport that settles must not trigger any on-chain reconcile.
+    // Pre-raid roster: 5 small cargo (ship 0) and 8 rocket launchers (defense 0).
     indexer.applyLog({
-      blockNumber: "0x90",
-      transactionHash: "0xt-launch",
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-ships",
       logIndex: "0x0",
-      topics: [fleetMissionLaunchedTopic, topic(90n), addressTopic(player), topic(0n)],
-      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
+      topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(5n)
     });
     indexer.applyLog({
-      blockNumber: "0x95",
-      transactionHash: "0xt-return",
-      logIndex: "0x0",
-      topics: [fleetMissionReturnedTopic, topic(90n), addressTopic(player), topic(7n)],
-      data: "0x"
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-defense",
+      logIndex: "0x1",
+      topics: [planetDefenseCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(8n)
     });
-    expect(indexer.drainFleetMissionReconcilePlanets()).toEqual([]);
-    // Draining clears the queue.
-    expect(indexer.drainFleetMissionReconcilePlanets()).toEqual([]);
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(5);
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(8);
+
+    // An incoming attack settles: the contract thins the defender to 2 ships + 3 defenses and loots
+    // resources, emitting the new absolute totals plus the post-loot balance — all applied from events.
+    const lootedAt = Math.floor(Date.now() / 1000);
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: "0xraid",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: "0xraid",
+      logIndex: "0x1",
+      topics: [planetDefenseCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: "0xraid",
+      logIndex: "0x2",
+      topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+      data: abiWords(10n, 20n, 5n, BigInt(lootedAt))
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: "0xraid",
+      logIndex: "0x3",
+      topics: [fleetMissionResolvedTopic, topic(81n)],
+      data: abiWords(BigInt(lootedAt))
+    });
+
+    // Post-raid served state — reconstructed from events alone, with no on-the-fly canonical RPC read.
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(2);
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(3);
+    const served = indexer.walletSettlement(player).planet;
+    expect(served?.lastSettledAt).toBe(String(lootedAt));
+    expect(served?.resources).toEqual({ metal: "10", crystal: "20", deuterium: "5" });
   });
 
   test("applies duplicate webhook logs only once", () => {
