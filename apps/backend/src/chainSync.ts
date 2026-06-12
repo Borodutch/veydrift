@@ -53,14 +53,12 @@ export type ChainSyncSnapshot = {
   lastConnectedAt: string | null;
   lastError: string | null;
   lastEventAt: string | null;
-  lastSelfHealAt: string | null;
   latestWebsocketBlock: string | null;
   latestSyncedBlock: string | null;
   reconcileFailureCount: number;
   reconcileBackoffUntil: string | null;
   reconnectAttempts: number;
   reorgDetectedAt: string | null;
-  selfHealRecoveredEvents: number;
   subscribedAddresses: string[];
   subscribedToHeads: boolean;
   subscribedToLogs: boolean;
@@ -114,9 +112,6 @@ export class ChainSyncService {
   private backfillRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private backfillRetryFailureCount = 0;
   private pendingBackfillRetry: { fromBlock: bigint; toBlock: bigint | "latest"; reason: string } | null = null;
-  private selfHealTimer: ReturnType<typeof setInterval> | undefined;
-  private lastSelfHealAt: string | null = null;
-  private selfHealRecoveredEvents = 0;
 
   constructor(
     private readonly config: BackendConfig,
@@ -132,8 +127,6 @@ export class ChainSyncService {
       reconcileBackoffMaxMs?: number;
       backfillRetryBaseMs?: number;
       backfillRetryMaxMs?: number;
-      selfHealIntervalMs?: number;
-      selfHealDepthBlocks?: number;
     } = {}
   ) {}
 
@@ -172,18 +165,6 @@ export class ChainSyncService {
     return Math.min(baseMs * 2 ** exponent, maxMs);
   }
 
-  private selfHealIntervalMs(): number {
-    return this.options.selfHealIntervalMs ?? 60_000;
-  }
-
-  private selfHealDepthBlocks(): bigint {
-    const configured = this.options.selfHealDepthBlocks;
-    if (configured === undefined || !Number.isFinite(configured) || configured <= 0) {
-      return 256n;
-    }
-    return BigInt(Math.floor(configured));
-  }
-
   snapshot(): ChainSyncSnapshot {
     return {
       connected: this.connected,
@@ -194,7 +175,6 @@ export class ChainSyncService {
       lastConnectedAt: this.lastConnectedAt,
       lastError: this.lastError,
       lastEventAt: this.lastEventAt,
-      lastSelfHealAt: this.lastSelfHealAt,
       latestWebsocketBlock: this.latestWebsocketBlock,
       latestSyncedBlock: this.latestSyncedBlock,
       reconcileFailureCount: this.reconcileFailureCount,
@@ -204,7 +184,6 @@ export class ChainSyncService {
           : null,
       reconnectAttempts: this.reconnectAttempts,
       reorgDetectedAt: this.reorgDetectedAt,
-      selfHealRecoveredEvents: this.selfHealRecoveredEvents,
       subscribedAddresses: this.subscribedAddresses(),
       subscribedToHeads: [...this.subscriptionKinds.values()].includes("newHeads"),
       subscribedToLogs: [...this.subscriptionKinds.values()].includes("logs"),
@@ -251,7 +230,6 @@ export class ChainSyncService {
     this.pendingReconcileReason = null;
     this.pendingBackfillRetry = null;
     this.stopHeartbeat();
-    this.stopSelfHeal();
     const socket = this.socket;
     this.socket = null;
     socket?.close();
@@ -292,7 +270,6 @@ export class ChainSyncService {
     this.subscriptionKinds.clear();
     this.lastActivityAt = Date.now();
     this.startHeartbeat();
-    this.startSelfHeal();
     this.subscribe("logs");
     this.subscribe("newHeads");
     if (reconnectingAfterProgress) {
@@ -308,7 +285,6 @@ export class ChainSyncService {
     this.subscriptionKinds.clear();
     this.requestKinds.clear();
     this.stopHeartbeat();
-    this.stopSelfHeal();
     if (!this.stopped) {
       this.scheduleReconnect();
     }
@@ -541,8 +517,7 @@ export class ChainSyncService {
     backfiller: LogBackfiller,
     fromBlock: bigint,
     toBlock: bigint | "latest",
-    reason: string,
-    options: { selfHeal?: boolean } = {}
+    reason: string
   ): Promise<void> {
     const applyLog = this.indexer?.applyLog;
     if (!applyLog) {
@@ -550,14 +525,10 @@ export class ChainSyncService {
       return;
     }
     if (this.backfillInProgress) {
-      // The single backfill slot is busy (e.g. a periodic self-heal pass is running).
-      // A self-heal tick is best-effort and simply retries next interval, but a gap/
-      // reconnect recovery is a KNOWN missed range — re-queue the SAME bounded range for a
-      // backoff-delayed retry so it is not silently dropped while the slot is occupied. We
-      // deliberately do NOT escalate to the heavy canonical reconcile here (VEY-KANEO-461).
-      if (!options.selfHeal) {
-        this.scheduleBackfillRetry(backfiller, fromBlock, toBlock, reason);
-      }
+      // The single backfill slot is busy. A gap/reconnect recovery is a KNOWN missed range, so
+      // re-queue the SAME bounded range for a backoff-delayed retry rather than silently dropping it
+      // while the slot is occupied. We deliberately do NOT escalate to a heavy reconcile (VEY-KANEO-461).
+      this.scheduleBackfillRetry(backfiller, fromBlock, toBlock, reason);
       return;
     }
     this.backfillInProgress = true;
@@ -589,10 +560,6 @@ export class ChainSyncService {
           needsReconcile = true;
         }
       }
-      if (options.selfHeal) {
-        this.lastSelfHealAt = new Date().toISOString();
-        this.selfHealRecoveredEvents += recovered;
-      }
       if (needsReconcile) {
         this.requestReconciliation("reorg/decode failure during backfill");
       }
@@ -611,17 +578,12 @@ export class ChainSyncService {
       this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : "Failed to backfill chain logs.";
-      // A periodic self-heal pass is best-effort: if its recent-range re-scan RPC fails (e.g. a
-      // truncated/empty RPC body — "Unexpected end of JSON input"), record it and let the next
-      // interval retry. Gap/reconnect recovery (non-self-heal) is a KNOWN missed range, but a
-      // transient RPC failure must NOT escalate to the heavy universe-wide canonical reconcile:
-      // retrying that heavy read back-to-back is exactly what pegged the single Bun core and took
-      // the service down (VEY-KANEO-461). Instead, retry the SAME bounded range with exponential
-      // backoff — event integration recovers when the RPC does. Genuine reorg/removed-log
-      // divergence is escalated separately (it sets needsReconcile / requestReconciliation above).
-      if (!options.selfHeal) {
-        this.scheduleBackfillRetry(backfiller, fromBlock, toBlock, reason);
-      }
+      // Gap/reconnect recovery is a KNOWN missed range, but a transient RPC failure must NOT escalate
+      // to a heavy universe-wide reconcile: retrying that heavy read back-to-back is exactly what
+      // pegged the single Bun core and took the service down (VEY-KANEO-461). Instead, retry the SAME
+      // bounded range with exponential backoff — event integration recovers when the RPC does. Genuine
+      // reorg/removed-log divergence is escalated separately (it sets needsReconcile above).
+      this.scheduleBackfillRetry(backfiller, fromBlock, toBlock, reason);
     } finally {
       this.backfillInProgress = false;
     }
@@ -720,53 +682,6 @@ export class ChainSyncService {
           );
       }
     );
-  }
-
-  /**
-   * Periodically re-scan a recent block range and replay its logs through the indexer
-   * (idempotent). This self-heals live events that an RPC provider silently dropped from
-   * the `logs` subscription while the socket stayed connected and `newHeads` kept flowing —
-   * a case neither head-gap recovery, reconnect backfill, nor the heartbeat can detect,
-   * since there is no block gap and the connection looks healthy.
-   */
-  private startSelfHeal(): void {
-    this.stopSelfHeal();
-    const interval = this.selfHealIntervalMs();
-    if (interval <= 0) return;
-    if (!this.options.logBackfiller || !this.indexer?.applyLog) return;
-    this.selfHealTimer = setInterval(() => this.selfHealTick(), interval);
-  }
-
-  private stopSelfHeal(): void {
-    if (this.selfHealTimer) {
-      clearInterval(this.selfHealTimer);
-      this.selfHealTimer = undefined;
-    }
-  }
-
-  private selfHealTick(): void {
-    if (this.stopped || !this.connected) return;
-    const backfiller = this.options.logBackfiller;
-    if (!backfiller || !this.indexer?.applyLog) return;
-    // A reconnect/gap backfill is already covering recent blocks; skip this pass.
-    if (this.backfillInProgress) return;
-
-    const anchor = this.latestSyncedBlock ?? this.latestWebsocketBlock;
-    if (anchor === null) return;
-    let latest: bigint;
-    try {
-      latest = BigInt(anchor);
-    } catch {
-      return;
-    }
-
-    const depth = this.selfHealDepthBlocks();
-    let fromBlock = latest > depth ? latest - depth + 1n : 0n;
-    const floor = this.config.indexFromBlock;
-    if (fromBlock < floor) fromBlock = floor;
-    if (fromBlock > latest) return;
-
-    void this.backfillRange(backfiller, fromBlock, "latest", "periodic self-heal", { selfHeal: true });
   }
 
   private startHeartbeat(): void {

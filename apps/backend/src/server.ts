@@ -184,22 +184,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     });
   }
-  if (indexer && !dependencies.indexer && typeof chainSync?.addListener === "function") {
-    // Event-driven bounded reconcile: when a combat fleet mission settles, the contract may have
-    // thinned the attacker's survivors or the defender's ships/defenses with no ship-count event.
-    // Drain those planets and read just them back from chain (reconcilePlanetState) — a handful of
-    // planets with recent fleet activity, never the whole universe — so ship losses land without the
-    // old 30s sweep. Non-combat returns are credited from events alone and never reach here
-    // (VEY-KANEO-461). Fire-and-forget; reconcilePlanetState self-dedupes per planet and never throws.
-    chainSync.addListener((event) => {
-      if (event.kind !== "chain-event") return;
-      for (const planetId of indexer.drainFleetMissionReconcilePlanets()) {
-        void indexer.reconcilePlanetState(planetId).catch((error) => {
-          console.error("Veydrift bounded fleet reconcile failed", planetId, reasonText(error));
-        });
-      }
-    });
-  }
 
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -837,26 +821,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
       try {
         return Response.json(await indexer.rebuild(), {
-          headers: jsonHeaders
-        });
-      } catch (error) {
-        return errorResponse(error, 502);
-      }
-    }
-
-    if (request.method === "POST" && url.pathname.startsWith("/index/verify/")) {
-      if (!indexer) {
-        return unavailableResponse(loaded.problems);
-      }
-
-      const planetId = decodeURIComponent(url.pathname.slice("/index/verify/".length));
-      if (!planetId) {
-        return errorResponse(new Error("Missing planetId"), 400);
-      }
-
-      const heal = url.searchParams.get("heal") === "true";
-      try {
-        return Response.json(await indexer.verifyCanonicalState(planetId, { heal }), {
           headers: jsonHeaders
         });
       } catch (error) {
