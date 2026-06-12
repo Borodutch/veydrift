@@ -951,7 +951,7 @@ export function researchActionStatus({
   };
 }
 
-function researchViewState(
+export function researchViewState(
   state: PlayableState,
   researchState: ChainResearchState | null,
   useLocalStateFallback: boolean,
@@ -969,7 +969,12 @@ function researchViewState(
     },
     research: researchLevels(researchState),
     researchQueue: researchQueueForDisplay(researchState, state, now) ?? undefined,
-    resources: toResources(researchState.resources) ?? { metal: 0, crystal: 0, deuterium: 0 },
+    // VEY-KANEO-473: gate research affordability on the canonical settled-to-now balance
+    // (`resourcesAsOfNow`) the top bar uses — the same single source the infrastructure, shipyard,
+    // and defense panels now read — falling back to the raw settled `resources` only when the
+    // accrued field is absent. This is the fallback the gate uses when `spendableResources` is
+    // unavailable; reading the raw snapshot here is what let the panel disagree with the top bar.
+    resources: toResources(researchState.resourcesAsOfNow ?? researchState.resources) ?? { metal: 0, crystal: 0, deuterium: 0 },
   };
 }
 
