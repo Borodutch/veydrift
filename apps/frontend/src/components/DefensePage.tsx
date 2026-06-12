@@ -91,7 +91,10 @@ export function DefensePage({
   const [localSelectedKey, setLocalSelectedKey] = useState<DefenseKey>("rocketLauncher");
   const selectedKey = selectedDefenseKey ?? localSelectedKey;
   const shipyardLevel = defenseState?.shipyardLevel ?? 0;
-  const resources = toResources(defenseState?.resources);
+  // VEY-KANEO-473: gate on the canonical settled-to-now balance (`resourcesAsOfNow`) the top bar
+  // uses, falling back to the raw settled snapshot only when the accrued field is absent — so the
+  // defense affordability number can never disagree with the bar.
+  const resources = toResources(defenseState?.resourcesAsOfNow ?? defenseState?.resources);
   const queue = activeProductionQueue(defenseState?.queue, overviewQueue, "defense");
   const productionAvailable = defenseState?.productionAvailable !== false;
   const initialLoading = shouldShowDefenseInitialLoader({ defenseState, loading });

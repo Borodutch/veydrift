@@ -76,6 +76,29 @@ describe("contract state adapters", () => {
     });
   });
 
+  test("infrastructure resources use the accrued settled-to-now balance, matching the top bar (VEY-KANEO-473)", () => {
+    // The top bar reads the backend's accrued `resourcesAsOfNow`; the infrastructure panel and its
+    // affordability gate must read the SAME value, not the raw settled `resources` snapshot —
+    // otherwise the bar shows one number while the panel says "Requires more" (Shot A).
+    const accruedState: ChainInfrastructureState = {
+      ...infrastructureState,
+      resources: { metal: "1234", crystal: "567", deuterium: "89" },
+      resourcesAsOfNow: { metal: "5678", crystal: "999", deuterium: "120" },
+    };
+
+    const state = infrastructurePlayableState(accruedState, 1_000);
+
+    expect(state.resources).toEqual({ metal: 5678, crystal: 999, deuterium: 120 });
+  });
+
+  test("infrastructure resources fall back to the settled snapshot when accrued is absent (VEY-KANEO-473)", () => {
+    // Older deploy / planet still warming: no `resourcesAsOfNow` field — keep rendering the raw
+    // settled `resources` rather than zeroing the panel.
+    const state = infrastructurePlayableState(infrastructureState, 1_000);
+
+    expect(state.resources).toEqual({ metal: 1234, crystal: 567, deuterium: 89 });
+  });
+
   test("maps backend-sourced next-upgrade durations per building (VEY-KANEO-472)", () => {
     const withDuration: ChainInfrastructureState = {
       ...infrastructureState,
