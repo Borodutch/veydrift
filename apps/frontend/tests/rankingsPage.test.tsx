@@ -2,9 +2,6 @@ import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import type { Coordinates } from "../src/types";
 import {
-  activeMissionsByPlanetId,
-  maxPlanetMissionLines,
-  planetMissionSubtext,
   primaryRankingEntries,
   rankingsColumnLabels,
   rankingsPageSize,
@@ -16,6 +13,9 @@ import {
   RankingsTable,
   shouldShowRankingsInitialLoader,
 } from "../src/components/RankingsPage";
+// The per-planet mission subtext helpers live in their own module (unit-tested in
+// planetMissionSubtext.test.ts); the Rankings tests only need the planet-keyed grouping here.
+import { activeMissionsByPlanetId } from "../src/planetMissionSubtext";
 import type { FleetMissionSummary, HighscoreEntry, HighscoreResponse } from "../src/walletFlow";
 
 describe("RankingsPage", () => {
@@ -569,74 +569,10 @@ describe("RankingsPage active mission subtext", () => {
     expect(byPlanet.get("5")).toEqual([mission]);
   });
 
-  test("labels an inbound outbound fleet as arriving here with the mission type and ETA", () => {
-    const incoming = activeMission({
-      arrivalAt: String(NOW_SECONDS + 720),
-      missionType: "Attack",
-      originPlanetId: "10",
-      targetPlanetId: "7",
-    });
-    const { lines, overflow } = planetMissionSubtext("7", [incoming], NOW_MS);
-
-    expect(overflow).toBe(0);
-    expect(lines).toEqual([{ key: "1-in", label: "Attack → here · 12m", tone: "incoming" }]);
-  });
-
-  test("labels an outbound fleet with the destination coordinates and ETA", () => {
-    const outbound = activeMission({
-      arrivalAt: String(NOW_SECONDS + 3600),
-      missionType: "Transport",
-      originPlanetId: "7",
-      originPlanet: planetRef("7", "2:44:9"),
-      targetPlanetId: "12",
-      targetPlanet: planetRef("12", "4:226:5"),
-    });
-    const { lines } = planetMissionSubtext("7", [outbound], NOW_MS);
-
-    expect(lines).toEqual([{ key: "1-out", label: "Transport → [4:226:5] · 1h", tone: "outgoing" }]);
-  });
-
-  test("labels a returning fleet inbound to its home planet as returning with the landing ETA", () => {
-    const returning = activeMission({
-      originPlanetId: "7",
-      returnAt: String(NOW_SECONDS + 1200),
-      status: "Returning",
-      targetPlanetId: "12",
-    });
-    const { lines } = planetMissionSubtext("7", [returning], NOW_MS);
-
-    expect(lines).toEqual([{ key: "1-in", label: "Returning · 20m", tone: "incoming" }]);
-  });
-
-  test("decodes colonization targets that carry no resolved planet reference", () => {
-    const colonizeTargetId = "57896044618658097711785492504343953926634992332820282019728792003956631986693";
-    const colonize = activeMission({
-      arrivalAt: String(NOW_SECONDS + 60),
-      missionType: "Colonize",
-      originPlanetId: "7",
-      originPlanet: planetRef("7", "2:44:9"),
-      targetPlanetId: colonizeTargetId,
-      targetPlanet: null,
-    });
-    const { lines } = planetMissionSubtext("7", [colonize], NOW_MS);
-
-    expect(lines[0]?.tone).toBe("outgoing");
-    expect(lines[0]?.label).toBe("Colonize → [4:226:5] · 1m");
-  });
-
-  test("sorts a planet's mission lines soonest-event-first and caps overflow", () => {
-    const missions = [
-      activeMission({ missionId: "a", arrivalAt: String(NOW_SECONDS + 3600), targetPlanetId: "7", originPlanetId: "1" }),
-      activeMission({ missionId: "b", arrivalAt: String(NOW_SECONDS + 60), targetPlanetId: "7", originPlanetId: "2" }),
-      activeMission({ missionId: "c", arrivalAt: String(NOW_SECONDS + 600), targetPlanetId: "7", originPlanetId: "3" }),
-      activeMission({ missionId: "d", arrivalAt: String(NOW_SECONDS + 1200), targetPlanetId: "7", originPlanetId: "4" }),
-    ];
-    const { lines, overflow } = planetMissionSubtext("7", missions, NOW_MS);
-
-    expect(lines.map((line) => line.key)).toEqual(["b-in", "c-in", "d-in"]);
-    expect(lines).toHaveLength(maxPlanetMissionLines);
-    expect(overflow).toBe(1);
-  });
+  // Per-planet mission line labeling, owner/third-party classification, colonize-coordinate decoding,
+  // and sorting/overflow are unit-tested directly against the helper in planetMissionSubtext.test.ts
+  // (and decodeColonizationTargetId in walletFlow.test.ts). The Rankings tests below cover only the
+  // component-level rendering of that subtext.
 
   test("renders the planet mission subtext under the planet row for every commander (full transparency)", () => {
     const entry = rankingEntry();
@@ -652,7 +588,9 @@ describe("RankingsPage active mission subtext", () => {
     const list = elementNodes(table).find((item) => item.props?.["data-planet-missions"] === "7");
 
     expect(list).toBeTruthy();
-    expect(visibleText(list)).toContain("Attack → here · 12m");
+    // The mission owner (0x9999…) differs from the ranked commander (0x1111…), so it reads as a
+    // third-party incoming attack that names the attacker (owner/third-party classification rework).
+    expect(visibleText(list)).toContain("Incoming Attack from 0x9999...9999 · 12m");
   });
 
   test("shows no mission subtext for a planet with no active missions", () => {

@@ -1864,7 +1864,8 @@ describe("Playable MVP app display helpers", () => {
       expect(snapshot.planetsResponse.planets).toHaveLength(1);
       expect(snapshot.fleetVisibility.outgoing.map((mission) => mission.missionId)).toEqual(["42"]);
       expect(requestedPaths).toContain(`/wallet/${wallet}/planets`);
-      expect(requestedPaths).toContain(`/wallet/${wallet}/fleet-visibility`);
+      // Hydration deliberately skips archived missions (includeArchive: false → ?archive=none).
+      expect(requestedPaths).toContain(`/wallet/${wallet}/fleet-visibility?archive=none`);
       expect(requestedPaths).not.toContain(`/wallet/${wallet}/settlement`);
       expect(requestedPaths).not.toContain(`/wallet/${wallet}/queues`);
     } finally {
@@ -1916,7 +1917,8 @@ describe("Playable MVP app display helpers", () => {
       expect(snapshot.settlement.homePlanetId).toBe("7");
       expect(snapshot.settlement.planet?.resources.metal).toBe("5000");
       expect(snapshot.planetsResponse.planets).toHaveLength(1);
-      expect(requestedPaths).toEqual([`/wallet/${wallet}/planets`, `/wallet/${wallet}/fleet-visibility`]);
+      // Hydration reads only indexed planets + active fleet visibility (?archive=none), no settlement.
+      expect(requestedPaths).toEqual([`/wallet/${wallet}/planets`, `/wallet/${wallet}/fleet-visibility?archive=none`]);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -2193,7 +2195,8 @@ describe("Playable MVP app display helpers", () => {
       expect(requestedPaths[0]).toBe(`/wallet/${wallet}/planets`);
       expect(requestedPaths).toContain(`/wallet/${wallet}/settlement`);
       expect(requestedPaths).toContain(`/wallet/${wallet}/queues`);
-      expect(requestedPaths).toContain(`/wallet/${wallet}/fleet-visibility`);
+      // Fleet visibility is fetched without archived missions during hydration (?archive=none).
+      expect(requestedPaths).toContain(`/wallet/${wallet}/fleet-visibility?archive=none`);
     } finally {
       globalThis.fetch = originalFetch;
     }
