@@ -415,6 +415,8 @@ export type ChainShipyardState = {
     count: number;
     cost: OnChainResources;
     energyPerUnit?: string;
+    // Backend-sourced predicted per-unit build time (VEY-KANEO-472).
+    durationSeconds?: number;
   }>;
   queue: QueueStateResponse | null;
   resourcesAsOfNow?: OnChainResources | null;
@@ -434,6 +436,8 @@ export type ChainDefenseState = {
     id: number;
     count: number;
     cost: OnChainResources;
+    // Backend-sourced predicted per-unit build time (VEY-KANEO-472).
+    durationSeconds?: number;
   }>;
   queue: QueueStateResponse | null;
   resourcesAsOfNow?: OnChainResources | null;
@@ -466,6 +470,8 @@ export type ChainInfrastructureState = {
     id: number;
     level: number;
     cost: OnChainResources;
+    // Backend-sourced predicted next-upgrade build time (VEY-KANEO-472).
+    durationSeconds?: number;
   }>;
   queue: QueueStateResponse | null;
 };
@@ -513,6 +519,8 @@ export type ChainResearchState = {
     id: number;
     level: number;
     cost: OnChainResources;
+    // Backend-sourced predicted next-level research time (VEY-KANEO-472).
+    durationSeconds?: number;
   }>;
   queue: QueueStateResponse | null;
   resourcesAsOfNow?: OnChainResources | null;

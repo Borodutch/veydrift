@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { formatCost } from "../buildingDetails";
+import { formatDuration } from "../durationFormat";
 import type { Resources } from "../playableMvp";
 import { timestampToMs } from "../timestampFormat";
 import type { QueueStateResponse } from "../walletFlow";
@@ -41,6 +42,9 @@ export type ProductionCatalogItem<Key extends string = string> = {
   status: "ready" | "locked" | "queued" | "unavailable";
   statusLabel: string;
   cost: Resources | undefined;
+  // Predicted build time for the selected quantity (VEY-KANEO-472). Backend-sourced
+  // per-unit duration scaled by quantity; undefined when the backend omits it.
+  durationSeconds?: number | undefined;
   requirements: ProductionRequirementState[];
   missing: string[];
   blockedReason?: string | undefined;
@@ -346,6 +350,9 @@ function SelectedProductionPanel<Key extends string>({
           <dl className="grid grid-cols-2 gap-2 text-xs">
             <Stat className="col-span-2" label="Price" value={item.cost ? formatProductionPrice(item.cost) : "-"} />
             <Stat label={item.countLabel} value={item.countValue === undefined ? "unavailable" : format(item.countValue)} />
+            {item.durationSeconds === undefined ? null : (
+              <Stat label="Build time" value={formatDuration(item.durationSeconds)} />
+            )}
           </dl>
         </div>
       )}

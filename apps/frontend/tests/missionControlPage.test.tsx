@@ -199,12 +199,11 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Mission Route Fleet");
     expect(text).not.toContain("Origin -> Target");
     // Status reads as a header pill with the live ETA (outbound) / return (returning) countdown.
-    // VEY-KANEO-433: the pill tracks the live clock — this fixture's `now` (…700_000) is past the
-    // outbound arrival (…300) and the return landing (…600), so the fleets read "Arrived"/"Returned"
-    // rather than the stale backend "Outbound"/"Returning" (see the dedicated pill test below).
-    expect(text).toContain("Arrived");
+    // VEY-KANEO-433/468: the pill tracks the live clock — this fixture's `now` (…700_000) is past the
+    // outbound arrival (…300) and the return landing (…600). Under lazy reconciliation both legs are
+    // mid-settlement, so they read "Resolving" rather than the stale backend "Outbound"/"Returning".
+    expect(text).toContain("Resolving");
     expect(text).toContain("ETA");
-    expect(text).toContain("Returned");
     expect(text).toContain("Returns");
     // Hostile inbound missions read "Incoming attack"; the player's own launches stay bare.
     expect(text).toContain("Incoming attack # 8");
@@ -785,16 +784,17 @@ describe("VEY-KANEO-433 time-aware mission status", () => {
   test("Outbound pill flips from En route to Arrived once arrival passes", () => {
     const fleet = mission({ status: "Outbound" });
     expect(missionStatusPill(fleet, beforeArrival).label).toBe("En route");
-    expect(missionStatusPill(fleet, afterArrival).label).toBe("Arrived");
+    // VEY-KANEO-468: an arrived-but-unsettled outbound leg is mid-settlement -> "Resolving".
+    expect(missionStatusPill(fleet, afterArrival).label).toBe("Resolving");
   });
 
-  test("Returning/Recalled pill flips to Returned once the fleet has landed", () => {
+  test("Returning/Recalled pill flips to Resolving once the fleet's landing time passes", () => {
     const returning = mission({ status: "Returning" });
     const recalled = mission({ status: "Recalled" });
     expect(missionStatusPill(returning, afterArrival).label).toBe("Returning");
-    expect(missionStatusPill(returning, afterReturn).label).toBe("Returned");
+    expect(missionStatusPill(returning, afterReturn).label).toBe("Resolving");
     expect(missionStatusPill(recalled, afterArrival).label).toBe("Recalled");
-    expect(missionStatusPill(recalled, afterReturn).label).toBe("Returned");
+    expect(missionStatusPill(recalled, afterReturn).label).toBe("Resolving");
   });
 
   test("terminal backend statuses pass through unchanged", () => {
@@ -805,8 +805,9 @@ describe("VEY-KANEO-433 time-aware mission status", () => {
   test("the text label mirrors the pill for the report card and shared report", () => {
     const fleet = mission({ status: "Outbound" });
     expect(missionDisplayStatusLabel(fleet, beforeArrival)).toBe("en route");
-    expect(missionDisplayStatusLabel(fleet, afterArrival)).toBe("arrived");
-    expect(missionDisplayStatusLabel(mission({ status: "Returning" }), afterReturn)).toBe("returned");
+    // VEY-KANEO-468: mid-settlement legs read "resolving" in report/text surfaces too.
+    expect(missionDisplayStatusLabel(fleet, afterArrival)).toBe("resolving");
+    expect(missionDisplayStatusLabel(mission({ status: "Returning" }), afterReturn)).toBe("resolving");
   });
 });
 

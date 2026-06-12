@@ -16,6 +16,7 @@ import {
   buildingLevelInfoRows,
   buildingUpgradeStatus,
   formatCost,
+  formatDuration,
   formatNumber,
   formatSigned,
   mineSolarPlantPrerequisiteFor,
@@ -79,6 +80,7 @@ interface InfrastructurePageProps {
   actionPendingLabel?: string | undefined;
   actionUnavailableReason?: string | undefined;
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
+  chainDurations?: Partial<Record<BuildingKey, number>> | undefined;
   hasLoadedInfrastructureState?: boolean | undefined;
   loading?: boolean | undefined;
   loadError?: string | undefined;
@@ -99,6 +101,7 @@ export function InfrastructurePage({
   actionPendingLabel,
   actionUnavailableReason,
   chainCosts,
+  chainDurations,
   hasLoadedInfrastructureState = false,
   loading = false,
   loadError,
@@ -190,6 +193,7 @@ export function InfrastructurePage({
             actionUnavailableReason={actionUnavailableReason}
             building={selectedBuilding}
             chainCost={chainCosts?.[selectedBuilding.key]}
+            chainDuration={chainDurations?.[selectedBuilding.key]}
             onOpenRequirement={onOpenRequirement}
             onUpgrade={() => onUpgrade(selectedBuilding.key)}
             now={now}
@@ -266,6 +270,7 @@ function BuildingDetailPanel({
   actionUnavailableReason,
   building,
   chainCost,
+  chainDuration,
   onOpenRequirement,
   onUpgrade,
   now,
@@ -278,6 +283,7 @@ function BuildingDetailPanel({
   actionUnavailableReason?: string | undefined;
   building: (typeof buildingCatalog)[number];
   chainCost?: Resources | undefined;
+  chainDuration?: number | undefined;
   now: number;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onUpgrade: () => void;
@@ -297,6 +303,7 @@ function BuildingDetailPanel({
   const status = buildingUpgradeStatus(state, building.key, {
     actionUnavailableReason: actionUnavailableReason ?? actionPendingLabel,
     chainCost,
+    chainDurationSeconds: chainDuration,
     now,
     spendableResources,
   });
@@ -391,6 +398,9 @@ function BuildingDetailPanel({
         ) : (
           <>
             <InspectInfoBlock label={binary ? "Build cost" : "Upgrade cost"} value={formatCost(status.cost)} />
+            {status.durationSeconds !== undefined ? (
+              <InspectInfoBlock label={binary ? "Build time" : "Upgrade time"} value={formatDuration(status.durationSeconds)} />
+            ) : null}
           </>
         )}
       </div>
@@ -569,6 +579,7 @@ export function BuildingLevelInfoModal({
                 <LevelInfoHeader className="min-w-24 whitespace-nowrap">Level</LevelInfoHeader>
                 <LevelInfoHeader className="min-w-24 whitespace-nowrap">Status</LevelInfoHeader>
                 <LevelInfoHeader className="min-w-52">Upgrade cost</LevelInfoHeader>
+                {columns.constructionTime && <LevelInfoHeader className="min-w-32">Build time</LevelInfoHeader>}
                 {columns.storage && <LevelInfoHeader className="min-w-40">Storage</LevelInfoHeader>}
                 {columns.effect && <LevelInfoHeader className="min-w-44">Effect</LevelInfoHeader>}
                 {columns.energyRequired && <LevelInfoHeader className="min-w-36">Energy use</LevelInfoHeader>}
@@ -596,6 +607,7 @@ export function BuildingLevelInfoModal({
                     {row.next && <LevelPill tone="next">Next</LevelPill>}
                   </LevelInfoCell>
                   <LevelInfoCell>{formatCost(row.cost)}</LevelInfoCell>
+                  {columns.constructionTime && <LevelInfoCell>{formatDuration(row.durationSeconds)}</LevelInfoCell>}
                   {columns.storage && (
                     <LevelInfoCell>
                       {row.storage
