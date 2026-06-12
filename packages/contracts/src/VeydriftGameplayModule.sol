@@ -533,12 +533,17 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             mission.status = FleetMissionStatus.Resolved;
             mission.returnAt = _currentTimestamp();
             activeFleetMissionCount[mission.owner] -= 1;
+            // Deploy is terminal at arrival (ships stay at target, no return leg): untrack now.
+            _untrackMissionResolution(missionId, mission);
         } else if (
             mission.missionType == FleetMissionType.Attack
                 || mission.missionType == FleetMissionType.Harvest
         ) {
             _delegateToCombatModule();
-            if (mission.status != FleetMissionStatus.Outbound) {
+            // Lazy reconcile (VEY-KANEO-468 Phase 2c): untrack only the terminal no-survivor
+            // (Resolved) battle here. A surviving fleet becomes Returning and stays enumerable until
+            // its return lands, so the lazy return settler can complete it with no keeper tx.
+            if (mission.status == FleetMissionStatus.Resolved) {
                 _untrackMissionResolution(missionId, mission);
             }
         } else {
@@ -562,6 +567,15 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
                 mission.cargo.deuterium
             );
         }
+    }
+
+    /// @notice Self-only sink (VEY-KANEO-468 Phase 2c): untracks a fully-completed mission from the
+    ///         resolution maps. The untrack machinery already lives in this module, so routing the
+    ///         deferred return-completion untrack here keeps it out of the bytecode-tight
+    ///         planet-management module while sharing one implementation.
+    function untrackResolvedFleetMission(uint256 missionId) external {
+        if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+        _untrackMissionResolution(missionId, _fleetMissions[missionId]);
     }
 
     function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32) external {

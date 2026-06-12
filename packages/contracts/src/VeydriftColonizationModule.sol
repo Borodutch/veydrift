@@ -41,6 +41,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     function startShipProduction(uint256 planetId, Ship ship, uint32 quantity) external {
         _requirePlanetOwner(planetId);
         _settleDueColonizeArrivals(msg.sender);
+        _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(planetId);
         _validateShipProduction(planetId, ship, quantity);
         ShipQueue memory activeQueue = shipQueues[planetId];
@@ -302,8 +303,11 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
             mission.status = FleetMissionStatus.Resolved;
             mission.returnAt = _currentTimestamp();
             activeFleetMissionCount[mission.owner] -= 1;
+            // Lazy reconcile (VEY-KANEO-468 Phase 2c): only the terminal no-return (Resolved)
+            // colony untracks at arrival. A blocked colony becomes Returning and stays enumerable
+            // until its return lands, so the lazy return settler can complete it with no keeper tx.
+            _untrackDirectMissionResolution(missionId, mission);
         }
-        _untrackDirectMissionResolution(missionId, mission);
 
         emit FleetMissionResolved(missionId, msg.sender, mission.missionType, mission.returnAt);
         if (mission.status == FleetMissionStatus.Returning) {

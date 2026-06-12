@@ -1585,6 +1585,52 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 3);
     }
 
+    function testFleetReturnLandsLazilyWithoutCompleteTx() public {
+        // VEY-KANEO-468 Phase 2c: a matured return leg must land the moment ANY action touches the
+        // owner — with no `completeFleetMissionReturn` keeper/user tx.
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 3);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+
+        uint256 destinationPlanetId = _createResolvedColony(player, originPlanetId, 7);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 3;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            destinationPlanetId,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            ships,
+            VeydriftGameStorage.Resources({metal: 100, crystal: 0, deuterium: 0}),
+            0
+        );
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 0);
+        assertEq(game.activeFleetMissionCount(player), 1);
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        vm.prank(player);
+        game.resolveFleetMission(missionId);
+
+        (,, uint64 returnAt,) = _fleetMission(missionId);
+        vm.warp(returnAt);
+
+        // An unrelated action (renamePlanet) lazily lands the matured return — no completeFleetMissionReturn.
+        vm.expectEmit(true, true, false, true, address(game));
+        emit PlanetShipCountChanged(originPlanetId, Ship.SmallCargo, 3);
+        vm.prank(player);
+        game.renamePlanet(originPlanetId, "lazyland");
+
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 3);
+        assertEq(game.activeFleetMissionCount(player), 0);
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
+    }
+
     function testInterplanetaryMissileAttackUsesScoreProtectionButDoesNotCountBashing() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
         _setShipCount(originPlanetId, Ship.SmallCargo, 200_000);
@@ -4899,6 +4945,73 @@ contract VeydriftGameTest is Test {
             0
         );
         game.resolveFleetMission(missionId);
+    }
+
+    /// @notice VEY-KANEO-468 Phase 2b: an arrived Attack whose randomness is fulfilled resolves
+    ///         lazily on the attacker's next ordinary mutating action — no keeper/resolve tx.
+    function testAttackArrivalLazyResolvesOnNextMutatingActionWhenRandomnessReady() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setBuildingLevel(originPlanetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 2);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+        _setResources(targetPlanetId, 10_000, 4_000, 3_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 42);
+
+        vm.prank(player);
+        game.startShipProduction(originPlanetId, Ship.SmallCargo, 1);
+
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+    }
+
+    /// @notice Lazy combat settlement must not leak the randomness-engine revert to the caller. When
+    ///         the battle seed is still pending, the mission remains Outbound and the pre-existing
+    ///         pending-mission gate remains the user-visible blocker.
+    function testAttackArrivalLazySettleSkipsPendingRandomness() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setBuildingLevel(originPlanetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 2);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+        _setResources(targetPlanetId, 10_000, 4_000, 3_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, arrivalAt)
+        );
+        game.startShipProduction(originPlanetId, Ship.SmallCargo, 1);
+
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
     }
 
     function testGenericFleetMissionRejectsInvalidTargetCapacityShipsAndTiming() public {

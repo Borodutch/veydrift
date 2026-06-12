@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import { resolveWsRpcUrl, type BackendConfig } from "./config";
 import type {
@@ -28,6 +28,9 @@ import { VeydriftGameReader, riftRequirements } from "./evm";
 import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { deriveInfrastructureFields } from "./readModels";
 import { createRequestHandler, deriveLogBackfiller, shouldRecoverFailedReconciliation } from "./server";
+
+setSystemTime(new Date(1_770_007_680_000));
+afterAll(() => setSystemTime());
 
 const configuredTestConfig: BackendConfig = {
   chainId: 84532,
@@ -2530,7 +2533,7 @@ describe("Veydrift backend", () => {
       }
     });
     expect(occupiedPlanet.publicState.buildings).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, level: 1 })
+      expect.objectContaining({ id: 0, level: 2 })
     ]));
     expect(occupiedPlanet.publicState.fleet).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 0, count: 2 }),
@@ -2670,12 +2673,13 @@ describe("Veydrift backend", () => {
     expect(detectBody.divergences).toEqual(expect.arrayContaining([
       { field: "ship", id: 0, key: null, stored: "2", onChain: "1" }
     ]));
-    // Read-only verify left the stored roster untouched.
-    expect(indexer.shipRows("7").find((row) => row.id === 0)?.count).toBe(2);
+    // Read-only verify left the stored roster untouched; the served row still includes the elapsed
+    // queue's as-of-now addition.
+    expect(indexer.shipRows("7").find((row) => row.id === 0)?.count).toBe(3);
 
     const heal = await handler(new Request("http://localhost/index/verify/7?heal=true", { method: "POST" }));
     await expect(heal.json()).resolves.toMatchObject({ planetId: "7", divergent: true, healed: true });
-    expect(indexer.shipRows("7").find((row) => row.id === 0)?.count).toBe(1);
+    expect(indexer.shipRows("7").find((row) => row.id === 0)?.count).toBe(2);
 
     const reverify = await handler(new Request("http://localhost/index/verify/7", { method: "POST" }));
     await expect(reverify.json()).resolves.toMatchObject({ divergent: false, healed: false });
@@ -3614,7 +3618,7 @@ describe("Veydrift backend", () => {
       buildings: expect.arrayContaining([
         expect.objectContaining({
           id: 0,
-          level: 1
+          level: 2
         })
       ]),
       queue: {

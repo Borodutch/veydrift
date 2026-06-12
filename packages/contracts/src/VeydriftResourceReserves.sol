@@ -19,6 +19,16 @@ interface IVeydriftColonizeArrivalSettler {
     function settleDuePlayerColonizeArrivals(address player) external;
 }
 
+/// @dev Self-call surface used by the lazy fleet reconcile to resolve a player's due Attack/Harvest
+///      combat arrivals (VEY-KANEO-468 Phase 2b). The facade exposes `settleDuePlayerCombatArrivals`
+///      (self-only) and fans it out to the planet-management module impl. Combat resolution is gated
+///      on asynchronous randomness, so each per-mission resolve is wrapped in try/catch: when the
+///      battle seed is not yet committed the resolve reverts and is skipped (mission stays pending),
+///      and the residual `_requireNoPendingMissionResolution*` gate still protects the action.
+interface IVeydriftCombatArrivalSettler {
+    function settleDuePlayerCombatArrivals(address player) external;
+}
+
 /// @notice ERC-20 reserve backing and internal resource accounting shared by gameplay modules.
 abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     using SafeCast for uint256;
@@ -54,6 +64,23 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     ///      be called from inside `_settleResources`/`_settleDuePlanet` — keep it in prologues only.
     function _settleDueColonizeArrivals(address player) internal {
         IVeydriftColonizeArrivalSettler(address(this)).settleDuePlayerColonizeArrivals(player);
+    }
+
+    /// @notice Lazy fleet reconcile, combat leg (VEY-KANEO-468 Phase 2b): resolves every Attack/Harvest
+    ///         mission `player` owns (as attacker or as the targeted defender) whose `arrivalAt` has
+    ///         elapsed AND whose battle randomness is committed — the moment any mutating call touches
+    ///         `player` — with no keeper/resolve tx. Randomness-blocked arrivals are skipped and stay
+    ///         pending; the caller's residual `_requireNoPendingMissionResolution*` gate still reverts
+    ///         only for those (the brief window before `RandomnessCommitterService` commits the seed).
+    /// @dev A single self-call into the (self-only) facade entrypoint fans out to the planet-management
+    ///      module impl, so the enumeration/resolution body lives once. Both attacker and defender are
+    ///      enumerable via `_resolutionMissionIdsByPlayer` (tracked at launch for origin AND target
+    ///      owner). `resolveFleetMission` is idempotent (no-op once status != Outbound) and the combat
+    ///      module's internal settles never re-enter a fleet reconcile, so this is bounded and
+    ///      recursion-free. Must NOT be called from inside `_settleResources`/`_settleDuePlanet` —
+    ///      keep it in action prologues only.
+    function _settleDueCombatArrivals(address player) internal {
+        IVeydriftCombatArrivalSettler(address(this)).settleDuePlayerCombatArrivals(player);
     }
 
     /// @dev Applies a player's research level once a settle observes its queue elapsed by `cutoffAt`.
@@ -419,8 +446,12 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         pure
         returns (bool)
     {
-        return missionType == FleetMissionType.Attack || missionType == FleetMissionType.Harvest
-            || missionType == FleetMissionType.Colonize;
+        // Transport/Deploy/Colonize/Attack/Harvest are enum values 0..4 (VeydriftGameStorage). All
+        // five are resolution-tracked (VEY-KANEO-468 Phase 2c enrolls Transport/Deploy so their
+        // arrivals and every return leg stay enumerable for the lazy settlers); the trailing
+        // counterplay/missile types (AcsDefend..DefenseHold) are not directly tracked. A single range
+        // check is cheaper than the per-type comparisons, clawing back bytecode at each inline site.
+        return missionType <= FleetMissionType.Harvest;
     }
 
     function _addResolutionMissionForPlanet(uint256 planetId, uint256 missionId) private {

@@ -4,6 +4,7 @@ import {
   deriveMissionAsOfNow,
   deriveQueueAsOfNow,
   nowSeconds,
+  settleQueueAsOfNow,
   withMissionAsOfNow,
   withQueueAsOfNow
 } from "./asOfNow";
@@ -53,6 +54,36 @@ describe("withQueueAsOfNow", () => {
     expect(enriched.readyAt).toBe(String(NOW + 120));
     expect(queue.asOfNow).toBeUndefined();
     expect(queue.backlog?.[0]?.asOfNow).toBeUndefined();
+  });
+
+  test("advances elapsed active entries and promotes the next backlog item", () => {
+    const result = settleQueueAsOfNow({
+      ...queue,
+      readyAt: String(NOW - 30),
+      backlog: [
+        { active: true, kind: "ship", itemId: 2, quantity: 1, readyAt: String(NOW - 10), cost: { metal: "0", crystal: "0", deuterium: "0" } },
+        { active: true, kind: "ship", itemId: 3, quantity: 1, readyAt: String(NOW + 300), cost: { metal: "0", crystal: "0", deuterium: "0" } }
+      ]
+    }, NOW);
+
+    expect(result.completed.map((entry) => entry.itemId)).toEqual([1, 2]);
+    expect(result.queue).toMatchObject({
+      itemId: 3,
+      asOfNow: { secondsRemaining: 300, complete: false }
+    });
+  });
+
+  test("returns no active queue once the full backlog is elapsed", () => {
+    const result = settleQueueAsOfNow({
+      ...queue,
+      readyAt: String(NOW - 30),
+      backlog: [
+        { active: true, kind: "ship", itemId: 2, readyAt: String(NOW - 10), cost: { metal: "0", crystal: "0", deuterium: "0" } }
+      ]
+    }, NOW);
+
+    expect(result.completed.map((entry) => entry.itemId)).toEqual([1, 2]);
+    expect(result.queue).toBeNull();
   });
 });
 

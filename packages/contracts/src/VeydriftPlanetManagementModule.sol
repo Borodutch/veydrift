@@ -9,11 +9,67 @@ import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
 import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
+/// @dev Self-call surface used by the combat lazy reconcile to drive the existing (permissionless)
+///      `resolveFleetMission` dispatch for a single due Attack/Harvest mission, wrapped in try/catch
+///      so an arrival whose randomness is not yet committed cannot brick the caller's action.
+interface IVeydriftCombatMissionResolver {
+    function resolveFleetMission(uint256 missionId) external;
+}
+
+/// @dev Self-call surface routing the deferred return-completion untrack to the gameplay module,
+///      which already carries the untrack machinery — keeping it out of this bytecode-tight module.
+interface IVeydriftResolvedMissionUntracker {
+    function untrackResolvedFleetMission(uint256 missionId) external;
+}
+
 /// @notice Delegatecall target for colony and planet metadata/destruction paths.
 contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     bytes4 private constant ATTACK_PROTECTION_STATUS_SELECTOR = 0x8a6b2246;
 
     constructor() VeydriftResourceReserves(address(0)) {}
+
+    /// @notice Lazy fleet reconcile, combat leg (VEY-KANEO-468 Phase 2b). Self-only via the facade
+    ///         gate. Resolves every due Attack/Harvest mission `player` owns (attacker or targeted
+    ///         defender) whose battle randomness is committed, so combat lands on the player's next
+    ///         mutating call — no keeper/resolve tx.
+    /// @dev Iterates a memory snapshot of the player's tracked mission ids, so the swap-and-pop
+    ///      untrack inside `resolveFleetMission` cannot disturb iteration. Each resolve is wrapped in
+    ///      try/catch: a `PendingRandomness` revert (seed not yet committed) is swallowed, leaving the
+    ///      mission Outbound/tracked for a later call. `resolveFleetMission` is idempotent once
+    ///      status != Outbound and the combat module's internal settles never re-enter a fleet
+    ///      reconcile, so this is bounded and recursion-free.
+    function settleDuePlayerCombatArrivals(address player) external {
+        uint256[] memory missionIds = _resolutionMissionIdsByPlayer[player];
+        uint64 nowTimestamp = uint64(block.timestamp);
+        for (uint256 index = 0; index < missionIds.length;) {
+            FleetMission storage mission = _fleetMissions[missionIds[index]];
+            if (
+                mission.status == FleetMissionStatus.Outbound
+                    && (mission.missionType == FleetMissionType.Attack
+                        || mission.missionType == FleetMissionType.Harvest)
+                    && nowTimestamp >= mission.arrivalAt
+            ) {
+                try IVeydriftCombatMissionResolver(address(this))
+                    .resolveFleetMission(missionIds[index]) {}
+                    catch {}
+            } else if (
+                (mission.status == FleetMissionStatus.Returning
+                        || mission.status == FleetMissionStatus.Recalled)
+                    && nowTimestamp >= mission.returnAt
+                    && _earliestPendingMissionArrivalForPlanet(mission.originPlanetId)
+                        == type(uint64).max
+            ) {
+                // Lazy reconcile (VEY-KANEO-468 Phase 2c): land every matured return leg the player
+                // owns the moment any action touches them — no `completeFleetMissionReturn` tx. The
+                // pending-resolution guard preserves combat-snapshot integrity (a return never lands
+                // across an unresolved Attack/Harvest arrival on the origin planet).
+                _landFleetReturn(missionIds[index], mission);
+            }
+            unchecked {
+                ++index;
+            }
+        }
+    }
 
     function launchInterplanetaryMissileAttack(
         uint256 originPlanetId,
@@ -27,6 +83,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         if (originPlanetId == targetPlanetId) revert SamePlanet();
         Planet storage target = _planets[targetPlanetId];
         if (target.owner == address(0)) revert NoPlanet();
+        _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
         if (primaryTarget > Defense.LargeShieldDome) revert InvalidMissileTarget(primaryTarget);
@@ -84,6 +141,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     function renamePlanet(uint256 planetId, string calldata name) external {
         _requirePlanetOwner(planetId);
+        _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(planetId);
         uint256 length = bytes(name).length;
         if (length == 0 || length > 32) revert InvalidPlanetName();
@@ -94,6 +152,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     function abandonPlanet(uint256 planetId) external {
         _requirePlanetOwner(planetId);
+        _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(planetId);
         if (homePlanetOf[msg.sender] == planetId) revert CannotAbandonHomePlanet();
         if (
@@ -125,6 +184,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     function depositMarketResource(uint256 planetId, Resource resource, uint128 amount) external {
         _requirePlanetOwner(planetId);
         _settleDueColonizeArrivals(msg.sender);
+        _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(planetId);
         _requireRiftUnlocked(planetId);
         if (amount == 0) revert InvalidQuantity();
@@ -140,6 +200,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         external
     {
         _requirePlanetOwner(planetId);
+        _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(planetId);
         _requireRiftUnlocked(planetId);
         if (amount == 0) revert InvalidQuantity();
@@ -165,6 +226,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     function finishMarketResourceWithdrawal(Resource resource) external {
         ResourceWithdrawal memory withdrawal = resourceWithdrawals[msg.sender][resource];
         if (!withdrawal.active) revert WithdrawalInactive(resource);
+        _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(withdrawal.planetId);
         if (_currentTimestamp() < withdrawal.unlocksAt) {
             revert WithdrawalNotReady(withdrawal.unlocksAt);
@@ -220,20 +282,36 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         ) {
             revert FleetMissionNotResolved(mission.returnAt);
         }
+        _settleDueCombatArrivals(msg.sender);
+        // The prologue settle runs the lazy return settler, which may already have landed this very
+        // mission (VEY-KANEO-468 Phase 2c). If so the leg is Returned — the credit happened this tx,
+        // so report success rather than double-crediting (which would underflow activeFleetMissionCount).
+        if (mission.status == FleetMissionStatus.Returned) return;
         _requireNoPendingMissionResolutionForPlanet(mission.originPlanetId);
         if (_currentTimestamp() < mission.returnAt) revert FleetNotArrived(mission.returnAt);
 
+        _landFleetReturn(missionId, mission);
+    }
+
+    /// @dev Credits a matured return leg's cargo + ships back to its origin planet and untracks the
+    ///      mission (VEY-KANEO-468 Phase 2c: deferred from arrival to return-completion so the leg
+    ///      stays enumerable for the lazy return settler). Caller must have already confirmed the
+    ///      mission is Returning/Recalled, its `returnAt` has elapsed, and no unresolved combat
+    ///      arrival is pending on the origin planet (the combat-snapshot integrity gate).
+    function _landFleetReturn(uint256 missionId, FleetMission storage mission) private {
         _planets[mission.originPlanetId].resources =
             _add(_planets[mission.originPlanetId].resources, mission.cargo);
         _creditMissionShips(mission.originPlanetId, mission.ships);
         mission.status = FleetMissionStatus.Returned;
         activeFleetMissionCount[mission.owner] -= 1;
+        IVeydriftResolvedMissionUntracker(address(this)).untrackResolvedFleetMission(missionId);
         emit FleetMissionReturned(missionId, mission.owner, mission.originPlanetId);
     }
 
     function startResearch(uint256 planetId, Technology technology) external {
         _requirePlanetOwner(planetId);
         _settleDueColonizeArrivals(msg.sender);
+        _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlayer(msg.sender);
         if (researchQueues[msg.sender].active) revert QueueActive();
 
@@ -263,6 +341,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     }
 
     function finishResearch() external {
+        _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlayer(msg.sender);
         ResearchQueue memory queue = researchQueues[msg.sender];
         if (!queue.active) revert QueueInactive();
