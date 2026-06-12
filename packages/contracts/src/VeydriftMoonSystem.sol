@@ -464,6 +464,9 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
 
     function startMoonBuildingUpgrade(uint256 planetId, MoonBuilding building) external {
         _requireMoonOwner(planetId);
+        // Lazy on-chain reconciliation (VEY-KANEO-468): a due moon-building construction completes on
+        // the next moon interaction, so the owner can immediately queue the next without a finish tx.
+        _settleMoonBuildingDue(planetId);
         if (moonBuildingConstructions[planetId].active) revert ConstructionActive();
 
         uint16 currentLevel = _moonBuildingLevels[planetId][building];
@@ -487,14 +490,28 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         );
     }
 
+    /// @dev Back-compat explicit finish. No longer required for completion (a due construction settles
+    ///      lazily on the next moon interaction via `_settleMoonBuildingDue`); kept so old callers and
+    ///      tests that finish a ready construction still succeed. Reverts when nothing is due.
     function finishMoonBuildingUpgrade(uint256 planetId) external {
         _requireMoonOwner(planetId);
-        MoonBuildingConstruction memory construction = moonBuildingConstructions[planetId];
+        MoonBuildingConstruction storage construction = moonBuildingConstructions[planetId];
         if (!construction.active) revert ConstructionInactive();
         if (_currentTimestamp() < construction.readyAt) {
             revert ConstructionNotReady(construction.readyAt);
         }
+        _settleMoonBuildingDue(planetId);
+    }
 
+    /// @dev Lazy on-chain reconciliation (VEY-KANEO-468): apply a moon-building construction whose
+    ///      `readyAt` has elapsed. Idempotent and a no-op when nothing is due, so it is safe to call
+    ///      at the top of every moon mutating path. This is the (now redundant) body of
+    ///      `finishMoonBuildingUpgrade`, generalized so no finish tx is required for completion.
+    function _settleMoonBuildingDue(uint256 planetId) internal {
+        MoonBuildingConstruction memory construction = moonBuildingConstructions[planetId];
+        if (!construction.active || _currentTimestamp() < construction.readyAt) {
+            return;
+        }
         delete moonBuildingConstructions[planetId];
         _moonBuildingLevels[planetId][construction.building] = construction.targetLevel;
         if (construction.building == MoonBuilding.LunarBase) {
@@ -522,6 +539,10 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         if (originMoonPlanetId == destinationMoonPlanetId) revert SameMoon();
         _requireMoonOwner(originMoonPlanetId);
         _requireMoonOwner(destinationMoonPlanetId);
+        // Lazy on-chain reconciliation (VEY-KANEO-468): settle any due moon-building constructions on
+        // both moons this call touches before resolving the jump.
+        _settleMoonBuildingDue(originMoonPlanetId);
+        _settleMoonBuildingDue(destinationMoonPlanetId);
         _requireJumpGate(originMoonPlanetId);
         _requireJumpGate(destinationMoonPlanetId);
 

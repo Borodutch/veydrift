@@ -124,6 +124,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     function depositMarketResource(uint256 planetId, Resource resource, uint128 amount) external {
         _requirePlanetOwner(planetId);
+        _settleDueColonizeArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(planetId);
         _requireRiftUnlocked(planetId);
         if (amount == 0) revert InvalidQuantity();
@@ -232,6 +233,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     function startResearch(uint256 planetId, Technology technology) external {
         _requirePlanetOwner(planetId);
+        _settleDueColonizeArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlayer(msg.sender);
         if (researchQueues[msg.sender].active) revert QueueActive();
 
@@ -366,24 +368,23 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     function _settleResources(uint256 planetId) private {
         uint64 currentTime = _currentTimestamp();
         Planet storage planetRef = _planets[planetId];
-        if (currentTime <= planetRef.lastSettledAt) {
-            return;
+        if (currentTime > planetRef.lastSettledAt) {
+            uint256 elapsed = uint256(currentTime) - planetRef.lastSettledAt;
+            (uint256 metalPerHour, uint256 crystalPerHour, uint256 deutPerHour) =
+                _productionPerHour(planetId);
+            Resources memory produced = Resources({
+                metal: _toUint128((metalPerHour * elapsed) / 1 hours),
+                crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
+                deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
+            });
+            (, Resources memory added) =
+                _cappedResourceIncrease(planetId, planetRef.resources, produced);
+            added = _reserveLimitedIncrease(added);
+            _increaseInternalResources(added);
+            planetRef.resources = _add(planetRef.resources, added);
+            planetRef.lastSettledAt = currentTime;
         }
-
-        uint256 elapsed = uint256(currentTime) - planetRef.lastSettledAt;
-        (uint256 metalPerHour, uint256 crystalPerHour, uint256 deutPerHour) =
-            _productionPerHour(planetId);
-        Resources memory produced = Resources({
-            metal: _toUint128((metalPerHour * elapsed) / 1 hours),
-            crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
-            deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
-        });
-        (, Resources memory added) =
-            _cappedResourceIncrease(planetId, planetRef.resources, produced);
-        added = _reserveLimitedIncrease(added);
-        _increaseInternalResources(added);
-        planetRef.resources = _add(planetRef.resources, added);
-        planetRef.lastSettledAt = currentTime;
+        _settleDuePlanet(planetId);
     }
 
     function _spend(uint256 planetId, Resources memory cost) private {

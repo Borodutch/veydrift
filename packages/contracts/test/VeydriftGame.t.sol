@@ -589,13 +589,12 @@ contract VeydriftGameTest is Test {
         assertEq(construction.cost.deuterium, 0);
         assertEq(construction.readyAt, block.timestamp + 108);
 
+        // Before readyAt the lazy reconcile is a no-op: the upgrade stays pending (VEY-KANEO-468 —
+        // finishBuildingUpgrade is now a thin wrapper that runs the reconcile, it no longer reverts).
         vm.prank(player);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftGameStorage.ConstructionNotReady.selector, construction.readyAt
-            )
-        );
         game.finishBuildingUpgrade(planetId);
+        assertTrue(game.activeBuildingConstruction(planetId).active);
+        assertEq(game.buildingLevel(planetId, Building.MetalMine), 0);
 
         vm.warp(construction.readyAt);
         vm.prank(player);
@@ -621,7 +620,7 @@ contract VeydriftGameTest is Test {
         );
     }
 
-    function testBuildingCompletionRejectsBeforeDisplayedReadyAt() public {
+    function testBuildingCompletionDoesNotApplyBeforeDisplayedReadyAt() public {
         address account = address(0xB005);
         vm.deal(account, 1 ether);
         vm.prank(account);
@@ -633,14 +632,13 @@ contract VeydriftGameTest is Test {
             game.activeBuildingConstruction(planetId);
         assertEq(construction.readyAt, block.timestamp + 432);
 
+        // One second before readyAt the lazy reconcile must NOT complete the upgrade (VEY-KANEO-468);
+        // it stays pending at the current level rather than reverting.
         vm.warp(construction.readyAt - 1);
         vm.prank(account);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftGameStorage.ConstructionNotReady.selector, construction.readyAt
-            )
-        );
         game.finishBuildingUpgrade(planetId);
+        assertTrue(game.activeBuildingConstruction(planetId).active);
+        assertEq(game.buildingLevel(planetId, Building.DeuteriumSynthesizer), 0);
 
         vm.warp(construction.readyAt);
         vm.prank(account);
@@ -1820,6 +1818,132 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(planetId, Ship.SmallCargo), 2);
     }
 
+    // VEY-KANEO-468: lazy on-chain reconciliation. A production queue whose `readyAt` has elapsed is
+    // applied by the next mutating interaction with the planet/owner, with no dedicated finish* tx.
+    function testMutatingCallSettlesDueShipAndDefenseWithoutFinishTx() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setBuildingLevel(planetId, Building.ResearchLab, 1);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 1_000_000, 1_000_000, 1_000_000);
+
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 2);
+        vm.prank(player);
+        game.startDefenseProduction(planetId, Defense.RocketLauncher, 3);
+
+        VeydriftGameStorage.ShipQueue memory shipQueue = game.shipQueue(planetId);
+        VeydriftGameStorage.DefenseQueue memory defenseQueue = game.defenseQueue(planetId);
+        vm.warp(shipQueue.readyAt > defenseQueue.readyAt ? shipQueue.readyAt : defenseQueue.readyAt);
+
+        // No finishShipProduction / finishDefenseProduction call. An unrelated mutating interaction
+        // (starting research) must settle both due queues on-chain.
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Energy);
+
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 2);
+        assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 3);
+        assertFalse(game.shipQueue(planetId).active);
+        assertFalse(game.defenseQueue(planetId).active);
+    }
+
+    // VEY-KANEO-468: research (player-scoped) is applied lazily by the player's next mutating call.
+    function testMutatingCallSettlesDueResearchWithoutFinishTx() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.ResearchLab, 1);
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 1_000_000, 1_000_000, 1_000_000);
+
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Energy);
+        VeydriftGameStorage.ResearchQueue memory researchQueue = game.researchQueue(player);
+        vm.warp(researchQueue.readyAt);
+
+        // No finishResearch call. A subsequent mutating interaction (starting ship production)
+        // must apply the researched level on-chain.
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 1);
+
+        assertEq(game.technologyLevel(player, Technology.Energy), 1);
+        assertFalse(game.researchQueue(player).active);
+    }
+
+    // VEY-KANEO-468: one lazy reconcile drains the entire ready production backlog (bounded loop:
+    // active + every ready backlog entry), and re-running it applies nothing further (idempotent).
+    function testLazySettleDrainsFullProductionBacklogAndIsIdempotent() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setBuildingLevel(planetId, Building.ResearchLab, 1);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 1_000_000, 1_000_000, 1_000_000);
+
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 2);
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.LightFighter, 3);
+
+        VeydriftGameStorage.ShipQueue[] memory backlog = game.shipQueueBacklog(planetId);
+        assertEq(backlog.length, 1);
+        vm.warp(backlog[0].readyAt); // both the active SmallCargo batch and the LightFighter backlog are now due
+
+        // A single unrelated mutating call settles the active batch AND the ready backlog batch.
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Energy);
+
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 2);
+        assertEq(game.shipCount(planetId, Ship.LightFighter), 3);
+        assertFalse(game.shipQueue(planetId).active);
+        assertEq(game.shipQueueBacklog(planetId).length, 0);
+
+        // Idempotent: a further mutating call does not re-credit the already-settled batches.
+        _setResources(planetId, 1_000_000, 1_000_000, 1_000_000);
+        vm.prank(player);
+        game.startDefenseProduction(planetId, Defense.RocketLauncher, 1);
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 2);
+        assertEq(game.shipCount(planetId, Ship.LightFighter), 3);
+    }
+
+    // VEY-KANEO-468 cross-player: an attack's impact-time snapshot settles the defender's due
+    // (player-scoped) research before combat, without the defender taking any action of their own.
+    function testAttackImpactSettlesDefenderDueResearch() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _setBuildingLevel(targetPlanetId, Building.ResearchLab, 1);
+        _setResources(targetPlanetId, 1_000_000, 1_000_000, 1_000_000);
+
+        vm.prank(defender);
+        game.startResearch(targetPlanetId, Technology.Energy);
+        VeydriftGameStorage.ResearchQueue memory researchQueue = game.researchQueue(defender);
+        vm.warp(researchQueue.readyAt); // research is now due but the defender never settles it
+
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            340
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        assertGe(arrivalAt, researchQueue.readyAt);
+        assertEq(game.technologyLevel(defender, Technology.Energy), 0); // not applied before resolution
+
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 340);
+        game.resolveFleetMission(missionId);
+
+        assertEq(game.technologyLevel(defender, Technology.Energy), 1); // settled at impact
+        assertFalse(game.researchQueue(defender).active);
+    }
+
     function testShipProductionAppendsMatchingActiveQueue() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
@@ -2110,6 +2234,95 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(colonyPlanetId).resources.metal, 300);
         assertEq(game.planet(colonyPlanetId).resources.crystal, 200);
         assertEq(game.planet(colonyPlanetId).resources.deuterium, 100);
+    }
+
+    /// @notice VEY-KANEO-468 Phase 2a: an arrived Colonize mission resolves lazily on the owner's
+    ///         next mutating action (here `startShipProduction`, which runs the player-scoped Colonize
+    ///         reconcile in its prologue) — no explicit `resolveFleetMission`/keeper tx.
+    function testColonizeArrivalLazyResolvesOnNextMutatingAction() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 2, 44, 8);
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setBuildingLevel(originPlanetId, Building.Shipyard, 2);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            _colonizationTargetId(2, 44, 9),
+            VeydriftGameStorage.FleetMissionType.Colonize,
+            _colonyShipManifest(),
+            VeydriftGameStorage.Resources({metal: 300, crystal: 200, deuterium: 100}),
+            100,
+            0
+        );
+        (VeydriftGameStorage.FleetMissionStatus status, uint64 arrivalAt,,) =
+            _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(game.planetCountOf(player), 1);
+
+        // Fleet has arrived but no resolve tx was sent. An unrelated mutating action must settle it.
+        vm.warp(uint256(arrivalAt) + 1 hours);
+        vm.prank(player);
+        game.startShipProduction(originPlanetId, Ship.SmallCargo, 1);
+
+        (status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        assertEq(game.planetCountOf(player), 2);
+        assertEq(game.planet(2).owner, player);
+        assertEq(game.activeFleetMissionCount(player), 0);
+    }
+
+    /// @notice The lazy Colonize reconcile is a no-op before arrival (mission stays Outbound, no
+    ///         colony) and idempotent after (a second mutating action creates no second colony).
+    function testColonizeLazyResolveRespectsArrivalAndIsIdempotent() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 2, 44, 8);
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setBuildingLevel(originPlanetId, Building.Shipyard, 2);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            _colonizationTargetId(2, 44, 9),
+            VeydriftGameStorage.FleetMissionType.Colonize,
+            _colonyShipManifest(),
+            VeydriftGameStorage.Resources({metal: 300, crystal: 200, deuterium: 100}),
+            100,
+            0
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        // Before arrival: the reconcile must NOT resolve — mission stays Outbound, no colony.
+        vm.warp(uint256(arrivalAt) - 1);
+        vm.prank(player);
+        game.startShipProduction(originPlanetId, Ship.SmallCargo, 1);
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(game.planetCountOf(player), 1);
+
+        // After arrival: first action resolves it.
+        vm.warp(uint256(arrivalAt) + 1);
+        vm.prank(player);
+        game.startShipProduction(originPlanetId, Ship.SmallCargo, 1);
+        (status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        assertEq(game.planetCountOf(player), 2);
+
+        // Idempotent: a further action creates no second colony and does not revert.
+        vm.warp(uint256(arrivalAt) + 2);
+        vm.prank(player);
+        game.startShipProduction(originPlanetId, Ship.SmallCargo, 1);
+        assertEq(game.planetCountOf(player), 2);
     }
 
     function testColonizationReturnsIfCoordinatesBecomeOccupiedBeforeArrival() public {
@@ -3355,15 +3568,17 @@ contract VeydriftGameTest is Test {
         _setTechnologyLevel(defender, Technology.CombustionDrive, 1);
         _setResources(targetPlanetId, 100_000, 100_000, 100_000);
 
+        // Both queues are started before either is ready and the defender takes no further action,
+        // so they stay pending until the attack's impact-time snapshot settles them. (VEY-KANEO-468:
+        // any intervening defender mutation would lazily settle an already-ready queue sooner — see
+        // testMutatingCallSettlesDueShipAndDefenseWithoutFinishTx.)
         vm.prank(defender);
         game.startShipProduction(targetPlanetId, Ship.LightFighter, 1);
-        VeydriftGameStorage.ShipQueue memory shipQueue = game.shipQueue(targetPlanetId);
-        vm.warp(shipQueue.readyAt);
-
         vm.prank(defender);
         game.startDefenseProduction(targetPlanetId, Defense.RocketLauncher, 1);
+        VeydriftGameStorage.ShipQueue memory shipQueue = game.shipQueue(targetPlanetId);
         VeydriftGameStorage.DefenseQueue memory defenseQueue = game.defenseQueue(targetPlanetId);
-        vm.warp(defenseQueue.readyAt);
+        vm.warp(shipQueue.readyAt > defenseQueue.readyAt ? shipQueue.readyAt : defenseQueue.readyAt);
 
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);

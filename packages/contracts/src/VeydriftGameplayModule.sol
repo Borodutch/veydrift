@@ -582,6 +582,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function _settleResources(uint256 planetId) private {
         uint64 currentTime = _currentTimestamp();
         _settleResourcesUntil(planetId, currentTime);
+        _settleDuePlanet(planetId);
     }
 
     function _settleAttackTargetSnapshot(uint256 planetId, uint64 impactAt) private {

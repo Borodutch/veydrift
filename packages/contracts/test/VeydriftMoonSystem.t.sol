@@ -635,6 +635,36 @@ contract VeydriftMoonSystemTest is Test {
         moons.jumpGateJumpShips(planetId, secondPlanetId, ships);
     }
 
+    // VEY-KANEO-468: a due moon-building construction completes lazily on the next moon interaction,
+    // with no finishMoonBuildingUpgrade tx required.
+    function testMoonBuildingSettlesLazilyWithoutFinishTx() public {
+        uint256 planetId = _startPlanet();
+        _fundPlanet(planetId, 3_000_000, 5_000_000, 3_000_000);
+        _createMoon(planetId);
+        _buildMoon(planetId, MoonBuilding.LunarBase); // level 1 (provides fields)
+
+        // Start a LunarBase L1->L2 upgrade and warp past readyAt, but do NOT call finish.
+        vm.prank(player);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.LunarBase);
+        VeydriftMoonSystem.MoonBuildingConstruction memory due =
+            moons.activeMoonBuildingConstruction(planetId);
+        assertEq(due.targetLevel, 2);
+        vm.warp(due.readyAt);
+        assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.LunarBase), 1); // unsettled pre-touch
+
+        // A subsequent mutating interaction must settle the due construction (no finish tx) and then
+        // start the next one.
+        vm.prank(player);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.LunarBase);
+
+        assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.LunarBase), 2);
+        VeydriftMoonSystem.MoonBuildingConstruction memory next =
+            moons.activeMoonBuildingConstruction(planetId);
+        assertTrue(next.active);
+        assertEq(uint8(next.building), uint8(MoonBuilding.LunarBase));
+        assertEq(next.targetLevel, 3);
+    }
+
     function _startPlanet() internal returns (uint256 planetId) {
         vm.prank(player);
         planetId = game.startPlanet{value: 0.05 ether}();
