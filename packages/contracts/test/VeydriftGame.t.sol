@@ -1873,6 +1873,42 @@ contract VeydriftGameTest is Test {
         assertFalse(game.researchQueue(player).active);
     }
 
+    // VEY-KANEO-468: one lazy reconcile drains the entire ready production backlog (bounded loop:
+    // active + every ready backlog entry), and re-running it applies nothing further (idempotent).
+    function testLazySettleDrainsFullProductionBacklogAndIsIdempotent() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setBuildingLevel(planetId, Building.ResearchLab, 1);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 1_000_000, 1_000_000, 1_000_000);
+
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 2);
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.LightFighter, 3);
+
+        VeydriftGameStorage.ShipQueue[] memory backlog = game.shipQueueBacklog(planetId);
+        assertEq(backlog.length, 1);
+        vm.warp(backlog[0].readyAt); // both the active SmallCargo batch and the LightFighter backlog are now due
+
+        // A single unrelated mutating call settles the active batch AND the ready backlog batch.
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Energy);
+
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 2);
+        assertEq(game.shipCount(planetId, Ship.LightFighter), 3);
+        assertFalse(game.shipQueue(planetId).active);
+        assertEq(game.shipQueueBacklog(planetId).length, 0);
+
+        // Idempotent: a further mutating call does not re-credit the already-settled batches.
+        _setResources(planetId, 1_000_000, 1_000_000, 1_000_000);
+        vm.prank(player);
+        game.startDefenseProduction(planetId, Defense.RocketLauncher, 1);
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 2);
+        assertEq(game.shipCount(planetId, Ship.LightFighter), 3);
+    }
+
     function testShipProductionAppendsMatchingActiveQueue() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
