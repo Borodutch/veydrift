@@ -2,6 +2,7 @@ import type { BuildingKey, PlayableState, ResearchKey, Resources } from "./playa
 import {
   buildingEnergyProduction,
   buildingCost,
+  buildingDurationEstimate,
   buildingRequirementsFor,
   canAfford,
   allianceDepotSupportCapacity,
@@ -29,6 +30,9 @@ export type BuildingUpgradeStatus = {
   disabled: boolean;
   reason: string;
   targetLevel: number;
+  // Backend-sourced predicted time to complete the next upgrade (VEY-KANEO-472).
+  // Undefined when the backend has not supplied it (e.g. legacy/live-read payloads).
+  durationSeconds?: number | undefined;
 };
 
 export type BuildingEnergyDetail =
@@ -57,6 +61,10 @@ const solarPrerequisiteMineKeys = new Set<BuildingKey>([
 export type BuildingLevelInfoRow = {
   cost: Resources;
   current: boolean;
+  // Per-level predicted build time for the reference table (VEY-KANEO-472). This
+  // static catalogue already derives cost/energy/storage client-side, so the duration
+  // column is restored the same way using the conformance-tested formula helper.
+  durationSeconds: number;
   effect?: string;
   energyProduced?: number;
   energyRequired?: number;
@@ -70,6 +78,7 @@ export type BuildingLevelInfoRow = {
 };
 
 export type BuildingLevelInfoColumns = {
+  constructionTime: boolean;
   effect: boolean;
   deuteriumConsumed: boolean;
   energyProduced: boolean;
@@ -83,11 +92,13 @@ export function buildingUpgradeStatus(
   options: {
     actionUnavailableReason?: string | undefined;
     chainCost?: Resources | undefined;
+    chainDurationSeconds?: number | undefined;
     now?: number | undefined;
     spendableResources?: Resources | undefined;
   } = {},
 ): BuildingUpgradeStatus {
   const cost = options.chainCost ?? buildingCost(state.buildings, key);
+  const durationSeconds = options.chainDurationSeconds;
   const spendable = options.spendableResources ?? state.resources;
   const binary = isBinaryBuilding(key);
   const currentLevel = state.buildings[key];
@@ -99,6 +110,7 @@ export function buildingUpgradeStatus(
       disabled: true,
       reason: "Rift bridge built on this planet",
       targetLevel,
+      durationSeconds,
     };
   }
 
@@ -108,6 +120,7 @@ export function buildingUpgradeStatus(
       disabled: true,
       reason: options.actionUnavailableReason,
       targetLevel,
+      durationSeconds,
     };
   }
 
@@ -124,6 +137,7 @@ export function buildingUpgradeStatus(
         ? `${queuedBuildingLabel} upgrade in progress`
         : `Another building is currently upgrading: ${queuedBuildingLabel}`,
       targetLevel,
+      durationSeconds,
     };
   }
 
@@ -134,6 +148,7 @@ export function buildingUpgradeStatus(
       disabled: true,
       reason: `Requires ${solarPrerequisite}`,
       targetLevel,
+      durationSeconds,
     };
   }
 
@@ -144,6 +159,7 @@ export function buildingUpgradeStatus(
       disabled: true,
       reason: `Requires ${formatBuildingRequirement(missingRequirement)}`,
       targetLevel,
+      durationSeconds,
     };
   }
 
@@ -153,6 +169,7 @@ export function buildingUpgradeStatus(
       disabled: true,
       reason: formatMissingResources(spendable, cost),
       targetLevel,
+      durationSeconds,
     };
   }
 
@@ -161,6 +178,7 @@ export function buildingUpgradeStatus(
     disabled: false,
     reason: binary ? "Ready to build Rift bridge" : `Ready for Level ${targetLevel}`,
     targetLevel,
+    durationSeconds,
   };
 }
 
@@ -182,6 +200,7 @@ export function buildingLevelInfoRows(
     const row: BuildingLevelInfoRow = {
       cost,
       current: currentLevel === level,
+      durationSeconds: buildingDurationEstimate(preUpgradeBuildings, cost),
       level,
       next: currentLevel + 1 === level,
     };
@@ -218,6 +237,7 @@ export function buildingLevelInfoRows(
 
 export function buildingLevelInfoColumns(rows: BuildingLevelInfoRow[]): BuildingLevelInfoColumns {
   return {
+    constructionTime: rows.some((row) => row.durationSeconds !== undefined),
     deuteriumConsumed: rows.some((row) => row.deuteriumConsumed !== undefined),
     effect: rows.some((row) => row.effect !== undefined),
     energyProduced: rows.some((row) => row.energyProduced !== undefined),

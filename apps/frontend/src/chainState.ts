@@ -100,6 +100,22 @@ export function buildingCosts(infrastructureState: ChainInfrastructureState | nu
   ) as Partial<Record<BuildingKey, Resources>>;
 }
 
+// Backend-sourced predicted next-upgrade durations per building (VEY-KANEO-472). Paired
+// with buildingCosts so the detail panel renders "Build time"/"Upgrade time" from the
+// server value instead of re-deriving it on the client (regressed by #821).
+export function buildingDurations(
+  infrastructureState: ChainInfrastructureState | null,
+): Partial<Record<BuildingKey, number>> {
+  if (!infrastructureState) return {};
+
+  return Object.fromEntries(
+    buildingCatalog.flatMap((building) => {
+      const row = infrastructureState.buildings.find((item) => item.id === buildingContractIds[building.key]);
+      return typeof row?.durationSeconds === "number" ? [[building.key, row.durationSeconds]] : [];
+    }),
+  ) as Partial<Record<BuildingKey, number>>;
+}
+
 export function buildingLevels(infrastructureState: ChainInfrastructureState): PlayableState["buildings"] {
   return Object.fromEntries(
     buildingCatalog.map((building) => {

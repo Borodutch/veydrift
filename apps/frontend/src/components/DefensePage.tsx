@@ -235,6 +235,10 @@ export function defenseProductionItems({
     const parsedQuantity = parseProductionQuantity(quantityInput);
     const quantity = parsedQuantity ?? 1;
     const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
+    // Backend-sourced per-unit build time scaled by the selected quantity (VEY-KANEO-472).
+    const durationSeconds = chainDefense?.durationSeconds === undefined
+      ? undefined
+      : chainDefense.durationSeconds * quantity;
     const missing = getMissingRequirements(defense, defenseState);
     const requirements = getDefenseRequirementStates(defense, defenseState);
     const limitReason = getDefenseLimitReason(defense.key, quantity, defenseState, queue);
@@ -259,6 +263,7 @@ export function defenseProductionItems({
       asset: defense.asset,
       blockedReason,
       cost: totalCost,
+      ...(durationSeconds === undefined ? {} : { durationSeconds }),
       countLabel: "Deployed",
       countValue: deployed,
       detailNote: stats || (defense.group === "missile" ? "Missile support system" : "Planetary defense"),

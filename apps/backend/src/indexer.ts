@@ -858,14 +858,15 @@ export class SettlementIndexer {
     });
   }
 
-  shipRows(planetId: string): ShipyardState["ships"] {
+  shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
     return deriveShipRows(
       (id) => this.asOfNowCount(
         this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
         this.queueSettlement(`ship:${planetId}`).completed,
         id
       ),
-      this.planet(planetId)?.temperature
+      this.planet(planetId)?.temperature,
+      durationLevels
     );
   }
 
@@ -878,14 +879,15 @@ export class SettlementIndexer {
   // (applyShipCountChangedEvent), so a fleet that has departed is already debited and a fleet that
   // returned (minus combat losses) is already credited, with no departed-ships projection or reconcile
   // needed. Builds emit ShipCompleted, also applied. (VEY-KANEO-461)
-  availableShipRows(planetId: string): ShipyardState["ships"] {
+  availableShipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
     return deriveShipRows(
       (id) => this.asOfNowCount(
         this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
         this.queueSettlement(`ship:${planetId}`).completed,
         id
       ),
-      this.planet(planetId)?.temperature
+      this.planet(planetId)?.temperature,
+      durationLevels
     );
   }
 
@@ -945,12 +947,12 @@ export class SettlementIndexer {
     }
   }
 
-  defenseRows(planetId: string): DefenseState["defenses"] {
+  defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
     return deriveDefenseRows((id) => this.asOfNowCount(
       this.indexedLevel("contract_defense_counts", "defense_id", planetId, id),
       this.queueSettlement(`defense:${planetId}`).completed,
       id
-    ));
+    ), durationLevels);
   }
 
   technologyLevels(wallet: `0x${string}`): Record<string, number> {
@@ -970,9 +972,9 @@ export class SettlementIndexer {
     return levels;
   }
 
-  technologyRows(wallet: `0x${string}`): ResearchState["technologies"] {
+  technologyRows(wallet: `0x${string}`, labLevel?: number): ResearchState["technologies"] {
     const levels = this.technologyLevels(wallet);
-    return deriveTechnologyRows((id) => levels[String(id)] ?? 0);
+    return deriveTechnologyRows((id) => levels[String(id)] ?? 0, labLevel);
   }
 
   private queueSettlement(queueKeyValue: string) {
