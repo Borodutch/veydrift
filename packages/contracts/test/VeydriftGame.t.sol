@@ -609,6 +609,35 @@ contract VeydriftGameTest is Test {
         assertEq(nextCost.deuterium, 0);
     }
 
+    // VEY-KANEO-477: a building construction whose `readyAt` has elapsed must lazy-complete inside
+    // `startBuildingUpgrade` BEFORE the active check, so the owner can immediately queue the next
+    // upgrade without a separate finish tx. Previously the active check ran before the settle and a
+    // ready (but unsettled) construction wrongly reverted `ConstructionActive`, so it never completed.
+    function testReadyBuildingUpgradeAutoCompletesWhenStartingNext() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setResources(planetId, 10_000, 10_000, 0);
+
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.MetalMine);
+        VeydriftGameStorage.BuildingConstruction memory construction =
+            game.activeBuildingConstruction(planetId);
+        assertEq(uint8(construction.building), uint8(Building.MetalMine));
+
+        // The MetalMine upgrade is ready but has NOT been settled (no finish tx). Starting the next
+        // upgrade must settle/complete it first instead of reverting ConstructionActive.
+        vm.warp(construction.readyAt);
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.CrystalMine);
+
+        assertEq(game.buildingLevel(planetId, Building.MetalMine), 1);
+        VeydriftGameStorage.BuildingConstruction memory next =
+            game.activeBuildingConstruction(planetId);
+        assertTrue(next.active);
+        assertEq(uint8(next.building), uint8(Building.CrystalMine));
+        assertEq(next.targetLevel, 1);
+    }
+
     function testBuildingConstructionDurationsMatchCanonicalVeydriftFormula() public {
         _assertStartedBuildingDuration(address(0xB001), Building.MetalMine, 60, 15, 0, 108);
         _assertStartedBuildingDuration(address(0xB002), Building.SolarPlant, 75, 30, 0, 151);
