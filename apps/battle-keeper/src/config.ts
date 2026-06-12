@@ -17,6 +17,9 @@ export type KeeperConfig = {
   port: number;
   /** Max concurrent resolveFleetMission submissions in flight. */
   maxConcurrency: number;
+  /** Deep one-time backfill window (blocks) scanned at startup so the keeper picks up missions
+   * launched long before it started — including overdue arrivals that block returns. */
+  backfillBlocks: number;
 };
 
 export type ConfigProblem = {
@@ -38,6 +41,9 @@ const defaultSweepIntervalMs = 15_000;
 const defaultResolveIntervalMs = 5_000;
 const defaultPort = 8080;
 const defaultMaxConcurrency = 3;
+// ~2 days of Base L2 blocks (2s). Covers the active-mission window; kept at/under the node's
+// 100k-block eth_getLogs cap per chunk (the sweep chunks anything larger).
+const defaultBackfillBlocks = 90_000;
 
 function parsePositiveInt(
   raw: string | undefined,
@@ -105,6 +111,12 @@ export function loadKeeperConfig(env: NodeJS.ProcessEnv = process.env): LoadConf
     "MAX_CONCURRENCY",
     problems
   );
+  const backfillBlocks = parsePositiveInt(
+    env.BACKFILL_BLOCKS,
+    defaultBackfillBlocks,
+    "BACKFILL_BLOCKS",
+    problems
+  );
 
   if (problems.length > 0) {
     return { config: null, problems };
@@ -120,7 +132,8 @@ export function loadKeeperConfig(env: NodeJS.ProcessEnv = process.env): LoadConf
       sweepIntervalMs,
       resolveIntervalMs,
       port,
-      maxConcurrency
+      maxConcurrency,
+      backfillBlocks
     },
     problems: []
   };

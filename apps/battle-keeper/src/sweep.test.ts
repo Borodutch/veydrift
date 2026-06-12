@@ -142,4 +142,41 @@ describe("LogBackfillSweep", () => {
 
     expect(sweep.snapshot().lastSweepError).toContain("503");
   });
+
+  test("deep backfill splits a wide window into contiguous chunks covering the full range", async () => {
+    const keeper = makeKeeper(() => 10_000);
+    const ranges: Array<{ from: bigint; to: bigint }> = [];
+    const transport: JsonRpcTransport = {
+      request: async <T>(method: string, params?: unknown): Promise<T> => {
+        if (method === "eth_blockNumber") {
+          return `0x${(1_000).toString(16)}` as T;
+        }
+        if (method === "eth_getLogs") {
+          const p = (params as [{ fromBlock: string; toBlock: string }])[0];
+          const from = BigInt(p.fromBlock);
+          const to = BigInt(p.toBlock);
+          ranges.push({ from, to });
+          // The mission lives in a NON-first chunk (block 720) to prove chunks beyond the first are scanned.
+          return (from <= 720n && 720n <= to
+            ? [launchedLog(7n, MissionType.Transport, 900n, 5_000n)]
+            : []) as T;
+        }
+        return "0x0" as T;
+      }
+    };
+    const sweep = new LogBackfillSweep(transport, gameContract, keeper, {
+      maxRangeBlocks: 100n,
+      logger: silentLogger
+    });
+
+    await sweep.sweep(500n); // deep lookback => scan blocks [500, 1000] in 100-block chunks
+
+    expect(ranges.length).toBeGreaterThan(1);
+    expect(ranges[0]!.from).toBe(500n);
+    expect(ranges[ranges.length - 1]!.to).toBe(1_000n);
+    for (let i = 1; i < ranges.length; i += 1) {
+      expect(ranges[i]!.from).toBe(ranges[i - 1]!.to + 1n);
+    }
+    expect(keeper.snapshot().pendingMissionIds).toContain("7");
+  });
 });

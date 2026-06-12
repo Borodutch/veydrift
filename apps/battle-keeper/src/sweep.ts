@@ -10,8 +10,11 @@ export type SweepSnapshot = {
 };
 
 export type LogSweepOptions = {
-  /** How many blocks back to backfill each sweep (covers a missed WS window). */
+  /** How many blocks back to backfill each periodic sweep (covers a missed WS window). */
   lookbackBlocks?: bigint;
+  /** Max block span per `eth_getLogs` request. Nodes cap the range (the self-hosted node caps at
+   * 100k), so a deep backfill is split into chunks of this size. */
+  maxRangeBlocks?: bigint;
   logger?: KeeperLogger;
 };
 
@@ -28,6 +31,7 @@ export class LogBackfillSweep {
   private sweepCount = 0;
   private recoveredLaunches = 0;
   private readonly lookbackBlocks: bigint;
+  private readonly maxRangeBlocks: bigint;
   private readonly logger: KeeperLogger | undefined;
 
   constructor(
@@ -37,6 +41,7 @@ export class LogBackfillSweep {
     options: LogSweepOptions = {}
   ) {
     this.lookbackBlocks = options.lookbackBlocks ?? 2_000n;
+    this.maxRangeBlocks = options.maxRangeBlocks ?? 90_000n;
     this.logger = options.logger;
   }
 
@@ -49,45 +54,36 @@ export class LogBackfillSweep {
     };
   }
 
-  async sweep(): Promise<void> {
+  /**
+   * Re-read recent logs and feed them into the keeper. With no argument it covers the rolling
+   * `lookbackBlocks` window (the periodic backstop). Pass `lookbackOverride` for a DEEP startup
+   * backfill (e.g. tens of thousands of blocks) so missions launched long before the keeper started
+   * — including overdue arrivals that block returns — are picked up. The range is split into
+   * `maxRangeBlocks` chunks because nodes cap a single `eth_getLogs` span.
+   */
+  async sweep(lookbackOverride?: bigint): Promise<void> {
     try {
-      const latestHex = await this.transport.request<string>("eth_blockNumber", []);
-      const latest = BigInt(latestHex);
-      const fromBlock = latest > this.lookbackBlocks ? latest - this.lookbackBlocks : 0n;
-      const logs = await this.transport.request<RawLog[]>("eth_getLogs", [
-        {
-          address: this.gameContractAddress,
-          fromBlock: `0x${fromBlock.toString(16)}`,
-          toBlock: "latest",
-          topics: [Array.from(subscribedTopic0)]
-        }
-      ]);
+      const latest = BigInt(await this.transport.request<string>("eth_blockNumber", []));
+      const lookback = lookbackOverride ?? this.lookbackBlocks;
+      const fromBlock = latest > lookback ? latest - lookback : 0n;
 
       const pendingBefore = this.keeper.snapshot().pendingCount;
-      for (const log of logs) {
-        const decoded = decodeBattleLog(log);
-        if (!decoded) {
-          continue;
-        }
-        if (decoded.kind === "launched") {
-          this.keeper.recordLaunched({
-            missionId: decoded.missionId,
-            missionType: decoded.missionType,
-            arrivalAt: decoded.arrivalAt,
-            returnAt: decoded.returnAt
-          });
-        } else if (decoded.kind === "resolved") {
-          this.keeper.recordArrivalResolved({
-            missionId: decoded.missionId,
-            missionType: decoded.missionType,
-            returnAt: decoded.returnAt
-          });
-        } else {
-          this.keeper.recordReturned(decoded.missionId);
+      for (let start = fromBlock; start <= latest; start += this.maxRangeBlocks + 1n) {
+        const end = start + this.maxRangeBlocks > latest ? latest : start + this.maxRangeBlocks;
+        const logs = await this.transport.request<RawLog[]>("eth_getLogs", [
+          {
+            address: this.gameContractAddress,
+            fromBlock: `0x${start.toString(16)}`,
+            toBlock: `0x${end.toString(16)}`,
+            topics: [Array.from(subscribedTopic0)]
+          }
+        ]);
+        for (const log of logs) {
+          this.applyLog(log);
         }
       }
-      const pendingAfter = this.keeper.snapshot().pendingCount;
-      const recovered = Math.max(0, pendingAfter - pendingBefore);
+
+      const recovered = Math.max(0, this.keeper.snapshot().pendingCount - pendingBefore);
       this.recoveredLaunches += recovered;
       this.sweepCount += 1;
       this.lastSweepAt = new Date().toISOString();
@@ -98,6 +94,29 @@ export class LogBackfillSweep {
     } catch (error) {
       this.lastSweepError = error instanceof Error ? error.message : String(error);
       this.logger?.error("[sweep] backfill failed", error);
+    }
+  }
+
+  private applyLog(log: RawLog): void {
+    const decoded = decodeBattleLog(log);
+    if (!decoded) {
+      return;
+    }
+    if (decoded.kind === "launched") {
+      this.keeper.recordLaunched({
+        missionId: decoded.missionId,
+        missionType: decoded.missionType,
+        arrivalAt: decoded.arrivalAt,
+        returnAt: decoded.returnAt
+      });
+    } else if (decoded.kind === "resolved") {
+      this.keeper.recordArrivalResolved({
+        missionId: decoded.missionId,
+        missionType: decoded.missionType,
+        returnAt: decoded.returnAt
+      });
+    } else {
+      this.keeper.recordReturned(decoded.missionId);
     }
   }
 }

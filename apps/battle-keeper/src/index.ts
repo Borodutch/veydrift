@@ -51,8 +51,11 @@ function main(): void {
     void sweep.sweep().then(() => keeper.tick());
   }, config.sweepIntervalMs);
 
-  // Prime the sweep once at startup so we pick up missions launched while the keeper was down.
-  void sweep.sweep().then(() => keeper.tick());
+  // Deep one-time backfill at startup: scan a wide window (config.backfillBlocks, chunked) so the
+  // keeper picks up every still-due mission launched before it started — overdue arrivals (which
+  // block returns) and overdue returns alike — then converge them via tick().
+  consoleLogger.info("[battle-keeper] startup deep backfill", { blocks: config.backfillBlocks });
+  void sweep.sweep(BigInt(config.backfillBlocks)).then(() => keeper.tick());
 
   const startedAtMs = Date.now();
   const handler = createHandler(keeper, listener, startedAtMs);
