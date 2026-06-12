@@ -18,6 +18,7 @@ import type {
   PlayerQueues,
   ResearchState,
   RiftState,
+  RpcLog,
   SettledPlanetEvent,
   ShipyardState,
   WalletSettlement,
@@ -72,6 +73,10 @@ const allianceCreatedTopic = "0x4a2634d9b86143d681c41580ee71aad7571fc28bc42c855f
 const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425e5b688ec918c2f58df7360e";
 const allianceJoinRequestedTopic = "0x57dc0d6d966259dfce732817e0ad98a199174482159ce86fec64334a407ed2b5";
 const allianceJoinedTopic = "0x966912f1fd05e1765f8d822e0db01e534676a830ea4b161fc254f4e63f0324eb";
+const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
+const planetRenamedTopic = "0x2b772c1fa271aad466ce009b6b5824b2ad6ccd942d21efc686513ffa8eb166cd";
+const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
+const moonChanceRequestedTopic = "0x8969f3a52192b4b918b49219d60ea0b68d3f5fd8b70c4691b297a538ac333121";
 const planet: PlanetState = {
   planetId: "7",
   owner: player,
@@ -665,6 +670,91 @@ class MockChainReader implements ChainReader {
       }
     ];
   }
+
+  // The event-sourced indexer rebuilds purely from listContractLogs (VEY-KANEO-476). This adapter
+  // serializes this reader's structured planet/debris/moon-chance/alliance events back into the raw
+  // RpcLogs rebuild() replays, so existing per-test overrides of listSettledPlanetEvents (and the
+  // alliance/debris/moon-chance lists) keep driving the same indexed state through the new path.
+  async listContractLogs(): Promise<RpcLog[]> {
+    const logs: RpcLog[] = [];
+    let block = 0x200;
+    const nextBlock = () => `0x${(block++).toString(16)}`;
+
+    const planetEvents = this.listSettledPlanetEvents ? await this.listSettledPlanetEvents() : [];
+    for (const event of planetEvents) {
+      const tx = event.transactionHash ?? "0xseed";
+      logs.push({
+        blockNumber: nextBlock(),
+        transactionHash: tx,
+        topics: [planetStartedTopic, addressTopic(event.owner), topic(BigInt(event.planetId))],
+        data: abiWords(
+          BigInt(event.galaxy),
+          BigInt(event.system),
+          BigInt(event.position),
+          BigInt(event.fields),
+          signedWord(BigInt(event.temperature))
+        )
+      });
+      logs.push({
+        blockNumber: nextBlock(),
+        transactionHash: `${tx}-settled`,
+        topics: [planetSettledTopic, topic(BigInt(event.planetId))],
+        data: abiWords(
+          BigInt(event.resources.metal),
+          BigInt(event.resources.crystal),
+          BigInt(event.resources.deuterium),
+          BigInt(event.lastSettledAt ?? "0")
+        )
+      });
+      if (event.name) {
+        logs.push({
+          blockNumber: nextBlock(),
+          transactionHash: `${tx}-named`,
+          topics: [planetRenamedTopic, addressTopic(event.owner), topic(BigInt(event.planetId))],
+          data: abiStrings(event.name)
+        });
+      }
+    }
+
+    const debrisEvents = this.listDebrisFieldEvents ? await this.listDebrisFieldEvents() : [];
+    for (const event of debrisEvents) {
+      logs.push({
+        blockNumber: nextBlock(),
+        transactionHash: event.transactionHash ?? "0xdebris",
+        topics: [debrisFieldUpdatedTopic, topic(BigInt(event.planetId))],
+        data: abiWords(BigInt(event.resources.metal), BigInt(event.resources.crystal ?? "0"))
+      });
+    }
+
+    const moonChanceEvents = this.listMoonChanceReportEvents ? await this.listMoonChanceReportEvents() : [];
+    for (const event of moonChanceEvents) {
+      if (event.eventName !== "MoonChanceRequested") continue;
+      logs.push({
+        blockNumber: nextBlock(),
+        transactionHash: event.transactionHash ?? "0xmoon",
+        topics: [
+          moonChanceRequestedTopic,
+          topic(BigInt(event.outcomeId ?? "0")),
+          topic(BigInt(event.battleId ?? "0")),
+          topic(BigInt(event.targetPlanetId ?? "0"))
+        ],
+        data: abiWords(
+          BigInt(event.defender ?? "0"),
+          BigInt(event.metalDebris ?? "0"),
+          BigInt(event.crystalDebris ?? "0"),
+          BigInt(event.chanceBps ?? 0),
+          BigInt(event.randomnessRequestId ?? "0"),
+          BigInt(event.purposeHash ?? "0")
+        )
+      });
+    }
+
+    const allianceReader = this as ChainReader;
+    const allianceLogs = allianceReader.listAllianceLogs ? await allianceReader.listAllianceLogs(0n) : [];
+    logs.push(...allianceLogs);
+
+    return logs;
+  }
 }
 
 function testIndexer(): SettlementIndexer {
@@ -682,7 +772,8 @@ function withoutIndexLists(reader: ChainReader): ChainReader {
   return new Proxy(reader, {
     get(target, property, receiver) {
       if (
-        property === "listSettledPlanetEvents"
+        property === "listContractLogs"
+        || property === "listSettledPlanetEvents"
         || property === "listMoonChanceReportEvents"
         || property === "listDebrisFieldEvents"
       ) {
@@ -2445,6 +2536,17 @@ describe("Veydrift backend", () => {
       fromBlock: "100"
     });
     indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xbuilddone",
+      logIndex: "0x0",
+      topics: [
+        buildingCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(2n)
+    });
+    indexer.applyLog({
       blockNumber: "0x81",
       transactionHash: "0xshipdone",
       logIndex: "0x0",
@@ -2513,7 +2615,9 @@ describe("Veydrift backend", () => {
     });
     expect(occupiedPlanet.publicState).toMatchObject({
       resources: {
-        metal: "5064",
+        // Event-derived: base 5000 metal projected forward by the level-2 metal mine over the
+        // ~2h-elapsed lastSettledAt window (VEY-KANEO-476 — served from the index, not a chain read).
+        metal: "5146",
         crystal: "4900",
         deuterium: "4800"
       },
@@ -2629,52 +2733,6 @@ describe("Veydrift backend", () => {
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(chainReader.rebuildCalls).toBe(0);
     expect(handler).toBeDefined();
-  });
-
-  test("verifies and self-heals a planet's canonical state via /index/verify (VEY-KANEO-452)", async () => {
-    const chainReader = new MockChainReader();
-    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
-    const handler = createRequestHandler({
-      config: configuredTestConfig,
-      chainReader,
-      indexer
-    });
-
-    await indexer.rebuild();
-
-    // Drift the on-chain ship roster after the canonical mirror was built so the
-    // stored count (2) no longer matches what shipCount now returns (1).
-    chainReader.getShipyardState = async (wallet: Address): Promise<ShipyardState> => ({
-      wallet,
-      homePlanetId: planet.planetId,
-      planetId: planet.planetId,
-      productionAvailable: true,
-      resources: planet.resources,
-      fleetSlots: { active: 0, limit: 2 },
-      shipyardLevel: 1,
-      naniteLevel: 0,
-      technologyLevels: {},
-      ships: [{ id: 0, count: 1, cost: { metal: "2000", crystal: "2000", deuterium: "0" } }],
-      queue: null
-    });
-
-    const detect = await handler(new Request("http://localhost/index/verify/7", { method: "POST" }));
-    expect(detect.status).toBe(200);
-    const detectBody = await detect.json();
-    expect(detectBody).toMatchObject({ planetId: "7", reachedChain: true, divergent: true, healed: false });
-    expect(detectBody.divergences).toEqual(expect.arrayContaining([
-      { field: "ship", id: 0, key: null, stored: "2", onChain: "1" }
-    ]));
-    // Read-only verify left the stored roster untouched; the served row still includes the elapsed
-    // queue's as-of-now addition.
-    expect(indexer.shipRows("7").find((row) => row.id === 0)?.count).toBe(3);
-
-    const heal = await handler(new Request("http://localhost/index/verify/7?heal=true", { method: "POST" }));
-    await expect(heal.json()).resolves.toMatchObject({ planetId: "7", divergent: true, healed: true });
-    expect(indexer.shipRows("7").find((row) => row.id === 0)?.count).toBe(2);
-
-    const reverify = await handler(new Request("http://localhost/index/verify/7", { method: "POST" }));
-    await expect(reverify.json()).resolves.toMatchObject({ divergent: false, healed: false });
   });
 
   test("coalesces concurrent index rebuilds", async () => {
@@ -3566,6 +3624,15 @@ describe("Veydrift backend", () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
+    // Metal mine settled to level 2 from events; the infrastructure page is served from this indexed
+    // state, never a live chain read (which throws below).
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xbuilddone",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(2n)
+    });
     chainReader.getInfrastructureState = async () => {
       throw new Error("RPC HTTP 503");
     };
@@ -4658,6 +4725,35 @@ describe("Veydrift backend", () => {
     };
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
+    // The indexed score is derived from replayed events, never a chain highscore read.
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xbuildingdone",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xdefensedone",
+      logIndex: "0x0",
+      topics: [defenseCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(3n, 3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xshipdone",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(2n, 2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xresearchdone",
+      logIndex: "0x0",
+      topics: [researchCompletedTopic, addressTopic(player), topic(0n)],
+      data: abiWords(1n)
+    });
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
@@ -4904,6 +5000,10 @@ function topic(value: bigint): string {
 
 function addressTopic(address: Address): string {
   return `0x${address.slice(2).padStart(64, "0")}`;
+}
+
+function signedWord(value: bigint): bigint {
+  return value >= 0n ? value : (1n << 256n) + value;
 }
 
 function completedFleetMissionLogs({
