@@ -6,9 +6,11 @@ import {
   buildingCatalog,
   canAfford,
   energyBalance,
+  researchDurationEstimate,
   researchEffectRows,
   researchCatalog,
   researchCost,
+  researchLabRequirementFor,
   researchRequirementsFor,
   researchUnlockRows,
   unmetResearchRequirement,
@@ -16,7 +18,7 @@ import {
 import type { ChainResearchState } from "../walletFlow";
 import { researchQueueForDisplay as chainResearchQueueForDisplay } from "../chainState";
 import { formatMissingResources } from "../buildingDetails";
-import { formatDurationUntil } from "../durationFormat";
+import { formatDuration, formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import {
   InspectCatalogTile,
@@ -371,6 +373,7 @@ function ResearchDetailPanel({
     actionPendingLabel,
     canTransact,
     chainCost: chainCostFor(researchState, research.id),
+    chainDurationSeconds: chainDurationFor(researchState, research.id),
     error,
     key: research.key,
     loading,
@@ -428,6 +431,9 @@ function ResearchDetailPanel({
           <RequirementFlairs onOpenRequirement={onOpenRequirement} requirements={requirementStates} />
         </InspectInfoRow>
         <InspectInfoRow label="Research cost" value={status.cost ? formatCost(status.cost) : "Unavailable until chain state loads"} />
+        {status.durationSeconds === undefined ? null : (
+          <InspectInfoRow label="Research time" value={formatDuration(status.durationSeconds)} />
+        )}
       </dl>
 
       <ResearchEffectsSection effectRows={effectRows} unlockRows={unlockRows} />
@@ -471,6 +477,10 @@ function ResearchDetailPanel({
 export type ResearchLevelInfoRow = {
   cost: Resources;
   current: boolean;
+  // Per-level predicted research time for the reference table (VEY-KANEO-472).
+  // Undefined when prerequisites for that level are unmet. Client-computed, matching
+  // this catalogue's existing client-side cost/effect derivation.
+  durationSeconds?: number | undefined;
   effect: string;
   level: number;
   next: boolean;
@@ -502,10 +512,18 @@ export function researchLevelInfoRows(
     };
     const cost = researchCost(preResearch, key);
     const requirementStatus = researchLevelRequirementStatus(targetState, key, level);
+    const durationSeconds = requirementStatus !== "Met"
+      ? undefined
+      : researchDurationEstimate(state.buildings, cost, {
+          networkLevel: preResearch.intergalacticResearchNetwork,
+          requiredLabLevel: researchLabRequirementFor(key),
+          researchNetworkLabLevels: options.researchNetworkLabLevels,
+        });
 
     return {
       cost,
       current: currentLevel === level,
+      durationSeconds,
       effect: researchLevelEffectSummary(state, key, level, options.researchNetworkLabLevels),
       level,
       next: currentLevel + 1 === level,
@@ -579,6 +597,7 @@ export function ResearchLevelInfoModal({
                 <ResearchLevelInfoHeader className="min-w-24 whitespace-nowrap">Level</ResearchLevelInfoHeader>
                 <ResearchLevelInfoHeader className="min-w-24 whitespace-nowrap">Status</ResearchLevelInfoHeader>
                 <ResearchLevelInfoHeader className="min-w-52">Research cost</ResearchLevelInfoHeader>
+                <ResearchLevelInfoHeader className="min-w-32">Research time</ResearchLevelInfoHeader>
                 <ResearchLevelInfoHeader className="min-w-52">Requirements</ResearchLevelInfoHeader>
                 <ResearchLevelInfoHeader className="min-w-60">Effect</ResearchLevelInfoHeader>
               </tr>
@@ -608,6 +627,9 @@ export function ResearchLevelInfoModal({
                     </div>
                   </ResearchLevelInfoCell>
                   <ResearchLevelInfoCell>{formatCost(row.cost)}</ResearchLevelInfoCell>
+                  <ResearchLevelInfoCell>
+                    {row.durationSeconds === undefined ? "Unavailable until prerequisites are met" : formatDuration(row.durationSeconds)}
+                  </ResearchLevelInfoCell>
                   <ResearchLevelInfoCell>{row.requirementStatus}</ResearchLevelInfoCell>
                   <ResearchLevelInfoCell>{row.effect}</ResearchLevelInfoCell>
                 </tr>
@@ -838,6 +860,7 @@ export function researchActionStatus({
   actionPendingLabel,
   canTransact,
   chainCost,
+  chainDurationSeconds,
   error,
   key,
   loading,
@@ -850,6 +873,7 @@ export function researchActionStatus({
   actionPendingLabel?: string | undefined;
   canTransact: boolean;
   chainCost: Resources | undefined;
+  chainDurationSeconds?: number | undefined;
   error: string | undefined;
   key: ResearchKey;
   loading: boolean;
@@ -918,6 +942,8 @@ export function researchActionStatus({
     cost,
     currentLevel,
     disabled,
+    // Backend-sourced predicted research time for the next level (VEY-KANEO-472).
+    durationSeconds: chainDurationSeconds,
     hasMissingRequirement: Boolean(missingRequirement),
     reason,
     targetLevel,
@@ -925,7 +951,7 @@ export function researchActionStatus({
   };
 }
 
-function researchViewState(
+export function researchViewState(
   state: PlayableState,
   researchState: ChainResearchState | null,
   useLocalStateFallback: boolean,
@@ -943,7 +969,12 @@ function researchViewState(
     },
     research: researchLevels(researchState),
     researchQueue: researchQueueForDisplay(researchState, state, now) ?? undefined,
-    resources: toResources(researchState.resources) ?? { metal: 0, crystal: 0, deuterium: 0 },
+    // VEY-KANEO-473: gate research affordability on the canonical settled-to-now balance
+    // (`resourcesAsOfNow`) the top bar uses — the same single source the infrastructure, shipyard,
+    // and defense panels now read — falling back to the raw settled `resources` only when the
+    // accrued field is absent. This is the fallback the gate uses when `spendableResources` is
+    // unavailable; reading the raw snapshot here is what let the panel disagree with the top bar.
+    resources: toResources(researchState.resourcesAsOfNow ?? researchState.resources) ?? { metal: 0, crystal: 0, deuterium: 0 },
   };
 }
 
@@ -976,6 +1007,11 @@ function researchQueueForDisplay(
 function chainCostFor(researchState: ChainResearchState | null, technologyId: number): Resources | undefined {
   const row = researchState?.technologies.find((item) => item.id === technologyId);
   return toResources(row?.cost);
+}
+
+function chainDurationFor(researchState: ChainResearchState | null, technologyId: number): number | undefined {
+  const row = researchState?.technologies.find((item) => item.id === technologyId);
+  return typeof row?.durationSeconds === "number" ? row.durationSeconds : undefined;
 }
 
 function toResources(resources: ChainResearchState["resources"] | ChainResearchState["technologies"][number]["cost"] | null | undefined): Resources | undefined {

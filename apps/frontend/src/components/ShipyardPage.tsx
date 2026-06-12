@@ -2,6 +2,7 @@ import { useState } from "preact/hooks";
 import type { BuildingKey, ResearchKey, Resources, ShipKey, UnlockRequirement } from "../playableMvp";
 import { canAfford, missingUnlockRequirements, shipCatalog, shipyardCatalog, shipCombatStats, shipSpecRows } from "../playableMvp";
 import { formatMissingResources } from "../buildingDetails";
+import { formatDuration } from "../durationFormat";
 import { activeProductionQueue } from "../productionQueueFallback";
 import type { ChainShipyardState } from "../walletFlow";
 import {
@@ -82,7 +83,10 @@ export function ShipyardPage({
   const [localSelectedKey, setLocalSelectedKey] = useState<ShipKey>("smallCargo");
   const selectedKey = selectedShipKey ?? localSelectedKey;
   const shipyardLevel = shipyardState?.shipyardLevel ?? 0;
-  const resources = toResources(shipyardState?.resources);
+  // VEY-KANEO-473: gate on the canonical settled-to-now balance (`resourcesAsOfNow`) the top bar
+  // uses, falling back to the raw settled snapshot only when the accrued field is absent — so the
+  // shipyard affordability number can never disagree with the bar.
+  const resources = toResources(shipyardState?.resourcesAsOfNow ?? shipyardState?.resources);
   const queue = activeProductionQueue(shipyardState?.queue, overviewQueue, "ship");
   const productionAvailable = shipyardState?.productionAvailable !== false;
   const initialLoading = shouldShowShipyardInitialLoader({ loading, shipyardState });
@@ -234,6 +238,10 @@ export function shipProductionItems({
     const parsedQuantity = parseProductionQuantity(quantityInput);
     const quantity = parsedQuantity ?? 1;
     const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
+    // Backend-sourced per-unit build time scaled by the selected quantity (VEY-KANEO-472).
+    const durationSeconds = chainShip?.durationSeconds === undefined
+      ? undefined
+      : chainShip.durationSeconds * quantity;
     const missing = shipUnavailable ? ["Unavailable on current deployment"] : getMissingRequirements(ship, shipyardState);
     const requirements = getShipRequirementStates(ship, shipyardState);
     const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
@@ -257,10 +265,12 @@ export function shipProductionItems({
       asset: ship.asset,
       blockedReason,
       cost: totalCost,
+      ...(durationSeconds === undefined ? {} : { durationSeconds }),
       countLabel: "At planet",
       countValue: owned,
       detailSections: shipDetailSections({
         cost: totalCost,
+        durationSeconds,
         owned,
         ship,
       }),
@@ -304,10 +314,12 @@ function shipNotes(ship: (typeof shipCatalog)[number]): string[] {
 
 function shipDetailSections({
   cost,
+  durationSeconds,
   owned,
   ship,
 }: {
   cost: Resources | undefined;
+  durationSeconds: number | undefined;
   owned: number | undefined;
   ship: (typeof shipCatalog)[number];
 }): ProductionDetailSection[] {
@@ -331,6 +343,9 @@ function shipDetailSections({
           hint: "Ships stationed at this planet now. Fleets in flight on missions are not counted here.",
         },
         { label: "Price", value: cost ? formatProductionPrice(cost) : "-", wide: true },
+        ...(durationSeconds === undefined
+          ? []
+          : [{ label: "Build time", value: formatDuration(durationSeconds), wide: true } as const]),
       ],
     },
   ];

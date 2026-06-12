@@ -41,7 +41,14 @@ export function infrastructurePlayableState(
         infrastructureState.technologyLevels?.[research.id.toString()] ?? 0,
       ]),
     ) as PlayableState["research"],
-    resources: toResources(infrastructureState.resources) ?? state.resources,
+    // VEY-KANEO-473: the playable `resources` (what the infrastructure panel and its
+    // affordability gate read) must be the SAME canonical settled-to-now balance the top bar
+    // shows — the backend's accrued `resourcesAsOfNow` — not the raw settled `resources` snapshot.
+    // Reading the raw snapshot here while the top bar read `resourcesAsOfNow` is exactly what made
+    // the bar and the affordability gate disagree (bar "51,561 metal" vs panel "Requires more").
+    // Fall back to the raw settled `resources` only when the backend has not populated the accrued
+    // field (older deploy / planet still warming).
+    resources: toResources(infrastructureState.resourcesAsOfNow ?? infrastructureState.resources) ?? state.resources,
     queue: buildingQueueForDisplay(infrastructureState, now) ?? undefined,
   };
 }
@@ -74,7 +81,10 @@ export function researchPlayableState(
       }),
     ) as PlayableState["research"],
     researchQueue: researchQueueForDisplay(researchState.queue, now) ?? undefined,
-    resources: toResources(researchState.resources) ?? { metal: 0, crystal: 0, deuterium: 0 },
+    // VEY-KANEO-473: same single-source rule as infrastructure — gate research affordability on the
+    // canonical settled-to-now `resourcesAsOfNow`, falling back to the raw settled snapshot only when
+    // the accrued field is absent.
+    resources: toResources(researchState.resourcesAsOfNow ?? researchState.resources) ?? { metal: 0, crystal: 0, deuterium: 0 },
   };
 }
 
@@ -88,6 +98,22 @@ export function buildingCosts(infrastructureState: ChainInfrastructureState | nu
       return cost ? [[building.key, cost]] : [];
     }),
   ) as Partial<Record<BuildingKey, Resources>>;
+}
+
+// Backend-sourced predicted next-upgrade durations per building (VEY-KANEO-472). Paired
+// with buildingCosts so the detail panel renders "Build time"/"Upgrade time" from the
+// server value instead of re-deriving it on the client (regressed by #821).
+export function buildingDurations(
+  infrastructureState: ChainInfrastructureState | null,
+): Partial<Record<BuildingKey, number>> {
+  if (!infrastructureState) return {};
+
+  return Object.fromEntries(
+    buildingCatalog.flatMap((building) => {
+      const row = infrastructureState.buildings.find((item) => item.id === buildingContractIds[building.key]);
+      return typeof row?.durationSeconds === "number" ? [[building.key, row.durationSeconds]] : [];
+    }),
+  ) as Partial<Record<BuildingKey, number>>;
 }
 
 export function buildingLevels(infrastructureState: ChainInfrastructureState): PlayableState["buildings"] {

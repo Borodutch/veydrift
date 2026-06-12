@@ -12,6 +12,7 @@ import {
 } from "../src/components/ShipyardPage";
 import type { ChainShipyardState } from "../src/walletFlow";
 import { shipCatalog, shipyardCatalog } from "../src/playableMvp";
+import { formatDuration } from "../src/durationFormat";
 
 describe("Shipyard status panel surfaces only failures", () => {
   test("does not render success or pending action banners", () => {
@@ -232,6 +233,46 @@ describe("Shipyard page display helpers", () => {
     // Contract enum / stats source of truth stays intact for queue labels and combat.
     expect(shipCatalog.some((ship) => ship.key === "pathfinder")).toBe(true);
     expect(shipyardCatalog).toHaveLength(shipCatalog.length - 1);
+  });
+
+  test("shows backend per-unit build time scaled by the selected quantity (VEY-KANEO-472)", () => {
+    const items = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      quantities: { smallCargo: 3 },
+      queue: undefined,
+      resources: { metal: 100000, crystal: 100000, deuterium: 100000 },
+      shipyardLevel: 5,
+      // Small Cargo is ship id 0; backend supplies a 60s per-unit duration.
+      shipyardState: shipyardState({
+        ships: [{ id: 0, count: 4, cost: { metal: "2000", crystal: "2000", deuterium: "0" }, durationSeconds: 60 }],
+      }),
+    });
+
+    const smallCargo = items.find((item) => item.key === "smallCargo");
+    const buildStat = smallCargo?.detailSections
+      ?.find((section) => section.title === "Build")
+      ?.stats.find((stat) => stat.label === "Build time");
+    expect(buildStat?.value).toBe(formatDuration(180));
+  });
+
+  test("omits build time when the backend supplies no per-unit duration (VEY-KANEO-472)", () => {
+    const items = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      quantities: { smallCargo: 3 },
+      queue: undefined,
+      resources: { metal: 100000, crystal: 100000, deuterium: 100000 },
+      shipyardLevel: 5,
+      shipyardState: shipyardState(),
+    });
+
+    const buildStats = items.find((item) => item.key === "smallCargo")?.detailSections
+      ?.find((section) => section.title === "Build")
+      ?.stats.map((stat) => stat.label);
+    expect(buildStats).not.toContain("Build time");
   });
 
   test("uses a typed shipyard quantity when building the item model", () => {

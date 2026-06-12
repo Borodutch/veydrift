@@ -928,14 +928,17 @@ export function returnPhaseLoot(
 // refresh — which is the heart of this ticket. The auto-poll (#744) then folds in loot/battle reports
 // once the backend actually resolves the mission.
 export function missionStatusPill(mission: FleetMissionSummary, now: number): MissionStatusPill {
+  // VEY-KANEO-468: completions settle lazily on-chain (the next mutating call; combat via the battle
+  // keeper). A leg whose clock has passed but whose backend status has not advanced is mid-settlement,
+  // so the pill reads "Resolving" until the chain reflects it — not a finished "Arrived"/"Returned".
   if (mission.status === "Outbound") {
     return isMissionDue(mission, now)
-      ? { label: "Arrived", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" }
+      ? { label: "Resolving", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" }
       : { label: "En route", tone: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100" };
   }
   if (mission.status === "Returning" || mission.status === "Recalled") {
     if (isMissionReturned(mission, now)) {
-      return { label: "Returned", tone: "border-emerald-300/25 bg-emerald-300/10 text-emerald-100" };
+      return { label: "Resolving", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
     }
     return mission.status === "Returning"
       ? { label: "Returning", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" }
@@ -2095,11 +2098,14 @@ function missionStatusLabel(status: string): string {
 // fleet that has already arrived (or "returning" for one that has already landed). Keeps the report
 // surfaces consistent with the time-aware list pills and the mission-detail timeline.
 export function missionDisplayStatusLabel(mission: FleetMissionSummary, now: number): string {
+  // VEY-KANEO-468: a leg whose clock has passed but whose on-chain status has not advanced is
+  // mid-settlement (lazy reconcile / battle keeper), so it reads "resolving" until the chain
+  // reflects it — mirroring the "Resolving" list pill.
   if (mission.status === "Outbound" && isMissionDue(mission, now)) {
-    return "arrived";
+    return "resolving";
   }
   if ((mission.status === "Returning" || mission.status === "Recalled") && isMissionReturned(mission, now)) {
-    return "returned";
+    return "resolving";
   }
   return missionStatusLabel(mission.status);
 }
