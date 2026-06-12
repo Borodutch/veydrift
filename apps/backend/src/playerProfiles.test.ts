@@ -9,6 +9,7 @@ import { createRequestHandler } from "./server";
 const config: BackendConfig = {
   chainId: 84532,
   deploymentMode: "test",
+  qaSyntheticStationedDefenders: false,
   indexDbPath: ":memory:",
   randomnessCommitmentStorePath: ".data/test-randomness.json",
   indexFromBlock: 100n,

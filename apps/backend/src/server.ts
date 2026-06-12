@@ -139,7 +139,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const indexer =
     dependencies.indexer ??
     (isIndexableChainReader(indexerChainReader) ? new SettlementIndexer(indexerChainReader, loaded.config.indexFromBlock, {
-      databasePath: loaded.config.indexDbPath
+      databasePath: loaded.config.indexDbPath,
+      // VEY-KANEO-471: config already hard-gates this to non-production; pass it through so the
+      // fleet-visibility read model can serve the synthetic stationed-defense payload for QA.
+      qaSyntheticStationedDefenders: loaded.config.qaSyntheticStationedDefenders
     }) : undefined);
   const logBackfiller = deriveLogBackfiller(indexerChainReader);
   const chainSync =

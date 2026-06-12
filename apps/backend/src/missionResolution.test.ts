@@ -10,6 +10,7 @@ import type { ResolvableFleetMission, ReturnableFleetMission } from "./evm";
 const config: BackendConfig = {
   chainId: 84532,
   deploymentMode: "test",
+  qaSyntheticStationedDefenders: false,
   gameContractAddress: "0x3333333333333333333333333333333333333333",
   indexDbPath: ":memory:",
   randomnessCommitmentStorePath: ".data/test-randomness.json",

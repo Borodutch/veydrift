@@ -11,6 +11,12 @@ export type BackendConfig = {
   logChunkSpan?: bigint;
   missionResolutionEnabled: boolean;
   missionResolverAddress?: `0x${string}`;
+  // VEY-KANEO-471: QA staging flag. When VEYDRIFT_QA_SYNTHETIC_STATIONED_DEFENDERS is truthy AND the
+  // deployment is NOT production, the fleet-visibility read model injects one synthetic incoming
+  // attack with a populated `stationedDefenders` payload so the Mission Control "Stationed defenses"
+  // panel can be visually verified without staging a real ≥2-wallet ACS Defend scenario on-chain.
+  // Hard-forced false in production (see loadBackendConfig) so synthetic data is never prod-reachable.
+  qaSyntheticStationedDefenders: boolean;
   moonContractAddress?: `0x${string}`;
   randomnessEngineAddress?: `0x${string}`;
   randomnessFulfillerPrivateKey?: `0x${string}`;
@@ -63,6 +69,7 @@ export type SafeConfigSummary = {
   settlementContractConfigured: boolean;
   indexFromBlock: string;
   logChunkSpan: string;
+  qaSyntheticStationedDefenders: boolean;
 };
 
 const defaultChainId = 84532;
@@ -77,6 +84,11 @@ const deploymentModes = new Set<DeploymentMode>(["local", "test", "staging", "pr
 export function loadBackendConfig(env: Record<string, string | undefined> = process.env): ConfigResult {
   const problems: ConfigProblem[] = [];
   const deploymentMode = parseDeploymentMode(env.VEYDRIFT_DEPLOYMENT_MODE, problems);
+  // VEY-KANEO-471: gate the synthetic stationed-defense QA payload on an explicit opt-in env AND a
+  // non-production deployment. Both conditions are required, so a stray env in prod can never surface
+  // fake defenders to real players.
+  const qaSyntheticStationedDefenders =
+    parseBooleanFlag(env.VEYDRIFT_QA_SYNTHETIC_STATIONED_DEFENDERS) && deploymentMode !== "production";
   const alchemyWebhookSigningKey = env.VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY;
   const chainId = parsePositiveInteger(env.VEYDRIFT_CHAIN_ID, "VEYDRIFT_CHAIN_ID", problems) ?? defaultChainId;
   const indexFromBlock = parseBigInt(env.VEYDRIFT_INDEX_FROM_BLOCK, "VEYDRIFT_INDEX_FROM_BLOCK", problems) ?? 0n;
@@ -165,6 +177,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       logChunkSpan,
       missionResolutionEnabled: deploymentMode === "test" && Boolean(missionResolverAddress),
       ...(missionResolverAddress ? { missionResolverAddress } : {}),
+      qaSyntheticStationedDefenders,
       ...(moonContractAddress ? { moonContractAddress } : {}),
       ...(randomnessEngineAddress ? { randomnessEngineAddress } : {}),
       ...(randomnessFulfillerPrivateKey ? { randomnessFulfillerPrivateKey } : {}),
@@ -210,7 +223,10 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
     ),
     settlementContractConfigured: Boolean(config.settlementContractAddress),
     indexFromBlock: config.indexFromBlock.toString(),
-    logChunkSpan: (config.logChunkSpan ?? defaultLogChunkSpan).toString()
+    logChunkSpan: (config.logChunkSpan ?? defaultLogChunkSpan).toString(),
+    // VEY-KANEO-471: surfaced on /health so QA can confirm the harness is active on a test deploy and
+    // ops can confirm it is OFF everywhere it must be (always false in production).
+    qaSyntheticStationedDefenders: config.qaSyntheticStationedDefenders
   };
 }
 
@@ -236,6 +252,13 @@ function parseDeploymentMode(value: string | undefined, problems: ConfigProblem[
     message: "Expected one of local, test, staging, production."
   });
   return defaultDeploymentMode;
+}
+
+// VEY-KANEO-471: lenient truthy parse for opt-in QA env flags ("1"/"true"/"yes"/"on", any case).
+// Anything else — including unset — is false, so the flag defaults to OFF.
+function parseBooleanFlag(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
 }
 
 function parsePositiveInteger(

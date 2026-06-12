@@ -1624,6 +1624,7 @@ describe("ACS attack group participants", () => {
 const readerConfig: BackendConfig = {
   chainId: 84532,
   deploymentMode: "test",
+  qaSyntheticStationedDefenders: false,
   gameContractAddress: "0x1111111111111111111111111111111111111111",
   indexDbPath: ":memory:",
   randomnessCommitmentStorePath: ".data/test-randomness.json",
