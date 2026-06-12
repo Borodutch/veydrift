@@ -82,7 +82,10 @@ export function ShipyardPage({
   const [localSelectedKey, setLocalSelectedKey] = useState<ShipKey>("smallCargo");
   const selectedKey = selectedShipKey ?? localSelectedKey;
   const shipyardLevel = shipyardState?.shipyardLevel ?? 0;
-  const resources = toResources(shipyardState?.resources);
+  // VEY-KANEO-473: gate on the canonical settled-to-now balance (`resourcesAsOfNow`) the top bar
+  // uses, falling back to the raw settled snapshot only when the accrued field is absent — so the
+  // shipyard affordability number can never disagree with the bar.
+  const resources = toResources(shipyardState?.resourcesAsOfNow ?? shipyardState?.resources);
   const queue = activeProductionQueue(shipyardState?.queue, overviewQueue, "ship");
   const productionAvailable = shipyardState?.productionAvailable !== false;
   const initialLoading = shouldShowShipyardInitialLoader({ loading, shipyardState });
