@@ -1907,6 +1907,43 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(planetId, Ship.LightFighter), 3);
     }
 
+    // VEY-KANEO-468 cross-player: an attack's impact-time snapshot settles the defender's due
+    // (player-scoped) research before combat, without the defender taking any action of their own.
+    function testAttackImpactSettlesDefenderDueResearch() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _setBuildingLevel(targetPlanetId, Building.ResearchLab, 1);
+        _setResources(targetPlanetId, 1_000_000, 1_000_000, 1_000_000);
+
+        vm.prank(defender);
+        game.startResearch(targetPlanetId, Technology.Energy);
+        VeydriftGameStorage.ResearchQueue memory researchQueue = game.researchQueue(defender);
+        vm.warp(researchQueue.readyAt); // research is now due but the defender never settles it
+
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            340
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        assertGe(arrivalAt, researchQueue.readyAt);
+        assertEq(game.technologyLevel(defender, Technology.Energy), 0); // not applied before resolution
+
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 340);
+        game.resolveFleetMission(missionId);
+
+        assertEq(game.technologyLevel(defender, Technology.Energy), 1); // settled at impact
+        assertFalse(game.researchQueue(defender).active);
+    }
+
     function testShipProductionAppendsMatchingActiveQueue() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
