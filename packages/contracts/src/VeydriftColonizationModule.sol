@@ -272,6 +272,12 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
             revert InvalidMissionType(missionType);
         }
         if (randomnessRequestId != 0) revert InvalidId();
+        // Lazy on-chain reconciliation (VEY-KANEO-477): settle the player's due Colonize/combat fleet
+        // arrivals BEFORE `_validateColonyCreation` runs `_requireNoPendingMissionResolutionForPlanet`.
+        // A ready-but-unsettled arrival on the origin would otherwise revert the launch instead of
+        // settling first. Mirrors the prologue every other mutating colonization path already runs.
+        _settleDueColonizeArrivals(msg.sender);
+        _settleDueCombatArrivals(msg.sender);
         _validateColonyCreation(originPlanetId);
         if (ships.colonyShip != 1 || _missionShipTotal(ships) != 1) revert InvalidQuantity();
 

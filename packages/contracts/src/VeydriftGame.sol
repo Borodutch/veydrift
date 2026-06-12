@@ -95,6 +95,11 @@ contract VeydriftGame is VeydriftResourceReserves {
     function startBuildingUpgrade(uint256 planetId, Building building) external {
         _touchPlayer(msg.sender);
         _requirePlanetOwner(planetId);
+        // Lazy on-chain reconciliation (VEY-KANEO-477): settle BEFORE the active check so a construction
+        // whose `readyAt` has elapsed completes here and clears `active`, letting the owner immediately
+        // queue the next upgrade without a finish tx. Mirrors `startMoonBuildingUpgrade`. A construction
+        // that is genuinely still in progress stays active and correctly trips `ConstructionActive`.
+        _settleResources(planetId);
         if (buildingConstructions[planetId].active) revert ConstructionActive();
 
         uint16 currentLevel = _buildingLevels[planetId][building];
@@ -107,7 +112,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         }
 
         _requireBuildingDependencies(planetId, building);
-        _settleResources(planetId);
 
         Resources memory cost = buildingUpgradeCost(planetId, building);
         _spend(planetId, cost);
