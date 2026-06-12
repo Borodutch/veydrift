@@ -2440,8 +2440,24 @@ export class SettlementIndexer {
     const planet = this.planet(planetId);
     if (!planet) return;
 
-    if (isZeroResourcePlaceholder(planet) && !this.planetResourceSnapshot(planetId)) {
+    const snapshot = this.planetResourceSnapshot(planetId);
+
+    if (isZeroResourcePlaceholder(planet) && !snapshot) {
       this.markStale(pendingPlanetResourcesReason(planetId));
+      return;
+    }
+
+    // VEY-KANEO-476/475: on-chain `_spend` now settles, deducts the cost, and emits an authoritative
+    // post-spend `PlanetSettled` BEFORE the queue-started event (BuildingStarted/ResearchQueued/…) that
+    // carries the same cost — `_spend` emits at a lower logIndex than the caller's queue event, so during
+    // event replay (and live ingestion) the PlanetSettled snapshot is applied first and already reflects
+    // this spend. Subtracting the cost again here double-counts it, driving the served balance below the
+    // contract's `previewResources` by exactly `cost` forever — there is no canonical RPC re-pin left to
+    // mask it (the regression QA caught: metal ~16k low after three builds). When the current resource
+    // snapshot was written by a PlanetSettled in THIS transaction, the spend is already captured: skip the
+    // subtraction. Pre-475 spends emit no PlanetSettled in their tx, so the snapshot still carries an
+    // earlier transaction hash and falls through to the subtraction below, preserving that behavior.
+    if (snapshot && snapshot.transaction_hash === transactionHash) {
       return;
     }
 

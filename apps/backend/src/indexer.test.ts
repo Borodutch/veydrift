@@ -470,6 +470,63 @@ describe("SettlementIndexer", () => {
     expect(served?.resources).toEqual({ metal: "1234", crystal: "567", deuterium: "89" });
   });
 
+  test("does not re-subtract a build cost already captured by the same-tx PlanetSettled (VEY-KANEO-476)", () => {
+    // Regression (live QA on test.veydrift.com, 2026-06-12): after three builds the served metal sat ~16k
+    // below the contract's previewResources as a fixed offset. Root cause: on-chain `_spend` settles,
+    // deducts the cost, and emits the authoritative post-spend PlanetSettled (lower logIndex) BEFORE the
+    // BuildingStarted event that also carries the cost. Event replay applied PlanetSettled (the correct
+    // post-spend balance) and then subtracted the cost a SECOND time from BuildingStarted — and with the
+    // canonical RPC re-pin removed (VEY-KANEO-476) nothing corrected it, so the balance drifted low by the
+    // cost forever. The served balance must equal the PlanetSettled value, not value - cost.
+    const rpcForbidden = () => {
+      throw new Error("on-the-fly RPC read is forbidden (VEY-KANEO-476)");
+    };
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      getInfrastructureState: rpcForbidden,
+      getShipyardState: rpcForbidden,
+      getDefenseState: rpcForbidden,
+      getResearchState: rpcForbidden,
+      getPlayerQueues: rpcForbidden,
+      getPlanet: rpcForbidden
+    } as never, 100n);
+
+    indexer.applyEvent(planet);
+
+    // One on-chain build tx ("0xbuild"): `_spend` emits the post-spend balance (5000-400 metal,
+    // 4900-120 crystal, 4800-60 deuterium) at logIndex 0, settled to `spentAt`; then
+    // `startBuildingUpgrade` emits BuildingStarted carrying the same cost at logIndex 1.
+    const spentAt = Math.floor(Date.now() / 1000);
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xbuild",
+      logIndex: "0x0",
+      topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+      data: abiWords(4600n, 4780n, 4740n, BigInt(spentAt))
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xbuild",
+      logIndex: "0x1",
+      topics: [buildingStartedTopic, topic(7n), topic(5n)],
+      data: abiWords(1n, BigInt(spentAt + 3600), 400n, 120n, 60n)
+    });
+
+    // The build is still queued from the event...
+    expect(indexer.playerQueues(player, planet.planetId).building).toMatchObject({
+      kind: "building",
+      itemId: 5,
+      targetLevel: 1
+    });
+    // ...but the served balance equals the authoritative PlanetSettled balance — the cost is NOT
+    // subtracted a second time (the double-count would serve 4200/4660/4680).
+    const served = indexer.walletSettlement(player).planet;
+    expect(served?.lastSettledAt).toBe(String(spentAt));
+    expect(served?.resources).toEqual({ metal: "4600", crystal: "4780", deuterium: "4740" });
+  });
+
   test("settles resources at the old production rate up to readyAt when a building upgrade completes (VEY-KANEO-429)", () => {
     // Regression: the read-model projects `resources` forward from `lastSettledAt`
     // at the CURRENT production rate. When a metal-mine upgrade completed, the
