@@ -129,15 +129,11 @@ import {
   walletRequestErrorMessage,
   spendTransactionErrorMessage,
   confirmTransactionReceipt,
-  sendFinishDefenseProductionTransaction,
   fetchWalletQueues,
   fetchWalletSettlement,
   parseRiftTokenAmount,
   sendApproveResourceTokenTransaction,
-  sendFinishBuildingUpgradeTransaction,
   sendFinishResourceWithdrawalTransaction,
-  sendFinishShipProductionTransaction,
-  sendFinishResearchTransaction,
   sendAbandonPlanetTransaction,
   sendCreateColonyTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
@@ -145,10 +141,8 @@ import {
   sendLaunchDefenseHoldTransaction,
   sendLaunchFleetMissionTransaction,
   sendJoinAttackMissionTransaction,
-  sendFinishMoonBuildingUpgradeTransaction,
   sendJumpGateJumpTransaction,
   sendRecallFleetMissionTransaction,
-  sendResolveFleetMissionTransaction,
   sendDepositResourceTransaction,
   sendRenamePlanetTransaction,
   sendRequestResourceWithdrawalTransaction,
@@ -3488,128 +3482,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     void runBuildingTransaction(key);
   }, [runBuildingTransaction]);
 
-  const handleFinishBuildingUpgrade = useCallback(async () => {
-    const buildingKey = buildingKeyForContractId(activeBuildingQueue?.itemId) ?? buildingQueue?.key;
-    const planetId = activePlanetId ?? onChainSettlement?.homePlanetId;
-
-    await transactionActionGate.run(`building:finish:${planetId ?? "unknown"}`, async () => {
-      if (!provider || !account || !gameContract || !planetId) {
-        setBuildingAction({
-          status: "error",
-          buildingKey,
-          label: "Wallet, game contract, or active planet is unavailable.",
-        });
-        return;
-      }
-      const label = "Building completion";
-      let completionBuildingKey = buildingKey;
-      let finishExpectation: FinishedBuildingExpectation | undefined;
-      setBuildingAction({ status: "pending", buildingKey, label: "Refreshing infrastructure state" });
-
-      try {
-        const { infrastructureState: latestInfrastructureState, unavailableReason } =
-          await buildingCompletionUnavailableReasonAfterBackendRevalidation({
-            account,
-            activePlanetId: planetId,
-            apiBaseUrl,
-            fallback: infrastructureChainState,
-            knownBuildingQueue: activeBuildingQueue,
-          });
-        if (unavailableReason) {
-          setBuildingAction({ status: "error", buildingKey, label: unavailableReason });
-          return;
-        }
-
-        const latestQueue = latestInfrastructureState?.queue;
-        completionBuildingKey = buildingKeyForContractId(latestQueue?.itemId) ?? buildingKey;
-        const expectation = {
-          itemId: latestQueue?.itemId ?? activeBuildingQueue?.itemId,
-          targetLevel: latestQueue?.targetLevel ?? activeBuildingQueue?.targetLevel,
-        };
-        finishExpectation = expectation;
-        const duplicateFinishReason = completedBuildingFinishSyncReasonFor({
-          activeBuildingQueue,
-          expectation: completedBuildingFinishExpectation,
-        });
-        if (duplicateFinishReason) {
-          setBuildingAction({ status: "error", buildingKey: completionBuildingKey, label: duplicateFinishReason });
-          return;
-        }
-
-        setFailedBuildingFinishExpectation(undefined);
-        setBuildingAction({ status: "pending", buildingKey: completionBuildingKey, label: buildingWalletConfirmationLabel(label) });
-        const txHash = await sendFinishBuildingUpgradeTransaction(
-          provider,
-          account,
-          gameContract,
-          planetId,
-        );
-        setBuildingAction({
-          status: "pending",
-          buildingKey: completionBuildingKey,
-          label: transactionConfirmingLabel(label, txHash),
-        });
-        await confirmSubmittedTransaction(txHash);
-        setCompletedBuildingFinishExpectation(expectation);
-        setBuildingAction({ status: "pending", buildingKey: completionBuildingKey, label: transactionSyncingLabel(label) });
-        const synced = await refreshFinishedBuildingState(expectation);
-        if (synced) {
-          setCompletedBuildingFinishExpectation(undefined);
-          setBuildingAction({ status: "success", buildingKey: completionBuildingKey, label: "Building upgrade finished." });
-        } else {
-          setBuildingAction({
-            status: "pending",
-            buildingKey: completionBuildingKey,
-            label: "Building completion confirmed. Rechecking game state after a temporary API/RPC outage.",
-          });
-        }
-      } catch (error) {
-        console.error(error);
-        const label = buildingFinishActionErrorLabel(error);
-        const failedSyncReason = failedBuildingFinishSyncReasonFor({
-          activeBuildingQueue,
-          expectation: finishExpectation,
-        });
-        const isRejectedByUser = isUserRejected(error);
-        if (finishExpectation) {
-          try {
-            await Promise.all([
-              refreshOnChainState(),
-              refreshInfrastructureState(),
-            ]);
-          } catch (refreshError) {
-            console.error(refreshError);
-          }
-        }
-        if (!isRejectedByUser && failedSyncReason) {
-          setFailedBuildingFinishExpectation(finishExpectation);
-        }
-        setBuildingAction({
-          status: "error",
-          buildingKey: completionBuildingKey,
-          label: isRejectedByUser ? buildingFinishRejectedLabel : failedSyncReason ?? label,
-        });
-      }
-    });
-  }, [
-    account,
-    activeBuildingQueue,
-    activePlanetId,
-    apiBaseUrl,
-    completedBuildingFinishExpectation,
-    confirmSubmittedTransaction,
-    failedBuildingFinishExpectation,
-    gameContract,
-    infrastructureChainState,
-    buildingQueue?.key,
-    onChainSettlement?.homePlanetId,
-    provider,
-    refreshFinishedBuildingState,
-    refreshInfrastructureState,
-    refreshOnChainState,
-    transactionActionGate,
-  ]);
-
   const runShipyardTransaction = useCallback(async (
     label: string,
     actionKey: string,
@@ -3851,25 +3723,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     shipyardState?.planetId,
   ]);
 
-  const handleFinishShipProduction = useCallback(() => {
-    const planetId = shipCompletionPlanetIdFor({
-      activePlanetId,
-      shipyardState,
-      walletQueues: onChainQueues,
-    });
-    if (!provider || !account || !gameContract || !planetId) {
-      setShipyardAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
-      return;
-    }
-
-    void runShipyardTransaction("Ship completion", `shipyard:finish:${planetId}`, () => sendFinishShipProductionTransaction(
-      provider,
-      account,
-      gameContract,
-      planetId,
-    ));
-  }, [account, activePlanetId, gameContract, onChainQueues, provider, runShipyardTransaction, shipyardState]);
-
   const handleBuildDefense = useCallback((defenseId: number, _key: DefenseKey, quantity: number) => {
     if (!provider || !account || !gameContract || !defenseState?.homePlanetId) {
       setDefenseAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
@@ -3904,25 +3757,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     refreshStartedDefenseProductionState,
     runDefenseTransaction,
   ]);
-
-  const handleFinishDefenseProduction = useCallback(() => {
-    const planetId = defenseCompletionPlanetIdFor({
-      activePlanetId,
-      defenseState,
-      walletQueues: onChainQueues,
-    });
-    if (!provider || !account || !gameContract || !planetId) {
-      setDefenseAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
-      return;
-    }
-
-    void runDefenseTransaction("Defense completion", `defense:finish:${planetId}`, () => sendFinishDefenseProductionTransaction(
-      provider,
-      account,
-      gameContract,
-      planetId,
-    ));
-  }, [account, activePlanetId, defenseState, gameContract, onChainQueues, provider, runDefenseTransaction]);
 
   const handleCreateAlliance = useCallback((tag: string, name: string, description: string) => {
     if (!provider || !account || !allianceContract) {
@@ -4286,80 +4120,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     runResearchTransaction,
   ]);
 
-  const handleFinishResearch = useCallback(() => {
-    console.info("Research completion click received", {
-      hasAccount: Boolean(account),
-      hasGameContract: Boolean(gameContract),
-      hasOverviewQueue: Boolean(onChainQueues?.research),
-      hasProvider: Boolean(provider),
-      hasQueue: Boolean(effectiveResearchState?.queue?.active),
-      itemId: effectiveResearchState?.queue?.itemId ?? onChainQueues?.research?.itemId,
-      targetLevel: effectiveResearchState?.queue?.targetLevel ?? onChainQueues?.research?.targetLevel,
-    });
-    const canTransact = Boolean(provider && account && gameContract);
-    const unavailableReason = overviewResearchCompletionUnavailableReasonFor({
-      canTransact,
-      overviewQueue: onChainQueues?.research,
-      researchState: effectiveResearchState,
-    });
-    if (unavailableReason) {
-      console.info("Research completion blocked before wallet request", { reason: unavailableReason });
-      setResearchAction({ status: "error", label: unavailableReason });
-      return;
-    }
-    if (!provider || !account || !gameContract) return;
-
-    const expectation = {
-      itemId: effectiveResearchState?.queue?.itemId ?? onChainQueues?.research?.itemId,
-      targetLevel: effectiveResearchState?.queue?.targetLevel ?? onChainQueues?.research?.targetLevel,
-    };
-    void runResearchTransaction("Research completion", async () => {
-      const latestResearchState = await researchStateForCompletionRevalidation({
-        account,
-        activePlanetId,
-        apiBaseUrl,
-        fallback: effectiveResearchState,
-      });
-      if (latestResearchState) {
-        setResearchState(latestResearchState);
-        setResearchError(undefined);
-      }
-
-      const latestUnavailableReason = researchCompletionUnavailableReasonFor({
-        canTransact: Boolean(provider && account && gameContract),
-        researchState: latestResearchState,
-      });
-      if (latestUnavailableReason) {
-        console.info("Research completion blocked after backend revalidation", { reason: latestUnavailableReason });
-        throw new Error(latestUnavailableReason);
-      }
-
-      console.info("Research completion wallet request starting", expectation);
-      try {
-        const txHash = await sendFinishResearchTransaction(
-          provider,
-          account,
-          gameContract,
-        );
-        console.info("Research completion wallet request returned", { txHash });
-        return txHash;
-      } catch (error) {
-        console.error("Research completion wallet request failed", error);
-        throw error;
-      }
-    }, () => refreshFinishedResearchState(expectation));
-  }, [
-    account,
-    activePlanetId,
-    apiBaseUrl,
-    gameContract,
-    effectiveResearchState,
-    onChainQueues?.research,
-    provider,
-    refreshFinishedResearchState,
-    runResearchTransaction,
-  ]);
-
   const handleApproveRiftResource = useCallback((resource: RiftResourceState, amount: string) => {
     if (!provider || !account || !gameContract || !resource.tokenAddress) {
       setRiftAction({ status: "error", label: "Wallet, game contract, or resource token is unavailable." });
@@ -4675,20 +4435,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     ));
   }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
 
-  const handleFinishMoonBuilding = useCallback(() => {
-    if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
-      setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
-      return;
-    }
-
-    void runMoonTransaction("Finish moon building", () => sendFinishMoonBuildingUpgradeTransaction(
-      provider,
-      account,
-      moonContract,
-      moonState.homePlanetId ?? "",
-    ));
-  }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
-
   const handleJumpGate = useCallback((destinationPlanetId: string, ships?: Partial<MissionShips>) => {
     if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
       setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
@@ -4744,17 +4490,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
     runMissionTransaction(`Recall mission #${missionId}`, () =>
       sendRecallFleetMissionTransaction(provider, account, gameContract, missionId)
-    );
-  }, [account, gameContract, provider, runMissionTransaction]);
-
-  const handleResolveMission = useCallback((missionId: string) => {
-    if (!provider || !account || !gameContract) {
-      setMissionAction({ status: "error", label: "Wallet or game contract is unavailable." });
-      return;
-    }
-
-    runMissionTransaction(`Resolve mission #${missionId}`, () =>
-      sendResolveFleetMissionTransaction(provider, account, gameContract, missionId)
     );
   }, [account, gameContract, provider, runMissionTransaction]);
 
@@ -5050,7 +4785,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onShareReport={() => handleShareMissionReport(missionDetailShareUrl)}
           onCounterplay={handleMissionCounterplay}
           onRecall={handleRecallMission}
-          onResolve={handleResolveMission}
           onRetry={loadMissionDetail}
           onSelectCoordinates={handleSelectPlanet}
           onSelectPlayer={handleSelectPlayer}
@@ -5183,9 +4917,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
             infrastructureChainState,
             onChainResources,
           })}
-          finishUnavailableReason={buildingFinishUnavailableReason}
-          isActionPending={buildingAction.status === "pending"}
-          isBuildingReadyToFinish={isBuildingReadyToFinish}
           loading={infrastructureLoading}
           loadError={infrastructureLoadErrorFor({
             activeBuildingQueue,
@@ -5194,7 +4925,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
             isWalletConnected,
           })}
           now={now}
-          onFinishBuilding={handleFinishBuildingUpgrade}
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshInfrastructureState}
           onSelectBuilding={setSelectedBuildingKey}
@@ -5216,7 +4946,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           error={moonError}
           loading={moonLoading}
           moonState={moonState}
-          onFinishBuilding={handleFinishMoonBuilding}
           onJumpGate={handleJumpGate}
           onRefresh={refreshInfrastructureState}
           onStartBuilding={handleStartMoonBuilding}
@@ -5248,7 +4977,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onGlobalMissionArchivePageChange={(page) => void loadGlobalMissionArchive(page)}
           onMissionArchivePageChange={(page) => void loadMissionArchive(page)}
           onRefresh={refreshMissionControl}
-          onResolve={handleResolveMission}
           reportMissionId={missionReportId ?? undefined}
           reportUrlForMission={missionReportUrlForMission}
           walletPlanets={walletPlanets}
@@ -5264,7 +4992,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           error={researchError}
           loading={researchLoading}
           now={now}
-          onFinish={handleFinishResearch}
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshResearchState}
           onResearch={handleResearch}
@@ -5291,7 +5018,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           now={now}
           onBuild={handleBuildDefense}
           onDefendPlanet={handleDefendPlanet}
-          onFinish={handleFinishDefenseProduction}
           onOpenMission={handleOpenMissionReport}
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshDefenseState}
@@ -5378,7 +5104,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           now={now}
           onBuild={handleBuildShip}
           onCollect={refreshShipyardState}
-          onFinish={handleFinishShipProduction}
           onOpenRequirement={handleOpenRequirement}
           onRefresh={refreshShipyardState}
           onSelectShip={setSelectedShipKey}
@@ -5453,13 +5178,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         onChainStatus={isWalletConnected ? onChainStatus : "local"}
         buildingActionNotice={infrastructureActionNotice}
         buildingActionPendingLabel={infrastructureActionPendingLabel}
-        isDefenseActionPending={defenseAction.status === "pending"}
-        isShipyardActionPending={shipyardAction.status === "pending"}
-        isResearchActionPending={researchAction.status === "pending"}
-        onFinishBuilding={handleFinishBuildingUpgrade}
-        onFinishDefense={handleFinishDefenseProduction}
-        onFinishShipProduction={handleFinishShipProduction}
-        onFinishResearch={handleFinishResearch}
         onNavigate={(target) => handleNavigate(target)}
         onRenamePlanet={handleRenamePlanet}
         onUpdatePlayerDisplayName={handleUpdatePlayerDisplayName}
@@ -5467,12 +5185,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         playerProfileAction={playerProfileAction}
         homePlanet={homePlanetIdentity}
         buildingQueue={buildingQueue}
-        isBuildingActionPending={buildingAction.status === "pending"}
-        isBuildingReadyToFinish={overviewBuildingReadyToFinishFlag({
-          activeBuildingQueue,
-          isBuildingReadyToFinish,
-          now,
-        })}
         planet={planet}
         queueProgress={queueProgress}
         rates={rates}

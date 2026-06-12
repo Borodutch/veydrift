@@ -41,7 +41,6 @@ interface MissionDetailPageProps {
   onShareReport: () => void;
   onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onRecall: (missionId: string) => void;
-  onResolve: (missionId: string) => void;
   onRetry: () => void;
   onSelectCoordinates: (coords: Coordinates) => void;
   onSelectPlayer: (wallet: string) => void;
@@ -59,7 +58,6 @@ export function MissionDetailPage({
   onBack,  onShareReport,
   onCounterplay,
   onRecall,
-  onResolve,
   onRetry,
   onSelectCoordinates,
   onSelectPlayer,
@@ -121,7 +119,6 @@ export function MissionDetailPage({
             now={now}
             onCounterplay={onCounterplay}
             onRecall={onRecall}
-            onResolve={onResolve}
           />
           {actionState.status !== "idle" ? (
             <Notice tone={actionState.status === "error" ? "danger" : actionState.status === "success" ? "success" : "info"}>
@@ -151,14 +148,12 @@ function MissionActions({
   mission,
   now,  onCounterplay,
   onRecall,
-  onResolve,
 }: {
   canTransact: boolean;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   mission: FleetMissionSummary;
   now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onRecall: (missionId: string) => void;
-  onResolve: (missionId: string) => void;
 }) {
   const context = missionActionContext(mission, fleetVisibility);
   // Which orders show is decided by the same wallet-scoped classification the Mission Control list
@@ -166,11 +161,7 @@ function MissionActions({
   // that field is only emitted by FleetMissionRecalled, so a still-recallable Outbound fleet would
   // carry a null cost and lose its Recall button. The backend now projects the cost for Outbound
   // fleets, and the cost row below tolerates a null cost regardless.
-  const actions = missionLifecycleActions({ canTransact, context, mission, now })
-    // VEY-KANEO-427: only surface Resolve when it is actionable. A disabled Resolve
-    // (e.g. the mission has not arrived yet) is hidden here, mirroring how the Mission
-    // Control list suppresses disabled Resolve/Join orders rather than greying them out.
-    .filter((action) => action.kind !== "resolve" || action.enabled);
+  const actions = missionLifecycleActions({ canTransact, context, mission, now });
 
   // Hide the section entirely when no wallet action applies at this stage.
   if (actions.length === 0) {
@@ -188,7 +179,6 @@ function MissionActions({
             action={action}
             key={action.kind}
             onClick={() => {
-              if (action.kind === "resolve") onResolve(mission.missionId);
               if (action.kind === "recall") onRecall(mission.missionId);
             }}
           />

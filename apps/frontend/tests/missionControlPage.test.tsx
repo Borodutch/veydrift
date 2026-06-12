@@ -19,24 +19,24 @@ describe("MissionControlPage", () => {
   test("enables only playable lifecycle actions for mission timing", () => {
     const now = 1_770_000_100_000;
 
+    // VEY-KANEO-468: arrival/return completions reconcile lazily on-chain (and via the backend
+    // resolver), so there is no manual "Resolve" lifecycle action anymore — only recall/counterplay/join.
     expect(missionLifecycleActions({
       canTransact: true,
       context: "outgoing",
       mission: mission({ arrivalAt: "1770000300", missionId: "1", status: "Outbound" }),
       now,
     }).map((action) => [action.kind, action.enabled])).toEqual([
-      ["resolve", false],
       ["recall", true],
     ]);
 
+    // A due outbound mission no longer exposes any manual order; it settles on the next interaction.
     expect(missionLifecycleActions({
       canTransact: true,
       context: "due",
       mission: mission({ arrivalAt: "1770000000", missionId: "2", status: "Outbound" }),
       now,
-    }).map((action) => [action.kind, action.enabled])).toEqual([
-      ["resolve", true],
-    ]);
+    }).map((action) => [action.kind, action.enabled])).toEqual([]);
 
     // VEY-KANEO-465: returns reconcile automatically via the backend resolver, so a
     // returning fleet exposes no manual "Land fleet" action.
@@ -53,7 +53,6 @@ describe("MissionControlPage", () => {
       mission: mission({ arrivalAt: "1770000300", missionId: "4", missionType: "Attack", status: "Outbound" }),
       now,
     }).map((action) => [action.kind, action.enabled])).toEqual([
-      ["resolve", false],
       ["counterplay", true],
     ]);
 
@@ -63,7 +62,6 @@ describe("MissionControlPage", () => {
       mission: mission({ arrivalAt: "1770000300", missionId: "5", missionType: "Attack", status: "Outbound" }),
       now,
     }).map((action) => [action.kind, action.enabled])).toEqual([
-      ["resolve", false],
       ["joinAttack", true],
     ]);
   });
@@ -537,9 +535,8 @@ describe("MissionControlPage", () => {
     // Due count now surfaces only via the "Needs orders now" badge (the summary stat card is gone).
     expect(text).not.toContain("Due resolvers");
     expect(text).toContain("Needs orders now 1");
-    // VEY-399#7: the resolve action label is "Resolve".
-    expect(text).toContain("Resolve");
-    expect(text).not.toContain("Resolve battle");
+    // VEY-KANEO-468: a due mission settles automatically on-chain, so no manual "Resolve" order renders.
+    expect(text).not.toContain("Resolve");
   });
 
   test("paginates past missions inline without a separate list action", () => {

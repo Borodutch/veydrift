@@ -13,7 +13,6 @@ import {
   researchLevelInfoRows,
   researchRefreshErrorLabel,
   researchActionStatus,
-  researchCompletionButtonState,
   researchRefreshButtonState,
   shouldHideResearchValues,
 } from "../src/components/ResearchPage";
@@ -397,37 +396,6 @@ describe("Research page load-error display", () => {
     expect(text).toContain("Crystal 800, Deut. 400");
   });
 
-  test("enables research completion from the app clock once the queue is ready", () => {
-    const queue = {
-      kind: "research",
-      key: "energy",
-      label: "Energy Technology",
-      readyAt: 1_700_000_120_000,
-      startedAt: 1_700_000_000_000,
-      targetLevel: 1,
-    } as const;
-
-    expect(researchCompletionButtonState({
-      actionPending: false,
-      canTransact: true,
-      now: 1_700_000_119_000,
-      queue,
-    })).toMatchObject({
-      disabled: true,
-      label: expect.stringContaining("Ready in 1s"),
-    });
-
-    expect(researchCompletionButtonState({
-      actionPending: false,
-      canTransact: true,
-      now: 1_700_000_120_000,
-      queue,
-    })).toEqual({
-      disabled: false,
-      label: "Complete research",
-    });
-  });
-
   test("keeps selected queued research disabled before the authoritative ready time", () => {
     const status = researchActionStatus({
       actionPending: false,
@@ -457,7 +425,6 @@ describe("Research page load-error display", () => {
     expect(status).toMatchObject({
       actionLabel: "In progress",
       badge: "In progress",
-      completionReady: false,
       disabled: true,
       reason: "Research to Level 2 in progress",
       tileStatus: "Active",
@@ -506,7 +473,6 @@ describe("Research page load-error display", () => {
     expect(status).toMatchObject({
       actionLabel: "In progress",
       badge: "In progress",
-      completionReady: false,
       disabled: true,
       reason: "Research to Level 1 in progress",
       targetLevel: 1,
@@ -514,7 +480,7 @@ describe("Research page load-error display", () => {
     });
   });
 
-  test("lets selected queued research complete once authoritative ready time has passed", () => {
+  test("shows a ready-but-unsettled research level as completing, not manually actionable (VEY-KANEO-468)", () => {
     const status = researchActionStatus({
       actionPending: false,
       canTransact: true,
@@ -540,14 +506,16 @@ describe("Research page load-error display", () => {
       }),
     });
 
+    // The level is past its ready time but not yet settled on-chain. Completion now happens
+    // automatically (lazy reconcile), so the tile reflects an in-progress "Completing" state and
+    // exposes no manual completion action.
     expect(status).toMatchObject({
-      actionLabel: "Complete research",
-      badge: "Ready",
-      completionReady: true,
-      disabled: false,
-      reason: "Ready to complete Level 2",
+      actionLabel: "In progress",
+      badge: "In progress",
+      disabled: true,
+      reason: "Completing Level 2",
       targetLevel: 2,
-      tileStatus: "Ready",
+      tileStatus: "Active",
     });
   });
 

@@ -33,7 +33,6 @@ interface ShipyardPageProps {
   now?: number | undefined;
   onBuild: (shipId: number, key: ShipKey, quantity: number) => void;
   onCollect: () => void;
-  onFinish: () => void;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
   onSelectShip?: ((key: ShipKey) => void) | undefined;
@@ -71,7 +70,6 @@ export function ShipyardPage({
   now,
   onBuild,
   onCollect,
-  onFinish,
   onOpenRequirement,
   onRefresh,
   onSelectShip,
@@ -127,7 +125,6 @@ export function ShipyardPage({
           })}
           now={now}
           onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
-          onFinishQueue={onFinish}
           onOpenRequirement={onOpenRequirement}
           onQuantity={(key, quantity) => setQuantities((prev) => ({ ...prev, [key]: quantity }))}
           onRefreshQueue={onCollect}

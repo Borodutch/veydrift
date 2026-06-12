@@ -114,7 +114,9 @@ describe("playable chain refresh", () => {
     expect(source).toContain("confirmSubmittedTransaction(txHash)");
     expect(source).toContain("sendStartBuildingUpgradeTransaction(\n          provider,\n          account,\n          gameContract,\n          planetId,\n          building,\n        )");
     expect(source).not.toContain("building,\n          { readProvider },");
-    expect(source).toContain("sendFinishBuildingUpgradeTransaction(\n          provider,\n          account,\n          gameContract,\n          planetId,\n        )");
+    // VEY-KANEO-468: the manual building-finish flow was removed (building upgrades settle
+    // lazily on-chain), so the frontend no longer sends finishBuildingUpgrade at all.
+    expect(source).not.toContain("sendFinishBuildingUpgradeTransaction");
     expect(source).not.toContain("sendCollectResourcesTransaction");
   });
 });

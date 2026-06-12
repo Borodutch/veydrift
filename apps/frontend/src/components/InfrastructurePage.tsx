@@ -79,13 +79,9 @@ interface InfrastructurePageProps {
   actionPendingLabel?: string | undefined;
   actionUnavailableReason?: string | undefined;
   chainCosts?: Partial<Record<BuildingKey, Resources>> | undefined;
-  finishUnavailableReason?: string | undefined;
   hasLoadedInfrastructureState?: boolean | undefined;
-  isActionPending?: boolean | undefined;
-  isBuildingReadyToFinish?: boolean | undefined;
   loading?: boolean | undefined;
   loadError?: string | undefined;
-  onFinishBuilding?: (() => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh?: (() => void) | undefined;
   onSelectBuilding?: ((key: BuildingKey) => void) | undefined;
@@ -103,14 +99,10 @@ export function InfrastructurePage({
   actionPendingLabel,
   actionUnavailableReason,
   chainCosts,
-  finishUnavailableReason,
   hasLoadedInfrastructureState = false,
-  isActionPending = false,
-  isBuildingReadyToFinish,
   loading = false,
   loadError,
   now = Date.now(),
-  onFinishBuilding,
   onOpenRequirement,
   onRefresh,
   onSelectBuilding,
@@ -129,16 +121,6 @@ export function InfrastructurePage({
     loadError,
   });
   const initialLoadError = showInitialLoadError ? loadError : undefined;
-  const activeBuildingQueue = settledState.queue?.kind === "building" ? settledState.queue : undefined;
-  const finishAction = infrastructureFinishAction({
-    actionUnavailableReason: finishUnavailableReason ?? actionUnavailableReason ?? actionPendingLabel,
-    isActionPending,
-    isBuildingReadyToFinish,
-    onFinishBuilding,
-    queue: activeBuildingQueue,
-  });
-  const headerFinishAction = infrastructureHeaderFinishAction(finishAction);
-
   const { detailPanelRef, selectInspectItem: handleSelectBuilding } = useInspectDetailSelection<BuildingKey>((key) => {
     setLocalSelectedKey(key);
     onSelectBuilding?.(key);
@@ -168,18 +150,6 @@ export function InfrastructurePage({
             <ActiveBuildingBadge
               label={buildingQueueLabel(settledState.queue.label, settledState.queue.targetLevel)}
             />
-          ) : null}
-          {headerFinishAction ? (
-            <button
-              aria-label={headerFinishAction.reason ?? "Finish building upgrade"}
-              className="h-9 rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-              disabled={headerFinishAction.disabled}
-              onClick={headerFinishAction.onFinish}
-              title={headerFinishAction.reason ?? "Finish building upgrade"}
-              type="button"
-            >
-              {headerFinishAction.label}
-            </button>
           ) : null}
           {onRefresh ? (
             <RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh infrastructure state" />
@@ -220,10 +190,6 @@ export function InfrastructurePage({
             actionUnavailableReason={actionUnavailableReason}
             building={selectedBuilding}
             chainCost={chainCosts?.[selectedBuilding.key]}
-            finishUnavailableReason={finishUnavailableReason}
-            isActionPending={isActionPending}
-            isBuildingReadyToFinish={isBuildingReadyToFinish}
-            onFinishBuilding={onFinishBuilding}
             onOpenRequirement={onOpenRequirement}
             onUpgrade={() => onUpgrade(selectedBuilding.key)}
             now={now}
@@ -300,10 +266,6 @@ function BuildingDetailPanel({
   actionUnavailableReason,
   building,
   chainCost,
-  finishUnavailableReason,
-  isActionPending,
-  isBuildingReadyToFinish,
-  onFinishBuilding,
   onOpenRequirement,
   onUpgrade,
   now,
@@ -316,11 +278,7 @@ function BuildingDetailPanel({
   actionUnavailableReason?: string | undefined;
   building: (typeof buildingCatalog)[number];
   chainCost?: Resources | undefined;
-  finishUnavailableReason?: string | undefined;
-  isActionPending?: boolean | undefined;
-  isBuildingReadyToFinish?: boolean | undefined;
   now: number;
-  onFinishBuilding?: (() => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onUpgrade: () => void;
   planetProductionProfile?: PlanetProductionProfile | undefined;
@@ -360,17 +318,8 @@ function BuildingDetailPanel({
     statusDisabled: status.disabled,
   });
   const activeBuildingQueue = state.queue?.kind === "building" ? state.queue : undefined;
-  const finishAction = infrastructureFinishAction({
-    actionUnavailableReason: finishUnavailableReason ?? actionUnavailableReason ?? actionPendingLabel,
-    binary,
-    isActionPending,
-    isBuildingReadyToFinish,
-    onFinishBuilding,
-    queue: activeBuildingQueue,
-  });
   const dedupedActionNotice = deduplicatedInfrastructureActionNotice(actionNotice, [
     status.reason,
-    finishAction.reason,
   ]);
   // Only surface failures. Success action banners are intentionally not rendered
   // so the panel does not flash a transient status banner on every action.
@@ -466,21 +415,6 @@ function BuildingDetailPanel({
         </div>
       )}
 
-      {finishAction.visible && (
-        <button
-          aria-label={finishAction.reason ?? "Finish building upgrade"}
-          className="mt-3 flex h-10 w-full min-w-0 items-center justify-center overflow-hidden rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-          disabled={finishAction.disabled}
-          onClick={finishAction.onFinish}
-          title={finishAction.reason ?? "Finish building upgrade"}
-          type="button"
-        >
-          <span className="block min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap">
-            {finishAction.label}
-          </span>
-        </button>
-      )}
-
       {!isSelectedBuildingQueued && !(binary && built) && (
         <button
           aria-label={binary ? `${actionVerb} ${building.label}` : `${actionVerb} ${building.label} to Level ${status.targetLevel}`}
@@ -515,53 +449,6 @@ export function infrastructureUpgradeButtonLabel({
   statusDisabled: boolean;
 }): string {
   return binary ? "Build Rift Bridge" : defaultLabel;
-}
-
-export function infrastructureFinishButtonLabel(
-  _actionUnavailableReason: string | undefined,
-  binary: boolean,
-): string {
-  return binary ? "Finish build" : "Finish upgrade";
-}
-
-export function infrastructureFinishAction({
-  actionUnavailableReason,
-  binary = false,
-  isActionPending,
-  isBuildingReadyToFinish,
-  onFinishBuilding,
-  queue,
-}: {
-  actionUnavailableReason?: string | undefined;
-  binary?: boolean | undefined;
-  isActionPending?: boolean | undefined;
-  isBuildingReadyToFinish?: boolean | undefined;
-  onFinishBuilding?: (() => void) | undefined;
-  queue?: BuildingQueueItem | undefined;
-}): {
-  disabled: boolean;
-  label: string;
-  onFinish?: (() => void) | undefined;
-  reason?: string | undefined;
-  visible: boolean;
-} {
-  const visible = Boolean(queue && onFinishBuilding);
-  const reason = actionUnavailableReason
-    ?? (isActionPending ? "Building transaction is already in progress." : undefined)
-    ?? (isBuildingReadyToFinish ? undefined : "Building upgrade is not ready to finish yet.");
-
-  return {
-    disabled: Boolean(reason),
-    label: infrastructureFinishButtonLabel(undefined, binary),
-    onFinish: visible && !reason ? onFinishBuilding : undefined,
-    reason,
-    visible,
-  };
-}
-
-export function infrastructureHeaderFinishAction(action: ReturnType<typeof infrastructureFinishAction>) {
-  if (!action.visible || action.disabled) return undefined;
-  return action;
 }
 
 export function deduplicatedInfrastructureActionNotice(
