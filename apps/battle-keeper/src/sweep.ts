@@ -16,10 +16,11 @@ export type LogSweepOptions = {
 };
 
 /**
- * Backstop reconciler: periodically re-reads recent battle logs over HTTP `eth_getLogs` and feeds
- * them into the keeper, so a mission whose WebSocket `FleetMissionLaunched` was dropped still gets
- * picked up. Resolved events in the window also drop already-settled missions. Pairs with the
- * resolution loop's `tick()` (run separately) which actually submits due missions.
+ * Backstop reconciler: periodically re-reads recent fleet-mission logs over HTTP `eth_getLogs` and
+ * feeds them into the keeper, so a mission whose WebSocket event was dropped still gets picked up for
+ * BOTH legs — a missed `FleetMissionLaunched` re-queues the arrival, a missed `FleetMissionResolved`
+ * transitions it to the return leg (or drops a terminal one), and a missed `FleetMissionReturned`
+ * drops it. Pairs with the resolution loop's `tick()` (run separately) which submits due legs.
  */
 export class LogBackfillSweep {
   private lastSweepAt: string | null = null;
@@ -72,10 +73,17 @@ export class LogBackfillSweep {
           this.keeper.recordLaunched({
             missionId: decoded.missionId,
             missionType: decoded.missionType,
-            arrivalAt: decoded.arrivalAt
+            arrivalAt: decoded.arrivalAt,
+            returnAt: decoded.returnAt
+          });
+        } else if (decoded.kind === "resolved") {
+          this.keeper.recordArrivalResolved({
+            missionId: decoded.missionId,
+            missionType: decoded.missionType,
+            returnAt: decoded.returnAt
           });
         } else {
-          this.keeper.recordResolved(decoded.missionId);
+          this.keeper.recordReturned(decoded.missionId);
         }
       }
       const pendingAfter = this.keeper.snapshot().pendingCount;

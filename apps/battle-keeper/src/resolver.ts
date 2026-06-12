@@ -4,9 +4,12 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { JsonRpcTransport } from "./transport";
 
 /**
- * `resolveFleetMission(uint256)` — permissionless: any funded EOA can call it to settle an arrived
- * mission. Selector is 0xde09e7cf (matches the removed backend keeper). We keep the ABI inline so the
- * keeper has no build dependency on the contracts package.
+ * Permissionless settlement entrypoints — any funded EOA can call them. We keep the ABIs inline so
+ * the keeper has no build dependency on the contracts package.
+ *  - `resolveFleetMission(uint256)` — selector 0xde09e7cf — settles the ARRIVAL leg (all outbound
+ *    mission types). Afterwards the mission is either terminal (Deploy/Colonize/…) or Returning.
+ *  - `completeFleetMissionReturn(uint256)` — selector 0xc2472852 — settles the RETURN leg once a
+ *    Returning/Recalled mission's returnAt has passed.
  */
 const resolveFleetMissionAbi = [
   {
@@ -18,7 +21,21 @@ const resolveFleetMissionAbi = [
   }
 ] as const satisfies Abi;
 
+const completeFleetMissionReturnAbi = [
+  {
+    type: "function",
+    name: "completeFleetMissionReturn",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "missionId", type: "uint256" }],
+    outputs: []
+  }
+] as const satisfies Abi;
+
 export const resolveFleetMissionSelector = "0xde09e7cf";
+export const completeFleetMissionReturnSelector = "0xc2472852";
+
+/** Which leg of a mission's lifecycle a resolve targets. */
+export type MissionLeg = "arrival" | "return";
 
 /** Raised when an attempted resolve reverts on simulation — almost always "randomness not committed
  * yet". The keeper catches this and retries on the next tick/event rather than crashing. */
@@ -33,10 +50,11 @@ export class MissionNotResolvableError extends Error {
 }
 
 export type MissionResolver = {
-  /** Submit resolveFleetMission(missionId). Resolves with the tx hash once mined successfully.
+  /** Submit the leg's settlement call (resolveFleetMission for "arrival",
+   * completeFleetMissionReturn for "return"). Resolves with the tx hash once mined successfully.
    * Throws {@link MissionNotResolvableError} when the call reverts (retry later) or any other error
    * on transport/timeout failure. */
-  resolveMission(missionId: string): Promise<string>;
+  resolveMission(missionId: string, leg: MissionLeg): Promise<string>;
   keeperAddress(): string;
 };
 
@@ -46,6 +64,21 @@ export function encodeResolveFleetMissionCall(missionId: bigint): `0x${string}` 
     functionName: "resolveFleetMission",
     args: [missionId]
   });
+}
+
+export function encodeCompleteFleetMissionReturnCall(missionId: bigint): `0x${string}` {
+  return encodeFunctionData({
+    abi: completeFleetMissionReturnAbi,
+    functionName: "completeFleetMissionReturn",
+    args: [missionId]
+  });
+}
+
+/** Calldata for the given leg's permissionless settlement call. */
+export function encodeMissionCall(missionId: bigint, leg: MissionLeg): `0x${string}` {
+  return leg === "return"
+    ? encodeCompleteFleetMissionReturnCall(missionId)
+    : encodeResolveFleetMissionCall(missionId);
 }
 
 type ViemResolverOptions = {
@@ -82,12 +115,13 @@ export class ViemMissionResolver implements MissionResolver {
     return this.account.address;
   }
 
-  async resolveMission(missionId: string): Promise<string> {
-    const data = encodeResolveFleetMissionCall(BigInt(missionId));
+  async resolveMission(missionId: string, leg: MissionLeg = "arrival"): Promise<string> {
+    const data = encodeMissionCall(BigInt(missionId), leg);
     const from = this.account.address;
 
-    // 1) Simulate. A revert here means the mission isn't resolvable yet (randomness not committed,
-    //    not arrived, already resolved by someone else) — surface as retryable, don't send a tx.
+    // 1) Simulate. A revert here means this leg isn't resolvable yet (arrival: randomness not
+    //    committed / not arrived / already resolved; return: not due / wrong status / already
+    //    returned) — surface as retryable, don't send a tx.
     try {
       await this.transport.request<string>("eth_call", [{ from, to: this.to, data }, "latest"]);
     } catch (error) {

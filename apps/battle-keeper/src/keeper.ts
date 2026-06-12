@@ -1,5 +1,5 @@
 import { keeperResolvableMissionTypes, missionTypeNames } from "./events";
-import { MissionNotResolvableError, type MissionResolver } from "./resolver";
+import { MissionNotResolvableError, type MissionLeg, type MissionResolver } from "./resolver";
 
 export type KeeperLogger = {
   info: (message: string, meta?: Record<string, unknown>) => void;
@@ -13,15 +13,32 @@ export const consoleLogger: KeeperLogger = {
   error: (message, error) => console.error(message, error ?? "")
 };
 
+/** What the keeper needs to record a freshly launched mission (from a WS event or the sweep). */
+export type LaunchedMission = {
+  missionId: string;
+  missionType: number;
+  /** Unix seconds when the mission arrives. */
+  arrivalAt: number;
+  /** Unix seconds the return leg becomes resolvable; 0 means the mission has no return leg. */
+  returnAt: number;
+};
+
+/** A mission tracked in the pending set, currently awaiting one specific leg. */
 export type PendingMission = {
   missionId: string;
   missionType: number;
-  /** Unix seconds when the mission arrives and becomes resolvable. */
-  arrivalAt: number;
+  /** Which leg we are waiting to resolve next. */
+  leg: MissionLeg;
+  /** Unix seconds when {@link leg} becomes resolvable (arrivalAt for "arrival", returnAt for "return"). */
+  dueAt: number;
+  /** Known return time (from the launch event, refined by FleetMissionResolved). 0 => no return leg. */
+  returnAt: number;
 };
 
 export type KeeperSnapshot = {
   pendingCount: number;
+  awaitingArrivalCount: number;
+  awaitingReturnCount: number;
   inFlightCount: number;
   resolvedCount: number;
   submitFailureCount: number;
@@ -40,21 +57,28 @@ export type BattleKeeperOptions = {
 };
 
 /**
- * Core, transport-agnostic battle-resolution engine. It owns the pending set and the resolve loop
- * and is driven by `recordLaunched`/`recordResolved` (from WS events or the safety sweep) plus
- * `tick()` (the resolution loop). All chain I/O is behind {@link MissionResolver} so this is unit
- * testable with a mock resolver.
+ * Core, transport-agnostic fleet-mission resolution engine. It owns the pending set and the resolve
+ * loop and is driven by `recordLaunched`/`recordArrivalResolved`/`recordReturned` (from WS events or
+ * the safety sweep) plus `tick()` (the resolution loop). All chain I/O is behind {@link MissionResolver}
+ * so this is unit testable with a mock resolver.
+ *
+ * Each mission is a small two-leg state machine:
+ *   awaiting-arrival --(resolveFleetMission)--> { awaiting-return | terminal }
+ *   awaiting-return  --(completeFleetMissionReturn)--> terminal
+ * The keeper resolves whichever leg is due so nothing waits on a player's mutating call.
  *
  * Invariants:
- *  - Only Attack/Harvest missions are tracked (everything else lazy-settles — out of scope).
- *  - A mission already resolved (observed event or successful submit) is never re-added.
+ *  - Every outbound mission type is tracked for its arrival; round-trip types also get a return leg.
+ *  - A terminal mission (FleetMissionReturned, or arrival-resolved with no return) is never re-added.
  *  - A mission with an in-flight submission is never submitted again (idempotent / no double-submit).
- *  - A revert ("randomness not ready") leaves the mission pending for the next tick — never crashes.
+ *  - A revert (arrival: randomness not ready; return: not due / wrong status) leaves the mission
+ *    pending for the next tick — never crashes.
  */
 export class BattleKeeper {
   private readonly pending = new Map<string, PendingMission>();
   private readonly inFlight = new Set<string>();
-  private readonly resolved = new Set<string>();
+  /** Missions that are fully done (return resolved, or arrival resolved with no return leg). */
+  private readonly terminal = new Set<string>();
   private readonly maxConcurrency: number;
   private readonly now: () => number;
   private readonly logger: KeeperLogger;
@@ -75,49 +99,86 @@ export class BattleKeeper {
     this.logger = options.logger ?? consoleLogger;
   }
 
-  /** Record a launched mission. No-op unless it is a keeper-resolvable combat leg (Attack/Harvest)
-   * that we haven't already resolved or queued. */
-  recordLaunched(mission: PendingMission): void {
+  /** Record a launched mission into the awaiting-arrival leg. No-op for a non-resolvable type, or a
+   * mission we have already settled or are already tracking (any leg). */
+  recordLaunched(mission: LaunchedMission): void {
     if (!keeperResolvableMissionTypes.has(mission.missionType)) {
       return;
     }
-    if (this.resolved.has(mission.missionId) || this.pending.has(mission.missionId)) {
+    if (this.terminal.has(mission.missionId) || this.pending.has(mission.missionId)) {
       return;
     }
-    this.pending.set(mission.missionId, mission);
-    this.logger.info("[keeper] queued mission", {
+    this.pending.set(mission.missionId, {
+      missionId: mission.missionId,
+      missionType: mission.missionType,
+      leg: "arrival",
+      dueAt: mission.arrivalAt,
+      returnAt: mission.returnAt
+    });
+    this.logger.info("[keeper] queued mission (arrival)", {
       missionId: mission.missionId,
       missionType: missionTypeNames[mission.missionType] ?? mission.missionType,
-      arrivalAt: mission.arrivalAt
+      arrivalAt: mission.arrivalAt,
+      returnAt: mission.returnAt
     });
   }
 
-  /** Mark a mission resolved (from FleetMissionResolved / AttackBattleResolved). Drops it from the
-   * pending set so the keeper stops trying to resolve it — works even if WE didn't resolve it. */
-  recordResolved(missionId: string): void {
-    const wasPending = this.pending.delete(missionId);
+  /** The arrival leg is done (observed FleetMissionResolved, or our own successful resolve). If the
+   * mission has a return leg (returnAt > 0) transition it to awaiting-return with the authoritative
+   * returnAt; otherwise it is terminal. Idempotent and safe even if we never saw the launch. */
+  recordArrivalResolved(event: { missionId: string; missionType: number; returnAt: number }): void {
+    const { missionId, missionType, returnAt } = event;
     this.inFlight.delete(missionId);
-    if (!this.resolved.has(missionId)) {
-      this.resolved.add(missionId);
-      if (wasPending) {
-        this.logger.info("[keeper] mission resolved (observed)", { missionId });
+    if (this.terminal.has(missionId)) {
+      return;
+    }
+    if (returnAt > 0) {
+      const existing = this.pending.get(missionId);
+      const wasArrival = !existing || existing.leg === "arrival";
+      this.pending.set(missionId, {
+        missionId,
+        missionType: existing?.missionType ?? missionType,
+        leg: "return",
+        dueAt: returnAt,
+        returnAt
+      });
+      if (wasArrival) {
+        this.logger.info("[keeper] arrival resolved, awaiting return", { missionId, returnAt });
+      }
+    } else {
+      const wasTracked = this.pending.delete(missionId);
+      this.terminal.add(missionId);
+      if (wasTracked) {
+        this.logger.info("[keeper] arrival resolved (terminal, no return)", { missionId });
       }
     }
   }
 
-  /** Missions that have arrived and are not currently being submitted. */
+  /** The return leg is done (FleetMissionReturned). Drop the mission — it is terminal. */
+  recordReturned(missionId: string): void {
+    const wasTracked = this.pending.delete(missionId);
+    this.inFlight.delete(missionId);
+    if (!this.terminal.has(missionId)) {
+      this.terminal.add(missionId);
+      if (wasTracked) {
+        this.logger.info("[keeper] return resolved (terminal)", { missionId });
+      }
+    }
+  }
+
+  /** Missions whose current leg is due and that are not currently being submitted. */
   private dueMissions(): PendingMission[] {
     const nowSeconds = this.now();
     const due: PendingMission[] = [];
     for (const mission of this.pending.values()) {
-      if (mission.arrivalAt <= nowSeconds && !this.inFlight.has(mission.missionId)) {
+      if (mission.dueAt <= nowSeconds && !this.inFlight.has(mission.missionId)) {
         due.push(mission);
       }
     }
     return due;
   }
 
-  /** One resolution pass: submit resolveFleetMission for every due mission, bounded concurrency. */
+  /** One resolution pass: submit the due leg for every due mission, bounded concurrency. */
   async tick(): Promise<void> {
     const due = this.dueMissions();
     if (due.length === 0) {
@@ -145,30 +206,42 @@ export class BattleKeeper {
   }
 
   private async submit(mission: PendingMission): Promise<void> {
-    const { missionId } = mission;
-    // Idempotency guard: skip if it raced into flight or got resolved between scan and submit.
-    if (this.inFlight.has(missionId) || !this.pending.has(missionId)) {
+    const { missionId, leg } = mission;
+    // Idempotency guard: skip if it raced into flight, got settled, or changed leg between scan and
+    // submit (so we never double-submit the same (missionId, leg)).
+    const current = this.pending.get(missionId);
+    if (this.inFlight.has(missionId) || !current || current.leg !== leg) {
       return;
     }
     this.inFlight.add(missionId);
     try {
-      const hash = await this.resolver.resolveMission(missionId);
-      // Successful on-chain resolution: treat as resolved immediately (the event is a backstop).
-      this.pending.delete(missionId);
-      this.resolved.add(missionId);
+      const hash = await this.resolver.resolveMission(missionId, leg);
       this.resolvedCount += 1;
       this.lastResolvedMissionId = missionId;
       this.lastResolvedAt = new Date(this.now() * 1_000).toISOString();
       this.lastError = null;
-      this.logger.info("[keeper] resolved mission", { missionId, hash });
+      this.logger.info("[keeper] resolved mission leg", { missionId, leg, hash });
+      // Our submit succeeded. The authoritative event (FleetMissionResolved / FleetMissionReturned)
+      // is the backstop, but advance the state machine now so we don't keep re-submitting.
+      if (leg === "arrival") {
+        this.recordArrivalResolved({
+          missionId,
+          missionType: mission.missionType,
+          returnAt: mission.returnAt
+        });
+      } else {
+        this.recordReturned(missionId);
+      }
     } catch (error) {
       this.submitFailureCount += 1;
       this.lastError = error instanceof Error ? error.message : String(error);
       this.lastErrorAt = new Date(this.now() * 1_000).toISOString();
       if (error instanceof MissionNotResolvableError) {
-        // Expected: randomness not committed yet / lost a race. Keep pending, retry next tick.
-        this.logger.warn("[keeper] mission not resolvable yet, will retry", {
+        // Expected: arrival randomness not committed yet, or return not due / wrong status / lost a
+        // race. Keep this leg pending and retry next tick.
+        this.logger.warn("[keeper] mission leg not resolvable yet, will retry", {
           missionId,
+          leg,
           reason: this.lastError
         });
       } else {
@@ -180,16 +253,27 @@ export class BattleKeeper {
   }
 
   /** Reconcile the pending set against an authoritative reader (safety sweep backstop). Adds missions
-   * the WS feed may have missed; existing/resolved ones are ignored by recordLaunched. */
-  reconcilePending(resolvable: PendingMission[]): void {
+   * the WS feed may have missed; existing/terminal ones are ignored by recordLaunched. */
+  reconcilePending(resolvable: LaunchedMission[]): void {
     for (const mission of resolvable) {
       this.recordLaunched(mission);
     }
   }
 
   snapshot(): KeeperSnapshot {
+    let awaitingArrivalCount = 0;
+    let awaitingReturnCount = 0;
+    for (const mission of this.pending.values()) {
+      if (mission.leg === "return") {
+        awaitingReturnCount += 1;
+      } else {
+        awaitingArrivalCount += 1;
+      }
+    }
     return {
       pendingCount: this.pending.size,
+      awaitingArrivalCount,
+      awaitingReturnCount,
       inFlightCount: this.inFlight.size,
       resolvedCount: this.resolvedCount,
       submitFailureCount: this.submitFailureCount,

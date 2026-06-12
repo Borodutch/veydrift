@@ -1,9 +1,12 @@
 import { decodeEventLog, toEventSelector, type Abi } from "viem";
 
 /**
- * Battle-relevant slice of the VeydriftGame event surface. We only decode the three events the
- * keeper acts on (mirrors packages/contracts/src/VeydriftGameStorage.sol). Solidity encodes the
- * `FleetMissionType` enum as `uint8` in the ABI, so the indexed `missionType` topic is a uint8.
+ * Fleet-mission slice of the VeydriftGame event surface (mirrors
+ * packages/contracts/src/VeydriftGameStorage.sol). The keeper drives a two-leg state machine off
+ * these three events: a mission is launched (arrival pending), its arrival is resolved (which either
+ * makes it terminal or transitions it to a pending return leg), and finally its return is resolved
+ * (terminal). Solidity encodes the `FleetMissionType` enum as `uint8`, so the indexed `missionType`
+ * topic is a uint8.
  */
 export const battleEventsAbi = [
   {
@@ -32,24 +35,20 @@ export const battleEventsAbi = [
   },
   {
     type: "event",
-    name: "AttackBattleResolved",
+    name: "FleetMissionReturned",
     inputs: [
       { name: "missionId", type: "uint256", indexed: true },
-      { name: "attacker", type: "address", indexed: true },
-      { name: "targetPlanetId", type: "uint256", indexed: true },
-      { name: "outcome", type: "uint8", indexed: false },
-      { name: "rounds", type: "uint8", indexed: false },
-      { name: "randomSeed", type: "uint256", indexed: false },
-      { name: "lootMetal", type: "uint128", indexed: false },
-      { name: "lootCrystal", type: "uint128", indexed: false },
-      { name: "lootDeuterium", type: "uint128", indexed: false }
+      { name: "owner", type: "address", indexed: true },
+      { name: "planetId", type: "uint256", indexed: true }
     ]
   }
 ] as const satisfies Abi;
 
 /**
- * `FleetMissionType` enum ordinals from VeydriftGameStorage.sol. The keeper only resolves combat
- * legs (Attack/Harvest) promptly — every other mission type lazy-settles, so it is out of scope.
+ * `FleetMissionType` enum ordinals from VeydriftGameStorage.sol. Every outbound mission type has an
+ * arrival leg the keeper resolves promptly; round-trip types (Transport/Attack/Harvest/…) also have
+ * a return leg. (Lazy on-chain reconcile remains the correctness floor; the keeper is the promptness
+ * optimization.)
  */
 export const MissionType = {
   Transport: 0,
@@ -68,24 +67,26 @@ export const missionTypeNames: Record<number, string> = Object.fromEntries(
   Object.entries(MissionType).map(([name, value]) => [value, name])
 );
 
-/** Mission types this keeper resolves promptly. Everything else is left to lazy settlement. */
-export const keeperResolvableMissionTypes = new Set<number>([MissionType.Attack, MissionType.Harvest]);
+/**
+ * Mission types whose ARRIVAL leg the keeper resolves promptly. This is now every outbound mission
+ * type — `resolveFleetMission` is permissionless for all of them, and the resolver's simulate-first
+ * guard harmlessly skips/retries anything not yet (or never) resolvable.
+ */
+export const keeperResolvableMissionTypes = new Set<number>(Object.values(MissionType));
 
 export const eventTopics = {
   fleetMissionLaunched: toEventSelector(
     "FleetMissionLaunched(uint256,address,uint8,uint256,uint256,uint64,uint64,uint256)"
   ),
   fleetMissionResolved: toEventSelector("FleetMissionResolved(uint256,address,uint8,uint64)"),
-  attackBattleResolved: toEventSelector(
-    "AttackBattleResolved(uint256,address,uint256,uint8,uint8,uint256,uint128,uint128,uint128)"
-  )
+  fleetMissionReturned: toEventSelector("FleetMissionReturned(uint256,address,uint256)")
 } as const;
 
 /** topic[0] values the keeper subscribes to (OR-filtered server-side over the game contract). */
 export const subscribedTopic0 = [
   eventTopics.fleetMissionLaunched,
   eventTopics.fleetMissionResolved,
-  eventTopics.attackBattleResolved
+  eventTopics.fleetMissionReturned
 ] as const;
 
 export type RawLog = {
@@ -97,19 +98,30 @@ export type DecodedLaunched = {
   kind: "launched";
   missionId: string;
   missionType: number;
+  /** Unix seconds when the mission arrives and its arrival leg becomes resolvable. */
   arrivalAt: number;
+  /** Unix seconds the return leg becomes resolvable; 0 means the mission has no return leg. */
+  returnAt: number;
 };
 
 export type DecodedResolved = {
   kind: "resolved";
   missionId: string;
+  missionType: number;
+  /** (Possibly updated) return time; 0 (or terminal status) means no return leg. */
+  returnAt: number;
 };
 
-export type DecodedBattleEvent = DecodedLaunched | DecodedResolved;
+export type DecodedReturned = {
+  kind: "returned";
+  missionId: string;
+};
+
+export type DecodedBattleEvent = DecodedLaunched | DecodedResolved | DecodedReturned;
 
 /**
  * Decode a raw JSON-RPC log into the keeper's internal event shape. Returns `null` for logs that are
- * not one of the three battle events (or that fail to decode) so callers can simply skip them.
+ * not one of the three fleet-mission events (or that fail to decode) so callers can simply skip them.
  */
 export function decodeBattleLog(log: RawLog): DecodedBattleEvent | null {
   const topic0 = log.topics[0];
@@ -129,22 +141,44 @@ export function decodeBattleLog(log: RawLog): DecodedBattleEvent | null {
         missionId: bigint;
         missionType: number;
         arrivalAt: bigint;
+        returnAt: bigint;
       };
       return {
         kind: "launched",
         missionId: args.missionId.toString(),
         missionType: Number(args.missionType),
-        arrivalAt: Number(args.arrivalAt)
+        arrivalAt: Number(args.arrivalAt),
+        returnAt: Number(args.returnAt)
       };
     }
 
-    if (topic0 === eventTopics.fleetMissionResolved || topic0 === eventTopics.attackBattleResolved) {
-      // Both carry missionId as the first indexed arg (topic[1]); decode just that cheaply.
+    if (topic0 === eventTopics.fleetMissionResolved) {
+      const decoded = decodeEventLog({
+        abi: battleEventsAbi,
+        eventName: "FleetMissionResolved",
+        topics: log.topics as [signature: `0x${string}`, ...args: `0x${string}`[]],
+        data: log.data as `0x${string}`
+      });
+      const args = decoded.args as {
+        missionId: bigint;
+        missionType: number;
+        returnAt: bigint;
+      };
+      return {
+        kind: "resolved",
+        missionId: args.missionId.toString(),
+        missionType: Number(args.missionType),
+        returnAt: Number(args.returnAt)
+      };
+    }
+
+    if (topic0 === eventTopics.fleetMissionReturned) {
+      // missionId is the first indexed arg (topic[1]); decode just that cheaply.
       const missionTopic = log.topics[1];
       if (!missionTopic) {
         return null;
       }
-      return { kind: "resolved", missionId: BigInt(missionTopic).toString() };
+      return { kind: "returned", missionId: BigInt(missionTopic).toString() };
     }
   } catch {
     return null;

@@ -1,46 +1,59 @@
 # @veydrift/battle-keeper
 
-A focused, **event-driven keeper** that resolves on-chain combat battles (Attack / Harvest fleet
-missions) promptly so players don't wait on a manual mutating call.
+A focused, **event-driven keeper** that resolves on-chain fleet missions promptly — **every mission
+type, both legs (arrival and return)** — so players never wait on a manual mutating call.
 
 ## Why this exists (VEY-468)
 
 Veydrift moved all mission completions to **lazy on-chain settlement**, retiring the old 30s polling
-keeper. That's fine for deterministic legs (Transport, Deploy, Colonize, returns) — they settle the
-next time anyone touches the relevant state. But **combat resolution needs randomness and should not
-lag**: an attacker shouldn't have to send their own resolve tx and wait. This service watches for
-launched battles and calls the permissionless `resolveFleetMission(uint256)` as soon as each one
-arrives.
+keeper. Lazy settlement is the **correctness floor**: any mission settles the next time someone
+touches the relevant state. But that can lag — a player shouldn't have to send their own resolve tx
+and wait, and combat in particular needs randomness resolved promptly. This service is the
+**promptness optimization**: it watches launched missions and calls the permissionless settlement
+entrypoints as soon as each leg is due.
 
-It is intentionally a **separate web service** (not the backend), so combat resolution is isolated
-from the indexer/API and can be deployed on the host that can reach the self-hosted node.
+It is intentionally a **separate web service** (not the backend), so resolution is isolated from the
+indexer/API and can be deployed on the host that can reach the self-hosted node.
 
 ## What it does
 
-- **WebSocket-subscribes** to the game contract's battle events:
-  - `FleetMissionLaunched` → if `missionType` is **Attack** or **Harvest**, record
-    `{ missionId, arrivalAt }` in a pending set.
-  - `FleetMissionResolved` / `AttackBattleResolved` → drop that `missionId` from pending.
-- **Resolution loop** (every `RESOLVE_INTERVAL_MS`): for each pending mission whose `arrivalAt <= now`,
-  submit `resolveFleetMission(missionId)` as a **signed raw transaction** (`eth_sendRawTransaction`,
-  selector `0xde09e7cf`) from `KEEPER_PRIVATE_KEY`. The call is **permissionless** — any funded EOA
-  can resolve. Each submission is simulated with `eth_call` first, so a mission whose randomness isn't
-  committed yet reverts during simulation and is **retried on the next tick** without burning a nonce
-  or crashing.
-- **Safety sweep** (every `SWEEP_INTERVAL_MS`): backfills recent battle logs over `eth_getLogs` to
-  recover any launch the WebSocket feed may have dropped, then re-attempts due missions.
-- **Idempotent**: a mission with an in-flight submission is never submitted again; once a resolution
-  is observed (our successful tx or anyone's `FleetMissionResolved`/`AttackBattleResolved`) it is
-  dropped from pending and never re-queued.
+Each mission is a small **two-leg state machine**:
+
+```
+awaiting-arrival --resolveFleetMission(0xde09e7cf)--> { awaiting-return | terminal }
+awaiting-return  --completeFleetMissionReturn(0xc2472852)--> terminal
+```
+
+- **WebSocket-subscribes** to the game contract's fleet-mission events:
+  - `FleetMissionLaunched` (carries `arrivalAt` **and** `returnAt`) → record **every** outbound
+    mission type in the **awaiting-arrival** leg.
+  - `FleetMissionResolved` (carries `missionType` + the possibly-updated `returnAt`) → the arrival
+    leg is done. If `returnAt > 0`, transition to **awaiting-return** with that time; otherwise the
+    mission is **terminal** (Deploy/Colonize/…).
+  - `FleetMissionReturned` → the return leg is done; the mission is **terminal**.
+- **Resolution loop** (every `RESOLVE_INTERVAL_MS`): for each pending mission whose current leg is due
+  (`dueAt <= now`), submit the leg's call — `resolveFleetMission(missionId)` for arrival,
+  `completeFleetMissionReturn(missionId)` for return — as a **signed raw transaction**
+  (`eth_sendRawTransaction`) from `KEEPER_PRIVATE_KEY`. Both calls are **permissionless** — any funded
+  EOA can resolve. Each submission is simulated with `eth_call` first, so a leg that isn't resolvable
+  yet (arrival: randomness not committed; return: not yet due / wrong status) reverts during
+  simulation and is **retried on the next tick** without burning a nonce or crashing.
+- **Safety sweep** (every `SWEEP_INTERVAL_MS`): backfills recent fleet-mission logs over `eth_getLogs`
+  to recover **both legs** — a missed launch re-queues the arrival, a missed `FleetMissionResolved`
+  transitions to the return leg (or drops a terminal one), and a missed `FleetMissionReturned` drops
+  it — then re-attempts due legs.
+- **Idempotent**: a mission with an in-flight submission is never submitted again for that leg; a
+  terminal mission is never re-queued. When we resolve a leg ourselves we advance the state machine
+  immediately (the matching event is a backstop that refines the authoritative `returnAt`).
 - **Robust**: auto-reconnects the WebSocket with capped exponential backoff, bounded concurrency on
   tx submission, structured logs, and never wedges.
 
 ### Scope decision
 
-This keeper **only resolves Attack/Harvest battle missions**. Every other mission type
-(Transport, Deploy, Colonize, AcsDefend, DefenseHold, returns, …) is **deterministic and
-lazy-settles**, so it is deliberately left out of scope. `RandomnessCommitterService` stays in the
-backend — the keeper **only resolves**, it does not commit randomness.
+The keeper **only resolves** — it does not commit randomness; `RandomnessCommitterService` stays in
+the backend. Lazy on-chain reconcile remains the correctness floor, so even if the keeper is down
+nothing is lost; it merely settles later. Any mission type that emits no `FleetMissionLaunched`
+(i.e. has no resolvable arrival) is simply never tracked.
 
 ## Endpoints
 

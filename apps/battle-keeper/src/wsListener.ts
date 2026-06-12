@@ -223,10 +223,17 @@ export class WsBattleListener {
       this.keeper.recordLaunched({
         missionId: decoded.missionId,
         missionType: decoded.missionType,
-        arrivalAt: decoded.arrivalAt
+        arrivalAt: decoded.arrivalAt,
+        returnAt: decoded.returnAt
+      });
+    } else if (decoded.kind === "resolved") {
+      this.keeper.recordArrivalResolved({
+        missionId: decoded.missionId,
+        missionType: decoded.missionType,
+        returnAt: decoded.returnAt
       });
     } else {
-      this.keeper.recordResolved(decoded.missionId);
+      this.keeper.recordReturned(decoded.missionId);
     }
   }
 }

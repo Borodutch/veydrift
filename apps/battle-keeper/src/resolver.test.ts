@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  completeFleetMissionReturnSelector,
+  encodeCompleteFleetMissionReturnCall,
   encodeResolveFleetMissionCall,
   MissionNotResolvableError,
   resolveFleetMissionSelector,
@@ -34,6 +36,16 @@ describe("encodeResolveFleetMissionCall", () => {
     const data = encodeResolveFleetMissionCall(42n);
     expect(data.startsWith(resolveFleetMissionSelector)).toBe(true);
     expect(data).toBe(`${resolveFleetMissionSelector}${(42n).toString(16).padStart(64, "0")}`);
+  });
+});
+
+describe("encodeCompleteFleetMissionReturnCall", () => {
+  test("produces the 0xc2472852 selector and abi-encoded missionId", () => {
+    const data = encodeCompleteFleetMissionReturnCall(42n);
+    expect(data.startsWith(completeFleetMissionReturnSelector)).toBe(true);
+    expect(data).toBe(
+      `${completeFleetMissionReturnSelector}${(42n).toString(16).padStart(64, "0")}`
+    );
   });
 });
 
@@ -82,6 +94,38 @@ describe("ViemMissionResolver", () => {
     const sendCall = transport.calls.find((c) => c.method === "eth_sendRawTransaction");
     expect(typeof (sendCall?.params[0] as string)).toBe("string");
     expect((sendCall?.params[0] as string).startsWith("0x02")).toBe(true); // EIP-1559 envelope
+  });
+
+  test("the return leg simulates and broadcasts completeFleetMissionReturn", async () => {
+    let simulatedData: string | undefined;
+    const transport = new MockTransport((method, params) => {
+      switch (method) {
+        case "eth_call":
+          simulatedData = (params[0] as { data: string }).data;
+          return "0x";
+        case "eth_getTransactionCount":
+          return "0x0";
+        case "eth_estimateGas":
+          return "0x5208";
+        case "eth_getBlockByNumber":
+          return { baseFeePerGas: "0x3b9aca00" };
+        case "eth_maxPriorityFeePerGas":
+          return "0x3b9aca00";
+        case "eth_sendRawTransaction":
+          return "0xdeadbeef";
+        case "eth_getTransactionReceipt":
+          return { status: "0x1" };
+        default:
+          return "0x0";
+      }
+    });
+    const resolver = new ViemMissionResolver(transport, testKey, gameContract, 84532);
+
+    const hash = await resolver.resolveMission("1", "return");
+    expect(hash).toBe("0xdeadbeef");
+    // The simulated calldata targets completeFleetMissionReturn, not resolveFleetMission.
+    expect(simulatedData?.startsWith(completeFleetMissionReturnSelector)).toBe(true);
+    expect(transport.methodCalls("eth_sendRawTransaction")).toBe(1);
   });
 
   test("a mined-but-reverted receipt is retryable (MissionNotResolvableError)", async () => {

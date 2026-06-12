@@ -29,7 +29,7 @@ function setup(): { handler: (request: Request) => Response; keeper: BattleKeepe
 describe("health handler", () => {
   test("GET /health returns the snapshot", async () => {
     const { handler, keeper } = setup();
-    keeper.recordLaunched({ missionId: "1", missionType: MissionType.Attack, arrivalAt: 500 });
+    keeper.recordLaunched({ missionId: "1", missionType: MissionType.Attack, arrivalAt: 500, returnAt: 900 });
 
     const res = handler(new Request("http://localhost/health"));
     const body = await res.json();
