@@ -26,6 +26,7 @@ import type {
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import { VeydriftGameReader, riftRequirements } from "./evm";
 import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
+import { deriveInfrastructureFields } from "./readModels";
 import { createRequestHandler, deriveLogBackfiller } from "./server";
 
 const configuredTestConfig: BackendConfig = {
@@ -4137,6 +4138,70 @@ describe("Veydrift backend", () => {
     // the stale stored 5000 and under-reported LOOT at 2500.
     expect(tacticalPlanet.tactical.raidableResources.metal).toBe("2532");
     expect(Number(tacticalPlanet.tactical.raidableResources.metal)).toBeGreaterThan(2500);
+  });
+
+  test("Raid Target Finder loot is derived from the same accrued resources the public universe surface exposes (VEY-KANEO-454)", async () => {
+    // Cross-surface invariant for the QA report: the Raid Target Finder LOOT (highscores
+    // `raidableResources`) must be derived from the SAME accrued (capped) resources the public
+    // universe surface (`publicState.resources`) shows — not a staler stored snapshot. Both the
+    // highscores path (`rankedHighscorePlanets`) and the universe path (`publicPlanetStateRef`)
+    // run `resourcesWithClaimableAccrual` over the identical settled base, so they must agree.
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    // Metal mine + solar plant settled two hours ago: stored metal 5000 accrues to 5064.
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      lastSettledAt: (Math.floor(Date.now() / 1_000) - 7_200).toString()
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xmine",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xsolar",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(3n)],
+      data: abiWords(1n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const universeResponse = await handler(new Request("http://localhost/universe/galaxies/2/systems/44"));
+    const universeBody = await universeResponse.json();
+    const publicPlanet = universeBody.planets.find((item: { position: number }) => item.position === 9);
+    const publicResources = publicPlanet.publicState.resources;
+    // The public universe surface accrues production: stored 5000 -> accrued 5064.
+    expect(publicResources.metal).toBe("5064");
+
+    const highscoreResponse = await handler(new Request("http://localhost/highscores?limit=10"));
+    const highscoreBody = await highscoreResponse.json();
+    const tacticalPlanet = highscoreBody.rankings.total[0].planets[0];
+
+    // Raidable loot derived from the public (accrued) resources, using the same shared derivation
+    // the backend applies. The Finder must match this exactly — proving it reads the accrued base,
+    // not the stale stored snapshot (which would yield raidable metal 2500 instead of 2532).
+    const expectedRaidable = deriveInfrastructureFields(
+      { ...planet, resources: publicResources },
+      indexer.infrastructureRows("7"),
+      indexer.shipRows("7"),
+      indexer.technologyLevels(player)
+    ).raidableResources!;
+    expect(expectedRaidable).not.toBeNull();
+    expect(tacticalPlanet.tactical.raidableResources).toEqual(expectedRaidable);
+    expect(tacticalPlanet.tactical.raidableResourceTotal).toBe(
+      (BigInt(expectedRaidable.metal) + BigInt(expectedRaidable.crystal) + BigInt(expectedRaidable.deuterium)).toString()
+    );
   });
 
   test("paginates highscore rankings while preserving absolute ranks", async () => {
