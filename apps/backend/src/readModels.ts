@@ -177,38 +177,78 @@ export function zeroResources(): Resources {
 }
 
 export function deriveBuildingRows(levelFor: (id: number) => number): InfrastructureState["buildings"] {
-  return Array.from({ length: buildingCount }, (_, id) => ({
-    id,
-    level: levelFor(id),
-    cost: toResources(buildingCost(id, levelFor(id)))
-  }));
+  // Robotics Factory (id 4) and Nanite Factory (id 11) levels drive the next-upgrade
+  // duration for every building on the planet (VEY-KANEO-472).
+  const roboticsLevel = levelFor(4);
+  const naniteLevel = levelFor(11);
+
+  return Array.from({ length: buildingCount }, (_, id) => {
+    const cost = buildingCost(id, levelFor(id));
+    return {
+      id,
+      level: levelFor(id),
+      cost: toResources(cost),
+      durationSeconds: buildingDurationSeconds(roboticsLevel, naniteLevel, cost)
+    };
+  });
 }
 
-export function deriveShipRows(countFor: (id: number) => number, maxTemperature?: number): ShipyardState["ships"] {
+// Optional shipyard/nanite levels enable the per-unit predicted build time on each ship
+// row (VEY-KANEO-472). Count-only callers (tactical summary, raid finder) omit them and
+// pay no extra work; the detail (Shipyard) payload passes them.
+export function deriveShipRows(
+  countFor: (id: number) => number,
+  maxTemperature?: number,
+  durationLevels?: { shipyardLevel: number; naniteLevel: number }
+): ShipyardState["ships"] {
   const solarSatelliteEnergyPerUnit = maxTemperature === undefined ? undefined : solarSatelliteEnergy(maxTemperature).toString();
 
-  return supportedShipIds.map((id) => ({
-    id,
-    count: countFor(id),
-    cost: toResources(shipCosts[id] ?? zeroNumericResources()),
-    ...(id === 9 && solarSatelliteEnergyPerUnit ? { energyPerUnit: solarSatelliteEnergyPerUnit } : {})
-  }));
+  return supportedShipIds.map((id) => {
+    const cost = shipCosts[id] ?? zeroNumericResources();
+    return {
+      id,
+      count: countFor(id),
+      cost: toResources(cost),
+      ...(id === 9 && solarSatelliteEnergyPerUnit ? { energyPerUnit: solarSatelliteEnergyPerUnit } : {}),
+      ...(durationLevels
+        ? { durationSeconds: unitDurationSeconds(durationLevels.shipyardLevel, durationLevels.naniteLevel, cost, 1) }
+        : {})
+    };
+  });
 }
 
-export function deriveDefenseRows(countFor: (id: number) => number): DefenseState["defenses"] {
-  return Array.from({ length: defenseCount }, (_, id) => ({
-    id,
-    count: countFor(id),
-    cost: toResources(defenseCosts[id] ?? zeroNumericResources())
-  }));
+export function deriveDefenseRows(
+  countFor: (id: number) => number,
+  durationLevels?: { shipyardLevel: number; naniteLevel: number }
+): DefenseState["defenses"] {
+  return Array.from({ length: defenseCount }, (_, id) => {
+    const cost = defenseCosts[id] ?? zeroNumericResources();
+    return {
+      id,
+      count: countFor(id),
+      cost: toResources(cost),
+      ...(durationLevels
+        ? { durationSeconds: unitDurationSeconds(durationLevels.shipyardLevel, durationLevels.naniteLevel, cost, 1) }
+        : {})
+    };
+  });
 }
 
-export function deriveTechnologyRows(levelFor: (id: number) => number): ResearchState["technologies"] {
-  return supportedTechnologyIds.map((id) => ({
-    id,
-    level: levelFor(id),
-    cost: toResources(researchCost(id, levelFor(id)))
-  }));
+// Optional effective research-lab level enables the predicted research time on each
+// technology row (VEY-KANEO-472); the detail (Research) payload passes it.
+export function deriveTechnologyRows(
+  levelFor: (id: number) => number,
+  labLevel?: number
+): ResearchState["technologies"] {
+  return supportedTechnologyIds.map((id) => {
+    const cost = researchCost(id, levelFor(id));
+    return {
+      id,
+      level: levelFor(id),
+      cost: toResources(cost),
+      ...(labLevel === undefined ? {} : { durationSeconds: researchDurationSeconds(labLevel, cost) })
+    };
+  });
 }
 
 export function usedFieldsFromBuildingRows(
@@ -488,4 +528,42 @@ function toResources(resources: NumericResources): Resources {
 
 function zeroNumericResources(): NumericResources {
   return { metal: 0, crystal: 0, deuterium: 0 };
+}
+
+// Predicted queue durations for the NEXT (not-yet-started) build/upgrade/research,
+// surfaced server-side so the build screens can show "Build/Upgrade/Research time"
+// without re-deriving game state on the client (VEY-KANEO-472, regressed by #821).
+// Mirrors VeydriftFormulas.{buildingDuration,unitDuration,researchDuration} with the
+// deployed constants QUEUE_UNIVERSE_SPEED = 1 and MIN_QUEUE_SECONDS = 1, matching the
+// conformance-tested frontend helpers in playableMvp.ts.
+const QUEUE_UNIVERSE_SPEED = 1;
+const MIN_QUEUE_SECONDS = 1;
+const SECONDS_PER_HOUR = 3_600;
+
+export function buildingDurationSeconds(
+  roboticsLevel: number,
+  naniteLevel: number,
+  cost: NumericResources
+): number {
+  const denominator = 2_500 * (roboticsLevel + 1) * (2 ** naniteLevel) * QUEUE_UNIVERSE_SPEED;
+  const raw = Math.floor(((cost.metal + cost.crystal) * SECONDS_PER_HOUR) / denominator);
+  return Math.max(MIN_QUEUE_SECONDS, raw);
+}
+
+export function researchDurationSeconds(labLevel: number, cost: NumericResources): number {
+  const denominator = 1_000 * (labLevel + 1) * QUEUE_UNIVERSE_SPEED;
+  const raw = Math.floor(((cost.metal + cost.crystal) * SECONDS_PER_HOUR) / denominator);
+  return Math.max(MIN_QUEUE_SECONDS, raw);
+}
+
+// Per-batch duration for `quantity` ships/defenses; the contract ceils the whole batch.
+export function unitDurationSeconds(
+  shipyardLevel: number,
+  naniteLevel: number,
+  cost: NumericResources,
+  quantity: number
+): number {
+  const denominator = 2_500 * (shipyardLevel + 1) * (2 ** naniteLevel) * QUEUE_UNIVERSE_SPEED;
+  const raw = Math.ceil(((cost.metal + cost.crystal) * Math.max(1, Math.floor(quantity)) * SECONDS_PER_HOUR) / denominator);
+  return Math.max(MIN_QUEUE_SECONDS, raw);
 }

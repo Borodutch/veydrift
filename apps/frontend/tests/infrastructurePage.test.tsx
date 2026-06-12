@@ -111,8 +111,9 @@ describe("Infrastructure page display helpers", () => {
     expect(button.props.title).toBe("Level table");
   });
 
-  test("renders Metal Mine modal rows with cost and energy use, no client production/build time", () => {
-    // VEY-KANEO-465: per-building production rate and upgrade build time are backend-owned.
+  test("renders Metal Mine modal rows with cost, energy use, and build time (no client production)", () => {
+    // VEY-KANEO-465 dropped per-building production AND build time. VEY-KANEO-472 restores
+    // the build-time column (production stays backend-owned).
     const state = {
       ...createInitialPlayableState(1_000),
       buildings: {
@@ -134,7 +135,7 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("Level 2 Next");
     expect(text).toContain("Metal 90, Crystal 22");
     expect(text).toContain("24 required");
-    expect(text).not.toContain("Build time");
+    expect(text).toContain("Build time");
     expect(text).not.toContain("Production");
     expect(text).not.toContain("Metal/h");
   });

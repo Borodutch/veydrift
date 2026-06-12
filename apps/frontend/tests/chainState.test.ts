@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildingCosts,
+  buildingDurations,
   energyBalanceFromChain,
   emptyContractState,
   infrastructurePlayableState,
@@ -73,6 +74,21 @@ describe("contract state adapters", () => {
       required: 100,
       scaleBps: 6000,
     });
+  });
+
+  test("maps backend-sourced next-upgrade durations per building (VEY-KANEO-472)", () => {
+    const withDuration: ChainInfrastructureState = {
+      ...infrastructureState,
+      buildings: [
+        { id: 0, level: 2, cost: { metal: "240", crystal: "60", deuterium: "0" }, durationSeconds: 432 },
+        { id: 1, level: 0, cost: { metal: "48", crystal: "24", deuterium: "0" } },
+      ],
+    };
+
+    expect(buildingDurations(withDuration).metalMine).toBe(432);
+    // Rows without a backend duration are omitted (no client re-derivation).
+    expect(buildingDurations(withDuration).crystalMine).toBeUndefined();
+    expect(buildingDurations(null)).toEqual({});
   });
 
   test("converts indexed energy source details for the top bar popup", () => {

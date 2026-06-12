@@ -1473,7 +1473,7 @@ function indexedShipyardState(
     technologyLevels: indexer.technologyLevels(wallet),
     // Launchable ships only: exclude fleets already away on missions so Mission Compose stops offering
     // phantom ships that revert at launch (VEY-KANEO-447).
-    ships: planet ? indexer.availableShipRows(planet.planetId) : [],
+    ships: planet ? indexer.availableShipRows(planet.planetId, { shipyardLevel, naniteLevel }) : [],
     queue: planet ? indexer.planetQueue(planet.planetId, "ship") : null
   };
 }
@@ -1498,7 +1498,12 @@ function indexedDefenseState(
     naniteLevel: buildings.find((building) => building.id === 11)?.level ?? 0,
     missileSiloLevel: buildings.find((building) => building.id === 14)?.level ?? 0,
     technologyLevels: indexer.technologyLevels(wallet),
-    defenses: planet ? indexer.defenseRows(planet.planetId) : [],
+    defenses: planet
+      ? indexer.defenseRows(planet.planetId, {
+          shipyardLevel: buildings.find((building) => building.id === 5)?.level ?? 0,
+          naniteLevel: buildings.find((building) => building.id === 11)?.level ?? 0
+        })
+      : [],
     queue: planet ? indexer.planetQueue(planet.planetId, "defense") : null
   };
 }
@@ -1522,7 +1527,7 @@ function indexedResearchState(
     researchLabLevel: buildings.find((building) => building.id === 6)?.level ?? 0,
     researchNetworkLabLevels: [],
     technologyLevels: indexer.technologyLevels(wallet),
-    technologies: indexer.technologyRows(wallet),
+    technologies: indexer.technologyRows(wallet, buildings.find((building) => building.id === 6)?.level ?? 0),
     queue: indexer.researchQueue(wallet)
   };
 }
