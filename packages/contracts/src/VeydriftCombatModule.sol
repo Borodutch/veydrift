@@ -1633,7 +1633,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         // The capacity split + rollover arithmetic and the storage decrement live in the deployed
         // VeydriftRaidStorage library to keep this size-constrained module within EIP-170.
         (raided.metal, raided.crystal, raided.deuterium) = VeydriftRaidStorage.raid(
-            _planets[targetPlanetId].resources,
+            _planets[targetPlanetId],
+            targetPlanetId,
             capacity,
             plunderBps,
             lootRatio.metalBps,

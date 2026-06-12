@@ -459,6 +459,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         emit ColonyCreated(
             owner, originPlanetId, colonyPlanetId, galaxy, system, position, fields, temperature
         );
+        _emitPlanetSettled(colonyPlanetId);
     }
 
     function _nextColonyCoordinates(address player, uint256 salt)
@@ -634,6 +635,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         available.crystal -= cost.crystal;
         available.deuterium -= cost.deuterium;
         _decreaseInternalResources(cost);
+        _emitPlanetSettled(planetId);
     }
 
     function _productionPerHour(uint256 planetId)

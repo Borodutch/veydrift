@@ -790,6 +790,23 @@ abstract contract VeydriftGameStorage {
         _setPlanetDefenseCount(planetId, defense, _defenseCounts[planetId][defense] - quantity);
     }
 
+    /// @dev Single authoritative resource-balance sink. Emits the planet's post-mutation
+    ///      `{metal,crystal,deuterium,settledAt}`. Every discrete resource mutation (cost spend,
+    ///      cargo/loot credit, raid debit, collect, starting balance) routes through here so the
+    ///      backend indexer tracks balances from events alone — never an on-the-fly `previewResources`
+    ///      RPC read. Production accrued purely by elapsed time carries no discrete delta and is
+    ///      derived off-chain from the last emitted `settledAt`; this event fires whenever the stored
+    ///      balance changes by anything other than passive time, always carrying the final values and a
+    ///      `settledAt == block.timestamp` baseline. Funnelling through one `internal` helper keeps the
+    ///      emitting bytecode to a single copy per module, mirroring `_setPlanetShipCount`.
+    function _emitPlanetSettled(uint256 planetId) internal {
+        Planet storage planetRef = _planets[planetId];
+        Resources storage balance = planetRef.resources;
+        emit PlanetSettled(
+            planetId, balance.metal, balance.crystal, balance.deuterium, planetRef.lastSettledAt
+        );
+    }
+
     function _recordAttack(address attacker, uint256 targetPlanetId) internal {
         address defender = _attackDefender(targetPlanetId);
         bool defenderInactive =

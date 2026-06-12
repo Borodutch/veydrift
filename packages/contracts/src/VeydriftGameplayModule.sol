@@ -521,20 +521,27 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         } else {
             _settleResources(mission.targetPlanetId);
         }
-        if (mission.missionType == FleetMissionType.Transport) {
+        if (
+            mission.missionType == FleetMissionType.Transport
+                || mission.missionType == FleetMissionType.Deploy
+        ) {
+            // Both transport and deploy credit the target's cargo on arrival; share the credit + the
+            // single authoritative `_emitPlanetSettled` (VEY-KANEO-475) and branch only on the
+            // mission-type-specific bookkeeping that follows.
             _planets[mission.targetPlanetId].resources =
                 _add(_planets[mission.targetPlanetId].resources, mission.cargo);
-            mission.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
-            mission.status = FleetMissionStatus.Returning;
-        } else if (mission.missionType == FleetMissionType.Deploy) {
-            _planets[mission.targetPlanetId].resources =
-                _add(_planets[mission.targetPlanetId].resources, mission.cargo);
-            _creditMissionShips(mission.targetPlanetId, mission.ships);
-            mission.status = FleetMissionStatus.Resolved;
-            mission.returnAt = _currentTimestamp();
-            activeFleetMissionCount[mission.owner] -= 1;
-            // Deploy is terminal at arrival (ships stay at target, no return leg): untrack now.
-            _untrackMissionResolution(missionId, mission);
+            _emitPlanetSettled(mission.targetPlanetId);
+            if (mission.missionType == FleetMissionType.Transport) {
+                mission.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
+                mission.status = FleetMissionStatus.Returning;
+            } else {
+                _creditMissionShips(mission.targetPlanetId, mission.ships);
+                mission.status = FleetMissionStatus.Resolved;
+                mission.returnAt = _currentTimestamp();
+                activeFleetMissionCount[mission.owner] -= 1;
+                // Deploy is terminal at arrival (ships stay at target, no return leg): untrack now.
+                _untrackMissionResolution(missionId, mission);
+            }
         } else if (
             mission.missionType == FleetMissionType.Attack
                 || mission.missionType == FleetMissionType.Harvest
@@ -662,6 +669,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         available.crystal -= cost.crystal;
         available.deuterium -= cost.deuterium;
         _decreaseInternalResources(cost);
+        _emitPlanetSettled(planetId);
     }
 
     function _cappedResourceIncrease(
