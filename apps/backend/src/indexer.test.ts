@@ -19,6 +19,7 @@ const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe2
 const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
+const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
@@ -579,6 +580,35 @@ describe("SettlementIndexer", () => {
       }
     });
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 9)?.count).toBe(2);
+  });
+
+  test("applies PlanetDefenseCountChanged events to indexed defense rows (VEY-KANEO-461/462)", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    // Build 5 rocket launchers (defense id 0) on planet 7.
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xdefdone",
+      logIndex: "0x0",
+      topics: [defenseCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(5n, 5n)
+    });
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(5);
+
+    // A combat defense loss emits PlanetDefenseCountChanged with the planet's resulting total (2).
+    expect(indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xcombat-def",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(2n)
+    })).toMatchObject({ applied: true, duplicate: false });
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(2);
   });
 
   test("availableShipRows reflects the launch debit emitted by PlanetShipCountChanged (VEY-KANEO-461)", () => {
