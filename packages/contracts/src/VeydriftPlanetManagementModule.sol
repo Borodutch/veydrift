@@ -316,6 +316,13 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         _settleDueColonizeArrivals(msg.sender);
         _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlayer(msg.sender);
+        // VEY-KANEO-480: settle a ready-but-unsettled research queue BEFORE the active check, mirroring
+        // the start*/action settle-before-check fixes in #852 (VEY-KANEO-477). A research whose readyAt
+        // has elapsed but was never observed would otherwise still report active and falsely revert
+        // QueueActive(), blocking the owner from queueing the next research without a separate finish tx.
+        // A due research now completes and clears active here; a genuinely in-progress one stays active
+        // and still trips QueueActive().
+        _settleResearchDue(msg.sender, _currentTimestamp());
         if (researchQueues[msg.sender].active) revert QueueActive();
 
         uint16 currentLevel = _technologyLevels[msg.sender][technology];
