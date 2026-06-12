@@ -3,8 +3,9 @@ pragma solidity ^0.8.28;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
-import {ITransparentUpgradeableProxy} from
-    "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
+import {
+    ITransparentUpgradeableProxy
+} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
@@ -49,9 +50,7 @@ contract UpgradeGame is Script {
 
         // The upgrade call is onlyOwner on the ProxyAdmin. Fail fast (before any deploy) if the
         // signer cannot actually execute the upgrade, so we never strand orphaned module deploys.
-        require(
-            ProxyAdmin(proxyAdmin).owner() == broadcaster, "BROADCASTER_NOT_PROXY_ADMIN_OWNER"
-        );
+        require(ProxyAdmin(proxyAdmin).owner() == broadcaster, "BROADCASTER_NOT_PROXY_ADMIN_OWNER");
 
         vm.startBroadcast(privateKey);
 
@@ -73,9 +72,8 @@ contract UpgradeGame is Script {
         );
         newImplementation = address(newImpl);
 
-        ProxyAdmin(proxyAdmin).upgradeAndCall(
-            ITransparentUpgradeableProxy(proxy), newImplementation, ""
-        );
+        ProxyAdmin(proxyAdmin)
+            .upgradeAndCall(ITransparentUpgradeableProxy(proxy), newImplementation, "");
 
         vm.stopBroadcast();
 

@@ -45,19 +45,17 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             FleetMission storage mission = _fleetMissions[missionIds[index]];
             if (
                 mission.status == FleetMissionStatus.Outbound
-                    && (
-                        mission.missionType == FleetMissionType.Attack
-                            || mission.missionType == FleetMissionType.Harvest
-                    ) && nowTimestamp >= mission.arrivalAt
+                    && (mission.missionType == FleetMissionType.Attack
+                        || mission.missionType == FleetMissionType.Harvest)
+                    && nowTimestamp >= mission.arrivalAt
             ) {
                 try IVeydriftCombatMissionResolver(address(this))
                     .resolveFleetMission(missionIds[index]) {}
                     catch {}
             } else if (
-                (
-                    mission.status == FleetMissionStatus.Returning
-                        || mission.status == FleetMissionStatus.Recalled
-                ) && nowTimestamp >= mission.returnAt
+                (mission.status == FleetMissionStatus.Returning
+                        || mission.status == FleetMissionStatus.Recalled)
+                    && nowTimestamp >= mission.returnAt
                     && _earliestPendingMissionArrivalForPlanet(mission.originPlanetId)
                         == type(uint64).max
             ) {
