@@ -4,6 +4,7 @@ import {
   deriveMissionAsOfNow,
   deriveQueueAsOfNow,
   nowSeconds,
+  settleCompletedQueue,
   withMissionAsOfNow,
   withQueueAsOfNow
 } from "./asOfNow";
@@ -122,6 +123,71 @@ describe("withMissionAsOfNow", () => {
     });
     expect(enriched.missionId).toBe("1");
     expect(enriched.status).toBe("Outbound");
+  });
+});
+
+describe("settleCompletedQueue (VEY-KANEO-461)", () => {
+  const defenseQueue = (readyAt: string, backlog?: QueueState[]): QueueState => ({
+    active: true,
+    kind: "defense",
+    itemId: 0,
+    quantity: 1,
+    readyAt,
+    cost: { metal: "2000", crystal: "0", deuterium: "0" },
+    ...(backlog ? { backlog } : {})
+  });
+
+  test("returns the queue untouched while the active head is still building", () => {
+    const queue = defenseQueue(String(NOW + 60));
+    const settled = settleCompletedQueue(queue, NOW);
+    expect(settled.completed).toEqual([]);
+    expect(settled.active).toEqual(queue);
+  });
+
+  test("folds an elapsed single-item queue into completed and clears the active queue", () => {
+    const settled = settleCompletedQueue(defenseQueue(String(NOW - 1)), NOW);
+    expect(settled.active).toBeNull();
+    expect(settled.completed).toEqual([{ itemId: 0, quantity: 1, targetLevel: null }]);
+  });
+
+  test("completes elapsed head + backlog entries in order, promoting the first pending one", () => {
+    const queue = defenseQueue(String(NOW - 100), [
+      { active: true, kind: "defense", itemId: 0, quantity: 2, readyAt: String(NOW - 50), cost: { metal: "2000", crystal: "0", deuterium: "0" } },
+      { active: true, kind: "defense", itemId: 1, quantity: 5, readyAt: String(NOW + 50), cost: { metal: "1500", crystal: "500", deuterium: "0" } }
+    ]);
+    const settled = settleCompletedQueue(queue, NOW);
+    expect(settled.completed).toEqual([
+      { itemId: 0, quantity: 1, targetLevel: null },
+      { itemId: 0, quantity: 2, targetLevel: null }
+    ]);
+    expect(settled.active?.itemId).toBe(1);
+    expect(settled.active?.readyAt).toBe(String(NOW + 50));
+    expect(settled.active?.backlog).toBeUndefined();
+  });
+
+  test("keeps an entry queued behind an earlier still-pending one even if its readyAt elapsed", () => {
+    const queue = defenseQueue(String(NOW + 50), [
+      { active: true, kind: "defense", itemId: 1, quantity: 5, readyAt: String(NOW - 10), cost: { metal: "1500", crystal: "500", deuterium: "0" } }
+    ]);
+    const settled = settleCompletedQueue(queue, NOW);
+    expect(settled.completed).toEqual([]);
+    expect(settled.active?.itemId).toBe(0);
+    expect(settled.active?.backlog).toHaveLength(1);
+  });
+
+  test("does not mutate the input queue", () => {
+    const queue = defenseQueue(String(NOW - 1), [
+      { active: true, kind: "defense", itemId: 1, quantity: 5, readyAt: String(NOW + 50), cost: { metal: "1500", crystal: "500", deuterium: "0" } }
+    ]);
+    const snapshot = JSON.stringify(queue);
+    settleCompletedQueue(queue, NOW);
+    expect(JSON.stringify(queue)).toBe(snapshot);
+  });
+
+  test("treats a null readyAt as not yet due", () => {
+    const settled = settleCompletedQueue(defenseQueue(null as unknown as string), NOW);
+    expect(settled.completed).toEqual([]);
+    expect(settled.active?.readyAt).toBeNull();
   });
 });
 

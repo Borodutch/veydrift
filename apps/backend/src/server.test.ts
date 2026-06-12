@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import { resolveWsRpcUrl, type BackendConfig } from "./config";
 import type {
@@ -711,6 +711,12 @@ describe("chain-sync self-heal wiring", () => {
 
 describe("Veydrift backend", () => {
   const handler = createRequestHandler();
+
+  // Pin to a moment before fixtures whose production queues use early-Feb-2026 `readyAt`
+  // timestamps to keep them ACTIVE: read models settle any elapsed queue from the indexed DB
+  // (VEY-KANEO-461), so the wall clock would otherwise fold a "still building" fixture away.
+  const pinBeforePendingQueues = (): void => { setSystemTime(new Date(1_769_900_000_000)); };
+  afterEach(() => { setSystemTime(); });
 
   test("returns health status", async () => {
     const response = await handler(new Request("http://localhost/health"));
@@ -2637,6 +2643,7 @@ describe("Veydrift backend", () => {
   });
 
   test("verifies and self-heals a planet's canonical state via /index/verify (VEY-KANEO-452)", async () => {
+    pinBeforePendingQueues();
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     const handler = createRequestHandler({
@@ -2976,6 +2983,7 @@ describe("Veydrift backend", () => {
   });
 
   test("serves post-spend indexed resources after multiple active queued spends", async () => {
+    pinBeforePendingQueues();
     const chainReader = new MockChainReader();
     chainReader.getWalletSettlement = async () => {
       throw new Error("RPC HTTP 503");
@@ -3381,6 +3389,7 @@ describe("Veydrift backend", () => {
   });
 
   test("serves indexed shipyard research and rift state without chain reader calls when warm", async () => {
+    pinBeforePendingQueues();
     const chainReader = new MockChainReader();
     chainReader.getShipyardState = async () => {
       throw new Error("shipyard should not call chain reader");

@@ -88,7 +88,7 @@ import {
 import type { HighscoreEntry } from "./highscores";
 import { playerFallbackName, type PlayerProfile } from "./playerProfiles";
 import { planetArchetypeForTemperature } from "./universe";
-import { nowSeconds, withMissionAsOfNow, withQueueAsOfNow } from "./asOfNow";
+import { nowSeconds, settleCompletedQueue, withMissionAsOfNow, withQueueAsOfNow } from "./asOfNow";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
 export type IndexedMoonChanceReportEvent = MoonChanceReportEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
@@ -851,9 +851,23 @@ export class SettlementIndexer {
     return deriveBuildingRows((id) => this.indexedLevel("contract_building_levels", "building_id", planetId, id));
   }
 
+  // Quantity finished, per item id, by any queue entry whose `readyAt` has elapsed but whose
+  // *Completed event has not been indexed (dropped websocket log / not-yet-reconciled). Folded
+  // into served ship/defense counts so a finished build shows up straight from the indexed DB,
+  // idempotent with the real *Completed event when it lands (VEY-KANEO-461). See settleCompletedQueue.
+  private completedQueueCounts(queueKeyValue: string, nowSec: number): Map<number, number> {
+    const counts = new Map<number, number>();
+    for (const item of settleCompletedQueue(this.queueState(queueKeyValue), nowSec).completed) {
+      if (item.itemId === null || item.quantity <= 0) continue;
+      counts.set(item.itemId, (counts.get(item.itemId) ?? 0) + item.quantity);
+    }
+    return counts;
+  }
+
   shipRows(planetId: string): ShipyardState["ships"] {
+    const completed = this.completedQueueCounts(`ship:${planetId}`, nowSeconds());
     return deriveShipRows(
-      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
+      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id) + (completed.get(id) ?? 0),
       this.planet(planetId)?.temperature
     );
   }
@@ -868,8 +882,9 @@ export class SettlementIndexer {
   // returned (minus combat losses) is already credited, with no departed-ships projection or reconcile
   // needed. Builds emit ShipCompleted, also applied. (VEY-KANEO-461)
   availableShipRows(planetId: string): ShipyardState["ships"] {
+    const completed = this.completedQueueCounts(`ship:${planetId}`, nowSeconds());
     return deriveShipRows(
-      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
+      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id) + (completed.get(id) ?? 0),
       this.planet(planetId)?.temperature
     );
   }
@@ -931,7 +946,10 @@ export class SettlementIndexer {
   }
 
   defenseRows(planetId: string): DefenseState["defenses"] {
-    return deriveDefenseRows((id) => this.indexedLevel("contract_defense_counts", "defense_id", planetId, id));
+    const completed = this.completedQueueCounts(`defense:${planetId}`, nowSeconds());
+    return deriveDefenseRows(
+      (id) => this.indexedLevel("contract_defense_counts", "defense_id", planetId, id) + (completed.get(id) ?? 0)
+    );
   }
 
   technologyLevels(wallet: `0x${string}`): Record<string, number> {
@@ -945,9 +963,22 @@ export class SettlementIndexer {
     return Object.fromEntries(rows.map((row) => [String(row.id), row.value]));
   }
 
+  // Research finished by an elapsed `readyAt` whose ResearchCompleted event has not been indexed,
+  // by technology id → highest reached level. Same read-time completion as ship/defense counts but
+  // for the (backlog-less) research queue, applied as a floor on the served level (VEY-KANEO-461).
+  private completedResearchLevels(wallet: `0x${string}`, nowSec: number): Map<number, number> {
+    const levels = new Map<number, number>();
+    for (const item of settleCompletedQueue(this.queueState(`research:${wallet.toLowerCase()}`), nowSec).completed) {
+      if (item.itemId === null || item.targetLevel === null) continue;
+      levels.set(item.itemId, Math.max(levels.get(item.itemId) ?? 0, item.targetLevel));
+    }
+    return levels;
+  }
+
   technologyRows(wallet: `0x${string}`): ResearchState["technologies"] {
     const levels = this.technologyLevels(wallet);
-    return deriveTechnologyRows((id) => levels[String(id)] ?? 0);
+    const completed = this.completedResearchLevels(wallet, nowSeconds());
+    return deriveTechnologyRows((id) => Math.max(levels[String(id)] ?? 0, completed.get(id) ?? 0));
   }
 
   highscoreForWallet(wallet: `0x${string}`, planetIds?: string[]): HighscoreEntry {
@@ -1067,7 +1098,14 @@ export class SettlementIndexer {
   }
 
   planetQueue(planetId: string, kind: "building" | "defense" | "ship"): QueueState | null {
-    return withQueueAsOfNow(this.queueState(`${kind}:${planetId}`), nowSeconds());
+    const now = nowSeconds();
+    const queue = this.queueState(`${kind}:${planetId}`);
+    // Defense/ship completions are a pure count bump the contract finishes lazily on `readyAt`
+    // (no resource settlement), so elapsed entries are folded into served counts and dropped from
+    // the active queue here. Building queues settle resources at the old rate on completion
+    // (VEY-KANEO-429), so they are left to the *Completed event / reconcile (VEY-KANEO-461).
+    const active = kind === "building" ? queue : settleCompletedQueue(queue, now).active;
+    return withQueueAsOfNow(active, now);
   }
 
   moonQueue(planetId: string): QueueState | null {
@@ -1075,7 +1113,9 @@ export class SettlementIndexer {
   }
 
   researchQueue(wallet: `0x${string}`): QueueState | null {
-    return withQueueAsOfNow(this.queueState(`research:${wallet.toLowerCase()}`), nowSeconds());
+    const now = nowSeconds();
+    const active = settleCompletedQueue(this.queueState(`research:${wallet.toLowerCase()}`), now).active;
+    return withQueueAsOfNow(active, now);
   }
 
   moonState(wallet: `0x${string}`, planetId: string | null): MoonState {

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { canonicalContractTables } from "./contractStateSchema";
 import type { Address, AllianceState, DebrisFieldEvent, DefenseState, InfrastructureState, MoonChanceReportEvent, PlayerQueues, ResearchState, ShipyardState, SettledPlanetEvent } from "./evm";
@@ -109,6 +109,15 @@ const moonChance: MoonChanceReportEvent = {
 };
 
 describe("SettlementIndexer", () => {
+  // Several fixtures below queue production with `readyAt` timestamps in the 1_770_00x_xxx
+  // (early-Feb-2026) range to represent an ACTIVE, still-building queue. Read models now settle
+  // any queue whose `readyAt` has elapsed straight from the indexed DB (VEY-KANEO-461), so those
+  // queues must be pinned to a moment before they complete to stay "active" — otherwise the wall
+  // clock (well past Feb 2026) folds them away. Tests that assert an active pending queue call
+  // `pinBeforePendingQueues()`; the hook restores real time after each test.
+  const pinBeforePendingQueues = (): void => { setSystemTime(new Date(1_769_900_000_000)); };
+  afterEach(() => { setSystemTime(); });
+
   test("persists indexed contract state for read-side reuse", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");
@@ -298,6 +307,7 @@ describe("SettlementIndexer", () => {
   });
 
   test("replays active production queue starts from stored event logs on startup", () => {
+    pinBeforePendingQueues();
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");
     try {
@@ -1649,6 +1659,7 @@ describe("SettlementIndexer", () => {
   });
 
   test("indexes ship and research queues plus completed counts and levels", () => {
+    pinBeforePendingQueues();
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -1733,6 +1744,90 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  // A queued defense build whose `readyAt` has elapsed but whose DefenseCompleted event was dropped
+  // from the websocket feed (and not yet reconciled) must still serve as finished straight from the
+  // indexed DB — the count bumps and the stuck "ready" queue clears, with no chain read (VEY-KANEO-461).
+  // Uses a real past `readyAt` so the wall clock settles it (no pinned time).
+  const ELAPSED_READY_AT = 1_700_000_000n; // 2023 — safely in the past for any test run
+
+  test("serves an elapsed defense build as finished and clears the stuck queue without its DefenseCompleted event", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xstuck-defense",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n, ELAPSED_READY_AT, 2000n, 0n, 0n)
+    });
+
+    // DefenseCompleted never arrives. The count is served folded and the queue is settled away.
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(1);
+    expect(indexer.playerQueues(player, planet.planetId).defense).toBeNull();
+  });
+
+  test("does not double-count once the dropped DefenseCompleted event finally lands", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xstuck-defense",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n, ELAPSED_READY_AT, 2000n, 0n, 0n)
+    });
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(1);
+
+    // The real completion event deletes the queue row and writes the final total (= 1). The served
+    // count is unchanged: base count + folded queue quantity is idempotent with the event.
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xstuck-defense-done",
+      logIndex: "0x0",
+      topics: [defenseCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n, 1n)
+    });
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(1);
+    expect(indexer.playerQueues(player, planet.planetId).defense).toBeNull();
+  });
+
+  test("serves an elapsed ship build and research level from the indexed DB without their completion events", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x92",
+      transactionHash: "0xstuck-ship",
+      logIndex: "0x0",
+      topics: [shipQueuedTopic, topic(7n), topic(3n)],
+      data: abiWords(2n, ELAPSED_READY_AT, 2000n, 1000n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x93",
+      transactionHash: "0xstuck-research",
+      logIndex: "0x0",
+      topics: [researchQueuedTopic, addressTopic(player), topic(4n)],
+      data: abiWords(2n, ELAPSED_READY_AT, 800n, 400n, 200n)
+    });
+
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 3)?.count).toBe(2);
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 3)?.count).toBe(2);
+    expect(indexer.technologyRows(player).find((tech) => tech.id === 4)?.level).toBe(2);
+    expect(indexer.playerQueues(player, planet.planetId).ship).toBeNull();
+    expect(indexer.playerQueues(player, planet.planetId).research).toBeNull();
+  });
+
   test("indexes moon creation and moon building queues", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
@@ -1801,6 +1896,7 @@ describe("SettlementIndexer", () => {
   });
 
   test("persists every production queue kind from indexed contract events", () => {
+    pinBeforePendingQueues();
     const db = new Database(":memory:");
     try {
       const indexer = new SettlementIndexer({
@@ -1992,6 +2088,7 @@ describe("SettlementIndexer", () => {
   });
 
   test("appends different defense queue events to the indexed backlog", () => {
+    pinBeforePendingQueues();
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -2038,6 +2135,7 @@ describe("SettlementIndexer", () => {
   });
 
   test("appends different ship queue events to the indexed backlog", () => {
+    pinBeforePendingQueues();
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -3006,6 +3104,7 @@ describe("SettlementIndexer", () => {
   });
 
   test("rebuild reconciles stale levels and queues from canonical on-chain snapshots", async () => {
+    pinBeforePendingQueues();
     const currentPlanet: SettledPlanetEvent = {
       ...planet,
       resources: {
@@ -3459,6 +3558,7 @@ describe("SettlementIndexer", () => {
   }
 
   test("rebuild preserves newer uncompleted event-derived production queues and subtracts queued spend costs", async () => {
+    pinBeforePendingQueues();
     const currentPlanet: SettledPlanetEvent = {
       ...planet,
       resources: {
@@ -3528,6 +3628,7 @@ describe("SettlementIndexer", () => {
   });
 
   test("rebuild uses live canonical resources without subtracting active queue costs again", async () => {
+    pinBeforePendingQueues();
     const previewResources = {
       metal: "1888",
       crystal: "579",
