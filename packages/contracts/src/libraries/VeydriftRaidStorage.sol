@@ -16,21 +16,29 @@ library VeydriftRaidStorage {
     uint16 private constant BPS = 10_000;
 
     /// @notice Loot a target planet's resources into cargo, honoring an optional loot ratio.
-    /// @dev Reads and decrements `target` in place (under the combat module's delegatecall storage
-    ///      context) and returns the looted amounts. An all-zero ratio keeps the legacy greedy
-    ///      metal->crystal->deuterium fill; otherwise capacity is allocated by the bps shares and
-    ///      any unfillable remainder rolls over to the other resources in the same order.
+    /// @dev Reads and decrements `target.resources` in place (under the combat module's delegatecall
+    ///      storage context) and returns the looted amounts. An all-zero ratio keeps the legacy greedy
+    ///      metal->crystal->deuterium fill; otherwise capacity is allocated by the bps shares and any
+    ///      unfillable remainder rolls over to the other resources in the same order. Emits the
+    ///      authoritative post-raid balance as `PlanetSettled` so the indexer tracks the defender's loss
+    ///      from events without an RPC read. Emitting here — rather than in the size-critical combat
+    ///      module (9 bytes of EIP-170 headroom) — keeps the event bytecode inside this already-linked
+    ///      library. The raid is the defender's only discrete resource mutation in the combat path, so
+    ///      this is the single final balance for that planet in the tx, carried with the planet's
+    ///      combat-snapshot `lastSettledAt`.
     function raid(
-        VeydriftGameStorage.Resources storage target,
+        VeydriftGameStorage.Planet storage target,
+        uint256 planetId,
         uint256 capacity,
         uint16 plunderRateBps,
         uint16 metalBps,
         uint16 crystalBps,
         uint16 deuteriumBps
     ) public returns (uint128 metal, uint128 crystal, uint128 deuterium) {
-        uint256 metalCap = (uint256(target.metal) * plunderRateBps) / BPS;
-        uint256 crystalCap = (uint256(target.crystal) * plunderRateBps) / BPS;
-        uint256 deuteriumCap = (uint256(target.deuterium) * plunderRateBps) / BPS;
+        VeydriftGameStorage.Resources storage balance = target.resources;
+        uint256 metalCap = (uint256(balance.metal) * plunderRateBps) / BPS;
+        uint256 crystalCap = (uint256(balance.crystal) * plunderRateBps) / BPS;
+        uint256 deuteriumCap = (uint256(balance.deuterium) * plunderRateBps) / BPS;
 
         uint256 m;
         uint256 c;
@@ -59,9 +67,12 @@ library VeydriftRaidStorage {
         metal = m.toUint128();
         crystal = c.toUint128();
         deuterium = d.toUint128();
-        target.metal -= metal;
-        target.crystal -= crystal;
-        target.deuterium -= deuterium;
+        balance.metal -= metal;
+        balance.crystal -= crystal;
+        balance.deuterium -= deuterium;
+        emit VeydriftGameStorage.PlanetSettled(
+            planetId, balance.metal, balance.crystal, balance.deuterium, target.lastSettledAt
+        );
     }
 
     function _min(uint256 a, uint256 b) private pure returns (uint256) {

@@ -364,6 +364,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         available.crystal -= cost.crystal;
         available.deuterium -= cost.deuterium;
         _decreaseInternalResources(cost);
+        _emitPlanetSettled(planetId);
     }
 
     function _cappedResourceIncrease(
