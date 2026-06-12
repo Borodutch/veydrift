@@ -3244,6 +3244,125 @@ contract VeydriftGameTest is Test {
         game.abandonPlanet(colonyPlanetId);
     }
 
+    // VEY-KANEO-477: a building construction whose `readyAt` has elapsed but was never settled must
+    // NOT block abandon with PlanetHasActiveQueues. The module settle (moved above the queue checks)
+    // completes ready ship/defense queues; the due building is discarded with the destroyed planet.
+    function testAbandonPlanetWithReadyBuildingClearsConstructionAndSucceeds() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        uint256 colonyPlanetId = _createResolvedColony(player, originPlanetId, 21);
+
+        _setResources(colonyPlanetId, 1_000, 1_000, 0);
+        vm.prank(player);
+        game.startBuildingUpgrade(colonyPlanetId, Building.MetalMine);
+        VeydriftGameStorage.BuildingConstruction memory construction =
+            game.activeBuildingConstruction(colonyPlanetId);
+        assertTrue(construction.active);
+
+        // Construction is ready but unsettled (no finish tx); empty the planet at the ready instant.
+        vm.warp(construction.readyAt);
+        _setPlanetLastSettledAt(colonyPlanetId, uint64(block.timestamp));
+        _setResources(colonyPlanetId, 0, 0, 0);
+
+        vm.prank(player);
+        game.abandonPlanet(colonyPlanetId);
+
+        assertEq(game.planet(colonyPlanetId).owner, address(0));
+        assertFalse(game.activeBuildingConstruction(colonyPlanetId).active);
+        assertEq(game.planetCountOf(player), 1);
+    }
+
+    // VEY-KANEO-477: an in-progress (not-yet-ready) building still blocks abandon.
+    function testAbandonPlanetStillRejectsInProgressBuilding() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        uint256 colonyPlanetId = _createResolvedColony(player, originPlanetId, 22);
+
+        _setResources(colonyPlanetId, 1_000, 1_000, 0);
+        vm.prank(player);
+        game.startBuildingUpgrade(colonyPlanetId, Building.MetalMine);
+        _setResources(colonyPlanetId, 0, 0, 0);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.PlanetHasActiveQueues.selector);
+        game.abandonPlanet(colonyPlanetId);
+    }
+
+    // VEY-KANEO-477: a missile attack must settle the origin's ready-but-unsettled defense production
+    // queue BEFORE reading `_defenseCounts`, so just-finished interplanetary missiles are available to
+    // fire rather than the launch reverting InvalidQuantity on a stale (0) count.
+    function testMissileAttackSettlesOriginReadyMissileQueueBeforeFiring() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
+        _seedDefensePrerequisites(originPlanetId);
+        _setResources(originPlanetId, 10_000_000, 10_000_000, 10_000_000);
+        _setDefenseCount(targetPlanetId, Defense.LightLaser, 10);
+
+        vm.prank(player);
+        game.startDefenseProduction(originPlanetId, Defense.InterplanetaryMissile, 3);
+        VeydriftGameStorage.DefenseQueue memory queue = game.defenseQueue(originPlanetId);
+        assertTrue(queue.active);
+
+        // Missiles are ready but never settled (no finish tx); origin's stored count is still 0.
+        vm.warp(queue.readyAt);
+
+        vm.prank(player);
+        game.launchInterplanetaryMissileAttack(
+            originPlanetId, targetPlanetId, Defense.LightLaser, 3
+        );
+
+        assertEq(game.defenseCount(originPlanetId, Defense.InterplanetaryMissile), 0);
+        assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 7);
+    }
+
+    // VEY-KANEO-477: launching a Colonize mission must settle the player's due-but-unresolved fleet
+    // arrivals BEFORE `_validateColonyCreation`'s pending-resolution gate, so a prior arrived colony
+    // does not wrongly block the next colonize launch.
+    function testColonizeLaunchSettlesDueArrivalBeforeValidating() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 2, 60, 8);
+        _setTechnologyLevel(player, Technology.Astrophysics, 2);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
+        _setTechnologyLevel(player, Technology.Computer, 3);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 2);
+        _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+
+        vm.prank(player);
+        uint256 firstMissionId = game.launchFleetMission(
+            originPlanetId,
+            _colonizationTargetId(2, 60, 9),
+            VeydriftGameStorage.FleetMissionType.Colonize,
+            _colonyShipManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            0
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(firstMissionId);
+
+        // First colony has arrived but is unresolved -> pending resolution on the origin.
+        vm.warp(uint256(arrivalAt) + 1);
+
+        vm.prank(player);
+        uint256 secondMissionId = game.launchFleetMission(
+            originPlanetId,
+            _colonizationTargetId(2, 60, 10),
+            VeydriftGameStorage.FleetMissionType.Colonize,
+            _colonyShipManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            0
+        );
+        assertGt(secondMissionId, firstMissionId);
+
+        // The launch prologue resolved the first colony (terminal Resolved, slot was free).
+        (VeydriftGameStorage.FleetMissionStatus firstStatus,,,) = _fleetMission(firstMissionId);
+        assertEq(uint8(firstStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+    }
+
     function testGenericFleetMissionLaunchRecallResolveAndReturn() public {
         address defender = address(0xDEF);
         vm.deal(defender, 1 ether);

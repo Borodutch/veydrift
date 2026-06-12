@@ -49,6 +49,12 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         ) {
             revert InvalidHoldWindow(holdSeconds);
         }
+        // Lazy on-chain reconciliation (VEY-KANEO-477): settle the caller's due Colonize/combat fleet
+        // arrivals BEFORE the pending-resolution gate, so a ready-but-unsettled arrival of the caller's
+        // own fleet does not wrongly block launching a defense hold. Mirrors the prologue every other
+        // mutating fleet path runs; genuinely pending (randomness-uncommitted) arrivals still revert.
+        _settleDueColonizeArrivals(msg.sender);
+        _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
 
