@@ -4313,6 +4313,29 @@ export function isFleetMissionLog(log: RpcLog): boolean {
     || topic === attackMissionJoinedTopic;
 }
 
+// A fleet-mission log that signals a mission reaching an end state — combat resolved, a return-leg
+// exposed, or the fleet physically home. The event-driven ship read model uses these to trigger a
+// bounded, per-planet canonical reconcile for combat missions (whose survivor/defender losses the
+// contract emits no ship-count event for), instead of sweeping every planet on a timer (VEY-KANEO-461).
+export function isFleetMissionSettlementLog(log: RpcLog): boolean {
+  const topic = topicAt(log.topics, 0);
+  return topic === fleetMissionResolvedTopic
+    || topic === fleetMissionReturnExposedTopic
+    || topic === fleetMissionReturnedTopic;
+}
+
+// The mission id a single fleet-mission log refers to. Returns null for the attack-joined link log
+// (which carries two ids in topics 1/2 and is not itself a settlement) and for non-fleet logs.
+export function fleetMissionLogMissionId(log: RpcLog): string | null {
+  const topic = topicAt(log.topics, 0);
+  if (topic === attackMissionJoinedTopic || !isFleetMissionLog(log)) return null;
+  try {
+    return decodeUint(topicAt(log.topics, 1)).toString();
+  } catch {
+    return null;
+  }
+}
+
 export function decodeSettledPlanetLog(log: RpcLog): SettledPlanetEvent {
   const eventName = topicAt(log.topics, 0) === planetStartedTopic ? "PlanetStarted" : "ColonyCreated";
   const player = decodeAddressWord(topicAt(log.topics, 1));
