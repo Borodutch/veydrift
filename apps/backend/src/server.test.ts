@@ -4874,3 +4874,42 @@ function fleetMissionLog({
   };
   return log;
 }
+
+describe("worker role gating (VEY-KANEO-466)", () => {
+  test("reader workers skip every background loop but still serve reads", async () => {
+    const indexer = new SettlementIndexer(new MockChainReader(), 100n);
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      indexer,
+      role: "reader"
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    // Chain-sync ingestion and the on-chain committers must run only on the writer.
+    expect(body.chainSync).toBeNull();
+    expect(body.missionResolution).toBeNull();
+    expect(body.randomnessCommitter).toBeNull();
+    // Reads are still served from the shared WAL database.
+    expect(body.indexer).not.toBeNull();
+    expect(response.status).toBe(200);
+  });
+
+  test("writer workers (the default) construct chain-sync and the committer", async () => {
+    const indexer = new SettlementIndexer(new MockChainReader(), 100n);
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    expect(body.chainSync).not.toBeNull();
+    expect(body.randomnessCommitter).not.toBeNull();
+    expect(body.indexer).not.toBeNull();
+  });
+});

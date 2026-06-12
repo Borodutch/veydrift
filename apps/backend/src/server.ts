@@ -48,6 +48,7 @@ import {
 } from "./playerProfiles";
 import { deriveInfrastructureFields, isCombatShipId } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
+import type { WorkerRole } from "./workerPool";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8"
@@ -108,11 +109,21 @@ export type ServerDependencies = {
   missionResolver?: MissionResolutionService;
   randomnessCommitter?: RandomnessCommitterService;
   indexer?: SettlementIndexer;
+  // Worker role in the multi-process pool (VEY-KANEO-466). "writer" (the default) owns chain-sync
+  // ingestion, the cold-start rebuild, bounded reconciles, and the on-chain committers — those must
+  // run on exactly one worker. "reader" workers skip every background loop and serve reads from the
+  // shared WAL database. Explicitly injected services (tests) always take precedence over the role.
+  role?: WorkerRole;
 };
 
 const defaultUniverseSeed = "veydrift-mainnet-preview";
 
 export function createRequestHandler(dependencies: ServerDependencies = {}): (request: Request) => Promise<Response> {
+  // Only the writer worker runs the chain indexer ingestion + the on-chain committers; reader workers
+  // serve from the shared WAL database and must not start any background loop (VEY-KANEO-466). Tests
+  // that inject services bypass this entirely. Default is "writer" so single-process and test setups
+  // keep their current behavior.
+  const isWriter = (dependencies.role ?? "writer") !== "reader";
   const loaded = dependencies.config ? { config: dependencies.config, problems: dependencies.configProblems ?? [] } : loadBackendConfig();
   const rawChainReader =
     dependencies.chainReader ??
@@ -133,7 +144,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const logBackfiller = deriveLogBackfiller(indexerChainReader);
   const chainSync =
     dependencies.chainSync ??
-    (loaded.problems.length === 0
+    (isWriter && loaded.problems.length === 0
       ? new ChainSyncService(loaded.config, indexer, logBackfiller ? { logBackfiller } : {})
       : undefined);
   const resolutionReader = rawChainReader?.listResolvableFleetMissions
@@ -146,18 +157,18 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     : undefined;
   const missionResolver =
     dependencies.missionResolver ??
-    (loaded.problems.length === 0 && resolutionReader
+    (isWriter && loaded.problems.length === 0 && resolutionReader
       ? new MissionResolutionService(loaded.config, resolutionReader)
       : undefined);
 
   const randomnessCommitter =
     dependencies.randomnessCommitter ??
-    (loaded.problems.length === 0 ? new RandomnessCommitterService(loaded.config) : undefined);
+    (isWriter && loaded.problems.length === 0 ? new RandomnessCommitterService(loaded.config) : undefined);
 
   chainSync?.start();
   missionResolver?.start();
   randomnessCommitter?.start();
-  if (!dependencies.indexer && indexer && loaded.problems.length === 0) {
+  if (isWriter && !dependencies.indexer && indexer && loaded.problems.length === 0) {
     // Steady state is now pure event integration: chainSync subscribes to the contract's logs and
     // applies them to the SQLite read model, which the API serves directly — no per-request eth_call
     // and no periodic universe-wide canonical sweep (VEY-KANEO-461). We only fall back to a full

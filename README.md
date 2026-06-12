@@ -372,6 +372,45 @@ domains from the test services, or scale/delete `frontend-test` and
 `backend-test`. Do not repoint or delete the production `veydrift/frontend`
 service while rolling back the test app.
 
+#### Backend multi-worker model
+
+`bun run start` (`apps/backend/src/index.ts`) launches a supervisor that spawns
+`N = CPU count` worker processes, all binding the same `PORT` with
+`SO_REUSEPORT` (Bun.serve `reusePort: true`). The kernel load-balances incoming
+connections across the workers, so a slow request handled by one worker no
+longer blocks the others (VEY-KANEO-466).
+
+- **Worker 0 is the single writer.** It runs chain-sync ingestion, the
+  cold-start index rebuild, the bounded per-planet reconciles, mission
+  resolution, and the randomness committer. The committers submit on-chain
+  transactions, so they must run on exactly one worker.
+- **The remaining workers are readers.** They serve read requests
+  (`GET`/`HEAD`/`OPTIONS`) from the shared SQLite index database, which is opened
+  in WAL mode (`PRAGMA journal_mode = WAL`) so many readers run concurrently with
+  the single writer. Readers skip every background loop. Every **mutating**
+  request (the few `POST` endpoints: display-name, `/index/rebuild`,
+  `/index/verify`, `/webhooks/alchemy`) is forwarded over loopback to the
+  writer's private listener, so the writer stays the sole mutator of the index
+  and the only holder of the in-memory indexer state (e.g. the bounded
+  fleet-mission reconcile queue). The writer binds that private listener on
+  `127.0.0.1:<PORT+1>` (override with `VEYDRIFT_WRITER_INTERNAL_PORT`) in
+  addition to the shared reusePort socket.
+- The supervisor respawns a worker that exits unexpectedly and forwards
+  SIGTERM/SIGINT so a redeploy or Ctrl-C tears the whole pool down cleanly
+  (each worker still answers `GET /health` the instant it binds the port, so the
+  EasyPanel health gate above is unchanged).
+
+Tuning env vars:
+
+```text
+VEYDRIFT_WORKER_COUNT=<N>          # override the worker count (default: host CPU count; set 1 to force
+                                  # the original single-process behavior).
+VEYDRIFT_WRITER_INTERNAL_PORT=<P> # override the writer's private loopback write listener (default
+                                  # PORT+1); only relevant when the pool has more than one worker.
+                                  # VEYDRIFT_WORKER_ROLE / VEYDRIFT_WORKER_INDEX are managed internally
+                                  # by the supervisor and should not be set by hand.
+```
+
 ## Operating Rules
 
 - Keep public copy non-specific until the game direction is approved.
