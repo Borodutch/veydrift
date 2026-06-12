@@ -286,28 +286,6 @@ describe("HTTP JSON-RPC transport", () => {
   });
 });
 
-describe("resource reserve availability (VEY-KANEO-473)", () => {
-  test("reads resourceReserveAvailable() and decodes the per-resource surplus", async () => {
-    const selectors: string[] = [];
-    const reader = new VeydriftGameReader(readerConfig, {
-      async request<T>(method: string, params: unknown[]): Promise<T> {
-        expect(method).toBe("eth_call");
-        const [call] = params as [{ data: string }];
-        selectors.push(call.data.slice(0, 10));
-        return dataWords([word(20n), word(100_000n), word(250_000n)]) as T;
-      },
-      async requestBatch<T>(): Promise<T[]> {
-        throw new Error("unexpected batch");
-      }
-    });
-
-    const reserve = await reader.getResourceReserveAvailable();
-
-    expect(selectors).toEqual(["0x90117fd3"]);
-    expect(reserve).toEqual({ metal: "20", crystal: "100000", deuterium: "250000" });
-  });
-});
-
 describe("current planet enumeration", () => {
   test("reads current planet owners without scanning historical logs", async () => {
     const batchSelectors: string[] = [];

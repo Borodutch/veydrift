@@ -1269,7 +1269,7 @@ function accruedPlanetState<T extends PlanetState | null>(
   const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
   return {
     ...planet,
-    resources: resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt, indexer.resourceReserveAvailableSnapshot())
+    resources: resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt)
   };
 }
 
@@ -1430,7 +1430,7 @@ function indexedInfrastructureState(
       : unavailableReason,
     resources: planet && !planetResourcesPending ? planet.resources : null,
     resourcesAsOfNow: planet && !planetResourcesPending
-      ? resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt, indexer.resourceReserveAvailableSnapshot())
+      ? resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt)
       : null,
     ...derived,
     technologyLevels,
@@ -1688,7 +1688,7 @@ function publicPlanetStateRef(
   const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
 
   return {
-    resources: resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt, indexer.resourceReserveAvailableSnapshot()),
+    resources: resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt),
     buildings: buildings.map(({ id, level }) => ({ id, level })),
     fleet: ships.map(({ id, count }) => ({ id, count })),
     defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
@@ -1702,19 +1702,11 @@ function publicPlanetStateRef(
   };
 }
 
-// VEY-KANEO-473: `reserveAvailable` is the contract's per-resource `resourceReserveAvailable()`
-// snapshot — how much NEW production the ERC-20 reserve can still mint. The contract caps settled
-// production at BOTH storage caps (`_addWithCaps`) AND this reserve headroom (`_reserveLimitedIncrease`)
-// in `previewResources`/`_spend`. Applying the same reserve cap here keeps the displayed spendable
-// balance from over-reporting beyond what an on-chain spend will actually credit (which previously
-// let the UI show "affordable" while `startBuildingUpgrade` reverted with InsufficientResources).
-// `null` => reserve snapshot unavailable (older deploy / read failure): fall back to storage-cap-only.
 function resourcesWithClaimableAccrual(
   current: Resources,
   productionPerHour: Resources | null,
   storageCaps: Resources | null,
   lastSettledAt: string,
-  reserveAvailable: Resources | null = null,
   now = Date.now()
 ): Resources {
   if (!productionPerHour || !storageCaps) return current;
@@ -1724,9 +1716,9 @@ function resourcesWithClaimableAccrual(
 
   const elapsedSeconds = Math.max(0, Math.floor(now / 1_000) - lastSettledAtSeconds);
   return {
-    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds, reserveAvailable?.metal ?? null),
-    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds, reserveAvailable?.crystal ?? null),
-    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds, reserveAvailable?.deuterium ?? null)
+    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds),
+    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds),
+    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds)
   };
 }
 
@@ -1734,8 +1726,7 @@ function resourceWithClaimableAccrual(
   current: string,
   productionPerHour: string,
   storageCap: string,
-  elapsedSeconds: number,
-  reserveAvailable: string | null = null
+  elapsedSeconds: number
 ): string {
   const currentValue = Number(current);
   const rate = Math.max(0, Number(productionPerHour));
@@ -1744,13 +1735,7 @@ function resourceWithClaimableAccrual(
 
   const produced = Math.floor((rate * elapsedSeconds) / 3_600);
   const remainingCapacity = Math.max(0, cap - currentValue);
-  // The reserve headroom caps newly-minted production exactly as the contract's
-  // `_reserveLimitedIncrease` does. A non-finite/negative snapshot is treated as 0 (mint nothing),
-  // never as "unlimited" — only `null` means "no reserve data, fall back to storage cap only".
-  const reserveLimited = reserveAvailable === null
-    ? Math.min(produced, remainingCapacity)
-    : Math.min(produced, remainingCapacity, Math.max(0, Number(reserveAvailable) || 0));
-  return Math.floor(currentValue + reserveLimited).toString();
+  return Math.floor(currentValue + Math.min(produced, remainingCapacity)).toString();
 }
 
 async function allianceIntelForOccupiedPlanets(
