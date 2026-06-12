@@ -523,6 +523,9 @@ export type ShipyardState = {
     count: number;
     cost: Resources;
     energyPerUnit?: string;
+    // Predicted per-unit build time for the next batch (VEY-KANEO-472); present on the
+    // Shipyard detail payload, omitted on count-only projections.
+    durationSeconds?: number;
   }>;
   queue: QueueState | null;
 };
@@ -543,6 +546,9 @@ export type DefenseState = {
     id: number;
     count: number;
     cost: Resources;
+    // Predicted per-unit build time for the next batch (VEY-KANEO-472); present on the
+    // Defense detail payload, omitted on count-only projections.
+    durationSeconds?: number;
   }>;
   queue: QueueState | null;
 };
@@ -567,6 +573,9 @@ export type InfrastructureState = {
     id: number;
     level: number;
     cost: Resources;
+    // Predicted next-upgrade build time (VEY-KANEO-472), computed server-side from the
+    // planet's Robotics/Nanite Factory levels and the next-level cost.
+    durationSeconds?: number;
   }>;
   queue: QueueState | null;
 };
@@ -610,6 +619,9 @@ export type ResearchState = {
     id: number;
     level: number;
     cost: Resources;
+    // Predicted next-level research time (VEY-KANEO-472); present on the Research detail
+    // payload, computed server-side from the effective Research Lab level.
+    durationSeconds?: number;
   }>;
   queue: QueueState | null;
 };
