@@ -47,7 +47,7 @@ export const raidTargetFinderPageSize = 250;
 
 const sortColumns: Array<{ key: RaidTargetSortKey; label: string; hint: string }> = [
   { key: "distance", label: "Dist", hint: "Flight distance from your active planet" },
-  { key: "loot", label: "Loot", hint: "Raidable resources (metal + crystal + deuterium)" },
+  { key: "loot", label: "Loot", hint: "Plunderable haul — ~50% of the target's current (production-accrued) unprotected resources you'd actually capture, not its full stockpile" },
   { key: "combat", label: "Combat", hint: "Combined ship + defense power to overcome" },
   { key: "defense", label: "Defense", hint: "Stationary defense power" },
 ];
@@ -200,7 +200,9 @@ export function RaidTargetFinderPage({
       </div>
 
       <p className="text-xs leading-5 text-slate-500">
-        Intel mirrors the public highscore feed (top {raidTargetFinderPageSize} commanders). Loot and combat reflect the
+        Intel mirrors the public highscore feed (top {raidTargetFinderPageSize} commanders). Loot is the plunderable
+        haul — roughly half (the on-chain plunder rate) of the target's current production-accrued unprotected
+        resources, so it reads lower than the planet's full public stockpile by design. Loot and combat reflect the
         last indexed state and may change before your fleet arrives.
         {activeCount > 0 ? (
           <>
