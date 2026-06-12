@@ -57,6 +57,7 @@ import {
   activeBuildingQueueResponse,
   buildingQueueItemForDisplay,
   buildingCosts,
+  buildingDurations,
   energyBalanceFromChain,
   infrastructurePlayableState,
   isBuildingQueueReadyToFinish,
@@ -3287,6 +3288,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [activeBuildingQueue, failedBuildingFinishExpectation]);
 
   const chainBuildingCosts = useMemo(() => buildingCosts(infrastructureChainState), [infrastructureChainState]);
+  const chainBuildingDurations = useMemo(() => buildingDurations(infrastructureChainState), [infrastructureChainState]);
   const infrastructureUnavailableReason = useMemo(() => {
     return infrastructureUnavailableReasonFor({
       buildingAction,
@@ -4911,6 +4913,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           actionPendingLabel={infrastructureActionPendingLabel}
           actionUnavailableReason={infrastructureUnavailableReason}
           chainCosts={chainBuildingCosts}
+          chainDurations={chainBuildingDurations}
           hasLoadedInfrastructureState={hasInfrastructureDisplayState({
             activeBuildingQueue,
             homePlanetId: onChainSettlement?.homePlanetId,

@@ -475,6 +475,41 @@ describe("Defense page display helpers", () => {
   });
 });
 
+describe("Defense build time (VEY-KANEO-472)", () => {
+  test("exposes backend per-unit duration scaled by the selected quantity", () => {
+    const items = defenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      defenseState: defenseState({
+        // Rocket Launcher is defense id 0; backend supplies a 30s per-unit duration.
+        defenses: [{ id: 0, count: 0, cost: { metal: "2000", crystal: "0", deuterium: "0" }, durationSeconds: 30 }],
+      }),
+      productionAvailable: true,
+      quantities: { rocketLauncher: 5 },
+      queue: undefined,
+      resources: { metal: 100000, crystal: 100000, deuterium: 100000 },
+    });
+
+    expect(items.find((item) => item.key === "rocketLauncher")?.durationSeconds).toBe(150);
+  });
+
+  test("omits build time when the backend supplies no per-unit duration", () => {
+    const items = defenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      defenseState: defenseState({
+        defenses: [{ id: 0, count: 0, cost: { metal: "2000", crystal: "0", deuterium: "0" } }],
+      }),
+      productionAvailable: true,
+      quantities: { rocketLauncher: 5 },
+      queue: undefined,
+      resources: { metal: 100000, crystal: 100000, deuterium: 100000 },
+    });
+
+    expect(items.find((item) => item.key === "rocketLauncher")).not.toHaveProperty("durationSeconds");
+  });
+});
+
 function defenseState(overrides: Partial<ChainDefenseState> = {}): ChainDefenseState {
   return {
     wallet: "0x1111111111111111111111111111111111111111",

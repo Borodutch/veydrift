@@ -44,6 +44,26 @@ describe("building detail helpers", () => {
     });
   });
 
+  test("threads the backend-sourced upgrade duration onto the status (VEY-KANEO-472)", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: { ...createInitialPlayableState(1_000).buildings, solarPlant: 1 },
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    // With a backend duration, the status carries it for the detail panel to render.
+    expect(buildingUpgradeStatus(state, "metalMine", {
+      chainDurationSeconds: 432,
+      spendableResources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    })).toMatchObject({
+      disabled: false,
+      durationSeconds: 432,
+    });
+
+    // Without one (legacy/live-read payloads), no client time is fabricated.
+    expect(buildingUpgradeStatus(state, "metalMine").durationSeconds).toBeUndefined();
+  });
+
   test("lists missing resources without a client-derived time-to-afford estimate", () => {
     // VEY-KANEO-465: time-to-afford is game-state math the frontend no longer derives.
     expect(formatMissingResources(
@@ -328,9 +348,11 @@ describe("building detail helpers", () => {
     });
   });
 
-  test("builds Metal Mine level table rows with costs and energy use (no client production/duration)", () => {
-    // VEY-KANEO-465: per-building production rate and upgrade duration are backend-owned
-    // game state — the level table no longer derives or exposes them.
+  test("builds Metal Mine level table rows with costs, energy use, and build time (no client production)", () => {
+    // VEY-KANEO-465 dropped per-building production AND build time from the level table.
+    // VEY-KANEO-472 restores the build-time column (production stays backend-owned): this
+    // static reference table already derives cost/energy client-side, so the per-level
+    // duration is computed the same way via the conformance-tested formula helper.
     const state = {
       ...createInitialPlayableState(1_000),
       buildings: {
@@ -341,6 +363,7 @@ describe("building detail helpers", () => {
     const rows = buildingLevelInfoRows(state.buildings, "metalMine", undefined, 3);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
+      constructionTime: true,
       deuteriumConsumed: false,
       effect: false,
       energyProduced: false,
@@ -361,13 +384,16 @@ describe("building detail helpers", () => {
       level: 2,
       next: true,
     });
-    expect(rows.every((row) => !("production" in row) && !("durationSeconds" in row))).toBe(true);
+    // Production stays backend-owned (absent); build time is restored on every row.
+    expect(rows.every((row) => !("production" in row))).toBe(true);
+    expect(rows.every((row) => typeof row.durationSeconds === "number" && row.durationSeconds > 0)).toBe(true);
   });
 
   test("builds Solar Plant level table rows with energy output", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "solarPlant", undefined, 2);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
+      constructionTime: true,
       deuteriumConsumed: false,
       effect: false,
       energyProduced: true,
@@ -421,6 +447,7 @@ describe("building detail helpers", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "fusionReactor", undefined, 2, 3);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
+      constructionTime: true,
       deuteriumConsumed: true,
       effect: false,
       energyProduced: true,
@@ -469,6 +496,7 @@ describe("building detail helpers", () => {
     const rows = buildingLevelInfoRows(createInitialPlayableState(1_000).buildings, "metalStorage", undefined, 2);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
+      constructionTime: true,
       deuteriumConsumed: false,
       effect: false,
       energyProduced: false,
@@ -493,6 +521,7 @@ describe("building detail helpers", () => {
     const rows = buildingLevelInfoRows(state.buildings, "missileSilo", undefined, 4);
 
     expect(buildingLevelInfoColumns(rows)).toEqual({
+      constructionTime: true,
       deuteriumConsumed: false,
       effect: true,
       energyProduced: false,

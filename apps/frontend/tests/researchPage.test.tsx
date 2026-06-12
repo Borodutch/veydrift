@@ -348,8 +348,10 @@ describe("Research page load-error display", () => {
         requirementStatus: "Met",
       },
     ]);
-    // VEY-KANEO-465: research duration is backend-owned; rows no longer carry durationSeconds.
-    expect(rows.every((row) => !("durationSeconds" in row))).toBe(true);
+    // VEY-KANEO-472: the per-level reference table restores a client-computed research time
+    // for rows whose prerequisites are met (this catalogue already derives cost/effect
+    // client-side). Locked rows leave it undefined.
+    expect(rows.every((row) => typeof row.durationSeconds === "number" && row.durationSeconds > 0)).toBe(true);
   });
 
   test("marks locked research level rows with unmet prerequisites", () => {
@@ -385,8 +387,8 @@ describe("Research page load-error display", () => {
     expect(text).toContain("Energy Technology levels");
     expect(text).toContain("Current Level 1");
     expect(text).toContain("Research cost");
-    // VEY-KANEO-465: client-derived research time column removed.
-    expect(text).not.toContain("Research time");
+    // VEY-KANEO-472: the per-level research time column is restored.
+    expect(text).toContain("Research time");
     expect(text).toContain("Requirements");
     expect(text).toContain("Effect");
     expect(text).toContain("Level 1");

@@ -91,7 +91,10 @@ export function DefensePage({
   const [localSelectedKey, setLocalSelectedKey] = useState<DefenseKey>("rocketLauncher");
   const selectedKey = selectedDefenseKey ?? localSelectedKey;
   const shipyardLevel = defenseState?.shipyardLevel ?? 0;
-  const resources = toResources(defenseState?.resources);
+  // VEY-KANEO-473: gate on the canonical settled-to-now balance (`resourcesAsOfNow`) the top bar
+  // uses, falling back to the raw settled snapshot only when the accrued field is absent — so the
+  // defense affordability number can never disagree with the bar.
+  const resources = toResources(defenseState?.resourcesAsOfNow ?? defenseState?.resources);
   const queue = activeProductionQueue(defenseState?.queue, overviewQueue, "defense");
   const productionAvailable = defenseState?.productionAvailable !== false;
   const initialLoading = shouldShowDefenseInitialLoader({ defenseState, loading });
@@ -232,6 +235,10 @@ export function defenseProductionItems({
     const parsedQuantity = parseProductionQuantity(quantityInput);
     const quantity = parsedQuantity ?? 1;
     const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
+    // Backend-sourced per-unit build time scaled by the selected quantity (VEY-KANEO-472).
+    const durationSeconds = chainDefense?.durationSeconds === undefined
+      ? undefined
+      : chainDefense.durationSeconds * quantity;
     const missing = getMissingRequirements(defense, defenseState);
     const requirements = getDefenseRequirementStates(defense, defenseState);
     const limitReason = getDefenseLimitReason(defense.key, quantity, defenseState, queue);
@@ -256,6 +263,7 @@ export function defenseProductionItems({
       asset: defense.asset,
       blockedReason,
       cost: totalCost,
+      ...(durationSeconds === undefined ? {} : { durationSeconds }),
       countLabel: "Deployed",
       countValue: deployed,
       detailNote: stats || (defense.group === "missile" ? "Missile support system" : "Planetary defense"),
