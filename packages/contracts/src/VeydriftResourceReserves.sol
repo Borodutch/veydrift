@@ -12,6 +12,13 @@ interface IVeydriftUnitQueueSettler {
     function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external;
 }
 
+/// @dev Self-call surface used by the lazy fleet reconcile to resolve a player's due Colonize
+///      arrivals (VEY-KANEO-468 Phase 2a). The facade exposes `settleDuePlayerColonizeArrivals`
+///      (self-only) and fans it out to the colonization module impl, which owns Colonize resolution.
+interface IVeydriftColonizeArrivalSettler {
+    function settleDuePlayerColonizeArrivals(address player) external;
+}
+
 /// @notice ERC-20 reserve backing and internal resource accounting shared by gameplay modules.
 abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     using SafeCast for uint256;
@@ -33,6 +40,20 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     function _settleDuePlanet(uint256 planetId) internal {
         IVeydriftUnitQueueSettler(address(this))
             .completeAttackTargetSnapshotQueues(planetId, uint64(block.timestamp));
+    }
+
+    /// @notice Lazy fleet reconcile, Colonize leg (VEY-KANEO-468 Phase 2a): resolves every Colonize
+    ///         mission `player` owns whose `arrivalAt` has elapsed, the moment any mutating call
+    ///         touches `player` — no keeper/resolve tx required.
+    /// @dev A single self-call into the (self-only) facade entrypoint fans out to the colonization
+    ///      module impl, so the enumeration/resolution body lives once and each prologue pays only a
+    ///      cheap external call. Safe to call from any action prologue: Colonize is enumerable
+    ///      (tracked in `_resolutionMissionIdsByPlayer`), deterministic (no combat randomness), and
+    ///      additive (Colonize never gated mutating calls — VEY-417). `resolveFleetMission` for
+    ///      Colonize is idempotent and does not re-enter settlement, so this cannot recurse. Must NOT
+    ///      be called from inside `_settleResources`/`_settleDuePlanet` — keep it in prologues only.
+    function _settleDueColonizeArrivals(address player) internal {
+        IVeydriftColonizeArrivalSettler(address(this)).settleDuePlayerColonizeArrivals(player);
     }
 
     /// @dev Applies a player's research level once a settle observes its queue elapsed by `cutoffAt`.

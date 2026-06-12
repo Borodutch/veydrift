@@ -124,6 +124,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     function depositMarketResource(uint256 planetId, Resource resource, uint128 amount) external {
         _requirePlanetOwner(planetId);
+        _settleDueColonizeArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(planetId);
         _requireRiftUnlocked(planetId);
         if (amount == 0) revert InvalidQuantity();
@@ -232,6 +233,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     function startResearch(uint256 planetId, Technology technology) external {
         _requirePlanetOwner(planetId);
+        _settleDueColonizeArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlayer(msg.sender);
         if (researchQueues[msg.sender].active) revert QueueActive();
 

@@ -11,6 +11,13 @@ import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
 import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
+/// @dev Self-call surface used by the Colonize lazy reconcile to drive the existing (public)
+///      `resolveFleetMission` dispatch for a single due mission, wrapped in try/catch so one stuck
+///      colony cannot brick the caller's action.
+interface IVeydriftColonizeMissionResolver {
+    function resolveFleetMission(uint256 missionId) external;
+}
+
 /// @notice Delegatecall target for delayed colony fleet mission launch and resolution.
 contract VeydriftColonizationModule is VeydriftResourceReserves {
     using SafeCast for uint256;
@@ -33,6 +40,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
 
     function startShipProduction(uint256 planetId, Ship ship, uint32 quantity) external {
         _requirePlanetOwner(planetId);
+        _settleDueColonizeArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(planetId);
         _validateShipProduction(planetId, ship, quantity);
         ShipQueue memory activeQueue = shipQueues[planetId];
@@ -115,6 +123,34 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
             _completeReadyShipProduction(planetId, shipQueues[planetId]);
         }
         _delegateToDefenseProductionModule();
+    }
+
+    /// @notice Lazy fleet reconcile, Colonize leg (VEY-KANEO-468 Phase 2a). Self-only via the facade
+    ///         gate. Resolves every Colonize mission `player` owns whose `arrivalAt` has elapsed, so an
+    ///         overdue colony lands on the player's next mutating call — no keeper/resolve tx.
+    /// @dev Iterates a memory snapshot of the player's tracked mission ids, so the swap-and-pop
+    ///      untrack inside `resolveFleetMission` cannot disturb iteration. Each resolve is wrapped so
+    ///      one stuck colony cannot brick the caller's action; `resolveFleetMission` for Colonize is
+    ///      idempotent (no-op once status != Outbound) and never re-enters settlement, so this is
+    ///      bounded and recursion-free.
+    function settleDuePlayerColonizeArrivals(address player) external {
+        uint256[] memory missionIds = _resolutionMissionIdsByPlayer[player];
+        uint64 nowTimestamp = uint64(block.timestamp);
+        for (uint256 index = 0; index < missionIds.length;) {
+            FleetMission storage mission = _fleetMissions[missionIds[index]];
+            if (
+                mission.status == FleetMissionStatus.Outbound
+                    && mission.missionType == FleetMissionType.Colonize
+                    && nowTimestamp >= mission.arrivalAt
+            ) {
+                try IVeydriftColonizeMissionResolver(address(this))
+                    .resolveFleetMission(missionIds[index]) {}
+                    catch {}
+            }
+            unchecked {
+                ++index;
+            }
+        }
     }
 
     function _completeReadyShipProduction(uint256 planetId, ShipQueue memory queue) private {

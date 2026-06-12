@@ -158,6 +158,11 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToColonizationModule();
     }
 
+    function settleDuePlayerColonizeArrivals(address) external {
+        if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+        _delegateToColonizationModule();
+    }
+
     function startResearch(uint256, Technology) external {
         _touchPlayer(msg.sender);
         _delegateToPlanetManagementModule();

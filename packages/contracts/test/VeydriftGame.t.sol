@@ -2236,6 +2236,95 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(colonyPlanetId).resources.deuterium, 100);
     }
 
+    /// @notice VEY-KANEO-468 Phase 2a: an arrived Colonize mission resolves lazily on the owner's
+    ///         next mutating action (here `startShipProduction`, which runs the player-scoped Colonize
+    ///         reconcile in its prologue) — no explicit `resolveFleetMission`/keeper tx.
+    function testColonizeArrivalLazyResolvesOnNextMutatingAction() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 2, 44, 8);
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setBuildingLevel(originPlanetId, Building.Shipyard, 2);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            _colonizationTargetId(2, 44, 9),
+            VeydriftGameStorage.FleetMissionType.Colonize,
+            _colonyShipManifest(),
+            VeydriftGameStorage.Resources({metal: 300, crystal: 200, deuterium: 100}),
+            100,
+            0
+        );
+        (VeydriftGameStorage.FleetMissionStatus status, uint64 arrivalAt,,) =
+            _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(game.planetCountOf(player), 1);
+
+        // Fleet has arrived but no resolve tx was sent. An unrelated mutating action must settle it.
+        vm.warp(uint256(arrivalAt) + 1 hours);
+        vm.prank(player);
+        game.startShipProduction(originPlanetId, Ship.SmallCargo, 1);
+
+        (status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        assertEq(game.planetCountOf(player), 2);
+        assertEq(game.planet(2).owner, player);
+        assertEq(game.activeFleetMissionCount(player), 0);
+    }
+
+    /// @notice The lazy Colonize reconcile is a no-op before arrival (mission stays Outbound, no
+    ///         colony) and idempotent after (a second mutating action creates no second colony).
+    function testColonizeLazyResolveRespectsArrivalAndIsIdempotent() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 2, 44, 8);
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setBuildingLevel(originPlanetId, Building.Shipyard, 2);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            _colonizationTargetId(2, 44, 9),
+            VeydriftGameStorage.FleetMissionType.Colonize,
+            _colonyShipManifest(),
+            VeydriftGameStorage.Resources({metal: 300, crystal: 200, deuterium: 100}),
+            100,
+            0
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        // Before arrival: the reconcile must NOT resolve — mission stays Outbound, no colony.
+        vm.warp(uint256(arrivalAt) - 1);
+        vm.prank(player);
+        game.startShipProduction(originPlanetId, Ship.SmallCargo, 1);
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(game.planetCountOf(player), 1);
+
+        // After arrival: first action resolves it.
+        vm.warp(uint256(arrivalAt) + 1);
+        vm.prank(player);
+        game.startShipProduction(originPlanetId, Ship.SmallCargo, 1);
+        (status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        assertEq(game.planetCountOf(player), 2);
+
+        // Idempotent: a further action creates no second colony and does not revert.
+        vm.warp(uint256(arrivalAt) + 2);
+        vm.prank(player);
+        game.startShipProduction(originPlanetId, Ship.SmallCargo, 1);
+        assertEq(game.planetCountOf(player), 2);
+    }
+
     function testColonizationReturnsIfCoordinatesBecomeOccupiedBeforeArrival() public {
         address competitor = address(0xC011);
         vm.deal(competitor, 1 ether);
