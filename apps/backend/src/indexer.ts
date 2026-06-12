@@ -20,11 +20,15 @@ import {
   decodeMoonChanceReportLog,
   decodePlanetSettledLog,
   decodePlanetRenamedLog,
+  decodeRandomnessFulfilledRequestId,
   decodeRiftResourceLog,
   decodeSettledPlanetLog,
   decodeShipCountChangedLog,
   decodeDefenseCountChangedLog,
+  fleetMissionNeedsResolution,
+  missionBattleRandomnessRequestId,
   isDebrisFieldLog,
+  isRandomnessFulfilledLog,
   isBattleReportLog,
   isFleetMissionLog,
   isIndexedQueueCompletedLog,
@@ -123,6 +127,11 @@ export type SettlementIndexerOptions = {
   // real ≥2-wallet on-chain ACS Defend scenario. Sourced from config.qaSyntheticStationedDefenders,
   // which is already hard-gated to non-production. Defaults to false.
   qaSyntheticStationedDefenders?: boolean;
+  // VEY-KANEO-479: when true (the randomness engine is configured for this deployment), an arrived
+  // Attack's `needsResolution` is gated on its battle randomness being fulfilled — derived from the
+  // ingested RandomnessFulfilled logs. When false, no randomness data is expected and readiness stays
+  // on the plain arrival check, preserving behaviour for deployments without the engine.
+  randomnessEngineConfigured?: boolean;
 };
 
 type CountRow = {
@@ -307,11 +316,14 @@ export class SettlementIndexer {
   ) {
     this.db = options.database ?? openIndexerDatabase(options.databasePath ?? ":memory:");
     this.qaSyntheticStationedDefenders = options.qaSyntheticStationedDefenders ?? false;
+    this.randomnessEngineConfigured = options.randomnessEngineConfigured ?? false;
     this.migrate();
   }
 
   // VEY-KANEO-471: see SettlementIndexerOptions. Read once in fleetMissionVisibility.
   private readonly qaSyntheticStationedDefenders: boolean;
+  // VEY-KANEO-479: see SettlementIndexerOptions. Gates arrived-Attack readiness on randomness.
+  private readonly randomnessEngineConfigured: boolean;
 
   snapshot(): IndexerSnapshot {
     const reconciliationInProgress = this.rebuildPromise !== null || this.planetRebuildPromise !== null;
@@ -1218,6 +1230,14 @@ export class SettlementIndexer {
     }
     if (isMoonChanceReportLog(log)) {
       this.applyMoonChanceEvent(decodeMoonChanceReportLog(log));
+      return true;
+    }
+    if (isRandomnessFulfilledLog(log)) {
+      // VEY-KANEO-479: the log is already persisted in indexed_event_logs above; fleet-mission readiness
+      // derives the fulfilled-request set from it on read (fulfilledRandomnessRequestIds). Mark it
+      // applied — and touch the index — so an arrived Attack flips to "Ready to resolve" on this event.
+      // dispatchLog returns a boolean; applyLogAtomic wraps it into the ApplyLogResult + snapshot.
+      this.touch();
       return true;
     }
 
@@ -2864,7 +2884,43 @@ export class SettlementIndexer {
     const logs = rows
       .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
       .filter(isFleetMissionLog);
-    return decodeCompleteFleetMissionLogs(logs);
+    // VEY-KANEO-479: decode leaves `needsResolution` at its default; compute it here so an arrived
+    // Attack only reads "Ready to resolve" once its battle randomness is fulfilled (gated on the
+    // ingested RandomnessFulfilled logs). Harvest and the other types stay on the plain arrival check.
+    const missions = decodeCompleteFleetMissionLogs(logs);
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    // Only an arrived Attack awaiting its randomness needs the fulfillment scan; skip it (and the
+    // extra full-table read it does) whenever nothing is actually gated, which is the common case.
+    const needsGate = this.randomnessEngineConfigured && missions.some(
+      (mission) =>
+        missionBattleRandomnessRequestId(mission) !== null
+        && mission.status === "Outbound"
+        && Number(mission.arrivalAt) <= nowSeconds
+    );
+    const fulfilledRandomnessRequestIds = needsGate ? this.fulfilledRandomnessRequestIds() : null;
+    return missions.map((mission) => ({
+      ...mission,
+      needsResolution: fleetMissionNeedsResolution(mission, nowSeconds, fulfilledRandomnessRequestIds)
+    }));
+  }
+
+  // VEY-KANEO-479: request ids the RandomnessEngine has fulfilled, read from the ingested
+  // RandomnessFulfilled logs.
+  private fulfilledRandomnessRequestIds(): ReadonlySet<string> {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
+    `).all() as EventRow[];
+    const fulfilled = new Set<string>();
+    for (const row of rows) {
+      const log = parseEvent<IndexedRpcLog>(row.event_json);
+      if (isRandomnessFulfilledLog(log)) {
+        fulfilled.add(decodeRandomnessFulfilledRequestId(log));
+      }
+    }
+    return fulfilled;
   }
 
   private indexedBattleReports(): BattleReport[] {

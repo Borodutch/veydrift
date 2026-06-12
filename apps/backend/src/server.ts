@@ -140,7 +140,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       databasePath: loaded.config.indexDbPath,
       // VEY-KANEO-471: config already hard-gates this to non-production; pass it through so the
       // fleet-visibility read model can serve the synthetic stationed-defense payload for QA.
-      qaSyntheticStationedDefenders: loaded.config.qaSyntheticStationedDefenders
+      qaSyntheticStationedDefenders: loaded.config.qaSyntheticStationedDefenders,
+      // VEY-KANEO-479: when the randomness engine is configured, gate an arrived Attack's readiness on
+      // its battle randomness being fulfilled (derived from ingested RandomnessFulfilled logs).
+      randomnessEngineConfigured: Boolean(loaded.config.randomnessEngineAddress)
     }) : undefined);
   const logBackfiller = deriveLogBackfiller(indexerChainReader);
   const chainSync =
@@ -330,7 +333,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        return indexedSettlementFundingUnavailableResponse(indexer);
+        return await indexedSettlementFundingResponse(indexer, chainReader, wallet);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -2299,29 +2302,37 @@ function indexedReadNotReadyResponse(surface: string, indexer: SettlementIndexer
   );
 }
 
-function indexedSettlementFundingUnavailableResponse(indexer: SettlementIndexer | undefined): Response {
-  const snapshot = indexer?.snapshot() ?? null;
-  console.warn("Frontend indexed read is not ready", {
-    surface: "settlement funding",
-    indexer: snapshot,
-    source: indexedSource
-  });
+async function indexedSettlementFundingResponse(
+  indexer: SettlementIndexer | undefined,
+  chainReader: ChainReader | undefined,
+  wallet: `0x${string}`
+): Promise<Response> {
+  // Settlement funding gates new-player onboarding (the Settle button). The start price
+  // is an immutable game constant the reader memoizes (read once), and the wallet balance
+  // is a cheap eth_getBalance node call — neither is a per-request game-state eth_call, so
+  // serving real funding here does not reintroduce the #606 read-RPC flood. We still gate
+  // on the indexer being warm so a cold/booting backend returns a real not-ready response
+  // (consistent with /settlement and /planets) instead of the old permanent stub that
+  // blocked every new player with startPriceWei: null (VEY-KANEO-478).
+  if (!chainReader || !hasWarmPlanetIndex(indexer)) {
+    return indexedReadNotReadyResponse("settlement funding", indexer);
+  }
 
-  return Response.json(
-    {
-      affordable: false,
-      balanceWei: null,
-      contractKind: "game",
-      startPriceWei: null,
-      unavailableReason: "Settlement funding requires indexed funding state.",
-      indexer: snapshot,
-      source: indexedSource,
-      stale: true
-    },
-    {
-      headers: indexedStateHeaders(snapshot ? "not-ready" : "unavailable")
-    }
-  );
+  const snapshot = indexer.snapshot();
+  try {
+    const funding = await chainReader.getSettlementFunding(wallet);
+    return indexedJsonResponse(
+      { ...funding, stale: !snapshot.safeToServeIndexedState },
+      snapshot
+    );
+  } catch (error) {
+    console.warn("Settlement funding read failed", {
+      wallet,
+      error: reasonText(error),
+      source: indexedSource
+    });
+    return indexedReadNotReadyResponse("settlement funding", indexer);
+  }
 }
 
 function indexedAllianceResponse(wallet: `0x${string}`, indexer: SettlementIndexer | undefined): Response {
@@ -2465,6 +2476,10 @@ function errorResponse(error: unknown, status: number): Response {
       status: responseStatus
     }
   );
+}
+
+function reasonText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function statusForError(error: unknown, fallback: number): number {

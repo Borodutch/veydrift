@@ -1108,25 +1108,58 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("returns indexed settlement-funding unavailable state without chain balance reads", async () => {
+  test("returns indexed-not-ready for settlement-funding when the index is cold", async () => {
+    // VEY-KANEO-478: a cold/booting indexer must surface a real retryable not-ready
+    // response (like /settlement and /planets), not the old permanent unavailable stub
+    // that blocked onboarding. It must also not reach the chain reader to do so.
     const response = await createRequestHandler({
       config: configuredTestConfig,
       chainReader: withoutIndexLists(new class extends MockChainReader {
         override getSettlementFunding(): ReturnType<MockChainReader["getSettlementFunding"]> {
-          throw new Error("frontend settlement funding reads must not call chain reader");
+          throw new Error("cold settlement funding reads must not call chain reader");
         }
       }())
     })(new Request(`http://localhost/wallet/${player}/settlement-funding`));
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({
-      affordable: false,
-      balanceWei: null,
-      contractKind: "game",
-      startPriceWei: null,
-      source: "contract-state-indexer",
-      stale: true
+      error: "indexed_read_not_ready",
+      retryable: true,
+      source: "contract-state-indexer"
     });
+  });
+
+  test("serves real settlement-funding (non-null start price) when the indexer is warm", async () => {
+    // VEY-KANEO-478 AC1/AC4: with a warm indexer the endpoint must return the real start
+    // price and balance with no unavailableReason, so the Settle button is enabled for new
+    // players. Start price comes from the (memoized) chain constant; balance is a cheap
+    // eth_getBalance — no per-request game-state eth_call.
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "100"
+    });
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    })(new Request(`http://localhost/wallet/${player}/settlement-funding`));
+
+    expect(response.status).toBe(200);
+    const body = await response.json() as Record<string, unknown>;
+    expect(body).toMatchObject({
+      affordable: true,
+      balanceWei: "100000000000000000",
+      contractKind: "game",
+      startPriceWei: "50000000000000000",
+      source: "contract-state-indexer"
+    });
+    expect(body.startPriceWei).not.toBeNull();
+    expect(body.unavailableReason).toBeUndefined();
   });
 
   test("does not read public battle report lists from the chain reader", async () => {

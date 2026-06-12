@@ -86,6 +86,14 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
+        // Lazy on-chain reconciliation (VEY-KANEO-477): complete both planets' ready DEFENSE production
+        // queues BEFORE reading `_defenseCounts` below, so the missile/intercept math runs against
+        // current counts (an origin missile batch or a target ABM/defense that just finished is
+        // included). `_settleDuePlanet` settles ship/defense/research queues only — it does NOT advance
+        // resource production, so missiling a target never moves the victim's resource clock, and
+        // defenses do not affect production rate, so no settled window is rescaled.
+        _settleDuePlanet(originPlanetId);
+        _settleDuePlanet(targetPlanetId);
         if (primaryTarget > Defense.LargeShieldDome) revert InvalidMissileTarget(primaryTarget);
         _enforceAttackProtection(msg.sender, targetPlanetId, false);
 
@@ -138,6 +146,20 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(planetId);
         if (homePlanetOf[msg.sender] == planetId) revert CannotAbandonHomePlanet();
+        // Lazy on-chain reconciliation (VEY-KANEO-477): settle BEFORE the active-queue check so ready
+        // ship/defense production queues complete (via `_settleDuePlanet`) and stop reading as active —
+        // a planet whose construction already finished must not be falsely blocked from abandon.
+        _settleResources(planetId);
+        // A ready-but-unsettled BUILDING construction is not completed by the module settle (two-window
+        // building completion lives only in the main facade's `_settleResourcesUpTo`). It must not block
+        // abandon either: the planet is being destroyed, so discard the due construction. `planetId` is
+        // monotonic (`nextPlanetId++`) and never reused, so the cleared slot is unreachable afterwards.
+        if (
+            buildingConstructions[planetId].active
+                && buildingConstructions[planetId].readyAt <= _currentTimestamp()
+        ) {
+            delete buildingConstructions[planetId];
+        }
         if (
             buildingConstructions[planetId].active || defenseQueues[planetId].active
                 || shipQueues[planetId].active
@@ -146,7 +168,6 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         }
         if (activeFleetMissionCount[msg.sender] != 0) revert PlanetHasActiveFleetMissions();
 
-        _settleResources(planetId);
         Planet memory planetRef = _planets[planetId];
         if (
             planetRef.resources.metal != 0 || planetRef.resources.crystal != 0
