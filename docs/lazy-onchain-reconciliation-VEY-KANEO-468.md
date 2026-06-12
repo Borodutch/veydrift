@@ -210,6 +210,18 @@ contracts from `VeydriftGame`.
    drain via `_settleResources` and research drain via `_settlePlayerDue`; keep `finish*` as thin
    wrappers that just trigger the reconcile (back-compat). Foundry tests: no finish tx, a later
    mutating call applies due research/ship/defense/building. Keeper + fleet flow untouched.
+   **Status — landed (partial coverage).** `_settleDuePlanet` / `_settleResearchDue` /
+   `_settleUnitQueuesDue` added to `VeydriftResourceReserves`; invoked from `_settleResources` in the
+   colonization, defense-production, planet-management, and defense-hold modules. So any module-routed
+   mutating call (start ship/defense/research, colony ops, defense-hold, any `_spend`) now settles due
+   research + ship + defense for the planet/owner with no finish tx; building already auto-settled.
+   `finish*` kept as back-compat. **Not yet covered (EIP-170 budget):** the facade entrypoints
+   (`collectResources` / `settlePlanet` / building / moon-spend — 54 B free) and the gameplay module
+   (fleet launch/resolve — 127 B free) cannot host the ~400 B reconcile bodies without first reclaiming
+   `finish*` dispatch, which is itself gated on removing the live frontend/keeper callers. Combat
+   (9 B free) is intentionally untouched. Foundry: `testMutatingCallSettlesDueShipAndDefenseWithout-
+   FinishTx`, `testMutatingCallSettlesDueResearchWithoutFinishTx`; suite green (259); storage layout
+   unchanged.
 2. **Fleet lazy-settle.** Flip `_isPendingResolutionMission` to resolve-in-reconcile; resolve
    Transport/Deploy/Colonize + all returns synchronously; resolve Attack/Harvest with try/catch on
    randomness (skip when uncommitted). Cross-player counterparty reconcile. Foundry tests incl. the
