@@ -13,6 +13,14 @@ interface IVeydriftSpaceDockGame {
 }
 
 /// @notice Veydrift Space Dock wreckage and repair accounting for combat modules.
+/// @dev UNUSED / DORMANT FEATURE (as of 2026-06): this system is not deployed or wired into
+///      the live game. No deploy script calls `VeydriftGame.setSpaceDockSystem(...)`, so the
+///      game's `_spaceDockSystem` stays `address(0)` and `VeydriftCombatModule._recordCombatWreckage`
+///      intentionally no-ops. There is no `/runtime-config` field, `/wallet/:wallet/spacedock`
+///      endpoint, or frontend integration, so `startShipRepair` / `finishShipRepair` are not
+///      player-reachable. Kept as scaffolding for a possible future ship-repair feature; wire it
+///      up (deploy + `setSpaceDockSystem` + runtime-config/feature flag + wallet endpoint) before
+///      treating it as live. See closed issue #804.
 contract VeydriftSpaceDockSystem {
     using SafeCast for uint256;
 

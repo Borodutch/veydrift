@@ -193,6 +193,9 @@ contract VeydriftGame is VeydriftResourceReserves {
         emit RandomnessEngineUpdated(oldRandomnessEngine, nextRandomnessEngine);
     }
 
+    /// @dev UNUSED / DORMANT: SpaceDock is never set on the live deployment, so `_spaceDockSystem`
+    ///      stays `address(0)` and combat wreckage recording no-ops. See VeydriftSpaceDockSystem and
+    ///      closed issue #804 before wiring this up.
     function setSpaceDockSystem(address) external {
         _delegateToColonizationModule();
     }
