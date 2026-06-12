@@ -295,30 +295,9 @@ export type ApplyLogResult = {
   snapshot: IndexerSnapshot;
 };
 
-// Maps each FleetMissionShips composition key to its on-chain Ship enum id (VeydriftTypes.Ship). The list
-// deliberately omits SolarSatellite (9) and Crawler (15) — the contract never lets those join a mission.
-const MISSION_SHIP_IDS: ReadonlyArray<readonly [string, number]> = [
-  ["smallCargo", 0],
-  ["lightFighter", 1],
-  ["recycler", 2],
-  ["colonyShip", 3],
-  ["largeCargo", 4],
-  ["heavyFighter", 5],
-  ["cruiser", 6],
-  ["battleship", 7],
-  ["bomber", 8],
-  ["destroyer", 10],
-  ["deathstar", 11],
-  ["battlecruiser", 12],
-  ["reaper", 13],
-  ["pathfinder", 14]
-];
-
-// Mission types whose fleet can take ship losses (combat at the target, or stationed defense that
-// fought). A returned mission of any OTHER type brought every launched ship home — the contract
-// credited them all — so its debit can be released from event integration alone. Combat returns can
-// have lost ships the contract emits no count event for, so they keep being debited until a bounded
-// canonical reconcile of the planet reads the exact survivor count (VEY-KANEO-461).
+// Mission types whose just-settled combat at a planet warrants a bounded canonical reconcile of the
+// planets involved (origin survivors / stationed-defender losses). Drives drainFleetMissionReconcilePlanets;
+// ship counts themselves are now authoritative from PlanetShipCountChanged events (VEY-KANEO-461).
 const COMBAT_MISSION_TYPES: ReadonlySet<string> = new Set([
   "Attack",
   "AcsAttack",
@@ -326,14 +305,6 @@ const COMBAT_MISSION_TYPES: ReadonlySet<string> = new Set([
   "Intercept",
   "MissileAttack"
 ]);
-
-// True when a mission's ships are physically back on the origin planet AND no combat could have
-// thinned them, so the departed-ships projection can stop debiting it without an on-chain read.
-// Only a `Returned` mission has actually arrived home (Outbound/Returning/Resolved/Recalled are still
-// in transit or at the target); a combat type still needs the bounded reconcile to learn its losses.
-function missionShipsAreHomeIntact(mission: FleetMissionSummary): boolean {
-  return mission.status === "Returned" && !COMBAT_MISSION_TYPES.has(mission.missionType);
-}
 
 export class SettlementIndexer {
   private readonly db: Database;
@@ -861,60 +832,19 @@ export class SettlementIndexer {
   }
 
   // Ships physically present at the planet and therefore launchable right now — the value the contract
-  // returns from `shipCount(planetId, ship)` — as opposed to `shipRows`, the planet's full owned roster.
-  //
-  // The contract debits ships from the origin planet at launch (VeydriftGameplayModule._debitMissionShips),
-  // credits survivors back on return, and burns combat losses, but emits NO PlanetShipCountChanged for any
-  // of those moves — the only ship-count events are build completions and the combat solar-satellite wipe.
-  // So `contract_ship_counts` only re-syncs with on-chain on the next canonical reconcile; between
-  // reconciles it still counts ships that have already left (and may have died) on a mission. Mission
-  // Compose read that stale roster and offered phantom ships, so a launch exceeding the real on-chain count
-  // reverted (VEY-KANEO-447) — and the reporter saw it with the fleet already gone, not merely in flight.
-  //
-  // We can't restore departures from events: FleetMissionReturned/ReturnExposed carry no surviving ship
-  // composition, so the read model never learns how many ships actually came home. We therefore apply a
-  // debit-only projection — subtract EVERY mission that has departed since the reconcile baseline (any
-  // status, including Returned/Resolved/lost), per its launch composition — and let the next reconcile's
-  // fresh on-chain read add survivors back. Gating on the launch block vs `lastReconciledBlock` keeps us
-  // from re-subtracting departures the baseline already excludes. This never over-reports (so no phantom
-  // ships, no launch revert); a fleet that returned intact transiently under-reports until the next
-  // reconcile, which only ever offers fewer ships than are truly present.
+  // returns from `shipCount(planetId, ship)`. Post the VeydriftGame events upgrade this is identical to
+  // `shipRows`: the contract emits PlanetShipCountChanged on EVERY ship-count mutation (the single sink
+  // `_setPlanetShipCount` emits it, and launch debits, return credits, and combat losses all route
+  // through it), so `contract_ship_counts` is now the authoritative at-planet roster for every mission
+  // type — attack/transport/colonize/deploy/acs-defend. The indexer applies those events directly
+  // (applyShipCountChangedEvent), so a fleet that has departed is already debited and a fleet that
+  // returned (minus combat losses) is already credited, with no departed-ships projection or reconcile
+  // needed. Builds emit ShipCompleted, also applied. (VEY-KANEO-461)
   availableShipRows(planetId: string): ShipyardState["ships"] {
-    const departedByShipId = this.shipsDepartedSinceReconcile(planetId);
     return deriveShipRows(
-      (id) => Math.max(0, this.indexedLevel("contract_ship_counts", "ship_id", planetId, id) - (departedByShipId.get(id) ?? 0)),
+      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
       this.planet(planetId)?.temperature
     );
-  }
-
-  // Sum, per ship id, the ships that have left `planetId` on missions the canonical reconcile baseline has
-  // not yet absorbed. Every complete fleet-mission summary has already departed (the contract debited it at
-  // launch), and we cannot know which ships returned, so we count them all regardless of current status —
-  // an intact return is restored by the next reconcile, a loss stays correctly subtracted.
-  private shipsDepartedSinceReconcile(planetId: string): Map<number, number> {
-    const baselineBlock = this.planetReconcileBlock(planetId);
-    const departed = new Map<number, number>();
-    for (const mission of this.indexedFleetMissionSummaries()) {
-      if (mission.originPlanetId !== planetId) continue;
-      // Ships home again: a non-combat fleet that has physically returned brought every launched
-      // ship back (no losses possible), so the contract has credited them and we must stop debiting
-      // it — this is how a returned fleet reappears in the at-planet count from event integration
-      // alone, without a canonical reconcile (VEY-KANEO-461 / VEY-KANEO-460). Combat returns stay
-      // debited until reconcilePlanetState pins the exact survivor count.
-      if (missionShipsAreHomeIntact(mission)) continue;
-      let launchBlock: bigint;
-      try {
-        launchBlock = BigInt(mission.launchBlockNumber ?? "0");
-      } catch {
-        launchBlock = 0n;
-      }
-      if (launchBlock <= baselineBlock) continue;
-      for (const [key, shipId] of MISSION_SHIP_IDS) {
-        const quantity = Number(mission.ships[key] ?? "0");
-        if (quantity > 0) departed.set(shipId, (departed.get(shipId) ?? 0) + quantity);
-      }
-    }
-    return departed;
   }
 
   // The block height through which `contract_ship_counts` for this planet is known to match chain.
