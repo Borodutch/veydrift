@@ -1,0 +1,17 @@
+# Nixpacks build config for the Veydrift battle-keeper service.
+# Build context is the monorepo root (workspaces resolve from there); set EasyPanel's build path to
+# the repo root and point it at this file.
+
+[phases.install]
+cmds = ["NODE_ENV=development bun install --frozen-lockfile && rm -rf /root/.cache/nix"]
+
+[phases.build]
+# No bundling step — the keeper runs straight from TypeScript under Bun. Type-check so a broken
+# build fails fast instead of at runtime.
+cmds = ["cd apps/battle-keeper && bun run check && rm -rf /root/.bun/install/cache /tmp/*"]
+
+[start]
+cmd = "cd apps/battle-keeper && bun src/index.ts"
+
+[variables]
+NODE_ENV = "production"
