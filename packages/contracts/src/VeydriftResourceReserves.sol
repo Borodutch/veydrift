@@ -446,8 +446,12 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         pure
         returns (bool)
     {
-        return missionType == FleetMissionType.Attack || missionType == FleetMissionType.Harvest
-            || missionType == FleetMissionType.Colonize;
+        // Transport/Deploy/Colonize/Attack/Harvest are enum values 0..4 (VeydriftGameStorage). All
+        // five are resolution-tracked (VEY-KANEO-468 Phase 2c enrolls Transport/Deploy so their
+        // arrivals and every return leg stay enumerable for the lazy settlers); the trailing
+        // counterplay/missile types (AcsDefend..DefenseHold) are not directly tracked. A single range
+        // check is cheaper than the per-type comparisons, clawing back bytecode at each inline site.
+        return missionType <= FleetMissionType.Harvest;
     }
 
     function _addResolutionMissionForPlanet(uint256 planetId, uint256 missionId) private {

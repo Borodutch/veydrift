@@ -16,6 +16,12 @@ interface IVeydriftCombatMissionResolver {
     function resolveFleetMission(uint256 missionId) external;
 }
 
+/// @dev Self-call surface routing the deferred return-completion untrack to the gameplay module,
+///      which already carries the untrack machinery — keeping it out of this bytecode-tight module.
+interface IVeydriftResolvedMissionUntracker {
+    function untrackResolvedFleetMission(uint256 missionId) external;
+}
+
 /// @notice Delegatecall target for colony and planet metadata/destruction paths.
 contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     bytes4 private constant ATTACK_PROTECTION_STATUS_SELECTOR = 0x8a6b2246;
@@ -47,6 +53,19 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
                 try IVeydriftCombatMissionResolver(address(this))
                     .resolveFleetMission(missionIds[index]) {}
                     catch {}
+            } else if (
+                (
+                    mission.status == FleetMissionStatus.Returning
+                        || mission.status == FleetMissionStatus.Recalled
+                ) && nowTimestamp >= mission.returnAt
+                    && _earliestPendingMissionArrivalForPlanet(mission.originPlanetId)
+                        == type(uint64).max
+            ) {
+                // Lazy reconcile (VEY-KANEO-468 Phase 2c): land every matured return leg the player
+                // owns the moment any action touches them — no `completeFleetMissionReturn` tx. The
+                // pending-resolution guard preserves combat-snapshot integrity (a return never lands
+                // across an unresolved Attack/Harvest arrival on the origin planet).
+                _landFleetReturn(missionIds[index], mission);
             }
             unchecked {
                 ++index;
@@ -266,14 +285,28 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             revert FleetMissionNotResolved(mission.returnAt);
         }
         _settleDueCombatArrivals(msg.sender);
+        // The prologue settle runs the lazy return settler, which may already have landed this very
+        // mission (VEY-KANEO-468 Phase 2c). If so the leg is Returned — the credit happened this tx,
+        // so report success rather than double-crediting (which would underflow activeFleetMissionCount).
+        if (mission.status == FleetMissionStatus.Returned) return;
         _requireNoPendingMissionResolutionForPlanet(mission.originPlanetId);
         if (_currentTimestamp() < mission.returnAt) revert FleetNotArrived(mission.returnAt);
 
+        _landFleetReturn(missionId, mission);
+    }
+
+    /// @dev Credits a matured return leg's cargo + ships back to its origin planet and untracks the
+    ///      mission (VEY-KANEO-468 Phase 2c: deferred from arrival to return-completion so the leg
+    ///      stays enumerable for the lazy return settler). Caller must have already confirmed the
+    ///      mission is Returning/Recalled, its `returnAt` has elapsed, and no unresolved combat
+    ///      arrival is pending on the origin planet (the combat-snapshot integrity gate).
+    function _landFleetReturn(uint256 missionId, FleetMission storage mission) private {
         _planets[mission.originPlanetId].resources =
             _add(_planets[mission.originPlanetId].resources, mission.cargo);
         _creditMissionShips(mission.originPlanetId, mission.ships);
         mission.status = FleetMissionStatus.Returned;
         activeFleetMissionCount[mission.owner] -= 1;
+        IVeydriftResolvedMissionUntracker(address(this)).untrackResolvedFleetMission(missionId);
         emit FleetMissionReturned(missionId, mission.owner, mission.originPlanetId);
     }
 
