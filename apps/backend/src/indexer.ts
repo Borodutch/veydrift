@@ -23,6 +23,7 @@ import {
   decodeRiftResourceLog,
   decodeSettledPlanetLog,
   decodeShipCountChangedLog,
+  decodeDefenseCountChangedLog,
   isDebrisFieldLog,
   isBattleReportLog,
   isFleetMissionLog,
@@ -38,6 +39,7 @@ import {
   isRiftResourceLog,
   isSettledPlanetLog,
   isShipCountChangedLog,
+  isDefenseCountChangedLog,
   type ChainReader,
   type Address,
   type AllianceIdentity,
@@ -55,6 +57,7 @@ import {
   type IndexedMoonCreatedEvent,
   type IndexedRiftResourceEvent,
   type IndexedShipCountChangedEvent,
+  type IndexedDefenseCountChangedEvent,
   type InfrastructureState,
   type ManagedPlanet,
   type MoonState,
@@ -294,6 +297,12 @@ export type ApplyLogResult = {
   removed: boolean;
   snapshot: IndexerSnapshot;
 };
+
+// How many planets the canonical reconcile reads at once. Each planet fans out 4 batched eth_call reads,
+// so this bounds the concurrent batches the self-hosted RPC node has to serialize and return intact —
+// reading the whole universe in one Promise.all truncated responses and failed the reconcile
+// (VEY-KANEO-461). 25 keeps the reconcile completing without making it serial-slow.
+const CANONICAL_READ_PLANET_CHUNK = 25;
 
 // Mission types whose just-settled combat at a planet warrants a bounded canonical reconcile of the
 // planets involved (origin survivors / stationed-defender losses). Drives drainFleetMissionReconcilePlanets;
@@ -1205,6 +1214,10 @@ export class SettlementIndexer {
       this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
+    if (isDefenseCountChangedLog(log)) {
+      this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
     if (isIndexedQueueStartedLog(log)) {
       this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), {
         settledAt: blockTimestampSeconds(log) ?? Math.floor(Date.now() / 1_000).toString()
@@ -1981,6 +1994,8 @@ export class SettlementIndexer {
         this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
       } else if (isShipCountChangedLog(log)) {
         this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
+      } else if (isDefenseCountChangedLog(log)) {
+        this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
       } else if (isAllianceLog(log)) {
         this.applyAllianceEvent(decodeAllianceLog(log));
       }
@@ -2057,7 +2072,13 @@ export class SettlementIndexer {
     };
     const owners = new Set(planets.map((planet) => planet.owner.toLowerCase() as `0x${string}`));
 
-    await Promise.all(planets.map(async (planet) => {
+    // Read the universe in bounded planet batches rather than one universe-wide Promise.all. Each planet
+    // fans out 4 batched eth_call reads, so the unbounded version fired hundreds of large batches at once
+    // — the self-hosted node truncated some responses ("Unexpected end of JSON input") and the canonical
+    // reconcile failed deterministically, freezing lastReconciledBlock (VEY-KANEO-461). Chunking caps the
+    // in-flight reads so the node returns each batch intact and the reconcile completes.
+    for (const planetChunk of chunks(planets, CANONICAL_READ_PLANET_CHUNK)) {
+      await Promise.all(planetChunk.map(async (planet) => {
       const planetId = planet.planetId;
       const owner = planet.owner as `0x${string}`;
       const [
@@ -2112,9 +2133,11 @@ export class SettlementIndexer {
         if (queues.ship?.active) state.verifiedEmptyQueues.delete(`ship:${planetId}`);
         if (queues.research?.active) state.verifiedEmptyQueues.delete(`research:${owner.toLowerCase()}`);
       }
-    }));
+      }));
+    }
 
-    await Promise.all([...owners].map(async (owner) => {
+    for (const ownerChunk of chunks([...owners], CANONICAL_READ_PLANET_CHUNK)) {
+      await Promise.all(ownerChunk.map(async (owner) => {
       const research = await this.chainReader.getResearchState?.(owner);
       if (!research) return;
       if (research.homePlanetId) {
@@ -2127,7 +2150,8 @@ export class SettlementIndexer {
       } else {
         state.verifiedEmptyQueues.add(`research:${owner.toLowerCase()}`);
       }
-    }));
+      }));
+    }
 
     return state;
   }
@@ -2570,6 +2594,31 @@ export class SettlementIndexer {
       "count",
       event.planetId,
       event.shipId,
+      event.total
+    );
+    this.touch();
+  }
+
+  // The contract emits PlanetDefenseCountChanged with the planet's resulting defense total on every
+  // defense mutation the production queue doesn't already cover — combat defense losses, post-combat
+  // repair, and interplanetary-missile silo/interception/primary hits (VEY-KANEO-462). Indexing it keeps
+  // contract_defense_counts authoritative from events alone, so defense counts no longer depend on a
+  // canonical reconcile completing (VEY-KANEO-461).
+  private applyDefenseCountChangedEvent(event: IndexedDefenseCountChangedEvent): void {
+    this.upsertIndexedLevel(
+      "indexed_defense_counts",
+      "defense_id",
+      "count",
+      event.planetId,
+      event.defenseId,
+      event.total
+    );
+    this.upsertIndexedLevel(
+      "contract_defense_counts",
+      "defense_id",
+      "count",
+      event.planetId,
+      event.defenseId,
       event.total
     );
     this.touch();

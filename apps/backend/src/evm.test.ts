@@ -11,6 +11,9 @@ import {
   isBattleReportLog,
   isPlanetRenamedLog,
   isMoonChanceReportLog,
+  RpcResponseParseError,
+  decodeDefenseCountChangedLog,
+  isDefenseCountChangedLog,
   VeydriftGameReader,
   type Address,
   type BattleReport,
@@ -124,6 +127,77 @@ describe("HTTP JSON-RPC transport", () => {
     } finally {
       globalThis.fetch = previousFetch;
     }
+  });
+
+  test("retries a truncated/empty RPC body and recovers when the node returns valid JSON (VEY-KANEO-461)", async () => {
+    const previousFetch = globalThis.fetch;
+    let attempts = 0;
+
+    globalThis.fetch = (async () => {
+      attempts += 1;
+      // First response is a truncated body (the self-hosted node cutting the stream short → would throw
+      // "Unexpected end of JSON input"); the retry returns a valid body.
+      if (attempts === 1) {
+        return new Response("{\"jsonrpc\":\"2.0\",\"id\":1,\"res", { status: 200 });
+      }
+      return Response.json({ jsonrpc: "2.0", id: 1, result: "0x1234" });
+    }) as unknown as typeof fetch;
+
+    try {
+      const transport = new HttpJsonRpcTransport("https://rpc.example", { cacheTtlMs: 0 });
+      await expect(transport.request<string>("eth_call", [{ to: "0x0000000000000000000000000000000000000001", data: "0x181c1bc4" }, "latest"]))
+        .resolves.toBe("0x1234");
+      expect(attempts).toBe(2);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  test("surfaces a persistently truncated batch body as RpcResponseParseError so reads fall back to sequential (VEY-KANEO-461)", async () => {
+    const previousFetch = globalThis.fetch;
+    let attempts = 0;
+
+    globalThis.fetch = (async () => {
+      attempts += 1;
+      // Every attempt truncates — an oversized batch the node can never return intact.
+      return new Response("[{\"jsonrpc\":\"2.0\",\"id\":1,\"resu", { status: 200 });
+    }) as unknown as typeof fetch;
+
+    try {
+      const transport = new HttpJsonRpcTransport("https://rpc.example", { cacheTtlMs: 0 });
+      const request = {
+        method: "eth_call",
+        params: [{ to: "0x0000000000000000000000000000000000000001", data: "0x181c1bc4" }, "latest"]
+      };
+      await expect(transport.requestBatch<string>([request])).rejects.toBeInstanceOf(RpcResponseParseError);
+      // Retried the full 3 attempts before giving up.
+      expect(attempts).toBe(3);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  test("decodes PlanetDefenseCountChanged into the planet's resulting defense total (VEY-KANEO-461/462)", () => {
+    const log: RpcLog = {
+      blockNumber: "0x90",
+      transactionHash: "0xdefense",
+      topics: [
+        "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3",
+        "0x0000000000000000000000000000000000000000000000000000000000000007",
+        "0x0000000000000000000000000000000000000000000000000000000000000003"
+      ],
+      data: "0x0000000000000000000000000000000000000000000000000000000000000005"
+    };
+
+    expect(isDefenseCountChangedLog(log)).toBe(true);
+    expect(decodeDefenseCountChangedLog(log)).toEqual({
+      eventName: "PlanetDefenseCountChanged",
+      transactionHash: "0xdefense",
+      blockNumber: "144",
+      planetId: "7",
+      defenseId: 3,
+      total: 5
+    });
   });
 
   test("aborts a hung RPC fetch at the request timeout and retries before failing", async () => {

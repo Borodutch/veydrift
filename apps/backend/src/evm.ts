@@ -212,6 +212,15 @@ export type IndexedShipCountChangedEvent = {
   total: number;
 };
 
+export type IndexedDefenseCountChangedEvent = {
+  eventName: "PlanetDefenseCountChanged";
+  transactionHash: string;
+  blockNumber: string;
+  planetId: string;
+  defenseId: number;
+  total: number;
+};
+
 export type IndexedAllianceEvent =
   | {
       eventName: "AllianceCreated";
@@ -964,7 +973,17 @@ export class HttpJsonRpcTransport {
         throw new Error(`RPC HTTP ${response.status}`);
       }
 
-      const body = (await response.json()) as JsonRpcResponse<T>;
+      let body: JsonRpcResponse<T>;
+      try {
+        body = await readRpcJson<JsonRpcResponse<T>>(response);
+      } catch (error) {
+        // A truncated/empty body (e.g. the node cutting the stream short) is transient — retry.
+        if (error instanceof RpcResponseParseError && attempt < 2) {
+          await retryDelay(attempt);
+          continue;
+        }
+        throw error;
+      }
       if (body.error) {
         if (isRetryableRpcError(body.error) && attempt < 2) {
           await retryDelay(attempt);
@@ -1084,7 +1103,19 @@ export class HttpJsonRpcTransport {
         throw new Error(`RPC HTTP ${response.status}`);
       }
 
-      const body = await response.json() as JsonRpcResponse<T> | Array<JsonRpcResponse<T> & { id?: number }>;
+      let body: JsonRpcResponse<T> | Array<JsonRpcResponse<T> & { id?: number }>;
+      try {
+        body = await readRpcJson<JsonRpcResponse<T> | Array<JsonRpcResponse<T> & { id?: number }>>(response);
+      } catch (error) {
+        // An oversized batch response truncated mid-stream throws "Unexpected end of JSON input" here.
+        // Retry the batch; if it keeps failing the typed error makes batchCallContract fall back to
+        // sequential single calls, whose small responses never truncate (VEY-KANEO-461).
+        if (error instanceof RpcResponseParseError && attempt < 2) {
+          await retryDelay(attempt);
+          continue;
+        }
+        throw error;
+      }
       if (!Array.isArray(body)) {
         if (body.error && isRetryableRpcError(body.error) && attempt < 2) {
           await retryDelay(attempt);
@@ -3948,6 +3979,7 @@ const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c82
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
+const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
@@ -4100,6 +4132,10 @@ export function isShipCountChangedLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === planetShipCountChangedTopic;
 }
 
+export function isDefenseCountChangedLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === planetDefenseCountChangedTopic;
+}
+
 export function isIndexedQueueStartedLog(log: RpcLog): boolean {
   const topic = topicAt(log.topics, 0);
   return topic === buildingStartedTopic
@@ -4234,6 +4270,19 @@ export function decodeShipCountChangedLog(log: RpcLog): IndexedShipCountChangedE
     blockNumber: BigInt(log.blockNumber).toString(),
     planetId: decodeUint(topicAt(log.topics, 1)).toString(),
     shipId: Number(decodeUint(topicAt(log.topics, 2))),
+    total: Number(decodeUintWord(wordAt(words, 0)))
+  };
+}
+
+export function decodeDefenseCountChangedLog(log: RpcLog): IndexedDefenseCountChangedEvent {
+  const words = splitWords(log.data);
+
+  return {
+    eventName: "PlanetDefenseCountChanged",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+    defenseId: Number(decodeUint(topicAt(log.topics, 2))),
     total: Number(decodeUintWord(wordAt(words, 0)))
   };
 }
@@ -4926,11 +4975,19 @@ function isRpcRevert(error: unknown): boolean {
 }
 
 function shouldChunkLogQuery(error: unknown): boolean {
-  return error instanceof Error && /max block range|block range|too many blocks|RPC HTTP 400/i.test(error.message);
+  // A truncated/oversized response body (RpcResponseParseError) means the block range produced more logs
+  // than the node could return intact — halving the range is the same recovery as an explicit
+  // "block range too large" rejection (VEY-KANEO-461).
+  return error instanceof RpcResponseParseError
+    || (error instanceof Error && /max block range|block range|too many blocks|RPC HTTP 400/i.test(error.message));
 }
 
 function shouldRetryWithoutBatch(error: unknown): boolean {
-  return error instanceof Error && /RPC HTTP (400|413)/i.test(error.message);
+  // A truncated/oversized batch response (RpcResponseParseError) or an explicit too-large rejection
+  // (HTTP 400/413) both mean "this batch was too big" — retry the same calls one at a time, whose
+  // small individual responses the node can always return intact (VEY-KANEO-461).
+  return error instanceof RpcResponseParseError
+    || (error instanceof Error && /RPC HTTP (400|413)/i.test(error.message));
 }
 
 const defaultRpcRequestTimeoutMsValue = 10_000;
@@ -4966,8 +5023,41 @@ export class RpcTransportError extends Error {
   }
 }
 
+// Raised when an RPC response body cannot be read or parsed as JSON — typically a truncated or empty
+// body from an oversized batch response (the self-hosted node cutting the stream short), surfaced by
+// fetch as "Unexpected end of JSON input". Treated as transient so the request is retried, and as a
+// batch-too-large signal so a batched eth_call falls back to sequential single calls. Before this the
+// parse threw a bare SyntaxError that failed the canonical reconcile hard and froze lastReconciledBlock
+// forever (VEY-KANEO-461).
+export class RpcResponseParseError extends Error {
+  constructor(cause: unknown, bodyLength?: number) {
+    super(`RPC response parse error${bodyLength === undefined ? "" : ` (body ${bodyLength} bytes)`}: ${reasonText(cause)}`);
+    this.name = "RpcResponseParseError";
+    this.cause = cause;
+  }
+}
+
+// Read and JSON-parse an RPC response defensively. A failure to read the stream (connection reset
+// mid-body) or to parse it (truncated/empty body) becomes a typed RpcResponseParseError so callers can
+// retry and, for batched reads, shrink the request — rather than a fatal SyntaxError.
+async function readRpcJson<T>(response: Response): Promise<T> {
+  let text: string;
+  try {
+    text = await response.text();
+  } catch (error) {
+    throw new RpcResponseParseError(error);
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    throw new RpcResponseParseError(error, text.length);
+  }
+}
+
 function isRetryableTransportError(error: unknown): boolean {
-  return error instanceof RpcRequestTimeoutError || error instanceof RpcTransportError;
+  return error instanceof RpcRequestTimeoutError
+    || error instanceof RpcTransportError
+    || error instanceof RpcResponseParseError;
 }
 
 function reasonText(error: unknown): string {
