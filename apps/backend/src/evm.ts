@@ -3793,7 +3793,8 @@ export function decodeCompleteFleetMissionLogs(logs: RpcLog[]): FleetMissionSumm
   return [...decodeFleetMissionLogs(logs).values()].filter(isCompleteFleetMissionSummary);
 }
 
-// VEY-KANEO-479: a RandomnessEngine.RandomnessFulfilled log (requestId is the first indexed topic).
+// VEY-KANEO-479: a RandomnessEngine.RandomnessFulfilled log. topics[0] is the event signature and
+// the indexed `requestId` is the first indexed parameter, i.e. topics[1] (decoded just below).
 export function isRandomnessFulfilledLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === randomnessFulfilledTopic;
 }
