@@ -1918,6 +1918,12 @@ type RankedHighscorePlanet = {
   tactical: {
     raidableResources: Resources;
     raidableResourceTotal: string;
+    // Full production-accrued public resources (metal + crystal + deuterium) the planet
+    // currently holds — the same figure the public universe/planet surface exposes. LOOT
+    // (`raidableResourceTotal`) is the ~50% on-chain plunder of this base, so surfacing the
+    // gross total lets the UI show why LOOT reads lower than the planet's full stockpile and
+    // stops it from being misread as missing accrual. (VEY-KANEO-454)
+    grossResourceTotal: string;
     ships: {
       count: number;
       power: string;
@@ -2275,6 +2281,10 @@ export function indexedPlanetTacticalSummary(
   return {
     raidableResources,
     raidableResourceTotal: resourceTotal(raidableResources).toString(),
+    // `planet` here is already production-accrued (see `accruedPlanetState` at the Finder/
+    // Rankings call sites), so its resources match the public universe surface. This is the
+    // full stockpile LOOT is plundered from at the ~50% on-chain rate. (VEY-KANEO-454)
+    grossResourceTotal: resourceTotal(fallbackResources).toString(),
     ships: shipSummary,
     defenses: defenseSummary,
     combatPower: (BigInt(combatShipSummary.power) + BigInt(defenseSummary.power)).toString()

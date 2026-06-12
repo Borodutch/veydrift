@@ -30,6 +30,7 @@ function planet(overrides: Partial<HighscorePlanet> & { planetId: string }): Hig
     tactical: {
       raidableResources: { metal: "1000", crystal: "500", deuterium: "100" },
       raidableResourceTotal: "1600",
+      grossResourceTotal: "3200",
       ships: { count: 2, power: "300" },
       defenses: { count: 1, power: "200" },
       combatPower: "500",
@@ -137,6 +138,8 @@ describe("buildRaidTargets", () => {
       origin: ORIGIN,
     })[0]!;
     expect(target.loot).toBe(1600);
+    // LOOT is the ~50% plunder of the planet's full accrued public resources (VEY-KANEO-454).
+    expect(target.grossLoot).toBe(3200);
     expect(target.combatPower).toBe(500);
     expect(target.shipPower).toBe(300);
     expect(target.defensePower).toBe(200);
@@ -275,6 +278,7 @@ describe("sortRaidTargets", () => {
       alliance: null,
       distance: 0,
       loot: 0,
+      grossLoot: 0,
       raidableResources: null,
       combatPower: 0,
       shipPower: 0,
