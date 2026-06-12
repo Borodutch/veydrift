@@ -679,8 +679,22 @@ abstract contract VeydriftGameStorage {
         return keccak256(abi.encode(attacker, defender));
     }
 
+    /// @dev Touches a player's activity clock AND lazily reconciles their due research
+    ///      (VEY-KANEO-468). Research is player-scoped with a single active queue, so a due completion
+    ///      is applied in place on the next mutating interaction instead of requiring a manual
+    ///      `finishResearch` tx. Idempotent and bounded (one queue, no backlog). `_touchPlayer` is the
+    ///      universal entrypoint hook (called at the top of every mutating facade function), making it
+    ///      the single chokepoint for player-scoped lazy settlement.
     function _touchPlayer(address player) internal {
         uint64 currentTime = uint64(block.timestamp);
+        ResearchQueue storage queue = researchQueues[player];
+        if (queue.active && currentTime >= queue.readyAt) {
+            Technology technology = queue.technology;
+            uint16 targetLevel = queue.targetLevel;
+            delete researchQueues[player];
+            _technologyLevels[player][technology] = targetLevel;
+            emit ResearchCompleted(player, technology, targetLevel);
+        }
         if (playerLastActiveAt[player] == currentTime) return;
         playerLastActiveAt[player] = currentTime;
     }

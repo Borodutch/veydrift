@@ -123,16 +123,13 @@ contract VeydriftGame is VeydriftResourceReserves {
         );
     }
 
+    /// @dev Back-compat wrapper (VEY-KANEO-468). Building upgrades auto-settle inside
+    ///      `_settleResources` -> `_settleResourcesUpTo` -> `_completeBuilding` once `block.timestamp`
+    ///      reaches `readyAt`, so this entrypoint is no longer required for progress and is now an
+    ///      idempotent reconcile trigger (a call before `readyAt` is a no-op, never an early
+    ///      completion: `_settleResourcesUpTo` only completes when `ceiling >= construction.readyAt`).
     function finishBuildingUpgrade(uint256 planetId) external {
         _touchPlayer(msg.sender);
-        _requirePlanetOwner(planetId);
-        BuildingConstruction memory construction = buildingConstructions[planetId];
-        if (!construction.active) revert ConstructionInactive();
-        uint64 currentTime = uint64(block.timestamp);
-        if (currentTime < construction.readyAt) {
-            revert ConstructionNotReady(construction.readyAt);
-        }
-
         _settleResources(planetId);
     }
 
@@ -166,9 +163,11 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToPlanetManagementModule();
     }
 
+    /// @dev Back-compat wrapper (VEY-KANEO-468). Research auto-settles in `_touchPlayer` via
+    ///      `_settlePlayerResearchDue`, so no manual finish tx is required for progress; the selector
+    ///      stays in the ABI as an idempotent reconcile trigger.
     function finishResearch() external {
         _touchPlayer(msg.sender);
-        _delegateToPlanetManagementModule();
     }
 
     function setMoonSystem(address nextMoonSystem) external onlyOwner {

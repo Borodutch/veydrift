@@ -589,13 +589,12 @@ contract VeydriftGameTest is Test {
         assertEq(construction.cost.deuterium, 0);
         assertEq(construction.readyAt, block.timestamp + 108);
 
+        // VEY-KANEO-468: finishBuildingUpgrade is now an idempotent reconcile trigger. A call before
+        // readyAt is a no-op (never an early completion) instead of reverting ConstructionNotReady.
         vm.prank(player);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftGameStorage.ConstructionNotReady.selector, construction.readyAt
-            )
-        );
         game.finishBuildingUpgrade(planetId);
+        assertTrue(game.activeBuildingConstruction(planetId).active);
+        assertEq(game.buildingLevel(planetId, Building.MetalMine), 0);
 
         vm.warp(construction.readyAt);
         vm.prank(player);
@@ -633,14 +632,14 @@ contract VeydriftGameTest is Test {
             game.activeBuildingConstruction(planetId);
         assertEq(construction.readyAt, block.timestamp + 432);
 
+        // VEY-KANEO-468: the displayed-readyAt guarantee is preserved by the settlement primitive
+        // (`_settleResourcesUpTo` only completes when ceiling >= readyAt), not by a wrapper revert.
+        // Calling finishBuildingUpgrade one second early must NOT complete the building.
         vm.warp(construction.readyAt - 1);
         vm.prank(account);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftGameStorage.ConstructionNotReady.selector, construction.readyAt
-            )
-        );
         game.finishBuildingUpgrade(planetId);
+        assertEq(game.buildingLevel(planetId, Building.DeuteriumSynthesizer), 0);
+        assertTrue(game.activeBuildingConstruction(planetId).active);
 
         vm.warp(construction.readyAt);
         vm.prank(account);
@@ -5360,9 +5359,39 @@ contract VeydriftGameTest is Test {
         vm.expectRevert(VeydriftGameStorage.QueueInactive.selector);
         game.finishShipProduction(planetId);
 
+        // VEY-KANEO-468: research now lazy-settles in _touchPlayer, so finishResearch is an
+        // idempotent reconcile trigger -- calling it with no active queue is a no-op, not a revert.
+        // (Ship/defense lazy-settle is not yet wired, so those finish wrappers still guard.)
         vm.prank(player);
-        vm.expectRevert(VeydriftGameStorage.QueueInactive.selector);
         game.finishResearch();
+    }
+
+    /// @notice VEY-KANEO-468: a player's due research is reconciled in-contract on the next
+    ///         mutating interaction, with NO manual finishResearch tx (and no backend keeper).
+    function testResearchLazilySettlesOnUnrelatedMutatingCallWithoutFinishTx() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.ResearchLab, 4);
+        _setResources(planetId, 100_000, 100_000, 100_000);
+
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Energy);
+        VeydriftGameStorage.ResearchQueue memory queue = game.researchQueue(player);
+        assertTrue(queue.active);
+        assertEq(uint8(queue.technology), uint8(Technology.Energy));
+        assertEq(game.technologyLevel(player, Technology.Energy), 0);
+
+        // Time passes past completion. Deliberately NO finishResearch() call.
+        vm.warp(queue.readyAt);
+        assertTrue(game.researchQueue(player).active, "queue must remain until reconciled");
+
+        // An unrelated mutating interaction (starting a building) flows through _touchPlayer and
+        // must lazily apply the due research level before doing anything else.
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.MetalMine);
+
+        assertEq(game.technologyLevel(player, Technology.Energy), 1, "research auto-settled");
+        assertFalse(game.researchQueue(player).active, "queue cleared by lazy reconcile");
     }
 
     function _build(address account, uint256 planetId, Building building) internal {
