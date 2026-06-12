@@ -38,7 +38,8 @@ global `/missions`, `/mission/<id>`, `/battle-reports`, `/highscores`,
 Frontend central API client is `apps/frontend/src/walletFlow.ts`
 (`fetchWalletInfrastructure` / `…Shipyard` / `…Defenses` / `…Research` / `…Queues` /
 etc., and the `Chain*State` response types). Resource/derived logic lives in
-`canonicalResources.ts`, `chainState.ts`, `overviewData.ts`, `gameStateCache.ts`.
+`chainState.ts`, `overviewData.ts`, `gameStateCache.ts`, and the resource-display
+wiring in `PlayableMvpApp.tsx` (which already reads the backend's `resourcesAsOfNow`).
 
 **Leak points the EPIC must remove** (these expose the real/unreconciled split or
 keep contract logic in the frontend):
@@ -46,10 +47,16 @@ keep contract logic in the frontend):
 - `Chain*State` types carry `productionAvailable` / `unavailableReason`, and
   `WalletSettlementResponse.indexer.indexedState: "healthy" | "reconciling" | "stale"`
   (`walletFlow.ts`). These surface backend reconciliation status to the UI.
-- A direct `previewResources(planetId)` `eth_call` helper still exists in the
-  frontend (`walletFlow.ts` ~L1691–1710, `GAME_SELECTORS.previewResources`), despite
-  VEY-463 ("remove all direct RPC reads"). `previewResources` must be a **backend**
-  responsibility; the frontend reads available resources from the resources endpoint.
+- `previewResources` is **already a backend responsibility** and there is **no**
+  direct frontend `eth_call` for it: `GAME_SELECTORS` has no `previewResources`
+  selector and `walletFlow.ts` has no such helper (the only frontend mention is a
+  doc comment in `PlayableMvpApp.tsx`). Per VEY-463 / VEY-KANEO-464 / VEY-KANEO-465
+  the backend computes the settled, storage-capped balance server-side
+  (`apps/backend/src/indexer.ts` reads the contract's `previewResources`) and exposes
+  it as `resourcesAsOfNow`, which the frontend renders directly. The remaining work
+  is consolidation: serve this under a single named resources endpoint (below) and
+  ensure no surface keeps `productionAvailable` / `unavailableReason` / indexer-health
+  branching — not removing a frontend RPC read, which is gone.
 
 So this EPIC is mostly **simplification/consolidation of existing endpoints**, not
 greenfield: shrink payloads, fold reconciliation status out of the contract, move
@@ -77,8 +84,9 @@ truth or a clean error; it never asks the frontend to reconcile.
    `previewResources`-backed settled balance as the single source for display +
    affordability; fixes the build-revert / bar-vs-affordability bug. Establishes
    the thin-frontend + backend-authoritative pattern. **Backend** computes available
-   resources via `previewResources(planetId)`; **frontend** drops its direct
-   `previewResources` eth_call and reads the resources endpoint.
+   resources via `previewResources(planetId)` (already done as `resourcesAsOfNow`,
+   VEY-KANEO-464/465); **frontend** reads it from the named resources endpoint. No
+   frontend `previewResources` eth_call remains to remove.
 2. **Infrastructure thin-wrapper cleanup = VEY-KANEO-472** *(in-progress)*. Restore
    build/research time estimates as a **frontend** presentational calc (regressed by
    #82x); strip any infra game-state calc that belongs server-side.
