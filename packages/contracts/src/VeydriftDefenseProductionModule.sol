@@ -258,22 +258,23 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
     function _settleResources(uint256 planetId) private {
         uint64 currentTime = _currentTimestamp();
         Planet storage planetRef = _planets[planetId];
-        if (currentTime <= planetRef.lastSettledAt) return;
-
-        uint256 elapsed = uint256(currentTime) - planetRef.lastSettledAt;
-        (uint256 metalPerHour, uint256 crystalPerHour, uint256 deutPerHour) =
-            _productionPerHour(planetId);
-        Resources memory produced = Resources({
-            metal: _toUint128((metalPerHour * elapsed) / 1 hours),
-            crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
-            deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
-        });
-        (, Resources memory added) =
-            _cappedResourceIncrease(planetId, planetRef.resources, produced);
-        added = _reserveLimitedIncrease(added);
-        _increaseInternalResources(added);
-        planetRef.resources = _add(planetRef.resources, added);
-        planetRef.lastSettledAt = currentTime;
+        if (currentTime > planetRef.lastSettledAt) {
+            uint256 elapsed = uint256(currentTime) - planetRef.lastSettledAt;
+            (uint256 metalPerHour, uint256 crystalPerHour, uint256 deutPerHour) =
+                _productionPerHour(planetId);
+            Resources memory produced = Resources({
+                metal: _toUint128((metalPerHour * elapsed) / 1 hours),
+                crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
+                deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
+            });
+            (, Resources memory added) =
+                _cappedResourceIncrease(planetId, planetRef.resources, produced);
+            added = _reserveLimitedIncrease(added);
+            _increaseInternalResources(added);
+            planetRef.resources = _add(planetRef.resources, added);
+            planetRef.lastSettledAt = currentTime;
+        }
+        _settleDuePlanet(planetId);
     }
 
     function _spend(uint256 planetId, Resources memory cost) private {

@@ -1820,6 +1820,59 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(planetId, Ship.SmallCargo), 2);
     }
 
+    // VEY-KANEO-468: lazy on-chain reconciliation. A production queue whose `readyAt` has elapsed is
+    // applied by the next mutating interaction with the planet/owner, with no dedicated finish* tx.
+    function testMutatingCallSettlesDueShipAndDefenseWithoutFinishTx() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setBuildingLevel(planetId, Building.ResearchLab, 1);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 1_000_000, 1_000_000, 1_000_000);
+
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 2);
+        vm.prank(player);
+        game.startDefenseProduction(planetId, Defense.RocketLauncher, 3);
+
+        VeydriftGameStorage.ShipQueue memory shipQueue = game.shipQueue(planetId);
+        VeydriftGameStorage.DefenseQueue memory defenseQueue = game.defenseQueue(planetId);
+        vm.warp(shipQueue.readyAt > defenseQueue.readyAt ? shipQueue.readyAt : defenseQueue.readyAt);
+
+        // No finishShipProduction / finishDefenseProduction call. An unrelated mutating interaction
+        // (starting research) must settle both due queues on-chain.
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Energy);
+
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 2);
+        assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 3);
+        assertFalse(game.shipQueue(planetId).active);
+        assertFalse(game.defenseQueue(planetId).active);
+    }
+
+    // VEY-KANEO-468: research (player-scoped) is applied lazily by the player's next mutating call.
+    function testMutatingCallSettlesDueResearchWithoutFinishTx() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.ResearchLab, 1);
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 1_000_000, 1_000_000, 1_000_000);
+
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Energy);
+        VeydriftGameStorage.ResearchQueue memory researchQueue = game.researchQueue(player);
+        vm.warp(researchQueue.readyAt);
+
+        // No finishResearch call. A subsequent mutating interaction (starting ship production)
+        // must apply the researched level on-chain.
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 1);
+
+        assertEq(game.technologyLevel(player, Technology.Energy), 1);
+        assertFalse(game.researchQueue(player).active);
+    }
+
     function testShipProductionAppendsMatchingActiveQueue() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
@@ -3355,15 +3408,17 @@ contract VeydriftGameTest is Test {
         _setTechnologyLevel(defender, Technology.CombustionDrive, 1);
         _setResources(targetPlanetId, 100_000, 100_000, 100_000);
 
+        // Both queues are started before either is ready and the defender takes no further action,
+        // so they stay pending until the attack's impact-time snapshot settles them. (VEY-KANEO-468:
+        // any intervening defender mutation would lazily settle an already-ready queue sooner — see
+        // testMutatingCallSettlesDueShipAndDefenseWithoutFinishTx.)
         vm.prank(defender);
         game.startShipProduction(targetPlanetId, Ship.LightFighter, 1);
-        VeydriftGameStorage.ShipQueue memory shipQueue = game.shipQueue(targetPlanetId);
-        vm.warp(shipQueue.readyAt);
-
         vm.prank(defender);
         game.startDefenseProduction(targetPlanetId, Defense.RocketLauncher, 1);
+        VeydriftGameStorage.ShipQueue memory shipQueue = game.shipQueue(targetPlanetId);
         VeydriftGameStorage.DefenseQueue memory defenseQueue = game.defenseQueue(targetPlanetId);
-        vm.warp(defenseQueue.readyAt);
+        vm.warp(shipQueue.readyAt > defenseQueue.readyAt ? shipQueue.readyAt : defenseQueue.readyAt);
 
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);

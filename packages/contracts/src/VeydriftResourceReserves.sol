@@ -3,13 +3,60 @@ pragma solidity ^0.8.28;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {VeydriftGameStorage, IERC20ReserveToken} from "./VeydriftGameStorage.sol";
-import {Resource} from "./libraries/VeydriftTypes.sol";
+import {Resource, Technology} from "./libraries/VeydriftTypes.sol";
+
+/// @dev Self-call surface used by the lazy reconcile to drain a planet's ready ship/defense
+///      production queues. The facade exposes `completeAttackTargetSnapshotQueues` (self-only) and
+///      fans it out to the colonization (ship) and defense-production (defense) module impls.
+interface IVeydriftUnitQueueSettler {
+    function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external;
+}
 
 /// @notice ERC-20 reserve backing and internal resource accounting shared by gameplay modules.
 abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     using SafeCast for uint256;
 
     constructor(address admin) VeydriftGameStorage(admin) {}
+
+    /// @notice Lazy on-chain reconciliation for a planet (VEY-KANEO-468): applies every completion
+    ///         whose `readyAt` has elapsed for `planetId` and its owner — ready research (player
+    ///         scoped) and ready ship/defense production (planet scoped) — without requiring a
+    ///         dedicated finish tx. Idempotent and bounded: each drain advances one ready queue
+    ///         entry per iteration and stops at the first not-yet-ready entry.
+    /// @dev Callers invoke this after settling resource production (`_settleResourcesUntil`), so a
+    ///      completion that lands mid-window does not retroactively rescale the whole settled window
+    ///      — matching how building completion and attack-snapshot queue drains already order.
+    ///      Building completion stays folded into the facade's `_settleResourcesUpTo`.
+    function _settleDuePlanet(uint256 planetId) internal {
+        address owner = _planets[planetId].owner;
+        if (owner != address(0)) {
+            _settleResearchDue(owner);
+        }
+        _settleUnitQueuesDue(planetId);
+    }
+
+    /// @dev Applies a player's research level the moment a mutating call observes its queue elapsed.
+    ///      Research is single-queue/player-scoped with no backlog, so a single application suffices.
+    ///      This is the body of the (now redundant) `finishResearch` entrypoint.
+    function _settleResearchDue(address player) internal {
+        ResearchQueue memory queue = researchQueues[player];
+        // Hour-scale queue completion; a validator nudging the block timestamp by seconds is moot.
+        // forge-lint: disable-next-line(block-timestamp)
+        if (queue.active && uint64(block.timestamp) >= queue.readyAt) {
+            delete researchQueues[player];
+            _technologyLevels[player][queue.technology] = queue.targetLevel;
+            emit ResearchCompleted(player, queue.technology, queue.targetLevel);
+        }
+    }
+
+    /// @dev Drains all ready ship then defense production queue entries for `planetId` up to now,
+    ///      reusing the audited `completeAttackTargetSnapshotQueues` fan-out (self-call: the facade
+    ///      gates it to `msg.sender == address(this)`). The drain impls never re-enter settlement,
+    ///      so this cannot recurse.
+    function _settleUnitQueuesDue(uint256 planetId) internal {
+        IVeydriftUnitQueueSettler(address(this))
+            .completeAttackTargetSnapshotQueues(planetId, uint64(block.timestamp));
+    }
 
     function setResourceTokens(address metalToken, address crystalToken, address deuteriumToken)
         external
