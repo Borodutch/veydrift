@@ -72,10 +72,10 @@ function visibilityFor(mission: FleetMissionSummary): FleetMissionVisibilityResp
   return empty;
 }
 
-function renderDetailText(detail: MissionDetailResponse, fleetVisibility = visibilityFor(detail.mission)): string {
+function renderDetailPage(detail: MissionDetailResponse, fleetVisibility = visibilityFor(detail.mission)): VNode {
   const noop = () => {};
   const actionState: MissionDetailActionState = { status: "idle" };
-  const page = MissionDetailPage({
+  return MissionDetailPage({
     actionState,
     canTransact: false,
     detail,
@@ -92,8 +92,19 @@ function renderDetailText(detail: MissionDetailResponse, fleetVisibility = visib
     onRetry: noop,
     onSelectCoordinates: noop,
     onSelectPlayer: noop,
-  });
-  return visibleText(page);
+  }) as VNode;
+}
+
+function renderDetailText(detail: MissionDetailResponse, fleetVisibility = visibilityFor(detail.mission)): string {
+  return visibleText(renderDetailPage(detail, fleetVisibility));
+}
+
+// The unit listings render as icon chips (VEY-KANEO-407, #709): the unit name + count live in each
+// chip's `title` tooltip rather than as plain text, so the composition is asserted via those titles.
+function renderDetailUnitTitles(detail: MissionDetailResponse, fleetVisibility = visibilityFor(detail.mission)): string[] {
+  return findElements(renderDetailPage(detail, fleetVisibility), "span")
+    .map((element) => element.props?.title)
+    .filter((title): title is string => typeof title === "string");
 }
 
 describe("MissionDetailPage defender Fleet / Defenses block", () => {
@@ -102,10 +113,12 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
       fleet: [{ id: 1, count: 12 }], // Light Fighter
       defenses: [{ id: 4, count: 3 }], // Gauss Cannon
     };
-    const text = renderDetailText({ mission: combatMission(), battleReport: battleReport(), defenderPlanetState });
+    const detail = { mission: combatMission(), battleReport: battleReport(), defenderPlanetState };
+    const text = renderDetailText(detail);
+    const unitTitles = renderDetailUnitTitles(detail);
 
-    expect(text).toContain("Light Fighter ×12");
-    expect(text).toContain("Gauss Cannon ×3");
+    expect(unitTitles).toContain("Light Fighter ×12");
+    expect(unitTitles).toContain("Gauss Cannon ×3");
     expect(text).not.toContain(OLD_PLACEHOLDER);
   });
 

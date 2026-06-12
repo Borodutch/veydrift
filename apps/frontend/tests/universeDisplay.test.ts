@@ -81,12 +81,12 @@ const APPROVED_MISSILE_DEFENSE_ASSETS = [
   {
     key: "antiBallisticMissile",
     label: "Anti-Ballistic Missile",
-    sha256: "30038cef31c6f50390af3303bd6d7f59005cde9100fe4e0d7e2bbbbe393c1d89",
+    sha256: "4d0acc42e6ba5dbe9acc48bc4a40f3b2874d206471cbad43e8109095d3e8dca4",
   },
   {
     key: "interplanetaryMissile",
     label: "Interplanetary Missile",
-    sha256: "7f507427bb6f232147e06346db6ab155c1d6629666561f977c4f762f7128ccd4",
+    sha256: "2e1912b8d8419e26bcffd80b2f8cfc1617ef6e1bf435571b0c156875ef314620",
   },
 ] as const;
 
