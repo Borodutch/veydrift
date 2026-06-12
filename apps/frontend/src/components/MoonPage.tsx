@@ -6,7 +6,7 @@ import type { MissionShips } from "../galaxyActions";
 import type { ChainMoonState } from "../walletFlow";
 import { formatCost } from "../buildingDetails";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../moonActions";
-import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import { formatUserTimestamp } from "../timestampFormat";
 import { PageHeader, RefreshButton } from "./PageHeader";
 import { InlineSyncIndicator } from "./VeydriftLoader";
 import { MoonSkeleton } from "./LoadingSkeletons";
@@ -17,7 +17,6 @@ interface MoonPageProps {
   error?: string | undefined;
   loading?: boolean | undefined;
   moonState?: ChainMoonState | null | undefined;
-  onFinishBuilding?: (() => void) | undefined;
   onJumpGate?: ((destinationPlanetId: string, ships?: Partial<MissionShips>) => void) | undefined;
   onRefresh?: (() => void) | undefined;
   onStartBuilding?: ((buildingId: number, label: string) => void) | undefined;
@@ -29,7 +28,6 @@ export function MoonPage({
   error,
   loading,
   moonState,
-  onFinishBuilding,
   onJumpGate,
   onRefresh,
   onStartBuilding,
@@ -61,7 +59,6 @@ export function MoonPage({
             canTransact={canTransact}
             moon={moon}
             moonState={moonState}
-            onFinishBuilding={onFinishBuilding}
             onJumpGate={onJumpGate}
             onStartBuilding={onStartBuilding}
           />
@@ -137,7 +134,6 @@ function MoonSystemsPanel({
   canTransact,
   moon,
   moonState,
-  onFinishBuilding,
   onJumpGate,
   onStartBuilding,
 }: {
@@ -145,7 +141,6 @@ function MoonSystemsPanel({
   canTransact?: boolean | undefined;
   moon: NonNullable<ChainMoonState["moon"]>;
   moonState?: ChainMoonState | null | undefined;
-  onFinishBuilding?: MoonPageProps["onFinishBuilding"];
   onJumpGate?: MoonPageProps["onJumpGate"];
   onStartBuilding?: MoonPageProps["onStartBuilding"];
 }) {
@@ -209,16 +204,6 @@ function MoonSystemsPanel({
               {moonState.queue.targetLevel ? "L" + moonState.queue.targetLevel : ""} / ready{" "}
               {formatMoonReadyAt(moonState.queue.readyAt)}
             </span>
-            {onFinishBuilding ? (
-              <button
-                className="h-8 rounded border border-amber-200/30 bg-amber-200/10 px-3 font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={!canTransact || pending || !queueReady(moonState.queue.readyAt)}
-                onClick={onFinishBuilding}
-                type="button"
-              >
-                Finish
-              </button>
-            ) : null}
           </div>
         ) : null}
 
@@ -302,10 +287,4 @@ function moonBuildingLabel(itemId: number | undefined): string {
 function formatMoonReadyAt(value: string | null | undefined): string {
   if (!value || value === "0") return "Ready";
   return formatUserTimestamp(value);
-}
-
-function queueReady(value: string | null | undefined): boolean {
-  if (!value || value === "0") return true;
-  const timestamp = timestampToMs(value);
-  return timestamp !== undefined && timestamp <= Date.now();
 }

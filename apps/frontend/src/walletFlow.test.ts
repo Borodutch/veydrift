@@ -42,22 +42,15 @@ import {
   miniAppUnsupportedChainMessage,
   mergePlayerProfile,
   parseRiftTokenAmount,
-  sendCompleteFleetMissionReturnTransaction,
   sendApproveResourceTokenTransaction,
   sendDepositResourceTransaction,
-  sendFinishDefenseProductionTransaction,
-  sendFinishBuildingUpgradeTransaction,
   sendFinishResourceWithdrawalTransaction,
-  sendFinishShipProductionTransaction,
-  sendFinishResearchTransaction,
   sendCreateColonyTransaction,
   sendJoinAttackMissionTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchFleetMissionTransaction,
-  sendFinishMoonBuildingUpgradeTransaction,
   sendJumpGateJumpTransaction,
   sendRecallFleetMissionTransaction,
-  sendResolveFleetMissionTransaction,
   sendAcceptAllianceInviteTransaction,
   sendAllianceJoinRequestTransaction,
   sendAllianceKickTransaction,
@@ -998,7 +991,7 @@ describe("walletFlow", () => {
     });
 
     await expect(
-      sendResolveFleetMissionTransaction(provider, account, contract, "42")
+      sendRecallFleetMissionTransaction(provider, account, contract, "42")
     ).rejects.toThrow("This fleet has not arrived yet");
 
     expect(requests).toEqual([
@@ -1007,7 +1000,7 @@ describe("walletFlow", () => {
         params: [{
           from: account,
           to: contract,
-          data: encodeGameCall("0xde09e7cf", [42]),
+          data: encodeGameCall("0x1cbc460c", ["42"]),
         }],
       },
     ]);
@@ -1184,7 +1177,7 @@ describe("walletFlow", () => {
     })).toThrow("Loot ratio must total 100%.");
   });
 
-  test("encodes fleet lifecycle resolver transactions", async () => {
+  test("encodes the fleet recall transaction", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
@@ -1192,8 +1185,6 @@ describe("walletFlow", () => {
     });
 
     await expect(sendRecallFleetMissionTransaction(provider, account, contract, "11")).resolves.toBe("0xfleet1");
-    await expect(sendResolveFleetMissionTransaction(provider, account, contract, "12")).resolves.toBe("0xfleet2");
-    await expect(sendCompleteFleetMissionReturnTransaction(provider, account, contract, "13")).resolves.toBe("0xfleet3");
 
     expect(requests).toEqual([
       {
@@ -1202,22 +1193,6 @@ describe("walletFlow", () => {
           from: account,
           to: contract,
           data: encodeGameCall("0x1cbc460c", ["11"]),
-        }],
-      },
-      {
-        method: "eth_sendTransaction",
-        params: [{
-          from: account,
-          to: contract,
-          data: encodeGameCall("0xde09e7cf", ["12"]),
-        }],
-      },
-      {
-        method: "eth_sendTransaction",
-        params: [{
-          from: account,
-          to: contract,
-          data: encodeGameCall("0xc2472852", ["13"]),
         }],
       },
     ]);
@@ -1607,20 +1582,11 @@ describe("walletFlow", () => {
       sendStartBuildingUpgradeTransaction(provider, account, contract, "7", 0)
     ).resolves.toBe("0xtx1");
     await expect(
-      sendFinishBuildingUpgradeTransaction(provider, account, contract, "7")
+      sendStartShipProductionTransaction(provider, account, contract, "7", 0, 3)
     ).resolves.toBe("0xtx2");
     await expect(
-      sendStartShipProductionTransaction(provider, account, contract, "7", 0, 3)
-    ).resolves.toBe("0xtx3");
-    await expect(
-      sendFinishShipProductionTransaction(provider, account, contract, "7")
-    ).resolves.toBe("0xtx4");
-    await expect(
       sendStartDefenseProductionTransaction(provider, account, contract, "7", 0, 2)
-    ).resolves.toBe("0xtx5");
-    await expect(
-      sendFinishDefenseProductionTransaction(provider, account, contract, "7")
-    ).resolves.toBe("0xtx6");
+    ).resolves.toBe("0xtx3");
 
     expect(requests).toEqual([
       {
@@ -1630,16 +1596,6 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: encodeGameCall("0x165715e3", [7, 0])
-          }
-        ]
-      },
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000007"
           }
         ]
       },
@@ -1659,27 +1615,7 @@ describe("walletFlow", () => {
           {
             from: account,
             to: contract,
-            data: "0x7bd931540000000000000000000000000000000000000000000000000000000000000007"
-          }
-        ]
-      },
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
             data: encodeGameCall("0xfec06283", [7, 0, 2])
-          }
-        ]
-      },
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xa5a0d5970000000000000000000000000000000000000000000000000000000000000007"
           }
         ]
       }
@@ -1712,60 +1648,6 @@ describe("walletFlow", () => {
     ]);
   });
 
-  test("submits ready finish building upgrade transactions without gas-estimate preflight reads", async () => {
-    const requests: unknown[] = [];
-    const provider = mockProvider(async ({ method, params }) => {
-      requests.push({ method, params });
-      if (method === "eth_sendTransaction") return "0xfinish";
-      throw new Error(`unexpected ${method}`);
-    });
-
-    await expect(
-      sendFinishBuildingUpgradeTransaction(provider, account, contract, "1")
-    ).resolves.toBe("0xfinish");
-
-    expect(requests).toEqual([
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
-          }
-        ]
-      }
-    ]);
-  });
-
-  test("keeps wallet rejection after building completion submission as a user rejection", async () => {
-    const requests: unknown[] = [];
-    const provider = mockProvider(async ({ method, params }) => {
-      requests.push({ method, params });
-      if (method === "eth_sendTransaction") {
-        throw { code: 4001, message: "User rejected the request." };
-      }
-      throw new Error(`unexpected ${method}`);
-    });
-
-    await expect(
-      sendFinishBuildingUpgradeTransaction(provider, account, contract, "1")
-    ).rejects.toMatchObject({ code: 4001 });
-
-    expect(requests).toEqual([
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0x6ab2f9d40000000000000000000000000000000000000000000000000000000000000001"
-          }
-        ]
-      }
-    ]);
-  });
-
   test("requests Rabby accounts before other production, research, and rift submissions", async () => {
     const walletRequests: Array<{ method: string; params: unknown[] | undefined }> = [];
     let authorized = false;
@@ -1789,11 +1671,8 @@ describe("walletFlow", () => {
 
     const submissions: Array<() => Promise<string>> = [
       () => sendStartShipProductionTransaction(walletProvider, account, contract, "7", 0, 3),
-      () => sendFinishShipProductionTransaction(walletProvider, account, contract, "7"),
       () => sendStartDefenseProductionTransaction(walletProvider, account, contract, "7", 0, 2),
-      () => sendFinishDefenseProductionTransaction(walletProvider, account, contract, "7"),
       () => sendStartResearchTransaction(walletProvider, account, contract, "7", 12),
-      () => sendFinishResearchTransaction(walletProvider, account, contract),
       () => sendApproveResourceTokenTransaction(walletProvider, account, "0x3333333333333333333333333333333333333333", contract, 1_500_000n),
       () => sendDepositResourceTransaction(walletProvider, account, contract, "7", 0, 1_500_000n),
       () => sendRequestResourceWithdrawalTransaction(walletProvider, account, contract, "7", 1, 2_000_000n),
@@ -1835,9 +1714,8 @@ describe("walletFlow", () => {
     };
 
     await expect(sendStartMoonBuildingUpgradeTransaction(provider, account, contract, "7", 2)).resolves.toBe("0xmoon1");
-    await expect(sendFinishMoonBuildingUpgradeTransaction(provider, account, contract, "7")).resolves.toBe("0xmoon2");
-    await expect(sendJumpGateJumpTransaction(provider, account, contract, "7", "9")).resolves.toBe("0xmoon3");
-    await expect(sendJumpGateJumpTransaction(provider, account, contract, "7", "9", ships)).resolves.toBe("0xmoon4");
+    await expect(sendJumpGateJumpTransaction(provider, account, contract, "7", "9")).resolves.toBe("0xmoon2");
+    await expect(sendJumpGateJumpTransaction(provider, account, contract, "7", "9", ships)).resolves.toBe("0xmoon3");
 
     expect(requests).toEqual([
       {
@@ -1847,16 +1725,6 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: encodeGameCall("0x715e1b1a", [7, 2])
-          }
-        ]
-      },
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: encodeGameCall("0x713b9e66", [7])
           }
         ]
       },
@@ -1910,9 +1778,6 @@ describe("walletFlow", () => {
     await expect(
       sendStartResearchTransaction(provider, account, contract, "7", 12)
     ).resolves.toBe("0xresearch1");
-    await expect(
-      sendFinishResearchTransaction(provider, account, contract)
-    ).resolves.toBe("0xresearch2");
 
     expect(requests).toEqual([
       {
@@ -1922,41 +1787,6 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: encodeGameCall("0x7f314b93", [7, 12])
-          }
-        ]
-      },
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: "0xba2fbdc8"
-          }
-        ]
-      }
-    ]);
-  });
-
-  test("submits VeydriftGame mission resolution transactions", async () => {
-    const requests: unknown[] = [];
-    const provider = mockProvider(async ({ method, params }) => {
-      requests.push({ method, params });
-      return "0xresolve";
-    });
-
-    await expect(
-      sendResolveFleetMissionTransaction(provider, account, contract, "42")
-    ).resolves.toBe("0xresolve");
-
-    expect(requests).toEqual([
-      {
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: account,
-            to: contract,
-            data: encodeGameCall("0xde09e7cf", [42])
           }
         ]
       }

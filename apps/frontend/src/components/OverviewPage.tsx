@@ -80,15 +80,6 @@ interface OverviewPageProps {
   isWalletConnected: boolean;
   buildingActionNotice?: InfrastructureActionNotice | undefined;
   buildingActionPendingLabel?: string | undefined;
-  isBuildingActionPending?: boolean | undefined;
-  isBuildingReadyToFinish?: boolean | undefined;
-  onFinishBuilding?: (() => void) | undefined;
-  isDefenseActionPending?: boolean | undefined;
-  onFinishDefense?: (() => void) | undefined;
-  isShipyardActionPending?: boolean | undefined;
-  onFinishShipProduction?: (() => void) | undefined;
-  isResearchActionPending?: boolean | undefined;
-  onFinishResearch?: (() => void) | undefined;
   researchAction?: OverviewResearchActionState | undefined;
   onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard" | "mission-control") => void;
   onRenamePlanet?: ((name: string) => void) | undefined;
@@ -123,15 +114,6 @@ export function OverviewPage({
   isWalletConnected,
   buildingActionNotice,
   buildingActionPendingLabel,
-  isBuildingActionPending = false,
-  isBuildingReadyToFinish,
-  onFinishBuilding,
-  isDefenseActionPending = false,
-  onFinishDefense,
-  isShipyardActionPending = false,
-  onFinishShipProduction,
-  isResearchActionPending = false,
-  onFinishResearch,
   researchAction = { status: "idle" },
   onNavigate,
   onRenamePlanet,
@@ -191,12 +173,6 @@ export function OverviewPage({
     .map((queue) => defenseQueuePreview(queue)) ?? [];
   const defenseReadyAt = queueTimestampMs(onChainQueues?.defense?.readyAt);
   const defenseStartedAt = queueTimestampMs(onChainQueues?.defense?.startedAt);
-  const defenseFinishAction = overviewDefenseFinishAction({
-    actionPending: isDefenseActionPending,
-    now,
-    onFinishDefense,
-    queue: onChainQueues?.defense,
-  });
   const onChainShipQueue = shipQueuePreview(onChainQueues?.ship);
   const onChainShipBacklog = onChainQueues?.ship?.backlog
     ?.filter((queue) => queue.active)
@@ -205,30 +181,8 @@ export function OverviewPage({
   const shipStartedAt = queueTimestampMs(onChainQueues?.ship?.startedAt);
   const shipHasCanonicalTimeline =
     shipReadyAt !== undefined && shipStartedAt !== undefined && shipStartedAt < shipReadyAt;
-  const shipyardFinishAction = overviewShipyardFinishAction({
-    actionPending: isShipyardActionPending,
-    chainStatus: onChainStatus,
-    now,
-    onFinishShipProduction,
-    queue: onChainQueues?.ship,
-  });
-  const researchFinishAction = overviewResearchFinishAction({
-    actionPending: isResearchActionPending,
-    now,
-    onFinishResearch,
-    queue: onChainQueues?.research,
-  });
   const buildingNoticeKey = buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId);
   const scopedBuildingNotice = overviewBuildingActionNoticeFor(buildingActionNotice, buildingNoticeKey);
-  const buildingFinishAction = overviewBuildingFinishAction({
-    actionUnavailableReason: scopedBuildingNotice?.tone === "error" ? scopedBuildingNotice.label : undefined,
-    actionPending: isBuildingActionPending,
-    actionPendingLabel: buildingActionPendingLabel,
-    isBuildingReadyToFinish,
-    now,
-    onFinishBuilding,
-    queue: onChainQueues?.building ?? buildingQueue,
-  });
   const pendingBuildingNotice = buildingActionPendingLabel
     ? {
         buildingKey: buildingQueue?.key ?? buildingKeyForContractId(onChainQueues?.building?.itemId),
@@ -236,13 +190,9 @@ export function OverviewPage({
         tone: "pending" as const,
       }
     : undefined;
-  const overviewBuildingNotice = overviewBuildingActionNoticeFor(
+  const overviewBuildingNoticeToRender = overviewBuildingActionNoticeFor(
     scopedBuildingNotice ?? pendingBuildingNotice,
     buildingNoticeKey,
-  );
-  const overviewBuildingNoticeToRender = overviewBuildingNoticeForFinishAction(
-    overviewBuildingNoticeForReadyFinishAction(overviewBuildingNotice, buildingFinishAction),
-    buildingFinishAction,
   );
 
   // Only ever derive the planet name from real data: the loaded home planet's name, or a
@@ -651,9 +601,6 @@ export function OverviewPage({
                   indeterminate
                 />
               )}
-              <OverviewBuildingFinishButton
-                action={buildingFinishAction}
-              />
               <OverviewBuildingActionNotice notice={overviewBuildingNoticeToRender} />
             </QueuePanelContent>
           ) : buildingQueue ? (
@@ -666,9 +613,6 @@ export function OverviewPage({
                 startedAt={buildingQueue.startedAt}
                 thumbnailSrc={localBuildingAsset}
                 now={now}
-              />
-              <OverviewBuildingFinishButton
-                action={buildingFinishAction}
               />
               <OverviewBuildingActionNotice notice={overviewBuildingNoticeToRender} />
             </QueuePanelContent>
@@ -695,7 +639,6 @@ export function OverviewPage({
                 color="bg-rose-300"
                 now={now}
               />
-              <OverviewDefenseFinishButton action={defenseFinishAction} />
               {onChainDefenseBacklog.length > 0 ? (
                 <div className="grid gap-1 border-t border-white/10 pt-2 text-xs text-slate-400">
                   <span className="font-semibold uppercase tracking-[0.14em] text-slate-500">Queued next</span>
@@ -729,7 +672,6 @@ export function OverviewPage({
                 color="bg-cyan-300"
                 now={now}
               />
-              <OverviewResearchFinishButton action={researchFinishAction} />
               <OverviewResearchActionNotice actionState={researchAction} />
             </QueuePanelContent>
           ) : onChainQueues?.research?.active ? (
@@ -741,7 +683,6 @@ export function OverviewPage({
                 thumbnailSrc={onChainResearchAsset}
                 color="bg-cyan-300"
               />
-              <OverviewResearchFinishButton action={researchFinishAction} />
               <OverviewResearchActionNotice actionState={researchAction} />
             </QueuePanelContent>
           ) : settledState.researchQueue ? (
@@ -785,7 +726,6 @@ export function OverviewPage({
                 color="bg-emerald-300"
                 now={now}
               />
-              <OverviewShipyardFinishButton action={shipyardFinishAction} />
               {onChainShipBacklog.length > 0 ? (
                 <div className="grid gap-1 border-t border-white/10 pt-2 text-xs text-slate-400">
                   <span className="font-semibold uppercase tracking-[0.14em] text-slate-500">Queued next</span>
@@ -824,74 +764,6 @@ export function OverviewPage({
   );
 }
 
-export function shouldShowOverviewBuildingFinishAction({
-  isBuildingReadyToFinish,
-  now = Date.now(),
-  onFinishBuilding,
-  queue,
-}: {
-  isBuildingReadyToFinish?: boolean | undefined;
-  now?: number | undefined;
-  onFinishBuilding?: (() => void) | undefined;
-  queue?: OverviewBuildingFinishQueue | null | undefined;
-}): boolean {
-  if (!onFinishBuilding) return false;
-  if (isBuildingReadyToFinish !== undefined) return isBuildingReadyToFinish;
-
-  const readyAt = timestampToMs(queue?.readyAt);
-  const active = queue && ("active" in queue ? queue.active : true);
-  return Boolean(active && readyAt !== undefined && readyAt <= now);
-}
-
-type OverviewBuildingFinishQueue =
-  | Pick<QueueStateResponse, "active" | "readyAt">
-  | { readyAt: TimestampInput };
-
-export function overviewBuildingFinishAction({
-  actionUnavailableReason,
-  actionPending,
-  actionPendingLabel,
-  isBuildingReadyToFinish,
-  now = Date.now(),
-  onFinishBuilding,
-  queue,
-}: {
-  actionUnavailableReason?: string | undefined;
-  actionPending?: boolean | undefined;
-  actionPendingLabel?: string | undefined;
-  isBuildingReadyToFinish?: boolean | undefined;
-  now?: number | undefined;
-  onFinishBuilding?: (() => void) | undefined;
-  queue?: OverviewBuildingFinishQueue | null | undefined;
-}): {
-  disabled: boolean;
-  label: string;
-  onFinish?: (() => void) | undefined;
-  reason?: string | undefined;
-  reasonTone: InfrastructureActionNotice["tone"];
-  visible: boolean;
-} {
-  const ready = shouldShowOverviewBuildingFinishAction({
-    isBuildingReadyToFinish,
-    now,
-    onFinishBuilding,
-    queue,
-  });
-  const visible = Boolean(queue && onFinishBuilding && (actionPending || ready));
-  const reason = actionPending
-    ? actionPendingLabel ?? "Building transaction is already in progress."
-    : actionUnavailableReason;
-
-  return {
-    disabled: Boolean(reason),
-    label: actionPending ? "Completing building" : "Complete building",
-    onFinish: visible && !reason ? onFinishBuilding : undefined,
-    reason,
-    reasonTone: actionPending ? "pending" : "error",
-    visible,
-  };
-}
-
 export function overviewBuildingActionNoticeFor(
   actionNotice: InfrastructureActionNotice | undefined,
   buildingKey: BuildingQueueItem["key"] | undefined,
@@ -900,133 +772,13 @@ export function overviewBuildingActionNoticeFor(
   return actionNoticeForBuilding(actionNotice, buildingKey);
 }
 
-export function overviewBuildingNoticeForFinishAction(
-  notice: InfrastructureActionNotice | undefined,
-  action: Pick<ReturnType<typeof overviewBuildingFinishAction>, "reason" | "reasonTone" | "visible">,
-): InfrastructureActionNotice | undefined {
-  if (notice || !action.visible || !action.reason) return notice;
-
-  return {
-    label: action.reason,
-    tone: action.reasonTone,
-  };
-}
-
-export function overviewBuildingNoticeForReadyFinishAction(
-  notice: InfrastructureActionNotice | undefined,
-  action: Pick<ReturnType<typeof overviewBuildingFinishAction>, "reason" | "visible">,
-): InfrastructureActionNotice | undefined {
-  if (action.visible && !action.reason && notice?.tone === "success") return undefined;
-  return notice;
-}
-
-export function overviewDefenseFinishAction({
-  actionPending,
-  now,
-  onFinishDefense,
-  queue,
-}: {
-  actionPending?: boolean | undefined;
-  now: number;
-  onFinishDefense?: (() => void) | undefined;
-  queue?: PlayerQueuesResponse["defense"] | undefined;
-}): {
-  disabled: boolean;
-  onFinish?: (() => void) | undefined;
-  visible: boolean;
-} {
-  const ready = Boolean(queue?.active && queue.readyAt && Number(queue.readyAt) * 1_000 <= now);
-  const visible = Boolean(ready && onFinishDefense);
-  return {
-    disabled: Boolean(actionPending),
-    onFinish: visible && !actionPending ? onFinishDefense : undefined,
-    visible,
-  };
-}
-
-export function overviewShipyardFinishAction({
-  actionPending,
-  chainStatus = "ready",
-  now,
-  onFinishShipProduction,
-  queue,
-}: {
-  actionPending?: boolean | undefined;
-  chainStatus?: ChainLoadStatus | undefined;
-  now: number;
-  onFinishShipProduction?: (() => void) | undefined;
-  queue?: PlayerQueuesResponse["ship"] | undefined;
-}): {
-  disabled: boolean;
-  onFinish?: (() => void) | undefined;
-  reason?: string | undefined;
-  visible: boolean;
-} {
-  const ready = Boolean(queue?.active && queue.readyAt && Number(queue.readyAt) * 1_000 <= now);
-  const visible = Boolean(ready && onFinishShipProduction);
-  const reason = visible && chainStatus !== "ready"
-    ? "Shipyard state is syncing. Refresh and retry once backend state is ready."
-    : undefined;
-  const disabled = Boolean(actionPending || reason);
-  return {
-    disabled,
-    onFinish: visible && !disabled ? onFinishShipProduction : undefined,
-    reason,
-    visible,
-  };
-}
-
+// Research completions settle automatically on-chain (lazy reconcile), so there is no manual
+// "complete" control. This predicate is still used to derive backend-state availability messaging.
 export function isOverviewResearchReadyToFinish(
   queue: PlayerQueuesResponse["research"] | undefined,
   now: number,
 ): boolean {
   return Boolean(queue?.active && queue.readyAt && Number(queue.readyAt) * 1_000 <= now);
-}
-
-export function overviewResearchFinishAction({
-  actionPending,
-  now,
-  onFinishResearch,
-  queue,
-}: {
-  actionPending?: boolean | undefined;
-  now: number;
-  onFinishResearch?: (() => void) | undefined;
-  queue?: PlayerQueuesResponse["research"] | undefined;
-}): {
-  disabled: boolean;
-  onFinish?: (() => void) | undefined;
-  visible: boolean;
-} {
-  const visible = Boolean(isOverviewResearchReadyToFinish(queue, now) && onFinishResearch);
-  return {
-    disabled: Boolean(actionPending),
-    onFinish: visible && !actionPending ? onFinishResearch : undefined,
-    visible,
-  };
-}
-
-function OverviewBuildingFinishButton({
-  action,
-}: {
-  action: ReturnType<typeof overviewBuildingFinishAction>;
-}) {
-  if (!action.visible) return null;
-
-  return (
-    <button
-      aria-label={action.reason ?? "Finish building upgrade"}
-      className="mt-auto flex min-h-9 w-full min-w-0 items-center justify-center whitespace-normal break-words rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 py-2 text-center text-xs font-semibold leading-4 text-cyan-200 transition [overflow-wrap:anywhere] hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-      disabled={action.disabled}
-      onClick={action.onFinish}
-      title={action.reason ?? "Finish building upgrade"}
-      type="button"
-    >
-      <span className="block min-w-0 max-w-full whitespace-normal break-words [overflow-wrap:anywhere]">
-        {action.label}
-      </span>
-    </button>
-  );
 }
 
 function OverviewBuildingActionNotice({
@@ -1046,65 +798,6 @@ function OverviewBuildingActionNotice({
     <div className={`min-w-0 max-w-full overflow-hidden whitespace-normal break-words rounded-md border px-3 py-2 text-xs leading-5 [overflow-wrap:anywhere] ${className}`} role={role}>
       {notice.label}
     </div>
-  );
-}
-
-function OverviewDefenseFinishButton({
-  action,
-}: {
-  action: ReturnType<typeof overviewDefenseFinishAction>;
-}) {
-  if (!action.visible) return null;
-
-  return (
-    <button
-      className="mt-auto flex h-9 w-full items-center justify-center rounded-md border border-rose-300/40 bg-rose-300/10 px-3 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-      disabled={action.disabled}
-      onClick={action.onFinish}
-      type="button"
-    >
-      Complete queue
-    </button>
-  );
-}
-
-function OverviewShipyardFinishButton({
-  action,
-}: {
-  action: ReturnType<typeof overviewShipyardFinishAction>;
-}) {
-  if (!action.visible) return null;
-
-  return (
-    <button
-      aria-label={action.reason ?? "Complete Shipyard queue"}
-      className="mt-auto flex h-9 w-full items-center justify-center rounded-md border border-emerald-300/40 bg-emerald-300/10 px-3 text-xs font-semibold text-emerald-100 transition hover:bg-emerald-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-      disabled={action.disabled}
-      onClick={action.onFinish}
-      title={action.reason ?? "Complete Shipyard queue"}
-      type="button"
-    >
-      Complete queue
-    </button>
-  );
-}
-
-function OverviewResearchFinishButton({
-  action,
-}: {
-  action: ReturnType<typeof overviewResearchFinishAction>;
-}) {
-  if (!action.visible) return null;
-
-  return (
-    <button
-      className="mt-auto flex h-9 w-full items-center justify-center rounded-md border border-amber-300/40 bg-amber-300/10 px-3 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-      disabled={action.disabled}
-      onClick={action.onFinish}
-      type="button"
-    >
-      Complete research
-    </button>
   );
 }
 

@@ -40,7 +40,7 @@ type MissionControlActionState =
   | { status: "success"; label: string }
   | { status: "error"; label: string };
 
-export type MissionLifecycleActionKind = "counterplay" | "joinAttack" | "recall" | "resolve";
+export type MissionLifecycleActionKind = "counterplay" | "joinAttack" | "recall";
 
 export type MissionLifecycleAction = {
   kind: MissionLifecycleActionKind;
@@ -79,7 +79,6 @@ interface MissionControlPageProps {
   onMissionArchivePageChange?: ((page: number) => void) | undefined;
   onRecall: (missionId: string) => void;
   onRefresh: () => void;
-  onResolve: (missionId: string) => void;
   reportMissionId?: string | undefined;
   reportUrlForMission?: ((missionId: string) => string) | undefined;
   walletPlanets?: ManagedPlanetResponse[] | undefined;
@@ -107,7 +106,6 @@ export function MissionControlPage({
   onMissionArchivePageChange,
   onRecall,
   onRefresh,
-  onResolve,
   reportMissionId,
   reportUrlForMission,
   walletPlanets = [],
@@ -217,7 +215,6 @@ export function MissionControlPage({
             onJoinAttack={onJoinAttack}
             onOpenReport={onOpenReport}
             onRecall={onRecall}
-            onResolve={onResolve}
             planetLookup={planetLookup}
             wallet={walletAddress}
             walletPlanetIds={walletPlanetIds}
@@ -560,14 +557,9 @@ export function missionLifecycleActions({
   const actions: MissionLifecycleAction[] = [];
   const due = isMissionDue(mission, now);
 
-  if (mission.status === "Outbound" && context !== "observer") {
-    actions.push({
-      enabled: canTransact && due,
-      kind: "resolve",
-      label: "Resolve",
-      reason: due ? walletReason(canTransact) : "Mission has not arrived yet.",
-    });
-  }
+  // Arrival/return completions reconcile automatically — deterministically on the next
+  // mutating call (lazy on-chain settle) and via the backend mission resolver — so the
+  // former manual "Resolve" order is removed; arrived rows are read-only until settled.
 
   if (context === "outgoing" && mission.status === "Outbound") {
     // Recall is only valid more than the 60s cutoff before arrival; inside that window the contract
@@ -644,7 +636,6 @@ function ActiveMissionSection({
   onJoinAttack,
   onOpenReport,
   onRecall,
-  onResolve,
   planetLookup,
   wallet,
   walletPlanetIds,
@@ -661,7 +652,6 @@ function ActiveMissionSection({
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
-  onResolve: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   wallet?: string | undefined;
   walletPlanetIds: ReadonlySet<string>;
@@ -675,7 +665,6 @@ function ActiveMissionSection({
     onJoinAttack,
     onOpenReport,
     onRecall,
-    onResolve,
     planetLookup,
     wallet,
     walletPlanetIds,
@@ -723,7 +712,6 @@ function ActiveMissionList({
   onJoinAttack,
   onOpenReport,
   onRecall,
-  onResolve,
   planetLookup,
   rows,
   wallet,
@@ -737,7 +725,6 @@ function ActiveMissionList({
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
-  onResolve: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   rows: ActiveMissionRow[];
   wallet?: string | undefined;
@@ -779,7 +766,6 @@ function ActiveMissionList({
               onJoinAttack={onJoinAttack}
               onOpenReport={onOpenReport}
               onRecall={onRecall}
-              onResolve={onResolve}
               planetLookup={planetLookup}
               wallet={wallet}
               walletPlanetIds={walletPlanetIds}
@@ -802,7 +788,6 @@ function MissionRow({
   onJoinAttack,
   onOpenReport,
   onRecall,
-  onResolve,
   planetLookup,
   wallet,
   walletPlanetIds,
@@ -816,14 +801,13 @@ function MissionRow({
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
-  onResolve: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   wallet?: string | undefined;
   walletPlanetIds: ReadonlySet<string>;
 }) {
-  // VEY-399#6/VEY-397#11: only surface Resolve and Join when they are actionable.
+  // VEY-397#11: only surface Join when it is actionable.
   const actions = missionLifecycleActions({ canTransact, context, mission, now })
-    .filter((action) => !["joinAttack", "resolve"].includes(action.kind) || action.enabled);
+    .filter((action) => action.kind !== "joinAttack" || action.enabled);
   const missionDirection = resolveMissionDirection({ context, mission, wallet, walletPlanetIds });
   const origin = missionEndpoint(mission, "origin", planetLookup);
   const target = missionEndpoint(mission, "target", planetLookup);
@@ -855,7 +839,6 @@ function MissionRow({
               action={action}
               key={action.kind}
               onClick={() => {
-                if (action.kind === "resolve") onResolve(mission.missionId);
                 if (action.kind === "recall") onRecall(mission.missionId);
               }}
             />

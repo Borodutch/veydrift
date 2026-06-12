@@ -123,7 +123,6 @@ describe("Mission Control battle reports", () => {
       onOpenReportList: () => undefined,
       onRecall: () => undefined,
       onRefresh: () => undefined,
-      onResolve: () => undefined,
     })).join(" ");
 
     expect(text).toContain("Mission Control");
@@ -192,7 +191,6 @@ describe("Mission Control battle reports", () => {
       onOpenReportList: () => undefined,
       onRecall: () => undefined,
       onRefresh: () => undefined,
-      onResolve: () => undefined,
     }));
 
     // A single deduped battle-report row exposes exactly one row "Open" action (Details + Report
@@ -382,17 +380,17 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Mission Route Fleet");
   });
 
-  test("hides Join when disabled and labels the resolve action 'Resolve' (VEY-399#6/#7)", () => {
+  test("hides the disabled Join action and renders no manual Resolve order (VEY-KANEO-468)", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
-    // Own outbound mission already arrived -> Resolve is enabled and labeled "Resolve".
-    // A joinable alliance attack that already arrived -> Join is disabled, so it is hidden.
+    // Own outbound attack already arrived: arrival now reconciles lazily on-chain, so there is no
+    // manual "Resolve" order anymore. A joinable alliance attack that already arrived -> Join is
+    // disabled, so it is hidden.
     const text = collectText(MissionControlPage(missionControlProps(now, {
       outgoing: [mission("32", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000)],
       joinableAttacks: [mission("34", "Attack", "Outbound", "0x3333333333333333333333333333333333333333", "5", "6", now - 60_000)],
     }))).join(" ");
 
-    expect(text).toContain("Resolve");
-    expect(text).not.toContain("Resolve battle");
+    expect(text).not.toContain("Resolve");
     expect(text).not.toContain("Join");
   });
 
@@ -592,7 +590,6 @@ describe("Mission Control battle reports", () => {
       onBack: () => undefined,      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
-      onResolve: () => undefined,
       onRetry: () => undefined,
       onSelectCoordinates: () => undefined,
       onSelectPlayer: () => undefined,
@@ -600,9 +597,9 @@ describe("Mission Control battle reports", () => {
 
     expect(text).toContain("Mission #42");
     expect(text).not.toContain("Mission Detail");
-    // VEY-399#7: the resolve action label is "Resolve" (shared across the control + detail screens).
-    expect(text).toContain("Resolve");
-    expect(text).not.toContain("Resolve battle");
+    // VEY-KANEO-468: arrival/return completions reconcile lazily on-chain, so the former manual
+    // "Resolve" order is gone from the detail screen; an arrived outbound attack shows no order.
+    expect(text).not.toContain("Resolve");
     // VEY-395 rework: the mission-detail page subtitle was removed.
     expect(text).not.toContain("Shareable mission state");
     // VEY-KANEO-339: the report header control is a share affordance (native share dialog + clipboard
@@ -685,7 +682,6 @@ describe("Mission Control battle reports", () => {
       onBack: () => undefined,      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
-      onResolve: () => undefined,
       onRetry: () => undefined,
       onSelectCoordinates: () => undefined,
       onSelectPlayer: () => undefined,
@@ -769,7 +765,6 @@ describe("Mission Control battle reports", () => {
       onBack: () => undefined,      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
-      onResolve: () => undefined,
       onRetry: () => undefined,
       onSelectCoordinates: () => undefined,
       onSelectPlayer: () => undefined,
@@ -812,7 +807,6 @@ describe("Mission Control battle reports", () => {
       onBack: () => undefined,      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
-      onResolve: () => undefined,
       onRetry: () => undefined,
       onSelectCoordinates: () => undefined,
       onSelectPlayer: () => undefined,
@@ -857,7 +851,6 @@ describe("Mission Control battle reports", () => {
       onBack: () => undefined,      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
-      onResolve: () => undefined,
       onRetry: () => undefined,
       onSelectCoordinates: () => undefined,
       onSelectPlayer: () => undefined,
@@ -892,7 +885,6 @@ describe("Mission Control battle reports", () => {
       onBack: () => undefined,      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
-      onResolve: () => undefined,
       onRetry: () => undefined,
       onSelectCoordinates: () => undefined,
       onSelectPlayer: () => undefined,
@@ -987,7 +979,6 @@ describe("Mission Control battle reports", () => {
       onBack: () => undefined,      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
-      onResolve: () => undefined,
       onRetry: () => undefined,
       onSelectCoordinates: () => undefined,
       onSelectPlayer: () => undefined,
@@ -1003,13 +994,13 @@ describe("Mission Control battle reports", () => {
 
     const pending = collectText(MissionDetailPage({
       ...baseProps,
-      actionState: { status: "pending", label: "Resolve mission #42: waiting for wallet confirmation." },
+      actionState: { status: "pending", label: "Recall mission #42: waiting for wallet confirmation." },
     })).join(" ");
     expect(pending).toContain("waiting for wallet confirmation");
 
     const failed = collectText(MissionDetailPage({
       ...baseProps,
-      actionState: { status: "error", label: "Resolve mission #42 transaction failed." },
+      actionState: { status: "error", label: "Recall mission #42 transaction failed." },
     })).join(" ");
     expect(failed).toContain("transaction failed");
   });
@@ -1045,7 +1036,6 @@ describe("Mission Control battle reports", () => {
       onBack: () => undefined,      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
-      onResolve: () => undefined,
       onRetry: () => undefined,
       onSelectCoordinates: (coords: Coordinates) => { selectedCoords.push(coords); },
       onSelectPlayer: (wallet: string) => { selectedPlayers.push(wallet); },
@@ -1107,7 +1097,6 @@ describe("Mission Control battle reports", () => {
       onBack: () => undefined,      onShareReport: () => undefined,
       onCounterplay: () => undefined,
       onRecall: () => undefined,
-      onResolve: () => undefined,
       onRetry: () => undefined,
       onSelectCoordinates: () => undefined,
       onSelectPlayer: () => undefined,
@@ -1366,7 +1355,6 @@ function missionControlProps(
     onOpenReportList: () => undefined,
     onRecall: () => undefined,
     onRefresh: () => undefined,
-    onResolve: () => undefined,
   };
 }
 
@@ -1401,7 +1389,6 @@ function missionDetailProps(
     onBack: () => undefined,    onShareReport: () => undefined,
     onCounterplay: () => undefined,
     onRecall: () => undefined,
-    onResolve: () => undefined,
     onRetry: () => undefined,
     onSelectCoordinates: () => undefined,
     onSelectPlayer: () => undefined,
