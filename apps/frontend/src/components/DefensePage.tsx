@@ -44,6 +44,7 @@ interface DefensePageProps {
   onRefresh: () => void;
   onSelectDefense?: ((key: DefenseKey) => void) | undefined;
   overviewQueue?: ChainDefenseState["queue"] | undefined;
+  productionRates?: Resources | undefined;
   selectedDefenseKey?: DefenseKey | undefined;
   spendableResources?: Resources | undefined;
 }
@@ -84,6 +85,7 @@ export function DefensePage({
   onRefresh,
   onSelectDefense,
   overviewQueue,
+  productionRates,
   selectedDefenseKey,
   spendableResources,
 }: DefensePageProps) {
@@ -143,6 +145,7 @@ export function DefensePage({
             quantities,
             queue,
             resources: spendableResources ?? resources,
+            productionRates,
           })}
           now={now}
           onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
@@ -218,6 +221,7 @@ export function defenseProductionItems({
   quantities,
   queue,
   resources,
+  productionRates,
 }: {
   actionPending: boolean;
   canTransact: boolean;
@@ -226,6 +230,7 @@ export function defenseProductionItems({
   quantities: Record<string, ProductionQuantityInput>;
   queue?: ChainDefenseState["queue"] | undefined;
   resources: Resources | undefined;
+  productionRates?: Resources | undefined;
 }): ProductionCatalogItem<DefenseKey>[] {
   return defenseCatalog.map((defense) => {
     const chainDefense = defenseState?.defenses.find((item) => item.id === defense.id);
@@ -252,6 +257,7 @@ export function defenseProductionItems({
       missing,
       resources,
       totalCost,
+      productionRates,
     });
     const disabled = Boolean(blockedReason) || actionPending;
     const queued = queuedDefenseCount(defense.id, queue);
@@ -381,6 +387,7 @@ function getBlockedReason({
   missing,
   resources,
   totalCost,
+  productionRates,
 }: {
   affordable: boolean;
   canTransact: boolean;
@@ -390,6 +397,7 @@ function getBlockedReason({
   missing: string[];
   resources: Resources | undefined;
   totalCost?: Resources | undefined;
+  productionRates?: Resources | undefined;
 }): string | undefined {
   if (!canTransact) return "Wallet or game contract unavailable";
   if (!defenseState) return "Waiting for chain state";
@@ -398,7 +406,7 @@ function getBlockedReason({
   if (missing.length > 0) return missing[0];
   if (limitReason) return limitReason;
   if (!resources) return "Resources unavailable";
-  if (!affordable && totalCost) return formatMissingResources(resources, totalCost);
+  if (!affordable && totalCost) return formatMissingResources(resources, totalCost, productionRates);
   if (!affordable) return "Insufficient resources";
   return undefined;
 }
