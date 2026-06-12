@@ -1283,6 +1283,10 @@ export class VeydriftGameReader implements ChainReader {
   private readonly resourceTokenAddresses: Partial<Record<RiftResourceKey, Address>>;
   private readonly settlementContractAddress: Address | undefined;
   private readonly hydrateQueueStartedAt: boolean;
+  // The first-planet start price is an immutable game constant. Memoize the first chain
+  // read so serving settlement funding never reissues a per-request game-state eth_call
+  // (VEY-KANEO-478 / #606); only the wallet balance is read fresh on each request.
+  private startPriceRead: Promise<bigint | undefined> | undefined;
 
   constructor(
     config: BackendConfig,
@@ -3372,6 +3376,20 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   private async readStartPrice(): Promise<bigint | undefined> {
+    if (!this.startPriceRead) {
+      this.startPriceRead = this.fetchStartPrice();
+    }
+    try {
+      return await this.startPriceRead;
+    } catch (error) {
+      // A transient RPC failure must not poison the memo: drop it so the next funding
+      // request retries the read instead of permanently failing.
+      this.startPriceRead = undefined;
+      throw error;
+    }
+  }
+
+  private async fetchStartPrice(): Promise<bigint | undefined> {
     try {
       return await this.readUintCall("0xf1a9af89", []);
     } catch (error) {
