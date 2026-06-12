@@ -2778,6 +2778,47 @@ describe("SettlementIndexer", () => {
     expect(surviving.ships).toMatchObject({ smallCargo: "2", lightFighter: "5" });
   });
 
+  // VEY-KANEO-471: the QA staging harness injects one fully-populated synthetic incoming attack so the
+  // Stationed defenses panel can be verified without a real multi-wallet on-chain ACS Defend scenario.
+  // It must (a) be absent unless the flag is on, (b) when on, expose two stationed defenders with
+  // identity + ships + future hold-until + Alliance Depot level, and (c) target a planet the wallet
+  // actually owns (never fabricate ownership).
+  test("injects a synthetic populated stationed-defense attack only when the QA flag is enabled", () => {
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+
+    // Flag off (default): no synthetic incoming.
+    const offIndexer = new SettlementIndexer(reader, 100n);
+    offIndexer.applyEvent(planet); // player owns planet "7"
+    expect(offIndexer.fleetMissionVisibility(player).incoming).toEqual([]);
+
+    // Flag on, but the wallet owns no planet: still nothing to target, so nothing injected.
+    const orphanIndexer = new SettlementIndexer(reader, 100n, { qaSyntheticStationedDefenders: true });
+    expect(orphanIndexer.fleetMissionVisibility(player).incoming).toEqual([]);
+
+    // Flag on with an owned planet: one synthetic populated attack appears.
+    const onIndexer = new SettlementIndexer(reader, 100n, { qaSyntheticStationedDefenders: true });
+    onIndexer.applyEvent(planet);
+    const incoming = onIndexer.fleetMissionVisibility(player).incoming;
+    expect(incoming).toHaveLength(1);
+    const synthetic = incoming[0]!;
+    expect(synthetic.missionId).toBe("qa-synthetic-attack");
+    expect(synthetic.targetPlanetId).toBe("7");
+    expect(synthetic.targetPlanet?.planetId).toBe("7");
+    expect(synthetic.stationedDefenders).toHaveLength(2);
+    const [first, second] = synthetic.stationedDefenders!;
+    expect(first).toMatchObject({ missionId: "qa-synthetic-defender-1", defenderDisplayName: "QA Ally Alpha" });
+    expect(Number(first!.holdUntil)).toBeGreaterThan(Math.floor(Date.now() / 1_000));
+    expect(first!.ships.lightFighter).toBe("12");
+    expect(first!.allianceDepotLevel).toBeGreaterThanOrEqual(0);
+    expect(second!.missionId).toBe("qa-synthetic-defender-2");
+    // The derived as-of-now timing is populated like any served mission.
+    expect(synthetic.asOfNow).toBeDefined();
+  });
+
   // VEY-KANEO-415: reproduce/confirm "active Colonize missions not visible in Mission Control".
   // This exercises the indexed (production) visibility path that backs the live Mission Control feed.
   // A colonize launch emits the same FleetMissionLaunched/Cargo/Ships events as any mission, with

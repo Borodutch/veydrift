@@ -12,6 +12,7 @@ import { RandomnessCommitterService } from "./randomnessCommitter";
 const baseConfig: BackendConfig = {
   chainId: 84532,
   deploymentMode: "test",
+  qaSyntheticStationedDefenders: false,
   indexDbPath: ":memory:",
   indexFromBlock: 0n,
   missionResolutionEnabled: false,

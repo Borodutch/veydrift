@@ -35,6 +35,7 @@ afterAll(() => setSystemTime());
 const configuredTestConfig: BackendConfig = {
   chainId: 84532,
   deploymentMode: "test",
+  qaSyntheticStationedDefenders: false,
   indexDbPath: ":memory:",
   randomnessCommitmentStorePath: ".data/test-randomness.json",
   indexFromBlock: 100n,
@@ -741,7 +742,8 @@ describe("Veydrift backend", () => {
         moonContractConfigured: false,
         randomnessEngineConfigured: false,
         randomnessCommitterConfigured: false,
-        gameContractConfigured: false
+        gameContractConfigured: false,
+        qaSyntheticStationedDefenders: false
       },
       configured: false,
       readiness: {

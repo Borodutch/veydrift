@@ -120,6 +120,11 @@ export type IndexerSnapshot = {
 export type SettlementIndexerOptions = {
   database?: Database;
   databasePath?: string;
+  // VEY-KANEO-471: when true, fleetMissionVisibility appends one synthetic incoming attack with a
+  // populated `stationedDefenders` payload so QA can verify the Stationed defenses panel without a
+  // real ≥2-wallet on-chain ACS Defend scenario. Sourced from config.qaSyntheticStationedDefenders,
+  // which is already hard-gated to non-production. Defaults to false.
+  qaSyntheticStationedDefenders?: boolean;
 };
 
 // A single field of a planet's stored canonical state that disagrees with the
@@ -357,8 +362,12 @@ export class SettlementIndexer {
     options: SettlementIndexerOptions = {}
   ) {
     this.db = options.database ?? openIndexerDatabase(options.databasePath ?? ":memory:");
+    this.qaSyntheticStationedDefenders = options.qaSyntheticStationedDefenders ?? false;
     this.migrate();
   }
+
+  // VEY-KANEO-471: see SettlementIndexerOptions. Read once in fleetMissionVisibility.
+  private readonly qaSyntheticStationedDefenders: boolean;
 
   snapshot(): IndexerSnapshot {
     const reconciliationInProgress = this.rebuildPromise !== null || this.planetRebuildPromise !== null;
@@ -758,20 +767,29 @@ export class SettlementIndexer {
     const summariesById = new Map(summaries.map((mission) => [mission.missionId, mission]));
     const nowSeconds = Math.floor(Date.now() / 1_000);
 
+    const incoming = summaries
+      .filter((mission) =>
+        mission.owner.toLowerCase() !== walletLower
+          && ownedPlanetIds.has(mission.targetPlanetId)
+          && ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
+          && mission.status === "Outbound"
+      )
+      .map((attack) => ({
+        ...attack,
+        stationedDefenders: this.stationedDefendersForAttack(attack, summariesById, nowSeconds)
+      }));
+
+    // VEY-KANEO-471: prepend a synthetic populated incoming attack so QA can verify the Stationed
+    // defenses panel deterministically. Hard-gated to non-production by config, and additionally only
+    // emitted when the wallet actually owns a planet to target — so it never fabricates ownership.
+    const syntheticIncoming = this.qaSyntheticStationedDefenders
+      ? this.syntheticStationedDefenseAttack(wallet, ownedPlanetIds, nowSeconds)
+      : null;
+
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
-      incoming: summaries
-        .filter((mission) =>
-          mission.owner.toLowerCase() !== walletLower
-            && ownedPlanetIds.has(mission.targetPlanetId)
-            && ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
-            && mission.status === "Outbound"
-        )
-        .map((attack) => ({
-          ...attack,
-          stationedDefenders: this.stationedDefendersForAttack(attack, summariesById, nowSeconds)
-        })),
+      incoming: syntheticIncoming ? [syntheticIncoming, ...incoming] : incoming,
       outgoing: summaries.filter((mission) =>
         mission.owner.toLowerCase() === walletLower && mission.status === "Outbound"
       ),
@@ -3433,6 +3451,73 @@ export class SettlementIndexer {
         allianceDepotLevel
       }))
       .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
+  }
+
+  // VEY-KANEO-471: build one fully-populated synthetic incoming attack (with two stationed defenders)
+  // so QA can verify the Stationed defenses panel — defender identity, per-unit assets + counts, live
+  // hold countdown, and Alliance Depot upkeep/sustain — without staging a real multi-wallet ACS Defend
+  // scenario on-chain. Only ever reachable when the (non-production-gated) flag is set. Returns null if
+  // the wallet owns no planet, so it never fabricates planet ownership. The synthetic mission ids are
+  // prefixed `qa-synthetic-*` so they are visually unmistakable and cannot collide with on-chain ids.
+  private syntheticStationedDefenseAttack(
+    wallet: `0x${string}`,
+    ownedPlanetIds: Set<string>,
+    nowSeconds: number
+  ): FleetMissionSummary | null {
+    const targetPlanetId = [...ownedPlanetIds].sort((left, right) => Number(left) - Number(right))[0];
+    if (targetPlanetId === undefined) return null;
+    const targetPlanet = this.fleetMissionPlanetReference(targetPlanetId);
+    const allianceDepotLevel = targetPlanet?.allianceDepotLevel ?? 5;
+    const arrivalAt = String(nowSeconds + 3_600);
+
+    const stationedDefenders: StationedDefenderSummary[] = [
+      {
+        missionId: "qa-synthetic-defender-1",
+        defender: "0x00000000000000000000000000000000000DEF01",
+        defenderDisplayName: "QA Ally Alpha",
+        ships: { lightFighter: "12", cruiser: "3", battleship: "1" },
+        holdUntil: String(nowSeconds + 6 * 3_600),
+        allianceDepotLevel
+      },
+      {
+        missionId: "qa-synthetic-defender-2",
+        defender: "0x00000000000000000000000000000000000DEF02",
+        defenderDisplayName: "QA Ally Beta",
+        ships: { smallCargo: "20", heavyFighter: "8", destroyer: "2" },
+        holdUntil: String(nowSeconds + 18 * 3_600),
+        allianceDepotLevel
+      }
+    ];
+
+    return withMissionAsOfNow(
+      {
+        missionId: "qa-synthetic-attack",
+        status: "Outbound",
+        missionType: "Attack",
+        owner: "0x00000000000000000000000000000000000A77AC",
+        originPlanetId: "0",
+        targetPlanetId,
+        originPlanet: null,
+        targetPlanet,
+        arrivalAt,
+        returnAt: "0",
+        fuelCost: "0",
+        recallCost: null,
+        attackGroupId: null,
+        joinedAttackMissionIds: [],
+        defendsMissionId: null,
+        counterplayDefenderMissionIds: stationedDefenders.map((defender) => defender.missionId),
+        stationedDefenders,
+        cargo: zeroResources(),
+        returnCargo: null,
+        ships: { lightFighter: "40", cruiser: "6" },
+        transactionHash: "0xqa-synthetic-stationed-defense",
+        blockNumber: "0",
+        launchBlockNumber: "0",
+        needsResolution: false
+      },
+      nowSeconds
+    );
   }
 
   private withFleetMissionPlanetReferences(mission: FleetMissionSummary): FleetMissionSummary {

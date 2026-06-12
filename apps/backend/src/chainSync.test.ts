@@ -12,6 +12,7 @@ const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4
 const config: BackendConfig = {
   chainId: 84532,
   deploymentMode: "test",
+  qaSyntheticStationedDefenders: false,
   gameContractAddress: "0x3333333333333333333333333333333333333333",
   indexDbPath: ":memory:",
   randomnessCommitmentStorePath: ".data/test-randomness.json",
