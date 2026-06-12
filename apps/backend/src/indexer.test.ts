@@ -43,6 +43,7 @@ const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
+const randomnessFulfilledTopic = "0x864b23caf5999ffe7e7b5bc685db237bcef9eb7bd6423c2fd395d9b4663372f5";
 const planet: SettledPlanetEvent = {
   eventName: "PlanetStarted",
   transactionHash: "0xabc",
@@ -3859,6 +3860,78 @@ describe("SettlementIndexer", () => {
     const third = indexer.highscoreLeaderboard();
     expect(third).not.toBe(first);
     expect(third.entries).toEqual(indexer.highscoreEntriesForOwners(indexer.settledPlanetsByOwner()));
+  });
+});
+
+describe("attack needsResolution is gated on battle randomness (VEY-KANEO-479)", () => {
+  const attacker = "0x00000000000000000000000000000000000a77ac" as Address;
+  // An arrived (past-dated) Attack carrying its battle randomness request id in launched word 4.
+  function applyArrivedAttack(indexer: SettlementIndexer, missionId: bigint, requestId: bigint): void {
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xattack",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(attacker), topic(3n)],
+      data: abiWords(99n, 7n, 1700000000n, 1700000300n, requestId)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xattack",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(missionId)],
+      data: abiWords(0n, 0n, 0n, 1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xattack",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(missionId)],
+      data: abiWords(1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+  }
+
+  function applyRandomnessFulfilled(indexer: SettlementIndexer, requestId: bigint): void {
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xfulfill",
+      logIndex: "0x0",
+      topics: [randomnessFulfilledTopic, topic(requestId), addressTopic(attacker), topic(0n)],
+      data: abiWords(1700000100n, 123n)
+    });
+  }
+
+  function newIndexer(randomnessEngineConfigured: boolean): SettlementIndexer {
+    return new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { randomnessEngineConfigured });
+  }
+
+  function activeAttack(indexer: SettlementIndexer, missionId: string) {
+    return indexer.allActiveFleetMissions().find((mission) => mission.missionId === missionId);
+  }
+
+  test("leaves an arrived attack not-ready until its randomness is fulfilled", () => {
+    const indexer = newIndexer(true);
+    applyArrivedAttack(indexer, 70n, 42n);
+    expect(activeAttack(indexer, "70")?.needsResolution).toBe(false);
+
+    applyRandomnessFulfilled(indexer, 42n);
+    expect(activeAttack(indexer, "70")?.needsResolution).toBe(true);
+  });
+
+  test("a different request's fulfillment does not unlock the attack", () => {
+    const indexer = newIndexer(true);
+    applyArrivedAttack(indexer, 71n, 42n);
+    applyRandomnessFulfilled(indexer, 99n);
+    expect(activeAttack(indexer, "71")?.needsResolution).toBe(false);
+  });
+
+  test("without a randomness engine, an arrived attack is ready on arrival (no gating)", () => {
+    const indexer = newIndexer(false);
+    applyArrivedAttack(indexer, 72n, 42n);
+    expect(activeAttack(indexer, "72")?.needsResolution).toBe(true);
   });
 });
 

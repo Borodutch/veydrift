@@ -419,6 +419,12 @@ export type FleetMissionSummary = {
   // missions reconstructed without a launch event.
   launchBlockNumber: string;
   needsResolution: boolean;
+  // VEY-KANEO-479: the RandomnessEngine request id an Attack battle consumes at resolution, captured
+  // from FleetMissionLaunched word 4 (VeydriftGameplayModule._requestAttackBattleRandomness). Present
+  // and non-zero only for Attack missions; "0"/undefined for every other type (Harvest and the rest
+  // carry no battle randomness). The read model gates `needsResolution` on this request being
+  // fulfilled so Mission Control never shows a phantom "Ready to resolve" before the keeper can settle.
+  randomnessRequestId?: string;
   // Derived as-of-now state (VEY-KANEO-464): arrival/return ETA in seconds and
   // whether each leg is due, computed server-side at request time from
   // `arrivalAt` / `returnAt`. Optional so internally-constructed summaries stay
@@ -1282,6 +1288,7 @@ export class VeydriftGameReader implements ChainReader {
   private readonly logChunkSpan: bigint;
   private readonly resourceTokenAddresses: Partial<Record<RiftResourceKey, Address>>;
   private readonly settlementContractAddress: Address | undefined;
+  private readonly randomnessEngineAddress: Address | undefined;
   private readonly hydrateQueueStartedAt: boolean;
   // The first-planet start price is an immutable game constant. Memoize the first chain
   // read so serving settlement funding never reissues a per-request game-state eth_call
@@ -1309,6 +1316,7 @@ export class VeydriftGameReader implements ChainReader {
     this.logChunkSpan = config.logChunkSpan && config.logChunkSpan > 0n ? config.logChunkSpan : 2_000n;
     this.resourceTokenAddresses = config.resourceTokenAddresses ?? {};
     this.settlementContractAddress = config.settlementContractAddress;
+    this.randomnessEngineAddress = config.randomnessEngineAddress;
     this.hydrateQueueStartedAt = options.hydrateQueueStartedAt ?? true;
   }
 
@@ -2556,7 +2564,10 @@ export class VeydriftGameReader implements ChainReader {
       this.allianceContractAddress,
       this.resourceTokenAddresses.metal,
       this.resourceTokenAddresses.crystal,
-      this.resourceTokenAddresses.deuterium
+      this.resourceTokenAddresses.deuterium,
+      // VEY-KANEO-479: include the RandomnessEngine so RandomnessFulfilled logs are backfilled/ingested,
+      // letting the read model gate an arrived Attack's readiness on its battle randomness.
+      this.randomnessEngineAddress
     ].filter((address): address is Address => Boolean(address));
   }
 
@@ -3448,14 +3459,41 @@ export class VeydriftGameReader implements ChainReader {
         attackMissionJoinedTopic
       ]]
     });
-    const missions = decodeFleetMissionLogs(missionLogs);
+    const missions = [...decodeFleetMissionLogs(missionLogs).values()].filter(isCompleteFleetMissionSummary);
     const nowSeconds = Math.floor(Date.now() / 1_000);
-    return [...missions.values()]
-      .filter(isCompleteFleetMissionSummary)
-      .map((mission) => ({
-        ...mission,
-        needsResolution: mission.status === "Outbound" && Number(mission.arrivalAt) <= nowSeconds
-      }));
+    // VEY-KANEO-479: only an arrived Attack whose battle randomness has been fulfilled is truly
+    // resolvable; fetch the fulfilled request ids so `needsResolution` (and the keeper-facing
+    // listResolvableFleetMissions it feeds) never surfaces a phantom-ready attack. Skipped entirely
+    // when no Attack has arrived, so the common path adds no extra RPC round trip.
+    const fulfilledRandomnessRequestIds = await this.readFulfilledRandomnessRequestIds(missions, nowSeconds);
+    return missions.map((mission) => ({
+      ...mission,
+      needsResolution: fleetMissionNeedsResolution(mission, nowSeconds, fulfilledRandomnessRequestIds)
+    }));
+  }
+
+  // VEY-KANEO-479: the set of RandomnessEngine request ids already fulfilled on-chain, or null when no
+  // gating applies (no randomness engine configured, or no arrived Attack to gate). A null result means
+  // "no randomness data" and leaves readiness on the plain arrival check (back-compat).
+  private async readFulfilledRandomnessRequestIds(
+    missions: FleetMissionSummary[],
+    nowSeconds: number
+  ): Promise<ReadonlySet<string> | null> {
+    if (!this.randomnessEngineAddress) return null;
+    const hasGatedArrival = missions.some(
+      (mission) =>
+        missionBattleRandomnessRequestId(mission) !== null
+        && mission.status === "Outbound"
+        && Number(mission.arrivalAt) <= nowSeconds
+    );
+    if (!hasGatedArrival) return null;
+    const logs = await this.getLogs({
+      address: this.randomnessEngineAddress,
+      fromBlock: toQuantity(this.indexFromBlock),
+      toBlock: "latest",
+      topics: [[randomnessFulfilledTopic]]
+    });
+    return new Set(logs.map(decodeRandomnessFulfilledRequestId));
   }
 
   private async readBattleReports(): Promise<BattleReport[]> {
@@ -3619,7 +3657,12 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       mission.targetPlanetId = decodeUintWord(wordAt(words, 1)).toString();
       mission.arrivalAt = decodeUintWord(wordAt(words, 2)).toString();
       mission.returnAt = decodeUintWord(wordAt(words, 3)).toString();
-      if (mission.missionType === "AcsAttack") {
+      if (mission.missionType === "Attack") {
+        // VEY-KANEO-479: an Attack launch always rides its battle RandomnessEngine request id in
+        // word 4 (_requestAttackBattleRandomness). Capture it so the read model can gate readiness on
+        // the request being fulfilled. Read defensively — some fixtures emit only the first four words.
+        mission.randomnessRequestId = words.length > 4 ? decodeUintWord(wordAt(words, 4)).toString() : "0";
+      } else if (mission.missionType === "AcsAttack") {
         const attackMissionId = decodeUintWord(wordAt(words, 4)).toString();
         mission.attackGroupId = attackMissionId;
         const attack = missions.get(attackMissionId) ?? {
@@ -3748,6 +3791,47 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
 
 export function decodeCompleteFleetMissionLogs(logs: RpcLog[]): FleetMissionSummary[] {
   return [...decodeFleetMissionLogs(logs).values()].filter(isCompleteFleetMissionSummary);
+}
+
+// VEY-KANEO-479: a RandomnessEngine.RandomnessFulfilled log. topics[0] is the event signature and
+// the indexed `requestId` is the first indexed parameter, i.e. topics[1] (decoded just below).
+export function isRandomnessFulfilledLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === randomnessFulfilledTopic;
+}
+
+export function decodeRandomnessFulfilledRequestId(log: RpcLog): string {
+  return decodeUint(topicAt(log.topics, 1)).toString();
+}
+
+// VEY-KANEO-479: the battle RandomnessEngine request id a mission's resolution consumes, or null when
+// the mission carries no battle randomness. Only Attack battles request randomness at launch; Harvest
+// and the other resolvable types resolve deterministically, so they are never gated.
+export function missionBattleRandomnessRequestId(
+  mission: Pick<FleetMissionSummary, "missionType" | "randomnessRequestId">
+): string | null {
+  if (mission.missionType !== "Attack") return null;
+  const requestId = mission.randomnessRequestId;
+  if (!requestId || requestId === "0") return null;
+  return requestId;
+}
+
+// VEY-KANEO-479: whether a mission's arrival leg is actually resolvable now. An arrived Attack is only
+// resolvable once its battle randomness has been fulfilled (consumeRandomness reverts with
+// PendingRandomness until then), so gating `needsResolution` on it stops Mission Control from showing a
+// phantom "Ready to resolve" — and the keeper from attempting a doomed resolve — before the fulfiller
+// commits the word. `fulfilledRandomnessRequestIds` is null when no randomness data is available (e.g.
+// the engine is not configured); in that case readiness falls back to the plain arrival check.
+export function fleetMissionNeedsResolution(
+  mission: Pick<FleetMissionSummary, "status" | "arrivalAt" | "missionType" | "randomnessRequestId">,
+  nowSeconds: number,
+  fulfilledRandomnessRequestIds: ReadonlySet<string> | null
+): boolean {
+  if (mission.status !== "Outbound" || Number(mission.arrivalAt) > nowSeconds) return false;
+  const requestId = missionBattleRandomnessRequestId(mission);
+  if (requestId !== null && fulfilledRandomnessRequestIds !== null) {
+    return fulfilledRandomnessRequestIds.has(requestId);
+  }
+  return true;
 }
 
 export function isBattleReportLog(log: RpcLog): boolean {
@@ -4022,6 +4106,11 @@ const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5
 const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
 const combatDebrisSignaledTopic = "0xd0fbe8b5c73fec6dcfc5fef85459b695d1c9fedb4f94f9748ecaeff785192f14";
+// RandomnessEngine.RandomnessFulfilled(uint256 indexed requestId, address indexed requester,
+// bytes32 indexed purposeHash, uint64 fulfilledAt, uint256 randomWord). Emitted when the fulfiller
+// reveals the random word for a request — the moment a randomness-gated mission (an Attack battle)
+// actually becomes resolvable (consumeRandomness reverts with PendingRandomness until then).
+const randomnessFulfilledTopic = "0x864b23caf5999ffe7e7b5bc685db237bcef9eb7bd6423c2fd395d9b4663372f5";
 const missionTypes = ["Transport", "Deploy", "Colonize", "Attack", "Harvest", "AcsDefend", "Intercept", "MissileAttack", "AcsAttack", "DefenseHold"] as const;
 const missionStatuses = ["None", "Outbound", "Returning", "Resolved", "Returned", "Recalled"] as const;
 const battleOutcomes = ["Draw", "AttackerWin", "DefenderWin"] as const;

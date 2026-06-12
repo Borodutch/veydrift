@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage, StationedDefenseSection, allActiveMissionRows, buildMissionControlViewQuery, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
+import { MissionControlPage, StationedDefenseSection, allActiveMissionRows, buildMissionControlViewQuery, missionReport, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
@@ -1524,3 +1524,30 @@ function battleReport(missionId: string): BattleReport {
     blockNumber: "1234",
   };
 }
+
+describe("Ready to resolve is gated on randomness for combat missions (VEY-KANEO-479)", () => {
+  const planetLookup = new Map();
+  // Arrival one minute in the past relative to `now` so the local clock alone would read "due".
+  const arrivedMs = Date.parse("2026-06-05T12:00:00.000Z");
+  const now = arrivedMs + 60_000;
+
+  test("an arrived attack without confirmed resolution does not read 'Ready to resolve'", () => {
+    const attack = { ...mission("90", "Attack", "Outbound", undefined, "7", "9", arrivedMs), needsResolution: false };
+    expect(missionReport(attack, now, planetLookup).outcome).not.toBe("Ready to resolve.");
+  });
+
+  test("an arrived harvest without confirmed resolution does not read 'Ready to resolve'", () => {
+    const harvest = { ...mission("91", "Harvest", "Outbound", undefined, "7", "9", arrivedMs), needsResolution: false };
+    expect(missionReport(harvest, now, planetLookup).outcome).not.toBe("Ready to resolve.");
+  });
+
+  test("an attack the backend marks resolvable reads 'Ready to resolve'", () => {
+    const attack = { ...mission("92", "Attack", "Outbound", undefined, "7", "9", arrivedMs), needsResolution: true };
+    expect(missionReport(attack, now, planetLookup).outcome).toBe("Ready to resolve.");
+  });
+
+  test("a non-combat arrival still reads 'Ready to resolve' from the clock alone", () => {
+    const transport = { ...mission("93", "Transport", "Outbound", undefined, "7", "9", arrivedMs), needsResolution: false };
+    expect(missionReport(transport, now, planetLookup).outcome).toBe("Ready to resolve.");
+  });
+});
