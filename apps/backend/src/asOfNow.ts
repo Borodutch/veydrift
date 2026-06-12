@@ -27,15 +27,46 @@ export function deriveQueueAsOfNow(readyAt: string | null | undefined, nowSec: n
   return { secondsRemaining: remaining, complete: due };
 }
 
-// Returns a copy of the queue with `asOfNow` attached, recursing into `backlog`.
-// Pure: never mutates the input (read models cache and persist these objects).
-export function withQueueAsOfNow(queue: QueueState | null, nowSec: number): QueueState | null {
-  if (!queue) return null;
+export type QueueAsOfNowSettlement = {
+  queue: QueueState | null;
+  completed: QueueState[];
+};
+
+function withQueueTiming(queue: QueueState, nowSec: number): QueueState {
   return {
     ...queue,
     asOfNow: deriveQueueAsOfNow(queue.readyAt, nowSec),
-    ...(queue.backlog ? { backlog: queue.backlog.map((entry) => withQueueAsOfNow(entry, nowSec)!) } : {})
+    ...(queue.backlog ? { backlog: queue.backlog.map((entry) => withQueueTiming(entry, nowSec)) } : {})
   };
+}
+
+function withoutBacklog(queue: QueueState): QueueState {
+  const { backlog: _backlog, ...rest } = queue;
+  return rest;
+}
+
+// Returns the queue state as if every elapsed active/backlog entry had already settled on-chain.
+// Pure: never mutates the input (read models cache and persist these objects).
+export function settleQueueAsOfNow(queue: QueueState | null, nowSec: number): QueueAsOfNowSettlement {
+  if (!queue) return { queue: null, completed: [] };
+  const ordered = [queue, ...(queue.backlog ?? [])];
+  const completed: QueueState[] = [];
+  let activeIndex = 0;
+  for (; activeIndex < ordered.length; activeIndex += 1) {
+    const entry = ordered[activeIndex];
+    if (!entry || !deriveQueueAsOfNow(entry.readyAt, nowSec).complete) break;
+    completed.push(withQueueTiming(withoutBacklog(entry), nowSec));
+  }
+  const active = ordered[activeIndex];
+  if (!active) return { queue: null, completed };
+  return {
+    queue: withQueueTiming({ ...active, backlog: ordered.slice(activeIndex + 1) }, nowSec),
+    completed
+  };
+}
+
+export function withQueueAsOfNow(queue: QueueState | null, nowSec: number): QueueState | null {
+  return queue ? withQueueTiming(queue, nowSec) : null;
 }
 
 export function deriveMissionAsOfNow(

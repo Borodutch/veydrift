@@ -39,7 +39,6 @@ import {
   type IndexedRpcLog,
   type IndexerSnapshot
 } from "./indexer";
-import { MissionResolutionService } from "./missionResolution";
 import { RandomnessCommitterService } from "./randomnessCommitter";
 import {
   validatePlayerDisplayName,
@@ -106,7 +105,6 @@ export type ServerDependencies = {
   config?: BackendConfig;
   configProblems?: ConfigProblem[];
   chainReader?: ChainReader;
-  missionResolver?: MissionResolutionService;
   randomnessCommitter?: RandomnessCommitterService;
   indexer?: SettlementIndexer;
   // Worker role in the multi-process pool (VEY-KANEO-466). "writer" (the default) owns chain-sync
@@ -147,26 +145,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     (isWriter && loaded.problems.length === 0
       ? new ChainSyncService(loaded.config, indexer, logBackfiller ? { logBackfiller } : {})
       : undefined);
-  const resolutionReader = rawChainReader?.listResolvableFleetMissions
-    ? {
-        listResolvableFleetMissions: rawChainReader.listResolvableFleetMissions.bind(rawChainReader),
-        ...(rawChainReader.listReturnableFleetMissions
-          ? { listReturnableFleetMissions: rawChainReader.listReturnableFleetMissions.bind(rawChainReader) }
-          : {})
-      }
-    : undefined;
-  const missionResolver =
-    dependencies.missionResolver ??
-    (isWriter && loaded.problems.length === 0 && resolutionReader
-      ? new MissionResolutionService(loaded.config, resolutionReader)
-      : undefined);
-
   const randomnessCommitter =
     dependencies.randomnessCommitter ??
     (isWriter && loaded.problems.length === 0 ? new RandomnessCommitterService(loaded.config) : undefined);
 
   chainSync?.start();
-  missionResolver?.start();
   randomnessCommitter?.start();
   if (isWriter && !dependencies.indexer && indexer && loaded.problems.length === 0) {
     // Steady state is now pure event integration: chainSync subscribes to the contract's logs and
@@ -224,7 +207,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname === "/health") {
       const chainSyncSnapshot = chainSync?.snapshot() ?? null;
-      const missionResolutionSnapshot = missionResolver?.snapshot() ?? null;
       const indexerSnapshot = indexer?.snapshot() ?? null;
       return Response.json(
         {
@@ -234,7 +216,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           chain: safeConfigSummary(loaded.config),
           readiness: backendReadiness(loaded.problems, chainSyncSnapshot, indexerSnapshot),
           chainSync: chainSyncSnapshot,
-          missionResolution: missionResolutionSnapshot,
+          missionResolution: null,
           randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
           indexer: indexerSnapshot,
           rpc: chainReader?.rpcMetrics?.() ?? null

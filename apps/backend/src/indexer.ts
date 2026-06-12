@@ -88,7 +88,7 @@ import {
 import type { HighscoreEntry } from "./highscores";
 import { playerFallbackName, type PlayerProfile } from "./playerProfiles";
 import { planetArchetypeForTemperature } from "./universe";
-import { nowSeconds, withMissionAsOfNow, withQueueAsOfNow } from "./asOfNow";
+import { nowSeconds, settleQueueAsOfNow, withMissionAsOfNow, withQueueAsOfNow } from "./asOfNow";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
 export type IndexedMoonChanceReportEvent = MoonChanceReportEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
@@ -830,12 +830,23 @@ export class SettlementIndexer {
   }
 
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
-    return deriveBuildingRows((id) => this.indexedLevel("contract_building_levels", "building_id", planetId, id));
+    const completed = this.queueSettlement(`building:${planetId}`).completed;
+    return deriveBuildingRows((id) => {
+      const level = this.indexedLevel("contract_building_levels", "building_id", planetId, id);
+      const settled = completed
+        .filter((entry) => entry.itemId === id && entry.targetLevel !== undefined)
+        .reduce((max, entry) => Math.max(max, entry.targetLevel ?? max), level);
+      return settled;
+    });
   }
 
   shipRows(planetId: string): ShipyardState["ships"] {
     return deriveShipRows(
-      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
+      (id) => this.asOfNowCount(
+        this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
+        this.queueSettlement(`ship:${planetId}`).completed,
+        id
+      ),
       this.planet(planetId)?.temperature
     );
   }
@@ -851,7 +862,11 @@ export class SettlementIndexer {
   // needed. Builds emit ShipCompleted, also applied. (VEY-KANEO-461)
   availableShipRows(planetId: string): ShipyardState["ships"] {
     return deriveShipRows(
-      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
+      (id) => this.asOfNowCount(
+        this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
+        this.queueSettlement(`ship:${planetId}`).completed,
+        id
+      ),
       this.planet(planetId)?.temperature
     );
   }
@@ -913,7 +928,11 @@ export class SettlementIndexer {
   }
 
   defenseRows(planetId: string): DefenseState["defenses"] {
-    return deriveDefenseRows((id) => this.indexedLevel("contract_defense_counts", "defense_id", planetId, id));
+    return deriveDefenseRows((id) => this.asOfNowCount(
+      this.indexedLevel("contract_defense_counts", "defense_id", planetId, id),
+      this.queueSettlement(`defense:${planetId}`).completed,
+      id
+    ));
   }
 
   technologyLevels(wallet: `0x${string}`): Record<string, number> {
@@ -924,12 +943,35 @@ export class SettlementIndexer {
       ORDER BY technology_id ASC
     `).all(wallet) as LevelRow[];
 
-    return Object.fromEntries(rows.map((row) => [String(row.id), row.value]));
+    const levels = Object.fromEntries(rows.map((row) => [String(row.id), row.value]));
+    for (const entry of this.queueSettlement(`research:${wallet.toLowerCase()}`).completed) {
+      if (entry.itemId === undefined || entry.targetLevel === undefined) continue;
+      const key = String(entry.itemId);
+      levels[key] = Math.max(levels[key] ?? 0, entry.targetLevel);
+    }
+    return levels;
   }
 
   technologyRows(wallet: `0x${string}`): ResearchState["technologies"] {
     const levels = this.technologyLevels(wallet);
     return deriveTechnologyRows((id) => levels[String(id)] ?? 0);
+  }
+
+  private queueSettlement(queueKeyValue: string) {
+    return settleQueueAsOfNow(this.queueState(queueKeyValue), nowSeconds());
+  }
+
+  private asOfNowCount(base: number, completed: QueueState[], itemId: number): number {
+    return completed
+      .filter((entry) => entry.itemId === itemId && entry.quantity !== undefined)
+      .reduce((total, entry) => total + (entry.quantity ?? 0), base);
+  }
+
+  private moonBuildingLevelAsOfNow(planetId: string, buildingId: number): number {
+    const level = this.indexedLevel("indexed_moon_building_levels", "building_id", planetId, buildingId);
+    return this.queueSettlement(`moon-building:${planetId}`).completed
+      .filter((entry) => entry.itemId === buildingId && entry.targetLevel !== undefined)
+      .reduce((max, entry) => Math.max(max, entry.targetLevel ?? max), level);
   }
 
   highscoreForWallet(wallet: `0x${string}`, planetIds?: string[]): HighscoreEntry {
@@ -1080,7 +1122,7 @@ export class SettlementIndexer {
         : null,
       buildings: moonBuildingRows.map((building) => ({
         ...building,
-        level: planetId ? this.indexedLevel("indexed_moon_building_levels", "building_id", planetId, building.id) : 0,
+        level: planetId ? this.moonBuildingLevelAsOfNow(planetId, building.id) : 0,
         cost: zeroResources()
       })),
       queue: planetId ? this.moonQueue(planetId) : null
