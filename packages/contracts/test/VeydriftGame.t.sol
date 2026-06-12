@@ -572,6 +572,59 @@ contract VeydriftGameTest is Test {
         game.startResearch(planetId, Technology.Graviton);
     }
 
+    // VEY-KANEO-480: a research queue whose `readyAt` has elapsed must lazy-complete inside
+    // `startResearch` BEFORE the active check, so the owner can immediately queue the next research
+    // without a separate finishResearch tx. Previously the active check ran before any research
+    // settle and a ready (but unsettled) research wrongly reverted `QueueActive`, so it never
+    // completed via the start path (5th settle-before-check case, missed by #852).
+    function testReadyResearchAutoCompletesWhenStartingNext() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.ResearchLab, 1);
+        _setTechnologyLevel(player, Technology.Energy, 2);
+        _setResources(planetId, 100_000, 100_000, 100_000);
+
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Laser);
+        VeydriftGameStorage.ResearchQueue memory queue = game.researchQueue(player);
+        assertTrue(queue.active);
+        assertEq(uint8(queue.technology), uint8(Technology.Laser));
+        assertEq(queue.targetLevel, 1);
+
+        // Laser research is ready but has NOT been settled (no finishResearch tx). Starting the next
+        // research must settle/complete it first instead of reverting QueueActive.
+        vm.warp(queue.readyAt);
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Laser);
+
+        assertEq(game.technologyLevel(player, Technology.Laser), 1);
+        VeydriftGameStorage.ResearchQueue memory next = game.researchQueue(player);
+        assertTrue(next.active);
+        assertEq(uint8(next.technology), uint8(Technology.Laser));
+        assertEq(next.targetLevel, 2);
+    }
+
+    // VEY-KANEO-480: a genuinely in-progress research (readyAt not yet elapsed) must still trip
+    // QueueActive() — the settle-before-check fix only completes due research, it must not let a
+    // second research queue while the first is still running.
+    function testInProgressResearchStillRevertsQueueActiveOnStart() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.ResearchLab, 1);
+        _setTechnologyLevel(player, Technology.Energy, 2);
+        _setResources(planetId, 100_000, 100_000, 100_000);
+
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Laser);
+        VeydriftGameStorage.ResearchQueue memory queue = game.researchQueue(player);
+
+        // One second before readyAt the research is still running; a second start must revert.
+        vm.warp(queue.readyAt - 1);
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.QueueActive.selector);
+        game.startResearch(planetId, Technology.Laser);
+    }
+
     function testBuildingConstructionAndCompletion() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
