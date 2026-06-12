@@ -212,25 +212,10 @@ in this PR as `serves planet resources from a PlanetSettled event alone, never a
    module re-measured under EIP-170 (tightest: PlanetManagement 1,611 B, Gameplay 33 B, facade 39 B
    of headroom); storage layout unchanged. Foundry tests per wired path + the indexer event-replay
    test.
-2. **Indexer cutover (Phase 2) — LANDED in VEY-KANEO-476.** With full coverage, the indexer serves
-   steady-state from event replay only. Serve-path resources already come from the snapshot+projection
-   and serve-path `getInfrastructureState`/`previewResources` RPC was already removed (VEY-KANEO-461/
-   464/465). This task removed the two remaining on-the-fly canonical RPC re-pins, so served state is
-   now reconstructed from events alone:
-   - Deleted `refreshCanonicalState`/`refreshCanonicalStateUncached` (the unscheduled periodic
-     universe-wide RPC re-pin).
-   - Removed the bounded per-planet combat reconcile (`reconcilePlanetState` +
-     `drainFleetMissionReconcilePlanets` wiring in `server.ts`). It existed because combat could thin a
-     defender's ships/defenses with no event; post-Phase-1 the contract emits `PlanetShipCountChanged`/
-     `PlanetDefenseCountChanged` on every count change and `PlanetSettled` for loot, all applied
-     directly, so the reconcile is redundant.
-   - **Kept for downtime reconciliation only:** the cold-start/gap `rebuild`→`readCanonicalState` RPC
-     pin and the manual `verifyCanonicalState` debug endpoint (`/debug/...verify`). These never run at
-     serve time or on a periodic/steady-state timer.
-   New acceptance test: `reconstructs a defender's combat ship/defense losses and loot from events
-   alone, never an on-the-fly RPC read (VEY-KANEO-476)` — the faked `ChainReader` throws on every
-   on-the-fly canonical read. The production projection already exists in `readModels.ts`, so this was a
-   serve-path/reconcile rewire, not new derivation.
+2. **Indexer cutover (Phase 2).** With full coverage, serve resources from the snapshot+projection;
+   demote `refreshCanonicalState`/`readCanonicalState` to downtime reconciliation only; remove the
+   serve-path `getInfrastructureState`/`previewResources` RPC. The production projection already
+   exists in `readModels.ts`, so this is a serve-path rewire, not new derivation.
 3. **Deploy + verify (OpenClaw).** ProxyAdmin upgrade via the existing `script/UpgradeGame.s.sol`
    (state preserved — no storage-layout change), backend redeploy, live smoke: mutate each path,
    advance a block, confirm `contract_planet_resources` matches on-chain `previewResources` with zero
@@ -254,6 +239,6 @@ OpenClaw via ProxyAdmin (note: `script/Upgrade.s.sol` has a known misleading rev
 | Audit table mutation → event in the PR | this doc (Phase 1) |
 | Every planet resource mutation emits a sufficient final event | 1 — LANDED (all modules) |
 | No duplicated/partial event for one logical change (full balance, emitted at the terminal mutation) | 1 — LANDED |
-| Indexer syncs from events only; serve-path / periodic / on-the-fly RPC re-pin removed | 2 — LANDED (VEY-KANEO-476) |
+| Indexer syncs from events only; serve-path / periodic RPC removed | 2 |
 | Event-replay test matches `previewResources` without serve-time RPC | 1 — LANDED (`indexer.test.ts`) |
 | Deployed (proxy upgrade + backend) and verified live; VEY-473 fixed | 3 (OpenClaw) |
