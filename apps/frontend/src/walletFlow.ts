@@ -2114,29 +2114,6 @@ export async function sendStartResearchTransaction(
   });
 }
 
-export async function sendFinishBuildingUpgradeTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string
-): Promise<string> {
-  const data = encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId]);
-  const transaction: TransactionRequest = {
-    from: account,
-    to: contractAddress,
-    data
-  };
-
-  const accountProbeReadyChecked = await prepareAccountProbeWalletForTransaction(provider, account);
-  if (!accountProbeReadyChecked) {
-    await assertWalletUnlocked(provider);
-  }
-
-  return sendWalletTransaction(provider, account, transaction, {
-    accountProbeReadyChecked
-  });
-}
-
 export async function sendStartMoonBuildingUpgradeTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -2148,19 +2125,6 @@ export async function sendStartMoonBuildingUpgradeTransaction(
     from: account,
     to: contractAddress,
     data: encodeGameCall(MOON_SELECTORS.startMoonBuildingUpgrade, [planetId, buildingId])
-  });
-}
-
-export async function sendFinishMoonBuildingUpgradeTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string
-): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeGameCall(MOON_SELECTORS.finishMoonBuildingUpgrade, [planetId])
   });
 }
 
@@ -2197,44 +2161,6 @@ export async function sendJumpGateJumpTransaction(
     from: account,
     to: contractAddress,
     data: encodeGameCall(selector, args)
-  });
-}
-
-export async function sendFinishResearchTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string
-): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: GAME_SELECTORS.finishResearch
-  });
-}
-
-export async function sendFinishShipProductionTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string
-): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.finishShipProduction, [planetId])
-  });
-}
-
-export async function sendFinishDefenseProductionTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string
-): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.finishDefenseProduction, [planetId])
   });
 }
 
@@ -2323,32 +2249,6 @@ export async function sendRecallFleetMissionTransaction(
     from: account,
     to: contractAddress,
     data: encodeGameCall(GAME_SELECTORS.recallFleetMission, [missionId])
-  });
-}
-
-export async function sendResolveFleetMissionTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  missionId: string
-): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.resolveFleetMission, [missionId])
-  });
-}
-
-export async function sendCompleteFleetMissionReturnTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  missionId: string
-): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.completeFleetMissionReturn, [missionId])
   });
 }
 

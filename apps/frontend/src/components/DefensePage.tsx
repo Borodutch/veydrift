@@ -39,7 +39,6 @@ interface DefensePageProps {
   // VEY-KANEO-440: opens the player's own planet detail, where the Defend control is always shown
   // (enabled+explained where eligible, or disabled+explained on the launch planet itself).
   onDefendPlanet?: (() => void) | undefined;
-  onFinish: () => void;
   onOpenMission?: ((missionId: string) => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
@@ -80,7 +79,6 @@ export function DefensePage({
   now,
   onBuild,
   onDefendPlanet,
-  onFinish,
   onOpenMission,
   onOpenRequirement,
   onRefresh,
@@ -145,7 +143,6 @@ export function DefensePage({
           })}
           now={now}
           onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
-          onFinishQueue={onFinish}
           onOpenRequirement={onOpenRequirement}
           onQuantity={(key, quantity) => setQuantities((prev) => ({ ...prev, [key]: quantity }))}
           onSelect={(key) => {

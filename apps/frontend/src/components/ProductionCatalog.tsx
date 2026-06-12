@@ -103,7 +103,6 @@ export function ProductionCatalog<Key extends string>({
   items,
   now = Date.now(),
   onBuild,
-  onFinishQueue,
   onOpenRequirement,
   onQuantity,
   onRefreshQueue,
@@ -117,7 +116,6 @@ export function ProductionCatalog<Key extends string>({
   items: ProductionCatalogItem<Key>[];
   now?: number | undefined;
   onBuild: (item: ProductionCatalogItem<Key>) => void;
-  onFinishQueue?: (() => void) | undefined;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onQuantity: (key: Key, quantity: ProductionQuantityInput) => void;
   onRefreshQueue?: (() => void) | undefined;
@@ -135,7 +133,6 @@ export function ProductionCatalog<Key extends string>({
           actionPending={actionPending}
           canTransact={canTransact}
           now={now}
-          onFinish={onFinishQueue}
           onRefresh={onRefreshQueue}
           queue={queue}
         />
@@ -181,26 +178,23 @@ function ProductionQueuePanel({
   actionPending,
   canTransact,
   now,
-  onFinish,
   onRefresh,
   queue,
 }: {
   actionPending: boolean;
   canTransact: boolean;
   now: number;
-  onFinish?: (() => void) | undefined;
   onRefresh?: (() => void) | undefined;
   queue: ProductionQueue;
 }) {
   const ready = isQueueReady(queue.readyAt, now);
-  const action = ready ? onFinish : onRefresh;
 
   return (
     <QueueProgressPanel
-      action={action ? {
-        disabled: !canTransact || actionPending || (ready && !onFinish),
-        label: ready ? "Complete queue" : "Refresh queue",
-        onClick: action,
+      action={onRefresh ? {
+        disabled: !canTransact || actionPending,
+        label: "Refresh queue",
+        onClick: onRefresh,
       } : undefined}
       asset={queue.asset}
       label={queue.label}

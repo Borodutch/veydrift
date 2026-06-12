@@ -70,7 +70,6 @@ interface ResearchPageProps {
   error: string | undefined;
   loading: boolean;
   now?: number | undefined;
-  onFinish: () => void;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onRefresh: () => void;
   onResearch: (technologyId: number, key: ResearchKey) => void;
@@ -89,7 +88,6 @@ export function ResearchPage({
   error,
   loading,
   now = Date.now(),
-  onFinish,
   onOpenRequirement,
   onRefresh,
   onResearch,
@@ -112,12 +110,6 @@ export function ResearchPage({
   });
   const viewState = researchViewState(settledState, researchState, useLocalStateFallback, now);
   const queue = hideLiveValues ? undefined : researchQueueForDisplay(researchState, viewState, now);
-  const completionButton = researchCompletionButtonState({
-    actionPending: actionState.status === "pending",
-    canTransact,
-    now,
-    queue,
-  });
   const { detailPanelRef, selectInspectItem: handleSelectResearch } = useInspectDetailSelection<ResearchKey>((key) => {
     setLocalSelectedKey(key);
     onSelectResearch?.(key);
@@ -127,19 +119,7 @@ export function ResearchPage({
     <div className="grid gap-4">
       <InspectPageHeader
         actions={(
-          <>
-          {completionButton && (
-            <button
-              className="h-9 rounded-md border border-amber-300/40 bg-amber-300/10 px-3 text-xs font-semibold text-amber-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-              disabled={completionButton.disabled}
-              onClick={onFinish}
-              type="button"
-            >
-              {completionButton.label}
-            </button>
-          )}
           <RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh research state" />
-          </>
         )}
         description="Select a technology to inspect real levels, prerequisites, cost, and on-chain action state."
         title="Research"
@@ -212,7 +192,6 @@ export function ResearchPage({
             error={error}
             loading={loading}
             now={now}
-            onFinish={onFinish}
             onResearch={() => onResearch(selectedResearch.id, selectedResearch.key)}
             onOpenRequirement={onOpenRequirement}
             queue={queue}
@@ -228,26 +207,6 @@ export function ResearchPage({
       )}
     </div>
   );
-}
-
-export function researchCompletionButtonState({
-  actionPending,
-  canTransact,
-  now,
-  queue,
-}: {
-  actionPending: boolean;
-  canTransact: boolean;
-  now: number;
-  queue: ReturnType<typeof researchQueueForDisplay>;
-}): { disabled: boolean; label: string } | undefined {
-  if (!queue) return undefined;
-
-  const queueReady = queue.readyAt ? queue.readyAt <= now : false;
-  return {
-    disabled: !canTransact || actionPending || !queueReady,
-    label: queueReady ? "Complete research" : `Ready ${formatReady(queue.readyAt, now)}`,
-  };
 }
 
 export function shouldHideResearchValues({
@@ -385,7 +344,6 @@ function ResearchDetailPanel({
   error,
   loading,
   now,
-  onFinish,
   onResearch,
   onOpenRequirement,
   queue,
@@ -400,7 +358,6 @@ function ResearchDetailPanel({
   error: string | undefined;
   loading: boolean;
   now: number;
-  onFinish: () => void;
   onResearch: () => void;
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   queue: ReturnType<typeof researchQueueForDisplay>;
@@ -490,10 +447,10 @@ function ResearchDetailPanel({
       )}
 
       <button
-        aria-label={status.completionReady ? `Complete ${research.label} Level ${status.targetLevel}` : `Research ${research.label} to Level ${status.targetLevel}`}
+        aria-label={`Research ${research.label} to Level ${status.targetLevel}`}
         className="mt-3 h-10 w-full rounded-md border border-cyan-300/40 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-200 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
         disabled={status.disabled}
-        onClick={status.completionReady ? onFinish : onResearch}
+        onClick={onResearch}
         type="button"
       >
         {status.actionLabel}
@@ -934,7 +891,7 @@ export function researchActionStatus({
             : !canTransact
               ? "Wallet or game contract unavailable"
               : activeReady
-                ? `Ready to complete Level ${targetLevel}`
+                ? `Completing Level ${targetLevel}`
               : active
                 ? `Research to Level ${state.researchQueue?.targetLevel ?? targetLevel} in progress`
               : queueOccupied
@@ -949,22 +906,22 @@ export function researchActionStatus({
                         ? formatMissingResources(spendable, cost)
                         : `Ready for Level ${targetLevel}`;
 
-  const completionReady = reason === `Ready to complete Level ${targetLevel}`;
+  // Completions settle automatically on-chain (lazy reconcile) — the button only ever
+  // starts a new research level and is disabled while a level is in progress/completing.
   const researchReady = reason === `Ready for Level ${targetLevel}`;
-  const disabled = !completionReady && !researchReady;
-  const badge = completionReady ? "Ready" : active ? "In progress" : disabled ? "Locked" : "Available";
+  const disabled = !researchReady;
+  const badge = active ? "In progress" : disabled ? "Locked" : "Available";
 
   return {
-    actionLabel: actionPending ? actionPendingLabel ?? "Awaiting wallet" : completionReady ? "Complete research" : active ? "In progress" : `Research Level ${targetLevel}`,
+    actionLabel: actionPending ? actionPendingLabel ?? "Awaiting wallet" : active ? "In progress" : `Research Level ${targetLevel}`,
     badge,
-    completionReady,
     cost,
     currentLevel,
     disabled,
     hasMissingRequirement: Boolean(missingRequirement),
     reason,
     targetLevel,
-    tileStatus: completionReady ? "Ready" : active ? "Active" : disabled ? "Locked" : "Ready",
+    tileStatus: active ? "Active" : disabled ? "Locked" : "Ready",
   };
 }
 
@@ -1063,12 +1020,6 @@ export function formatCost(cost: Resources): string {
 
 function format(value: number): string {
   return formatter.format(Math.floor(value));
-}
-
-function formatReady(readyAt: number, now: number): string {
-  const remaining = formatDurationUntil(readyAt, now);
-  const timestamp = formatUserTimestamp(readyAt);
-  return remaining === "Ready" ? `now (${timestamp})` : `in ${remaining} (${timestamp})`;
 }
 
 function formatRequirement(requirement: ResearchRequirement): string {

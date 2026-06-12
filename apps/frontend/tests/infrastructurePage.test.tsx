@@ -10,7 +10,6 @@ import {
   MetricDeltaSubtext,
   deduplicatedInfrastructureActionNotice,
   detailEffectRows,
-  infrastructureFinishButtonLabel,
   infrastructureUpgradeButtonLabel,
   infrastructureRefreshButtonState,
   infrastructureCatalogStatusText,
@@ -84,8 +83,6 @@ describe("Infrastructure page display helpers", () => {
     const unavailableReason =
       "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
 
-    expect(infrastructureFinishButtonLabel(unavailableReason, false)).toBe("Finish upgrade");
-    expect(infrastructureFinishButtonLabel(unavailableReason, true)).toBe("Finish build");
     expect(infrastructureUpgradeButtonLabel({
       actionUnavailableReason: unavailableReason,
       binary: false,

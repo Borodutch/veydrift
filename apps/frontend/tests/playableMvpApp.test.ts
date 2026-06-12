@@ -44,9 +44,6 @@ import {
   walletSnapshotHydrationKey,
 } from "../src/PlayableMvpApp";
 import {
-  infrastructureHeaderFinishAction,
-  infrastructureFinishAction,
-  infrastructureFinishButtonLabel,
   infrastructureUpgradeButtonLabel,
 } from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
@@ -259,111 +256,6 @@ describe("Playable MVP app display helpers", () => {
       defaultLabel: "Upgrade Level 2",
       statusDisabled: true,
     })).toBe("Upgrade Level 2");
-    expect(infrastructureFinishButtonLabel(undefined, false)).toBe("Finish upgrade");
-  });
-
-  test("keeps infrastructure finish controls visible with disabled reasons", () => {
-    const queue = {
-      kind: "building" as const,
-      key: "solarPlant" as const,
-      label: "Solar Plant",
-      readyAt: 1_700_000_600_000,
-      startedAt: 1_700_000_000_000,
-      targetLevel: 2,
-    };
-    let calls = 0;
-    const onFinishBuilding = () => {
-      calls += 1;
-    };
-
-    expect(infrastructureFinishAction({
-      isBuildingReadyToFinish: false,
-      onFinishBuilding,
-      queue,
-    })).toEqual({
-      disabled: true,
-      label: "Finish upgrade",
-      onFinish: undefined,
-      reason: "Building upgrade is not ready to finish yet.",
-      visible: true,
-    });
-
-    expect(infrastructureFinishAction({
-      actionUnavailableReason: buildingCompletionWalletPrompt,
-      isActionPending: true,
-      isBuildingReadyToFinish: true,
-      onFinishBuilding,
-      queue,
-    })).toEqual({
-      disabled: true,
-      label: "Finish upgrade",
-      onFinish: undefined,
-      reason: buildingCompletionWalletPrompt,
-      visible: true,
-    });
-
-    const ready = infrastructureFinishAction({
-      isBuildingReadyToFinish: true,
-      onFinishBuilding,
-      queue,
-    });
-    expect(ready.disabled).toBe(false);
-    expect(ready.label).toBe("Finish upgrade");
-    ready.onFinish?.();
-    expect(calls).toBe(1);
-  });
-
-  test("keeps infrastructure finish button copy compact on disabled mobile states", async () => {
-    const source = await Bun.file(new URL("../src/components/InfrastructurePage.tsx", import.meta.url)).text();
-    const longReason = "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
-    const action = infrastructureFinishAction({
-      actionUnavailableReason: longReason,
-      isBuildingReadyToFinish: true,
-      onFinishBuilding: () => undefined,
-      queue: {
-        kind: "building",
-        key: "solarPlant",
-        label: "Solar Plant",
-        readyAt: 1_700_000_000_000,
-        startedAt: 1_699_999_000_000,
-        targetLevel: 2,
-      },
-    });
-
-    expect(action).toMatchObject({
-      disabled: true,
-      label: "Finish upgrade",
-      reason: longReason,
-      visible: true,
-    });
-    expect(source).toContain("flex h-10 w-full min-w-0 items-center justify-center overflow-hidden");
-    expect(source).toContain("max-w-full overflow-hidden text-ellipsis whitespace-nowrap");
-  });
-
-  test("keeps disabled infrastructure finish reasons out of the page header", () => {
-    const queue = {
-      kind: "building" as const,
-      key: "solarPlant" as const,
-      label: "Solar Plant",
-      readyAt: 1_700_000_600_000,
-      startedAt: 1_700_000_000_000,
-      targetLevel: 2,
-    };
-    const onFinishBuilding = () => undefined;
-
-    expect(infrastructureHeaderFinishAction(infrastructureFinishAction({
-      isBuildingReadyToFinish: false,
-      onFinishBuilding,
-      queue,
-    }))).toBeUndefined();
-
-    const ready = infrastructureFinishAction({
-      isBuildingReadyToFinish: true,
-      onFinishBuilding,
-      queue,
-    });
-
-    expect(infrastructureHeaderFinishAction(ready)).toBe(ready);
   });
 
   test("keeps terminal infrastructure action notices visible", () => {
@@ -1370,16 +1262,6 @@ describe("Playable MVP app display helpers", () => {
       isDisplayedBuildingQueueReady: true,
       now: 1_700_000_000_000,
     })).toBeUndefined();
-  });
-
-  test("keeps wallet cancellation copy retryable for ready building completion", async () => {
-    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
-
-    expect(source).toContain("Building completion was cancelled in the wallet. The ready queue is still available");
-    expect(source).toContain("label: isRejectedByUser ? buildingFinishRejectedLabel : failedSyncReason ?? label");
-    expect(source).toContain("if (!isRejectedByUser && failedSyncReason)");
-    expect(source).toContain("setFailedBuildingFinishExpectation(undefined);");
-    expect(source).not.toContain("}) ?? failedBuildingFinishSyncReasonFor({");
   });
 
   test("clears failed finish blocking when the active building queue changes", () => {
