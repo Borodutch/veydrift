@@ -140,7 +140,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       databasePath: loaded.config.indexDbPath,
       // VEY-KANEO-471: config already hard-gates this to non-production; pass it through so the
       // fleet-visibility read model can serve the synthetic stationed-defense payload for QA.
-      qaSyntheticStationedDefenders: loaded.config.qaSyntheticStationedDefenders
+      qaSyntheticStationedDefenders: loaded.config.qaSyntheticStationedDefenders,
+      // VEY-KANEO-479: when the randomness engine is configured, gate an arrived Attack's readiness on
+      // its battle randomness being fulfilled (derived from ingested RandomnessFulfilled logs).
+      randomnessEngineConfigured: Boolean(loaded.config.randomnessEngineAddress)
     }) : undefined);
   const logBackfiller = deriveLogBackfiller(indexerChainReader);
   const chainSync =

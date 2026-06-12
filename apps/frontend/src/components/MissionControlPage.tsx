@@ -1925,6 +1925,22 @@ function isMissionDue(mission: FleetMissionSummary, now: number): boolean {
   return mission.status === "Outbound" && Number(mission.arrivalAt) * 1_000 <= now;
 }
 
+// VEY-KANEO-479: an Attack/Harvest fleet's resolution is keeper-driven and, for attacks, gated on the
+// battle randomness being committed on-chain — so its arrival clock passing does NOT mean it can be
+// settled yet. Rely solely on the backend's `needsResolution` (which already encodes that gate) for
+// combat missions instead of inferring "Ready to resolve" from the local clock, which would surface a
+// phantom CTA in the window between arrival and the randomness commitment the keeper waits on. Other
+// mission types stay on the existing clock fallback, where arrival is sufficient to resolve.
+function isMissionReadyToResolve(mission: FleetMissionSummary, now: number): boolean {
+  if (mission.needsResolution) {
+    return true;
+  }
+  if (mission.missionType === "Attack" || mission.missionType === "Harvest") {
+    return false;
+  }
+  return isMissionDue(mission, now);
+}
+
 // The contract refuses a recall once a fleet is within FLEET_RECALL_CUTOFF_SECONDS of arrival (and
 // after arrival), reverting with "the recall cutoff has passed" — VeydriftGameStorage exposes
 // FLEET_RECALL_CUTOFF_SECONDS = 60. A fleet is therefore recallable only while it is still Outbound
@@ -2245,7 +2261,7 @@ function commanderLabel(address: string, planet: MissionPlanetIdentity | undefin
   return name ? `${name} (${shortAddress(address)})` : shortAddress(address);
 }
 
-function missionReport(
+export function missionReport(
   mission: FleetMissionSummary,
   now: number,
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>
@@ -2279,7 +2295,7 @@ function missionReport(
       : "External commander unavailable",
     losses: mission.status === "Resolved" ? "Resolved combat losses are not exposed in this mission feed." : "Pending battle resolution.",
     origin,
-    outcome: mission.needsResolution || isMissionDue(mission, now) ? "Ready to resolve." : missionDisplayStatusLabel(mission, now),
+    outcome: isMissionReadyToResolve(mission, now) ? "Ready to resolve." : missionDisplayStatusLabel(mission, now),
     routeSummary: `${origin} -> ${target}`,
     target,
     title: `${missionTypeLabel(mission.missionType)} #${mission.missionId}`,

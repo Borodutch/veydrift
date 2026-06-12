@@ -258,7 +258,15 @@ export type FleetMissionSummary = {
   ships: Record<string, string>;
   transactionHash: string;
   blockNumber: string;
+  // VEY-KANEO-479: true only once the backend confirms an arrived mission is actually resolvable. For
+  // Attack battles this is gated on the battle randomness being committed on-chain, so Mission Control
+  // can avoid a phantom "Ready to resolve" before the keeper can settle. The backend leaves it
+  // unset/false while a combat fleet is still mid-flight or awaiting randomness.
   needsResolution?: boolean;
+  // VEY-KANEO-479: the battle RandomnessEngine request id an Attack consumes at resolution (non-zero
+  // for Attack missions only). Surfaced for parity with the backend summary; readiness is driven by
+  // `needsResolution`, which the backend already gates on this request's fulfillment.
+  randomnessRequestId?: string;
 };
 
 // VEY-KANEO-456: one allied fleet stationed (AcsDefend) to defend a planet under attack. `holdUntil` is

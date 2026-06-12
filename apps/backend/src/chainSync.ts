@@ -339,7 +339,10 @@ export class ChainSyncService {
         this.config.allianceContractAddress,
         this.config.resourceTokenAddresses.metal,
         this.config.resourceTokenAddresses.crystal,
-        this.config.resourceTokenAddresses.deuterium
+        this.config.resourceTokenAddresses.deuterium,
+        // VEY-KANEO-479: subscribe to the RandomnessEngine so RandomnessFulfilled lands in the index,
+        // letting an arrived Attack flip to "Ready to resolve" only once its battle randomness commits.
+        this.config.randomnessEngineAddress
       ].filter((address): address is `0x${string}` => Boolean(address));
       this.socket?.send(JSON.stringify({
         id,
@@ -806,7 +809,9 @@ export class ChainSyncService {
       this.config.allianceContractAddress,
       this.config.resourceTokenAddresses.metal,
       this.config.resourceTokenAddresses.crystal,
-      this.config.resourceTokenAddresses.deuterium
+      this.config.resourceTokenAddresses.deuterium,
+      // VEY-KANEO-479: see subscribe() — the RandomnessEngine feeds RandomnessFulfilled into the index.
+      this.config.randomnessEngineAddress
     ].filter((address): address is `0x${string}` => Boolean(address));
   }
 }

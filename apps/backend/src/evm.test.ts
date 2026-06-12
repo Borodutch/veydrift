@@ -1235,6 +1235,72 @@ describe("fleet mission resolution scheduling", () => {
   });
 });
 
+describe("attack resolution is gated on battle randomness (VEY-KANEO-479)", () => {
+  const owner = "0x0000000000000000000000000000000000000abc" as Address;
+  const engineAddress = "0x2222222222222222222222222222222222222222" as Address;
+  const pastSeconds = 1_700_000_000n;
+  // RandomnessEngine.RandomnessFulfilled topic, see evm.ts randomnessFulfilledTopic.
+  const randomnessFulfilledTopic = "0x864b23caf5999ffe7e7b5bc685db237bcef9eb7bd6423c2fd395d9b4663372f5";
+
+  // An arrived Attack launch carrying its battle randomness request id in FleetMissionLaunched word 4.
+  function arrivedAttackLogs(missionId: bigint, requestId: bigint): RpcLog[] {
+    return [
+      makeLog({
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(3n)],
+        data: dataWords([word(99n), word(1n), word(pastSeconds), word(pastSeconds + 300n), word(requestId)])
+      }),
+      makeLog({
+        topics: [fleetMissionCargoTopic, topic(missionId)],
+        data: dataWords([word(0n), word(0n), word(0n), word(1n)])
+      }),
+      makeLog({
+        topics: [fleetMissionShipsTopic, topic(missionId)],
+        data: dataWords(Array.from({ length: 14 }, (_, index) => word(index === 0 ? 1n : 0n)))
+      })
+    ];
+  }
+
+  function randomnessFulfilledLog(requestId: bigint): RpcLog {
+    return makeLog({
+      topics: [randomnessFulfilledTopic, topic(requestId), addressTopic(owner), topic(0n)],
+      data: dataWords([word(pastSeconds), word(123n)])
+    });
+  }
+
+  // Address-aware transport: the randomness-engine query returns fulfillment logs, every other
+  // eth_getLogs returns the game-contract mission logs.
+  function readerWith(missionLogs: RpcLog[], engineLogs: RpcLog[]): VeydriftGameReader {
+    return new VeydriftGameReader(
+      { ...readerConfig, randomnessEngineAddress: engineAddress },
+      {
+        async request<T>(method: string, params?: unknown): Promise<T> {
+          expect(method).toBe("eth_getLogs");
+          const filter = (params as [{ address: string | string[] }])[0];
+          const addresses = Array.isArray(filter.address) ? filter.address : [filter.address];
+          return (addresses.includes(engineAddress) ? engineLogs : missionLogs) as T;
+        }
+      }
+    );
+  }
+
+  test("withholds an arrived attack until its battle randomness is fulfilled", async () => {
+    const reader = readerWith(arrivedAttackLogs(7n, 42n), []);
+    expect(await reader.listResolvableFleetMissions()).toEqual([]);
+  });
+
+  test("surfaces the arrived attack once its randomness request is fulfilled", async () => {
+    const reader = readerWith(arrivedAttackLogs(7n, 42n), [randomnessFulfilledLog(42n)]);
+    const resolvable = await reader.listResolvableFleetMissions();
+    expect(resolvable.map((mission) => mission.missionId)).toEqual(["7"]);
+    expect(resolvable.map((mission) => mission.missionType)).toEqual(["Attack"]);
+  });
+
+  test("a different request's fulfillment does not unlock the attack", async () => {
+    const reader = readerWith(arrivedAttackLogs(7n, 42n), [randomnessFulfilledLog(99n)]);
+    expect(await reader.listResolvableFleetMissions()).toEqual([]);
+  });
+});
+
 describe("fleet mission cargo vs loot", () => {
   // VEY-404: a pure attack that loaded no outbound cargo but looted 50 metal must report Cargo 0
   // (outbound launch cargo) and Loot 50 (battle report) — not 50/50. On-chain the contract folds
