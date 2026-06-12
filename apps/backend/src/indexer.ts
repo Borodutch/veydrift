@@ -88,7 +88,7 @@ import {
 import type { HighscoreEntry } from "./highscores";
 import { playerFallbackName, type PlayerProfile } from "./playerProfiles";
 import { planetArchetypeForTemperature } from "./universe";
-import { nowSeconds, settleQueueAsOfNow, withMissionAsOfNow, withQueueAsOfNow } from "./asOfNow";
+import { nowSeconds, settleQueueAsOfNow, withMissionAsOfNow } from "./asOfNow";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
 export type IndexedMoonChanceReportEvent = MoonChanceReportEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
@@ -1108,16 +1108,22 @@ export class SettlementIndexer {
     return rowsByOwner;
   }
 
+  // Lazy on-chain reconciliation (VEY-KANEO-468): the active queue must reflect the as-of-now
+  // SETTLED state, not just flag the head "complete". `settleQueueAsOfNow` (via queueSettlement)
+  // pops every elapsed active/backlog entry and returns the next genuinely-in-progress queue (or
+  // null when all have settled), matching the derived levels/counts (infrastructureRows / shipRows
+  // / defenseRows / technologyLevels), which already apply the same completed entries. Flag-only
+  // `withQueueAsOfNow` left a finished item lingering in the "active" slot as "Ready".
   planetQueue(planetId: string, kind: "building" | "defense" | "ship"): QueueState | null {
-    return withQueueAsOfNow(this.queueState(`${kind}:${planetId}`), nowSeconds());
+    return this.queueSettlement(`${kind}:${planetId}`).queue;
   }
 
   moonQueue(planetId: string): QueueState | null {
-    return withQueueAsOfNow(this.queueState(`moon-building:${planetId}`), nowSeconds());
+    return this.queueSettlement(`moon-building:${planetId}`).queue;
   }
 
   researchQueue(wallet: `0x${string}`): QueueState | null {
-    return withQueueAsOfNow(this.queueState(`research:${wallet.toLowerCase()}`), nowSeconds());
+    return this.queueSettlement(`research:${wallet.toLowerCase()}`).queue;
   }
 
   moonState(wallet: `0x${string}`, planetId: string | null): MoonState {

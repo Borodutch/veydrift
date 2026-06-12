@@ -2517,19 +2517,11 @@ describe("Veydrift backend", () => {
         crystal: "4900",
         deuterium: "4800"
       },
+      // Lazy on-chain reconciliation (VEY-KANEO-468): readyAt is in the past, so the building has
+      // settled as-of-now on public all-players state too — no active construction, and the level
+      // is projected up (asserted below: building id 0 -> level 2).
       queues: {
-        building: {
-          active: true,
-          kind: "building",
-          targetLevel: 2,
-          readyAt: "1770000060",
-          // As-of-now derivation is served on all-players public state too, not just
-          // the owner's own endpoints (VEY-KANEO-464). readyAt is in the past here.
-          asOfNow: {
-            secondsRemaining: 0,
-            complete: true
-          }
-        }
+        building: null
       }
     });
     expect(occupiedPlanet.publicState.buildings).toEqual(expect.arrayContaining([
@@ -3062,16 +3054,16 @@ describe("Veydrift backend", () => {
       crystal: "2070",
       deuterium: "2370"
     });
+    // Lazy on-chain reconciliation (VEY-KANEO-468): these fixture queues all have elapsed readyAts,
+    // so they settle as-of-now and pop — no active queue remains (their levels/counts are projected
+    // into the planet's building/defense/ship/research state). The point of this test is the
+    // resource deductions from the spends, asserted above.
     expect(planetsBody.planets[0].queues).toMatchObject({
-      building: { kind: "building", itemId: 3, targetLevel: 12 },
-      defense: { kind: "defense", itemId: 0, quantity: 1 },
-      ship: { kind: "ship", itemId: 1, quantity: 1 }
+      building: null,
+      defense: null,
+      ship: null
     });
-    expect(planetsBody.queues.research).toMatchObject({
-      kind: "research",
-      itemId: 9,
-      targetLevel: 1
-    });
+    expect(planetsBody.queues.research).toBeNull();
   });
 
   test("does not rebuild a cold planet index during wallet settlement requests", async () => {
@@ -3207,24 +3199,11 @@ describe("Veydrift backend", () => {
 
     expect(queuesResponse.status).toBe(200);
     expect(queuesResponse.headers.get("x-veydrift-index-state")).toBe("stale");
-    expect(queuesBody.building).toMatchObject({
-      active: true,
-      kind: "building",
-      itemId: 5,
-      targetLevel: 1,
-      readyAt: "1770000900",
-      cost: {
-        metal: "400",
-        crystal: "120",
-        deuterium: "60"
-      },
-      // As-of-now derivation (VEY-KANEO-464): readyAt is in the past, so the queue
-      // reads as complete with no time remaining.
-      asOfNow: {
-        secondsRemaining: 0,
-        complete: true
-      }
-    });
+    // Lazy on-chain reconciliation (VEY-KANEO-468): readyAt is in the past, so the queue is settled
+    // as-of-now and popped — there is no active construction left, and the building level is
+    // projected up (asserted via the infrastructure rows below). Previously this lingered as an
+    // active "complete: true" queue (the stale-"Ready" bug).
+    expect(queuesBody.building).toBeNull();
     expect(infrastructureResponse.status).toBe(200);
     expect(infrastructureResponse.headers.get("x-veydrift-index-state")).toBe("stale");
     expect(infrastructureBody).toMatchObject({
@@ -3265,15 +3244,9 @@ describe("Veydrift backend", () => {
         crystal: "4780",
         deuterium: "4740"
       },
-      queue: {
-        active: true,
-        kind: "building",
-        itemId: 5,
-        asOfNow: {
-          secondsRemaining: 0,
-          complete: true
-        }
-      }
+      // Lazy on-chain reconciliation (VEY-KANEO-468): the elapsed building has settled as-of-now,
+      // so there is no active construction (the level is projected up in `buildings` above).
+      queue: null
     });
 
     indexer.applyLog({
@@ -3478,14 +3451,15 @@ describe("Veydrift backend", () => {
         expect.objectContaining({ id: 9, energyPerUnit: "22" })
       ])
     });
+    // Lazy on-chain reconciliation (VEY-KANEO-468): the research (itemId 4, readyAt in the past)
+    // has settled as-of-now, so there is no active research queue (its level is projected up).
     expect(research).toMatchObject({
       source: "contract-state-indexer",
-      queue: {
-        kind: "research",
-        itemId: 4,
-        targetLevel: 2
-      }
+      queue: null
     });
+    expect(research.technologies).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: 4, level: 2 })])
+    );
     // Personal state endpoints expose accrued resourcesAsOfNow (VEY-KANEO-464). This
     // fixture has no mines (zero production), so the projection equals canonical
     // resources, but the field must be present and non-null for a warm planet.
@@ -3621,10 +3595,9 @@ describe("Veydrift backend", () => {
           level: 2
         })
       ]),
-      queue: {
-        kind: "building",
-        targetLevel: 2
-      }
+      // Lazy on-chain reconciliation (VEY-KANEO-468): the elapsed building has settled as-of-now
+      // (building id 0 projected to level 2 above), so there is no active construction.
+      queue: null
     });
   });
 
