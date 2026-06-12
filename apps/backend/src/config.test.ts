@@ -92,4 +92,42 @@ describe("backend config", () => {
       VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
     }).config.missionResolutionEnabled).toBe(false);
   });
+
+  // VEY-KANEO-471: the synthetic stationed-defense QA payload must require an explicit opt-in AND a
+  // non-production deployment, and must never be reachable in production even if the env is set.
+  test("gates the synthetic stationed-defense QA flag on opt-in and non-production", () => {
+    const baseEnv = {
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    };
+
+    // Unset → off by default.
+    expect(loadBackendConfig({ ...baseEnv, VEYDRIFT_DEPLOYMENT_MODE: "test" }).config.qaSyntheticStationedDefenders).toBe(false);
+
+    // Opt-in on a non-production deployment → on.
+    for (const mode of ["local", "test", "staging"]) {
+      const result = loadBackendConfig({
+        ...baseEnv,
+        VEYDRIFT_DEPLOYMENT_MODE: mode,
+        VEYDRIFT_QA_SYNTHETIC_STATIONED_DEFENDERS: "true"
+      });
+      expect(result.config.qaSyntheticStationedDefenders).toBe(true);
+    }
+
+    // Accepts the common truthy spellings.
+    for (const value of ["1", "TRUE", "yes", "on"]) {
+      expect(loadBackendConfig({
+        ...baseEnv,
+        VEYDRIFT_DEPLOYMENT_MODE: "test",
+        VEYDRIFT_QA_SYNTHETIC_STATIONED_DEFENDERS: value
+      }).config.qaSyntheticStationedDefenders).toBe(true);
+    }
+
+    // Hard production guard: even an explicit opt-in stays off in production.
+    expect(loadBackendConfig({
+      ...baseEnv,
+      VEYDRIFT_DEPLOYMENT_MODE: "production",
+      VEYDRIFT_QA_SYNTHETIC_STATIONED_DEFENDERS: "true"
+    }).config.qaSyntheticStationedDefenders).toBe(false);
+  });
 });
