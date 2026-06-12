@@ -667,6 +667,7 @@ contract VeydriftGame is VeydriftResourceReserves {
             coordinateKey(galaxy, system, position),
             planetSeed(galaxy, system, position)
         );
+        _emitPlanetSettled(planetId);
     }
 
     function _missionShipQuantity(MissionShips calldata ships, Ship ship)
@@ -780,14 +781,7 @@ contract VeydriftGame is VeydriftResourceReserves {
             ceiling = pendingArrival;
         }
         _settleResourcesUpTo(planetId, ceiling);
-        Resources memory resources = _planets[planetId].resources;
-        emit PlanetSettled(
-            planetId,
-            resources.metal,
-            resources.crystal,
-            resources.deuterium,
-            _planets[planetId].lastSettledAt
-        );
+        _emitPlanetSettled(planetId);
     }
 
     function _settleResourcesUntil(uint256 planetId, uint64 settledAt) private {
@@ -864,6 +858,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         available.crystal -= cost.crystal;
         available.deuterium -= cost.deuterium;
         _decreaseInternalResources(cost);
+        _emitPlanetSettled(planetId);
     }
 
     function _cappedResourceIncrease(

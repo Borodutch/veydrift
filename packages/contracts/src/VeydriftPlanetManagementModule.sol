@@ -122,23 +122,6 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         );
     }
 
-    function createColonyAtNextSlot(uint256 originPlanetId, uint256 salt)
-        external
-        returns (uint256)
-    {
-        _validateColonyCreation(originPlanetId);
-        (uint16 galaxy, uint16 system, uint8 position) = _nextColonyCoordinates(msg.sender, salt);
-        return _createColony(originPlanetId, galaxy, system, position);
-    }
-
-    function createColony(uint256 originPlanetId, uint16 galaxy, uint16 system, uint8 position)
-        external
-        returns (uint256)
-    {
-        _validateColonyCreation(originPlanetId);
-        return _createColony(originPlanetId, galaxy, system, position);
-    }
-
     function renamePlanet(uint256 planetId, string calldata name) external {
         _requirePlanetOwner(planetId);
         _settleDueCombatArrivals(msg.sender);
@@ -191,9 +174,9 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
         _transferReserveIn(resource, amount);
         Resources memory resourceAmount = _resourceAmount(resource, amount);
-        _planets[planetId].resources = _add(_planets[planetId].resources, resourceAmount);
         _increaseInternalResources(resourceAmount);
         emit MarketResourceDeposited(msg.sender, planetId, resource, amount);
+        _creditResources(planetId, resourceAmount);
     }
 
     function requestMarketResourceWithdrawal(uint256 planetId, Resource resource, uint128 amount)
@@ -299,8 +282,7 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     ///      mission is Returning/Recalled, its `returnAt` has elapsed, and no unresolved combat
     ///      arrival is pending on the origin planet (the combat-snapshot integrity gate).
     function _landFleetReturn(uint256 missionId, FleetMission storage mission) private {
-        _planets[mission.originPlanetId].resources =
-            _add(_planets[mission.originPlanetId].resources, mission.cargo);
+        _creditResources(mission.originPlanetId, mission.cargo);
         _creditMissionShips(mission.originPlanetId, mission.ships);
         mission.status = FleetMissionStatus.Returned;
         activeFleetMissionCount[mission.owner] -= 1;
@@ -350,81 +332,6 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         delete researchQueues[msg.sender];
         _technologyLevels[msg.sender][queue.technology] = queue.targetLevel;
         emit ResearchCompleted(msg.sender, queue.technology, queue.targetLevel);
-    }
-
-    function _validateColonyCreation(uint256 originPlanetId) private view {
-        _requirePlanetOwner(originPlanetId);
-        _requireNoPendingMissionResolutionForPlanet(originPlanetId);
-        uint256 limit = 1 + _technologyLevels[msg.sender][Technology.Astrophysics];
-        if (planetCountOf[msg.sender] >= limit) revert PlanetLimitReached(limit);
-        _requireShips(originPlanetId, Ship.ColonyShip, 1);
-    }
-
-    function _createColony(uint256 originPlanetId, uint16 galaxy, uint16 system, uint8 position)
-        private
-        returns (uint256 colonyPlanetId)
-    {
-        bytes32 coordinates = _coordinateKey(galaxy, system, position);
-        if (occupiedCoordinates[coordinates]) revert CoordinatesOccupied();
-
-        _settleResources(originPlanetId);
-        _debitPlanetShips(originPlanetId, Ship.ColonyShip, 1);
-        colonyPlanetId = nextPlanetId++;
-        occupiedCoordinates[coordinates] = true;
-        planetCountOf[msg.sender] += 1;
-        _registerOwnedPlanet(msg.sender, colonyPlanetId);
-
-        bytes32 seed = _planetSeed(galaxy, system, position);
-        uint16 fields = uint16(160 + (uint256(seed) % 80));
-        int16 temperature = VeydriftPlanetGeneration.slotTemperature(
-            position, (uint256(seed) >> 16) % 21, (uint256(seed) >> 24) % 21
-        );
-        (uint16 metalMultiplier, uint16 crystalMultiplier, uint16 deuteriumMultiplier) =
-            VeydriftFormulas.planetMultipliers(temperature, fields);
-        _planets[colonyPlanetId] = Planet({
-            owner: msg.sender,
-            galaxy: galaxy,
-            system: system,
-            position: position,
-            fields: fields,
-            temperature: temperature,
-            metalMultiplierBps: metalMultiplier,
-            crystalMultiplierBps: crystalMultiplier,
-            deuteriumMultiplierBps: deuteriumMultiplier,
-            lastSettledAt: _currentTimestamp(),
-            resources: Resources({metal: 0, crystal: 0, deuterium: 0})
-        });
-        emit ColonyCreated(
-            msg.sender,
-            originPlanetId,
-            colonyPlanetId,
-            galaxy,
-            system,
-            position,
-            fields,
-            temperature
-        );
-    }
-
-    function _nextColonyCoordinates(address player, uint256 salt)
-        private
-        view
-        returns (uint16 galaxy, uint16 system, uint8 position)
-    {
-        for (uint256 attempt = 0; attempt < 64; attempt++) {
-            bytes32 seed = keccak256(
-                abi.encode(
-                    PLANET_SEED_DOMAIN, block.chainid, player, salt, planetCountOf[player], attempt
-                )
-            );
-            galaxy = uint16((uint256(seed) % MAX_GALAXY) + 1);
-            system = uint16(((uint256(seed) >> 16) % MAX_SYSTEM) + 1);
-            position = uint8(((uint256(seed) >> 32) % MAX_POSITION) + 1);
-            if (!occupiedCoordinates[_coordinateKey(galaxy, system, position)]) {
-                return (galaxy, system, position);
-            }
-        }
-        revert CoordinatesExhausted();
     }
 
     function _requirePlanetOwner(uint256 planetId) private view {
@@ -479,6 +386,15 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         available.crystal -= cost.crystal;
         available.deuterium -= cost.deuterium;
         _decreaseInternalResources(cost);
+        _emitPlanetSettled(planetId);
+    }
+
+    /// @dev Credit `amount` to `planetId`'s balance and emit the authoritative post-credit
+    ///      `PlanetSettled` (VEY-KANEO-475). Shared by the market-deposit and fleet-return credit
+    ///      paths so the `_add` + emit bytecode is compiled once in this EIP-170-bound module.
+    function _creditResources(uint256 planetId, Resources memory amount) private {
+        _planets[planetId].resources = _add(_planets[planetId].resources, amount);
+        _emitPlanetSettled(planetId);
     }
 
     function _resourceAmount(Resource resource, uint128 amount)
@@ -760,23 +676,6 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     {
         return VeydriftPlanetGeneration.coordinateKey(
             block.chainid, galaxy, system, position, MAX_GALAXY, MAX_SYSTEM, MAX_POSITION
-        );
-    }
-
-    function _planetSeed(uint16 galaxy, uint16 system, uint8 position)
-        private
-        view
-        returns (bytes32)
-    {
-        return VeydriftPlanetGeneration.planetSeed(
-            PLANET_SEED_DOMAIN,
-            block.chainid,
-            galaxy,
-            system,
-            position,
-            MAX_GALAXY,
-            MAX_SYSTEM,
-            MAX_POSITION
         );
     }
 

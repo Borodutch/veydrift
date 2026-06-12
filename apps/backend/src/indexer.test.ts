@@ -403,6 +403,45 @@ describe("SettlementIndexer", () => {
     expect(Number(updated?.resources.crystal)).toBe(4780);
   });
 
+  test("serves planet resources from a PlanetSettled event alone, never an on-the-fly RPC read (VEY-KANEO-475)", () => {
+    // Foundation invariant: with the contract now emitting the authoritative PlanetSettled balance on
+    // every discrete resource mutation (cost spend, cargo/loot credit, collect, colony, start), the
+    // latest event balance plus the read model's local production projection are sufficient to serve
+    // resources — the serve path must never fall back to previewResources/getInfrastructureState RPC.
+    // This reader throws on every on-the-fly state read, so the test passing proves none were called.
+    const rpcForbidden = () => {
+      throw new Error("on-the-fly RPC read at serve time is forbidden (VEY-KANEO-475)");
+    };
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      getInfrastructureState: rpcForbidden,
+      getShipyardState: rpcForbidden,
+      getDefenseState: rpcForbidden,
+      getResearchState: rpcForbidden,
+      getPlayerQueues: rpcForbidden,
+      getPlanet: rpcForbidden
+    } as never, 100n);
+
+    indexer.applyEvent(planet);
+    // Simulates the contract emitting PlanetSettled at the end of a build/ship/defense spend: the
+    // final post-spend balance, settled to the spend's block timestamp. `settledAt == now` so the
+    // production projection contributes nothing and the served balance equals the event exactly.
+    const now = Math.floor(Date.now() / 1000);
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xspend",
+      logIndex: "0x0",
+      topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+      data: abiWords(1234n, 567n, 89n, BigInt(now))
+    });
+
+    const served = indexer.walletSettlement(player).planet;
+    expect(served?.lastSettledAt).toBe(String(now));
+    expect(served?.resources).toEqual({ metal: "1234", crystal: "567", deuterium: "89" });
+  });
+
   test("settles resources at the old production rate up to readyAt when a building upgrade completes (VEY-KANEO-429)", () => {
     // Regression: the read-model projects `resources` forward from `lastSettledAt`
     // at the CURRENT production rate. When a metal-mine upgrade completed, the

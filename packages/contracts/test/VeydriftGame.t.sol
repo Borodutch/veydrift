@@ -59,18 +59,18 @@ contract MockResourceToken {
     }
 }
 
-/// @dev Thin wrapper that owns a storage `Resources` slot so the storage-reference
+/// @dev Thin wrapper that owns a storage `Planet` slot so the storage-reference
 ///      `VeydriftRaidStorage.raid` helper can be exercised deterministically in isolation.
 contract RaidStorageHarness {
-    VeydriftGameStorage.Resources internal _target;
+    VeydriftGameStorage.Planet internal _planet;
 
     function setTarget(uint128 metal, uint128 crystal, uint128 deuterium) external {
-        _target =
+        _planet.resources =
             VeydriftGameStorage.Resources({metal: metal, crystal: crystal, deuterium: deuterium});
     }
 
     function target() external view returns (VeydriftGameStorage.Resources memory) {
-        return _target;
+        return _planet.resources;
     }
 
     function raid(
@@ -81,7 +81,7 @@ contract RaidStorageHarness {
         uint16 deuteriumBps
     ) external returns (uint128 metal, uint128 crystal, uint128 deuterium) {
         return VeydriftRaidStorage.raid(
-                _target, capacity, plunderRateBps, metalBps, crystalBps, deuteriumBps
+                _planet, 0, capacity, plunderRateBps, metalBps, crystalBps, deuteriumBps
             );
     }
 }
@@ -1292,6 +1292,264 @@ contract VeydriftGameTest is Test {
         assertEq(required.metal, afterResources.metal);
         assertEq(required.crystal, afterResources.crystal);
         assertEq(required.deuterium, afterResources.deuterium);
+    }
+
+    // VEY-KANEO-475: every discrete resource mutation must emit the authoritative post-mutation
+    // balance via the `_emitPlanetSettled` sink (or the combat library) so the indexer never reads
+    // `previewResources` on the fly. These tests assert the emitted balance equals the on-chain
+    // `previewResources` for the same planet/block — i.e. the event alone is sufficient to sync state.
+    bytes32 private constant _PLANET_SETTLED_TOPIC =
+        keccak256("PlanetSettled(uint256,uint128,uint128,uint128,uint64)");
+
+    function _assertLastPlanetSettledMatchesPreview(uint256 planetId) internal view {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        VeydriftGameStorage.Resources memory preview = game.previewResources(planetId);
+        bool found;
+        for (uint256 i = 0; i < logs.length; i++) {
+            Vm.Log memory entry = logs[i];
+            if (
+                entry.topics.length == 2 && entry.topics[0] == _PLANET_SETTLED_TOPIC
+                    && uint256(entry.topics[1]) == planetId
+            ) {
+                (uint128 metal, uint128 crystal, uint128 deuterium, uint64 settledAt) =
+                    abi.decode(entry.data, (uint128, uint128, uint128, uint64));
+                assertEq(metal, preview.metal, "PlanetSettled metal != previewResources");
+                assertEq(crystal, preview.crystal, "PlanetSettled crystal != previewResources");
+                assertEq(
+                    deuterium, preview.deuterium, "PlanetSettled deuterium != previewResources"
+                );
+                assertEq(settledAt, uint64(block.timestamp), "PlanetSettled settledAt != now");
+                found = true;
+            }
+        }
+        assertTrue(found, "no authoritative PlanetSettled emitted for planet");
+    }
+
+    function testStartPlanetEmitsAuthoritativePlanetSettled() public {
+        vm.recordLogs();
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _assertLastPlanetSettledMatchesPreview(planetId);
+    }
+
+    function testBuildingSpendEmitsAuthoritativePlanetSettled() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setResources(planetId, 10_000, 10_000, 10_000);
+
+        vm.recordLogs();
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.MetalMine);
+        // Same block as the spend: no production accrues, so the emitted post-spend balance must
+        // equal previewResources exactly. Proves the facade `_spend` emit carries final values.
+        _assertLastPlanetSettledMatchesPreview(planetId);
+    }
+
+    function testShipProductionSpendEmitsAuthoritativePlanetSettled() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 10_000, 10_000, 10_000);
+
+        vm.recordLogs();
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 1);
+        // Ship production spends through the colonization module's `_spend` (the inherited sink body),
+        // a different emit path than the facade building spend above.
+        _assertLastPlanetSettledMatchesPreview(planetId);
+    }
+
+    function testAttackRaidEmitsDefenderAuthoritativePlanetSettled() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 4_000, 3_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            777
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 777);
+
+        vm.recordLogs();
+        game.resolveFleetMission(missionId);
+        // The raid loots 5_000 metal (classic plunder), leaving the defender at 5_000/4_000/3_000.
+        // The combat module is at the EIP-170 limit, so the defender's authoritative balance is
+        // emitted from the linked VeydriftRaidStorage library — assert it reached the log.
+        assertEq(game.planet(targetPlanetId).resources.metal, 5_000);
+        _assertLastPlanetSettledMatchesPreview(targetPlanetId);
+    }
+
+    /// @dev Credit/loot paths (market deposit, fleet-return cargo, raid debit) intentionally do not
+    ///      re-settle the planet to `block.timestamp` before emitting: the authoritative event carries
+    ///      the *stored* balance plus the planet's current `lastSettledAt`, which is exactly what the
+    ///      indexer applies before projecting elapsed-time production. Assert the final `PlanetSettled`
+    ///      for `planetId` matches that stored state (the last emit wins if a tx emits more than once).
+    function _assertLastPlanetSettledMatchesStored(uint256 planetId) internal view {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        VeydriftGameStorage.Planet memory stored = game.planet(planetId);
+        bool found;
+        uint128 metal;
+        uint128 crystal;
+        uint128 deuterium;
+        uint64 settledAt;
+        for (uint256 i = 0; i < logs.length; i++) {
+            Vm.Log memory entry = logs[i];
+            if (
+                entry.topics.length == 2 && entry.topics[0] == _PLANET_SETTLED_TOPIC
+                    && uint256(entry.topics[1]) == planetId
+            ) {
+                (metal, crystal, deuterium, settledAt) =
+                    abi.decode(entry.data, (uint128, uint128, uint128, uint64));
+                found = true;
+            }
+        }
+        assertTrue(found, "no authoritative PlanetSettled emitted for planet");
+        assertEq(metal, stored.resources.metal, "PlanetSettled metal != stored");
+        assertEq(crystal, stored.resources.crystal, "PlanetSettled crystal != stored");
+        assertEq(deuterium, stored.resources.deuterium, "PlanetSettled deuterium != stored");
+        assertEq(settledAt, stored.lastSettledAt, "PlanetSettled settledAt != stored lastSettledAt");
+    }
+
+    function testFleetLaunchSpendEmitsAuthoritativePlanetSettled() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        address defender = address(0xD1);
+        vm.deal(defender, 1 ether);
+        vm.prank(defender);
+        uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+
+        vm.recordLogs();
+        vm.prank(player);
+        game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+        // Launch debits fuel from the origin through the gameplay module's `_spend` (R3); the emit
+        // carries the post-spend origin balance with no further on-the-fly RPC read.
+        _assertLastPlanetSettledMatchesStored(originPlanetId);
+    }
+
+    function testTransportArrivalCreditEmitsAuthoritativePlanetSettled() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        uint256 colonyPlanetId = _createResolvedColony(player, originPlanetId, 7);
+
+        VeydriftGameStorage.Resources memory cargo =
+            VeydriftGameStorage.Resources({metal: 100, crystal: 0, deuterium: 0});
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            colonyPlanetId,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            ships,
+            cargo,
+            0
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+
+        vm.recordLogs();
+        vm.prank(player);
+        game.resolveFleetMission(missionId);
+        // Transport arrival settles + credits the target's cargo through the gameplay module; the
+        // consolidated transport/deploy `_emitPlanetSettled` (R5/R6) carries the post-credit balance.
+        _assertLastPlanetSettledMatchesStored(colonyPlanetId);
+    }
+
+    function testResearchSpendEmitsAuthoritativePlanetSettled() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.ResearchLab, 1);
+        _setTechnologyLevel(player, Technology.Energy, 2);
+        _setResources(planetId, 100_000, 100_000, 100_000);
+
+        vm.recordLogs();
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Laser);
+        // Research spends through the planet-management module's `_spend` (R3) — the module reclaimed
+        // EIP-170 headroom (dead colony entrypoints) so this authoritative emit fits.
+        _assertLastPlanetSettledMatchesStored(planetId);
+    }
+
+    function testMarketDepositCreditEmitsAuthoritativePlanetSettled() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.InterdimensionalRiftStabilizer, 1);
+        _setResources(planetId, 1_000, 1_000, 1_000);
+        metalToken.mint(player, 1_000);
+        vm.prank(player);
+        metalToken.approve(address(game), 1_000);
+
+        vm.recordLogs();
+        vm.prank(player);
+        game.depositMarketResource(planetId, Resource.Metal, 100);
+        assertEq(game.planet(planetId).resources.metal, 1_100);
+        // Deposit credits without an explicit settle; the shared `_creditResources` emit (R8) carries
+        // the stored post-credit balance and the planet's current `lastSettledAt`.
+        _assertLastPlanetSettledMatchesStored(planetId);
+    }
+
+    function testFleetReturnCreditEmitsAuthoritativePlanetSettled() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        uint256 colonyPlanetId = _createResolvedColony(player, originPlanetId, 7);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            colonyPlanetId,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            ships,
+            VeydriftGameStorage.Resources({metal: 100, crystal: 0, deuterium: 0}),
+            0
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        vm.prank(player);
+        game.resolveFleetMission(missionId);
+
+        (,, uint64 returnAt,) = _fleetMission(missionId);
+        vm.warp(returnAt);
+        vm.recordLogs();
+        vm.prank(player);
+        game.completeFleetMissionReturn(missionId);
+        // The return leg credits the origin through `_creditResources` in the planet-management module
+        // (R7) and emits the authoritative origin balance.
+        _assertLastPlanetSettledMatchesStored(originPlanetId);
     }
 
     function testSettlementCannotIssueMoreResourcesThanReserveBacking() public {
