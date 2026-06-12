@@ -17,6 +17,7 @@ import type {
   PlanetState,
   PlayerQueues,
   ResearchState,
+  Resources,
   RiftState,
   SettledPlanetEvent,
   ShipyardState,
@@ -4236,6 +4237,70 @@ describe("Veydrift backend", () => {
     expect(tacticalPlanet.tactical.raidableResourceTotal).toBe(
       (BigInt(expectedRaidable.metal) + BigInt(expectedRaidable.crystal) + BigInt(expectedRaidable.deuterium)).toString()
     );
+  });
+
+  // VEY-KANEO-473: shared scenario — a planet with a metal mine + solar plant settled two hours ago,
+  // whose stored metal 5000 would accrue to 5064 under a storage-cap-only projection (this is the
+  // exact base the existing 5064 accrual test uses). The backend's accrued `resourcesAsOfNow`/public
+  // resources are the single source both the top bar and the building-upgrade affordability gate read,
+  // so capping them at the contract reserve headroom is what stops the UI from over-reporting and the
+  // on-chain `_spend` from reverting with InsufficientResources.
+  async function accruedMetalForReserve(reserveAvailable: Resources | null): Promise<string> {
+    const chainReader = reserveAvailable
+      ? new class extends MockChainReader {
+          async getResourceReserveAvailable(): Promise<Resources> {
+            return reserveAvailable;
+          }
+        }()
+      : new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      lastSettledAt: (Math.floor(Date.now() / 1_000) - 7_200).toString()
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xmine",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xsolar",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(3n)],
+      data: abiWords(1n)
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
+    const universeResponse = await handler(new Request("http://localhost/universe/galaxies/2/systems/44"));
+    const universeBody = await universeResponse.json();
+    const publicPlanet = universeBody.planets.find((item: { position: number }) => item.position === 9);
+    return publicPlanet.publicState.resources.metal as string;
+  }
+
+  test("accrued spendable metal is capped at the contract reserve availability (VEY-KANEO-473)", async () => {
+    // Only 20 metal of reserve headroom: production would add 64, but the contract's
+    // `_reserveLimitedIncrease` would credit at most 20, so the displayed spendable must stop at 5020.
+    const metal = await accruedMetalForReserve({ metal: "20", crystal: "100000000", deuterium: "100000000" });
+    expect(metal).toBe("5020");
+  });
+
+  test("accrued spendable metal is unchanged when reserve headroom exceeds production (VEY-KANEO-473)", async () => {
+    // Ample reserve: the reserve cap never binds, so accrual matches the storage-cap-only 5064.
+    const metal = await accruedMetalForReserve({ metal: "100000000", crystal: "100000000", deuterium: "100000000" });
+    expect(metal).toBe("5064");
+  });
+
+  test("accrued spendable metal falls back to storage-cap-only when no reserve snapshot is available (VEY-KANEO-473)", async () => {
+    // Safe fallback: a reader without `getResourceReserveAvailable` (older deploy / read failure)
+    // leaves the snapshot null, and accrual behaves exactly as before (5064) — never under-reports.
+    const metal = await accruedMetalForReserve(null);
+    expect(metal).toBe("5064");
   });
 
   test("paginates highscore rankings while preserving absolute ranks", async () => {

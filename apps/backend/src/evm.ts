@@ -830,6 +830,11 @@ export interface ChainReader {
   getBattleReport(missionId: bigint): Promise<BattleReport | null>;
   getInfrastructureAuthoritativeFields?(planetId: bigint): Promise<Partial<Pick<InfrastructureState, "buildings" | "resources">>>;
   getInfrastructureState(wallet: Address, planetId?: bigint): Promise<InfrastructureState>;
+  // VEY-KANEO-473: the contract's globally-available reserve backing
+  // (`resourceReserveAvailable()`), i.e. how much NEW production the reserve can still
+  // mint per resource. Used to cap the backend's request-time accrual so the displayed
+  // spendable balance can never exceed what `previewResources`/`_spend` will credit.
+  getResourceReserveAvailable?(): Promise<Resources>;
   getMoonState(wallet: Address, planetId?: bigint): Promise<MoonState>;
   getDefenseState(wallet: Address, planetId?: bigint): Promise<DefenseState>;
   getShipyardAuthoritativeFields?(
@@ -1347,6 +1352,13 @@ export class VeydriftGameReader implements ChainReader {
       contractKind: "game",
       startPriceWei: startPrice.toString()
     };
+  }
+
+  // VEY-KANEO-473: `resourceReserveAvailable()` (selector 0x90117fd3) returns the per-resource
+  // surplus the ERC-20 reserve can still mint (balance - backing requirement). This is the cap
+  // `_reserveLimitedIncrease` applies to settled production on-chain.
+  async getResourceReserveAvailable(): Promise<Resources> {
+    return this.readResourcesCall("0x90117fd3", []);
   }
 
   async getPlanet(planetId: bigint): Promise<PlanetState | null> {

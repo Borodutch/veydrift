@@ -342,6 +342,12 @@ export class SettlementIndexer {
   private leaderboardCache:
     | { generation: number; planetsByOwner: Map<string, SettledPlanetEvent[]>; entries: HighscoreEntry[] }
     | null = null;
+  // VEY-KANEO-473: cached snapshot of the contract's `resourceReserveAvailable()` (per-resource
+  // surplus the ERC-20 reserve can still mint). Refreshed on each reconcile and used to cap
+  // request-time resource accrual so the displayed spendable balance never exceeds what
+  // `previewResources`/`_spend` will actually credit. `null` until first read (and on older deploys
+  // / readers without the getter), in which case accrual falls back to storage-cap-only behaviour.
+  private reserveAvailable: Resources | null = null;
 
   constructor(
     private readonly chainReader: Pick<
@@ -353,6 +359,7 @@ export class SettlementIndexer {
         | "getInfrastructureState"
         | "getPlayerQueues"
         | "getResearchState"
+        | "getResourceReserveAvailable"
         | "getShipyardState"
         | "listAllianceDirectoryState"
         | "listAllianceLogs"
@@ -1540,8 +1547,31 @@ export class SettlementIndexer {
     return this.planetRebuildPromise;
   }
 
+  // VEY-KANEO-473: the latest reserve-availability snapshot, or `null` when it has never been read
+  // (older deploy / reader without the getter / read failure). Callers must treat `null` as
+  // "no reserve cap available" and fall back to storage-cap-only accrual.
+  resourceReserveAvailableSnapshot(): Resources | null {
+    return this.reserveAvailable;
+  }
+
+  // Refreshes the cached `resourceReserveAvailable()` snapshot. Best-effort: a read failure or a
+  // reader without the getter leaves the previous snapshot in place (or `null`) rather than throwing,
+  // so a transient reserve read never blocks a reconcile.
+  private async refreshReserveAvailable(): Promise<void> {
+    if (!this.chainReader.getResourceReserveAvailable) return;
+    try {
+      this.reserveAvailable = await this.chainReader.getResourceReserveAvailable();
+    } catch {
+      // Keep the prior snapshot; accrual stays conservative or falls back to storage-cap-only.
+    }
+  }
+
   private async rebuildUncached(): Promise<IndexerSnapshot> {
-    const settledPlanetEvents = await this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
+    // Start the settled-planet read synchronously (callers/tests rely on it being invoked within the
+    // same tick as rebuild()), and refresh the reserve snapshot concurrently rather than ahead of it.
+    const settledPlanetEventsPromise = this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
+    await this.refreshReserveAvailable();
+    const settledPlanetEvents = await settledPlanetEventsPromise;
     const currentPlanets = this.chainReader.listCurrentPlanets
       ? await this.chainReader.listCurrentPlanets()
       : null;
@@ -1588,9 +1618,12 @@ export class SettlementIndexer {
   }
 
   private async rebuildPlanetsUncached(): Promise<IndexerSnapshot> {
-    const events = this.chainReader.listCurrentPlanets
-      ? await this.chainReader.listCurrentPlanets()
-      : await this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
+    // Invoke the planet read synchronously (see rebuildUncached) and refresh the reserve concurrently.
+    const eventsPromise = this.chainReader.listCurrentPlanets
+      ? this.chainReader.listCurrentPlanets()
+      : this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
+    await this.refreshReserveAvailable();
+    const events = await eventsPromise;
     const rebuild = this.db.transaction(() => {
       this.db.query("DELETE FROM indexed_planets").run();
       this.db.query("DELETE FROM contract_players").run();
