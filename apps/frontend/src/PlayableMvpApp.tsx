@@ -4987,14 +4987,20 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     />
   );
 
-  const compactPlanetSelector = walletPlanets.length > 0 ? (
-    <div className="mb-3 lg:hidden">
-      <PlanetSelector
-        layout="mobile"
-        onSelect={handleSelectManagedPlanet}
-        planets={walletPlanets}
-        selectedPlanetId={activePlanetId}
-      />
+  const mobilePlanetPicker = walletPlanets.length > 0 ? (
+    <PlanetSelector
+      layout="mobile"
+      onSelect={handleSelectManagedPlanet}
+      planets={walletPlanets}
+      selectedPlanetId={activePlanetId}
+    />
+  ) : null;
+
+  // Below `md` the picker lives inside the hamburger menu; between `md` and `lg`
+  // (no right sidebar, no hamburger) it stays as a compact row above content.
+  const compactPlanetSelector = mobilePlanetPicker ? (
+    <div className="mb-3 hidden md:block lg:hidden">
+      {mobilePlanetPicker}
     </div>
   ) : null;
 
@@ -5498,6 +5504,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           active={page}
           coordinates={homeCoordinateLabel}
           onNavigate={handleNavigate}
+          planetPicker={mobilePlanetPicker}
         />
 
         <main className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">

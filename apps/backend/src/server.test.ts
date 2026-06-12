@@ -27,7 +27,7 @@ import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import { VeydriftGameReader, riftRequirements } from "./evm";
 import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { deriveInfrastructureFields } from "./readModels";
-import { createRequestHandler, deriveLogBackfiller } from "./server";
+import { createRequestHandler, deriveLogBackfiller, shouldRecoverFailedReconciliation } from "./server";
 
 const configuredTestConfig: BackendConfig = {
   chainId: 84532,
@@ -2579,6 +2579,61 @@ describe("Veydrift backend", () => {
     expect(chainReader.rebuildCalls).toBe(1);
   });
 
+  test("re-attempts a failed reconcile once on a warm-DB boot to recover a frozen baseline (VEY-KANEO-461)", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    // Warm the DB: a first reconcile succeeds and sets `lastReconciledAt`.
+    await indexer.rebuild();
+    // A LATER reconcile then fails the way the self-hosted node truncated the heavy read
+    // ("Unexpected end of JSON input"), leaving `lastReconciliationError` set and the baseline
+    // frozen — the poisoned warm-DB state that persists in SQLite across a redeploy. Steady state
+    // runs no periodic sweep, so without recovery nothing ever re-runs the (now-fixed) reconcile.
+    chainReader.listSettledPlanetEvents = async () => {
+      chainReader.rebuildCalls += 1;
+      throw new Error("Unexpected end of JSON input");
+    };
+    await indexer.reconcile("periodic self-heal").catch(() => {});
+    expect(indexer.snapshot().lastReconciledAt).not.toBeNull();
+    expect(indexer.snapshot().lastReconciliationError).toBe("Unexpected end of JSON input");
+    const callsBeforeBoot = chainReader.rebuildCalls;
+    // Restore a healthy reader so the boot recovery reconcile can complete and clear the error.
+    chainReader.listSettledPlanetEvents = MockChainReader.prototype.listSettledPlanetEvents;
+
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    // Let the fire-and-forget recovery reconcile run to completion (it clears the error only after
+    // the rebuild finishes, not merely when the chain read is issued).
+    for (let i = 0; i < 50 && indexer.snapshot().lastReconciliationError !== null; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(chainReader.rebuildCalls).toBe(callsBeforeBoot + 1);
+    expect(indexer.snapshot().lastReconciliationError).toBeNull();
+    expect(indexer.snapshot().lastReconciledAt).not.toBeNull();
+    expect(handler).toBeDefined();
+  });
+
+  test("does not re-reconcile a healthy warm DB on boot — no reintroduced universe sweep (VEY-KANEO-461)", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    expect(indexer.snapshot().lastReconciliationError).toBeNull();
+    chainReader.rebuildCalls = 0;
+
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(chainReader.rebuildCalls).toBe(0);
+    expect(handler).toBeDefined();
+  });
+
   test("verifies and self-heals a planet's canonical state via /index/verify (VEY-KANEO-452)", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
@@ -4976,5 +5031,39 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     expect(body.chainSync).not.toBeNull();
     expect(body.randomnessCommitter).not.toBeNull();
     expect(body.indexer).not.toBeNull();
+  });
+});
+
+describe("shouldRecoverFailedReconciliation (VEY-KANEO-461)", () => {
+  test("recovers a warm DB carrying a failed reconcile", () => {
+    expect(shouldRecoverFailedReconciliation({
+      lastReconciledAt: "2026-06-11T09:44:41.430Z",
+      lastReconciliationError: "Unexpected end of JSON input",
+      reconciliationInProgress: false
+    })).toBe(true);
+  });
+
+  test("leaves a healthy warm DB untouched (no reintroduced sweep)", () => {
+    expect(shouldRecoverFailedReconciliation({
+      lastReconciledAt: "2026-06-11T09:44:41.430Z",
+      lastReconciliationError: null,
+      reconciliationInProgress: false
+    })).toBe(false);
+  });
+
+  test("does not fire on a cold DB (cold-start path owns that)", () => {
+    expect(shouldRecoverFailedReconciliation({
+      lastReconciledAt: null,
+      lastReconciliationError: "Unexpected end of JSON input",
+      reconciliationInProgress: false
+    })).toBe(false);
+  });
+
+  test("waits for an in-progress reconcile instead of stacking another", () => {
+    expect(shouldRecoverFailedReconciliation({
+      lastReconciledAt: "2026-06-11T09:44:41.430Z",
+      lastReconciliationError: "Unexpected end of JSON input",
+      reconciliationInProgress: true
+    })).toBe(false);
   });
 });

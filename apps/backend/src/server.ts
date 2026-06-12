@@ -185,6 +185,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       });
     }
   }
+  if (isWriter && indexer && loaded.problems.length === 0) {
+    maybeRecoverFailedReconciliation(indexer);
+  }
   if (cacheReader) {
     chainSync?.addListener((event) => {
       if (event.kind === "chain-event") {
@@ -973,6 +976,34 @@ function isIndexableChainReader(
       && typeof chainReader.listMoonChanceReportEvents === "function"
       && typeof chainReader.listSettledPlanetEvents === "function"
   );
+}
+
+// A warm DB carries its reconcile state in SQLite across redeploys. A canonical reconcile that FAILED
+// (classically a pre-fix truncated/empty RPC body surfaced as "Unexpected end of JSON input") leaves
+// `lastReconciliationError` set and `lastReconciledBlock` frozen. Steady state is pure event integration
+// with no periodic/boot universe sweep (VEY-KANEO-461), and a warm-DB boot deliberately skips the
+// cold-start rebuild — so after a redeploy nothing re-runs the reconcile, and the stale error + frozen
+// baseline survive every restart (they clear ONLY on a successful reconcile). That left #827's "make the
+// reconcile complete" fix (defensive parse, sequential/batched fallback, getLogs range-halving, planet
+// chunking) never actually exercised in production. Re-attempt the reconcile ONCE in the background on a
+// boot that inherits a recorded failure so the now-resilient reconcile completes, advances the baseline,
+// and clears the stale error. Guarded on the recorded failure itself: a healthy warm DB (error cleared on
+// its last success) is left untouched, so this does NOT reintroduce the periodic/boot universe sweep the
+// epic removed. Fire-and-forget (never await) so GET /health still answers promptly; `rebuild()`
+// coalesces, so this can never stack with the cold-start rebuild (mutually exclusive guards anyway).
+export function shouldRecoverFailedReconciliation(
+  snapshot: Pick<IndexerSnapshot, "lastReconciledAt" | "lastReconciliationError" | "reconciliationInProgress">
+): boolean {
+  return Boolean(snapshot.lastReconciledAt)
+    && Boolean(snapshot.lastReconciliationError)
+    && !snapshot.reconciliationInProgress;
+}
+
+function maybeRecoverFailedReconciliation(indexer: SettlementIndexer): void {
+  if (!shouldRecoverFailedReconciliation(indexer.snapshot())) return;
+  void indexer.rebuild().catch((error) => {
+    console.error("Veydrift index recovery reconciliation failed", error);
+  });
 }
 
 function hasWarmPlanetIndex(indexer: SettlementIndexer | undefined): indexer is SettlementIndexer {
