@@ -23,14 +23,23 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("shows the planet picker for single-planet wallets across viewports", () => {
-    // The compact picker must render for any wallet with at least one planet
-    // (not gated behind walletPlanets.length > 1) and be visible below `lg`.
-    expect(playableSource).toContain("const compactPlanetSelector = walletPlanets.length > 0");
+    // The picker must render for any wallet with at least one planet
+    // (not gated behind walletPlanets.length > 1).
+    expect(playableSource).toContain("const mobilePlanetPicker = walletPlanets.length > 0");
     expect(playableSource).toContain("{compactPlanetSelector}");
-    expect(playableSource).toContain("lg:hidden");
     expect(playableSource).not.toContain("walletPlanets.length > 1 ? mobilePlanetSelector : undefined");
     // The mobile image row no longer hides itself for a single planet.
     expect(playableSource).not.toContain("if (planets.length < 2) return null;");
+  });
+
+  test("moves the mobile planet picker into the hamburger menu, not above content", () => {
+    // Below `md` the picker is rendered inside the hamburger menu via NavBar.
+    expect(playableSource).toContain("planetPicker={mobilePlanetPicker}");
+    expect(navSource).toContain("planetPicker?: ComponentChildren");
+    expect(navSource).toContain("{planetPicker}");
+    // The compact row only fills the md-to-lg gap (no hamburger, no right sidebar),
+    // so it must be hidden below `md` and at/above `lg`.
+    expect(playableSource).toContain("mb-3 hidden md:block lg:hidden");
   });
 
   test("keeps the desktop planet selector compact and selection-only", () => {

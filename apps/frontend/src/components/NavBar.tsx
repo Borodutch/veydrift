@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
 import { ArrowLeftRight, Crosshair, Factory, FlaskConical, Menu, Moon, Orbit, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
@@ -27,6 +28,7 @@ interface NavBarProps {
   coordinates?: string | undefined;
   account?: string | undefined;
   onNavigate: (page: Page) => void;
+  planetPicker?: ComponentChildren;
 }
 
 const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: LucideIcon }> = [
@@ -44,7 +46,7 @@ const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: Lucide
   { key: "raid-target-finder", label: "Raid Finder", mobileLabel: "Raids", icon: Crosshair },
 ];
 
-export function NavBar({ active, account, coordinates, onNavigate }: NavBarProps) {
+export function NavBar({ active, account, coordinates, onNavigate, planetPicker }: NavBarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -133,6 +135,20 @@ export function NavBar({ active, account, coordinates, onNavigate }: NavBarProps
             className="grid gap-3 border-t border-white/10 bg-[#08101d]/98 p-3 shadow-2xl shadow-black/30"
             id="mobile-navigation-menu"
           >
+            {planetPicker ? (
+              <div
+                className="rounded border border-white/10 bg-white/[0.03] p-2"
+                // Close the menu once a planet is picked, matching nav-item behavior.
+                onClick={(event) => {
+                  if ((event.target as HTMLElement).closest("button")) setMobileMenuOpen(false);
+                }}
+              >
+                <p className="mb-1.5 px-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  Planets
+                </p>
+                {planetPicker}
+              </div>
+            ) : null}
             <nav aria-label="Mobile app sections" className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
               {pages.map((page) => (
                 <MobileTab
