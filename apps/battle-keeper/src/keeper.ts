@@ -82,6 +82,9 @@ export class BattleKeeper {
   private readonly maxConcurrency: number;
   private readonly now: () => number;
   private readonly logger: KeeperLogger;
+  /** Re-entrancy guard so overlapping timers (resolve loop + sweep) never run tick() concurrently —
+   * concurrent ticks would submit different missions in parallel and collide on the keeper EOA nonce. */
+  private ticking = false;
 
   private resolvedCount = 0;
   private submitFailureCount = 0;
@@ -180,19 +183,30 @@ export class BattleKeeper {
 
   /** One resolution pass: submit the due leg for every due mission, bounded concurrency. */
   async tick(): Promise<void> {
-    const due = this.dueMissions();
-    if (due.length === 0) {
+    // Never let two ticks overlap (resolve timer + sweep timer both call this): a concurrent tick
+    // would pull a fresh `pending` nonce for a different mission while this one is mid-submit and
+    // collide. Skip; the next scheduled tick picks up whatever is still due.
+    if (this.ticking) {
       return;
     }
+    this.ticking = true;
+    try {
+      const due = this.dueMissions();
+      if (due.length === 0) {
+        return;
+      }
 
-    // Simple bounded-concurrency worker pool over the due queue.
-    const queue = [...due];
-    const workerCount = Math.min(this.maxConcurrency, queue.length);
-    const workers: Promise<void>[] = [];
-    for (let i = 0; i < workerCount; i += 1) {
-      workers.push(this.drainQueue(queue));
+      // Simple bounded-concurrency worker pool over the due queue.
+      const queue = [...due];
+      const workerCount = Math.min(this.maxConcurrency, queue.length);
+      const workers: Promise<void>[] = [];
+      for (let i = 0; i < workerCount; i += 1) {
+        workers.push(this.drainQueue(queue));
+      }
+      await Promise.all(workers);
+    } finally {
+      this.ticking = false;
     }
-    await Promise.all(workers);
   }
 
   private async drainQueue(queue: PendingMission[]): Promise<void> {

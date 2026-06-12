@@ -309,6 +309,35 @@ describe("BattleKeeper idempotency", () => {
   });
 });
 
+describe("BattleKeeper tick re-entrancy", () => {
+  test("a second tick() is a no-op while the first is still in flight (no nonce races)", async () => {
+    // Gate the first resolve so it stays in flight while we fire an overlapping tick (as the resolve
+    // timer and sweep timer can). The overlapping tick must NOT submit anything.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started = 0;
+    const { keeper, resolver } = makeKeeper(async () => {
+      started += 1;
+      await gate;
+      return "0xhash";
+    });
+    keeper.recordLaunched(launch("1", MissionType.Attack, 500));
+    keeper.recordLaunched(launch("2", MissionType.Harvest, 500));
+
+    const first = keeper.tick();
+    await Promise.resolve(); // let the first tick begin submitting
+    await keeper.tick(); // overlapping tick — must short-circuit on the re-entrancy guard
+    release();
+    await first;
+
+    // Only the first tick's submissions ran; the overlapping tick added no extra calls.
+    expect(resolver.calls.sort()).toEqual(["1:arrival", "2:arrival"]);
+    expect(started).toBe(2);
+  });
+});
+
 describe("BattleKeeper safety sweep reconcile", () => {
   test("reconcilePending adds missed missions and ignores known/terminal ones", () => {
     const { keeper } = makeKeeper(async () => "0xhash");
