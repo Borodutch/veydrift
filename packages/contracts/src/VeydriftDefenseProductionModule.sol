@@ -17,6 +17,7 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
     function startDefenseProduction(uint256 planetId, Defense defense, uint32 quantity) external {
         _requirePlanetOwner(planetId);
         _settleDueColonizeArrivals(msg.sender);
+        _settleDueCombatArrivals(msg.sender);
         if (quantity == 0) revert InvalidQuantity();
         DefenseQueue memory activeQueue = defenseQueues[planetId];
 
@@ -86,6 +87,7 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
 
     function finishDefenseProduction(uint256 planetId) external {
         _requirePlanetOwner(planetId);
+        _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(planetId);
         DefenseQueue memory queue = defenseQueues[planetId];
         if (!queue.active) revert QueueInactive();

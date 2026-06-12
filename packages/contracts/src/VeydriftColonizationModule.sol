@@ -41,6 +41,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     function startShipProduction(uint256 planetId, Ship ship, uint32 quantity) external {
         _requirePlanetOwner(planetId);
         _settleDueColonizeArrivals(msg.sender);
+        _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(planetId);
         _validateShipProduction(planetId, ship, quantity);
         ShipQueue memory activeQueue = shipQueues[planetId];
