@@ -608,7 +608,15 @@ function fullNumber(value: string | null | undefined): string {
 function raidableResourcesLabel(target: RaidTarget): string {
   const resources = target.raidableResources;
   if (!resources) return "Raidable resources unavailable";
-  return `Raidable M ${fullNumber(resources.metal)} / C ${fullNumber(resources.crystal)} / D ${fullNumber(resources.deuterium)}`;
+  const breakdown = `LOOT M ${fullNumber(resources.metal)} / C ${fullNumber(resources.crystal)} / D ${fullNumber(resources.deuterium)}`;
+  // LOOT is the ~50% on-chain plunder of the target's full production-accrued public
+  // resources, so it reads lower than the planet's stockpile by design. Show that math
+  // explicitly so the gap is not misread as missing accrual. (VEY-KANEO-454)
+  if (target.grossLoot > 0 && target.grossLoot >= target.loot) {
+    const pct = Math.round((target.loot / target.grossLoot) * 100);
+    return `${breakdown} — ~${pct}% plunder of the planet's full accrued public resources (${compactNumber(target.grossLoot)}), not its full stockpile`;
+  }
+  return breakdown;
 }
 
 function combatLabel(target: RaidTarget): string {

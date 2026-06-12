@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import type { PlanetState } from "./evm";
-import { deriveDefenseRows, deriveShipRows } from "./readModels";
+import { deriveBuildingRows, deriveDefenseRows, deriveShipRows } from "./readModels";
 import { indexedPlanetTacticalSummary } from "./server";
 
 // Combat ship ids: 1 = Light Fighter, 6 = Cruiser. Non-combat ship ids: 0 = Small Cargo,
@@ -74,5 +74,26 @@ describe("indexedPlanetTacticalSummary COMBAT fighting strength (VEY-KANEO-450)"
     );
     expect(allNonCombat.ships.count).toBe(NON_COMBAT_SHIP_IDS.length * 25);
     expect(allNonCombat.combatPower).toBe("0");
+  });
+});
+
+describe("indexedPlanetTacticalSummary LOOT vs gross resources (VEY-KANEO-454)", () => {
+  // The recurring QA bounce reads LOOT (~50% of a planet's public resources) as missing
+  // production accrual. It is not: accrual is applied at the call site and LOOT is then the
+  // deliberate ~50% on-chain plunder rate (RAID_PLUNDER_BPS = 5000, RAID_PROTECTED_STORAGE_BPS = 0).
+  // `grossResourceTotal` exposes the full accrued stockpile LOOT is plundered from so the UI
+  // can show the math; this test pins LOOT == 50% of gross so the invariant cannot regress.
+  test("raidableResourceTotal is ~50% of the full accrued grossResourceTotal", () => {
+    const planet: PlanetState = { ...testPlanet(), resources: { metal: "1000", crystal: "500", deuterium: "100" } };
+    // At least one building so the plunder-rate path (deriveInfrastructureFields) runs.
+    const buildings = deriveBuildingRows((id) => (id === 0 ? 1 : 0));
+
+    const tactical = indexedPlanetTacticalSummary(planet, buildings, [], [], {});
+
+    // Full accrued public stockpile = 1000 + 500 + 100 = 1600.
+    expect(tactical.grossResourceTotal).toBe("1600");
+    // LOOT = 50% plunder of the unprotected (all, since protected storage = 0) accrued base.
+    expect(tactical.raidableResourceTotal).toBe("800");
+    expect(BigInt(tactical.raidableResourceTotal) * 2n).toBe(BigInt(tactical.grossResourceTotal));
   });
 });

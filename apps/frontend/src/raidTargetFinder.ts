@@ -56,7 +56,11 @@ export type RaidTarget = {
   // Flight distance from the viewer's active planet, or null when no origin is known.
   distance: number | null;
   // Raidable resource total (metal + crystal + deuterium) as a finite number.
+  // This is the ~50% on-chain plunder of `grossLoot`, not the planet's full stockpile.
   loot: number;
+  // Full production-accrued public resource total LOOT is plundered from (the figure the
+  // planet/universe surface shows). 0 when the backend does not report it. (VEY-KANEO-454)
+  grossLoot: number;
   raidableResources: OnChainResources | null;
   combatPower: number;
   shipPower: number;
@@ -229,6 +233,7 @@ export function buildRaidTargets({
         alliance,
         distance: origin ? fleetMissionDistance(origin, planet.coordinates) : null,
         loot: safeNumber(tactical?.raidableResourceTotal),
+        grossLoot: safeNumber(tactical?.grossResourceTotal),
         raidableResources: tactical?.raidableResources ?? null,
         combatPower: safeNumber(tactical?.combatPower),
         shipPower: safeNumber(tactical?.ships.power),
