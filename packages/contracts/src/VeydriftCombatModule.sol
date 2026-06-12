@@ -1454,6 +1454,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     }
 
     function _recordCombatWreckage(uint256 planetId, Ship ship, uint32 destroyed) private {
+        // UNUSED / DORMANT: SpaceDock is not wired on the live deployment, so `_spaceDockSystem`
+        // is `address(0)` and this is always a no-op today. See VeydriftSpaceDockSystem / issue #804.
         address spaceDockSystem = _spaceDockSystem;
         if (spaceDockSystem == address(0)) return;
 
