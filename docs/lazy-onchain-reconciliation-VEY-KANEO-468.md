@@ -201,6 +201,16 @@ contracts from `VeydriftGame`.
   (`researchQueues`, `shipQueues`/backlogs, `defenseQueues`/backlogs, `buildingConstructions`,
   `_fleetMissions`, resolution-tracking maps). Validate with the existing
   `packages/contracts/storage-layout` snapshots and `scripts/veydrift-alpha-state-preservation-check.mjs`.
+  - **Phase 2 caveat (discovered during implementation):** the resolution-tracking maps
+    (`_resolutionMissionIdsByPlanet`/`ByPlayer`) only index **Attack/Harvest/Colonize OUTBOUND**
+    missions (`_isResolutionTrackedMissionType`, `VeydriftResourceReserves.sol:397`), and a mission
+    is **untracked at arrival-resolution** (`VeydriftColonizationModule.sol:270`,
+    `VeydriftResourceReserves.sol:243`). So **Transport/Deploy missions and every RETURN leg are not
+    enumerable on-chain today.** Lazily settling them therefore needs the *existing* maps to be
+    populated for Transport/Deploy and untracking deferred from arrival to return-completion — a
+    tracking-**lifecycle** change (no new mapping ⇒ still no storage-layout change, but a behavior
+    change to validate against the live combat/colonize flows). Only Attack/Harvest/Colonize
+    **arrivals** are settleable lazily without touching the tracking lifecycle.
 - Removing `finish*` from the ABI is a breaking interface change; it is safe only once the frontend
   callers and the backend keeper are removed in the same release train.
 
@@ -234,6 +244,30 @@ contracts from `VeydriftGame`.
    Transport/Deploy/Colonize + all returns synchronously; resolve Attack/Harvest with try/catch on
    randomness (skip when uncommitted). Cross-player counterparty reconcile. Foundry tests incl. the
    cross-player attack ordering and the randomness-not-ready skip path.
+   **Implementation constraints (mapped during Phase-1b follow-up; resolve before coding):**
+   - **Enumeration/tracking lifecycle** — see the Phase 2 caveat under *Upgrade / migration*. Only
+     Attack/Harvest/Colonize **arrivals** are enumerable today; Transport/Deploy and all **returns**
+     need the existing tracking maps populated for those types with untrack deferred to
+     return-completion (no new mapping; behavior change to validate). The reconcile loop selects via
+     `_isPendingResolutionMission`-style predicates over `_resolutionMissionIdsByPlanet/ByPlayer`.
+   - **EIP-170 wall** — after Phase 1b, **gameplay has ~55 B and combat ~9 B** of headroom, so the
+     fleet-reconcile call cannot be wired into the gameplay/combat `_settleResources`/prologues
+     without first reclaiming bytecode (delegatecall-library extraction, as
+     `VeydriftAntiRaidPrimitives`/`VeydriftDefenseHoldStorage` already do). The reconcile *body*
+     (enumerate + dispatch + return-completion) lives in roomy modules (colonization 1,066 B /
+     planet-management 1,049 B) reached via a self-call, and resolving a mission re-invokes the
+     **existing** `resolveFleetMission`/`completeFleetMissionReturn` dispatch (no new
+     gameplay/combat bytecode); only *wiring the trigger into gameplay's own action prologues* is
+     bytecode-blocked. Partial coverage (roomy-module-routed actions only) is shippable first, like
+     Phase 1 → 1b.
+   - **Reentrancy** — keep the fleet reconcile in the **action prologue only**, never inside
+     `_settleResources`/`_settleDuePlanet`. Resolution bodies call `_settleResources` →
+     `_settleDuePlanet` (unit-queue self-call), which does **not** re-enter the fleet reconcile, so
+     it is recursion-free without a transient lock — provided no settle-path call site triggers it.
+   - **Safe slice order:** (a) Colonize arrivals (enumerable, deterministic, additive — Colonize
+     does not gate today); (b) Attack/Harvest arrivals (randomness `isFulfilled`-gated try/skip);
+     (c) tracking-lifecycle change to enumerate Transport/Deploy + returns, then settle them;
+     (d) bytecode reclaim → wire gameplay prologues for full coverage.
 3. **Remove keeper.** Delete `MissionResolutionService` + wiring + test. Extend read-model
    level/count derivation. Backend tests.
 4. **Remove frontend buttons.** Per the table above; UI renders from `asOfNow`.
