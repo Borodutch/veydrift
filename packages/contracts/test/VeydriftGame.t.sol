@@ -589,13 +589,12 @@ contract VeydriftGameTest is Test {
         assertEq(construction.cost.deuterium, 0);
         assertEq(construction.readyAt, block.timestamp + 108);
 
+        // Before readyAt the lazy reconcile is a no-op: the upgrade stays pending (VEY-KANEO-468 —
+        // finishBuildingUpgrade is now a thin wrapper that runs the reconcile, it no longer reverts).
         vm.prank(player);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftGameStorage.ConstructionNotReady.selector, construction.readyAt
-            )
-        );
         game.finishBuildingUpgrade(planetId);
+        assertTrue(game.activeBuildingConstruction(planetId).active);
+        assertEq(game.buildingLevel(planetId, Building.MetalMine), 0);
 
         vm.warp(construction.readyAt);
         vm.prank(player);
@@ -621,7 +620,7 @@ contract VeydriftGameTest is Test {
         );
     }
 
-    function testBuildingCompletionRejectsBeforeDisplayedReadyAt() public {
+    function testBuildingCompletionDoesNotApplyBeforeDisplayedReadyAt() public {
         address account = address(0xB005);
         vm.deal(account, 1 ether);
         vm.prank(account);
@@ -633,14 +632,13 @@ contract VeydriftGameTest is Test {
             game.activeBuildingConstruction(planetId);
         assertEq(construction.readyAt, block.timestamp + 432);
 
+        // One second before readyAt the lazy reconcile must NOT complete the upgrade (VEY-KANEO-468);
+        // it stays pending at the current level rather than reverting.
         vm.warp(construction.readyAt - 1);
         vm.prank(account);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftGameStorage.ConstructionNotReady.selector, construction.readyAt
-            )
-        );
         game.finishBuildingUpgrade(planetId);
+        assertTrue(game.activeBuildingConstruction(planetId).active);
+        assertEq(game.buildingLevel(planetId, Building.DeuteriumSynthesizer), 0);
 
         vm.warp(construction.readyAt);
         vm.prank(account);

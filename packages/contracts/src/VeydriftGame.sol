@@ -123,16 +123,13 @@ contract VeydriftGame is VeydriftResourceReserves {
         );
     }
 
+    /// @notice Back-compat wrapper (VEY-KANEO-468): building upgrades auto-settle inside
+    ///         `_settleResources` like every other completion, so this no longer gates on the
+    ///         construction being ready — it simply runs the lazy reconcile, which completes the
+    ///         upgrade once `readyAt` has elapsed (and is a no-op before then or when idle).
     function finishBuildingUpgrade(uint256 planetId) external {
         _touchPlayer(msg.sender);
         _requirePlanetOwner(planetId);
-        BuildingConstruction memory construction = buildingConstructions[planetId];
-        if (!construction.active) revert ConstructionInactive();
-        uint64 currentTime = uint64(block.timestamp);
-        if (currentTime < construction.readyAt) {
-            revert ConstructionNotReady(construction.readyAt);
-        }
-
         _settleResources(planetId);
     }
 
@@ -738,6 +735,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     function _settleResources(uint256 planetId) private {
         _requireNoPendingMissionResolutionForPlanet(planetId);
         _settleResourcesUpTo(planetId, uint64(block.timestamp));
+        _settleDuePlanet(planetId);
     }
 
     /// @dev Advances production (and any due building completion) up to `ceiling`. Callers that must

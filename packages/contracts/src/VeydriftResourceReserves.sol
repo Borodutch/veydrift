@@ -19,43 +19,34 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
     constructor(address admin) VeydriftGameStorage(admin) {}
 
     /// @notice Lazy on-chain reconciliation for a planet (VEY-KANEO-468): applies every completion
-    ///         whose `readyAt` has elapsed for `planetId` and its owner — ready research (player
-    ///         scoped) and ready ship/defense production (planet scoped) — without requiring a
-    ///         dedicated finish tx. Idempotent and bounded: each drain advances one ready queue
+    ///         whose `readyAt` has elapsed as of now for `planetId` and its owner — ready research
+    ///         (player scoped) and ready ship/defense production (planet scoped) — without requiring
+    ///         a dedicated finish tx. Idempotent and bounded: each drain advances one ready queue
     ///         entry per iteration and stops at the first not-yet-ready entry.
-    /// @dev Callers invoke this after settling resource production (`_settleResourcesUntil`), so a
-    ///      completion that lands mid-window does not retroactively rescale the whole settled window
-    ///      — matching how building completion and attack-snapshot queue drains already order.
-    ///      Building completion stays folded into the facade's `_settleResourcesUpTo`.
+    /// @dev A single self-call into `completeAttackTargetSnapshotQueues` fans the work out to the
+    ///      colonization (research + ship) and defense-production (defense) module impls — so the
+    ///      reconcile bodies live once, and every caller pays only a cheap external call. The facade
+    ///      gates that entrypoint to `msg.sender == address(this)`, and the drain impls never re-enter
+    ///      settlement, so this cannot recurse. Callers invoke this after settling resource production
+    ///      (`_settleResourcesUntil`), so a completion landing mid-window does not retroactively
+    ///      rescale the settled window. Building completion stays folded into `_settleResourcesUpTo`.
     function _settleDuePlanet(uint256 planetId) internal {
-        address owner = _planets[planetId].owner;
-        if (owner != address(0)) {
-            _settleResearchDue(owner);
-        }
-        _settleUnitQueuesDue(planetId);
+        IVeydriftUnitQueueSettler(address(this))
+            .completeAttackTargetSnapshotQueues(planetId, uint64(block.timestamp));
     }
 
-    /// @dev Applies a player's research level the moment a mutating call observes its queue elapsed.
-    ///      Research is single-queue/player-scoped with no backlog, so a single application suffices.
-    ///      This is the body of the (now redundant) `finishResearch` entrypoint.
-    function _settleResearchDue(address player) internal {
+    /// @dev Applies a player's research level once a settle observes its queue elapsed by `cutoffAt`.
+    ///      Research is single-queue/player-scoped with no backlog, so one application suffices. This
+    ///      is the body of the (now redundant) `finishResearch` entrypoint, generalized to a cutoff so
+    ///      an attack's impact-time snapshot settles the defender's by-impact research before combat
+    ///      reads tech levels. Called from the colonization queue-settler so it has a single home.
+    function _settleResearchDue(address player, uint64 cutoffAt) internal {
         ResearchQueue memory queue = researchQueues[player];
-        // Hour-scale queue completion; a validator nudging the block timestamp by seconds is moot.
-        // forge-lint: disable-next-line(block-timestamp)
-        if (queue.active && uint64(block.timestamp) >= queue.readyAt) {
+        if (queue.active && cutoffAt >= queue.readyAt) {
             delete researchQueues[player];
             _technologyLevels[player][queue.technology] = queue.targetLevel;
             emit ResearchCompleted(player, queue.technology, queue.targetLevel);
         }
-    }
-
-    /// @dev Drains all ready ship then defense production queue entries for `planetId` up to now,
-    ///      reusing the audited `completeAttackTargetSnapshotQueues` fan-out (self-call: the facade
-    ///      gates it to `msg.sender == address(this)`). The drain impls never re-enter settlement,
-    ///      so this cannot recurse.
-    function _settleUnitQueuesDue(uint256 planetId) internal {
-        IVeydriftUnitQueueSettler(address(this))
-            .completeAttackTargetSnapshotQueues(planetId, uint64(block.timestamp));
     }
 
     function setResourceTokens(address metalToken, address crystalToken, address deuteriumToken)

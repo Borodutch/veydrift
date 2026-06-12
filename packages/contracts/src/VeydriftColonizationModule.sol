@@ -106,6 +106,11 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     }
 
     function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external {
+        // Lazy on-chain reconciliation (VEY-KANEO-468): settle the planet owner's due research and
+        // this planet's due ship queues, then fan out to the defense-production module for defenses.
+        // For an attack snapshot `cutoffAt` is impact time (settling the defender's by-impact state);
+        // for an ordinary lazy settle it is `block.timestamp`.
+        _settleResearchDue(_planets[planetId].owner, cutoffAt);
         while (shipQueues[planetId].active && shipQueues[planetId].readyAt <= cutoffAt) {
             _completeReadyShipProduction(planetId, shipQueues[planetId]);
         }
