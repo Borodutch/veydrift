@@ -3140,6 +3140,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       deuterium: production ? Number(production.deuterium) : 0,
     };
   }, [infrastructureChainState?.productionPerHour]);
+  // VEY-KANEO-481: production rate that feeds the "affordable in …" ETA on disabled
+  // build/research/defense/shipyard actions. Only defined once the backend production
+  // rate has loaded so the ETA never renders the stalled copy during the initial load.
+  const productionRatesForEta = infrastructureChainState?.productionPerHour ? rates : undefined;
   // VEY-KANEO-465: storage caps are backend-derived (`storageCaps` on
   // /infrastructure) — no client recomputation.
   const caps = useMemo(() => {
@@ -4933,6 +4937,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onSelectBuilding={setSelectedBuildingKey}
           onUpgrade={handleUpgrade}
           planetProductionProfile={planetProductionProfile}
+          productionRates={productionRatesForEta}
           selectedBuildingKey={selectedBuildingKey}
           spendableResources={spendableResources}
           settledState={infrastructureState}
@@ -4999,6 +5004,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onRefresh={refreshResearchState}
           onResearch={handleResearch}
           onSelectResearch={setSelectedResearchKey}
+          productionRates={productionRatesForEta}
           researchState={effectiveResearchState}
           selectedResearchKey={selectedResearchKey}
           spendableResources={spendableResources}
@@ -5026,6 +5032,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onRefresh={refreshDefenseState}
           onSelectDefense={setSelectedDefenseKey}
           overviewQueue={onChainQueues?.defense}
+          productionRates={productionRatesForEta}
           selectedDefenseKey={selectedDefenseKey}
           spendableResources={spendableResources}
         />
@@ -5111,6 +5118,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onRefresh={refreshShipyardState}
           onSelectShip={setSelectedShipKey}
           overviewQueue={onChainQueues?.ship}
+          productionRates={productionRatesForEta}
           selectedShipKey={selectedShipKey}
           shipyardState={shipyardState}
           spendableResources={spendableResources}

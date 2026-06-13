@@ -551,8 +551,8 @@ describe("Research page load-error display", () => {
     });
   });
 
-  test("omits client-derived time-to-afford from research affordability copy", () => {
-    // VEY-KANEO-465: time-to-afford is game-state math the frontend no longer derives.
+  test("omits the affordable-in ETA from research copy when no production rate is supplied", () => {
+    // Live-read payloads without a backend production rate keep the plain missing-resource copy.
     const state = {
       ...createInitialPlayableState(10_000),
       buildings: {
@@ -579,6 +579,38 @@ describe("Research page load-error display", () => {
     expect(status).toMatchObject({
       disabled: true,
       reason: "Requires 900 more Metal, 300 more Crystal",
+    });
+  });
+
+  test("appends the backend-sourced affordable-in ETA to research copy when production rates are supplied (VEY-KANEO-481)", () => {
+    const state = {
+      ...createInitialPlayableState(10_000),
+      buildings: {
+        ...createInitialPlayableState(10_000).buildings,
+        researchLab: 1,
+      },
+      resources: { metal: 700, crystal: 2_000, deuterium: 1_000 },
+    };
+
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 1_600, crystal: 2_300, deuterium: 1_000 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_000_000,
+      researchState: researchState({
+        resources: { metal: "700", crystal: "2000", deuterium: "1000" },
+      }),
+      // Metal 900 short @ 900/h = 1h; Crystal 300 short @ 600/h = 30m. Max wait = 1h.
+      productionRates: { metal: 900, crystal: 600, deuterium: 0 },
+      state,
+    });
+
+    expect(status).toMatchObject({
+      disabled: true,
+      reason: "Requires 900 more Metal, 300 more Crystal (affordable in 1h)",
     });
   });
 

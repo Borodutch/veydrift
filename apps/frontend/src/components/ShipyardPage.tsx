@@ -38,6 +38,7 @@ interface ShipyardPageProps {
   onRefresh: () => void;
   onSelectShip?: ((key: ShipKey) => void) | undefined;
   overviewQueue?: ChainShipyardState["queue"] | undefined;
+  productionRates?: Resources | undefined;
   selectedShipKey?: ShipKey | undefined;
   shipyardState: ChainShipyardState | null;
   spendableResources?: Resources | undefined;
@@ -75,6 +76,7 @@ export function ShipyardPage({
   onRefresh,
   onSelectShip,
   overviewQueue,
+  productionRates,
   selectedShipKey,
   shipyardState,
   spendableResources,
@@ -126,6 +128,7 @@ export function ShipyardPage({
             resources: spendableResources ?? resources,
             shipyardLevel,
             shipyardState,
+            productionRates,
           })}
           now={now}
           onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
@@ -216,6 +219,7 @@ export function shipProductionItems({
   resources,
   shipyardLevel,
   shipyardState,
+  productionRates,
 }: {
   actionPending: boolean;
   canTransact: boolean;
@@ -225,6 +229,7 @@ export function shipProductionItems({
   resources: Resources | undefined;
   shipyardLevel: number;
   shipyardState: ChainShipyardState | null;
+  productionRates?: Resources | undefined;
 }): ProductionCatalogItem<ShipKey>[] {
   // Build only from the buildable subset so expedition-only ships (Pathfinder) are
   // hidden from the shipyard. `shipCatalog` is still used elsewhere for queue label
@@ -255,6 +260,7 @@ export function shipProductionItems({
       shipUnavailable,
       shipyardState,
       totalCost,
+      productionRates,
     });
     const disabled = Boolean(blockedReason) || actionPending;
     const combatStats = shipCombatStats(ship);
@@ -421,6 +427,7 @@ export function getBlockedReason({
   shipUnavailable,
   shipyardState,
   totalCost,
+  productionRates,
 }: {
   affordable: boolean;
   canTransact: boolean;
@@ -430,6 +437,7 @@ export function getBlockedReason({
   shipUnavailable: boolean;
   shipyardState?: ChainShipyardState | null | undefined;
   totalCost?: Resources | undefined;
+  productionRates?: Resources | undefined;
 }): string | undefined {
   if (!canTransact) return "Wallet or game contract unavailable";
   if (!shipyardState) return "Waiting for chain state";
@@ -438,7 +446,7 @@ export function getBlockedReason({
   if (!hasPlanet) return "No game planet";
   if (missing.length > 0) return missing[0];
   if (!resources) return "Resources unavailable";
-  if (!affordable && totalCost) return formatMissingResources(resources, totalCost);
+  if (!affordable && totalCost) return formatMissingResources(resources, totalCost, productionRates);
   if (!affordable) return "Insufficient resources";
   return undefined;
 }

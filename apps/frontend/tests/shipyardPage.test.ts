@@ -122,6 +122,21 @@ describe("Shipyard page display helpers", () => {
     })).toBe("Waiting for chain state");
   });
 
+  test("appends the affordable-in ETA to the unaffordable reason when production rates are supplied (VEY-KANEO-481)", () => {
+    // 500 Metal short @ 1000 Metal/h = 30m.
+    expect(getBlockedReason({
+      affordable: false,
+      canTransact: true,
+      hasPlanet: true,
+      missing: [],
+      resources: { metal: 4_500, crystal: 5_000, deuterium: 5_000 },
+      shipUnavailable: false,
+      shipyardState: shipyardState(),
+      totalCost: { metal: 5_000, crystal: 5_000, deuterium: 0 },
+      productionRates: { metal: 1_000, crystal: 1_000, deuterium: 0 },
+    })).toBe("Requires 500 more Metal (affordable in 30m)");
+  });
+
   test("labels refresh errors as stale-data notices when shipyard state remains loaded", () => {
     expect(shipyardRefreshErrorLabel({
       error: "Shipyard request failed with 503",

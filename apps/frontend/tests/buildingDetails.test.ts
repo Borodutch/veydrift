@@ -44,6 +44,26 @@ describe("building detail helpers", () => {
     });
   });
 
+  test("appends the affordable-in ETA to a disabled upgrade when production rates are supplied (VEY-KANEO-481)", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        solarPlant: 1,
+      },
+      resources: { metal: 10, crystal: 5_000, deuterium: 5_000 },
+    };
+
+    // 50 Metal short @ 100 Metal/h = 30m.
+    expect(buildingUpgradeStatus(state, "metalMine", {
+      productionRates: { metal: 100, crystal: 100, deuterium: 0 },
+    })).toMatchObject({
+      disabled: true,
+      reason: "Requires 50 more Metal (affordable in 30m)",
+      targetLevel: 1,
+    });
+  });
+
   test("threads the backend-sourced upgrade duration onto the status (VEY-KANEO-472)", () => {
     const state = {
       ...createInitialPlayableState(1_000),
@@ -64,8 +84,8 @@ describe("building detail helpers", () => {
     expect(buildingUpgradeStatus(state, "metalMine").durationSeconds).toBeUndefined();
   });
 
-  test("lists missing resources without a client-derived time-to-afford estimate", () => {
-    // VEY-KANEO-465: time-to-afford is game-state math the frontend no longer derives.
+  test("lists missing resources without an ETA when no production rate is supplied", () => {
+    // Live-read payloads without a backend production rate keep the plain missing-resource copy.
     expect(formatMissingResources(
       { metal: 20, crystal: 50, deuterium: 0 },
       { metal: 80, crystal: 80, deuterium: 0 },
@@ -75,6 +95,31 @@ describe("building detail helpers", () => {
       { metal: 20, crystal: 50, deuterium: 0 },
       { metal: 80, crystal: 50, deuterium: 10 },
     )).toBe("Requires 60 more Metal, 10 more Deuterium");
+  });
+
+  test("appends the backend-sourced \"affordable in\" ETA when a production rate is supplied (VEY-KANEO-481)", () => {
+    // ETA is the maximum across missing resources: metal 60 short @ 120/h = 30m,
+    // crystal 30 short @ 30/h = 1h — so the 1h crystal wait dominates.
+    expect(formatMissingResources(
+      { metal: 20, crystal: 50, deuterium: 0 },
+      { metal: 80, crystal: 80, deuterium: 0 },
+      { metal: 120, crystal: 30, deuterium: 0 },
+    )).toBe("Requires 60 more Metal, 30 more Crystal (affordable in 1h)");
+
+    // Single missing resource: 60 short @ 120/h = 30m.
+    expect(formatMissingResources(
+      { metal: 20, crystal: 50, deuterium: 0 },
+      { metal: 80, crystal: 50, deuterium: 0 },
+      { metal: 120, crystal: 30, deuterium: 0 },
+    )).toBe("Requires 60 more Metal (affordable in 30m)");
+  });
+
+  test("reports the stalled copy when a needed resource has no production (VEY-KANEO-481)", () => {
+    expect(formatMissingResources(
+      { metal: 20, crystal: 50, deuterium: 0 },
+      { metal: 80, crystal: 80, deuterium: 0 },
+      { metal: 120, crystal: 0, deuterium: 0 },
+    )).toBe("Requires 60 more Metal, 30 more Crystal (time unavailable: no Crystal production)");
   });
 
   test("uses spendable accrued resources for building affordability", () => {

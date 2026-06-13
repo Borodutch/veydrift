@@ -473,6 +473,42 @@ describe("Defense page display helpers", () => {
       disabled: true,
     });
   });
+
+  test("appends the affordable-in ETA to the insufficient-resource copy when production rates are supplied (VEY-KANEO-481)", () => {
+    const items = defenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      defenseState: defenseState({
+        shipyardLevel: 1,
+        defenses: [
+          {
+            id: 0,
+            count: 0,
+            cost: {
+              metal: "2000",
+              crystal: "0",
+              deuterium: "0",
+            },
+          },
+        ],
+      }),
+      productionAvailable: true,
+      quantities: { rocketLauncher: 2 },
+      queue: undefined,
+      resources: {
+        metal: 3_500,
+        crystal: 0,
+        deuterium: 0,
+      },
+      // 500 Metal short @ 1000 Metal/h = 30m.
+      productionRates: { metal: 1_000, crystal: 1_000, deuterium: 0 },
+    });
+
+    expect(items.find((item) => item.key === "rocketLauncher")).toMatchObject({
+      blockedReason: "Requires 500 more Metal (affordable in 30m)",
+      disabled: true,
+    });
+  });
 });
 
 describe("Defense build time (VEY-KANEO-472)", () => {
