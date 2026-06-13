@@ -134,6 +134,12 @@ export type SettlementIndexerOptions = {
   // ingested RandomnessFulfilled logs. When false, no randomness data is expected and readiness stays
   // on the plain arrival check, preserving behaviour for deployments without the engine.
   randomnessEngineConfigured?: boolean;
+  // VEY-KANEO-485: hard deadline (ms) for the chain-read phase of a full cold rebuild. The self-hosted
+  // node is the only RPC and caps eth_getLogs at 100k blocks; if the deploy->head backfill stalls, the
+  // rebuild rejects with a real error (recorded as lastReconciliationError, retried by the boot-time
+  // recovery) instead of sitting in reconciliation_in_progress forever. Omitted/<=0 disables the
+  // deadline (the in-memory test indexer has no slow RPC to guard).
+  rebuildDeadlineMs?: number;
 };
 
 // A single field of a planet's stored canonical state that disagrees with the
@@ -380,6 +386,7 @@ export class SettlementIndexer {
     this.db = options.database ?? openIndexerDatabase(options.databasePath ?? ":memory:");
     this.qaSyntheticStationedDefenders = options.qaSyntheticStationedDefenders ?? false;
     this.randomnessEngineConfigured = options.randomnessEngineConfigured ?? false;
+    this.rebuildDeadlineMs = options.rebuildDeadlineMs && options.rebuildDeadlineMs > 0 ? options.rebuildDeadlineMs : 0;
     this.migrate();
   }
 
@@ -387,6 +394,8 @@ export class SettlementIndexer {
   private readonly qaSyntheticStationedDefenders: boolean;
   // VEY-KANEO-479: see SettlementIndexerOptions. Gates arrived-Attack readiness on randomness.
   private readonly randomnessEngineConfigured: boolean;
+  // VEY-KANEO-485: see SettlementIndexerOptions. 0 = no cold-rebuild deadline.
+  private readonly rebuildDeadlineMs: number;
 
   snapshot(): IndexerSnapshot {
     const reconciliationInProgress = this.rebuildPromise !== null || this.planetRebuildPromise !== null;
@@ -1572,7 +1581,10 @@ export class SettlementIndexer {
     return this.planetRebuildPromise;
   }
 
-  private async rebuildUncached(): Promise<IndexerSnapshot> {
+  // VEY-KANEO-485: the chain-read phase of a full cold rebuild — every getLogs backfill and canonical
+  // read — wrapped so the deadline guards the slow, RPC-bound work. The fast synchronous DB write phase
+  // runs after the inputs are in hand.
+  private async readRebuildInputs() {
     const settledPlanetEvents = await this.chainReader.listSettledPlanetEvents(this.fromBlock, "latest");
     const currentPlanets = this.chainReader.listCurrentPlanets
       ? await this.chainReader.listCurrentPlanets()
@@ -1589,6 +1601,38 @@ export class SettlementIndexer {
     const allianceDirectory = this.chainReader.listAllianceDirectoryState
       ? await this.chainReader.listAllianceDirectoryState()
       : [];
+    return { settledPlanetEvents, planetEvents, debrisEvents, moonChanceEvents, canonicalState, allianceLogs, allianceDirectory };
+  }
+
+  // VEY-KANEO-485: surface a real error if the cold rebuild's chain reads stall past the deadline,
+  // instead of leaving the index stuck in reconciliation_in_progress with lastReconciliationError=null
+  // forever. The abandoned reads resolve into the void (no DB write runs unless the inputs arrive in
+  // time); rebuild()'s catch records the error and the boot-time recovery retries it.
+  private withRebuildDeadline<T>(read: Promise<T>): Promise<T> {
+    if (!this.rebuildDeadlineMs) return read;
+    const deadlineMs = this.rebuildDeadlineMs;
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`cold reindex chain read exceeded ${deadlineMs}ms deadline`));
+      }, deadlineMs);
+      (timer as { unref?: () => void }).unref?.();
+      read.then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (error) => { clearTimeout(timer); reject(error); }
+      );
+    });
+  }
+
+  private async rebuildUncached(): Promise<IndexerSnapshot> {
+    const {
+      settledPlanetEvents,
+      planetEvents,
+      debrisEvents,
+      moonChanceEvents,
+      canonicalState,
+      allianceLogs,
+      allianceDirectory
+    } = await this.withRebuildDeadline(this.readRebuildInputs());
     const rebuild = this.db.transaction(() => {
       this.db.query("DELETE FROM indexed_planets").run();
       this.db.query("DELETE FROM indexed_debris_fields").run();

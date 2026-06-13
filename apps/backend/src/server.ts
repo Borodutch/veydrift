@@ -143,7 +143,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       qaSyntheticStationedDefenders: loaded.config.qaSyntheticStationedDefenders,
       // VEY-KANEO-479: when the randomness engine is configured, gate an arrived Attack's readiness on
       // its battle randomness being fulfilled (derived from ingested RandomnessFulfilled logs).
-      randomnessEngineConfigured: Boolean(loaded.config.randomnessEngineAddress)
+      randomnessEngineConfigured: Boolean(loaded.config.randomnessEngineAddress),
+      // VEY-KANEO-485: bound the cold wipe->reindex chain reads so a stall surfaces a real error and the
+      // boot-time recovery retries, instead of an indefinite silent reconciliation_in_progress.
+      ...(loaded.config.rebuildDeadlineMs ? { rebuildDeadlineMs: loaded.config.rebuildDeadlineMs } : {})
     }) : undefined);
   const logBackfiller = deriveLogBackfiller(indexerChainReader);
   const chainSync =
