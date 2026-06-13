@@ -397,6 +397,17 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             return;
         }
 
+        // VEY-KANEO-492: attack protection is enforced at RESOLUTION as well as at launch. A target
+        // that entered score/newbie protection or joined the attacker's alliance while the fleet was
+        // in flight must not be raided through the launch->impact "attack gap". Bounce the whole
+        // attack group home with no combat, losses, debris, or plunder.
+        AttackBlockReason protectionReason =
+            _resolutionProtectionBlock(mission.owner, mission.targetPlanetId);
+        if (protectionReason != AttackBlockReason.None) {
+            _bounceProtectedAttack(missionId, mission, protectionReason);
+            return;
+        }
+
         BattleSettlement memory settlement = _runBattle(missionId, mission);
 
         if (settlement.outcome == BattleOutcome.AttackerWin) {
@@ -450,6 +461,40 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         );
         emit CombatDebrisSignaled(missionId, mission.targetPlanetId, debris.metal, debris.crystal);
         _requestMoonChanceFromBattle(missionId, mission.targetPlanetId, debris);
+    }
+
+    /// @dev Resolution-time re-check of attack protection. Mirrors the launch enforcement for the
+    ///      "this target may not be raided" reasons (score/newbie protection and same-alliance) but
+    ///      deliberately ignores BashingLimit: the bashing window count is incremented at launch, so
+    ///      re-checking it here would bounce every legitimately launched attack once the window
+    ///      filled. Returns AttackBlockReason.None when the attack may proceed to battle.
+    function _resolutionProtectionBlock(address attacker, uint256 targetPlanetId)
+        private
+        view
+        returns (AttackBlockReason)
+    {
+        (AttackBlockReason reason,) = _attackProtectionPreview(attacker, targetPlanetId);
+        if (reason == AttackBlockReason.ScoreProtection || reason == AttackBlockReason.SameAlliance)
+        {
+            return reason;
+        }
+        return AttackBlockReason.None;
+    }
+
+    /// @dev Sends a protected-on-impact attack home untouched: joined attackers and summoned
+    ///      defenders return via the shared linked-mission path, and the attack fleet keeps all of
+    ///      its ships and cargo and turns around. No battle runs, so there are no losses, debris, or
+    ///      plunder against the now-protected defender. The gameplay-module resolver emits the main
+    ///      mission's FleetMissionResolved / FleetMissionReturnExposed events off mission.status,
+    ///      mirroring the surviving-fleet battle path.
+    function _bounceProtectedAttack(
+        uint256 missionId,
+        FleetMission storage mission,
+        AttackBlockReason reason
+    ) private {
+        _returnLinkedMissions(missionId, mission);
+        mission.status = FleetMissionStatus.Returning;
+        emit AttackBouncedByProtection(missionId, mission.owner, mission.targetPlanetId, reason);
     }
 
     function _runBattle(uint256 missionId, FleetMission storage mission)

@@ -255,6 +255,12 @@ contract VeydriftGameTest is Test {
         uint32 hits,
         uint32 destroyedPrimary
     );
+    event AttackBouncedByProtection(
+        uint256 indexed missionId,
+        address indexed attacker,
+        uint256 indexed targetPlanetId,
+        VeydriftGameStorage.AttackBlockReason reason
+    );
 
     function setUp() public {
         game = _newGame(admin);
@@ -3016,6 +3022,66 @@ contract VeydriftGameTest is Test {
         );
         (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+    }
+
+    function testAttackResolutionBouncesWhenTargetBecomesScoreProtectedMidFlight() public {
+        vm.warp(8 days);
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setTechnologyLevel(player, Technology.Computer, 2);
+
+        // Attacker and the newbie target start close enough in score that the launch is NOT
+        // score-protected and the attack is allowed to depart.
+        _setShipCount(originPlanetId, Ship.SmallCargo, 50);
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 50);
+        _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(targetPlanetId, 500_000, 500_000, 500_000);
+
+        (VeydriftGameStorage.AttackBlockReason launchReason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(launchReason), uint8(VeydriftGameStorage.AttackBlockReason.None));
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            123
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        // While the fleet is in flight the attacker's empire balloons far past the newbie target,
+        // so the target is now score-protected and must not be raided on impact (the "attack gap").
+        _setShipCount(originPlanetId, Ship.Battleship, 1_000_000);
+        (VeydriftGameStorage.AttackBlockReason impactReason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(impactReason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection));
+
+        uint32 defenderShipsBefore = game.shipCount(targetPlanetId, Ship.SmallCargo);
+
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 1);
+        vm.expectEmit(true, true, true, true, address(game));
+        emit AttackBouncedByProtection(
+            missionId, player, targetPlanetId, VeydriftGameStorage.AttackBlockReason.ScoreProtection
+        );
+        game.resolveFleetMission(missionId);
+
+        // The attack fleet bounced: it is returning with its ship intact and empty cargo (no
+        // plunder loaded), and the protected defender kept all of its ships.
+        (
+            VeydriftGameStorage.FleetMissionStatus status,,,
+            VeydriftGameStorage.Resources memory cargo
+        ) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(cargo.metal, 0);
+        assertEq(cargo.crystal, 0);
+        assertEq(cargo.deuterium, 0);
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 49);
+        assertEq(game.shipCount(targetPlanetId, Ship.SmallCargo), defenderShipsBefore);
     }
 
     function testBashingLimitBlocksSeventhAttackUnlessDefenderIsInactive() public {
