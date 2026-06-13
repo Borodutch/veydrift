@@ -2559,15 +2559,16 @@ describe("Veydrift backend", () => {
         crystal: "4900",
         deuterium: "4800"
       },
-      // Lazy on-chain reconciliation (VEY-KANEO-468): readyAt is in the past, so the building has
-      // settled as-of-now on public all-players state too — no active construction, and the level
-      // is projected up (asserted below: building id 0 -> level 2).
+      // readyAt is in the past, so the elapsed entry is no longer an active construction on public
+      // all-players state either (no active queue). But the served level stays pinned to the
+      // contract-authoritative level — it is NOT optimistically projected up. The on-chain level
+      // only advances on the BuildingCompleted finish event (VEY-486: building id 0 stays level 1).
       queues: {
         building: null
       }
     });
     expect(occupiedPlanet.publicState.buildings).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, level: 2 })
+      expect.objectContaining({ id: 0, level: 1 })
     ]));
     expect(occupiedPlanet.publicState.fleet).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 0, count: 2 }),
@@ -2907,12 +2908,69 @@ describe("Veydrift backend", () => {
     expect(planetsResponse.status).toBe(200);
     expect(infrastructureResponse.status).toBe(200);
     expect(settlementBody.planet.resources.metal).toBe("5064");
-    expect(planetsBody.planets[0].resources.metal).toBe("5064");
+    // The planet roster is a settled-snapshot surface (VEY-KANEO-488): `resources` is the
+    // canonical value at `lastSettledAt` (5000 stored, matching the chain at a matched settle
+    // time so the contract<->DB watchdog reports no db>chain divergence), while the live
+    // production-accrued balance is exposed separately as `resourcesAsOfNow` (5064).
+    expect(planetsBody.planets[0].resources.metal).toBe("5000");
+    expect(planetsBody.planets[0].resourcesAsOfNow.metal).toBe("5064");
     expect(infrastructureBody.planetId).toBe("7");
     expect(infrastructureBody.planetLastSettledAt).toBe(settlementBody.planet.lastSettledAt);
     expect(infrastructureBody.resources.metal).toBe("5064");
     // Raidable loot reflects ~50% of resources (RAID_PLUNDER_BPS), not the full 5064 (VEY-451).
     expect(infrastructureBody.raidableResources.metal).toBe("2532");
+  });
+
+  test("planet roster serves the settled resource snapshot at lastSettledAt, with the accrued balance in resourcesAsOfNow (VEY-KANEO-488)", async () => {
+    // The external contract<->DB watchdog compares the roster's `resources` against the chain's
+    // stored `planet().resources` whenever `lastSettledAt` matches on both sides. Projecting
+    // production into `resources` while keeping the settled `lastSettledAt` made the served value
+    // exceed the chain at a matched settle time (db>chain). The roster must therefore keep
+    // `resources` equal to the settled snapshot and surface the live balance as `resourcesAsOfNow`.
+    const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm roster should not rebuild from chain");
+    };
+    const settledAt = (Math.floor(Date.now() / 1_000) - 7_200).toString();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      lastSettledAt: settledAt
+    });
+    // A metal mine + solar plant give the planet a nonzero production rate, so the accrued
+    // balance diverges from the settled snapshot over the elapsed two hours.
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xmine",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xsolar",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(3n)],
+      data: abiWords(1n)
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
+
+    const planetsResponse = await handler(new Request(`http://localhost/wallet/${player}/planets`));
+    const planetsBody = await planetsResponse.json();
+    const served = planetsBody.planets[0];
+
+    expect(planetsResponse.status).toBe(200);
+    // `resources` is the settled snapshot, unchanged from the indexed event — equals the chain's
+    // stored resources at the matched `lastSettledAt`, so the watchdog reports no db>chain divergence.
+    expect(served.lastSettledAt).toBe(settledAt);
+    expect(served.resources).toEqual(planet.resources);
+    // The live, production-accrued balance is exposed separately and strictly exceeds the snapshot.
+    expect(Number(served.resourcesAsOfNow.metal)).toBeGreaterThan(Number(served.resources.metal));
+    // Plunderable loot still reflects the live balance, not the frozen snapshot.
+    expect(Number(served.tactical.raidableResourceTotal)).toBeGreaterThan(0);
   });
 
   test("serves selected infrastructure planet resources from the indexed DB without a per-request chain read (VEY-KANEO-461)", async () => {
@@ -3620,11 +3678,13 @@ describe("Veydrift backend", () => {
       buildings: expect.arrayContaining([
         expect.objectContaining({
           id: 0,
-          level: 2
+          level: 1
         })
       ]),
-      // Lazy on-chain reconciliation (VEY-KANEO-468): the elapsed building has settled as-of-now
-      // (building id 0 projected to level 2 above), so there is no active construction.
+      // The served level stays pinned to the contract-authoritative level (building id 0 -> 1).
+      // An elapsed-but-unfinished build queue must NOT optimistically project the level up to 2:
+      // the on-chain buildingLevel only advances on the BuildingCompleted finish event (VEY-486).
+      // The elapsed entry is no longer an active construction either, so the queue is null.
       queue: null
     });
   });

@@ -619,8 +619,10 @@ describe("SettlementIndexer", () => {
     ).storageCaps;
     expect(caps?.crystal).toBe("20000");
 
-    // Contrast: a non-storage building (metal mine, id 0) under the identical elapsed-queue setup
-    // DOES still settle optimistically, so the fix is scoped to storage caps only.
+    // A non-storage building (metal mine, id 0) under the identical elapsed-queue setup now stays
+    // pinned to the contract level too: the served level must equal the on-chain buildingLevel,
+    // which only advances on the BuildingCompleted finish event — never from an elapsed-but-
+    // unfinished queue entry's targetLevel (VEY-486: a +1 over-count across all building types).
     const mineIndexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -642,7 +644,18 @@ describe("SettlementIndexer", () => {
       topics: [buildingStartedTopic, topic(7n), topic(0n)],
       data: abiWords(8n, BigInt(elapsedReadyAt), 0n, 0n, 0n)
     });
+    // Served level stays at the contract-authoritative 4 (NOT the optimistic queued target 8).
+    expect(mineIndexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(4);
+    // Only once the on-chain finish (BuildingCompleted) is indexed does the served level advance to 8.
+    mineIndexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xminedone",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(8n)
+    });
     expect(mineIndexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(8);
+    expect(mineIndexer.playerQueues(player, planet.planetId).building).toBeNull();
   });
 
   test("records an active queue startedAt aligned with the spend settle time (VEY-318)", () => {
