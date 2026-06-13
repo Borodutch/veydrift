@@ -324,13 +324,6 @@ export type ApplyLogResult = {
 // (VEY-KANEO-461). 25 keeps the reconcile completing without making it serial-slow.
 const CANONICAL_READ_PLANET_CHUNK = 25;
 
-// Storage building ids (MetalStorage=7, CrystalStorage=8, DeuteriumTank=9). These gate the
-// per-resource storage cap. The contract only raises that cap when finishBuildingUpgrade is
-// called on-chain, so the backend must NOT optimistically (wall-clock) complete a storage
-// upgrade — doing so reports a higher cap than storageCaps(planetId) and lets resourcesAsOfNow
-// accrue past what the contract enforces (VEY-KANEO-483).
-const STORAGE_BUILDING_IDS: ReadonlySet<number> = new Set([7, 8, 9]);
-
 // Mission types whose just-settled combat at a planet warrants a bounded canonical reconcile of the
 // planets involved (origin survivors / stationed-defender losses). Drives drainFleetMissionReconcilePlanets;
 // ship counts themselves are now authoritative from PlanetShipCountChanged events (VEY-KANEO-461).
@@ -876,18 +869,18 @@ export class SettlementIndexer {
   }
 
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
-    const completed = this.queueSettlement(`building:${planetId}`).completed;
-    return deriveBuildingRows((id) => {
-      const level = this.indexedLevel("contract_building_levels", "building_id", planetId, id);
-      // Storage buildings stay pinned to the contract-authoritative level so the derived
-      // storage cap matches storageCaps(planetId) exactly; only finishBuildingUpgrade (picked
-      // up by the canonical re-pin) raises it (VEY-KANEO-483).
-      if (STORAGE_BUILDING_IDS.has(id)) return level;
-      const settled = completed
-        .filter((entry) => entry.itemId === id && entry.targetLevel !== undefined)
-        .reduce((max, entry) => Math.max(max, entry.targetLevel ?? max), level);
-      return settled;
-    });
+    // Every building level is served contract-authoritative (VEY-KANEO-486). The contract's
+    // buildingLevel(planetId, building) view returns the raw stored _buildingLevels and only
+    // advances when a settling tx (finishBuildingUpgrade / any call routing through
+    // _settleResources) lands on-chain and emits BuildingCompleted — which the indexer applies to
+    // contract_building_levels via applyQueueCompletionEffects. Optimistically completing a queued
+    // upgrade by wall-clock once its readyAt elapsed put the served level +1 above chain for idle
+    // planets (no settling tx yet) and, because productionPerHour is derived from these rows, let
+    // resourcesAsOfNow accrue at the not-yet-earned rate. This extends the storage-cap pin
+    // (VEY-KANEO-483) to every building type.
+    return deriveBuildingRows((id) =>
+      this.indexedLevel("contract_building_levels", "building_id", planetId, id)
+    );
   }
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {

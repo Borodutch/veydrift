@@ -569,7 +569,7 @@ describe("SettlementIndexer", () => {
     expect(Number(projected?.resources.metal)).toBe(previewOracle);
   });
 
-  test("does not optimistically raise the storage cap above the contract until the upgrade finishes on-chain (VEY-KANEO-483)", () => {
+  test("serves building levels contract-authoritative until the upgrade finishes on-chain (VEY-KANEO-483/486)", () => {
     // A crystal-storage upgrade whose build timer has elapsed by wall-clock must NOT raise the
     // backend storage cap. The contract only bumps storageCaps(planetId) when finishBuildingUpgrade
     // lands on-chain, so optimistically completing the storage building reported crystal cap 40,000
@@ -618,8 +618,11 @@ describe("SettlementIndexer", () => {
     ).storageCaps;
     expect(caps?.crystal).toBe("20000");
 
-    // Contrast: a non-storage building (metal mine, id 0) under the identical elapsed-queue setup
-    // DOES still settle optimistically, so the fix is scoped to storage caps only.
+    // A non-storage building (metal mine, id 0) under the identical elapsed-queue setup stays
+    // pinned the same way (VEY-KANEO-486): the contract's buildingLevel view returns the raw stored
+    // level until a settling tx emits BuildingCompleted, so optimistically completing the upgrade by
+    // wall-clock reported the served level +1 above chain for idle planets. The mine stays at its
+    // contract-authoritative level 4, not the queued target level 8.
     const mineIndexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -640,6 +643,16 @@ describe("SettlementIndexer", () => {
       logIndex: "0x0",
       topics: [buildingStartedTopic, topic(7n), topic(0n)],
       data: abiWords(8n, BigInt(elapsedReadyAt), 0n, 0n, 0n)
+    });
+    expect(mineIndexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(4);
+    // Once the on-chain settling tx lands, the indexer applies BuildingCompleted and the served
+    // level advances to the contract-authoritative target — the upgrade is not lost, only deferred.
+    mineIndexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xminedone",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(8n)
     });
     expect(mineIndexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(8);
   });

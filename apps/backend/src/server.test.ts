@@ -2562,15 +2562,16 @@ describe("Veydrift backend", () => {
         crystal: "4900",
         deuterium: "4800"
       },
-      // Lazy on-chain reconciliation (VEY-KANEO-468): readyAt is in the past, so the building has
-      // settled as-of-now on public all-players state too — no active construction, and the level
-      // is projected up (asserted below: building id 0 -> level 2).
+      // Lazy on-chain reconciliation (VEY-KANEO-468): readyAt is in the past, so the construction
+      // still settles as-of-now in the queue view on public all-players state too — no active
+      // construction shown. The level stays contract-authoritative (asserted below: building id
+      // 0 -> level 1) until a settling tx emits BuildingCompleted (VEY-KANEO-486).
       queues: {
         building: null
       }
     });
     expect(occupiedPlanet.publicState.buildings).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, level: 2 })
+      expect.objectContaining({ id: 0, level: 1 })
     ]));
     expect(occupiedPlanet.publicState.fleet).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 0, count: 2 }),
@@ -3637,11 +3638,15 @@ describe("Veydrift backend", () => {
       buildings: expect.arrayContaining([
         expect.objectContaining({
           id: 0,
-          level: 2
+          // Contract-authoritative (VEY-KANEO-486): the served level stays at the canonical level 1
+          // even though the queued upgrade's readyAt has elapsed. The contract's buildingLevel view
+          // only advances when a settling tx lands and emits BuildingCompleted, so projecting the
+          // queued targetLevel here put the served level +1 above chain.
+          level: 1
         })
       ]),
-      // Lazy on-chain reconciliation (VEY-KANEO-468): the elapsed building has settled as-of-now
-      // (building id 0 projected to level 2 above), so there is no active construction.
+      // Lazy on-chain reconciliation (VEY-KANEO-468): the elapsed construction still settles
+      // as-of-now in the queue view, so there is no active construction shown.
       queue: null
     });
   });
