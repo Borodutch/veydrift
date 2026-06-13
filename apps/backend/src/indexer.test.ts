@@ -817,6 +817,57 @@ describe("SettlementIndexer", () => {
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(4);
   });
 
+  test("availableShipRows applies a Colonize launch's colony-ship debit, leaving no phantom at origin (VEY-KANEO-490)", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    // Build 1 colony ship (ship id 3) on planet 7: ShipCompleted(planet 7, ship 3, qty 1, total 1).
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-colony",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(3n)],
+      data: abiWords(1n, 1n)
+    });
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 3)?.count).toBe(1);
+
+    // Launch the Colonize fleet mission (missionType 2) carrying the colony ship. The contract debits the
+    // colony ship at launch and emits PlanetShipCountChanged(planet 7, ship 3, total 0) — the same sink
+    // every other mission type uses (VEY-KANEO-490). The fleet-mission logs alone carry no ship debit.
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xcolonize",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(50n), addressTopic(player), topic(2n)],
+      data: abiWords((1n << 255n) | (2n << 24n) | (44n << 8n) | 10n, 0n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xcolonize",
+      logIndex: "0x1",
+      topics: [fleetMissionShipsTopic, topic(50n)],
+      // One colony ship (4th ship slot), nothing else.
+      data: abiWords(0n, 0n, 0n, 1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xcolonize",
+      logIndex: "0x2",
+      topics: [planetShipCountChangedTopic, topic(7n), topic(3n)],
+      data: abiWords(0n)
+    });
+
+    // The departed colony ship is debited from the at-planet roster: no phantom over-reporting the origin.
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 3)?.count).toBe(0);
+    // The active colonize mission is still surfaced to its owner from the fleet-mission logs.
+    expect(indexer.fleetMissionVisibility(player).outgoing.find((mission) => mission.missionId === "50"))
+      .toMatchObject({ missionType: "Colonize", status: "Outbound", ships: { colonyShip: "1" } });
+  });
+
   test("availableShipRows never double-subtracts: the evented at-planet count is the single source of truth (VEY-KANEO-461)", async () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

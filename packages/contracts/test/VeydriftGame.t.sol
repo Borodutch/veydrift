@@ -2622,6 +2622,45 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(colonyPlanetId).resources.deuterium, 100);
     }
 
+    /// @notice VEY-KANEO-490: a Colonize fleet-mission launch must route its colony-ship debit through
+    ///         the `PlanetShipCountChanged` sink, exactly like attack/transport launches do. The indexer
+    ///         derives the at-planet roster (`contract_ship_counts`) purely from this event, so a launch
+    ///         that debits storage WITHOUT emitting would leave the indexer's origin count un-debited —
+    ///         a phantom colony ship that over-reports the origin roster even though the ship has
+    ///         departed. The existing coverage only asserts the on-chain `shipCount` (storage) drops to
+    ///         0, which stays green even if the emit is dropped; this locks the event in.
+    function testColonizeFleetMissionLaunchEmitsShipCountChanged() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 2, 44, 8);
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        // The launch debits the single colony ship from the origin and must emit the resulting total (0)
+        // through the same `PlanetShipCountChanged` sink the indexer integrates for every mission type.
+        vm.expectEmit(true, true, false, true, address(game));
+        emit PlanetShipCountChanged(originPlanetId, Ship.ColonyShip, 0);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            _colonizationTargetId(2, 44, 9),
+            VeydriftGameStorage.FleetMissionType.Colonize,
+            _colonyShipManifest(),
+            VeydriftGameStorage.Resources({metal: 300, crystal: 200, deuterium: 100}),
+            100,
+            0
+        );
+
+        // The mission is still Outbound (not resolved), proving the debit + emit happen at launch time
+        // rather than only at colony creation, and the origin storage roster is debited to 0.
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(game.shipCount(originPlanetId, Ship.ColonyShip), 0);
+    }
+
     /// @notice VEY-KANEO-468 Phase 2a: an arrived Colonize mission resolves lazily on the owner's
     ///         next mutating action (here `startShipProduction`, which runs the player-scoped Colonize
     ///         reconcile in its prologue) — no explicit `resolveFleetMission`/keeper tx.
