@@ -2,6 +2,9 @@ import type {
   Address,
   AllianceIdentity,
   AllianceState,
+  AllianceJoinRequestSnapshot,
+  AllianceInviteSnapshot,
+  AllianceDiplomacySnapshot,
   AttackProtectionStatus,
   BattleReport,
   ChainReader,
@@ -145,6 +148,32 @@ export class CachedChainReader implements ChainReader {
     }
 
     return this.cached("alliance-directory", () => this.inner.listAllianceDirectoryState!());
+  }
+
+  // Canonical-mirror seed reads. These run only on the indexer's startup rebuild (never per request), so
+  // forward to the inner reader without caching; absent inner methods degrade to "no chain seed".
+  listAllianceJoinRequestState(): Promise<AllianceJoinRequestSnapshot[]> {
+    if (!this.inner.listAllianceJoinRequestState) {
+      return Promise.resolve([]);
+    }
+
+    return this.inner.listAllianceJoinRequestState();
+  }
+
+  listAllianceInviteState(candidateWallets: readonly Address[]): Promise<AllianceInviteSnapshot[]> {
+    if (!this.inner.listAllianceInviteState) {
+      return Promise.resolve([]);
+    }
+
+    return this.inner.listAllianceInviteState(candidateWallets);
+  }
+
+  listAllianceDiplomacyState(): Promise<AllianceDiplomacySnapshot[]> {
+    if (!this.inner.listAllianceDiplomacyState) {
+      return Promise.resolve([]);
+    }
+
+    return this.inner.listAllianceDiplomacyState();
   }
 
   getAttackProtectionStatus(wallet: Address, targetPlanetId: bigint): Promise<AttackProtectionStatus> {

@@ -46,6 +46,9 @@ import {
   type Address,
   type AllianceIdentity,
   type AllianceState,
+  type AllianceJoinRequestSnapshot,
+  type AllianceInviteSnapshot,
+  type AllianceDiplomacySnapshot,
   type BattleReport,
   type DebrisFieldEvent,
   type DefenseState,
@@ -328,6 +331,9 @@ export class SettlementIndexer {
         | "getResearchState"
         | "getShipyardState"
         | "listAllianceDirectoryState"
+        | "listAllianceJoinRequestState"
+        | "listAllianceInviteState"
+        | "listAllianceDiplomacyState"
         | "listAllianceLogs"
         | "listCurrentPlanets"
     >,
@@ -1343,7 +1349,34 @@ export class SettlementIndexer {
     const allianceDirectory = this.chainReader.listAllianceDirectoryState
       ? await this.chainReader.listAllianceDirectoryState()
       : [];
-    return { settledPlanetEvents, planetEvents, debrisEvents, moonChanceEvents, canonicalState, allianceLogs, allianceDirectory };
+    // Seed the three eventless-migratable alliance sub-states from contract reads (canonical-mirror).
+    // Invites have no per-alliance enumeration getter, so probe the known-wallet set (planet owners,
+    // the same candidate set as the canonical planet/owner reads) × allianceIds. Optional methods are
+    // skipped when the injected reader lacks them, falling back to event-derived rows (no crash).
+    const allianceCandidateWallets = Array.from(
+      new Set(planetEvents.map((planet) => planet.owner.toLowerCase() as Address))
+    );
+    const allianceJoinRequests = this.chainReader.listAllianceJoinRequestState
+      ? await this.chainReader.listAllianceJoinRequestState()
+      : null;
+    const allianceInvites = this.chainReader.listAllianceInviteState
+      ? await this.chainReader.listAllianceInviteState(allianceCandidateWallets)
+      : null;
+    const allianceDiplomacy = this.chainReader.listAllianceDiplomacyState
+      ? await this.chainReader.listAllianceDiplomacyState()
+      : null;
+    return {
+      settledPlanetEvents,
+      planetEvents,
+      debrisEvents,
+      moonChanceEvents,
+      canonicalState,
+      allianceLogs,
+      allianceDirectory,
+      allianceJoinRequests,
+      allianceInvites,
+      allianceDiplomacy
+    };
   }
 
   // VEY-KANEO-485: surface a real error if the cold rebuild's chain reads stall past the deadline,
@@ -1373,7 +1406,10 @@ export class SettlementIndexer {
       moonChanceEvents,
       canonicalState,
       allianceLogs,
-      allianceDirectory
+      allianceDirectory,
+      allianceJoinRequests,
+      allianceInvites,
+      allianceDiplomacy
     } = await this.withRebuildDeadline(this.readRebuildInputs());
     const rebuild = this.db.transaction(() => {
       this.db.query("DELETE FROM indexed_planets").run();
@@ -1396,6 +1432,13 @@ export class SettlementIndexer {
         this.applyAllianceEvent(decodeAllianceLog(log));
       }
       this.applyAllianceDirectorySnapshot(allianceDirectory);
+      // Seed the three sub-states from chain reads AFTER the event replay so contract reads are
+      // authoritative over (possibly incomplete) event-derived rows. A non-null-but-empty snapshot
+      // means the chain has none, so the prior clearCanonicalState leaves the table empty (no stale
+      // event rows survive). A null snapshot means the reader can't read it — leave event rows as-is.
+      this.applyAllianceJoinRequestSnapshot(allianceJoinRequests);
+      this.applyAllianceInviteSnapshot(allianceInvites);
+      this.applyAllianceDiplomacySnapshot(allianceDiplomacy);
       const latestBlock = latestEventBlock([...settledPlanetEvents, ...debrisEvents, ...moonChanceEvents, ...allianceLogs]);
       this.recordSuccessfulAllianceReconciliation();
       this.touch();
@@ -3128,6 +3171,58 @@ export class SettlementIndexer {
     }
 
     if (directory.length > 0) this.touch();
+  }
+
+  // Canonical-mirror seed for contract_alliance_join_requests. null snapshot => reader can't read it,
+  // keep event-derived rows; non-null => DELETE+replace so the table mirrors the chain exactly (an
+  // empty array clears stale event rows that no longer exist on chain).
+  private applyAllianceJoinRequestSnapshot(snapshot: AllianceJoinRequestSnapshot[] | null): void {
+    if (snapshot === null) return;
+    this.db.query("DELETE FROM contract_alliance_join_requests").run();
+    for (const request of snapshot) {
+      this.db.query(`
+        INSERT INTO contract_alliance_join_requests (alliance_id, requester, requested_at)
+        VALUES (?, lower(?), ?)
+        ON CONFLICT(alliance_id, requester) DO UPDATE SET
+          requested_at = excluded.requested_at
+      `).run(request.allianceId, request.requester, request.requestedAt);
+    }
+    this.touch();
+  }
+
+  // Canonical-mirror seed for contract_alliance_invites. See applyAllianceJoinRequestSnapshot for the
+  // null vs. empty-array semantics.
+  private applyAllianceInviteSnapshot(snapshot: AllianceInviteSnapshot[] | null): void {
+    if (snapshot === null) return;
+    this.db.query("DELETE FROM contract_alliance_invites").run();
+    for (const invite of snapshot) {
+      this.db.query(`
+        INSERT INTO contract_alliance_invites (alliance_id, player, inviter, invited_at)
+        VALUES (?, lower(?), lower(?), ?)
+        ON CONFLICT(alliance_id, player) DO UPDATE SET
+          inviter = excluded.inviter,
+          invited_at = excluded.invited_at
+      `).run(invite.allianceId, invite.player, invite.inviter, invite.invitedAt);
+    }
+    this.touch();
+  }
+
+  // Canonical-mirror seed for contract_alliance_diplomacy. The reader returns one row per directed
+  // (alliance_id, other_alliance_id) pair, matching the AllianceDiplomacyUpdated handler that writes both
+  // directions; updated_at is left NULL on the chain seed (no event block backs it). See null vs.
+  // empty-array semantics on applyAllianceJoinRequestSnapshot.
+  private applyAllianceDiplomacySnapshot(snapshot: AllianceDiplomacySnapshot[] | null): void {
+    if (snapshot === null) return;
+    this.db.query("DELETE FROM contract_alliance_diplomacy").run();
+    for (const relation of snapshot) {
+      this.db.query(`
+        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at)
+        VALUES (?, ?, ?, NULL)
+        ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
+          status_id = excluded.status_id
+      `).run(relation.allianceId, relation.otherAllianceId, relation.statusId);
+    }
+    this.touch();
   }
 
   private touch(): void {

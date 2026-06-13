@@ -750,6 +750,28 @@ export type AllianceState = {
 
 export type AllianceRoleName = "none" | "member" | "officer" | "owner";
 
+// Canonical-mirror seed shapes for the alliance sub-states that have no on-chain enumeration getter
+// covered by the directory snapshot. Read from contract getters once on the startup rebuild and used
+// to DELETE+replace the corresponding indexed tables (see SettlementIndexer.rebuildUncached).
+export type AllianceJoinRequestSnapshot = {
+  allianceId: string;
+  requester: Address;
+  requestedAt: string;
+};
+
+export type AllianceInviteSnapshot = {
+  allianceId: string;
+  player: Address;
+  inviter: Address;
+  invitedAt: string;
+};
+
+export type AllianceDiplomacySnapshot = {
+  allianceId: string;
+  otherAllianceId: string;
+  statusId: number;
+};
+
 export type AttackBlockReason = "none" | "bashing_limit" | "score_protection" | "same_alliance";
 export type AttackRelation = "peer" | "stronger" | "weaker";
 export type HonorStatus = "neutral" | "honorable" | "bandit";
@@ -863,6 +885,9 @@ export interface ChainReader {
   getHighscoreForWallet?(wallet: Address, planetIds?: string[]): Promise<HighscoreEntry>;
   getHighscoresForWallets?(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): Promise<HighscoreEntry[]>;
   listAllianceDirectoryState?(): Promise<AllianceState["directory"]>;
+  listAllianceJoinRequestState?(): Promise<AllianceJoinRequestSnapshot[]>;
+  listAllianceInviteState?(candidateWallets: readonly Address[]): Promise<AllianceInviteSnapshot[]>;
+  listAllianceDiplomacyState?(): Promise<AllianceDiplomacySnapshot[]>;
   listCurrentPlanets?(): Promise<SettledPlanetEvent[]>;
   listResolvableFleetMissions?(): Promise<ResolvableFleetMission[]>;
   listReturnableFleetMissions?(): Promise<ReturnableFleetMission[]>;
@@ -2156,6 +2181,98 @@ export class VeydriftGameReader implements ChainReader {
 
     const allianceIds = await this.listAllianceIds();
     return this.allianceDirectoryState(allianceIds);
+  }
+
+  // Canonical-mirror seed: every alliance's pending join requests, read from the contract so eventless
+  // migrations (importAllianceSnapshot) are reflected. allianceJoinRequests(uint256) enumerates the
+  // requester addresses per alliance; allianceJoinRequest(address,uint256) supplies the requestedAt.
+  async listAllianceJoinRequestState(): Promise<AllianceJoinRequestSnapshot[]> {
+    if (!this.allianceContractAddress) return [];
+
+    const allianceIds = await this.listAllianceIds();
+    if (allianceIds.length === 0) return [];
+
+    const requesterListResults = await this.batchCallContract(
+      this.allianceContractAddress,
+      allianceIds.map((id) => ({ selector: "0x2953e5ce", args: [encodeUint(id)] }))
+    );
+    const pairs = allianceIds.flatMap((id, index) =>
+      decodeAddressArray(requesterListResults[index] ?? "0x").map((requester) => ({ allianceId: id, requester }))
+    );
+    if (pairs.length === 0) return [];
+
+    const detailResults = await this.batchCallContract(
+      this.allianceContractAddress,
+      pairs.map((pair) => ({ selector: "0xdb132ffb", args: [encodeAddress(pair.requester), encodeUint(pair.allianceId)] }))
+    );
+    return pairs.flatMap((pair, index) => {
+      const words = splitWords(detailResults[index] ?? "0x");
+      if (!decodeBoolWord(wordAt(words, 0))) return [];
+      return [{
+        allianceId: pair.allianceId.toString(),
+        requester: pair.requester,
+        requestedAt: decodeUintWord(wordAt(words, 3)).toString()
+      }];
+    });
+  }
+
+  // Canonical-mirror seed: pending alliance invites. The contract has no per-alliance enumeration getter,
+  // so iterate the candidate-wallet set (known players) × allianceIds and keep the invites the contract
+  // reports as active. Bounded in alpha; runs only on the startup rebuild, never per request.
+  async listAllianceInviteState(candidateWallets: readonly Address[]): Promise<AllianceInviteSnapshot[]> {
+    if (!this.allianceContractAddress) return [];
+
+    const allianceIds = await this.listAllianceIds();
+    if (allianceIds.length === 0) return [];
+    const wallets = Array.from(new Set(candidateWallets.map((wallet) => wallet.toLowerCase() as Address)));
+    if (wallets.length === 0) return [];
+
+    const pairs = wallets.flatMap((player) => allianceIds.map((allianceId) => ({ player, allianceId })));
+    const inviteResults = await this.batchCallContract(
+      this.allianceContractAddress,
+      pairs.map((pair) => ({ selector: "0xf4d46b3b", args: [encodeAddress(pair.player), encodeUint(pair.allianceId)] }))
+    );
+    return pairs.flatMap((pair, index) => {
+      const words = splitWords(inviteResults[index] ?? "0x");
+      if (!decodeBoolWord(wordAt(words, 0))) return [];
+      return [{
+        allianceId: pair.allianceId.toString(),
+        player: pair.player,
+        inviter: decodeAddressWord(wordAt(words, 2)),
+        invitedAt: decodeUintWord(wordAt(words, 3)).toString()
+      }];
+    });
+  }
+
+  // Canonical-mirror seed: alliance diplomacy. diplomacyStatus(uint256,uint256) is read for every
+  // ordered allianceId pair (skipping self-pairs); each non-None status yields one directed row, matching
+  // the AllianceDiplomacyUpdated event handler which writes both directions of the relation.
+  async listAllianceDiplomacyState(): Promise<AllianceDiplomacySnapshot[]> {
+    if (!this.allianceContractAddress) return [];
+
+    const allianceIds = await this.listAllianceIds();
+    if (allianceIds.length === 0) return [];
+
+    const pairs = allianceIds.flatMap((allianceId) =>
+      allianceIds
+        .filter((otherAllianceId) => otherAllianceId !== allianceId)
+        .map((otherAllianceId) => ({ allianceId, otherAllianceId }))
+    );
+    if (pairs.length === 0) return [];
+
+    const statusResults = await this.batchCallContract(
+      this.allianceContractAddress,
+      pairs.map((pair) => ({ selector: "0xbeddf2fb", args: [encodeUint(pair.allianceId), encodeUint(pair.otherAllianceId)] }))
+    );
+    return pairs.flatMap((pair, index) => {
+      const statusId = Number(decodeUintWord(wordAt(splitWords(statusResults[index] ?? "0x"), 0)));
+      if (statusId === 0) return [];
+      return [{
+        allianceId: pair.allianceId.toString(),
+        otherAllianceId: pair.otherAllianceId.toString(),
+        statusId
+      }];
+    });
   }
 
   private async allianceDirectoryState(allianceIds: readonly bigint[]): Promise<AllianceState["directory"]> {

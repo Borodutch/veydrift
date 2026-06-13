@@ -37,6 +37,7 @@ const allianceJoinRequestedTopic = "0x57dc0d6d966259dfce732817e0ad98a19917448215
 const allianceJoinedTopic = "0x966912f1fd05e1765f8d822e0db01e534676a830ea4b161fc254f4e63f0324eb";
 const allianceRoleUpdatedTopic = "0xe4ba1cf47cfd4ff05de8585bf5cb06e7b0856932c0d81ef64a3458e26877f30d";
 const allianceOwnershipTransferredTopic = "0x68f6446f7a86cbeefdd42de0fd5fe8291d2183c90343d9a43c0cdc976e5a1617";
+const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
@@ -2495,6 +2496,151 @@ describe("SettlementIndexer", () => {
         { address: officer, role: "officer", joinedAt: "1770000016" }
       ]
     });
+  });
+
+  test("seeds alliance join requests, invites, and diplomacy from contract reads with no backing events", async () => {
+    const db = new Database(":memory:");
+    const owner = "0x3333333333333333333333333333333333333333" as Address;
+    const applicant = "0x4444444444444444444444444444444444444444" as Address;
+    const invitee = "0x5555555555555555555555555555555555555555" as Address;
+    const directory: AllianceState["directory"] = [
+      {
+        allianceId: "1",
+        active: true,
+        tag: "VEY",
+        name: "Veydrift Command",
+        description: "Imported",
+        owner,
+        createdAt: "1770000000",
+        memberCount: 1,
+        members: [{ address: owner, role: "owner", joinedAt: "1770000000" }]
+      },
+      {
+        allianceId: "2",
+        active: true,
+        tag: "RVL",
+        name: "Rivals",
+        description: "Imported",
+        owner: player,
+        createdAt: "1770000001",
+        memberCount: 1,
+        members: [{ address: player, role: "owner", joinedAt: "1770000001" }]
+      }
+    ];
+    const indexer = new SettlementIndexer({
+      // The seed probes invites against the planet owners; supply applicant + invitee as owned planets.
+      async listSettledPlanetEvents() {
+        return [
+          { ...planet, planetId: "70", owner: applicant },
+          { ...planet, planetId: "71", owner: invitee }
+        ];
+      },
+      async getInfrastructureState() { return { resources: { metal: "0", crystal: "0", deuterium: "0" }, buildings: [] } as unknown as InfrastructureState; },
+      async getDefenseState() { return { resources: { metal: "0", crystal: "0", deuterium: "0" }, defenses: [] } as unknown as DefenseState; },
+      async getShipyardState() { return { resources: { metal: "0", crystal: "0", deuterium: "0" }, ships: [] } as unknown as ShipyardState; },
+      async getResearchState() { return { resources: { metal: "0", crystal: "0", deuterium: "0" }, technologies: [] } as unknown as ResearchState; },
+      async getPlayerQueues() { return {} as unknown as PlayerQueues; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      // No alliance event logs at all — the migration case.
+      async listAllianceLogs() { return []; },
+      async listAllianceDirectoryState() { return directory; },
+      async listAllianceJoinRequestState() {
+        return [{ allianceId: "1", requester: applicant, requestedAt: "1770003000" }];
+      },
+      async listAllianceInviteState() {
+        return [{ allianceId: "1", player: invitee, inviter: owner, invitedAt: "1770004000" }];
+      },
+      async listAllianceDiplomacyState() {
+        return [
+          { allianceId: "1", otherAllianceId: "2", statusId: 3 },
+          { allianceId: "2", otherAllianceId: "1", statusId: 3 }
+        ];
+      }
+    }, 100n, { database: db });
+
+    await indexer.rebuild();
+
+    expect(indexer.allianceState(applicant).pendingJoinRequests).toEqual([
+      { allianceId: "1", requester: applicant, requesterDisplayName: null, requestedAt: "1770003000" }
+    ]);
+    expect(indexer.allianceState(invitee).pendingInvites).toEqual([
+      { allianceId: "1", inviter: owner, inviterDisplayName: null, invitedAt: "1770004000" }
+    ]);
+    expect(
+      db.query("SELECT alliance_id, other_alliance_id, status_id FROM contract_alliance_diplomacy ORDER BY alliance_id, other_alliance_id").all()
+    ).toEqual([
+      { alliance_id: "1", other_alliance_id: "2", status_id: 3 },
+      { alliance_id: "2", other_alliance_id: "1", status_id: 3 }
+    ]);
+  });
+
+  test("chain seed clears stale event-derived join requests, invites, and diplomacy when chain has none", async () => {
+    const db = new Database(":memory:");
+    const officer = "0x3333333333333333333333333333333333333333" as Address;
+    const applicant = "0x4444444444444444444444444444444444444444" as Address;
+    const invitee = "0x5555555555555555555555555555555555555555" as Address;
+    // First boot: an event stream creates an invite, a join request, and a diplomacy relation, but the
+    // chain reads report none of them (the eventless migration removed them). The seed must win.
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      async listAllianceLogs() {
+        return [
+          {
+            blockNumber: "0x90",
+            blockTimestamp: "0x69801c80",
+            transactionHash: "0xalliance-create",
+            logIndex: "0x0",
+            topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+            data: abiStrings("VEY", "Veydrift Command")
+          },
+          {
+            blockNumber: "0x91",
+            blockTimestamp: "0x69801c81",
+            transactionHash: "0xalliance-owner",
+            logIndex: "0x0",
+            topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+            data: abiWords(1n)
+          },
+          {
+            blockNumber: "0x92",
+            blockTimestamp: "0x69801c82",
+            transactionHash: "0xalliance-invite",
+            logIndex: "0x0",
+            topics: [allianceInviteCreatedTopic, topic(1n), addressTopic(officer), addressTopic(invitee)],
+            data: "0x"
+          },
+          {
+            blockNumber: "0x93",
+            transactionHash: "0xalliance-request",
+            logIndex: "0x0",
+            topics: [allianceJoinRequestedTopic, topic(1n), addressTopic(applicant)],
+            data: abiWords(1770003000n)
+          },
+          {
+            blockNumber: "0x94",
+            transactionHash: "0xalliance-diplomacy",
+            logIndex: "0x0",
+            topics: [allianceDiplomacyUpdatedTopic, topic(1n), topic(2n)],
+            data: abiWords(3n)
+          }
+        ];
+      },
+      // Chain getters all return empty — these methods exist so the seed runs and clears the tables.
+      async listAllianceJoinRequestState() { return []; },
+      async listAllianceInviteState() { return []; },
+      async listAllianceDiplomacyState() { return []; }
+    }, 100n, { database: db });
+
+    await indexer.rebuild();
+
+    expect(indexer.allianceState(applicant).pendingJoinRequests).toEqual([]);
+    expect(indexer.allianceState(invitee).pendingInvites).toEqual([]);
+    expect(db.query("SELECT COUNT(*) AS n FROM contract_alliance_join_requests").get()).toEqual({ n: 0 });
+    expect(db.query("SELECT COUNT(*) AS n FROM contract_alliance_invites").get()).toEqual({ n: 0 });
+    expect(db.query("SELECT COUNT(*) AS n FROM contract_alliance_diplomacy").get()).toEqual({ n: 0 });
   });
 
   test("keeps reconciled alliance state serveable when unrelated indexed state is stale", async () => {
