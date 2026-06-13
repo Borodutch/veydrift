@@ -1272,10 +1272,13 @@ export function abandonPlanetUnavailableLabel(
   if (planet.queues.building?.active || planet.queues.defense?.active || planet.queues.ship?.active) {
     return "Finish active queues before abandoning this colony.";
   }
+  // Gate on the live settled-to-now balance (VEY-KANEO-488): a colony is "empty" only
+  // when its current resources are zero, not merely its last settled snapshot.
+  const planetResources = planet.resourcesAsOfNow ?? planet.resources;
   if (
-    !resourceAmountIsZero(planet.resources.metal)
-    || !resourceAmountIsZero(planet.resources.crystal)
-    || !resourceAmountIsZero(planet.resources.deuterium)
+    !resourceAmountIsZero(planetResources.metal)
+    || !resourceAmountIsZero(planetResources.crystal)
+    || !resourceAmountIsZero(planetResources.deuterium)
   ) {
     return "Empty colony resources before abandoning.";
   }
@@ -1307,18 +1310,20 @@ function transportCargoForSelectedPlanet(
   speedPercent = 100,
 ): Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined {
   if (!planet?.resources) return undefined;
+  // Transport defaults to the live settled-to-now balance, not the settled snapshot (VEY-KANEO-488).
+  const planetResources = planet.resourcesAsOfNow ?? planet.resources;
 
   const distance = fleetMissionDistance(planet, target);
   const fuelCost = fleetMissionFuelCost(ships, distance, driveLevels, speedPercent);
   let remaining = fleetMissionAvailableCargoCapacity(ships, distance, driveLevels, speedPercent);
   if (remaining <= 0) return undefined;
 
-  const metal = Math.min(safeResourceNumber(planet.resources.metal) ?? 0, remaining);
+  const metal = Math.min(safeResourceNumber(planetResources.metal) ?? 0, remaining);
   remaining -= metal;
-  const crystal = Math.min(safeResourceNumber(planet.resources.crystal) ?? 0, remaining);
+  const crystal = Math.min(safeResourceNumber(planetResources.crystal) ?? 0, remaining);
   remaining -= crystal;
 
-  const deuteriumAvailable = Math.max(0, (safeResourceNumber(planet.resources.deuterium) ?? 0) - fuelCost);
+  const deuteriumAvailable = Math.max(0, (safeResourceNumber(planetResources.deuterium) ?? 0) - fuelCost);
   const deuterium = Math.min(deuteriumAvailable, remaining);
 
   if (metal === 0 && crystal === 0 && deuterium === 0) return undefined;
@@ -3199,8 +3204,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const originMissionResources = useMemo(() => missionOriginResources({
     isWalletConnected,
     spendableResources,
-    planetResources: selectedManagedPlanet?.resources,
-  }), [isWalletConnected, spendableResources, selectedManagedPlanet?.resources]);
+    // Prefer the live settled-to-now balance over the settled snapshot (VEY-KANEO-488).
+    planetResources: selectedManagedPlanet?.resourcesAsOfNow ?? selectedManagedPlanet?.resources,
+  }), [isWalletConnected, spendableResources, selectedManagedPlanet?.resourcesAsOfNow, selectedManagedPlanet?.resources]);
   const activeBuildingQueue = useMemo(
     () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],

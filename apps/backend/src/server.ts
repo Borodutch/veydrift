@@ -1257,8 +1257,16 @@ function indexedWalletPlanetState(indexer: SettlementIndexer, planet: ManagedPla
   const technologyLevels = indexer.technologyLevels(planet.owner);
   const accrued = accruedPlanetState(indexer, planet);
 
+  // The planet roster is a settled-snapshot surface: the external contract<->DB watchdog
+  // (and any consumer keyed on lastSettledAt) treats `resources` as the value settled at
+  // `lastSettledAt`, so it must equal the chain's stored `planet().resources` at a matched
+  // settle time. Keep `resources` canonical and expose the production-accrued "as of now"
+  // balance separately as `resourcesAsOfNow` — the same split the infrastructure/shipyard/
+  // research endpoints already use (VEY-KANEO-464/488). Tactical/raidable still derive from
+  // the accrued state because plunderable loot reflects the live balance, not the snapshot.
   return {
-    ...accrued,
+    ...planet,
+    resourcesAsOfNow: accrued.resources,
     tactical: indexedPlanetTacticalSummary(accrued, buildings, ships, defenses, technologyLevels)
   };
 }
