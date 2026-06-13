@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { canonicalContractTables } from "./contractStateSchema";
-import type { Address, AllianceState, DebrisFieldEvent, DefenseState, InfrastructureState, MoonChanceReportEvent, PlayerQueues, ResearchState, ShipyardState, SettledPlanetEvent } from "./evm";
+import type { Address, AllianceState, DebrisFieldEvent, DefenseState, InfrastructureState, MoonChanceReportEvent, PlayerQueues, ResearchState, RpcLog, ShipyardState, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { deriveBuildingRows, deriveDefenseRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
 
@@ -25,6 +25,8 @@ const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d7
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
+const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
+const moonChanceRequestedTopic = "0x8969f3a52192b4b918b49219d60ea0b68d3f5fd8b70c4691b297a538ac333121";
 const moonBuildingStartedTopic = "0x6b41aeb096e643752dad879b8f3875d8657186226c3cf8b6e7a38c27292f215a";
 const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed6eb0ebee81c917b575ed3a";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
@@ -117,9 +119,34 @@ describe("SettlementIndexer", () => {
     const databasePath = join(dir, "contract-state.sqlite");
     try {
       const first = new SettlementIndexer({
-        async listDebrisFieldEvents() { return [debris]; },
-        async listMoonChanceReportEvents() { return [moonChance]; },
-        async listSettledPlanetEvents() { return [planet]; }
+        // Event replay reconstructs planet identity, debris and moon-chance from the contract log
+        // stream alone — the same PlanetStarted / DebrisFieldUpdated / MoonChanceRequested events the
+        // live WS feed delivers (VEY-KANEO-476).
+        async listContractLogs() {
+          return [
+            {
+              blockNumber: "0x7b",
+              logIndex: "0x0",
+              transactionHash: "0xabc",
+              topics: [planetStartedTopic, addressTopic(player), topic(7n)],
+              data: abiWords(2n, 44n, 9n, 211n, signedWord(-8n))
+            },
+            {
+              blockNumber: "0x7c",
+              logIndex: "0x0",
+              transactionHash: "0xdef",
+              topics: [debrisFieldUpdatedTopic, topic(7n)],
+              data: abiWords(27000n, 9000n)
+            },
+            {
+              blockNumber: "0x7d",
+              logIndex: "0x0",
+              transactionHash: "0xghi",
+              topics: [moonChanceRequestedTopic, topic(5n), topic(42n), topic(7n)],
+              data: abiWords(BigInt(player), 90000n, 10000n, 100n, 0n, 0n)
+            }
+          ];
+        }
       }, 100n, { databasePath });
 
       await expect(first.rebuild()).resolves.toMatchObject({
@@ -710,30 +737,17 @@ describe("SettlementIndexer", () => {
   });
 
   test("availableShipRows never double-subtracts: the evented at-planet count is the single source of truth (VEY-KANEO-461)", async () => {
-    const indexer = new SettlementIndexer({
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; },
-      async getShipyardState() {
-        return {
-          wallet: player,
-          homePlanetId: planet.planetId,
-          planetId: planet.planetId,
-          productionAvailable: true,
-          resources: planet.resources,
-          fleetSlots: { active: 1, limit: 1 },
-          shipyardLevel: 1,
-          naniteLevel: 0,
-          technologyLevels: {},
-          // On-chain count the contract returns: 5 light fighters present at reconcile time.
-          ships: [{ id: 1, count: 5, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
-          queue: null
-        };
-      }
-    }, 100n);
+    const indexer = new SettlementIndexer({}, 100n);
+    indexer.applyEvent(planet);
 
-    // Reconcile from the planet event (block 123) → stored count id1 = 5.
-    await indexer.rebuild();
+    // The contract emits the at-planet total of 5 light fighters; the indexer pins it from the event.
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xseed",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(7n), topic(1n)],
+      data: abiWords(5n)
+    });
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
 
     // A mission launches and the contract debits 3 light fighters, emitting the new at-planet total of 2.
@@ -774,112 +788,6 @@ describe("SettlementIndexer", () => {
     });
 
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(1);
-  });
-
-  test("refreshCanonicalState re-pins served ship counts to chain (VEY-452)", async () => {
-    let onchainShipCount = 2;
-    const indexer = new SettlementIndexer({
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; },
-      async listCurrentPlanets() { return [planet]; },
-      async getShipyardState() {
-        return {
-          wallet: player,
-          homePlanetId: planet.planetId,
-          planetId: planet.planetId,
-          productionAvailable: true,
-          resources: planet.resources,
-          fleetSlots: { active: 1, limit: 1 },
-          shipyardLevel: 1,
-          naniteLevel: 0,
-          technologyLevels: {},
-          ships: [{ id: 1, count: onchainShipCount, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
-          queue: null
-        };
-      }
-    }, 100n);
-
-    // Reconcile from the planet event (block 123) → stored id1 = 2.
-    await indexer.rebuild();
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(2);
-
-    // A mission launches and the contract debits 1 light fighter, emitting the new at-planet total of 1.
-    indexer.applyLog({
-      blockNumber: "0x90",
-      transactionHash: "0xlaunch-452",
-      logIndex: "0x0",
-      topics: [fleetMissionLaunchedTopic, topic(61n), addressTopic(player), topic(3n)],
-      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x90",
-      transactionHash: "0xlaunch-452-debit",
-      logIndex: "0x1",
-      topics: [planetShipCountChangedTopic, topic(7n), topic(1n)],
-      data: abiWords(1n)
-    });
-    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(1);
-
-    // The fleet comes home and the contract now reports 5 at the planet. A lightweight canonical refresh
-    // re-pins the stored roster to the live on-chain value; availableShipRows reads the same authoritative
-    // count, landing at 5.
-    onchainShipCount = 5;
-    await indexer.refreshCanonicalState();
-
-    // Re-pinned to chain (was 1).
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
-    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
-  });
-
-  test("refreshCanonicalState still re-pins chain state while a background rebuild is running (VEY-452)", async () => {
-    let onchainShipCount = 2;
-    let blockRebuild: (() => void) | null = null;
-    const indexer = new SettlementIndexer({
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listCurrentPlanets() { return [planet]; },
-      async listSettledPlanetEvents() {
-        if (blockRebuild) {
-          await new Promise<void>((resolve) => {
-            blockRebuild = resolve;
-          });
-        }
-        return [planet];
-      },
-      async getShipyardState() {
-        return {
-          wallet: player,
-          homePlanetId: planet.planetId,
-          planetId: planet.planetId,
-          productionAvailable: true,
-          resources: planet.resources,
-          fleetSlots: { active: 0, limit: 1 },
-          shipyardLevel: 1,
-          naniteLevel: 0,
-          technologyLevels: {},
-          ships: [{ id: 1, count: onchainShipCount, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
-          queue: null
-        };
-      }
-    }, 100n);
-
-    await indexer.rebuild();
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(2);
-
-    blockRebuild = () => {};
-    const rebuilding = indexer.reconcile("slow startup refresh");
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(indexer.snapshot()).toMatchObject({
-      reconciliationInProgress: true
-    });
-
-    onchainShipCount = 4;
-    await indexer.refreshCanonicalState();
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(4);
-
-    blockRebuild();
-    await rebuilding;
   });
 
   test("an out-of-order/backfilled older log cannot drag the indexed head back, and returned ships are credited from events (VEY-KANEO-460)", () => {
@@ -1113,33 +1021,27 @@ describe("SettlementIndexer", () => {
     });
 
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(4);
-    // A returned non-combat mission needs no bounded reconcile.
-    expect(indexer.drainFleetMissionReconcilePlanets()).toEqual([]);
   });
 
-  test("credits a returned combat fleet's survivors from events, and a bounded reconcile confirms them (VEY-KANEO-461)", async () => {
-    let onchainSmallCargo = 4;
+  test("credits a returned combat fleet's survivors from events alone, with no on-the-fly canonical RPC (VEY-KANEO-476)", () => {
+    // Post the VeydriftGame events upgrade (VEY-KANEO-475), combat losses and survivor credits both route
+    // through the contract's _setPlanetShipCount sink, so the surviving at-planet total is emitted as a
+    // PlanetShipCountChanged event and applied directly. The served roster needs no bounded per-planet
+    // canonical reconcile (removed in VEY-KANEO-476) — this reader throws on every on-chain state read, so
+    // the test passing proves the survivor count was reconstructed from events alone.
+    const rpcForbidden = () => {
+      throw new Error("on-the-fly canonical RPC read is forbidden (VEY-KANEO-476)");
+    };
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; },
-      async getShipyardState() {
-        return {
-          wallet: player,
-          homePlanetId: planet.planetId,
-          planetId: planet.planetId,
-          productionAvailable: true,
-          resources: planet.resources,
-          fleetSlots: { active: 0, limit: 1 },
-          shipyardLevel: 0,
-          naniteLevel: 0,
-          technologyLevels: {},
-          // On-chain survivor count after the battle: 2 of the 3 attackers came home (1 lost).
-          ships: [{ id: 0, count: onchainSmallCargo, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
-          queue: null
-        };
-      }
-    }, 100n);
+      async listSettledPlanetEvents() { return []; },
+      getInfrastructureState: rpcForbidden,
+      getShipyardState: rpcForbidden,
+      getDefenseState: rpcForbidden,
+      getResearchState: rpcForbidden,
+      getPlayerQueues: rpcForbidden
+    } as never, 100n);
     indexer.applyEvent(planet);
 
     // 4 small cargo built, then an Attack (mission type 3) launches with 3 of them.
@@ -1200,47 +1102,86 @@ describe("SettlementIndexer", () => {
 
     // Survivors credited from events alone — 3 launchable (1 destroyed ship excluded), no on-chain read.
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(3);
-
-    // The settled combat mission still queues its origin + target for a bounded reconcile as a safety net.
-    const targets = indexer.drainFleetMissionReconcilePlanets();
-    expect(targets).toContain("7");
-    expect(targets).toContain("99");
-
-    // The bounded reconcile reads the planet's authoritative count and confirms the evented survivor count
-    // (3) — it finds no divergence to heal, since events already pinned the roster exactly.
-    onchainSmallCargo = 3;
-    const report = await indexer.reconcilePlanetState("7");
-    expect(report?.reachedChain).toBe(true);
-    expect(report?.divergent).toBe(false);
-    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(3);
   });
 
-  test("drainFleetMissionReconcilePlanets ignores non-combat settlements and dedupes (VEY-KANEO-461)", () => {
+  test("reconstructs a defender's combat ship/defense losses and loot from events alone, never an on-the-fly RPC read (VEY-KANEO-476)", () => {
+    // EPIC VEY-KANEO-474 goal #1: the indexer serves steady-state from event replay only. When a planet is
+    // raided, the contract debits the defender's surviving ships/defenses through the _setPlanetShipCount /
+    // _setPlanetDefenseCount sinks (emitting the authoritative absolute totals) and emits the looted
+    // resource balance via _emitPlanetSettled. The indexer applies all three directly; there is no bounded
+    // per-planet canonical reconcile re-pinning the roster from chain. This reader throws on every on-chain
+    // state read, so the test passing proves the post-raid served state came purely from events.
+    const rpcForbidden = () => {
+      throw new Error("on-the-fly canonical RPC read is forbidden (VEY-KANEO-476)");
+    };
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return []; }
-    }, 100n);
+      async listSettledPlanetEvents() { return []; },
+      getInfrastructureState: rpcForbidden,
+      getShipyardState: rpcForbidden,
+      getDefenseState: rpcForbidden,
+      getResearchState: rpcForbidden,
+      getPlayerQueues: rpcForbidden
+    } as never, 100n);
     indexer.applyEvent(planet);
 
-    // A non-combat Transport that settles must not trigger any on-chain reconcile.
+    // Pre-raid roster: 5 small cargo (ship 0) and 8 rocket launchers (defense 0).
     indexer.applyLog({
-      blockNumber: "0x90",
-      transactionHash: "0xt-launch",
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-ships",
       logIndex: "0x0",
-      topics: [fleetMissionLaunchedTopic, topic(90n), addressTopic(player), topic(0n)],
-      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
+      topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(5n)
     });
     indexer.applyLog({
-      blockNumber: "0x95",
-      transactionHash: "0xt-return",
-      logIndex: "0x0",
-      topics: [fleetMissionReturnedTopic, topic(90n), addressTopic(player), topic(7n)],
-      data: "0x"
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-defense",
+      logIndex: "0x1",
+      topics: [planetDefenseCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(8n)
     });
-    expect(indexer.drainFleetMissionReconcilePlanets()).toEqual([]);
-    // Draining clears the queue.
-    expect(indexer.drainFleetMissionReconcilePlanets()).toEqual([]);
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(5);
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(8);
+
+    // An incoming attack settles: the contract thins the defender to 2 ships + 3 defenses and loots
+    // resources, emitting the new absolute totals plus the post-loot balance — all applied from events.
+    const lootedAt = Math.floor(Date.now() / 1000);
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: "0xraid",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: "0xraid",
+      logIndex: "0x1",
+      topics: [planetDefenseCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: "0xraid",
+      logIndex: "0x2",
+      topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+      data: abiWords(10n, 20n, 5n, BigInt(lootedAt))
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: "0xraid",
+      logIndex: "0x3",
+      topics: [fleetMissionResolvedTopic, topic(81n)],
+      data: abiWords(BigInt(lootedAt))
+    });
+
+    // Post-raid served state — reconstructed from events alone, with no on-the-fly canonical RPC read.
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(2);
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(3);
+    const served = indexer.walletSettlement(player).planet;
+    expect(served?.lastSettledAt).toBe(String(lootedAt));
+    expect(served?.resources).toEqual({ metal: "10", crystal: "20", deuterium: "5" });
   });
 
   test("applies duplicate webhook logs only once", () => {
@@ -2383,7 +2324,7 @@ describe("SettlementIndexer", () => {
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
       async listSettledPlanetEvents() { return []; },
-      async listAllianceLogs() {
+      async listContractLogs() {
         return [
           {
             blockNumber: "0x90",
@@ -2446,73 +2387,12 @@ describe("SettlementIndexer", () => {
     });
   });
 
-  test("rebuild overlays imported alliance contract directory snapshots into the DB read model", async () => {
-    const owner = "0x3333333333333333333333333333333333333333" as Address;
-    const officer = "0x4444444444444444444444444444444444444444" as Address;
-    const directory: AllianceState["directory"] = Array.from({ length: 15 }, (_, index) => {
-      const allianceId = (index + 1).toString();
-      const isImportedAlliance = allianceId === "15";
-      return {
-        allianceId,
-        active: true,
-        tag: isImportedAlliance ? "SWTS" : `A${allianceId.padStart(2, "0")}`,
-        name: isImportedAlliance ? "Swets Empire" : `Alliance ${allianceId}`,
-        description: isImportedAlliance ? "Imported from on-chain snapshot" : "",
-        owner: isImportedAlliance ? owner : player,
-        createdAt: (1770000000 + index).toString(),
-        memberCount: isImportedAlliance ? 2 : 1,
-        members: isImportedAlliance
-          ? [
-            { address: owner, role: "owner", joinedAt: "1770000015" },
-            { address: officer, role: "officer", joinedAt: "1770000016" }
-          ]
-          : [
-            { address: player, role: "owner", joinedAt: (1770000000 + index).toString() }
-          ]
-      };
-    });
-    const indexer = new SettlementIndexer({
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return []; },
-      async listAllianceLogs() { return []; },
-      async listAllianceDirectoryState() {
-        return directory;
-      }
-    }, 100n);
-
-    await indexer.rebuild();
-
-    const state = indexer.allianceState(owner);
-    expect(indexer.snapshot()).toMatchObject({
-      allianceStaleReason: null,
-      safeToServeAllianceState: true
-    });
-    expect(state.directory.map((alliance) => alliance.allianceId)).toEqual([
-      "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"
-    ]);
-    expect(state).toMatchObject({
-      membership: { allianceId: "15", role: "owner", joinedAt: "1770000015" },
-      profile: {
-        tag: "SWTS",
-        name: "Swets Empire",
-        description: "Imported from on-chain snapshot",
-        owner,
-        memberCount: 2
-      },
-      members: [
-        { address: owner, role: "owner", joinedAt: "1770000015" },
-        { address: officer, role: "officer", joinedAt: "1770000016" }
-      ]
-    });
-  });
-
   test("keeps reconciled alliance state serveable when unrelated indexed state is stale", async () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
       async listSettledPlanetEvents() { return []; },
-      async listAllianceLogs() {
+      async listContractLogs() {
         return [
           {
             blockNumber: "0x90",
@@ -2561,7 +2441,7 @@ describe("SettlementIndexer", () => {
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
       async listSettledPlanetEvents() { return []; },
-      async listAllianceLogs() {
+      async listContractLogs() {
         return [
           {
             blockNumber: "0x90",
@@ -2946,69 +2826,6 @@ describe("SettlementIndexer", () => {
     expect(indexer.snapshot().reorgDetectedAt).toBeTruthy();
   });
 
-  test("rebuild applies repeated debris updates in chain order", async () => {
-    const indexer = new SettlementIndexer({
-      async listDebrisFieldEvents() { return [debris, updatedDebris, clearedDebris, updatedDebris]; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; }
-    }, 100n);
-
-    await expect(indexer.rebuild()).resolves.toMatchObject({
-      indexedDebrisFields: 1,
-      indexedPlanets: 1
-    });
-    expect(indexer.debrisFieldsInSystem(2, 44)).toEqual([
-      expect.objectContaining({
-        planetId: planet.planetId,
-        resources: updatedDebris.resources
-      })
-    ]);
-  });
-
-  test("rebuild stores current planet resources instead of settlement-log zero placeholders", async () => {
-    const currentPlanet: SettledPlanetEvent = {
-      ...planet,
-      transactionHash: "0x",
-      blockNumber: "0",
-      lastSettledAt: "1770000500",
-      resources: {
-        metal: "9100",
-        crystal: "8200",
-        deuterium: "7300"
-      }
-    };
-    const indexer = new SettlementIndexer({
-      async listCurrentPlanets() { return [currentPlanet]; },
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() {
-        return [{
-          ...planet,
-          lastSettledAt: "0",
-          resources: {
-            metal: "0",
-            crystal: "0",
-            deuterium: "0"
-          }
-        }];
-      }
-    }, 100n);
-
-    await indexer.rebuild();
-
-    expect(indexer.walletSettlement(player).planet).toMatchObject({
-      transactionHash: planet.transactionHash,
-      blockNumber: planet.blockNumber,
-      lastSettledAt: currentPlanet.lastSettledAt,
-      resources: currentPlanet.resources
-    });
-    expect(indexer.snapshot()).toMatchObject({
-      indexedState: "healthy",
-      safeToServeIndexedState: true,
-      staleReason: null
-    });
-  });
-
   test("keeps first-settlement resources when resource log arrives before planet metadata", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
@@ -3047,352 +2864,11 @@ describe("SettlementIndexer", () => {
     });
   });
 
-  test("rebuild reconciles stale levels and queues from canonical on-chain snapshots", async () => {
-    const currentPlanet: SettledPlanetEvent = {
-      ...planet,
-      resources: {
-        metal: "9900",
-        crystal: "8800",
-        deuterium: "7700"
-      }
-    };
-    const liveInfrastructure: InfrastructureState = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      infrastructureAvailable: true,
-      resources: currentPlanet.resources,
-      productionPerHour: { metal: "30", crystal: "15", deuterium: "8" },
-      energyBalance: { produced: "20", required: "10", scaleBps: "10000" },
-      storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
-      protectedResources: { metal: "1000", crystal: "1000", deuterium: "1000" },
-      raidableResources: { metal: "8900", crystal: "7800", deuterium: "6700" },
-      technologyLevels: {},
-      buildings: [
-        { id: 0, level: 4, cost: { metal: "960", crystal: "240", deuterium: "0" } },
-        { id: 3, level: 2, cost: { metal: "150", crystal: "60", deuterium: "0" } }
-      ],
-      queue: {
-        active: true,
-        kind: "building",
-        itemId: 3,
-        targetLevel: 3,
-        readyAt: "1770000900",
-        startedAt: "1770000300",
-        cost: { metal: "150", crystal: "60", deuterium: "0" }
-      }
-    };
-    const liveQueues: PlayerQueues = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      building: liveInfrastructure.queue,
-      defense: {
-        active: true,
-        kind: "defense",
-        itemId: 1,
-        quantity: 2,
-        readyAt: "1770001000",
-        startedAt: "1770000400",
-        cost: { metal: "3000", crystal: "1000", deuterium: "0" },
-        backlog: [
-          {
-            active: true,
-            kind: "defense",
-            itemId: 0,
-            quantity: 3,
-            readyAt: "1770001600",
-            cost: { metal: "6000", crystal: "0", deuterium: "0" }
-          }
-        ]
-      },
-      ship: null,
-      research: {
-        active: true,
-        kind: "research",
-        itemId: 4,
-        targetLevel: 2,
-        readyAt: "1770001200",
-        startedAt: "1770000600",
-        cost: { metal: "800", crystal: "400", deuterium: "200" }
-      }
-    };
-    const indexer = new SettlementIndexer({
-      async listCurrentPlanets() { return [currentPlanet]; },
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; },
-      async getInfrastructureState() { return liveInfrastructure; },
-      async getPlayerQueues() { return liveQueues; },
-      async getResearchState() {
-        return {
-          wallet: player,
-          homePlanetId: planet.planetId,
-          researchAvailable: true,
-          resources: currentPlanet.resources,
-          researchLabLevel: 1,
-          researchNetworkLabLevels: [],
-          technologyLevels: { "4": 2 },
-          technologies: [
-            { id: 4, level: 2, cost: { metal: "1600", crystal: "800", deuterium: "400" } }
-          ],
-          queue: liveQueues.research
-        };
-      }
-    }, 100n);
-    indexer.applyEvent({
-      ...planet,
-      resources: { metal: "1", crystal: "1", deuterium: "1" }
-    });
-    indexer.applyLog({
-      blockNumber: "0x81",
-      transactionHash: "0xstale",
-      logIndex: "0x0",
-      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
-      data: abiWords(1n)
-    });
-
-    await indexer.rebuild();
-
-    expect(indexer.walletSettlement(player).planet?.resources).toEqual(currentPlanet.resources);
-    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)).toMatchObject({
-      id: 0,
-      level: 4
-    });
-    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 3)).toMatchObject({
-      id: 3,
-      level: 2
-    });
-    expect(indexer.playerQueues(player, planet.planetId).building).toMatchObject({
-      kind: "building",
-      itemId: 3,
-      targetLevel: 3,
-      readyAt: "1770000900"
-    });
-    expect(indexer.playerQueues(player, planet.planetId).defense).toMatchObject({
-      kind: "defense",
-      itemId: 1,
-      quantity: 2,
-      readyAt: "1770001000",
-      backlog: [
-        {
-          kind: "defense",
-          itemId: 0,
-          quantity: 3,
-          readyAt: "1770001600"
-        }
-      ]
-    });
-    expect(indexer.playerQueues(player, planet.planetId).research).toMatchObject({
-      kind: "research",
-      itemId: 4,
-      targetLevel: 2,
-      readyAt: "1770001200",
-      startedAt: "1770000600"
-    });
-    expect(indexer.technologyLevels(player)).toMatchObject({
-      "4": 2
-    });
-    expect(indexer.snapshot()).toMatchObject({
-      indexedState: "healthy",
-      safeToServeIndexedState: true,
-      staleReason: null
-    });
-  });
-
-  test("verifyCanonicalState reports no divergence when stored canonical equals on-chain (VEY-KANEO-452)", async () => {
-    const resources = { metal: "9900", crystal: "8800", deuterium: "7700" };
-    const liveInfrastructure: InfrastructureState = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      infrastructureAvailable: true,
-      resources,
-      productionPerHour: { metal: "0", crystal: "0", deuterium: "0" },
-      energyBalance: { produced: "0", required: "0", scaleBps: "10000" },
-      storageCaps: { metal: "100000", crystal: "100000", deuterium: "100000" },
-      protectedResources: { metal: "0", crystal: "0", deuterium: "0" },
-      raidableResources: { metal: "0", crystal: "0", deuterium: "0" },
-      technologyLevels: {},
-      buildings: deriveBuildingRows((id) => (id === 0 ? 4 : 0)),
-      queue: null
-    };
-    const liveShipyard: ShipyardState = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      planetId: planet.planetId,
-      productionAvailable: true,
-      resources: null,
-      fleetSlots: { active: 0, limit: 1 },
-      shipyardLevel: 0,
-      naniteLevel: 0,
-      technologyLevels: {},
-      ships: deriveShipRows((id) => (id === 1 ? 5 : 0)),
-      queue: null
-    };
-    const liveDefense: DefenseState = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      productionAvailable: true,
-      resources: null,
-      shipyardLevel: 0,
-      naniteLevel: 0,
-      missileSiloLevel: 0,
-      technologyLevels: {},
-      defenses: deriveDefenseRows((id) => (id === 2 ? 3 : 0)),
-      queue: null
-    };
-    const indexer = new SettlementIndexer({
-      async listCurrentPlanets() { return [planet]; },
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; },
-      async getInfrastructureState() { return liveInfrastructure; },
-      async getShipyardState() { return liveShipyard; },
-      async getDefenseState() { return liveDefense; }
-    }, 100n);
-
-    await indexer.rebuild();
-
-    const report = await indexer.verifyCanonicalState(planet.planetId);
-    expect(report).toMatchObject({
-      planetId: planet.planetId,
-      owner: player,
-      reachedChain: true,
-      divergent: false,
-      healed: false
-    });
-    expect(report.divergences).toEqual([]);
-  });
-
-  test("verifyCanonicalState detects and self-heals divergence vs previewResources/shipCount/buildingLevel/defenseCount (VEY-KANEO-452)", async () => {
-    let liveInfrastructure: InfrastructureState = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      infrastructureAvailable: true,
-      resources: { metal: "1000", crystal: "1000", deuterium: "1000" },
-      productionPerHour: { metal: "0", crystal: "0", deuterium: "0" },
-      energyBalance: { produced: "0", required: "0", scaleBps: "10000" },
-      storageCaps: { metal: "1000000", crystal: "1000000", deuterium: "1000000" },
-      protectedResources: { metal: "0", crystal: "0", deuterium: "0" },
-      raidableResources: { metal: "0", crystal: "0", deuterium: "0" },
-      technologyLevels: {},
-      buildings: deriveBuildingRows((id) => (id === 0 ? 5 : 0)),
-      queue: null
-    };
-    let liveShipyard: ShipyardState = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      planetId: planet.planetId,
-      productionAvailable: true,
-      resources: null,
-      fleetSlots: { active: 0, limit: 1 },
-      shipyardLevel: 0,
-      naniteLevel: 0,
-      technologyLevels: {},
-      ships: deriveShipRows((id) => (id === 1 ? 10 : 0)),
-      queue: null
-    };
-    let liveDefense: DefenseState = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      productionAvailable: true,
-      resources: null,
-      shipyardLevel: 0,
-      naniteLevel: 0,
-      missileSiloLevel: 0,
-      technologyLevels: {},
-      defenses: deriveDefenseRows((id) => (id === 2 ? 4 : 0)),
-      queue: null
-    };
-    const indexer = new SettlementIndexer({
-      async listCurrentPlanets() { return [planet]; },
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; },
-      async getInfrastructureState() { return liveInfrastructure; },
-      async getShipyardState() { return liveShipyard; },
-      async getDefenseState() { return liveDefense; }
-    }, 100n);
-
-    // Reconcile so the stored canonical mirror matches the v1 on-chain state.
-    await indexer.rebuild();
-    expect((await indexer.verifyCanonicalState(planet.planetId)).divergent).toBe(false);
-
-    // Simulate on-chain moves the indexer never observed via events: a building
-    // downgrade, fleet losses, a defense built, and resources spent — the kind of
-    // drift the contract applies without an event the read model can replay.
-    liveInfrastructure = {
-      ...liveInfrastructure,
-      resources: { metal: "250", crystal: "8000", deuterium: "120" },
-      buildings: deriveBuildingRows((id) => (id === 0 ? 3 : 0))
-    };
-    liveShipyard = {
-      ...liveShipyard,
-      ships: deriveShipRows((id) => (id === 1 ? 2 : 0))
-    };
-    liveDefense = {
-      ...liveDefense,
-      defenses: deriveDefenseRows((id) => (id === 2 ? 7 : 0))
-    };
-
-    // Read-only verify surfaces every diverged field without mutating state.
-    const detected = await indexer.verifyCanonicalState(planet.planetId);
-    expect(detected.reachedChain).toBe(true);
-    expect(detected.divergent).toBe(true);
-    expect(detected.healed).toBe(false);
-    expect(detected.divergences).toEqual(
-      expect.arrayContaining([
-        { field: "resources", id: null, key: "metal", stored: "1000", onChain: "250" },
-        { field: "resources", id: null, key: "crystal", stored: "1000", onChain: "8000" },
-        { field: "resources", id: null, key: "deuterium", stored: "1000", onChain: "120" },
-        { field: "building", id: 0, key: null, stored: "5", onChain: "3" },
-        { field: "ship", id: 1, key: null, stored: "10", onChain: "2" },
-        { field: "defense", id: 2, key: null, stored: "4", onChain: "7" }
-      ])
-    );
-    // Read models are still stale before the heal.
-    expect(indexer.shipRows(planet.planetId).find((row) => row.id === 1)?.count).toBe(10);
-
-    // Heal re-syncs just this planet's canonical rows to the contract values.
-    const healed = await indexer.verifyCanonicalState(planet.planetId, { heal: true });
-    expect(healed.divergent).toBe(true);
-    expect(healed.healed).toBe(true);
-
-    expect(indexer.infrastructureRows(planet.planetId).find((row) => row.id === 0)?.level).toBe(3);
-    expect(indexer.shipRows(planet.planetId).find((row) => row.id === 1)?.count).toBe(2);
-    expect(indexer.defenseRows(planet.planetId).find((row) => row.id === 2)?.count).toBe(7);
-    expect(indexer.planet(planet.planetId)?.resources).toEqual({ metal: "250", crystal: "8000", deuterium: "120" });
-
-    // After healing, the canonical state equals on-chain — no divergence remains.
-    const reverified = await indexer.verifyCanonicalState(planet.planetId);
-    expect(reverified.divergent).toBe(false);
-    expect(reverified.divergences).toEqual([]);
-  });
-
-  test("verifyCanonicalState returns reachedChain=false for an uncharted planet (VEY-KANEO-452)", async () => {
-    const indexer = new SettlementIndexer({
-      async listCurrentPlanets() { return []; },
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return []; }
-    }, 100n);
-
-    await indexer.rebuild();
-
-    const report = await indexer.verifyCanonicalState("404");
-    expect(report).toMatchObject({
-      planetId: "404",
-      owner: null,
-      reachedChain: false,
-      divergent: false,
-      healed: false
-    });
-    expect(report.divergences).toEqual([]);
-  });
-
   test("records reconciliation failures for health/debug visibility", async () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { throw new Error("RPC HTTP 429"); }
+      async listContractLogs() { throw new Error("RPC HTTP 429"); }
     }, 100n);
 
     await expect(indexer.rebuild()).rejects.toThrow("RPC HTTP 429");
@@ -3407,7 +2883,7 @@ describe("SettlementIndexer", () => {
     const reader = {
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; }
+      async listContractLogs(): Promise<RpcLog[]> { return []; }
     };
     const indexer = new SettlementIndexer(reader, 100n);
 
@@ -3421,7 +2897,7 @@ describe("SettlementIndexer", () => {
     });
 
     // A later background reconcile hits a transient truncated/empty RPC body and throws.
-    reader.listSettledPlanetEvents = async () => {
+    reader.listContractLogs = async () => {
       throw new Error("Unexpected end of JSON input");
     };
     await expect(indexer.reconcile("periodic self-heal")).rejects.toThrow("Unexpected end of JSON input");
@@ -3442,16 +2918,16 @@ describe("SettlementIndexer", () => {
     const reader = {
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; }
+      async listContractLogs(): Promise<RpcLog[]> { return []; }
     };
     const indexer = new SettlementIndexer(reader, 100n);
 
     await indexer.rebuild();
-    reader.listSettledPlanetEvents = async () => {
+    reader.listContractLogs = async () => {
       await new Promise<void>((resolve) => {
         releaseRebuild = resolve;
       });
-      return [planet];
+      return [];
     };
 
     const rebuilding = indexer.rebuild();
@@ -3473,16 +2949,16 @@ describe("SettlementIndexer", () => {
       const reader = {
         async listDebrisFieldEvents() { return []; },
         async listMoonChanceReportEvents() { return []; },
-        async listSettledPlanetEvents() { return [planet]; }
+        async listContractLogs(): Promise<RpcLog[]> { return []; }
       };
       const indexer = new SettlementIndexer(reader, 100n);
 
       await indexer.rebuild();
-      reader.listSettledPlanetEvents = async () => {
+      reader.listContractLogs = async () => {
         await new Promise<void>((resolve) => {
           releaseRebuild = resolve;
         });
-        return [planet];
+        return [];
       };
 
       const rebuilding = indexer.reconcile(reason);
@@ -3499,329 +2975,6 @@ describe("SettlementIndexer", () => {
       await rebuilding;
     });
   }
-
-  test("rebuild preserves newer uncompleted event-derived production queues and subtracts queued spend costs", async () => {
-    const currentPlanet: SettledPlanetEvent = {
-      ...planet,
-      resources: {
-        metal: "9900",
-        crystal: "8800",
-        deuterium: "7700"
-      }
-    };
-    const emptyLiveQueues: PlayerQueues = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      building: null,
-      defense: null,
-      ship: null,
-      research: null
-    };
-    const indexer = new SettlementIndexer({
-      async listCurrentPlanets() { return [currentPlanet]; },
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; },
-      async getPlayerQueues() { return emptyLiveQueues; }
-    }, 100n);
-    indexer.applyEvent(planet);
-    indexer.applyLog({
-      blockNumber: "0x390",
-      transactionHash: "0xrebuild-building",
-      logIndex: "0x0",
-      topics: [buildingStartedTopic, topic(7n), topic(6n)],
-      data: abiWords(2n, 1770002000n, 100n, 50n, 0n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x391",
-      transactionHash: "0xrebuild-research",
-      logIndex: "0x0",
-      topics: [researchQueuedTopic, addressTopic(player), topic(4n)],
-      data: abiWords(2n, 1770002100n, 80n, 40n, 20n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x392",
-      transactionHash: "0xrebuild-ship",
-      logIndex: "0x0",
-      topics: [shipQueuedTopic, topic(7n), topic(2n)],
-      data: abiWords(3n, 1770002200n, 60n, 30n, 0n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x393",
-      transactionHash: "0xrebuild-defense",
-      logIndex: "0x0",
-      topics: [defenseQueuedTopic, topic(7n), topic(1n)],
-      data: abiWords(5n, 1770002300n, 40n, 20n, 0n)
-    });
-
-    await indexer.rebuild();
-
-    expect(indexer.walletSettlement(player).planet?.resources).toEqual({
-      metal: "9620",
-      crystal: "8660",
-      deuterium: "7680"
-    });
-    expect(indexer.playerQueues(player, planet.planetId)).toMatchObject({
-      building: { kind: "building", itemId: 6, targetLevel: 2, readyAt: "1770002000" },
-      research: { kind: "research", itemId: 4, targetLevel: 2, readyAt: "1770002100" },
-      ship: { kind: "ship", itemId: 2, quantity: 3, readyAt: "1770002200" },
-      defense: { kind: "defense", itemId: 1, quantity: 5, readyAt: "1770002300" }
-    });
-  });
-
-  test("rebuild uses live canonical resources without subtracting active queue costs again", async () => {
-    const previewResources = {
-      metal: "1888",
-      crystal: "579",
-      deuterium: "2261"
-    };
-    const currentPlanet: SettledPlanetEvent = {
-      ...planet,
-      resources: {
-        metal: "14831",
-        crystal: "6519",
-        deuterium: "2263"
-      }
-    };
-    const liveInfrastructure: InfrastructureState = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      infrastructureAvailable: true,
-      resources: previewResources,
-      productionPerHour: { metal: "30", crystal: "15", deuterium: "8" },
-      energyBalance: { produced: "20", required: "10", scaleBps: "10000" },
-      storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
-      protectedResources: { metal: "1000", crystal: "1000", deuterium: "1000" },
-      raidableResources: { metal: "888", crystal: "0", deuterium: "1261" },
-      technologyLevels: {},
-      buildings: [],
-      queue: {
-        active: true,
-        kind: "building",
-        itemId: 3,
-        targetLevel: 12,
-        readyAt: "1770002000",
-        cost: { metal: "6487", crystal: "2594", deuterium: "0" }
-      }
-    };
-    const liveQueues: PlayerQueues = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      building: liveInfrastructure.queue,
-      defense: {
-        active: true,
-        kind: "defense",
-        itemId: 0,
-        quantity: 1,
-        readyAt: "1770002100",
-        cost: { metal: "2000", crystal: "0", deuterium: "0" }
-      },
-      ship: {
-        active: true,
-        kind: "ship",
-        itemId: 1,
-        quantity: 1,
-        readyAt: "1770002200",
-        cost: { metal: "3000", crystal: "1000", deuterium: "0" }
-      },
-      research: {
-        active: true,
-        kind: "research",
-        itemId: 9,
-        targetLevel: 1,
-        readyAt: "1770002300",
-        cost: { metal: "2000", crystal: "4000", deuterium: "600" }
-      }
-    };
-    const indexer = new SettlementIndexer({
-      async listCurrentPlanets() { return [currentPlanet]; },
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; },
-      async getInfrastructureState() { return liveInfrastructure; },
-      async getPlayerQueues() { return liveQueues; }
-    }, 100n);
-    indexer.applyEvent(planet);
-    indexer.applyLog({
-      blockNumber: "0x390",
-      transactionHash: "0xrebuild-building",
-      logIndex: "0x0",
-      topics: [buildingStartedTopic, topic(7n), topic(3n)],
-      data: abiWords(12n, 1770002000n, 6487n, 2594n, 0n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x391",
-      transactionHash: "0xrebuild-defense",
-      logIndex: "0x0",
-      topics: [defenseQueuedTopic, topic(7n), topic(0n)],
-      data: abiWords(1n, 1770002100n, 2000n, 0n, 0n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x392",
-      transactionHash: "0xrebuild-ship",
-      logIndex: "0x0",
-      topics: [shipQueuedTopic, topic(7n), topic(1n)],
-      data: abiWords(1n, 1770002200n, 3000n, 1000n, 0n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x393",
-      transactionHash: "0xrebuild-research",
-      logIndex: "0x0",
-      topics: [researchQueuedTopic, addressTopic(player), topic(9n)],
-      data: abiWords(1n, 1770002300n, 2000n, 4000n, 600n)
-    });
-
-    await indexer.rebuild();
-
-    expect(indexer.walletSettlement(player).planet?.resources).toEqual(previewResources);
-    expect(indexer.playerQueues(player, planet.planetId)).toMatchObject({
-      building: { kind: "building", itemId: 3, targetLevel: 12 },
-      defense: { kind: "defense", itemId: 0, quantity: 1 },
-      ship: { kind: "ship", itemId: 1, quantity: 1 },
-      research: { kind: "research", itemId: 9, targetLevel: 1 }
-    });
-  });
-
-  test("rebuild drops event-derived queues that canonical levels prove completed", async () => {
-    const currentPlanet: SettledPlanetEvent = {
-      ...planet,
-      resources: {
-        metal: "9900",
-        crystal: "8800",
-        deuterium: "7700"
-      }
-    };
-    const completedInfrastructure: InfrastructureState = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      infrastructureAvailable: true,
-      resources: currentPlanet.resources,
-      productionPerHour: { metal: "30", crystal: "15", deuterium: "8" },
-      energyBalance: { produced: "20", required: "10", scaleBps: "10000" },
-      storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
-      protectedResources: { metal: "1000", crystal: "1000", deuterium: "1000" },
-      raidableResources: { metal: "8900", crystal: "7800", deuterium: "6700" },
-      technologyLevels: { "4": 2 },
-      buildings: [
-        { id: 3, level: 5, cost: { metal: "569", crystal: "227", deuterium: "0" } },
-        { id: 6, level: 1, cost: { metal: "800", crystal: "400", deuterium: "200" } }
-      ],
-      queue: null
-    };
-    const completedResearch: ResearchState = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      researchAvailable: true,
-      resources: currentPlanet.resources,
-      researchLabLevel: 1,
-      researchNetworkLabLevels: [],
-      technologyLevels: { "4": 2 },
-      technologies: [
-        { id: 4, level: 2, cost: { metal: "1600", crystal: "800", deuterium: "400" } }
-      ],
-      queue: null
-    };
-    const emptyLiveQueues: PlayerQueues = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      building: null,
-      defense: null,
-      ship: null,
-      research: null
-    };
-    const indexer = new SettlementIndexer({
-      async listCurrentPlanets() { return [currentPlanet]; },
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; },
-      async getInfrastructureState() { return completedInfrastructure; },
-      async getPlayerQueues() { return emptyLiveQueues; },
-      async getResearchState() { return completedResearch; }
-    }, 100n);
-    indexer.applyEvent(planet);
-    indexer.applyLog({
-      blockNumber: "0x3a0",
-      transactionHash: "0xcompleted-building-without-log",
-      logIndex: "0x0",
-      topics: [buildingStartedTopic, topic(7n), topic(3n)],
-      data: abiWords(5n, 1770002000n, 379n, 151n, 0n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x3a1",
-      transactionHash: "0xcompleted-research-without-log",
-      logIndex: "0x0",
-      topics: [researchQueuedTopic, addressTopic(player), topic(4n)],
-      data: abiWords(2n, 1770002100n, 80n, 40n, 20n)
-    });
-
-    await indexer.rebuild();
-
-    expect(indexer.playerQueues(player, planet.planetId)).toMatchObject({
-      building: null,
-      research: null
-    });
-    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 3)).toMatchObject({
-      id: 3,
-      level: 5
-    });
-    expect(indexer.technologyLevels(player)).toMatchObject({ "4": 2 });
-  });
-
-  test("rebuild does not resurrect event-derived building queues that canonical infrastructure verified empty", async () => {
-    const currentPlanet: SettledPlanetEvent = {
-      ...planet,
-      resources: {
-        metal: "9900",
-        crystal: "8800",
-        deuterium: "7700"
-      }
-    };
-    const liveInfrastructure: InfrastructureState = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      infrastructureAvailable: true,
-      resources: currentPlanet.resources,
-      productionPerHour: { metal: "30", crystal: "15", deuterium: "8" },
-      energyBalance: { produced: "20", required: "10", scaleBps: "10000" },
-      storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
-      protectedResources: { metal: "1000", crystal: "1000", deuterium: "1000" },
-      raidableResources: { metal: "8900", crystal: "7800", deuterium: "6700" },
-      technologyLevels: {},
-      buildings: [
-        { id: 0, level: 5, cost: { metal: "960", crystal: "240", deuterium: "0" } },
-        { id: 3, level: 6, cost: { metal: "150", crystal: "60", deuterium: "0" } }
-      ],
-      queue: null
-    };
-    const indexer = new SettlementIndexer({
-      async listCurrentPlanets() { return [currentPlanet]; },
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; },
-      async getInfrastructureState() { return liveInfrastructure; }
-    }, 100n);
-    indexer.applyEvent(planet);
-    indexer.applyLog({
-      blockNumber: "0x3a0",
-      transactionHash: "0xstale-solar",
-      logIndex: "0x0",
-      topics: [buildingStartedTopic, topic(7n), topic(3n)],
-      data: abiWords(6n, 1770002000n, 100n, 50n, 0n)
-    });
-
-    await indexer.rebuild();
-
-    expect(indexer.playerQueues(player, planet.planetId).building).toBeNull();
-    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 3)).toMatchObject({
-      id: 3,
-      level: 6
-    });
-    expect(indexer.snapshot()).toMatchObject({
-      indexedState: "healthy",
-      safeToServeIndexedState: true,
-      staleReason: null
-    });
-  });
 
   test("memoizes the highscore leaderboard against the state version and invalidates on mutation (VEY-KANEO-467)", () => {
     const indexer = new SettlementIndexer({
