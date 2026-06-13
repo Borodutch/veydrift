@@ -1703,6 +1703,82 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("a decreasing PlanetSettled after a reconcile that stamped a newer lastSettledAt still drops served resources (VEY-KANEO-491)", async () => {
+    // Acceptance scenario from the field report: the canonical reconcile (rebuild) reads on-chain state and
+    // writes the resource snapshot stamped with `reconciledAt = now` — a lastSettledAt NEWER than any real
+    // PlanetSettled event timestamp. The authoritative DECREASING PlanetSettled a raid/spend produces must
+    // still land and drop the served balance; it must not be discarded in favour of the reconcile-set
+    // future timestamp. (The runtime refreshCanonicalState self-heal was removed; the startup reconcile is
+    // the only chain read, so it is the path that stamps the newer timestamp here.)
+    const onchain: InfrastructureState = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      infrastructureAvailable: true,
+      // Stale-high balance the read model over-reported in the field (P36 served ~3351 vs chain ~508).
+      resources: { metal: "9000", crystal: "8000", deuterium: "7000" },
+      productionPerHour: { metal: "0", crystal: "0", deuterium: "0" },
+      energyBalance: { produced: "20", required: "10", scaleBps: "10000" },
+      storageCaps: { metal: "100000", crystal: "100000", deuterium: "100000" },
+      protectedResources: { metal: "0", crystal: "0", deuterium: "0" },
+      raidableResources: { metal: "9000", crystal: "8000", deuterium: "7000" },
+      technologyLevels: {},
+      buildings: [{ id: 0, level: 4, cost: { metal: "960", crystal: "240", deuterium: "0" } }],
+      queue: null
+    };
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async listCurrentPlanets() { return [planet]; },
+      async getInfrastructureState() { return onchain; }
+    }, 100n);
+
+    // Reconcile: writes the canonical snapshot stamped with reconciledAt = now (a lastSettledAt newer than
+    // any real event). Zero production keeps the served balance equal to the snapshot exactly.
+    await indexer.rebuild();
+    const reconciledBlock = BigInt(indexer.snapshot().latestIndexedBlock || "0");
+    expect(indexer.walletSettlement(player).planet?.resources).toEqual({
+      metal: "9000",
+      crystal: "8000",
+      deuterium: "7000"
+    });
+
+    const now = Math.floor(Date.now() / 1000);
+
+    // The authoritative raid/spend PlanetSettled — a genuinely newer event (block past the reconcile block)
+    // carrying the lower post-mutation balance. It MUST drop the served resources even though the snapshot's
+    // stored lastSettledAt is newer.
+    const raidBlock = `0x${(reconciledBlock + 0x100n).toString(16)}`;
+    indexer.applyLog({
+      blockNumber: raidBlock,
+      transactionHash: "0xraid-after-reconcile",
+      logIndex: "0x0",
+      topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+      data: abiWords(508n, 460n, 410n, BigInt(now))
+    });
+    expect(indexer.walletSettlement(player).planet?.resources).toEqual({
+      metal: "508",
+      crystal: "460",
+      deuterium: "410"
+    });
+
+    // A stale, out-of-order older PlanetSettled (block before the raid) carrying the pre-raid high balance
+    // must NOT restore the over-report — this is the regression that made upgrades revert on-chain.
+    const staleBlock = `0x${(reconciledBlock + 0x10n).toString(16)}`;
+    indexer.applyLog({
+      blockNumber: staleBlock,
+      transactionHash: "0xstale-pre-raid",
+      logIndex: "0x0",
+      topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+      data: abiWords(9000n, 8000n, 7000n, BigInt(now))
+    });
+    expect(indexer.walletSettlement(player).planet?.resources).toEqual({
+      metal: "508",
+      crystal: "460",
+      deuterium: "410"
+    });
+  });
+
   test("reports used fields as completed building levels only", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
