@@ -870,7 +870,11 @@ describe("SettlementIndexer", () => {
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(1);
   });
 
-  test("refreshCanonicalState re-pins served ship counts to chain (VEY-452)", async () => {
+  // Canonical-mirror rework: the runtime refreshCanonicalState() self-heal was removed. The startup
+  // reconcile (rebuild) is now the ONLY canonical chain read, and it OVERWRITES the stored roster with
+  // the on-chain value on every run. This test asserts that contract — a re-run of rebuild() re-pins the
+  // served ship counts to the latest on-chain values even after events drove them elsewhere (VEY-452).
+  test("rebuild() re-pins served ship counts to chain on every startup reconcile (VEY-452)", async () => {
     let onchainShipCount = 2;
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
@@ -915,65 +919,14 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(1);
 
-    // The fleet comes home and the contract now reports 5 at the planet. A lightweight canonical refresh
-    // re-pins the stored roster to the live on-chain value; availableShipRows reads the same authoritative
-    // count, landing at 5.
+    // The fleet comes home and the contract now reports 5 at the planet. The next startup reconcile
+    // overwrites the stored roster with the authoritative on-chain value; served counts land at 5.
     onchainShipCount = 5;
-    await indexer.refreshCanonicalState();
+    await indexer.rebuild();
 
     // Re-pinned to chain (was 1).
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(5);
-  });
-
-  test("refreshCanonicalState still re-pins chain state while a background rebuild is running (VEY-452)", async () => {
-    let onchainShipCount = 2;
-    let blockRebuild: (() => void) | null = null;
-    const indexer = new SettlementIndexer({
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listCurrentPlanets() { return [planet]; },
-      async listSettledPlanetEvents() {
-        if (blockRebuild) {
-          await new Promise<void>((resolve) => {
-            blockRebuild = resolve;
-          });
-        }
-        return [planet];
-      },
-      async getShipyardState() {
-        return {
-          wallet: player,
-          homePlanetId: planet.planetId,
-          planetId: planet.planetId,
-          productionAvailable: true,
-          resources: planet.resources,
-          fleetSlots: { active: 0, limit: 1 },
-          shipyardLevel: 1,
-          naniteLevel: 0,
-          technologyLevels: {},
-          ships: [{ id: 1, count: onchainShipCount, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
-          queue: null
-        };
-      }
-    }, 100n);
-
-    await indexer.rebuild();
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(2);
-
-    blockRebuild = () => {};
-    const rebuilding = indexer.reconcile("slow startup refresh");
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(indexer.snapshot()).toMatchObject({
-      reconciliationInProgress: true
-    });
-
-    onchainShipCount = 4;
-    await indexer.refreshCanonicalState();
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(4);
-
-    blockRebuild();
-    await rebuilding;
   });
 
   test("an out-of-order/backfilled older log cannot drag the indexed head back, and returned ships are credited from events (VEY-KANEO-460)", () => {
@@ -1207,32 +1160,16 @@ describe("SettlementIndexer", () => {
     });
 
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(4);
-    // A returned non-combat mission needs no bounded reconcile.
-    expect(indexer.drainFleetMissionReconcilePlanets()).toEqual([]);
   });
 
-  test("credits a returned combat fleet's survivors from events, and a bounded reconcile confirms them (VEY-KANEO-461)", async () => {
-    let onchainSmallCargo = 4;
+  // Canonical-mirror rework: the combat-triggered bounded per-planet reconcile was removed; combat
+  // survivor/loss credits now come purely from PlanetShipCountChanged events. This test asserts that
+  // event-only correctness (the bounded-reconcile confirmation step is gone) (VEY-KANEO-461).
+  test("credits a returned combat fleet's survivors from events alone (VEY-KANEO-461)", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; },
-      async getShipyardState() {
-        return {
-          wallet: player,
-          homePlanetId: planet.planetId,
-          planetId: planet.planetId,
-          productionAvailable: true,
-          resources: planet.resources,
-          fleetSlots: { active: 0, limit: 1 },
-          shipyardLevel: 0,
-          naniteLevel: 0,
-          technologyLevels: {},
-          // On-chain survivor count after the battle: 2 of the 3 attackers came home (1 lost).
-          ships: [{ id: 0, count: onchainSmallCargo, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
-          queue: null
-        };
-      }
+      async listSettledPlanetEvents() { return [planet]; }
     }, 100n);
     indexer.applyEvent(planet);
 
@@ -1294,47 +1231,6 @@ describe("SettlementIndexer", () => {
 
     // Survivors credited from events alone — 3 launchable (1 destroyed ship excluded), no on-chain read.
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(3);
-
-    // The settled combat mission still queues its origin + target for a bounded reconcile as a safety net.
-    const targets = indexer.drainFleetMissionReconcilePlanets();
-    expect(targets).toContain("7");
-    expect(targets).toContain("99");
-
-    // The bounded reconcile reads the planet's authoritative count and confirms the evented survivor count
-    // (3) — it finds no divergence to heal, since events already pinned the roster exactly.
-    onchainSmallCargo = 3;
-    const report = await indexer.reconcilePlanetState("7");
-    expect(report?.reachedChain).toBe(true);
-    expect(report?.divergent).toBe(false);
-    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(3);
-  });
-
-  test("drainFleetMissionReconcilePlanets ignores non-combat settlements and dedupes (VEY-KANEO-461)", () => {
-    const indexer = new SettlementIndexer({
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return []; }
-    }, 100n);
-    indexer.applyEvent(planet);
-
-    // A non-combat Transport that settles must not trigger any on-chain reconcile.
-    indexer.applyLog({
-      blockNumber: "0x90",
-      transactionHash: "0xt-launch",
-      logIndex: "0x0",
-      topics: [fleetMissionLaunchedTopic, topic(90n), addressTopic(player), topic(0n)],
-      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
-    });
-    indexer.applyLog({
-      blockNumber: "0x95",
-      transactionHash: "0xt-return",
-      logIndex: "0x0",
-      topics: [fleetMissionReturnedTopic, topic(90n), addressTopic(player), topic(7n)],
-      data: "0x"
-    });
-    expect(indexer.drainFleetMissionReconcilePlanets()).toEqual([]);
-    // Draining clears the queue.
-    expect(indexer.drainFleetMissionReconcilePlanets()).toEqual([]);
   });
 
   test("applies duplicate webhook logs only once", () => {
@@ -3292,71 +3188,12 @@ describe("SettlementIndexer", () => {
     });
   });
 
-  test("verifyCanonicalState reports no divergence when stored canonical equals on-chain (VEY-KANEO-452)", async () => {
-    const resources = { metal: "9900", crystal: "8800", deuterium: "7700" };
-    const liveInfrastructure: InfrastructureState = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      infrastructureAvailable: true,
-      resources,
-      productionPerHour: { metal: "0", crystal: "0", deuterium: "0" },
-      energyBalance: { produced: "0", required: "0", scaleBps: "10000" },
-      storageCaps: { metal: "100000", crystal: "100000", deuterium: "100000" },
-      protectedResources: { metal: "0", crystal: "0", deuterium: "0" },
-      raidableResources: { metal: "0", crystal: "0", deuterium: "0" },
-      technologyLevels: {},
-      buildings: deriveBuildingRows((id) => (id === 0 ? 4 : 0)),
-      queue: null
-    };
-    const liveShipyard: ShipyardState = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      planetId: planet.planetId,
-      productionAvailable: true,
-      resources: null,
-      fleetSlots: { active: 0, limit: 1 },
-      shipyardLevel: 0,
-      naniteLevel: 0,
-      technologyLevels: {},
-      ships: deriveShipRows((id) => (id === 1 ? 5 : 0)),
-      queue: null
-    };
-    const liveDefense: DefenseState = {
-      wallet: player,
-      homePlanetId: planet.planetId,
-      productionAvailable: true,
-      resources: null,
-      shipyardLevel: 0,
-      naniteLevel: 0,
-      missileSiloLevel: 0,
-      technologyLevels: {},
-      defenses: deriveDefenseRows((id) => (id === 2 ? 3 : 0)),
-      queue: null
-    };
-    const indexer = new SettlementIndexer({
-      async listCurrentPlanets() { return [planet]; },
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return [planet]; },
-      async getInfrastructureState() { return liveInfrastructure; },
-      async getShipyardState() { return liveShipyard; },
-      async getDefenseState() { return liveDefense; }
-    }, 100n);
-
-    await indexer.rebuild();
-
-    const report = await indexer.verifyCanonicalState(planet.planetId);
-    expect(report).toMatchObject({
-      planetId: planet.planetId,
-      owner: player,
-      reachedChain: true,
-      divergent: false,
-      healed: false
-    });
-    expect(report.divergences).toEqual([]);
-  });
-
-  test("verifyCanonicalState detects and self-heals divergence vs previewResources/shipCount/buildingLevel/defenseCount (VEY-KANEO-452)", async () => {
+  // Canonical-mirror rework (replaces the removed verifyCanonicalState / per-planet self-heal,
+  // VEY-KANEO-452): the startup reconcile (rebuild) is the ONLY canonical chain read, and it OVERWRITES
+  // the stored canonical state with the contract values on every run — both upward and DOWNWARD — so any
+  // on-chain drift the indexer never observed via events (the contract mutates resources/ships/defenses/
+  // buildings for some actions without a replayable event) is corrected to the contract on the next boot.
+  test("startup rebuild overwrites stored canonical state with contract values, correcting unobserved drift", async () => {
     let liveInfrastructure: InfrastructureState = {
       wallet: player,
       homePlanetId: planet.planetId,
@@ -3406,80 +3243,30 @@ describe("SettlementIndexer", () => {
       async getDefenseState() { return liveDefense; }
     }, 100n);
 
-    // Reconcile so the stored canonical mirror matches the v1 on-chain state.
+    // First startup reconcile pins the stored canonical mirror to the v1 on-chain state.
     await indexer.rebuild();
-    expect((await indexer.verifyCanonicalState(planet.planetId)).divergent).toBe(false);
+    expect(indexer.infrastructureRows(planet.planetId).find((row) => row.id === 0)?.level).toBe(5);
+    expect(indexer.shipRows(planet.planetId).find((row) => row.id === 1)?.count).toBe(10);
+    expect(indexer.defenseRows(planet.planetId).find((row) => row.id === 2)?.count).toBe(4);
 
-    // Simulate on-chain moves the indexer never observed via events: a building
-    // downgrade, fleet losses, a defense built, and resources spent — the kind of
-    // drift the contract applies without an event the read model can replay.
+    // Simulate on-chain moves the indexer never observed via events: a building downgrade, fleet losses,
+    // a defense built, and resources spent — the kind of drift the contract applies without a replayable
+    // event. The contract is canonical and always wins.
     liveInfrastructure = {
       ...liveInfrastructure,
       resources: { metal: "250", crystal: "8000", deuterium: "120" },
       buildings: deriveBuildingRows((id) => (id === 0 ? 3 : 0))
     };
-    liveShipyard = {
-      ...liveShipyard,
-      ships: deriveShipRows((id) => (id === 1 ? 2 : 0))
-    };
-    liveDefense = {
-      ...liveDefense,
-      defenses: deriveDefenseRows((id) => (id === 2 ? 7 : 0))
-    };
+    liveShipyard = { ...liveShipyard, ships: deriveShipRows((id) => (id === 1 ? 2 : 0)) };
+    liveDefense = { ...liveDefense, defenses: deriveDefenseRows((id) => (id === 2 ? 7 : 0)) };
 
-    // Read-only verify surfaces every diverged field without mutating state.
-    const detected = await indexer.verifyCanonicalState(planet.planetId);
-    expect(detected.reachedChain).toBe(true);
-    expect(detected.divergent).toBe(true);
-    expect(detected.healed).toBe(false);
-    expect(detected.divergences).toEqual(
-      expect.arrayContaining([
-        { field: "resources", id: null, key: "metal", stored: "1000", onChain: "250" },
-        { field: "resources", id: null, key: "crystal", stored: "1000", onChain: "8000" },
-        { field: "resources", id: null, key: "deuterium", stored: "1000", onChain: "120" },
-        { field: "building", id: 0, key: null, stored: "5", onChain: "3" },
-        { field: "ship", id: 1, key: null, stored: "10", onChain: "2" },
-        { field: "defense", id: 2, key: null, stored: "4", onChain: "7" }
-      ])
-    );
-    // Read models are still stale before the heal.
-    expect(indexer.shipRows(planet.planetId).find((row) => row.id === 1)?.count).toBe(10);
-
-    // Heal re-syncs just this planet's canonical rows to the contract values.
-    const healed = await indexer.verifyCanonicalState(planet.planetId, { heal: true });
-    expect(healed.divergent).toBe(true);
-    expect(healed.healed).toBe(true);
-
+    // The next startup reconcile OVERWRITES the stored canonical rows with the contract values — building
+    // and ship counts dropped DOWNWARD, defense raised, resources re-pinned exactly to chain.
+    await indexer.rebuild();
     expect(indexer.infrastructureRows(planet.planetId).find((row) => row.id === 0)?.level).toBe(3);
     expect(indexer.shipRows(planet.planetId).find((row) => row.id === 1)?.count).toBe(2);
     expect(indexer.defenseRows(planet.planetId).find((row) => row.id === 2)?.count).toBe(7);
     expect(indexer.planet(planet.planetId)?.resources).toEqual({ metal: "250", crystal: "8000", deuterium: "120" });
-
-    // After healing, the canonical state equals on-chain — no divergence remains.
-    const reverified = await indexer.verifyCanonicalState(planet.planetId);
-    expect(reverified.divergent).toBe(false);
-    expect(reverified.divergences).toEqual([]);
-  });
-
-  test("verifyCanonicalState returns reachedChain=false for an uncharted planet (VEY-KANEO-452)", async () => {
-    const indexer = new SettlementIndexer({
-      async listCurrentPlanets() { return []; },
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return []; }
-    }, 100n);
-
-    await indexer.rebuild();
-
-    const report = await indexer.verifyCanonicalState("404");
-    expect(report).toMatchObject({
-      planetId: "404",
-      owner: null,
-      reachedChain: false,
-      divergent: false,
-      healed: false
-    });
-    expect(report.divergences).toEqual([]);
   });
 
   test("records reconciliation failures for health/debug visibility", async () => {
