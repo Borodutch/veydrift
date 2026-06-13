@@ -1640,6 +1640,69 @@ describe("SettlementIndexer", () => {
     expect(indexer.walletPlanets(player).planets[0]?.keyLevels.shipyard).toBe(2);
   });
 
+  test("a stale, out-of-order older PlanetSettled cannot clobber a newer decreasing balance (VEY-KANEO-491)", () => {
+    // PlanetSettled carries the authoritative post-mutation balance. A raid/spend emits a DECREASING
+    // PlanetSettled; the read model must keep that lower balance. But logs do not always arrive in block
+    // order — a gap/self-heal backfill or reconcile re-applies a previously-missed OLDER range after the
+    // live head feed has already advanced. The resource snapshot write used to be unconditional, so the
+    // older (pre-raid, higher) PlanetSettled clobbered the newer (post-raid, lower) one, over-reporting
+    // resources. The frontend then let the player queue an upgrade they could not afford on-chain, and the
+    // transaction reverted. The snapshot write must be monotonic by block, mirroring the head clamp.
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    // `settledAt == now` keeps the production projection at zero, so the served balance equals the latest
+    // event balance exactly and the assertions isolate the snapshot, not accrual.
+    const now = Math.floor(Date.now() / 1000);
+
+    // A raid at block 0x90 (144) drops the planet's metal from 5000 to 1000.
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xraid",
+      logIndex: "0x0",
+      topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+      data: abiWords(1000n, 900n, 800n, BigInt(now))
+    });
+    expect(indexer.walletSettlement(player).planet?.resources).toEqual({
+      metal: "1000",
+      crystal: "900",
+      deuterium: "800"
+    });
+
+    // A gap/self-heal backfill re-applies a previously-missed OLDER PlanetSettled (block 0x80 = 128)
+    // carrying the pre-raid, higher balance. It must NOT overwrite the newer post-raid snapshot.
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xbackfill-pre-raid",
+      logIndex: "0x0",
+      topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+      data: abiWords(9000n, 8000n, 7000n, BigInt(now - 600))
+    });
+    expect(indexer.walletSettlement(player).planet?.resources).toEqual({
+      metal: "1000",
+      crystal: "900",
+      deuterium: "800"
+    });
+
+    // A genuinely newer PlanetSettled (block 0x95 = 149) still applies and can move the balance again.
+    indexer.applyLog({
+      blockNumber: "0x95",
+      transactionHash: "0xnewer-settle",
+      logIndex: "0x0",
+      topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+      data: abiWords(1500n, 1400n, 1300n, BigInt(now))
+    });
+    expect(indexer.walletSettlement(player).planet?.resources).toEqual({
+      metal: "1500",
+      crystal: "1400",
+      deuterium: "1300"
+    });
+  });
+
   test("reports used fields as completed building levels only", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
