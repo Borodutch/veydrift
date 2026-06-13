@@ -169,6 +169,25 @@ describe("SettlementIndexer", () => {
     }
   });
 
+  test("surfaces a real error when the cold rebuild stalls past its deadline (VEY-KANEO-485)", async () => {
+    // The incident: a wiped indexer DB pointed at the only (range-capped, self-hosted) RPC could not
+    // finish the deploy->head backfill, so the index sat in reconciliation_in_progress with
+    // lastReconciliationError=null forever. A stalled chain read must now reject with a real error the
+    // boot-time recovery can retry. Model the stall with a settled-planet backfill that never resolves.
+    const indexer = new SettlementIndexer({
+      listDebrisFieldEvents() { return new Promise<never>(() => {}); },
+      listMoonChanceReportEvents() { return new Promise<never>(() => {}); },
+      listSettledPlanetEvents() { return new Promise<never>(() => {}); }
+    }, 100n, { rebuildDeadlineMs: 20 });
+
+    await expect(indexer.rebuild()).rejects.toThrow(/exceeded 20ms deadline/);
+
+    const snapshot = indexer.snapshot();
+    expect(snapshot.reconciliationInProgress).toBe(false);
+    expect(snapshot.lastReconciliationError).toMatch(/exceeded 20ms deadline/);
+    expect(snapshot.lastReconciledAt).toBeNull();
+  });
+
   test("creates canonical mirror tables and preserves existing indexed state", () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");

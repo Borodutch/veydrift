@@ -1313,7 +1313,7 @@ export class VeydriftGameReader implements ChainReader {
     this.moonContractAddress = config.moonContractAddress;
     this.chainId = config.chainId;
     this.indexFromBlock = config.indexFromBlock;
-    this.logChunkSpan = config.logChunkSpan && config.logChunkSpan > 0n ? config.logChunkSpan : 2_000n;
+    this.logChunkSpan = config.logChunkSpan && config.logChunkSpan > 0n ? config.logChunkSpan : 90_000n;
     this.resourceTokenAddresses = config.resourceTokenAddresses ?? {};
     this.settlementContractAddress = config.settlementContractAddress;
     this.randomnessEngineAddress = config.randomnessEngineAddress;
@@ -2778,21 +2778,24 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   private async getLogs(filter: RpcLogFilter): Promise<RpcLog[]> {
-    try {
-      return await this.transport.request<RpcLog[]>("eth_getLogs", [filter]);
-    } catch (error) {
-      if (!shouldChunkLogQuery(error)) {
-        throw error;
-      }
-    }
-
+    // VEY-KANEO-485: page deploy->head proactively in <=logChunkSpan windows rather than first issuing
+    // a full-range eth_getLogs that a range-capped node is guaranteed to reject. Our self-hosted node
+    // (now the ONLY RPC — Alchemy is permanently dead) caps eth_getLogs at 100k blocks; the old
+    // "try the unbounded range, fail, then chunk" path wasted a failing round-trip on every cold-rebuild
+    // and full-history serving read and, with the previous 2k span, never finished the cold reindex.
+    // Resolve the head once and chunk immediately. getLogsRange still halves any individual chunk a node
+    // rejects or truncates, so an over-cap or oversized-response chunk is always recovered.
     const fromBlock = decodeUint(filter.fromBlock);
     const toBlock = filter.toBlock === "latest"
       ? decodeUint(await this.transport.request<string>("eth_blockNumber", []))
       : decodeUint(filter.toBlock);
     if (toBlock < fromBlock) return [];
 
-    return this.getLogsInChunks(filter, fromBlock, toBlock, this.logChunkSpan);
+    if (toBlock - fromBlock > this.logChunkSpan) {
+      return this.getLogsInChunks(filter, fromBlock, toBlock, this.logChunkSpan);
+    }
+
+    return this.getLogsRange(filter, fromBlock, toBlock);
   }
 
   private async getLogsInChunks(

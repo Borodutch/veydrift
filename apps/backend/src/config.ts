@@ -9,6 +9,12 @@ export type BackendConfig = {
   indexDbPath: string;
   indexFromBlock: bigint;
   logChunkSpan?: bigint;
+  // VEY-KANEO-485: hard deadline (ms) for the chain-read phase of a full cold rebuild. If the
+  // deploy->head backfill does not finish in this window the rebuild rejects with a real error
+  // (recorded as lastReconciliationError) instead of sitting in reconciliation_in_progress forever.
+  // loadBackendConfig always populates it (default 5 min); optional only so existing BackendConfig
+  // literals/fixtures that predate this field keep type-checking.
+  rebuildDeadlineMs?: number;
   missionResolutionEnabled: boolean;
   missionResolverAddress?: `0x${string}`;
   // VEY-KANEO-471: QA staging flag. When VEYDRIFT_QA_SYNTHETIC_STATIONED_DEFENDERS is truthy AND the
@@ -76,7 +82,19 @@ const defaultChainId = 84532;
 const defaultDeploymentMode: DeploymentMode = "local";
 const defaultIndexDbPath = ".data/contract-state.sqlite";
 const defaultRandomnessCommitmentStorePath = ".data/randomness-commitments.json";
-const defaultLogChunkSpan = 2_000n;
+// VEY-KANEO-485: the self-hosted Base Sepolia node (now the ONLY RPC — Alchemy is permanently dead)
+// caps eth_getLogs at a 100,000-block range. The old 2,000-block default needed ~180 sequential
+// getLogs per event type to page the ~360k-block deploy->head history, so the cold wipe->reindex
+// rebuild stalled for many minutes and never reached recordSuccessfulReconciliation. A 90,000-block
+// span stays safely under the node's 100k cap (and well within response-size limits — the contract
+// emits only ~36k logs total) while paging deploy->head in ~4 requests per event type. Operators can
+// still tune VEYDRIFT_LOG_CHUNK_SPAN per node; getLogsRange keeps halving any chunk whose response a
+// node still rejects/truncates, so this default is safe even if a future node caps lower.
+const defaultLogChunkSpan = 90_000n;
+// VEY-KANEO-485: 5 minutes — comfortably above the "couple of minutes" a healthy cold reindex needs
+// (deploy->head pages in ~4 getLogs/event-type at the 90k span), but bounded so a stalled rebuild
+// surfaces a real error and the boot-time recovery retries it, instead of an indefinite silent hang.
+const defaultRebuildDeadlineMs = 300_000;
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 const privateKeyPattern = /^0x[a-fA-F0-9]{64}$/;
 const deploymentModes = new Set<DeploymentMode>(["local", "test", "staging", "production"]);
@@ -94,6 +112,9 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   const indexFromBlock = parseBigInt(env.VEYDRIFT_INDEX_FROM_BLOCK, "VEYDRIFT_INDEX_FROM_BLOCK", problems) ?? 0n;
   const parsedLogChunkSpan = parseBigInt(env.VEYDRIFT_LOG_CHUNK_SPAN, "VEYDRIFT_LOG_CHUNK_SPAN", problems);
   const logChunkSpan = parsedLogChunkSpan && parsedLogChunkSpan > 0n ? parsedLogChunkSpan : defaultLogChunkSpan;
+  const rebuildDeadlineMs =
+    parsePositiveInteger(env.VEYDRIFT_REBUILD_DEADLINE_MS, "VEYDRIFT_REBUILD_DEADLINE_MS", problems)
+      ?? defaultRebuildDeadlineMs;
   const { rpcUrl, rpcSource } = resolveRpcUrl(env);
   const { wsRpcUrl, wsRpcSource } = resolveWsRpcUrl(env);
   const gameContractAddress = parseAddress(
@@ -175,6 +196,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       indexDbPath: env.VEYDRIFT_INDEX_DB_PATH ?? defaultIndexDbPath,
       indexFromBlock,
       logChunkSpan,
+      rebuildDeadlineMs,
       missionResolutionEnabled: deploymentMode === "test" && Boolean(missionResolverAddress),
       ...(missionResolverAddress ? { missionResolverAddress } : {}),
       qaSyntheticStationedDefenders,

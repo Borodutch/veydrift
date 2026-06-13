@@ -577,16 +577,16 @@ describe("moon chance report event decoding", () => {
     await expect(reader.listAllianceLogs(100n, 200n)).resolves.toHaveLength(1);
   });
 
-  test("chunks log queries when the RPC enforces a small block range", async () => {
+  test("pages a 'latest' range in <=span windows without a doomed full-range call first", async () => {
+    // VEY-KANEO-485: a range-capped node never sees the unbounded range. getLogs resolves the head once
+    // (eth_blockNumber) and chunks deploy->head proactively, so there is no wasted failing full-range
+    // eth_getLogs ahead of the chunks.
     const calls: Array<{ method: string; params: unknown[] }> = [];
     const reader = new VeydriftGameReader(
       { ...readerConfig, logChunkSpan: 9n },
       {
         async request<T>(method: string, params: unknown[]): Promise<T> {
           calls.push({ method, params });
-          if (calls.length === 1) {
-            throw new Error("RPC -32602: query exceeds max block range 2000");
-          }
           if (method === "eth_blockNumber") {
             return "0x70" as T;
           }
@@ -598,12 +598,11 @@ describe("moon chance report event decoding", () => {
     await expect(reader.listSettledPlanetEvents(100n, "latest")).resolves.toEqual([]);
 
     expect(calls.map((call) => call.method)).toEqual([
-      "eth_getLogs",
       "eth_blockNumber",
       "eth_getLogs",
       "eth_getLogs"
     ]);
-    expect(calls[2]?.params).toEqual([
+    expect(calls[1]?.params).toEqual([
       {
         address: readerConfig.gameContractAddress,
         fromBlock: "0x64",
@@ -611,7 +610,7 @@ describe("moon chance report event decoding", () => {
         topics: expect.any(Array)
       }
     ]);
-    expect(calls[3]?.params).toEqual([
+    expect(calls[2]?.params).toEqual([
       {
         address: readerConfig.gameContractAddress,
         fromBlock: "0x6e",
@@ -623,6 +622,7 @@ describe("moon chance report event decoding", () => {
 
   test("uses a wide default chunk span so backfills are a handful of requests, not thousands", async () => {
     const logRanges: Array<{ fromBlock: string; toBlock: string }> = [];
+    let unboundedLatestQueries = 0;
     const reader = new VeydriftGameReader(
       readerConfig,
       {
@@ -632,8 +632,8 @@ describe("moon chance report event decoding", () => {
           }
           const [filter] = params as [{ fromBlock: string; toBlock: string }];
           if (filter.toBlock === "latest") {
-            // Provider rejects the unbounded range, forcing the chunk fallback.
-            throw new Error("RPC -32602: query exceeds max block range 2000");
+            // VEY-KANEO-485: the proactive pager must never send the unbounded range to a capped node.
+            unboundedLatestQueries += 1;
           }
           logRanges.push({ fromBlock: filter.fromBlock, toBlock: filter.toBlock });
           return [] as T;
@@ -641,12 +641,63 @@ describe("moon chance report event decoding", () => {
       }
     );
 
-    // ~44900 blocks. With the old 10-block span this is ~4490 eth_getLogs calls;
-    // with the 2000 default it must be at most a couple dozen.
+    // ~44900 blocks. With the old 10-block span this was ~4490 eth_getLogs calls; with the wide
+    // 90k default it pages deploy->head in a single window and never probes the unbounded range.
     await expect(reader.listSettledPlanetEvents(100n, "latest")).resolves.toEqual([]);
 
+    expect(unboundedLatestQueries).toBe(0);
     expect(logRanges.length).toBeLessThanOrEqual(24);
-    expect(logRanges[0]).toEqual({ fromBlock: "0x64", toBlock: "0x834" }); // 100 .. 2100
+    expect(logRanges[0]).toEqual({ fromBlock: "0x64", toBlock: "0xafc8" }); // 100 .. 45000 in one window
+  });
+
+  test("pages the full deploy->head history in <=100k windows against a range-capped node (VEY-KANEO-485)", async () => {
+    // Reproduces the incident node: eth_getLogs is hard-capped at a 100,000-block range, and the
+    // deploy->head history is ~360k blocks. The pager must complete the cold backfill in a handful of
+    // in-cap windows, never issue an over-cap or unbounded request, and never spin into hundreds of
+    // 2k-block calls (the old default that hung the cold reindex).
+    const deployBlock = 42_411_977n;
+    const head = 42_772_306n; // ~360k blocks after deploy (matches the restored-snapshot block)
+    const nodeBlockRangeCap = 100_000n;
+    const logRanges: Array<{ fromBlock: bigint; toBlock: bigint }> = [];
+    let overCapQueries = 0;
+    let unboundedLatestQueries = 0;
+    const reader = new VeydriftGameReader(
+      readerConfig,
+      {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          if (method === "eth_blockNumber") {
+            return `0x${head.toString(16)}` as T;
+          }
+          const [filter] = params as [{ fromBlock: string; toBlock: string }];
+          if (filter.toBlock === "latest") {
+            unboundedLatestQueries += 1;
+            throw new Error("RPC -32602: query exceeds max block range 100000");
+          }
+          const fromBlock = BigInt(filter.fromBlock);
+          const toBlock = BigInt(filter.toBlock);
+          if (toBlock - fromBlock > nodeBlockRangeCap) {
+            overCapQueries += 1;
+            throw new Error("RPC -32602: query exceeds max block range 100000");
+          }
+          logRanges.push({ fromBlock, toBlock });
+          return [] as T;
+        }
+      }
+    );
+
+    await expect(reader.listSettledPlanetEvents(deployBlock, "latest")).resolves.toEqual([]);
+
+    expect(unboundedLatestQueries).toBe(0);
+    expect(overCapQueries).toBe(0);
+    // ~360k blocks at the 90k default span (90,001-block windows) = 5 in-cap windows, end to end —
+    // versus ~180 calls per event type at the old 2k default that hung the cold reindex.
+    expect(logRanges.length).toBe(5);
+    expect(logRanges[0]?.fromBlock).toBe(deployBlock);
+    expect(logRanges.at(-1)?.toBlock).toBe(head);
+    // Contiguous, gap-free coverage of the whole deploy->head range.
+    for (let index = 1; index < logRanges.length; index += 1) {
+      expect(logRanges[index]!.fromBlock).toBe(logRanges[index - 1]!.toBlock + 1n);
+    }
   });
 
   test("splits log chunks again when an RPC rejects a chunk", async () => {
@@ -657,9 +708,6 @@ describe("moon chance report event decoding", () => {
       {
         async request<T>(method: string, params: unknown[]): Promise<T> {
           calls.push({ method, params });
-          if (calls.length === 1) {
-            throw new Error("RPC HTTP 400");
-          }
           if (method === "eth_blockNumber") {
             return "0x6d" as T;
           }
@@ -681,7 +729,6 @@ describe("moon chance report event decoding", () => {
 
     const logRanges = calls
       .filter((call) => call.method === "eth_getLogs")
-      .slice(1)
       .map((call) => {
         const [filter] = call.params as [{ fromBlock: string; toBlock: string }];
         return `${filter.fromBlock}:${filter.toBlock}`;
@@ -703,10 +750,6 @@ describe("moon chance report event decoding", () => {
           }
 
           const [filter] = params as [{ fromBlock: string; toBlock: string }];
-          if (filter.toBlock === "latest") {
-            throw new Error("RPC HTTP 400");
-          }
-
           const fromBlock = BigInt(filter.fromBlock);
           const toBlock = BigInt(filter.toBlock);
           if (toBlock - fromBlock > 4n) {
@@ -722,7 +765,6 @@ describe("moon chance report event decoding", () => {
 
     const logRanges = calls
       .filter((call) => call.method === "eth_getLogs")
-      .slice(1)
       .map((call) => {
         const [filter] = call.params as [{ fromBlock: string; toBlock: string }];
         return `${filter.fromBlock}:${filter.toBlock}`;
@@ -930,6 +972,9 @@ describe("player queue startedAt", () => {
           if (selector === "0x2b98afc7") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
           throw new Error(`Unexpected eth_call selector ${selector}`);
         }
+        if (method === "eth_blockNumber") {
+          return "0x200" as T;
+        }
         if (method === "eth_getLogs") {
           getLogsTopics = (params[0] as { topics?: unknown }).topics;
           return [shipQueuedLog] as T;
@@ -1071,6 +1116,7 @@ describe("fleet mission visibility", () => {
       readerConfig,
       {
         async request<T>(method: string, params: unknown[]): Promise<T> {
+          if (method === "eth_blockNumber") return "0x200" as T;
           expect(method).toBe("eth_getLogs");
           const [filter] = params as [{ topics?: unknown[] }];
           const topics = filter.topics?.[0] as string[] | undefined;
@@ -1126,6 +1172,7 @@ describe("fleet mission visibility", () => {
       readerConfig,
       {
         async request<T>(method: string): Promise<T> {
+          if (method === "eth_blockNumber") return "0x200" as T;
           expect(method).toBe("eth_getLogs");
           return missionLogs as T;
         }
@@ -1194,6 +1241,7 @@ describe("fleet mission resolution scheduling", () => {
   function readerFor(logs: RpcLog[]): VeydriftGameReader {
     return new VeydriftGameReader(readerConfig, {
       async request<T>(method: string): Promise<T> {
+        if (method === "eth_blockNumber") return "0x200" as T;
         expect(method).toBe("eth_getLogs");
         return logs as T;
       }
@@ -1274,6 +1322,7 @@ describe("attack resolution is gated on battle randomness (VEY-KANEO-479)", () =
       { ...readerConfig, randomnessEngineAddress: engineAddress },
       {
         async request<T>(method: string, params?: unknown): Promise<T> {
+          if (method === "eth_blockNumber") return "0x200" as T;
           expect(method).toBe("eth_getLogs");
           const filter = (params as [{ address: string | string[] }])[0];
           const addresses = Array.isArray(filter.address) ? filter.address : [filter.address];
