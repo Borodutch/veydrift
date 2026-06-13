@@ -817,7 +817,7 @@ describe("Veydrift backend", () => {
         deploymentMode: "local",
         hasRpcUrl: false,
         indexFromBlock: "0",
-        logChunkSpan: "2000",
+        logChunkSpan: "90000",
         missionResolutionEnabled: false,
         missionResolverConfigured: false,
         resourceTokensConfigured: {
@@ -2177,6 +2177,9 @@ describe("Veydrift backend", () => {
     const readyAt = 1_700_000_600n;
     const reader = new VeydriftGameReader(configuredTestConfig, {
       async request<T>(method: string, params: unknown[]): Promise<T> {
+        if (method === "eth_blockNumber") {
+          return "0x200" as T;
+        }
         if (method === "eth_getLogs") {
           const [filter] = params as [{ fromBlock: string }];
           expect(filter.fromBlock).toBe("0x64");
@@ -2262,6 +2265,9 @@ describe("Veydrift backend", () => {
     const readyAt = 1_700_000_600n;
     const reader = new VeydriftGameReader(configuredTestConfig, {
       async request<T>(method: string, params: unknown[]): Promise<T> {
+        if (method === "eth_blockNumber") {
+          return "0x200" as T;
+        }
         if (method === "eth_getLogs") {
           const [filter] = params as [{ fromBlock: string; topics: string[] }];
           expect(filter.fromBlock).toBe("0x64");
@@ -2365,6 +2371,9 @@ describe("Veydrift backend", () => {
     const readyAt = startedAt + 432n;
     const reader = new VeydriftGameReader(configuredTestConfig, {
       async request<T>(method: string, params: unknown[]): Promise<T> {
+        if (method === "eth_blockNumber") {
+          return "0x200" as T;
+        }
         if (method === "eth_getLogs") {
           return [
             {
@@ -2448,6 +2457,9 @@ describe("Veydrift backend", () => {
     let researchLogQueries = 0;
     const reader = new VeydriftGameReader(configuredTestConfig, {
       async request<T>(method: string, params: unknown[]): Promise<T> {
+        if (method === "eth_blockNumber") {
+          return "0x200" as T;
+        }
         if (method === "eth_getLogs") {
           const [filter] = params as [{ fromBlock: string; topics: string[] }];
           researchLogQueries += 1;

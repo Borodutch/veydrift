@@ -560,6 +560,57 @@ describe("ChainSyncService", () => {
     service.stop();
   });
 
+  test("self-reschedules a failed canonical reconcile so the indexer cannot stall indefinitely (VEY-KANEO-482)", async () => {
+    MockWebSocket.instances = [];
+    const reconcileReasons: string[] = [];
+    let failNext = true;
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      markStale() {},
+      async reconcile(reason: string) {
+        reconcileReasons.push(reason);
+        if (failNext) {
+          failNext = false;
+          throw new Error("simulated reconcile failure (e.g. flaky RPC)");
+        }
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      reconcileThrottleMs: 0,
+      reconcileBackoffBaseMs: 5,
+      reconcileBackoffMaxMs: 20
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    // A single head gap is the ONLY external trigger. The first reconcile fails; without the
+    // watchdog the indexer would park behind the backoff and never retry until another gap/reorg
+    // arrived. The websocket then stays silent for the rest of the test.
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x7b" } } });
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x7f" } } });
+    await Promise.resolve();
+
+    // The first attempt ran and failed.
+    expect(reconcileReasons.length).toBe(1);
+
+    // Wait past the backoff window: the failed reconcile must re-drive itself with no new trigger.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(reconcileReasons.length).toBeGreaterThanOrEqual(2);
+    // Once a retry succeeds, the watchdog stops — it does not hot-loop forever (VEY-KANEO-461).
+    const afterRecovery = reconcileReasons.length;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(reconcileReasons.length).toBe(afterRecovery);
+    service.stop();
+  });
+
   test("sends a liveness probe when the websocket is quiet but alive", async () => {
     MockWebSocket.instances = [];
     const service = new ChainSyncService(config, undefined, {
@@ -594,6 +645,221 @@ describe("ChainSyncService", () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
 
     expect(MockWebSocket.instances.length).toBeGreaterThanOrEqual(2);
+    service.stop();
+  });
+
+  test("self-heals a live log the provider silently dropped by replaying a recent range", async () => {
+    MockWebSocket.instances = [];
+    const seen = new Set<string>();
+    const appliedHashes: string[] = [];
+    const backfillRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog(log: { transactionHash: string }) {
+        if (seen.has(log.transactionHash)) {
+          return { applied: false, duplicate: true, ignored: false, removed: false, snapshot: {} };
+        }
+        seen.add(log.transactionHash);
+        appliedHashes.push(log.transactionHash);
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: {} };
+      },
+      markStale() {},
+      async reconcile() {}
+    };
+    const backfiller = {
+      async listContractLogs(from: bigint, to?: bigint | "latest") {
+        backfillRanges.push({ from, to: to ?? "latest" });
+        // A log that was never delivered over the live `logs` subscription.
+        return [{ blockNumber: "0x18e", transactionHash: "0xdropped", topics: [planetStartedTopic], data: "0x" }];
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      logBackfiller: backfiller,
+      selfHealIntervalMs: 2,
+      selfHealDepthBlocks: 50
+    });
+    const chainEventBlocks: Array<string | null> = [];
+    service.addListener((event) => {
+      if (event.kind === "chain-event") chainEventBlocks.push(event.blockNumber);
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    // Establish a recent block anchor (block 400) while the log at block 398 is never delivered.
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x190" } } });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // Re-scans only the recent depth window (400 - 50 + 1 = 351 .. latest), not the whole index.
+    expect(backfillRanges[0]).toEqual({ from: 351n, to: "latest" });
+    // The dropped log is recovered exactly once; further passes are idempotent no-ops.
+    expect(appliedHashes).toEqual(["0xdropped"]);
+    const snapshot = service.snapshot();
+    expect(snapshot.selfHealRecoveredEvents).toBe(1);
+    expect(snapshot.lastSelfHealAt).toEqual(expect.any(String));
+    // Recovering a dropped log emits a chain-event so read caches/SSE clients refresh.
+    expect(chainEventBlocks).toContain("400");
+    service.stop();
+  });
+
+  test("a failing periodic self-heal pass never escalates to a full canonical reconcile (VEY-KANEO-461)", async () => {
+    MockWebSocket.instances = [];
+    const reconcileReasons: string[] = [];
+    let backfillAttempts = 0;
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog() {
+        return { applied: false, duplicate: true, ignored: false, removed: false, snapshot: {} };
+      },
+      markStale() {},
+      async reconcile(reason: string) {
+        reconcileReasons.push(reason);
+      }
+    };
+    const backfiller = {
+      async listContractLogs() {
+        backfillAttempts += 1;
+        // Simulate the truncated/empty RPC body that took prod down: the heavy read returns a
+        // malformed response that JSON.parse rejects.
+        throw new Error("Unexpected end of JSON input");
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      logBackfiller: backfiller,
+      selfHealIntervalMs: 2,
+      selfHealDepthBlocks: 50
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x190" } } });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The self-heal pass ran and failed on the flaky RPC...
+    expect(backfillAttempts).toBeGreaterThanOrEqual(1);
+    expect(service.snapshot().lastError).toBe("Unexpected end of JSON input");
+    // ...but it must NOT have escalated to a full canonical reconcile (the SIGSEGV-prone read).
+    // A best-effort self-heal simply retries on the next interval.
+    expect(reconcileReasons).toEqual([]);
+    service.stop();
+  });
+
+  test("self-heal stays quiet when no live events were dropped", async () => {
+    MockWebSocket.instances = [];
+    const backfillCalls: bigint[] = [];
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog() {
+        // Everything in the recent range is already indexed.
+        return { applied: false, duplicate: true, ignored: false, removed: false, snapshot: {} };
+      },
+      markStale() {},
+      async reconcile() {}
+    };
+    const backfiller = {
+      async listContractLogs(from: bigint) {
+        backfillCalls.push(from);
+        return [{ blockNumber: "0x18e", transactionHash: "0xknown", topics: [planetStartedTopic], data: "0x" }];
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      logBackfiller: backfiller,
+      selfHealIntervalMs: 2,
+      selfHealDepthBlocks: 50
+    });
+    const chainEventBlocks: Array<string | null> = [];
+    service.addListener((event) => {
+      if (event.kind === "chain-event") chainEventBlocks.push(event.blockNumber);
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x190" } } });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The self-heal pass still ran (range was scanned)...
+    expect(backfillCalls.length).toBeGreaterThanOrEqual(1);
+    const snapshot = service.snapshot();
+    expect(snapshot.lastSelfHealAt).toEqual(expect.any(String));
+    // ...but recovered nothing and emitted no spurious chain-events.
+    expect(snapshot.selfHealRecoveredEvents).toBe(0);
+    expect(chainEventBlocks).toEqual([]);
+    service.stop();
+  });
+
+  test("self-heal restores stale planet state into the real indexer after a dropped log", async () => {
+    MockWebSocket.instances = [];
+    const indexer = new SettlementIndexer(
+      {
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; }
+      },
+      100n
+    );
+    // The SettledPlanet log for planet 7 in system (2,44) is never delivered live, so the
+    // indexer is stale: the planet is missing from query results.
+    const droppedLog = {
+      blockNumber: "0x7c",
+      transactionHash: "0xhealed",
+      topics: [
+        planetStartedTopic,
+        `0x${player.slice(2).padStart(64, "0")}`,
+        `0x${(7n).toString(16).padStart(64, "0")}`
+      ],
+      data: abiWords(2n, 44n, 9n, 211n, 1n)
+    };
+    const backfiller = {
+      async listContractLogs() { return [droppedLog]; }
+    };
+    const service = new ChainSyncService(config, indexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      logBackfiller: backfiller,
+      selfHealIntervalMs: 2,
+      selfHealDepthBlocks: 50
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    // Anchor at block 124 (0x7c) with the dropped log's block inside the self-heal window.
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x7c" } } });
+    // Stale before self-heal runs.
+    expect(indexer.settledPlanetsInSystem(2, 44)).toEqual([]);
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // The self-heal pass replayed the dropped log and restored the planet into query results.
+    expect(indexer.settledPlanetsInSystem(2, 44)).toEqual([
+      expect.objectContaining({ owner: player, planetId: "7", position: 9 })
+    ]);
+    expect(service.snapshot().selfHealRecoveredEvents).toBe(1);
     service.stop();
   });
 
@@ -632,6 +898,8 @@ describe("ChainSyncService", () => {
       WebSocketCtor: MockWebSocket,
       heartbeatIntervalMs: 0,
       logBackfiller: backfiller,
+      selfHealIntervalMs: 2,
+      selfHealDepthBlocks: 50,
       backfillRetryBaseMs: 5
     });
 
@@ -642,13 +910,11 @@ describe("ChainSyncService", () => {
     socket?.message({ id: 2, result: "heads-sub" });
     socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x190" } } });
 
-    // A forward head gap (0x191-0x195) starts a bounded backfill that we hold mid-flight so the
-    // single backfill slot stays occupied.
-    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x195" } } });
+    // Let a self-heal tick start a backfill that never resolves (slot now occupied).
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(releaseBackfill).toBeDefined();
 
-    // A second head gap arrives while the backfill slot is busy.
+    // A head gap arrives while the backfill slot is busy.
     socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x1a0" } } });
     await Promise.resolve();
 
@@ -659,9 +925,51 @@ describe("ChainSyncService", () => {
     releaseBackfill?.();
     await new Promise((resolve) => setTimeout(resolve, 30));
 
-    // The colliding gap was recovered by a second bounded backfill, never a reconcile.
+    // The gap range was recovered by a bounded backfill (extended to chain head), never a reconcile.
     expect(reconcileReasons).toEqual([]);
     expect(backfillRanges.length).toBeGreaterThanOrEqual(2);
+    expect(backfillRanges.some((range) => range.to === "latest" && range.from <= 401n)).toBe(true);
+    service.stop();
+  });
+
+  test("self-heal is disabled when the interval is zero", async () => {
+    MockWebSocket.instances = [];
+    let backfillCalls = 0;
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      applyLog() {
+        return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: {} };
+      },
+      markStale() {},
+      async reconcile() {}
+    };
+    const backfiller = {
+      async listContractLogs() {
+        backfillCalls += 1;
+        return [];
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      logBackfiller: backfiller,
+      selfHealIntervalMs: 0
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x190" } } });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(backfillCalls).toBe(0);
+    expect(service.snapshot().lastSelfHealAt).toBeNull();
+    expect(service.snapshot().selfHealRecoveredEvents).toBe(0);
     service.stop();
   });
 
@@ -739,6 +1047,7 @@ describe("ChainSyncService", () => {
     const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
       WebSocketCtor: MockWebSocket,
       heartbeatIntervalMs: 0,
+      selfHealIntervalMs: 0,
       logBackfiller: backfiller,
       backfillRetryBaseMs: 5,
       backfillRetryMaxMs: 5
@@ -783,6 +1092,7 @@ describe("ChainSyncService", () => {
     const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
       WebSocketCtor: MockWebSocket,
       heartbeatIntervalMs: 0,
+      selfHealIntervalMs: 0
     });
 
     service.start();

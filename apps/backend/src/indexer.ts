@@ -132,6 +132,12 @@ export type SettlementIndexerOptions = {
   // ingested RandomnessFulfilled logs. When false, no randomness data is expected and readiness stays
   // on the plain arrival check, preserving behaviour for deployments without the engine.
   randomnessEngineConfigured?: boolean;
+  // VEY-KANEO-485: hard deadline (ms) for the chain-read phase of a full cold rebuild. The self-hosted
+  // node is the only RPC and caps eth_getLogs at 100k blocks; if the deploy->head backfill stalls, the
+  // rebuild rejects with a real error (recorded as lastReconciliationError, retried by the boot-time
+  // recovery) instead of sitting in reconciliation_in_progress forever. Omitted/<=0 disables the
+  // deadline (the in-memory test indexer has no slow RPC to guard).
+  rebuildDeadlineMs?: number;
 };
 
 type CountRow = {
@@ -281,6 +287,12 @@ export type ApplyLogResult = {
   snapshot: IndexerSnapshot;
 };
 
+// Storage building ids (MetalStorage=7, CrystalStorage=8, DeuteriumTank=9). These gate the
+// per-resource storage cap. The contract only raises that cap when finishBuildingUpgrade is
+// called on-chain, so the backend must NOT optimistically (wall-clock) complete a storage
+// upgrade — doing so reports a higher cap than storageCaps(planetId) and lets resourcesAsOfNow
+// accrue past what the contract enforces (VEY-KANEO-483).
+const STORAGE_BUILDING_IDS: ReadonlySet<number> = new Set([7, 8, 9]);
 export class SettlementIndexer {
   private readonly db: Database;
   private planetRebuildPromise: Promise<IndexerSnapshot> | null = null;
@@ -317,6 +329,7 @@ export class SettlementIndexer {
     this.db = options.database ?? openIndexerDatabase(options.databasePath ?? ":memory:");
     this.qaSyntheticStationedDefenders = options.qaSyntheticStationedDefenders ?? false;
     this.randomnessEngineConfigured = options.randomnessEngineConfigured ?? false;
+    this.rebuildDeadlineMs = options.rebuildDeadlineMs && options.rebuildDeadlineMs > 0 ? options.rebuildDeadlineMs : 0;
     this.migrate();
   }
 
@@ -324,6 +337,8 @@ export class SettlementIndexer {
   private readonly qaSyntheticStationedDefenders: boolean;
   // VEY-KANEO-479: see SettlementIndexerOptions. Gates arrived-Attack readiness on randomness.
   private readonly randomnessEngineConfigured: boolean;
+  // VEY-KANEO-485: see SettlementIndexerOptions. 0 = no cold-rebuild deadline.
+  private readonly rebuildDeadlineMs: number;
 
   snapshot(): IndexerSnapshot {
     const reconciliationInProgress = this.rebuildPromise !== null || this.planetRebuildPromise !== null;
@@ -807,6 +822,10 @@ export class SettlementIndexer {
     const completed = this.queueSettlement(`building:${planetId}`).completed;
     return deriveBuildingRows((id) => {
       const level = this.indexedLevel("contract_building_levels", "building_id", planetId, id);
+      // Storage buildings stay pinned to the contract-authoritative level so the derived
+      // storage cap matches storageCaps(planetId) exactly; only finishBuildingUpgrade (picked
+      // up by the canonical re-pin) raises it (VEY-KANEO-483).
+      if (STORAGE_BUILDING_IDS.has(id)) return level;
       const settled = completed
         .filter((entry) => entry.itemId === id && entry.targetLevel !== undefined)
         .reduce((max, entry) => Math.max(max, entry.targetLevel ?? max), level);
@@ -1287,14 +1306,35 @@ export class SettlementIndexer {
     return this.planetRebuildPromise;
   }
 
+  // VEY-KANEO-485: surface a real error if the cold rebuild's chain read stalls past the deadline,
+  // instead of leaving the index stuck in reconciliation_in_progress with lastReconciliationError=null
+  // forever. The abandoned read resolves into the void (no DB write runs unless the log arrives in
+  // time); rebuild()'s catch records the error and the boot-time recovery retries it.
+  private withRebuildDeadline<T>(read: Promise<T>): Promise<T> {
+    if (!this.rebuildDeadlineMs) return read;
+    const deadlineMs = this.rebuildDeadlineMs;
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`cold reindex chain read exceeded ${deadlineMs}ms deadline`));
+      }, deadlineMs);
+      (timer as { unref?: () => void }).unref?.();
+      read.then(
+        (value) => { clearTimeout(timer); resolve(value); },
+        (error) => { clearTimeout(timer); reject(error); }
+      );
+    });
+  }
+
   private async rebuildUncached(): Promise<IndexerSnapshot> {
     // Event-sourced reconstruction: fetch the full contract event log from `fromBlock` (the deploy
     // block) and replay it through the same dispatch the live WS feed uses, re-deriving EVERY served
     // table — planets, resources, ship/defense counts, building/research levels, queues, moons, rift,
     // alliances — from events alone. No contract STATE getters, no listCurrentPlanets snapshot, no
     // canonical RPC re-pin: event replay is the sole source of truth (VEY-KANEO-476, EPIC 474 goal #1).
+    // VEY-KANEO-485: the getLogs read is the slow, RPC-bound phase, so it is guarded by the cold-reindex
+    // deadline; the synchronous DB replay below runs only once the full log is in hand.
     const logs = this.chainReader.listContractLogs
-      ? await this.chainReader.listContractLogs(this.fromBlock, "latest")
+      ? await this.withRebuildDeadline(this.chainReader.listContractLogs(this.fromBlock, "latest"))
       : [];
     const orderedLogs = sortLogsByPosition(logs);
     const rebuild = this.db.transaction(() => {

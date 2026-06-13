@@ -196,6 +196,28 @@ describe("SettlementIndexer", () => {
     }
   });
 
+  test("surfaces a real error when the cold rebuild stalls past its deadline (VEY-KANEO-485)", async () => {
+    // The incident: a wiped indexer DB pointed at the only (range-capped, self-hosted) RPC could not
+    // finish the deploy->head backfill, so the index sat in reconciliation_in_progress with
+    // lastReconciliationError=null forever. A stalled chain read must now reject with a real error the
+    // boot-time recovery can retry. In the event-sourced rebuild (VEY-KANEO-476) the cold rebuild's
+    // single chain read is the deploy->head event-log getLogs (listContractLogs), so model the stall
+    // with that backfill never resolving.
+    const indexer = new SettlementIndexer({
+      listContractLogs() { return new Promise<never>(() => {}); },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { rebuildDeadlineMs: 20 });
+
+    await expect(indexer.rebuild()).rejects.toThrow(/exceeded 20ms deadline/);
+
+    const snapshot = indexer.snapshot();
+    expect(snapshot.reconciliationInProgress).toBe(false);
+    expect(snapshot.lastReconciliationError).toMatch(/exceeded 20ms deadline/);
+    expect(snapshot.lastReconciledAt).toBeNull();
+  });
+
   test("creates canonical mirror tables and preserves existing indexed state", () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");
@@ -717,6 +739,81 @@ describe("SettlementIndexer", () => {
       + Math.floor((Number(oldRate.metal) * (readyAt - startTs)) / 3_600)
       + Math.floor((Number(newRate.metal) * (projectTo - readyAt)) / 3_600);
     expect(Number(projected?.resources.metal)).toBe(previewOracle);
+  });
+
+  test("does not optimistically raise the storage cap above the contract until the upgrade finishes on-chain (VEY-KANEO-483)", () => {
+    // A crystal-storage upgrade whose build timer has elapsed by wall-clock must NOT raise the
+    // backend storage cap. The contract only bumps storageCaps(planetId) when finishBuildingUpgrade
+    // lands on-chain, so optimistically completing the storage building reported crystal cap 40,000
+    // vs the contract's 20,000 and let resourcesAsOfNow accrue past what the contract enforces.
+    // Both timestamps sit before the suite's mocked clock (2026-01-01), so the queued upgrade's
+    // build timer has already elapsed by wall-clock and would be optimistically completed.
+    const startTs = 1_767_000_000;
+    const elapsedReadyAt = startTs + 3_600;
+
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent({ ...planet, lastSettledAt: startTs.toString() });
+
+    // Contract-authoritative crystal storage (building id 8) is level 1 -> cap 20,000.
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xcrystalstoragebase",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(8n)],
+      data: abiWords(1n)
+    });
+
+    // Queue a crystal-storage upgrade to level 2 with a readyAt already in the past, but never emit
+    // its BuildingCompleted (no on-chain finishBuildingUpgrade yet).
+    indexer.applyLog({
+      blockNumber: "0x81",
+      blockTimestamp: `0x${startTs.toString(16)}`,
+      transactionHash: "0xcrystalstorageupgrade",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(8n)],
+      data: abiWords(2n, BigInt(elapsedReadyAt), 0n, 0n, 0n)
+    });
+
+    const rows = indexer.infrastructureRows(planet.planetId);
+    // Storage level stays pinned to the contract level...
+    expect(rows.find((building) => building.id === 8)?.level).toBe(1);
+    // ...so the derived storage cap matches storageCaps(planetId) = 20,000, not the level-2 40,000.
+    const caps = deriveInfrastructureFields(
+      { ...planet, lastSettledAt: startTs.toString() },
+      rows,
+      deriveShipRows(() => 0),
+      {}
+    ).storageCaps;
+    expect(caps?.crystal).toBe("20000");
+
+    // Contrast: a non-storage building (metal mine, id 0) under the identical elapsed-queue setup
+    // DOES still settle optimistically, so the fix is scoped to storage caps only.
+    const mineIndexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    mineIndexer.applyEvent({ ...planet, lastSettledAt: startTs.toString() });
+    mineIndexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xminebase",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(4n)
+    });
+    mineIndexer.applyLog({
+      blockNumber: "0x81",
+      blockTimestamp: `0x${startTs.toString(16)}`,
+      transactionHash: "0xmineupgrade",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(0n)],
+      data: abiWords(8n, BigInt(elapsedReadyAt), 0n, 0n, 0n)
+    });
+    expect(mineIndexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(8);
   });
 
   test("records an active queue startedAt aligned with the spend settle time (VEY-318)", () => {
