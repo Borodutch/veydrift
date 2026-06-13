@@ -42,4 +42,40 @@ describe("planOnChainRefresh", () => {
     );
     expect(plan.applyResourceState).toBe(true);
   });
+
+  test("force-applies resource state for an explicit post-action refetch even on an equal lastSettledAt (VEY-KANEO-484)", () => {
+    // After a confirmed build/research/ship/defense spend, the explicit refetch must update the
+    // displayed resources without a page reload even when the backend momentarily returns the SAME
+    // settlement read (indexer lag / spend not yet reflected) — which the gate would otherwise drop.
+    const equal = planOnChainRefresh(
+      { planetId: "7", lastSettledAt: "200" },
+      { planetId: "7", lastSettledAt: "200" },
+      { force: true },
+    );
+    expect(equal.applyResourceState).toBe(true);
+
+    const older = planOnChainRefresh(
+      { planetId: "7", lastSettledAt: "200" },
+      { planetId: "7", lastSettledAt: "100" },
+      { force: true },
+    );
+    expect(older.applyResourceState).toBe(true);
+  });
+
+  test("force does not change the always-on queue/fleet application", () => {
+    const plan = planOnChainRefresh(
+      { planetId: "7", lastSettledAt: "200" },
+      { planetId: "7", lastSettledAt: "100" },
+      { force: true },
+    );
+    expect(plan.applyQueues).toBe(true);
+  });
+
+  test("without force, periodic polls keep the anti-snapback gate for older reads", () => {
+    const plan = planOnChainRefresh(
+      { planetId: "7", lastSettledAt: "200" },
+      { planetId: "7", lastSettledAt: "100" },
+    );
+    expect(plan.applyResourceState).toBe(false);
+  });
 });
