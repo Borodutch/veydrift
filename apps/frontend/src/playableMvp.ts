@@ -583,9 +583,14 @@ export const shipCatalog: Array<{
     asset: shipAssetByKey.reaper,
   },
   {
+    // VEY-KANEO-493: ship enum slot 14 (key `pathfinder`) is retained for on-chain
+    // index alignment but is expedition-only and unimplemented, so it is hidden from the
+    // shipyard and must never surface user-visible copy. The display label/description are
+    // intentionally neutral placeholders (not the external-game "Pathfinder" name); this
+    // catalog entry is never rendered because the ship cannot be built, owned, or queued.
     key: "pathfinder",
     id: 14,
-    label: "Pathfinder",
+    label: "Restricted Vessel",
     group: "special",
     baseCost: { metal: 8_000, crystal: 15_000, deuterium: 8_000 },
     requirements: [
@@ -593,7 +598,7 @@ export const shipCatalog: Array<{
       { kind: "technology", key: "hyperspaceDrive", label: "Hyperspace Drive", level: 2 },
       { kind: "technology", key: "shielding", label: "Shielding", level: 4 },
     ],
-    description: "A reconnaissance and expedition vessel with strong sensors and flexible cargo space. Pathfinders are useful whenever scouting value matters as much as combat value.",
+    description: "This vessel is not available in the current build.",
     asset: shipAssetByKey.pathfinder,
   },
   {
@@ -615,9 +620,10 @@ export const shipCatalog: Array<{
 
 // Ships that exist in the on-chain `Ship` enum and stay fully modelled here (combat
 // stats, queue labels, research effects) but must not be offered for production in the
-// frontend shipyard. Pathfinder is expedition-only, and expeditions are not implemented,
-// so building one is a dead-end spend. The contract enum is intentionally left intact so
-// on-chain ship indices do not shift.
+// frontend shipyard. The `pathfinder` slot (enum index 14) is expedition-only, and
+// expeditions are not implemented, so building one is a dead-end spend. The contract enum
+// is intentionally left intact so on-chain ship indices do not shift; its user-visible
+// copy is scrubbed (see the neutral label/description above — VEY-KANEO-493).
 export const shipyardHiddenShipKeys: ReadonlySet<ShipKey> = new Set<ShipKey>(["pathfinder"]);
 
 export function isShipyardHidden(key: ShipKey): boolean {
