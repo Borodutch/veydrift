@@ -37,6 +37,12 @@ export type PlanetState = Coordinates & {
   deuteriumMultiplierBps: number;
   lastSettledAt: string;
   resources: Resources;
+  // Live, settled-to-now balance (canonical `resources` projected forward at the
+  // production rate, capped at storage — the chain's `previewResources`). Optional
+  // because the canonical settled snapshot is the load-bearing value; serializers
+  // that expose a live balance populate it alongside `resources` rather than
+  // overwriting the settled snapshot (VEY-KANEO-488).
+  resourcesAsOfNow?: Resources;
 };
 
 export type ManagedPlanet = PlanetState & {

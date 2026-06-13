@@ -145,6 +145,11 @@ export type WalletSettlementResponse = {
 export type BackendIndexerState = NonNullable<WalletSettlementResponse["indexer"]>;
 
 export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet"]> & {
+  // The roster's `resources` is the canonical settled snapshot at `lastSettledAt`;
+  // `resourcesAsOfNow` is the live production-accrued balance (the chain's
+  // `previewResources`). Live consumers should prefer `resourcesAsOfNow` and fall
+  // back to `resources` for older backends/warming planets (VEY-KANEO-488).
+  resourcesAsOfNow?: OnChainResources;
   coordinates: string;
   isHomePlanet: boolean;
   fieldsUsed: number;
