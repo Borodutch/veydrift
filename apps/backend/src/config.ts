@@ -91,10 +91,14 @@ const defaultRandomnessCommitmentStorePath = ".data/randomness-commitments.json"
 // still tune VEYDRIFT_LOG_CHUNK_SPAN per node; getLogsRange keeps halving any chunk whose response a
 // node still rejects/truncates, so this default is safe even if a future node caps lower.
 const defaultLogChunkSpan = 90_000n;
-// VEY-KANEO-485: 5 minutes — comfortably above the "couple of minutes" a healthy cold reindex needs
-// (deploy->head pages in ~4 getLogs/event-type at the 90k span), but bounded so a stalled rebuild
-// surfaces a real error and the boot-time recovery retries it, instead of an indefinite silent hang.
-const defaultRebuildDeadlineMs = 300_000;
+// 30 minutes. The canonical-mirror cold reindex now reads the FULL current state of every entity from
+// the contracts at boot — per-planet infrastructure/defense/shipyard/queues, per-owner research/moon,
+// and all alliance state (members, join-requests, invites probed over candidate wallets x alliances, and
+// diplomacy over alliance pairs) — on top of the deploy->head getLogs pages. On the single self-hosted
+// Base node that whole sweep runs well past the old 5-minute ceiling, so a too-tight deadline aborted the
+// seed every boot and it never committed. Keep it bounded (so a genuine hang still surfaces a real error
+// and the boot-time recovery retries) but generous enough for the full contract-read seed to finish.
+const defaultRebuildDeadlineMs = 1_800_000;
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 const privateKeyPattern = /^0x[a-fA-F0-9]{64}$/;
 const deploymentModes = new Set<DeploymentMode>(["local", "test", "staging", "production"]);
