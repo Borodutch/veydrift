@@ -1806,6 +1806,62 @@ describe("Veydrift backend", () => {
     expect(body).toMatchObject({ allowed: true, blockedReason: "none" });
   });
 
+  test("indexed attack protection reports same_alliance for an ally target, ahead of bashing_limit (VEY-KANEO-489)", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const indexer = await twoPlanetIndexer(attacker);
+    // Equal veteran scores so score protection does not apply, and six attacks in the window so
+    // bashing_limit WOULD fire — proving same_alliance short-circuits first, matching the contract
+    // precedence (SameAlliance -> ScoreProtection -> BashingLimit).
+    indexer.applyLog(defenseCompletedLog({ planetId: 8n, defenseId: 0n, total: 350_000n, logIndex: 1 }));
+    indexer.applyLog(defenseCompletedLog({ planetId: 7n, defenseId: 0n, total: 350_000n, logIndex: 2 }));
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    for (let index = 0; index < 6; index++) {
+      indexer.applyLog(attackLaunchLog({
+        missionId: BigInt(index + 1),
+        attacker,
+        targetPlanetId: 7n,
+        blockTimestampSeconds: nowSeconds - 3_600 + index,
+        logIndex: 100 + index,
+      }));
+    }
+    // Put both the attacker and the defender (player, owner of planet 7) into alliance 1.
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: "0x69801c80",
+      transactionHash: "0xally-create",
+      logIndex: "0x0",
+      topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+      data: abiStrings("VEY", "Veydrift Command")
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      blockTimestamp: "0x69801c81",
+      transactionHash: "0xally-owner",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+      data: abiWords(3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92",
+      blockTimestamp: "0x69801c82",
+      transactionHash: "0xally-member",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(attacker)],
+      data: abiWords(1n)
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+
+    const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      allowed: false,
+      blockedReason: "same_alliance",
+      blockedReasonLabel: "Attack blocked: target belongs to your alliance."
+    });
+  });
+
   test("indexed highscore rankings report bashing_limit per planet (VEY-KANEO-489)", async () => {
     const attacker = "0x9999999999999999999999999999999999999999" as Address;
     const indexer = await twoPlanetIndexer(attacker);

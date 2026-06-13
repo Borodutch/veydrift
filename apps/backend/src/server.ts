@@ -2404,26 +2404,48 @@ function indexedAttackProtectionResponse(
   const defender = indexer.highscoreForWallet(target.owner, (planetsByOwner.get(target.owner.toLowerCase()) ?? []).map((planet) => planet.planetId));
   const attackerScore = BigInt(attacker.score.total);
   const defenderScore = BigInt(defender.score.total);
+  const attackerKey = wallet.toLowerCase();
+  const defenderKey = target.owner.toLowerCase();
+  // VEY-KANEO-489: model the contract's same_alliance gate, the HIGHEST-precedence reason in
+  // VeydriftGameStorage._attackProtectionStatus (SameAlliance -> ScoreProtection -> BashingLimit).
+  // Without it this single-target endpoint never returned `same_alliance`, so the frontend — which
+  // derives ally targets solely from this signal (galaxyActions.ts: isAllyTarget = blockedReason ===
+  // "same_alliance") — left the attack button enabled for allies and the launch reverted on-chain.
+  // allianceIntelForPlayers only returns members of *active* alliances, so a missing entry means "no
+  // alliance"; self-targets (attacker == owner) are never treated as same-alliance.
+  const allianceIntel = indexer.allianceIntelForPlayers([attackerKey, defenderKey]);
+  const attackerAlliance = allianceIntel.get(attackerKey) ?? null;
+  const defenderAlliance = allianceIntel.get(defenderKey) ?? null;
+  const sameAlliance = attackerKey !== defenderKey
+    && attackerAlliance !== null
+    && defenderAlliance !== null
+    && attackerAlliance.allianceId !== "0"
+    && attackerAlliance.allianceId === defenderAlliance.allianceId;
   // VEY-KANEO-489: use the contract-faithful newbie/score-ratio gate (VeydriftAntiRaidPrimitives.
   // isScoreProtected) instead of a naive 5x-score heuristic. The old heuristic false-blocked any two
   // players whose scores differed >5x — including two veterans both past the newbie-protection ceiling,
-  // who the contract never score-protects (both ratios are 0).
+  // who the contract never score-protects (both ratios are 0). Kept raw (not gated by sameAlliance) so
+  // plunderBps below still reflects the score-protection state.
   const scoreProtected = isIndexedScoreProtected(attackerScore, defenderScore);
   // VEY-KANEO-489: also replay the per-(attacker, planet) bashing window the contract enforces. Self
   // attacks are rejected upstream by the contract and carry no window; a self-target read just returns
-  // an empty launch history. Score protection is checked first to match the contract's precedence
-  // (VeydriftGameStorage._attackProtectionStatus: ScoreProtection before BashingLimit).
-  const bashingLimited = !scoreProtected
+  // an empty launch history. same_alliance and score protection are checked first to match the
+  // contract's precedence (VeydriftGameStorage._attackProtectionStatus: SameAlliance -> ScoreProtection
+  // -> BashingLimit); skipping the launch-log replay when either short-circuits avoids needless work.
+  const bashingLimited = !sameAlliance
+    && !scoreProtected
     && wallet.toLowerCase() !== target.owner.toLowerCase()
     && indexedBashingLimitReached(
       indexer.attackLaunchSecondsByTarget(wallet).get(targetPlanetId.toString()) ?? [],
       Math.floor(Date.now() / 1_000)
     );
-  const blockedReason: AttackBlockReason = scoreProtected
-    ? "score_protection"
-    : bashingLimited
-      ? "bashing_limit"
-      : "none";
+  const blockedReason: AttackBlockReason = sameAlliance
+    ? "same_alliance"
+    : scoreProtected
+      ? "score_protection"
+      : bashingLimited
+        ? "bashing_limit"
+        : "none";
 
   const body: AttackProtectionStatus & {
     source: typeof indexedSource;
