@@ -255,12 +255,6 @@ contract VeydriftGameTest is Test {
         uint32 hits,
         uint32 destroyedPrimary
     );
-    event AttackBouncedByProtection(
-        uint256 indexed missionId,
-        address indexed attacker,
-        uint256 indexed targetPlanetId,
-        VeydriftGameStorage.AttackBlockReason reason
-    );
 
     function setUp() public {
         game = _newGame(admin);
@@ -3064,14 +3058,12 @@ contract VeydriftGameTest is Test {
 
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 1);
-        vm.expectEmit(true, true, true, true, address(game));
-        emit AttackBouncedByProtection(
-            missionId, player, targetPlanetId, VeydriftGameStorage.AttackBlockReason.ScoreProtection
-        );
         game.resolveFleetMission(missionId);
 
         // The attack fleet bounced: it is returning with its ship intact and empty cargo (no
-        // plunder loaded), and the protected defender kept all of its ships.
+        // plunder loaded), and the protected defender kept all of its ships. A real battle would
+        // have either loaded plunder into the cargo or destroyed the lone attacker (status
+        // Resolved), so this state is only reachable when no combat ran.
         (
             VeydriftGameStorage.FleetMissionStatus status,,,
             VeydriftGameStorage.Resources memory cargo
@@ -3127,12 +3119,9 @@ contract VeydriftGameTest is Test {
 
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 1);
-        vm.expectEmit(true, true, true, true, address(game));
-        emit AttackBouncedByProtection(
-            missionId, player, targetPlanetId, VeydriftGameStorage.AttackBlockReason.SameAlliance
-        );
         game.resolveFleetMission(missionId);
 
+        // Same-alliance target is not raided on impact: the fleet bounces home untouched.
         (
             VeydriftGameStorage.FleetMissionStatus status,,,
             VeydriftGameStorage.Resources memory cargo

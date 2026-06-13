@@ -537,15 +537,6 @@ abstract contract VeydriftGameStorage {
         uint128 lootCrystal,
         uint128 lootDeuterium
     );
-    /// @notice Emitted when an attack fleet reaches an impact that is now protected (score/newbie
-    ///         tier or same-alliance) even though the launch passed protection. The fleet bounces
-    ///         home with no combat, losses, debris, or plunder. See VEY-KANEO-492.
-    event AttackBouncedByProtection(
-        uint256 indexed missionId,
-        address indexed attacker,
-        uint256 indexed targetPlanetId,
-        AttackBlockReason reason
-    );
     event CombatRoundResolved(
         uint256 indexed missionId,
         uint8 indexed round,
