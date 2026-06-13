@@ -2562,15 +2562,16 @@ describe("Veydrift backend", () => {
         crystal: "4900",
         deuterium: "4800"
       },
-      // Lazy on-chain reconciliation (VEY-KANEO-468): readyAt is in the past, so the building has
-      // settled as-of-now on public all-players state too — no active construction, and the level
-      // is projected up (asserted below: building id 0 -> level 2).
+      // readyAt is in the past, so the elapsed entry is no longer an active construction on public
+      // all-players state either (no active queue). But the served level stays pinned to the
+      // contract-authoritative level — it is NOT optimistically projected up. The on-chain level
+      // only advances on the BuildingCompleted finish event (VEY-486: building id 0 stays level 1).
       queues: {
         building: null
       }
     });
     expect(occupiedPlanet.publicState.buildings).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, level: 2 })
+      expect.objectContaining({ id: 0, level: 1 })
     ]));
     expect(occupiedPlanet.publicState.fleet).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 0, count: 2 }),
@@ -3637,11 +3638,13 @@ describe("Veydrift backend", () => {
       buildings: expect.arrayContaining([
         expect.objectContaining({
           id: 0,
-          level: 2
+          level: 1
         })
       ]),
-      // Lazy on-chain reconciliation (VEY-KANEO-468): the elapsed building has settled as-of-now
-      // (building id 0 projected to level 2 above), so there is no active construction.
+      // The served level stays pinned to the contract-authoritative level (building id 0 -> 1).
+      // An elapsed-but-unfinished build queue must NOT optimistically project the level up to 2:
+      // the on-chain buildingLevel only advances on the BuildingCompleted finish event (VEY-486).
+      // The elapsed entry is no longer an active construction either, so the queue is null.
       queue: null
     });
   });

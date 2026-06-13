@@ -324,13 +324,6 @@ export type ApplyLogResult = {
 // (VEY-KANEO-461). 25 keeps the reconcile completing without making it serial-slow.
 const CANONICAL_READ_PLANET_CHUNK = 25;
 
-// Storage building ids (MetalStorage=7, CrystalStorage=8, DeuteriumTank=9). These gate the
-// per-resource storage cap. The contract only raises that cap when finishBuildingUpgrade is
-// called on-chain, so the backend must NOT optimistically (wall-clock) complete a storage
-// upgrade — doing so reports a higher cap than storageCaps(planetId) and lets resourcesAsOfNow
-// accrue past what the contract enforces (VEY-KANEO-483).
-const STORAGE_BUILDING_IDS: ReadonlySet<number> = new Set([7, 8, 9]);
-
 // Mission types whose just-settled combat at a planet warrants a bounded canonical reconcile of the
 // planets involved (origin survivors / stationed-defender losses). Drives drainFleetMissionReconcilePlanets;
 // ship counts themselves are now authoritative from PlanetShipCountChanged events (VEY-KANEO-461).
@@ -876,18 +869,20 @@ export class SettlementIndexer {
   }
 
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
-    const completed = this.queueSettlement(`building:${planetId}`).completed;
-    return deriveBuildingRows((id) => {
-      const level = this.indexedLevel("contract_building_levels", "building_id", planetId, id);
-      // Storage buildings stay pinned to the contract-authoritative level so the derived
-      // storage cap matches storageCaps(planetId) exactly; only finishBuildingUpgrade (picked
-      // up by the canonical re-pin) raises it (VEY-KANEO-483).
-      if (STORAGE_BUILDING_IDS.has(id)) return level;
-      const settled = completed
-        .filter((entry) => entry.itemId === id && entry.targetLevel !== undefined)
-        .reduce((max, entry) => Math.max(max, entry.targetLevel ?? max), level);
-      return settled;
-    });
+    // Every building level is served strictly from the contract-authoritative mirror
+    // (contract_building_levels), which is raised ONLY by the on-chain completion event
+    // (BuildingCompleted -> applyQueueCompletionEffects). We must not optimistically fold an
+    // elapsed-but-unfinished build queue entry's targetLevel into the served level: a building
+    // upgrade only becomes live on chain once a settling tx (finishBuildingUpgrade / any
+    // _settleResources) actually runs, and `buildingLevel(planetId, building)` is a pure view of
+    // the stored level — a queue whose off-chain readyAt has merely elapsed does NOT change chain
+    // state. Folding targetLevel in here served level N+1 while chain was still at N, a systematic
+    // +1 over-count that also poisoned cost/affordability/ETA (VEY-486). Storage buildings were
+    // already pinned to the contract level for the same reason (VEY-KANEO-483); this generalizes
+    // that to every building type. While the build timer is still running it is surfaced as an
+    // active construction (planetQueue); the level itself advances only once the on-chain
+    // completion event is indexed.
+    return deriveBuildingRows((id) => this.indexedLevel("contract_building_levels", "building_id", planetId, id));
   }
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
@@ -1020,10 +1015,10 @@ export class SettlementIndexer {
   }
 
   private moonBuildingLevelAsOfNow(planetId: string, buildingId: number): number {
-    const level = this.indexedLevel("indexed_moon_building_levels", "building_id", planetId, buildingId);
-    return this.queueSettlement(`moon-building:${planetId}`).completed
-      .filter((entry) => entry.itemId === buildingId && entry.targetLevel !== undefined)
-      .reduce((max, entry) => Math.max(max, entry.targetLevel ?? max), level);
+    // Same rule as infrastructureRows (VEY-486): a moon-building level advances only on its
+    // on-chain completion event, never from an elapsed-but-unfinished queue entry. Folding the
+    // queue's targetLevel here over-reported the level by +1 before the upgrade was live on chain.
+    return this.indexedLevel("indexed_moon_building_levels", "building_id", planetId, buildingId);
   }
 
   highscoreForWallet(wallet: `0x${string}`, planetIds?: string[]): HighscoreEntry {
