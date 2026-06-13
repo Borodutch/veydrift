@@ -115,7 +115,21 @@ RPC URLs or API keys. Ownership remains canonical onchain; when the default
 backend starts with valid chain config it kicks off a background SQLite index
 reconciliation from `VEYDRIFT_INDEX_FROM_BLOCK` and reports the last
 reconciled block, latest indexed block, in-progress state, reorg detection, and
-last reconciliation error in `GET /health`. The websocket chain sync keeps the
+last reconciliation error in `GET /health`.
+Because the index is now reconstructed **purely from event replay** with no
+on-the-fly canonical RPC re-pin (VEY-KANEO-476 / EPIC 474 goal #1),
+`VEYDRIFT_INDEX_FROM_BLOCK` is a hard correctness input, not a performance hint:
+it **must be at or below the contract's genesis block** — the block where the
+oldest still-live planet was created (the original `VeydriftGame` proxy
+deployment, not a later upgrade/redeploy block). If it is set above any live
+planet's creation event, that planet's `PlanetStarted`/`ColonyCreated` identity
+event falls outside the replay window, so the planet silently disappears from the
+read model: `walletSettlement`/`walletPlanets` return an empty wallet while
+`/health` still reports `safeToServeIndexedState: true`. There is no event-only
+self-heal for a truncated baseline — confirm coverage after every (re)deploy with
+the post-deploy live gate (see the redeploy runbook). The deployment manifest
+tooling enforces `indexFromBlock <= deployBlock`; the deploy block recorded in the
+manifest must itself be the original proxy genesis. The websocket chain sync keeps the
 SQLite-backed contract state index warm, `GET /chain/events` streams backend
 chain-event notifications to the frontend, and `POST /index/rebuild` remains
 the manual HTTP fallback for rebuilding settlement events.

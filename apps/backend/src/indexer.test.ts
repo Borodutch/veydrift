@@ -527,6 +527,91 @@ describe("SettlementIndexer", () => {
     expect(served?.resources).toEqual({ metal: "4600", crystal: "4780", deuterium: "4740" });
   });
 
+  test("reconstructs and serves a pre-window owned planet only when the replay baseline covers its genesis (VEY-KANEO-476)", async () => {
+    // Regression (live QA on test.veydrift.com / api-test, 2026-06-13, GIT_SHA fb61240d after the #857
+    // revert): /wallet/0xbf74…08eE/planets served `homePlanetId:null, planets:[]` while on-chain the
+    // wallet owned planet 1 (`previewResources(1) ~= 31750/21239/4364`). Root cause: the event-only path
+    // rebuilt from VEYDRIFT_INDEX_FROM_BLOCK set ABOVE planet 1's creation block, so its PlanetStarted
+    // identity event fell outside the replay window and the planet vanished from the read model. With the
+    // canonical RPC re-pin removed (EPIC 474 goal #1) nothing back-filled it. The hard invariant: the
+    // configured replay baseline MUST be at/below the contract's genesis (where the oldest still-live
+    // planet was created), or that planet's ownership projection is lost.
+    const rpcForbidden = () => {
+      throw new Error("on-the-fly canonical RPC read is forbidden (VEY-KANEO-476)");
+    };
+    // The full on-chain log history for an "old" planet 1 owned by the wallet: its PlanetStarted identity
+    // at the contract genesis block (100), then an authoritative PlanetSettled at a much later block (150).
+    // The mock chain reader honours `fromBlock` exactly like eth_getLogs, returning only logs at/after it.
+    const genesisBlock = 100n;
+    const settledAt = Math.floor(Date.now() / 1000);
+    const fullHistory = [
+      {
+        blockNumber: "0x64", // 100 — genesis: planet 1 created here, BEFORE any misconfigured baseline
+        logIndex: "0x0",
+        transactionHash: "0xgenesis",
+        topics: [planetStartedTopic, addressTopic(player), topic(1n)],
+        data: abiWords(3n, 14n, 7n, 200n, signedWord(20n))
+      },
+      {
+        blockNumber: "0x96", // 150 — a later settle carrying the authoritative post-spend balance
+        logIndex: "0x0",
+        transactionHash: "0xsettle",
+        topics: [planetSettledTopic, topic(1n)],
+        data: abiWords(31750n, 21239n, 4364n, BigInt(settledAt))
+      }
+    ];
+    const readerFromBaseline = (baseline: bigint) => ({
+      async listContractLogs(fromBlock: bigint) {
+        return fullHistory.filter((log) => BigInt(log.blockNumber) >= fromBlock);
+      },
+      getInfrastructureState: rpcForbidden,
+      getShipyardState: rpcForbidden,
+      getDefenseState: rpcForbidden,
+      getResearchState: rpcForbidden,
+      getPlayerQueues: rpcForbidden,
+      getPlanet: rpcForbidden,
+      _baseline: baseline
+    });
+
+    // Baseline AT genesis (correct): the full history replays, so the owned planet is reconstructed and
+    // served from events alone — no canonical RPC re-pin involved.
+    const covered = new SettlementIndexer(readerFromBaseline(genesisBlock) as never, genesisBlock);
+    await covered.rebuild();
+    expect(covered.walletSettlement(player)).toMatchObject({
+      hasFirstPlanet: true,
+      homePlanetId: "1",
+      planet: { planetId: "1", owner: player }
+    });
+    expect(covered.walletSettlement(player).planet?.resources).toEqual({
+      metal: "31750",
+      crystal: "21239",
+      deuterium: "4364"
+    });
+    expect(covered.walletPlanets(player).planets.map((item) => item.planetId)).toEqual(["1"]);
+
+    // Baseline ABOVE genesis (the misconfigured live deploy): PlanetStarted at block 100 is outside the
+    // window, so planet 1 is never reconstructed and the wallet serves empty — exactly the live failure.
+    // Worse, the rebuild reports success: the post-window PlanetSettled momentarily raises
+    // planet_identity_pending:1 during replay, but recordSuccessfulReconciliation clears it, so the
+    // snapshot ends with NO pending reason and safeToServeIndexedState:true. The indexer serves the empty
+    // wallet *confidently* (the "served the wrong value confidently" report) and a fully quiet old planet
+    // leaves no symptom at all. There is no event-only self-heal for this — the only fix is configuring
+    // the baseline at/below genesis, enforced by the post-deploy live gate (VEY-KANEO-476 req 5).
+    const truncatedBaseline = 120n;
+    const truncated = new SettlementIndexer(readerFromBaseline(truncatedBaseline) as never, truncatedBaseline);
+    await truncated.rebuild();
+    expect(truncated.walletSettlement(player)).toMatchObject({
+      hasFirstPlanet: false,
+      homePlanetId: null,
+      planet: null
+    });
+    expect(truncated.walletPlanets(player).planets).toEqual([]);
+    expect(truncated.snapshot()).toMatchObject({
+      pendingReconciliationReason: null,
+      safeToServeIndexedState: true
+    });
+  });
+
   test("settles resources at the old production rate up to readyAt when a building upgrade completes (VEY-KANEO-429)", () => {
     // Regression: the read-model projects `resources` forward from `lastSettledAt`
     // at the CURRENT production rate. When a metal-mine upgrade completed, the

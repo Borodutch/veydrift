@@ -143,6 +143,17 @@ Apply every generated backend variable to the `veydrift_backend-test` EasyPanel 
 - `VEYDRIFT_DEPLOYMENT_ABI_HASH`
 - `VEYDRIFT_DEPLOYMENT_TIMESTAMP`
 
+> **`VEYDRIFT_INDEX_FROM_BLOCK` is a hard correctness input (VEY-KANEO-476).** The indexer now
+> reconstructs served state purely from event replay with no on-the-fly canonical RPC re-pin, so this
+> value must be **at or below the contract genesis block** — the block where the oldest still-live planet
+> was created (the original `VeydriftGame` proxy deployment, **not** a later upgrade/redeploy block). On a
+> proxy upgrade the storage (e.g. planets `1-99`) persists from before the upgrade, so the index block
+> must stay at the original genesis; setting it to the upgrade block silently drops every pre-upgrade
+> planet (`walletSettlement`/`walletPlanets` go empty while `/health` still reports
+> `safeToServeIndexedState: true`). The manifest generator enforces `indexFromBlock <= deployBlock`, but
+> `deployBlock` itself must be the original proxy genesis. There is no event-only self-heal for a
+> truncated baseline; verify coverage with the post-deploy gate below.
+
 Preserve existing secret/runtime values such as RPC URLs and Alchemy keys. Then rebuild/restart:
 
 1. `veydrift_backend-test`
@@ -177,6 +188,22 @@ The smoke check verifies:
 If rankings or any tab returns an unsupported deployment error, do not start browser QA. Fix the
 backend/ABI/config mismatch or create a narrow follow-up task if the deployed contract truly lacks
 that feature.
+
+### Event-replay baseline coverage gate (VEY-KANEO-476)
+
+Because served state is reconstructed purely from event replay, confirm the configured
+`VEYDRIFT_INDEX_FROM_BLOCK` actually covers the oldest live planets before handing off to QA:
+
+- Pick a wallet that owns a **low-id / pre-upgrade planet** (e.g. planet `1`). On-chain it should report
+  `homePlanetOf(wallet) == <id>` and `planet(<id>).owner == wallet`.
+- `GET /wallet/<wallet>/planets` must return that planet (non-null `homePlanetId`, the planet present in
+  `planets[]`), and its served `metal/crystal/deuterium` must match the contract's `previewResources(<id>)`
+  for the sampled block within normal accrual timing.
+- The RPC/canonical state-getter counters in `/health` must stay zero (no on-the-fly re-pin).
+
+If the wallet serves `homePlanetId: null` / `planets: []` while the planet exists on-chain, the index
+baseline is truncated: lower `VEYDRIFT_INDEX_FROM_BLOCK` to the original proxy genesis block and rerun a
+full `POST /index/rebuild`. Do not deploy/hand off until this gate passes.
 
 ## 5. Kaneo Evidence
 
