@@ -1554,11 +1554,11 @@ describe("Veydrift backend", () => {
 
   test("returns indexed-not-ready for cold Moon reads without chain reader", async () => {
     const handler = createRequestHandler({
-      chainReader: new class extends MockChainReader {
+      chainReader: withoutIndexLists(new class extends MockChainReader {
         override async getMoonState(): Promise<MoonState> {
           throw new Error("frontend moon reads must not call chain reader");
         }
-      }(),
+      }()),
       config: configuredTestConfig
     });
     const response = await handler(new Request(`http://localhost/wallet/${player}/moon`));
