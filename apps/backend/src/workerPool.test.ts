@@ -165,7 +165,7 @@ describe("createForwardingFetch", () => {
     const local = async () => new Response("local", { status: 200 });
     const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
 
-    const response = await handler(new Request("http://localhost/index/rebuild", { method: "POST" }));
+    const response = await handler(new Request("http://localhost/webhooks/alchemy", { method: "POST" }));
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toMatchObject({ error: "writer_unavailable" });
   });

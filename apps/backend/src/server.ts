@@ -112,6 +112,11 @@ export type ServerDependencies = {
   // run on exactly one worker. "reader" workers skip every background loop and serve reads from the
   // shared WAL database. Explicitly injected services (tests) always take precedence over the role.
   role?: WorkerRole;
+  // Test seam for the canonical-mirror startup reconcile. Production never injects `indexer`, so the
+  // default (`!dependencies.indexer`) leaves the every-boot rebuild firing in production. Tests that inject
+  // a warm indexer default to NOT auto-reconciling (so they can assert "no chain read" precisely); the
+  // canonical-mirror boot test sets this true to force-and-count the single startup reconcile.
+  runStartupReconcile?: boolean;
 };
 
 const defaultUniverseSeed = "veydrift-mainnet-preview";
@@ -160,46 +165,25 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
   chainSync?.start();
   randomnessCommitter?.start();
-  if (isWriter && !dependencies.indexer && indexer && loaded.problems.length === 0) {
-    // Steady state is now pure event integration: chainSync subscribes to the contract's logs and
-    // applies them to the SQLite read model, which the API serves directly — no per-request eth_call
-    // and no periodic universe-wide canonical sweep (VEY-KANEO-461). We only fall back to a full
-    // canonical rebuild to COLD-START a fresh database: until the first reconcile sets
-    // `lastReconciledAt`, indexed reads gate as "never_reconciled" and can't be served. A warm DB
-    // (persisted across redeploys) already has that marker, so a redeploy skips the heavy boot read
-    // entirely — eliminating the request-flood and the SIGSEGV-prone batched sweep (VEY-459). Fire it
-    // in the background (never await) so GET /health still answers within a second or two of start
-    // (see README "Backend redeploy health gate"). Do not turn this into an await.
-    const indexIsCold = !indexer.snapshot().lastReconciledAt;
-    if (indexIsCold) {
-      void indexer.rebuild().catch((error) => {
-        console.error("Veydrift index cold-start reconciliation failed", error);
-      });
-    }
-  }
-  if (isWriter && indexer && loaded.problems.length === 0) {
-    maybeRecoverFailedReconciliation(indexer);
+  const runStartupReconcile = dependencies.runStartupReconcile ?? !dependencies.indexer;
+  if (isWriter && runStartupReconcile && indexer && loaded.problems.length === 0) {
+    // Canonical-mirror contract: the SQLite read model is reconciled DIRECTLY from the contracts EXACTLY
+    // ONCE, at startup, and the contract state always wins — `rebuild()` clears the canonical tables and
+    // re-reads full canonical state (planets, resources, buildings, defenses, ships, research, queues,
+    // moons, alliances) on EVERY boot, warm or cold. Past data migrations changed contract state without
+    // emitting events, so event replay alone is incomplete; the startup canonical read is the only thing
+    // that makes the DB a faithful mirror. After this, the DB mutates ONLY via the websocket event
+    // listener (chainSync -> indexer.applyLog) — no per-request eth_call, no periodic sweep, no runtime
+    // self-heal. Fire it in the background (never await) so GET /health still answers within a second or
+    // two of start (see README "Backend redeploy health gate"). Do not turn this into an await.
+    void indexer.rebuild().catch((error) => {
+      console.error("Veydrift index startup reconciliation failed", error);
+    });
   }
   if (cacheReader) {
     chainSync?.addListener((event) => {
       if (event.kind === "chain-event") {
         cacheReader.clear();
-      }
-    });
-  }
-  if (indexer && !dependencies.indexer && typeof chainSync?.addListener === "function") {
-    // Event-driven bounded reconcile: when a combat fleet mission settles, the contract may have
-    // thinned the attacker's survivors or the defender's ships/defenses with no ship-count event.
-    // Drain those planets and read just them back from chain (reconcilePlanetState) — a handful of
-    // planets with recent fleet activity, never the whole universe — so ship losses land without the
-    // old 30s sweep. Non-combat returns are credited from events alone and never reach here
-    // (VEY-KANEO-461). Fire-and-forget; reconcilePlanetState self-dedupes per planet and never throws.
-    chainSync.addListener((event) => {
-      if (event.kind !== "chain-event") return;
-      for (const planetId of indexer.drainFleetMissionReconcilePlanets()) {
-        void indexer.reconcilePlanetState(planetId).catch((error) => {
-          console.error("Veydrift bounded fleet reconcile failed", planetId, reasonText(error));
-        });
       }
     });
   }
@@ -833,39 +817,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       return handleUniverseSystemRequest(url);
     }
 
-    if (request.method === "POST" && url.pathname === "/index/rebuild") {
-      if (!indexer) {
-        return unavailableResponse(loaded.problems);
-      }
-
-      try {
-        return Response.json(await indexer.rebuild(), {
-          headers: jsonHeaders
-        });
-      } catch (error) {
-        return errorResponse(error, 502);
-      }
-    }
-
-    if (request.method === "POST" && url.pathname.startsWith("/index/verify/")) {
-      if (!indexer) {
-        return unavailableResponse(loaded.problems);
-      }
-
-      const planetId = decodeURIComponent(url.pathname.slice("/index/verify/".length));
-      if (!planetId) {
-        return errorResponse(new Error("Missing planetId"), 400);
-      }
-
-      const heal = url.searchParams.get("heal") === "true";
-      try {
-        return Response.json(await indexer.verifyCanonicalState(planetId, { heal }), {
-          headers: jsonHeaders
-        });
-      } catch (error) {
-        return errorResponse(error, 502);
-      }
-    }
+    // The POST /index/rebuild and POST /index/verify/:planetId?heal=true routes have been REMOVED.
+    // Both issued on-demand RPC reads from an HTTP request (rebuild re-read the whole universe; verify
+    // re-read + healed a single planet). Under the canonical-mirror contract NO request handler may
+    // trigger an RPC call: the indexed DB is reconciled from the contracts exactly once at startup and
+    // mutated thereafter only by the websocket event listener. The HTTP API serves purely from the DB.
 
     if (request.method === "POST" && url.pathname === "/webhooks/alchemy") {
       if (!indexer) {
@@ -969,32 +925,16 @@ function isIndexableChainReader(
   );
 }
 
-// A warm DB carries its reconcile state in SQLite across redeploys. A canonical reconcile that FAILED
-// (classically a pre-fix truncated/empty RPC body surfaced as "Unexpected end of JSON input") leaves
-// `lastReconciliationError` set and `lastReconciledBlock` frozen. Steady state is pure event integration
-// with no periodic/boot universe sweep (VEY-KANEO-461), and a warm-DB boot deliberately skips the
-// cold-start rebuild — so after a redeploy nothing re-runs the reconcile, and the stale error + frozen
-// baseline survive every restart (they clear ONLY on a successful reconcile). That left #827's "make the
-// reconcile complete" fix (defensive parse, sequential/batched fallback, getLogs range-halving, planet
-// chunking) never actually exercised in production. Re-attempt the reconcile ONCE in the background on a
-// boot that inherits a recorded failure so the now-resilient reconcile completes, advances the baseline,
-// and clears the stale error. Guarded on the recorded failure itself: a healthy warm DB (error cleared on
-// its last success) is left untouched, so this does NOT reintroduce the periodic/boot universe sweep the
-// epic removed. Fire-and-forget (never await) so GET /health still answers promptly; `rebuild()`
-// coalesces, so this can never stack with the cold-start rebuild (mutually exclusive guards anyway).
+// Predicate kept for diagnostics/tests: true when a warm DB inherited a recorded reconcile failure
+// (lastReconciliationError set, not currently reconciling). Under the canonical-mirror contract the
+// startup reconcile now runs on EVERY boot and overwrites the DB regardless, so a failed prior reconcile
+// is automatically re-attempted at startup — there is no longer a separate runtime recovery path.
 export function shouldRecoverFailedReconciliation(
   snapshot: Pick<IndexerSnapshot, "lastReconciledAt" | "lastReconciliationError" | "reconciliationInProgress">
 ): boolean {
   return Boolean(snapshot.lastReconciledAt)
     && Boolean(snapshot.lastReconciliationError)
     && !snapshot.reconciliationInProgress;
-}
-
-function maybeRecoverFailedReconciliation(indexer: SettlementIndexer): void {
-  if (!shouldRecoverFailedReconciliation(indexer.snapshot())) return;
-  void indexer.rebuild().catch((error) => {
-    console.error("Veydrift index recovery reconciliation failed", error);
-  });
 }
 
 function hasWarmPlanetIndex(indexer: SettlementIndexer | undefined): indexer is SettlementIndexer {
@@ -2354,32 +2294,18 @@ async function indexedSettlementFundingResponse(
   chainReader: ChainReader | undefined,
   wallet: `0x${string}`
 ): Promise<Response> {
-  // Settlement funding gates new-player onboarding (the Settle button). The start price
-  // is an immutable game constant the reader memoizes (read once), and the wallet balance
-  // is a cheap eth_getBalance node call — neither is a per-request game-state eth_call, so
-  // serving real funding here does not reintroduce the #606 read-RPC flood. We still gate
-  // on the indexer being warm so a cold/booting backend returns a real not-ready response
-  // (consistent with /settlement and /planets) instead of the old permanent stub that
-  // blocked every new player with startPriceWei: null (VEY-KANEO-478).
-  if (!chainReader || !hasWarmPlanetIndex(indexer)) {
+  // VEY-KANEO-478: settlement funding is the deliberate, narrow exception to the canonical-mirror "no
+  // RPC on the request path" rule. It is NOT indexed contract game-state: it is the wallet's native ETH
+  // balance (a cheap eth_getBalance) plus the planet start price (a memoized chain constant), and the
+  // Settle button onboarding flow needs it live. So while the index is cold/booting we still serve a
+  // retryable DB-only not-ready response (never touching the chain), but once the index is warm we serve
+  // the real funding read so new players can settle their first planet.
+  if (!hasWarmPlanetIndex(indexer) || !chainReader) {
     return indexedReadNotReadyResponse("settlement funding", indexer);
   }
 
-  const snapshot = indexer.snapshot();
-  try {
-    const funding = await chainReader.getSettlementFunding(wallet);
-    return indexedJsonResponse(
-      { ...funding, stale: !snapshot.safeToServeIndexedState },
-      snapshot
-    );
-  } catch (error) {
-    console.warn("Settlement funding read failed", {
-      wallet,
-      error: reasonText(error),
-      source: indexedSource
-    });
-    return indexedReadNotReadyResponse("settlement funding", indexer);
-  }
+  const funding = await chainReader.getSettlementFunding(wallet);
+  return indexedJsonResponse(funding, indexer.snapshot());
 }
 
 function indexedAllianceResponse(wallet: `0x${string}`, indexer: SettlementIndexer | undefined): Response {

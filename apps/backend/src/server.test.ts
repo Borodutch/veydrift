@@ -1554,11 +1554,11 @@ describe("Veydrift backend", () => {
 
   test("returns indexed-not-ready for cold Moon reads without chain reader", async () => {
     const handler = createRequestHandler({
-      chainReader: new class extends MockChainReader {
+      chainReader: withoutIndexLists(new class extends MockChainReader {
         override async getMoonState(): Promise<MoonState> {
           throw new Error("frontend moon reads must not call chain reader");
         }
-      }(),
+      }()),
       config: configuredTestConfig
     });
     const response = await handler(new Request(`http://localhost/wallet/${player}/moon`));
@@ -2478,12 +2478,9 @@ describe("Veydrift backend", () => {
       indexer
     });
 
-    const rebuild = await handler(
-      new Request("http://localhost/index/rebuild", {
-        method: "POST"
-      })
-    );
-    await expect(rebuild.json()).resolves.toMatchObject({
+    // The POST /index/rebuild route was removed (HTTP requests must never trigger an RPC read under the
+    // canonical-mirror contract); seed the index by calling the startup reconcile directly instead.
+    await expect(indexer.rebuild()).resolves.toMatchObject({
       indexedDebrisFields: 1,
       indexedMoonChanceReports: 1,
       indexedPlanets: 1,
@@ -2622,44 +2619,42 @@ describe("Veydrift backend", () => {
     expect(chainReader.rebuildCalls).toBe(1);
   });
 
-  test("re-attempts a failed reconcile once on a warm-DB boot to recover a frozen baseline (VEY-KANEO-461)", async () => {
+  // Canonical-mirror rework: the dedicated warm-DB failure-recovery path (maybeRecoverFailedReconciliation)
+  // was removed. Recovery of a poisoned warm DB now happens implicitly because the startup reconcile runs
+  // on EVERY boot — a re-run of rebuild() (what every boot does) re-reads the contracts, clears the stale
+  // error, and re-pins the baseline (VEY-KANEO-461).
+  test("the startup reconcile recovers a frozen baseline left by a failed prior reconcile", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     // Warm the DB: a first reconcile succeeds and sets `lastReconciledAt`.
     await indexer.rebuild();
     // A LATER reconcile then fails the way the self-hosted node truncated the heavy read
-    // ("Unexpected end of JSON input"), leaving `lastReconciliationError` set and the baseline
-    // frozen — the poisoned warm-DB state that persists in SQLite across a redeploy. Steady state
-    // runs no periodic sweep, so without recovery nothing ever re-runs the (now-fixed) reconcile.
+    // ("Unexpected end of JSON input"), leaving `lastReconciliationError` set and the baseline frozen.
     chainReader.listSettledPlanetEvents = async () => {
       chainReader.rebuildCalls += 1;
       throw new Error("Unexpected end of JSON input");
     };
-    await indexer.reconcile("periodic self-heal").catch(() => {});
+    await indexer.reconcile("failed reconcile").catch(() => {});
     expect(indexer.snapshot().lastReconciledAt).not.toBeNull();
     expect(indexer.snapshot().lastReconciliationError).toBe("Unexpected end of JSON input");
     const callsBeforeBoot = chainReader.rebuildCalls;
-    // Restore a healthy reader so the boot recovery reconcile can complete and clear the error.
+    // Restore a healthy reader so the next startup reconcile completes and clears the error.
     chainReader.listSettledPlanetEvents = MockChainReader.prototype.listSettledPlanetEvents;
 
-    const handler = createRequestHandler({
-      config: configuredTestConfig,
-      chainReader,
-      indexer
-    });
+    // The next boot's canonical reconcile (always runs) recovers the DB.
+    await indexer.rebuild();
 
-    // Let the fire-and-forget recovery reconcile run to completion (it clears the error only after
-    // the rebuild finishes, not merely when the chain read is issued).
-    for (let i = 0; i < 50 && indexer.snapshot().lastReconciliationError !== null; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
     expect(chainReader.rebuildCalls).toBe(callsBeforeBoot + 1);
     expect(indexer.snapshot().lastReconciliationError).toBeNull();
     expect(indexer.snapshot().lastReconciledAt).not.toBeNull();
-    expect(handler).toBeDefined();
   });
 
-  test("does not re-reconcile a healthy warm DB on boot — no reintroduced universe sweep (VEY-KANEO-461)", async () => {
+  // Canonical-mirror rework: the startup reconcile now runs on EVERY boot (warm or cold) and overwrites
+  // the DB — contract state is canonical and always wins, and past data migrations changed contract state
+  // without emitting events, so a warm DB must NOT skip the canonical read. (This replaces the old
+  // "warm DB skips the boot rebuild" behavior, VEY-KANEO-461.) Steady-state per-request reads still issue
+  // no chain history reads — only this single boot reconcile does.
+  test("re-reconciles a healthy warm DB on every boot (canonical-mirror: contract always wins)", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
@@ -2669,58 +2664,46 @@ describe("Veydrift backend", () => {
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
-      indexer
+      indexer,
+      runStartupReconcile: true
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(chainReader.rebuildCalls).toBe(0);
+    // Let the fire-and-forget startup reconcile run.
+    for (let i = 0; i < 50 && chainReader.rebuildCalls === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    // Exactly one canonical rebuild on boot — no periodic sweep follows.
+    expect(chainReader.rebuildCalls).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(chainReader.rebuildCalls).toBe(1);
     expect(handler).toBeDefined();
   });
 
-  test("verifies and self-heals a planet's canonical state via /index/verify (VEY-KANEO-452)", async () => {
+  // Canonical-mirror rule 1/3: the request-time RPC routes POST /index/rebuild and
+  // POST /index/verify/:planetId?heal=true were REMOVED — no HTTP request may trigger an RPC read or a
+  // runtime canonical self-heal. They must now 404 and must NOT issue any chain read.
+  test("removed request-time RPC routes /index/rebuild and /index/verify 404 without hitting chain", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const callsAfterSeed = chainReader.rebuildCalls;
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
       indexer
     });
 
-    await indexer.rebuild();
+    const rebuild = await handler(new Request("http://localhost/index/rebuild", { method: "POST" }));
+    expect(rebuild.status).toBe(404);
+    await expect(rebuild.json()).resolves.toMatchObject({ error: "not_found" });
 
-    // Drift the on-chain ship roster after the canonical mirror was built so the
-    // stored count (2) no longer matches what shipCount now returns (1).
-    chainReader.getShipyardState = async (wallet: Address): Promise<ShipyardState> => ({
-      wallet,
-      homePlanetId: planet.planetId,
-      planetId: planet.planetId,
-      productionAvailable: true,
-      resources: planet.resources,
-      fleetSlots: { active: 0, limit: 2 },
-      shipyardLevel: 1,
-      naniteLevel: 0,
-      technologyLevels: {},
-      ships: [{ id: 0, count: 1, cost: { metal: "2000", crystal: "2000", deuterium: "0" } }],
-      queue: null
-    });
+    const verify = await handler(new Request("http://localhost/index/verify/7?heal=true", { method: "POST" }));
+    expect(verify.status).toBe(404);
+    await expect(verify.json()).resolves.toMatchObject({ error: "not_found" });
 
-    const detect = await handler(new Request("http://localhost/index/verify/7", { method: "POST" }));
-    expect(detect.status).toBe(200);
-    const detectBody = await detect.json();
-    expect(detectBody).toMatchObject({ planetId: "7", reachedChain: true, divergent: true, healed: false });
-    expect(detectBody.divergences).toEqual(expect.arrayContaining([
-      { field: "ship", id: 0, key: null, stored: "2", onChain: "1" }
-    ]));
-    // Read-only verify left the stored roster untouched; the served row still includes the elapsed
-    // queue's as-of-now addition.
-    expect(indexer.shipRows("7").find((row) => row.id === 0)?.count).toBe(3);
-
-    const heal = await handler(new Request("http://localhost/index/verify/7?heal=true", { method: "POST" }));
-    await expect(heal.json()).resolves.toMatchObject({ planetId: "7", divergent: true, healed: true });
-    expect(indexer.shipRows("7").find((row) => row.id === 0)?.count).toBe(2);
-
-    const reverify = await handler(new Request("http://localhost/index/verify/7", { method: "POST" }));
-    await expect(reverify.json()).resolves.toMatchObject({ divergent: false, healed: false });
+    // Neither route triggered any chain history read (the indexer is injected, so the handler fires no
+    // startup reconcile of its own here, and the removed routes do no chain work).
+    expect(chainReader.rebuildCalls).toBe(callsAfterSeed);
   });
 
   test("coalesces concurrent index rebuilds", async () => {
@@ -4219,8 +4202,8 @@ describe("Veydrift backend", () => {
       ],
       planetCount: 1,
       score: {
-        total: "15",
-        economy: "0",
+        total: "8095",
+        economy: "8080",
         research: "1",
         researchLevels: "1",
         military: "14",
@@ -4649,7 +4632,7 @@ describe("Veydrift backend", () => {
         topic(8n),
         topic(0n)
       ],
-      data: abiWords(9n, 1000n)
+      data: abiWords(9n, 25000n)
     });
     const handler = createRequestHandler({
       config: configuredTestConfig,
@@ -4708,7 +4691,7 @@ describe("Veydrift backend", () => {
         topic(8n),
         topic(0n)
       ],
-      data: abiWords(9n, 1000n)
+      data: abiWords(9n, 25000n)
     });
     const handler = createRequestHandler({
       config: configuredTestConfig,
@@ -4782,8 +4765,8 @@ describe("Veydrift backend", () => {
       homePlanetId: planet.planetId,
       planetCount: 1,
       score: {
-        total: "15",
-        economy: "0",
+        total: "8095",
+        economy: "8080",
         research: "1",
         researchLevels: "1",
         military: "14",

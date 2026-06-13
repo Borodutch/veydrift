@@ -31,8 +31,6 @@ import {
   isRandomnessFulfilledLog,
   isBattleReportLog,
   isFleetMissionLog,
-  isFleetMissionSettlementLog,
-  fleetMissionLogMissionId,
   isIndexedQueueCompletedLog,
   isIndexedQueueStartedLog,
   isAllianceLog,
@@ -48,6 +46,9 @@ import {
   type Address,
   type AllianceIdentity,
   type AllianceState,
+  type AllianceJoinRequestSnapshot,
+  type AllianceInviteSnapshot,
+  type AllianceDiplomacySnapshot,
   type BattleReport,
   type DebrisFieldEvent,
   type DefenseState,
@@ -140,35 +141,6 @@ export type SettlementIndexerOptions = {
   // recovery) instead of sitting in reconciliation_in_progress forever. Omitted/<=0 disables the
   // deadline (the in-memory test indexer has no slow RPC to guard).
   rebuildDeadlineMs?: number;
-};
-
-// A single field of a planet's stored canonical state that disagrees with the
-// authoritative on-chain getter. `resources` rows carry a resource `key` and a
-// null `id`; building/ship/defense rows carry the numeric item `id` and a null
-// `key`. `stored` is the backend value, `onChain` the contract value, both as
-// decimal strings so large resource amounts survive without precision loss.
-export type CanonicalFieldDivergence = {
-  field: "resources" | "building" | "ship" | "defense";
-  id: number | null;
-  key: "metal" | "crystal" | "deuterium" | null;
-  stored: string;
-  onChain: string;
-};
-
-// The result of comparing a planet's stored canonical state against the on-chain
-// previewResources / buildingLevel / shipCount / defenseCount getters, and
-// optionally self-healing it back to the contract values.
-export type CanonicalDivergenceReport = {
-  planetId: string;
-  owner: string | null;
-  checkedAt: string;
-  // True only when at least one on-chain getter answered; false when the planet
-  // is uncharted or the chain reader exposes none of the canonical getters, in
-  // which case no comparison was possible and `divergent` is meaningless.
-  reachedChain: boolean;
-  divergent: boolean;
-  divergences: CanonicalFieldDivergence[];
-  healed: boolean;
 };
 
 type CountRow = {
@@ -324,29 +296,11 @@ export type ApplyLogResult = {
 // (VEY-KANEO-461). 25 keeps the reconcile completing without making it serial-slow.
 const CANONICAL_READ_PLANET_CHUNK = 25;
 
-// Mission types whose just-settled combat at a planet warrants a bounded canonical reconcile of the
-// planets involved (origin survivors / stationed-defender losses). Drives drainFleetMissionReconcilePlanets;
-// ship counts themselves are now authoritative from PlanetShipCountChanged events (VEY-KANEO-461).
-const COMBAT_MISSION_TYPES: ReadonlySet<string> = new Set([
-  "Attack",
-  "AcsAttack",
-  "AcsDefend",
-  "Intercept",
-  "MissileAttack"
-]);
 
 export class SettlementIndexer {
   private readonly db: Database;
   private planetRebuildPromise: Promise<IndexerSnapshot> | null = null;
   private rebuildPromise: Promise<IndexerSnapshot> | null = null;
-  private canonicalRefreshPromise: Promise<void> | null = null;
-  // Mission ids whose settlement log was just integrated and may need a bounded canonical reconcile
-  // of the planets involved (combat survivor/defender losses). Drained by the server on each chain
-  // event; see drainFleetMissionReconcilePlanets / reconcilePlanetState (VEY-KANEO-461).
-  private readonly pendingFleetMissionSettlements = new Set<string>();
-  // Planets with a bounded canonical reconcile currently in flight, so overlapping settlement events
-  // don't fire duplicate eth_call sweeps for the same planet.
-  private readonly planetReconcileInFlight = new Set<string>();
   // Monotonic counter bumped by touch() on every applied state mutation. Read paths memoize
   // whole-universe derivations against it and recompute only when integrated events actually
   // changed state — never per request (VEY-KANEO-467).
@@ -366,10 +320,14 @@ export class SettlementIndexer {
       Partial<ChainReader>,
       "getDefenseState"
         | "getInfrastructureState"
+        | "getMoonState"
         | "getPlayerQueues"
         | "getResearchState"
         | "getShipyardState"
         | "listAllianceDirectoryState"
+        | "listAllianceJoinRequestState"
+        | "listAllianceInviteState"
+        | "listAllianceDiplomacyState"
         | "listAllianceLogs"
         | "listCurrentPlanets"
     >,
@@ -918,61 +876,14 @@ export class SettlementIndexer {
     );
   }
 
-  // The block height through which `contract_ship_counts` for this planet is known to match chain.
-  // Defaults to the global `lastReconciledBlock` (set by a full rebuild / canonical refresh) but a
-  // bounded per-planet reconcile can advance just this planet past it. Taking the max means a later
-  // global reconcile still supersedes a stale per-planet value. Missions launched at or before this
-  // block are already reflected in the stored count and must not be debited again (VEY-KANEO-447/461).
-  private planetReconcileBlock(planetId: string): bigint {
-    const globalBlock = safeBlockNumber(this.metadata("lastReconciledBlock"));
-    const perPlanet = this.metadata(`planetReconcileBlock:${planetId}`);
-    const planetBlock = perPlanet === null ? 0n : safeBlockNumber(perPlanet);
-    return planetBlock > globalBlock ? planetBlock : globalBlock;
-  }
-
-  private setPlanetReconcileBlock(planetId: string, block: string): void {
-    this.setMetadata(`planetReconcileBlock:${planetId}`, block);
-  }
-
-  // Planets whose just-settled combat missions need a bounded canonical reconcile. Resolving each
-  // pending settlement to its assembled summary lets us pick the exact origin/target planets and skip
-  // non-combat returns (already credited from events). Clears the queue; safe to call every chain event.
-  drainFleetMissionReconcilePlanets(): string[] {
-    if (this.pendingFleetMissionSettlements.size === 0) return [];
-    const missionIds = [...this.pendingFleetMissionSettlements];
-    this.pendingFleetMissionSettlements.clear();
-    const planets = new Set<string>();
-    for (const missionId of missionIds) {
-      const mission = this.fleetMission(missionId);
-      if (!mission || !COMBAT_MISSION_TYPES.has(mission.missionType)) continue;
-      if (mission.originPlanetId) planets.add(mission.originPlanetId);
-      if (mission.targetPlanetId) planets.add(mission.targetPlanetId);
-    }
-    return [...planets];
-  }
-
-  // Bounded, single-planet canonical reconcile: read just this planet's authoritative ship / defense /
-  // building / resource state from the contract, pin contract_* to it, and advance the planet's
-  // reconcile baseline to chain head so the departed-ships projection stops re-debiting fleets the
-  // fresh read already reflects. This is the only remaining steady-state on-chain read and runs only
-  // for planets with recent combat fleet activity — never a universe-wide sweep (VEY-KANEO-461).
-  async reconcilePlanetState(planetId: string): Promise<CanonicalDivergenceReport | null> {
-    if (this.planetReconcileInFlight.has(planetId)) return null;
-    this.planetReconcileInFlight.add(planetId);
-    try {
-      const head = this.metadata("latestIndexedBlock")
-        ?? this.metadata("lastReconciledBlock")
-        ?? this.fromBlock.toString();
-      const report = await this.verifyCanonicalState(planetId, { heal: true });
-      if (report.reachedChain) {
-        this.setPlanetReconcileBlock(planetId, head);
-        this.touch();
-      }
-      return report;
-    } finally {
-      this.planetReconcileInFlight.delete(planetId);
-    }
-  }
+  // NOTE: the combat-triggered bounded per-planet canonical reconcile (planetReconcileBlock /
+  // setPlanetReconcileBlock / drainFleetMissionReconcilePlanets / reconcilePlanetState) has been REMOVED.
+  // It re-read a planet's authoritative ship/defense/resource state from the contract on every settled
+  // combat fleet mission. Under the canonical-mirror contract NO runtime event may issue an RPC read —
+  // contract_* is seeded once at startup and maintained thereafter solely by event-listener callbacks.
+  // Ship/defense debits from combat now rely on the contract's PlanetShipCountChanged /
+  // PlanetDefenseCountChanged events, which applyShipCountChangedEvent / applyDefenseCountChangedEvent
+  // already integrate authoritatively from the event stream.
 
   defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
     return deriveDefenseRows((id) => this.asOfNowCount(
@@ -1015,10 +926,12 @@ export class SettlementIndexer {
   }
 
   private moonBuildingLevelAsOfNow(planetId: string, buildingId: number): number {
-    // Same rule as infrastructureRows (VEY-486): a moon-building level advances only on its
-    // on-chain completion event, never from an elapsed-but-unfinished queue entry. Folding the
-    // queue's targetLevel here over-reported the level by +1 before the upgrade was live on chain.
-    return this.indexedLevel("indexed_moon_building_levels", "building_id", planetId, buildingId);
+    // Mirror infrastructureRows (canonical-mirror + VEY-486): serve the moon-building level strictly
+    // from the contract-authoritative table (contract_moon_building_levels, seeded at startup from
+    // contract reads + raised only by the on-chain completion event), and never fold an
+    // elapsed-but-unfinished queue entry's targetLevel — that over-reported the level by +1 before the
+    // upgrade was live on chain.
+    return this.indexedLevel("contract_moon_building_levels", "moon_building_id", planetId, buildingId);
   }
 
   highscoreForWallet(wallet: `0x${string}`, planetIds?: string[]): HighscoreEntry {
@@ -1336,13 +1249,10 @@ export class SettlementIndexer {
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isFleetMissionLog(log)) {
-      // Fleet-mission state is decoded from the event log on read, but a settlement (resolve / return)
-      // can have thinned a combat fleet's ships with no ship-count event. Queue the mission so the
-      // server can fire a bounded canonical reconcile of the planets involved (VEY-KANEO-461).
-      if (isFleetMissionSettlementLog(log)) {
-        const missionId = fleetMissionLogMissionId(log);
-        if (missionId) this.pendingFleetMissionSettlements.add(missionId);
-      }
+      // Fleet-mission state is decoded from the event log on read. Combat ship/defense thinning that the
+      // mission settlement applies is reported separately by PlanetShipCountChanged /
+      // PlanetDefenseCountChanged events (integrated above), so no runtime RPC re-read is needed: the
+      // combat-triggered per-planet canonical reconcile has been removed (canonical-mirror contract).
       this.touch();
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
@@ -1384,183 +1294,22 @@ export class SettlementIndexer {
     return this.rebuild();
   }
 
-  // Lightweight, frequent on-chain state refresh — decoupled from the heavy full rebuild(). The full
-  // rebuild re-scans the entire getLogs history (slow, occasionally OOMs/hangs) and is the ONLY place the
-  // canonical chain reads run, so between rebuilds the served contract_* tables drift: event handlers
-  // mutate them with derivation that the contract emits no events for (mission ship debits/credits, loot,
-  // spend), and the departed-ships projection keeps subtracting fleets that already returned because its
-  // `lastReconciledBlock` baseline is stale — that is why resources read wrong and the shipyard shows 0.
-  //
-  // This reads each live planet's authoritative state straight from the contract (previewResources /
-  // shipyard / infrastructure / defenses / research) via readCanonicalState and overwrites contract_* with
-  // it, then advances the reconcile baseline to the current chain head so the departed-ships projection
-  // only nets out genuinely in-flight fleets. Run on a short interval it keeps every served number pinned
-  // to chain. Never throws; skips while a full rebuild is in flight (the rebuild does the same work).
-  async refreshCanonicalState(): Promise<void> {
-    if (this.canonicalRefreshPromise) return this.canonicalRefreshPromise;
-    const fullReconciliationInProgress = this.rebuildPromise || this.planetRebuildPromise;
-    if (fullReconciliationInProgress && !this.metadata("lastReconciledAt")) return;
-    if (!this.chainReader.listCurrentPlanets) return;
-    this.canonicalRefreshPromise = this.refreshCanonicalStateUncached()
-      .catch((error) => {
-        // A refresh miss is non-fatal: the persisted snapshot stays serveable and the next tick retries.
-        // Deliberately do NOT set lastReconciliationError here — that would flip serve-stale/health gating.
-        console.error("Veydrift canonical state refresh failed", error);
-      })
-      .finally(() => {
-        this.canonicalRefreshPromise = null;
-      });
-    return this.canonicalRefreshPromise;
-  }
-
-  private async refreshCanonicalStateUncached(): Promise<void> {
-    const planets = await this.chainReader.listCurrentPlanets!();
-    if (planets.length === 0) return;
-    // Snapshot the head BEFORE the chain reads. Used as the departed-ships baseline: any mission whose
-    // launch block is <= head is already reflected in the shipCount we just read, so it must not be
-    // subtracted again. Reading head-before-state keeps the projection on the safe (never-over-report)
-    // side if a fleet departs mid-refresh. latestIndexedBlock is maintained by the websocket head feed.
-    const head = this.metadata("latestIndexedBlock")
-      ?? this.metadata("lastReconciledBlock")
-      ?? this.fromBlock.toString();
-    const state = await this.readCanonicalState(planets);
-    const now = new Date().toISOString();
-    const apply = this.db.transaction(() => {
-      this.setMetadata("lastReconciledBlock", head);
-      this.applyCanonicalState(state);
-      this.setMetadata("lastReconciledAt", now);
-      this.touch();
-    });
-    apply();
-  }
+  // NOTE: the periodic runtime canonical refresh (refreshCanonicalState/refreshCanonicalStateUncached)
+  // has been REMOVED. Per the canonical-mirror contract the DB is reconciled from the contracts EXACTLY
+  // ONCE at startup (rebuild) and mutated thereafter ONLY by event-listener callbacks (applyLog). No
+  // periodic universe-wide RPC re-read runs in steady state.
 
   markStale(reason: string): IndexerSnapshot {
     this.setMetadata("pendingReconciliationReason", reason);
     return this.snapshot();
   }
 
-  // Verify — and optionally self-heal — a single planet's stored canonical state
-  // against the authoritative on-chain getters, without the cost of a full
-  // `rebuild()`. The canonical mirror is updated incrementally between reconciles
-  // from event logs, but the contract debits/credits ships, defenses and
-  // resources for many actions (mission launches, combat losses, settlement)
-  // without emitting an event the indexer can replay, so a planet's stored
-  // {resources, buildings, ships, defenses} can drift from the chain until the
-  // next full reconcile. This reads the exact authoritative values the reconcile
-  // uses — getInfrastructureState -> previewResources + buildingLevel,
-  // getShipyardState -> shipCount, getDefenseState -> defenseCount — diffs them
-  // against the stored canonical rows, and (with `heal`) re-syncs just this
-  // planet's rows to the contract values so the served state equals on-chain.
-  //
-  // Healing writes EXACT contract values (not the monotonic max() the event-replay
-  // path uses) because the on-chain read is authoritative: a building or ship that
-  // genuinely dropped on-chain must be corrected downward too, otherwise the
-  // divergence the call set out to remove would survive.
-  async verifyCanonicalState(
-    planetId: string,
-    options: { heal?: boolean } = {}
-  ): Promise<CanonicalDivergenceReport> {
-    const checkedAt = new Date().toISOString();
-    const planet = this.planet(planetId);
-    const owner = planet?.owner ?? null;
-    const baseReport: CanonicalDivergenceReport = {
-      planetId,
-      owner,
-      checkedAt,
-      reachedChain: false,
-      divergent: false,
-      divergences: [],
-      healed: false
-    };
-
-    if (!owner) return baseReport;
-
-    const ownerAddress = owner as `0x${string}`;
-    const planetIdBig = BigInt(planetId);
-    const [infrastructure, shipyard, defenseState] = await Promise.all([
-      this.chainReader.getInfrastructureState?.(ownerAddress, planetIdBig),
-      this.chainReader.getShipyardState?.(ownerAddress, planetIdBig),
-      this.chainReader.getDefenseState?.(ownerAddress, planetIdBig)
-    ]);
-
-    if (!infrastructure && !shipyard && !defenseState) {
-      return baseReport;
-    }
-
-    const divergences: CanonicalFieldDivergence[] = [];
-
-    if (infrastructure?.resources) {
-      const stored = this.planetResourceSnapshot(planetId);
-      for (const key of ["metal", "crystal", "deuterium"] as const) {
-        const storedValue = stored ? stored[key] : "0";
-        const onChain = infrastructure.resources[key];
-        if (BigInt(storedValue) !== BigInt(onChain)) {
-          divergences.push({ field: "resources", id: null, key, stored: storedValue, onChain });
-        }
-      }
-    }
-
-    for (const building of infrastructure?.buildings ?? []) {
-      const storedValue = this.indexedLevel("contract_building_levels", "building_id", planetId, building.id);
-      if (storedValue !== building.level) {
-        divergences.push({ field: "building", id: building.id, key: null, stored: String(storedValue), onChain: String(building.level) });
-      }
-    }
-
-    for (const ship of shipyard?.ships ?? []) {
-      const storedValue = this.indexedLevel("contract_ship_counts", "ship_id", planetId, ship.id);
-      if (storedValue !== ship.count) {
-        divergences.push({ field: "ship", id: ship.id, key: null, stored: String(storedValue), onChain: String(ship.count) });
-      }
-    }
-
-    for (const defense of defenseState?.defenses ?? []) {
-      const storedValue = this.indexedLevel("contract_defense_counts", "defense_id", planetId, defense.id);
-      if (storedValue !== defense.count) {
-        divergences.push({ field: "defense", id: defense.id, key: null, stored: String(storedValue), onChain: String(defense.count) });
-      }
-    }
-
-    const divergent = divergences.length > 0;
-    let healed = false;
-    if (divergent && options.heal) {
-      this.healPlanetCanonicalState(planetId, { infrastructure, shipyard, defenseState });
-      healed = true;
-    }
-
-    return { planetId, owner, checkedAt, reachedChain: true, divergent, divergences, healed };
-  }
-
-  private healPlanetCanonicalState(
-    planetId: string,
-    state: {
-      infrastructure: InfrastructureState | undefined;
-      shipyard: ShipyardState | undefined;
-      defenseState: DefenseState | undefined;
-    }
-  ): void {
-    const blockNumber = this.metadata("lastReconciledBlock") ?? "0";
-    const heal = this.db.transaction(() => {
-      if (state.infrastructure?.resources) {
-        const reconciledAt = Math.floor(Date.now() / 1_000).toString();
-        this.upsertPlanetResourceSnapshot(planetId, state.infrastructure.resources, reconciledAt, "0x", blockNumber);
-      }
-      for (const building of state.infrastructure?.buildings ?? []) {
-        this.upsertIndexedLevel("indexed_building_levels", "building_id", "level", planetId, building.id, building.level);
-        this.upsertIndexedLevel("contract_building_levels", "building_id", "level", planetId, building.id, building.level);
-      }
-      for (const ship of state.shipyard?.ships ?? []) {
-        this.upsertIndexedLevel("indexed_ship_counts", "ship_id", "count", planetId, ship.id, ship.count);
-        this.upsertIndexedLevel("contract_ship_counts", "ship_id", "count", planetId, ship.id, ship.count);
-      }
-      for (const defense of state.defenseState?.defenses ?? []) {
-        this.upsertIndexedLevel("indexed_defense_counts", "defense_id", "count", planetId, defense.id, defense.count);
-        this.upsertIndexedLevel("contract_defense_counts", "defense_id", "count", planetId, defense.id, defense.count);
-      }
-      this.touch();
-    });
-    heal();
-  }
+  // NOTE: the runtime per-planet RPC self-heal (verifyCanonicalState / healPlanetCanonicalState) has been
+  // REMOVED. It was the request-time and combat-triggered "re-read this planet from chain and re-pin
+  // contract_* to it" path. Under the canonical-mirror contract NO request or runtime event may issue an
+  // RPC read: the contract_* tables are seeded once at startup (rebuild) and maintained thereafter solely
+  // by event-listener callbacks (applyLog). Drift is corrected on the next startup reconcile, not at
+  // runtime.
 
   async rebuildPlanets(): Promise<IndexerSnapshot> {
     if (this.rebuildPromise) {
@@ -1596,7 +1345,34 @@ export class SettlementIndexer {
     const allianceDirectory = this.chainReader.listAllianceDirectoryState
       ? await this.chainReader.listAllianceDirectoryState()
       : [];
-    return { settledPlanetEvents, planetEvents, debrisEvents, moonChanceEvents, canonicalState, allianceLogs, allianceDirectory };
+    // Seed the three eventless-migratable alliance sub-states from contract reads (canonical-mirror).
+    // Invites have no per-alliance enumeration getter, so probe the known-wallet set (planet owners,
+    // the same candidate set as the canonical planet/owner reads) × allianceIds. Optional methods are
+    // skipped when the injected reader lacks them, falling back to event-derived rows (no crash).
+    const allianceCandidateWallets = Array.from(
+      new Set(planetEvents.map((planet) => planet.owner.toLowerCase() as Address))
+    );
+    const allianceJoinRequests = this.chainReader.listAllianceJoinRequestState
+      ? await this.chainReader.listAllianceJoinRequestState()
+      : null;
+    const allianceInvites = this.chainReader.listAllianceInviteState
+      ? await this.chainReader.listAllianceInviteState(allianceCandidateWallets)
+      : null;
+    const allianceDiplomacy = this.chainReader.listAllianceDiplomacyState
+      ? await this.chainReader.listAllianceDiplomacyState()
+      : null;
+    return {
+      settledPlanetEvents,
+      planetEvents,
+      debrisEvents,
+      moonChanceEvents,
+      canonicalState,
+      allianceLogs,
+      allianceDirectory,
+      allianceJoinRequests,
+      allianceInvites,
+      allianceDiplomacy
+    };
   }
 
   // VEY-KANEO-485: surface a real error if the cold rebuild's chain reads stall past the deadline,
@@ -1626,7 +1402,10 @@ export class SettlementIndexer {
       moonChanceEvents,
       canonicalState,
       allianceLogs,
-      allianceDirectory
+      allianceDirectory,
+      allianceJoinRequests,
+      allianceInvites,
+      allianceDiplomacy
     } = await this.withRebuildDeadline(this.readRebuildInputs());
     const rebuild = this.db.transaction(() => {
       this.db.query("DELETE FROM indexed_planets").run();
@@ -1649,6 +1428,13 @@ export class SettlementIndexer {
         this.applyAllianceEvent(decodeAllianceLog(log));
       }
       this.applyAllianceDirectorySnapshot(allianceDirectory);
+      // Seed the three sub-states from chain reads AFTER the event replay so contract reads are
+      // authoritative over (possibly incomplete) event-derived rows. A non-null-but-empty snapshot
+      // means the chain has none, so the prior clearCanonicalState leaves the table empty (no stale
+      // event rows survive). A null snapshot means the reader can't read it — leave event rows as-is.
+      this.applyAllianceJoinRequestSnapshot(allianceJoinRequests);
+      this.applyAllianceInviteSnapshot(allianceInvites);
+      this.applyAllianceDiplomacySnapshot(allianceDiplomacy);
       const latestBlock = latestEventBlock([...settledPlanetEvents, ...debrisEvents, ...moonChanceEvents, ...allianceLogs]);
       this.recordSuccessfulAllianceReconciliation();
       this.touch();
@@ -2039,22 +1825,12 @@ export class SettlementIndexer {
       this.upsertMoonChanceReport(report);
     }
 
-    this.db.query(`
-      INSERT OR IGNORE INTO contract_building_levels (planet_id, building_id, level)
-      SELECT planet_id, building_id, level FROM indexed_building_levels
-    `).run();
-    this.db.query(`
-      INSERT OR IGNORE INTO contract_defense_counts (planet_id, defense_id, count)
-      SELECT planet_id, defense_id, count FROM indexed_defense_counts
-    `).run();
-    this.db.query(`
-      INSERT OR IGNORE INTO contract_ship_counts (planet_id, ship_id, count)
-      SELECT planet_id, ship_id, count FROM indexed_ship_counts
-    `).run();
-    this.db.query(`
-      INSERT OR IGNORE INTO contract_technology_levels (owner, technology_id, level)
-      SELECT owner, technology_id, level FROM indexed_research_levels
-    `).run();
+    // NOTE: the canonical contract_* level/count/research tables are populated EXCLUSIVELY by the
+    // one-time startup canonical seed (readCanonicalState -> applyCanonicalState) and maintained
+    // thereafter by event-listener callbacks. The contract is the source of truth, so we must NOT
+    // backfill canonical rows from the event-derived indexed_* mirror — that lets stale/incomplete
+    // event-derived values override authoritative on-chain reads (the seed already wrote them).
+    // The previous `INSERT OR IGNORE INTO contract_* SELECT ... FROM indexed_*` backfills are removed.
 
     const queueRows = this.db.query(`
       SELECT queue_key, kind, planet_id, owner, item_id, target_level, quantity, ready_at, started_at, cost_json, event_json
@@ -2205,6 +1981,8 @@ export class SettlementIndexer {
       ships: new Map(),
       research: new Map(),
       researchQueues: new Map(),
+      moonBuildings: new Map(),
+      moonQueues: new Map(),
       verifiedEmptyQueues: new Set()
     };
     const owners = new Set(planets.map((planet) => planet.owner.toLowerCase() as `0x${string}`));
@@ -2275,7 +2053,23 @@ export class SettlementIndexer {
 
     for (const ownerChunk of chunks([...owners], CANONICAL_READ_PLANET_CHUNK)) {
       await Promise.all(ownerChunk.map(async (owner) => {
-      const research = await this.chainReader.getResearchState?.(owner);
+      // Research and moon state are both wallet-keyed on chain (resolved against the wallet's home
+      // planet), so read them together per owner.
+      const [research, moon] = await Promise.all([
+        this.chainReader.getResearchState?.(owner),
+        this.chainReader.getMoonState?.(owner)
+      ]);
+
+      // Moon: getMoonState resolves the wallet's home planet's moon. Seed the canonical moon building
+      // levels + active moon-building queue keyed by that home planet id. Absent / non-existent moons
+      // leave no canonical rows.
+      if (moon?.moon?.exists && moon.homePlanetId) {
+        state.moonBuildings.set(moon.homePlanetId, moon.buildings);
+        if (moon.queue?.active) {
+          state.moonQueues.set(moon.homePlanetId, moon.queue);
+        }
+      }
+
       if (!research) return;
       if (research.homePlanetId) {
         this.addCanonicalResources(state, research.homePlanetId, research.resources);
@@ -2299,6 +2093,8 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM indexed_defense_counts").run();
     this.db.query("DELETE FROM indexed_ship_counts").run();
     this.db.query("DELETE FROM indexed_research_levels").run();
+    this.db.query("DELETE FROM indexed_moon_building_levels").run();
+    this.db.query("DELETE FROM contract_moon_building_levels").run();
     this.db.query("DELETE FROM contract_players").run();
     this.db.query("DELETE FROM contract_planets").run();
     this.db.query("DELETE FROM contract_planet_resources").run();
@@ -2355,6 +2151,13 @@ export class SettlementIndexer {
         `).run(owner, technology.id, technology.level);
       }
     }
+    for (const [planetId, buildings] of state.moonBuildings) {
+      for (const building of buildings) {
+        // indexed_moon_building_levels keys on building_id; contract_moon_building_levels on moon_building_id.
+        this.upsertIndexedLevel("indexed_moon_building_levels", "building_id", "level", planetId, building.id, building.level);
+        this.upsertIndexedLevel("contract_moon_building_levels", "moon_building_id", "level", planetId, building.id, building.level);
+      }
+    }
     for (const [key, queue] of state.planetQueues) {
       const [kind, planetId] = key.split(":");
       if (!kind || !planetId || !isPlanetQueueKind(kind)) continue;
@@ -2363,6 +2166,25 @@ export class SettlementIndexer {
     for (const [owner, queue] of state.researchQueues) {
       this.upsertCanonicalQueue("research", null, owner, queue);
     }
+    for (const [planetId, queue] of state.moonQueues) {
+      this.upsertCanonicalMoonQueue(planetId, queue);
+    }
+  }
+
+  private upsertCanonicalMoonQueue(planetId: string, queue: QueueState): void {
+    if (queue.itemId === undefined || queue.targetLevel === undefined) return;
+    this.upsertQueue({
+      eventName: "MoonBuildingStarted",
+      transactionHash: "0x",
+      blockNumber: this.metadata("lastReconciledBlock") ?? "0",
+      queueKind: "moon-building",
+      planetId,
+      itemId: queue.itemId,
+      targetLevel: queue.targetLevel,
+      readyAt: queue.readyAt ?? "0",
+      ...(queue.startedAt ? { startedAt: queue.startedAt } : {}),
+      cost: queue.cost
+    });
   }
 
   private addActiveQueue(queues: Map<string, QueueState>, key: string, queue: QueueState | null | undefined): void {
@@ -2982,8 +2804,22 @@ export class SettlementIndexer {
     const planet = this.planet(planetId);
     if (!planet) return;
 
-    if (isZeroResourcePlaceholder(planet) && !this.planetResourceSnapshot(planetId)) {
+    const snapshot = this.planetResourceSnapshot(planetId);
+
+    if (isZeroResourcePlaceholder(planet) && !snapshot) {
       this.markStale(pendingPlanetResourcesReason(planetId));
+      return;
+    }
+
+    // Double-subtract guard (VEY-318 / PROBLEM B): a build/research/ship cost must be debited from the
+    // planet's balance EXACTLY ONCE. The contract debits resources atomically when an item is queued and
+    // emits a PlanetSettled carrying the resulting post-spend balance in the SAME transaction as the
+    // PlanetQueueStarted. PlanetSettled is authoritative — `updatePlanetResources` writes the snapshot
+    // with that event's transactionHash — so if the stored snapshot was written by a PlanetSettled in
+    // this same tx, it already reflects the spend and subtracting again drives the displayed balance low.
+    // Skip the subtraction in that case. Pre-migration spends (no same-tx PlanetSettled; the snapshot tx
+    // differs, or is the seed marker "0x") fall through and still subtract.
+    if (transactionHash && snapshot && snapshot.transaction_hash === transactionHash) {
       return;
     }
 
@@ -3331,6 +3167,58 @@ export class SettlementIndexer {
     }
 
     if (directory.length > 0) this.touch();
+  }
+
+  // Canonical-mirror seed for contract_alliance_join_requests. null snapshot => reader can't read it,
+  // keep event-derived rows; non-null => DELETE+replace so the table mirrors the chain exactly (an
+  // empty array clears stale event rows that no longer exist on chain).
+  private applyAllianceJoinRequestSnapshot(snapshot: AllianceJoinRequestSnapshot[] | null): void {
+    if (snapshot === null) return;
+    this.db.query("DELETE FROM contract_alliance_join_requests").run();
+    for (const request of snapshot) {
+      this.db.query(`
+        INSERT INTO contract_alliance_join_requests (alliance_id, requester, requested_at)
+        VALUES (?, lower(?), ?)
+        ON CONFLICT(alliance_id, requester) DO UPDATE SET
+          requested_at = excluded.requested_at
+      `).run(request.allianceId, request.requester, request.requestedAt);
+    }
+    this.touch();
+  }
+
+  // Canonical-mirror seed for contract_alliance_invites. See applyAllianceJoinRequestSnapshot for the
+  // null vs. empty-array semantics.
+  private applyAllianceInviteSnapshot(snapshot: AllianceInviteSnapshot[] | null): void {
+    if (snapshot === null) return;
+    this.db.query("DELETE FROM contract_alliance_invites").run();
+    for (const invite of snapshot) {
+      this.db.query(`
+        INSERT INTO contract_alliance_invites (alliance_id, player, inviter, invited_at)
+        VALUES (?, lower(?), lower(?), ?)
+        ON CONFLICT(alliance_id, player) DO UPDATE SET
+          inviter = excluded.inviter,
+          invited_at = excluded.invited_at
+      `).run(invite.allianceId, invite.player, invite.inviter, invite.invitedAt);
+    }
+    this.touch();
+  }
+
+  // Canonical-mirror seed for contract_alliance_diplomacy. The reader returns one row per directed
+  // (alliance_id, other_alliance_id) pair, matching the AllianceDiplomacyUpdated handler that writes both
+  // directions; updated_at is left NULL on the chain seed (no event block backs it). See null vs.
+  // empty-array semantics on applyAllianceJoinRequestSnapshot.
+  private applyAllianceDiplomacySnapshot(snapshot: AllianceDiplomacySnapshot[] | null): void {
+    if (snapshot === null) return;
+    this.db.query("DELETE FROM contract_alliance_diplomacy").run();
+    for (const relation of snapshot) {
+      this.db.query(`
+        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at)
+        VALUES (?, ?, ?, NULL)
+        ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
+          status_id = excluded.status_id
+      `).run(relation.allianceId, relation.otherAllianceId, relation.statusId);
+    }
+    this.touch();
   }
 
   private touch(): void {
@@ -3742,6 +3630,10 @@ type CanonicalReconciliationState = {
   ships: Map<string, ShipyardState["ships"]>;
   research: Map<`0x${string}`, ResearchState["technologies"]>;
   researchQueues: Map<`0x${string}`, QueueState>;
+  // Canonical moon building levels by moon home-planet id, and the planet's active moon-building queue.
+  // Seeded from getMoonState (wallet -> home-planet moon). null entries are intentionally absent.
+  moonBuildings: Map<string, MoonState["buildings"]>;
+  moonQueues: Map<string, QueueState>;
   verifiedEmptyQueues: Set<string>;
 };
 

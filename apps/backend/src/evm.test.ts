@@ -884,6 +884,86 @@ describe("moon chance report event decoding", () => {
     });
   });
 
+  test("reads every alliance's pending join requests for the canonical-mirror seed", async () => {
+    const allianceContractAddress = "0x2222222222222222222222222222222222222222";
+    const requester = "0x4444444444444444444444444444444444444444" as Address;
+    const reader = new VeydriftGameReader(
+      { ...readerConfig, allianceContractAddress },
+      {
+        async request<T>(_method: string, params: unknown[]): Promise<T> {
+          const [call] = params as [{ data: string }];
+          const selector = call.data.slice(0, 10);
+          if (selector === "0xf0bab901") return uintArrayResult([1n, 2n]) as T;
+          if (selector === "0x2953e5ce") {
+            // alliance 1 has a requester; alliance 2 has none.
+            return (call.data.endsWith("1".padStart(64, "0"))
+              ? addressArrayResult([requester])
+              : addressArrayResult([])) as T;
+          }
+          if (selector === "0xdb132ffb") {
+            return dataWords([word(1n), word(1n), addressWord(requester), word(1_779_816_690n)]) as T;
+          }
+          throw new Error(`Unexpected selector ${selector}`);
+        }
+      }
+    );
+
+    await expect(reader.listAllianceJoinRequestState()).resolves.toEqual([
+      { allianceId: "1", requester, requestedAt: "1779816690" }
+    ]);
+  });
+
+  test("reads pending invites by probing candidate wallets x alliances for the seed", async () => {
+    const allianceContractAddress = "0x2222222222222222222222222222222222222222";
+    const invitee = "0x5555555555555555555555555555555555555555" as Address;
+    const inviter = "0x3333333333333333333333333333333333333333" as Address;
+    const other = "0x6666666666666666666666666666666666666666" as Address;
+    const reader = new VeydriftGameReader(
+      { ...readerConfig, allianceContractAddress },
+      {
+        async request<T>(_method: string, params: unknown[]): Promise<T> {
+          const [call] = params as [{ data: string }];
+          const selector = call.data.slice(0, 10);
+          if (selector === "0xf0bab901") return uintArrayResult([1n]) as T;
+          if (selector === "0xf4d46b3b") {
+            return (call.data.toLowerCase().includes(invitee.slice(2).toLowerCase())
+              ? dataWords([word(1n), word(1n), addressWord(inviter), word(1_779_816_700n)])
+              : dataWords([word(0n), word(0n), word(0n), word(0n)])) as T;
+          }
+          throw new Error(`Unexpected selector ${selector}`);
+        }
+      }
+    );
+
+    await expect(reader.listAllianceInviteState([invitee, other])).resolves.toEqual([
+      { allianceId: "1", player: invitee, inviter, invitedAt: "1779816700" }
+    ]);
+  });
+
+  test("reads diplomacy status for every ordered alliance pair for the seed", async () => {
+    const allianceContractAddress = "0x2222222222222222222222222222222222222222";
+    const reader = new VeydriftGameReader(
+      { ...readerConfig, allianceContractAddress },
+      {
+        async request<T>(_method: string, params: unknown[]): Promise<T> {
+          const [call] = params as [{ data: string }];
+          const selector = call.data.slice(0, 10);
+          if (selector === "0xf0bab901") return uintArrayResult([1n, 2n]) as T;
+          if (selector === "0xbeddf2fb") {
+            // Only the (1,2) and (2,1) directed pairs are at war (status 3).
+            return dataWords([word(3n)]) as T;
+          }
+          throw new Error(`Unexpected selector ${selector}`);
+        }
+      }
+    );
+
+    await expect(reader.listAllianceDiplomacyState()).resolves.toEqual([
+      { allianceId: "1", otherAllianceId: "2", statusId: 3 },
+      { allianceId: "2", otherAllianceId: "1", statusId: 3 }
+    ]);
+  });
+
   test("does not expand rate-limited batch calls into sequential RPC bursts", async () => {
     const wallet = "0x0000000000000000000000000000000000000def" as Address;
     const individualSelectors: string[] = [];
