@@ -4,10 +4,20 @@ import { readFileSync } from "node:fs";
 const options = parseArgs(process.argv.slice(2));
 const apiUrl = trimSlash(options["api-url"] ?? "https://api-test.veydrift.com");
 const wallet = options.wallet;
+// VEY-KANEO-476 event-replay baseline-coverage gate: a specific OLD/low-id planet the wallet still owns
+// on-chain (e.g. `--expect-planet 1`). The event-only indexer drops any planet whose creation event is
+// below VEYDRIFT_INDEX_FROM_BLOCK, and a truncated baseline can leave a wallet with its newer planets
+// (and a home planet) while silently losing an older one — so a plain "has a home planet" check is not
+// enough. When provided, the wallet's served /planets MUST contain this id.
+const expectPlanetId = options["expect-planet"] ?? null;
 const manifest = options.manifest ? readManifest(options.manifest) : null;
 const failures = [];
 const evidence = [];
 let walletHomePlanetId = null;
+
+if (expectPlanetId && !wallet) {
+  usage("--expect-planet requires --wallet (the wallet that owns the planet on-chain).");
+}
 
 await checkJson("health", "/health", (body) => {
   expect(body.ok === true, "health.ok must be true");
@@ -58,6 +68,15 @@ if (wallet) {
       expect(!body.error, `planets returned error: ${body.error ?? ""}`);
       expect(Array.isArray(body.planets), "planets payload must include planets array");
       expect(body.planets.length > 0, "settled wallet must return at least one managed planet");
+      if (expectPlanetId) {
+        const ids = (body.planets ?? []).map((planet) => String(planet.planetId));
+        expect(
+          ids.includes(String(expectPlanetId)),
+          `event-replay baseline coverage: wallet must still own planet ${expectPlanetId}, served ids: [${ids.join(", ")}]. `
+            + "A missing old/low-id planet means VEYDRIFT_INDEX_FROM_BLOCK is above its creation block — "
+            + "lower it to the original proxy genesis and re-run POST /index/rebuild (VEY-KANEO-476)."
+        );
+      }
     });
     await checkWallet("infrastructure", `/wallet/${wallet}/infrastructure`, (body) => {
       expect(body.infrastructureAvailable !== false, body.unavailableReason ?? "infrastructure unavailable");
@@ -84,6 +103,12 @@ if (wallet) {
       expect(!unsupported, body.unavailableReason);
       expect(body.moonAvailable !== false || body.moon === null, body.unavailableReason ?? "moon unavailable");
     });
+  } else if (expectPlanetId) {
+    fail(
+      `event-replay baseline coverage: wallet serves no home planet, so planet ${expectPlanetId} could not be `
+        + "verified. This is the truncated-baseline failure (homePlanetId:null) — set VEYDRIFT_INDEX_FROM_BLOCK "
+        + "to the original proxy genesis and re-run POST /index/rebuild (VEY-KANEO-476)."
+    );
   }
 }
 
@@ -166,6 +191,6 @@ function readManifest(path) {
 }
 
 function usage(message) {
-  console.error(`${message}\nUsage: node scripts/veydrift-postdeploy-smoke.mjs [--manifest <file>] [--api-url <url>] [--wallet <0x...>]`);
+  console.error(`${message}\nUsage: node scripts/veydrift-postdeploy-smoke.mjs [--manifest <file>] [--api-url <url>] [--wallet <0x...>] [--expect-planet <id>]`);
   process.exit(1);
 }

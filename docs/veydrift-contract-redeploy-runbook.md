@@ -196,9 +196,19 @@ Because served state is reconstructed purely from event replay, confirm the conf
 
 - Pick a wallet that owns a **low-id / pre-upgrade planet** (e.g. planet `1`). On-chain it should report
   `homePlanetOf(wallet) == <id>` and `planet(<id>).owner == wallet`.
-- `GET /wallet/<wallet>/planets` must return that planet (non-null `homePlanetId`, the planet present in
-  `planets[]`), and its served `metal/crystal/deuterium` must match the contract's `previewResources(<id>)`
-  for the sampled block within normal accrual timing.
+- Run the smoke check with `--expect-planet`, which fails if that planet is missing from the served
+  `/wallet/<wallet>/planets` (the truncated-baseline symptom):
+
+  ```sh
+  node scripts/veydrift-postdeploy-smoke.mjs \
+    --manifest deploy/veydrift-base-sepolia-YYYYMMDDTHHMMSSZ.json \
+    --api-url https://api-test.veydrift.com \
+    --wallet 0x... --expect-planet 1
+  ```
+
+- Then confirm (manually, or via an RPC call against the contract) that the served
+  `metal/crystal/deuterium` for that planet match the contract's `previewResources(<id>)` at the sampled
+  block within normal accrual timing.
 - The RPC/canonical state-getter counters in `/health` must stay zero (no on-the-fly re-pin).
 
 If the wallet serves `homePlanetId: null` / `planets: []` while the planet exists on-chain, the index
