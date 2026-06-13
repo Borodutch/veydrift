@@ -913,6 +913,10 @@ function driveEffectRows(
   return shipKeys.flatMap((shipKey) => {
     const ship = shipCatalog.find((item) => item.key === shipKey);
     if (!ship) return [];
+    // VEY-KANEO-493: never surface shipyard-hidden ships (e.g. the expedition-only
+    // `pathfinder` slot) in research effect copy — they keep their drive math for index
+    // fidelity but must not appear in any player-readable list.
+    if (isShipyardHidden(shipKey)) return [];
 
     const currentSpeed = shipSpeed(shipKey, currentResearch);
     const nextSpeed = shipSpeed(shipKey, nextResearch);
@@ -1413,7 +1417,9 @@ export function researchUnlockRows(key: ResearchKey): string[] {
     }
   }
 
-  for (const ship of shipCatalog) {
+  // VEY-KANEO-493: use the buildable subset so shipyard-hidden ships (the expedition-only
+  // `pathfinder` slot) never surface as a research unlock in player-readable copy.
+  for (const ship of shipyardCatalog) {
     for (const requirement of ship.requirements) {
       if (requirement.kind === "technology" && requirement.key === key) {
         rows.push(`${ship.label} at Level ${requirement.level}`);
