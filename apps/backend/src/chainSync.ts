@@ -117,6 +117,15 @@ export class ChainSyncService {
   private selfHealTimer: ReturnType<typeof setInterval> | undefined;
   private lastSelfHealAt: string | null = null;
   private selfHealRecoveredEvents = 0;
+  // Self-driving retry for a FAILED canonical reconcile. Without this, a reconcile that fails
+  // once parks behind nextReconcileEligibleAt and is never re-attempted until an unrelated
+  // recovery trigger (gap/reorg/decode failure) happens to arrive. If the websocket then stays
+  // quiet, the indexer stalls indefinitely — drift is never repaired and lastSettledAt never
+  // advances (VEY-KANEO-482). This watchdog re-issues requestReconciliation once the backoff
+  // window elapses, so a stalled reconcile self-heals without a manual /index/rebuild. The
+  // exponential nextReconcileEligibleAt still gates each attempt, so this never hot-loops
+  // back-to-back (VEY-KANEO-461).
+  private reconcileRetryTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     private readonly config: BackendConfig,
@@ -247,6 +256,10 @@ export class ChainSyncService {
     if (this.backfillRetryTimer) {
       clearTimeout(this.backfillRetryTimer);
       this.backfillRetryTimer = undefined;
+    }
+    if (this.reconcileRetryTimer) {
+      clearTimeout(this.reconcileRetryTimer);
+      this.reconcileRetryTimer = undefined;
     }
     this.pendingReconcileReason = null;
     this.pendingBackfillRetry = null;
@@ -703,13 +716,20 @@ export class ChainSyncService {
         // A successful canonical reconcile clears the failure backoff so normal recovery resumes.
         this.reconcileFailureCount = 0;
         this.nextReconcileEligibleAt = 0;
+        if (this.reconcileRetryTimer) {
+          clearTimeout(this.reconcileRetryTimer);
+          this.reconcileRetryTimer = undefined;
+        }
       },
       (error: unknown) => {
         this.lastError = error instanceof Error ? error.message : "Failed to reconcile indexed state.";
-        // Back off exponentially before another reconcile may run. The reconcile is NOT
-        // re-scheduled here — it only re-runs when a real recovery trigger arrives, and
-        // requestReconciliation then honours this window. That keeps a failing reconcile from
-        // looping back-to-back and pegging the single-threaded event loop (VEY-KANEO-461).
+        // Back off exponentially before another reconcile may run, so a failing reconcile cannot
+        // loop back-to-back and peg the single-threaded event loop (VEY-KANEO-461). Unlike before,
+        // we DO self-reschedule a single retry once that backoff window elapses: otherwise a
+        // reconcile that fails while the websocket is quiet is never re-attempted (no new trigger
+        // arrives) and the indexer stalls indefinitely with permanent drift (VEY-KANEO-482). The
+        // backoff is honoured by requestReconciliation, so the retry stays bounded and grows
+        // exponentially up to reconcileBackoffMaxMs.
         this.reconcileFailureCount += 1;
         this.nextReconcileEligibleAt =
           Date.now() +
@@ -718,8 +738,24 @@ export class ChainSyncService {
             this.reconcileBackoffBaseMs(),
             this.reconcileBackoffMaxMs()
           );
+        this.scheduleReconcileRetry(reason);
       }
     );
+  }
+
+  // Watchdog: re-drive a stalled canonical reconcile once its backoff window elapses, without
+  // waiting for an external recovery trigger (VEY-KANEO-482). requestReconciliation re-checks the
+  // throttle + backoff gates, so the attempt only actually runs once nextReconcileEligibleAt has
+  // passed; a still-failing reconcile reschedules itself with the next (larger) backoff.
+  private scheduleReconcileRetry(reason: string): void {
+    if (this.stopped) return;
+    if (this.reconcileRetryTimer) return;
+    const delay = Math.max(0, this.nextReconcileEligibleAt - Date.now());
+    this.reconcileRetryTimer = setTimeout(() => {
+      this.reconcileRetryTimer = undefined;
+      if (this.stopped) return;
+      this.requestReconciliation(reason);
+    }, delay);
   }
 
   /**

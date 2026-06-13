@@ -560,6 +560,57 @@ describe("ChainSyncService", () => {
     service.stop();
   });
 
+  test("self-reschedules a failed canonical reconcile so the indexer cannot stall indefinitely (VEY-KANEO-482)", async () => {
+    MockWebSocket.instances = [];
+    const reconcileReasons: string[] = [];
+    let failNext = true;
+    const indexer = {
+      applyDebrisEvent() {},
+      applyEvent() {},
+      applyMoonChanceEvent() {},
+      markStale() {},
+      async reconcile(reason: string) {
+        reconcileReasons.push(reason);
+        if (failNext) {
+          failNext = false;
+          throw new Error("simulated reconcile failure (e.g. flaky RPC)");
+        }
+      }
+    };
+    const service = new ChainSyncService(config, indexer as unknown as SettlementIndexer, {
+      WebSocketCtor: MockWebSocket,
+      heartbeatIntervalMs: 0,
+      reconcileThrottleMs: 0,
+      reconcileBackoffBaseMs: 5,
+      reconcileBackoffMaxMs: 20
+    });
+
+    service.start();
+    const socket = MockWebSocket.instances[0];
+    socket?.open();
+    socket?.message({ id: 1, result: "logs-sub" });
+    socket?.message({ id: 2, result: "heads-sub" });
+    // A single head gap is the ONLY external trigger. The first reconcile fails; without the
+    // watchdog the indexer would park behind the backoff and never retry until another gap/reorg
+    // arrived. The websocket then stays silent for the rest of the test.
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x7b" } } });
+    socket?.message({ method: "eth_subscription", params: { subscription: "heads-sub", result: { number: "0x7f" } } });
+    await Promise.resolve();
+
+    // The first attempt ran and failed.
+    expect(reconcileReasons.length).toBe(1);
+
+    // Wait past the backoff window: the failed reconcile must re-drive itself with no new trigger.
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    expect(reconcileReasons.length).toBeGreaterThanOrEqual(2);
+    // Once a retry succeeds, the watchdog stops — it does not hot-loop forever (VEY-KANEO-461).
+    const afterRecovery = reconcileReasons.length;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(reconcileReasons.length).toBe(afterRecovery);
+    service.stop();
+  });
+
   test("sends a liveness probe when the websocket is quiet but alive", async () => {
     MockWebSocket.instances = [];
     const service = new ChainSyncService(config, undefined, {

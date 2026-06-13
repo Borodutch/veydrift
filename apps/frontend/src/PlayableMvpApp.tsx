@@ -356,10 +356,16 @@ export function recordedResourceSnapshotFreshness(
 export function planOnChainRefresh(
   current: ResourceSnapshotFreshness,
   next: ResourceSnapshotFreshness,
+  options: { force?: boolean } = {},
 ): OnChainRefreshPlan {
   return {
     applyQueues: true,
-    applyResourceState: shouldApplyResourceSnapshot(current, next),
+    // An explicit post-action refetch (force) is a deliberate, request-ordered read taken AFTER a
+    // confirmed spend, so it must apply even when the backend momentarily returns an equal/older
+    // lastSettledAt (indexer lag, or the spend not yet reflected). Otherwise the anti-snapback gate
+    // suppresses it and the top-bar resources stay frozen until a full page reload (VEY-KANEO-484).
+    // Periodic polls keep the gate, preserving the single poll-only store invariant (VEY-KANEO-430).
+    applyResourceState: options.force === true || shouldApplyResourceSnapshot(current, next),
   };
 }
 
@@ -2442,7 +2448,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       });
   }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research]);
 
-  const refreshOnChainState = useCallback(async (renameExpectation?: { planetId: string; name: string }) => {
+  const refreshOnChainState = useCallback(async (renameExpectation?: { planetId: string; name: string }, options: { force?: boolean } = {}) => {
     const requestId = beginRefreshRequest(onChainRefreshGate);
     if (!apiBaseUrl || !account) {
       latestOnChainResourceSnapshot.current = { planetId: null, lastSettledAt: null };
@@ -2475,7 +2481,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         return;
       }
       const nextFreshness = resourceSnapshotFreshnessForSettlement(nextSettlement);
-      const plan = planOnChainRefresh(latestOnChainResourceSnapshot.current, nextFreshness);
+      const plan = planOnChainRefresh(latestOnChainResourceSnapshot.current, nextFreshness, options);
       // Construction queues + fleet visibility are authoritative and not resource
       // snapshots, so apply them regardless of the resource anti-snapback gate.
       // This is what lets the Overview Buildings card clear a completed build
@@ -2846,8 +2852,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       // amount just spent on the upgrade. Safe to fire here: the indexer is
       // already confirmed caught up (the queue poll succeeded), and the queue
       // display prefers infrastructureChainState.queue, so this cannot regress
-      // the freshly-applied build queue.
-      void refreshOnChainState();
+      // the freshly-applied build queue. Force-apply: this explicit post-spend read
+      // must not be suppressed by the anti-snapback gate on an equal lastSettledAt,
+      // or the top-bar resources stay frozen until a page reload (VEY-KANEO-484).
+      void refreshOnChainState(undefined, { force: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load started building state.";
       setOnChainError(message);
@@ -3508,7 +3516,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           synced = result !== false;
         } else {
           refreshShipyardState();
-          void refreshOnChainState();
+          // Force the post-action settlement read so the just-spent resources show without a
+          // page reload even if the backend briefly returns an equal lastSettledAt (VEY-KANEO-484).
+          void refreshOnChainState(undefined, { force: true });
           refreshInfrastructureState();
         }
         setShipyardAction(synced
@@ -3543,7 +3553,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           await afterReceipt();
         } else {
           refreshDefenseState();
-          void refreshOnChainState();
+          // Force the post-action settlement read (see VEY-KANEO-484).
+          void refreshOnChainState(undefined, { force: true });
           refreshInfrastructureState();
         }
         setDefenseAction({ status: "success", label: `${label} confirmed.` });
@@ -3616,7 +3627,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           await afterReceipt();
         } else {
           refreshResearchState();
-          void refreshOnChainState();
+          // Force the post-action settlement read (see VEY-KANEO-484).
+          void refreshOnChainState(undefined, { force: true });
           refreshInfrastructureState();
         }
         setResearchAction({ status: "success", label: `${label} confirmed.` });
@@ -3639,7 +3651,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       await confirmSubmittedTransaction(txHash);
       setRiftAction({ status: "pending", label: transactionSyncingLabel(label) });
       refreshRiftState();
-      void refreshOnChainState();
+      // Force the post-action settlement read (see VEY-KANEO-484).
+      void refreshOnChainState(undefined, { force: true });
       refreshInfrastructureState();
       setRiftAction({ status: "success", label: `${label} confirmed.` });
     } catch (error) {
@@ -3661,7 +3674,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       setGalaxyAction({ status: "pending", label: transactionSyncingLabel(label) });
       refreshShipyardState();
       refreshDefenseState();
-      void refreshOnChainState();
+      // Force the post-action settlement read (see VEY-KANEO-484).
+      void refreshOnChainState(undefined, { force: true });
       refreshInfrastructureState();
       setGalaxyAction({ status: "success", label: `${label} confirmed.` });
     } catch (error) {
@@ -3682,7 +3696,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       await confirmSubmittedTransaction(txHash);
       setMoonAction({ status: "pending", label: transactionSyncingLabel(label) });
       await refreshInfrastructureState();
-      void refreshOnChainState();
+      // Force the post-action settlement read (see VEY-KANEO-484).
+      void refreshOnChainState(undefined, { force: true });
       setMoonAction({ status: "success", label: `${label} confirmed.` });
     } catch (error) {
       console.error(error);
