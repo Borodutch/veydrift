@@ -2022,7 +2022,56 @@ describe("Veydrift backend", () => {
     expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
       allowed: false,
       blockedReason: "bashing_limit",
-      blockedReasonLabel: "Attack blocked: bashing limit reached for this attacker, defender, and planet in the current 24-hour window."
+      blockedReasonLabel: "Attack blocked: bashing limit reached for this attacker, defender, and planet in the current 24-hour window.",
+      defenderInactive: false
+    });
+  });
+
+  test("indexed attack protection marks inactive defenders from indexed player activity (VEY-KANEO-500)", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const indexer = await twoPlanetIndexer(attacker);
+    indexer.applyLog(defenseCompletedLog({
+      planetId: 7n,
+      defenseId: 0n,
+      total: 10n,
+      blockTimestampSeconds: Math.floor(Date.now() / 1_000) - (8 * 24 * 60 * 60),
+      logIndex: 1
+    }));
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+
+    const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      allowed: true,
+      blockedReason: "none",
+      blockedReasonLabel: null,
+      defenderInactive: true
+    });
+  });
+
+  test("indexed highscore rankings report defenderInactive from indexed player activity (VEY-KANEO-500)", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const indexer = await twoPlanetIndexer(attacker);
+    indexer.applyLog(defenseCompletedLog({
+      planetId: 7n,
+      defenseId: 0n,
+      total: 10n,
+      blockTimestampSeconds: Math.floor(Date.now() / 1_000) - (8 * 24 * 60 * 60),
+      logIndex: 1
+    }));
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+
+    const response = await handler(new Request(`http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
+      allowed: true,
+      blockedReason: "none",
+      blockedReasonLabel: null,
+      defenderInactive: true
     });
   });
 
@@ -4733,7 +4782,8 @@ describe("Veydrift backend", () => {
     expect(body.rankings.total[0].attackProtection).toEqual({
       allowed: true,
       blockedReason: "none",
-      blockedReasonLabel: null
+      blockedReasonLabel: null,
+      defenderInactive: false
     });
     expect(body.currentPlayer).toMatchObject({
       wallet: owners[2],
@@ -4992,7 +5042,8 @@ describe("Veydrift backend", () => {
     expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
       allowed: false,
       blockedReason: "score_protection",
-      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection."
+      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+      defenderInactive: false
     });
   });
 
@@ -5051,7 +5102,8 @@ describe("Veydrift backend", () => {
     expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
       allowed: false,
       blockedReason: "score_protection",
-      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection."
+      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+      defenderInactive: false
     });
   });
 
@@ -5420,15 +5472,18 @@ function defenseCompletedLog({
   planetId,
   defenseId,
   total,
+  blockTimestampSeconds,
   logIndex,
 }: {
   planetId: bigint;
   defenseId: bigint;
   total: bigint;
+  blockTimestampSeconds?: number;
   logIndex: number;
 }): IndexedRpcLog {
   return {
     blockNumber: `0x${(0x2000 + logIndex).toString(16)}`,
+    ...(blockTimestampSeconds !== undefined ? { blockTimestamp: blockTimestampSeconds.toString() } : {}),
     data: abiWords(total, total),
     logIndex: `0x${logIndex.toString(16)}`,
     removed: false,

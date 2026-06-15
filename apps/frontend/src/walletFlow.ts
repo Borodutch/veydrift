@@ -698,6 +698,7 @@ export type HighscoreEntry = {
     allowed: boolean;
     blockedReason: "none" | "bashing_limit" | "score_protection" | "same_alliance";
     blockedReasonLabel: string | null;
+    defenderInactive?: boolean;
   } | null;
   displayName?: string | null;
   homePlanetId: string | null;

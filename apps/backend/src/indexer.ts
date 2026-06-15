@@ -21,6 +21,7 @@ import {
   decodeMoonChanceReportLog,
   decodePlanetSettledLog,
   decodePlanetRenamedLog,
+  decodeFleetMissionLogs,
   decodeRandomnessFulfilledRequestId,
   decodeRiftResourceLog,
   decodeSettledPlanetLog,
@@ -239,6 +240,11 @@ type PlanetResourceRow = ResourceColumns & {
 type PlayerProfileRow = {
   display_name: string | null;
   updated_at: string | null;
+  wallet: string;
+};
+
+type PlayerActivityRow = {
+  last_active_at: string;
   wallet: string;
 };
 
@@ -487,6 +493,26 @@ export class SettlementIndexer {
   playerProfiles(wallets: Iterable<string>): Map<string, PlayerProfile> {
     const uniqueWallets = [...new Set([...wallets].map((wallet) => wallet.toLowerCase()))];
     return new Map(uniqueWallets.map((wallet) => [wallet, this.playerProfile(wallet)]));
+  }
+
+  playerLastActiveSeconds(wallets: Iterable<string>): Map<string, number> {
+    const uniqueWallets = [...new Set([...wallets].map((wallet) => wallet.toLowerCase()))];
+    const activity = new Map<string, number>();
+    for (const walletChunk of chunks(uniqueWallets, 500)) {
+      if (walletChunk.length === 0) continue;
+      const rows = this.db.query(`
+        SELECT wallet, last_active_at
+        FROM indexed_player_activity
+        WHERE wallet IN (${walletChunk.map(() => "?").join(",")})
+      `).all(...walletChunk) as PlayerActivityRow[];
+      for (const row of rows) {
+        const seconds = Number(row.last_active_at);
+        if (Number.isFinite(seconds) && seconds > 0) {
+          activity.set(row.wallet.toLowerCase(), seconds);
+        }
+      }
+    }
+    return activity;
   }
 
   allianceState(wallet: `0x${string}`): AllianceState {
@@ -1242,6 +1268,8 @@ export class SettlementIndexer {
       return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
     }
 
+    this.recordPlayerActivityFromLog(eventId, log);
+
     if (isSettledPlanetLog(log)) {
       this.applyEvent(decodeSettledPlanetLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
@@ -1536,6 +1564,11 @@ export class SettlementIndexer {
         wallet TEXT PRIMARY KEY,
         display_name TEXT,
         updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS indexed_player_activity (
+        wallet TEXT PRIMARY KEY,
+        last_active_at TEXT NOT NULL,
+        event_id TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS indexed_planets (
         planet_id TEXT PRIMARY KEY,
@@ -3416,6 +3449,66 @@ export class SettlementIndexer {
     if (existing) return;
     this.recordLog(eventId, log);
     this.recordLatestBlock(log.blockNumber);
+  }
+
+  private recordPlayerActivityFromLog(eventId: string, log: IndexedRpcLog): void {
+    const lastActiveAt = blockTimestampSeconds(log);
+    if (!lastActiveAt) return;
+
+    const owner = this.playerActivityOwnerForLog(log);
+    if (!owner) return;
+
+    this.db.query(`
+      INSERT INTO indexed_player_activity (wallet, last_active_at, event_id)
+      VALUES (lower(?), ?, ?)
+      ON CONFLICT(wallet) DO UPDATE SET
+        last_active_at = CASE
+          WHEN CAST(excluded.last_active_at AS INTEGER) > CAST(indexed_player_activity.last_active_at AS INTEGER)
+          THEN excluded.last_active_at
+          ELSE indexed_player_activity.last_active_at
+        END,
+        event_id = CASE
+          WHEN CAST(excluded.last_active_at AS INTEGER) > CAST(indexed_player_activity.last_active_at AS INTEGER)
+          THEN excluded.event_id
+          ELSE indexed_player_activity.event_id
+        END
+    `).run(owner, lastActiveAt, eventId);
+  }
+
+  private playerActivityOwnerForLog(log: IndexedRpcLog): Address | null {
+    try {
+      if (isSettledPlanetLog(log)) return decodeSettledPlanetLog(log).owner;
+      if (isPlanetRenamedLog(log)) return decodePlanetRenamedLog(log).owner;
+      if (isRiftResourceLog(log)) return decodeRiftResourceLog(log).owner;
+
+      if (isIndexedQueueStartedLog(log)) {
+        const event = decodeIndexedQueueStartedLog(log);
+        return event.owner ?? this.ownerForPlanetActivity(event.planetId);
+      }
+
+      if (isIndexedQueueCompletedLog(log)) {
+        const event = decodeIndexedQueueCompletedLog(log);
+        return event.owner ?? this.ownerForPlanetActivity(event.planetId);
+      }
+
+      if (isPlanetSettledLog(log)) return this.ownerForPlanetActivity(decodePlanetSettledLog(log).planetId);
+      if (isShipCountChangedLog(log)) return this.ownerForPlanetActivity(decodeShipCountChangedLog(log).planetId);
+      if (isDefenseCountChangedLog(log)) return this.ownerForPlanetActivity(decodeDefenseCountChangedLog(log).planetId);
+      if (isMoonCreatedLog(log)) return decodeMoonCreatedLog(log).owner;
+
+      if (isFleetMissionLog(log)) {
+        const mission = [...decodeFleetMissionLogs([log]).values()][0];
+        return mission?.owner ?? null;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  private ownerForPlanetActivity(planetId: string | undefined): Address | null {
+    if (!planetId) return null;
+    return this.planet(planetId)?.owner ?? null;
   }
 
   private recordRemovedLog(eventId: string, log: IndexedRpcLog): void {
