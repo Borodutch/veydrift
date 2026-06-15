@@ -154,24 +154,41 @@ export function normalizeRaidTargetFilters(value: unknown): RaidTargetFilters {
   };
 }
 
+export function normalizeRaidTargetSort(value: unknown): RaidTargetSort {
+  if (!value || typeof value !== "object") return DEFAULT_RAID_TARGET_SORT;
+  const candidate = value as Partial<Record<keyof RaidTargetSort, unknown>>;
+  const key = candidate.key;
+  const direction = candidate.direction;
+  return {
+    key: key === "distance" || key === "loot" || key === "combat" || key === "defense"
+      ? key
+      : DEFAULT_RAID_TARGET_SORT.key,
+    direction: direction === "asc" || direction === "desc"
+      ? direction
+      : DEFAULT_RAID_TARGET_SORT.direction,
+  };
+}
+
 export function hasActiveAlliance(allianceId: string | null | undefined): boolean {
   return Boolean(allianceId && allianceId !== "0");
 }
 
 export type RaidTargetPersistedSettings = {
   filters: RaidTargetFilters;
+  sort: RaidTargetSort;
 };
 
 export function readPersistedRaidTargetSettings(): RaidTargetPersistedSettings {
-  const fallback = { filters: DEFAULT_RAID_TARGET_FILTERS };
+  const fallback = { filters: DEFAULT_RAID_TARGET_FILTERS, sort: DEFAULT_RAID_TARGET_SORT };
   if (typeof window === "undefined") return fallback;
 
   try {
     const raw = window.localStorage.getItem(RAID_TARGET_FINDER_STORAGE_KEY);
     if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as { filters?: unknown };
+    const parsed = JSON.parse(raw) as { filters?: unknown; sort?: unknown };
     return {
       filters: normalizeRaidTargetFilters(parsed.filters),
+      sort: normalizeRaidTargetSort(parsed.sort),
     };
   } catch {
     return fallback;
