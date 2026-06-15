@@ -97,11 +97,6 @@ export function ShipyardPage({
     <div className="grid gap-4">
       <PageHeader
         actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh shipyard state" />}
-        subtitle={shipyardState?.homePlanetId
-          ? `Planet #${shipyardState.planetId ?? shipyardState.homePlanetId} · Shipyard Level ${shipyardLevel}`
-          : productionAvailable
-            ? "On-chain VeydriftGame planet required for ship production"
-            : "Ship production contract unavailable on this deployment"}
         title="Shipyard"
       />
 

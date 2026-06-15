@@ -171,7 +171,6 @@ export function AlliancePage({
     <section className="grid min-h-0 gap-4">
       <PageHeader
         actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh alliance state" />}
-        subtitle={isMember && profile ? allianceDisplayName(profile) : "Create an alliance or scan the public directory."}
         title="Alliance"
         titleSize="xl"
       />

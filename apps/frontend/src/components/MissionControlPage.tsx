@@ -182,7 +182,6 @@ export function MissionControlPage({
     <section className="grid gap-4">
       <PageHeader
         actions={<RefreshButton loading={loading || missionArchiveLoading} onRefresh={onRefresh} title="Refresh missions" />}
-        subtitle="Watch inbound attacks, active launches, returning fleets, and time-critical battle actions from one command table."
         title="Mission Control"
       />
 

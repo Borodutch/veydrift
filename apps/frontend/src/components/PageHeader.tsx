@@ -44,16 +44,12 @@ export function PageHeader({
   actions,
   bordered = true,
   beforeTitle,
-  eyebrow,
-  subtitle,
   title,
   titleSize = "lg",
 }: {
   actions?: ComponentChildren | undefined;
   bordered?: boolean | undefined;
   beforeTitle?: ComponentChildren | undefined;
-  eyebrow?: string | undefined;
-  subtitle?: ComponentChildren | undefined;
   title: ComponentChildren;
   titleSize?: "lg" | "xl" | undefined;
 }) {
@@ -64,19 +60,9 @@ export function PageHeader({
     <header className={`flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between ${borderClass}`}>
       <div className="min-w-0">
         {beforeTitle}
-        {eyebrow ? (
-          <p className="text-xs font-semibold uppercase tracking-normal text-cyan-300/80">
-            {eyebrow}
-          </p>
-        ) : null}
-        <h1 className={`${eyebrow ? "mt-1 " : ""}${titleClass} font-semibold text-white`}>
+        <h1 className={`${titleClass} font-semibold text-white`}>
           {title}
         </h1>
-        {subtitle ? (
-          <p className="mt-1 max-w-2xl break-words text-sm leading-6 text-slate-400">
-            {subtitle}
-          </p>
-        ) : null}
       </div>
       {actions ? (
         <div className="flex max-w-full min-w-0 flex-wrap items-center gap-2 sm:justify-end">

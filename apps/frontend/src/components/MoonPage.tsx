@@ -43,7 +43,6 @@ export function MoonPage({
       <PageHeader
         actions={onRefresh ? <RefreshButton loading={isLoading} onRefresh={onRefresh} title="Refresh moon state" /> : undefined}
         bordered={false}
-        subtitle="Lunar structures and fleet support for the selected home planet."
         title="Moon"
       />
 
