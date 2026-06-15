@@ -138,7 +138,6 @@ export function InfrastructurePage({
           actions={onRefresh ? (
             <RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh infrastructure state" />
           ) : undefined}
-          description="Building levels and production are hidden until live infrastructure state loads."
           title="Infrastructure"
         />
         <InfrastructureLoadErrorPanel reason={initialLoadError} />
@@ -161,7 +160,6 @@ export function InfrastructurePage({
           ) : null}
           </>
         )}
-        description="Select a building to inspect real production, power, cost, and upgrade timing."
         title="Infrastructure"
       />
 

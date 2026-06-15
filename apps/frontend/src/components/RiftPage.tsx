@@ -67,8 +67,6 @@ export function RiftPage({
     <section className="grid gap-4">
       <PageHeader
         actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh Rift state" />}
-        eyebrow="Veydrift Rift Stabilizer"
-        subtitle="Move open-market resource tokens into your empire instantly, or lock in-game resources for a 30-day Veydrift withdrawal window."
         title="Resource Bridge"
       />
 

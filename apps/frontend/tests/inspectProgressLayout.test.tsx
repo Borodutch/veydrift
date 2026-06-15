@@ -67,7 +67,6 @@ describe("shared inspect/progress layout primitives", () => {
   test("renders shared page header and two-column inspect layout wrappers", () => {
     const header = InspectPageHeader({
       actions: <button type="button">Refresh</button>,
-      description: "Select an item to inspect live state.",
       title: "Research",
     });
     const layout = InspectTwoColumnLayout({
@@ -77,7 +76,7 @@ describe("shared inspect/progress layout primitives", () => {
     });
 
     expect(visibleText(header)).toContain("Research");
-    expect(visibleText(header)).toContain("Select an item to inspect live state");
+    expect(visibleText(header)).not.toContain("Select an item to inspect live state");
     expect(visibleText(header)).toContain("Refresh");
     expect(visibleText(layout)).toContain("Catalog tiles");
     expect(visibleText(layout)).toContain("Detail panel");

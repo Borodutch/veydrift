@@ -126,7 +126,7 @@ describe("Mission Control battle reports", () => {
     })).join(" ");
 
     expect(text).toContain("Mission Control");
-    expect(text).toContain("Watch inbound attacks");
+    expect(text).not.toContain("Watch inbound attacks");
     // "Hostile inbound" persists as the active-row direction label, not as a summary stat card.
     expect(text).toContain("Hostile inbound");
     // The top summary stat-card row (Active missions / Due resolvers / Hostile inbound / Returns) is removed.

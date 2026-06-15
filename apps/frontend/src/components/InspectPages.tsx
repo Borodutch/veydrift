@@ -99,7 +99,6 @@ export function PlayerInspectPage({
   return (
     <InspectShell
       title={displayName}
-      subtitle={`${wallet}${isCurrentWallet ? " / You" : ""}`}
       titlePrefix={alliance ? (
         <button
           className="shrink-0 rounded border border-cyan-300/20 bg-cyan-300/10 px-2 py-1 font-mono text-xs font-semibold leading-none text-cyan-100 transition hover:border-cyan-200/50 hover:bg-cyan-300/15"
@@ -276,7 +275,6 @@ export function AllianceInspectPage({
   return (
     <InspectShell
       title={alliance ? allianceDisplayName(alliance) : `Alliance #${allianceId}`}
-      subtitle={alliance?.description || "Public alliance details"}
       onBack={onBack}
       action={(
         <RefreshButton disabled={actionBusy} loading={disabled} onRefresh={onRefresh} title="Refresh alliance state" />
@@ -396,12 +394,10 @@ function PublicAllianceInspectSummary({
   );
 }
 
-function InspectShell({ action, children, eyebrow, onBack, subtitle, title, titlePrefix }: {
+function InspectShell({ action, children, onBack, title, titlePrefix }: {
   action?: ComponentChildren;
   children: ComponentChildren;
-  eyebrow?: string | undefined;
   onBack: () => void;
-  subtitle: string;
   title: string;
   titlePrefix?: ComponentChildren;
 }) {
@@ -416,8 +412,6 @@ function InspectShell({ action, children, eyebrow, onBack, subtitle, title, titl
             </button>
           )}
           bordered
-          eyebrow={eyebrow}
-          subtitle={subtitle}
           title={(
             <span className="flex min-w-0 flex-wrap items-center gap-2">
               {titlePrefix}
