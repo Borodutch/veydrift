@@ -283,8 +283,8 @@ describe("Mission Control battle reports", () => {
       originPlanet: planetReference("7", owner, "New Zion", "6:9:1", "temperate-ocean"),
       targetPlanet: planetReference("9", attacker, "Borealis", "5:407:4", "frozen-ice"),
     };
-    // The Defenses page reuses StationedDefenseSection without a prebuilt planet lookup; endpoints must
-    // still resolve from each summary's embedded origin/target planet references.
+    // Callers without a prebuilt planet lookup still resolve endpoints from each summary's embedded
+    // origin/target planet references.
     const text = collectText(StationedDefenseSection({
       incoming: [],
       now,
@@ -304,8 +304,7 @@ describe("Mission Control battle reports", () => {
       outgoing: [mission("32", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
     }))).join(" ");
 
-    // With no stationed defenses, Mission Control omits the section entirely (VEY-KANEO-455) — the
-    // dedicated Defenses page keeps the discoverable empty state / Defend entry point instead.
+    // With no stationed defenses, Mission Control omits the section entirely (VEY-KANEO-455).
     expect(text).not.toContain("Stationed defenses");
     expect(text).not.toContain("No fleets are stationed in defense");
     // A Transport mission must never be mistaken for a stationed defense.

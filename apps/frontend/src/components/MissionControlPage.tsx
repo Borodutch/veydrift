@@ -282,7 +282,7 @@ export function StationedDefenseSection({
   onOpenReport,
   outgoing,
   // Mission endpoints render from each summary's embedded origin/target planet references (the backend
-  // enriches them), so callers without a prebuilt lookup (e.g. the Defenses page) can omit it.
+  // enriches them), so callers without a prebuilt lookup can omit it.
   planetLookup = EMPTY_PLANET_LOOKUP,
   // VEY-KANEO-440: launching a DefenseHold lives on a planet's Defend action, but players (and QA) look
   // for it here, where the empty state already tells them to "choose Defend". Without an affordance on
@@ -292,9 +292,7 @@ export function StationedDefenseSection({
   // screen that describes it.
   onDefendPlanet,
   // VEY-KANEO-455: Mission Control aggregates many panels, so a "Stationed defenses" card showing only
-  // an empty state is noise there — hide the whole section until a fleet is actually stationed. The
-  // Defenses page (the dedicated defenses surface) leaves this off so its guidance/empty state stays
-  // visible, which is where the discoverable Defend entry point belongs.
+  // an empty state is noise there — hide the whole section until a fleet is actually stationed.
   hideWhenEmpty = false,
 }: {
   incoming: FleetMissionSummary[];
