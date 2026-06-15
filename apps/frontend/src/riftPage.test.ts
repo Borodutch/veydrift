@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { ComponentChildren } from "preact";
 import {
   formatRiftCountdown,
@@ -16,6 +18,17 @@ describe("RiftPage helpers", () => {
     expect(text).toContain("Refresh");
     expect(text).not.toContain("Veydrift Rift Stabilizer");
     expect(text).not.toContain("Resource Bridge");
+  });
+
+  test("uses only the shared refresh button as the loaded Rift refresh indicator", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("./components/RiftPage.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(source).toContain("<RefreshButton loading={loading}");
+    expect(source).not.toContain("InlineSyncIndicator");
+    expect(source).not.toContain("Refreshing Rift");
   });
 
   test("maps locked Rift requirements to shared clickable requirement flairs", () => {
