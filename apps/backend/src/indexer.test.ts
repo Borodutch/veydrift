@@ -884,11 +884,11 @@ describe("SettlementIndexer", () => {
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(1);
   });
 
-  // Canonical-mirror rework: the runtime refreshCanonicalState() self-heal was removed. The startup
-  // reconcile (rebuild) is now the ONLY canonical chain read, and it OVERWRITES the stored roster with
+  // Canonical-mirror rework: the runtime refreshCanonicalState() self-heal was removed. Explicit
+  // operator rebuild remains the canonical chain read, and it OVERWRITES the stored roster with
   // the on-chain value on every run. This test asserts that contract — a re-run of rebuild() re-pins the
   // served ship counts to the latest on-chain values even after events drove them elsewhere (VEY-452).
-  test("rebuild() re-pins served ship counts to chain on every startup reconcile (VEY-452)", async () => {
+  test("explicit rebuild() re-pins served ship counts to chain (VEY-452)", async () => {
     let onchainShipCount = 2;
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
@@ -933,7 +933,7 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(1);
 
-    // The fleet comes home and the contract now reports 5 at the planet. The next startup reconcile
+    // The fleet comes home and the contract now reports 5 at the planet. Explicit rebuild
     // overwrites the stored roster with the authoritative on-chain value; served counts land at 5.
     onchainShipCount = 5;
     await indexer.rebuild();
@@ -3487,11 +3487,11 @@ describe("SettlementIndexer", () => {
   });
 
   // Canonical-mirror rework (replaces the removed verifyCanonicalState / per-planet self-heal,
-  // VEY-KANEO-452): the startup reconcile (rebuild) is the ONLY canonical chain read, and it OVERWRITES
+  // VEY-KANEO-452): explicit rebuild is the canonical chain read, and it OVERWRITES
   // the stored canonical state with the contract values on every run — both upward and DOWNWARD — so any
   // on-chain drift the indexer never observed via events (the contract mutates resources/ships/defenses/
-  // buildings for some actions without a replayable event) is corrected to the contract on the next boot.
-  test("startup rebuild overwrites stored canonical state with contract values, correcting unobserved drift", async () => {
+  // buildings for some actions without a replayable event) is corrected only when an operator runs it.
+  test("explicit rebuild overwrites stored canonical state with contract values", async () => {
     let liveInfrastructure: InfrastructureState = {
       wallet: player,
       homePlanetId: planet.planetId,
@@ -3541,7 +3541,7 @@ describe("SettlementIndexer", () => {
       async getDefenseState() { return liveDefense; }
     }, 100n);
 
-    // First startup reconcile pins the stored canonical mirror to the v1 on-chain state.
+    // First explicit rebuild pins the stored canonical mirror to the v1 on-chain state.
     await indexer.rebuild();
     expect(indexer.infrastructureRows(planet.planetId).find((row) => row.id === 0)?.level).toBe(5);
     expect(indexer.shipRows(planet.planetId).find((row) => row.id === 1)?.count).toBe(10);
@@ -3558,7 +3558,7 @@ describe("SettlementIndexer", () => {
     liveShipyard = { ...liveShipyard, ships: deriveShipRows((id) => (id === 1 ? 2 : 0)) };
     liveDefense = { ...liveDefense, defenses: deriveDefenseRows((id) => (id === 2 ? 7 : 0)) };
 
-    // The next startup reconcile OVERWRITES the stored canonical rows with the contract values — building
+    // The next explicit rebuild OVERWRITES the stored canonical rows with the contract values — building
     // and ship counts dropped DOWNWARD, defense raised, resources re-pinned exactly to chain.
     await indexer.rebuild();
     expect(indexer.infrastructureRows(planet.planetId).find((row) => row.id === 0)?.level).toBe(3);
@@ -3580,6 +3580,44 @@ describe("SettlementIndexer", () => {
       lastReconciliationError: "RPC HTTP 429",
       reconciliationInProgress: false
     });
+  });
+
+  test("explicit contract-log replay applies events without canonical state reads", async () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { throw new Error("debris canonical read must not run"); },
+      async listMoonChanceReportEvents() { throw new Error("moon canonical read must not run"); },
+      async listSettledPlanetEvents() { throw new Error("settlement canonical read must not run"); },
+      async getInfrastructureState() { throw new Error("infrastructure eth_call must not run"); },
+      async getShipyardState() { throw new Error("shipyard eth_call must not run"); },
+      async getDefenseState() { throw new Error("defense eth_call must not run"); },
+      async getPlayerQueues() { throw new Error("queue eth_call must not run"); },
+      async listContractLogs() {
+        return [
+          {
+            blockNumber: "0x91",
+            transactionHash: "0xship-count",
+            logIndex: "0x0",
+            topics: [planetShipCountChangedTopic, topic(7n), topic(1n)],
+            data: abiWords(3n)
+          },
+          {
+            blockNumber: "0x90",
+            transactionHash: "0xplanet",
+            logIndex: "0x0",
+            topics: [planetStartedTopic, addressTopic(player), topic(7n)],
+            data: abiWords(2n, 44n, 9n, 211n, signedWord(-8n))
+          }
+        ];
+      }
+    }, 100n);
+
+    await indexer.replayContractLogs(100n, 0x91n);
+
+    expect(indexer.snapshot()).toMatchObject({
+      indexedPlanets: 1,
+      latestIndexedBlock: "145"
+    });
+    expect(indexer.shipRows("7").find((ship) => ship.id === 1)?.count).toBe(3);
   });
 
   test("a failed reconcile never takes a previously reconciled index out of service (VEY-KANEO-461)", async () => {

@@ -11,6 +11,7 @@ import {
 import {
   attachAttackGroupParticipants,
   decodeAllianceLog,
+  decodeAttackMissionLaunch,
   decodeBattleReports,
   decodeCompleteFleetMissionLogs,
   decodeDebrisFieldLog,
@@ -329,6 +330,7 @@ export class SettlementIndexer {
         | "listAllianceInviteState"
         | "listAllianceDiplomacyState"
         | "listAllianceLogs"
+        | "listContractLogs"
         | "listCurrentPlanets"
     >,
     private readonly fromBlock: bigint,
@@ -1295,9 +1297,9 @@ export class SettlementIndexer {
   }
 
   // NOTE: the periodic runtime canonical refresh (refreshCanonicalState/refreshCanonicalStateUncached)
-  // has been REMOVED. Per the canonical-mirror contract the DB is reconciled from the contracts EXACTLY
-  // ONCE at startup (rebuild) and mutated thereafter ONLY by event-listener callbacks (applyLog). No
-  // periodic universe-wide RPC re-read runs in steady state.
+  // has been REMOVED. The normal backend mutates the DB only from event-listener/event-replay callbacks
+  // (applyLog). Canonical eth_call rebuild() remains an explicit operator/test tool, not a request path
+  // or automatic startup self-heal.
 
   markStale(reason: string): IndexerSnapshot {
     this.setMetadata("pendingReconciliationReason", reason);
@@ -1307,9 +1309,23 @@ export class SettlementIndexer {
   // NOTE: the runtime per-planet RPC self-heal (verifyCanonicalState / healPlanetCanonicalState) has been
   // REMOVED. It was the request-time and combat-triggered "re-read this planet from chain and re-pin
   // contract_* to it" path. Under the canonical-mirror contract NO request or runtime event may issue an
-  // RPC read: the contract_* tables are seeded once at startup (rebuild) and maintained thereafter solely
-  // by event-listener callbacks (applyLog). Drift is corrected on the next startup reconcile, not at
-  // runtime.
+  // RPC read: the contract_* tables are maintained by event-listener/event-replay callbacks (applyLog).
+  // Drift correction is an explicit operator sync, not runtime self-heal.
+
+  async replayContractLogs(fromBlock = this.fromBlock, toBlock: bigint | "latest" = "latest"): Promise<IndexerSnapshot> {
+    if (!this.chainReader.listContractLogs) {
+      throw new Error("contract log replay is unavailable: chain reader cannot list raw contract logs");
+    }
+    const logs = await this.chainReader.listContractLogs(fromBlock, toBlock);
+    for (const log of sortRpcLogs(logs)) {
+      this.applyLog(log);
+    }
+    this.setMetadata("lastEventReplayAt", new Date().toISOString());
+    if (typeof toBlock === "bigint") {
+      this.recordLatestBlock(toBlock.toString());
+    }
+    return this.snapshot();
+  }
 
   async rebuildPlanets(): Promise<IndexerSnapshot> {
     if (this.rebuildPromise) {
@@ -1825,12 +1841,10 @@ export class SettlementIndexer {
       this.upsertMoonChanceReport(report);
     }
 
-    // NOTE: the canonical contract_* level/count/research tables are populated EXCLUSIVELY by the
-    // one-time startup canonical seed (readCanonicalState -> applyCanonicalState) and maintained
-    // thereafter by event-listener callbacks. The contract is the source of truth, so we must NOT
-    // backfill canonical rows from the event-derived indexed_* mirror — that lets stale/incomplete
-    // event-derived values override authoritative on-chain reads (the seed already wrote them).
-    // The previous `INSERT OR IGNORE INTO contract_* SELECT ... FROM indexed_*` backfills are removed.
+    // NOTE: the canonical contract_* level/count/research tables are maintained by event-listener and
+    // explicit event-replay callbacks during normal operation. The previous
+    // `INSERT OR IGNORE INTO contract_* SELECT ... FROM indexed_*` backfills are removed because they
+    // could preserve stale/incomplete rows instead of applying the latest absolute event totals.
 
     const queueRows = this.db.query(`
       SELECT queue_key, kind, planet_id, owner, item_id, target_level, quantity, ready_at, started_at, cost_json, event_json
@@ -3434,6 +3448,42 @@ export class SettlementIndexer {
     return fulfilled;
   }
 
+  // VEY-KANEO-489: replay every Attack `attacker` has launched, grouped by target planet, as ascending
+  // launch timestamps. The contract anchors each per-(attacker, defender, planet) bashing window at
+  // block.timestamp of the launch (VeydriftGameStorage._recordAttack runs in the FleetMissionLaunched
+  // transaction), so the server can derive the live window count from these and apply the same
+  // MAX_ATTACKS_PER_BASHING_WINDOW / 24h reset the contract enforces — letting the indexed
+  // attack-protection preview report bashing_limit instead of silently allowing a blocked attack.
+  // We key only by (attacker, planet), dropping the contract's defender dimension: planet ids are
+  // minted monotonically (nextPlanetId++) and never reassigned to a different non-zero owner (attacks
+  // loot but never capture; abandonment cannot re-mint an id), so a given planet id maps to exactly one
+  // defender over its lifetime — making (attacker, planet) equivalent to (attacker, defender, planet).
+  // Launches whose block lacks an ingested timestamp are skipped (they cannot be placed in the 24h
+  // window), which biases toward not-blocking rather than fabricating a window position.
+  attackLaunchSecondsByTarget(attacker: `0x${string}`): Map<string, number[]> {
+    const normalizedAttacker = attacker.toLowerCase();
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
+    `).all() as EventRow[];
+    const byTarget = new Map<string, number[]>();
+    for (const row of rows) {
+      const log = parseEvent<IndexedRpcLog>(row.event_json);
+      const launch = decodeAttackMissionLaunch(log);
+      if (!launch || launch.attacker.toLowerCase() !== normalizedAttacker) continue;
+      const launchedAt = blockTimestampSeconds(log);
+      if (launchedAt === undefined) continue;
+      const seconds = Number(launchedAt);
+      if (!Number.isFinite(seconds)) continue;
+      const existing = byTarget.get(launch.targetPlanetId);
+      if (existing) existing.push(seconds);
+      else byTarget.set(launch.targetPlanetId, [seconds]);
+    }
+    return byTarget;
+  }
+
   private indexedBattleReports(): BattleReport[] {
     const rows = this.db.query(`
       SELECT event_json
@@ -3701,6 +3751,22 @@ function openIndexerDatabase(databasePath: string): Database {
 
 function parseEvent<T>(value: string): T {
   return JSON.parse(value) as T;
+}
+
+function sortRpcLogs(logs: readonly RpcLog[]): RpcLog[] {
+  return [...logs].sort((left, right) => {
+    const blockDelta = compareBigIntish(left.blockNumber, right.blockNumber);
+    if (blockDelta !== 0) return blockDelta;
+    return compareBigIntish((left as IndexedRpcLog).logIndex ?? "0x0", (right as IndexedRpcLog).logIndex ?? "0x0");
+  });
+}
+
+function compareBigIntish(left: string, right: string): number {
+  const leftValue = BigInt(left);
+  const rightValue = BigInt(right);
+  if (leftValue < rightValue) return -1;
+  if (leftValue > rightValue) return 1;
+  return 0;
 }
 
 function mergeCurrentPlanetSnapshots(

@@ -48,6 +48,7 @@ const configuredTestConfig: BackendConfig = {
   rpcSource: "custom-url",
   rpcUrl: "https://example.invalid/rpc",
   wsRpcSource: "missing",
+  settlementStartPriceWei: "50000000000000000",
   settlementContractAddress: "0x1111111111111111111111111111111111111111",
   gameContractAddress: "0x3333333333333333333333333333333333333333"
 };
@@ -694,11 +695,11 @@ function withoutIndexLists(reader: ChainReader): ChainReader {
   });
 }
 
-describe("chain-sync self-heal wiring", () => {
-  test("production reader exposes the log backfiller self-heal depends on", () => {
+describe("chain-sync log backfill wiring", () => {
+  test("production reader exposes the log backfiller chain-sync depends on", () => {
     // server.ts builds the chain-sync logBackfiller from the production reader via
     // deriveLogBackfiller. If VeydriftGameReader stopped exposing listContractLogs, or the
-    // wiring dropped it, self-heal (and reconnect backfill) would silently become a no-op
+    // wiring dropped it, gap replay and reconnect backfill would silently become a no-op
     // in production. This asserts the real reader satisfies the backfiller contract.
     const reader = new VeydriftGameReader(configuredTestConfig);
     const backfiller = deriveLogBackfiller(reader);
@@ -739,6 +740,7 @@ describe("Veydrift backend", () => {
         hasWsRpcUrl: false,
         resourceTokenAddressesConfigured: false,
         settlementContractConfigured: false,
+        settlementStartPriceConfigured: false,
         moonContractConfigured: false,
         randomnessEngineConfigured: false,
         randomnessCommitterConfigured: false,
@@ -1038,12 +1040,12 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("serves real settlement-funding (non-null start price) when the indexer is warm", async () => {
-    // VEY-KANEO-478 AC1/AC4: with a warm indexer the endpoint must return the real start
-    // price and balance with no unavailableReason, so the Settle button is enabled for new
-    // players. Start price comes from the (memoized) chain constant; balance is a cheap
-    // eth_getBalance — no per-request game-state eth_call.
-    const chainReader = new MockChainReader();
+  test("serves settlement-funding from config when the indexer is warm without a request-time chain read", async () => {
+    const chainReader = new class extends MockChainReader {
+      override getSettlementFunding(): ReturnType<MockChainReader["getSettlementFunding"]> {
+        throw new Error("warm settlement funding reads must not call chain reader");
+      }
+    }();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     indexer.applyEvent({
       ...planet,
@@ -1062,13 +1064,46 @@ describe("Veydrift backend", () => {
     const body = await response.json() as Record<string, unknown>;
     expect(body).toMatchObject({
       affordable: true,
-      balanceWei: "100000000000000000",
+      balanceWei: null,
       contractKind: "game",
       startPriceWei: "50000000000000000",
       source: "contract-state-indexer"
     });
     expect(body.startPriceWei).not.toBeNull();
     expect(body.unavailableReason).toBeUndefined();
+  });
+
+  test("reports settlement-funding unavailable when no static start price is configured", async () => {
+    const chainReader = new class extends MockChainReader {
+      override getSettlementFunding(): ReturnType<MockChainReader["getSettlementFunding"]> {
+        throw new Error("unconfigured settlement funding must not call chain reader");
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "100"
+    });
+    const configWithoutStartPrice: BackendConfig = { ...configuredTestConfig };
+    delete configWithoutStartPrice.settlementStartPriceWei;
+
+    const response = await createRequestHandler({
+      config: configWithoutStartPrice,
+      chainReader,
+      indexer
+    })(new Request(`http://localhost/wallet/${player}/settlement-funding`));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      affordable: false,
+      balanceWei: null,
+      contractKind: "game",
+      startPriceWei: null,
+      unavailableReason: "Settlement start price is not configured for this game deployment yet.",
+      source: "contract-state-indexer"
+    });
   });
 
   test("does not read public battle report lists from the chain reader", async () => {
@@ -1695,6 +1730,199 @@ describe("Veydrift backend", () => {
       wallet: player,
       targetPlanetId: "7",
       source: "contract-state-indexer"
+    });
+  });
+
+  // VEY-KANEO-489: build a warm two-planet indexer (planet 7 -> player, planet 8 -> attacker) so the
+  // single-target /attack-protection read derives both scores from indexed defenses.
+  async function twoPlanetIndexer(attacker: Address): Promise<SettlementIndexer> {
+    const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => [
+      { ...planet, eventName: "PlanetStarted", planetId: "7", owner: player, transactionHash: "0xabc1", blockNumber: "123" },
+      { ...planet, eventName: "PlanetStarted", planetId: "8", owner: attacker, transactionHash: "0xabc2", blockNumber: "124" }
+    ];
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    return indexer;
+  }
+
+  test("indexed attack protection no longer score-protects two veterans past the newbie ceiling (VEY-KANEO-489)", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const indexer = await twoPlanetIndexer(attacker);
+    // Attacker ~700k score, defender ~8M score (defense unit value 2,000 / 1,000-point divisor). Both are
+    // past the 500k newbie-protection ceiling, so the contract's newbie/score-ratio gate never protects
+    // them. The old 5x-score heuristic false-blocked them because 8M > 700k * 5.
+    indexer.applyLog(defenseCompletedLog({ planetId: 8n, defenseId: 0n, total: 350_000n, logIndex: 1 }));
+    indexer.applyLog(defenseCompletedLog({ planetId: 7n, defenseId: 0n, total: 4_000_000n, logIndex: 2 }));
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+
+    const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ allowed: true, blockedReason: "none", blockedReasonLabel: null });
+  });
+
+  test("indexed attack protection reports bashing_limit after six attacks in the 24h window (VEY-KANEO-489)", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const indexer = await twoPlanetIndexer(attacker);
+    // Equal ~700k scores (both veterans) so score protection does not apply and bashing can be observed.
+    indexer.applyLog(defenseCompletedLog({ planetId: 8n, defenseId: 0n, total: 350_000n, logIndex: 1 }));
+    indexer.applyLog(defenseCompletedLog({ planetId: 7n, defenseId: 0n, total: 350_000n, logIndex: 2 }));
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    for (let index = 0; index < 6; index++) {
+      indexer.applyLog(attackLaunchLog({
+        missionId: BigInt(index + 1),
+        attacker,
+        targetPlanetId: 7n,
+        blockTimestampSeconds: nowSeconds - 3_600 + index,
+        logIndex: 100 + index,
+      }));
+    }
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+
+    const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      allowed: false,
+      blockedReason: "bashing_limit",
+      blockedReasonLabel: "Attack blocked: bashing limit reached for this attacker, defender, and planet in the current 24-hour window."
+    });
+  });
+
+  test("indexed attack protection allows the attack below the bashing cap (VEY-KANEO-489)", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const indexer = await twoPlanetIndexer(attacker);
+    indexer.applyLog(defenseCompletedLog({ planetId: 8n, defenseId: 0n, total: 350_000n, logIndex: 1 }));
+    indexer.applyLog(defenseCompletedLog({ planetId: 7n, defenseId: 0n, total: 350_000n, logIndex: 2 }));
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    for (let index = 0; index < 5; index++) {
+      indexer.applyLog(attackLaunchLog({
+        missionId: BigInt(index + 1),
+        attacker,
+        targetPlanetId: 7n,
+        blockTimestampSeconds: nowSeconds - 3_600 + index,
+        logIndex: 100 + index,
+      }));
+    }
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+
+    const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ allowed: true, blockedReason: "none" });
+  });
+
+  test("indexed attack protection ignores attacks older than the 24h bashing window (VEY-KANEO-489)", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const indexer = await twoPlanetIndexer(attacker);
+    indexer.applyLog(defenseCompletedLog({ planetId: 8n, defenseId: 0n, total: 350_000n, logIndex: 1 }));
+    indexer.applyLog(defenseCompletedLog({ planetId: 7n, defenseId: 0n, total: 350_000n, logIndex: 2 }));
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    // Six attacks, but the whole cluster is older than 24h, so the window has lapsed and the live count is 0.
+    for (let index = 0; index < 6; index++) {
+      indexer.applyLog(attackLaunchLog({
+        missionId: BigInt(index + 1),
+        attacker,
+        targetPlanetId: 7n,
+        blockTimestampSeconds: nowSeconds - 90_000 + index,
+        logIndex: 100 + index,
+      }));
+    }
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+
+    const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ allowed: true, blockedReason: "none" });
+  });
+
+  test("indexed attack protection reports same_alliance for an ally target, ahead of bashing_limit (VEY-KANEO-489)", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const indexer = await twoPlanetIndexer(attacker);
+    // Equal veteran scores so score protection does not apply, and six attacks in the window so
+    // bashing_limit WOULD fire — proving same_alliance short-circuits first, matching the contract
+    // precedence (SameAlliance -> ScoreProtection -> BashingLimit).
+    indexer.applyLog(defenseCompletedLog({ planetId: 8n, defenseId: 0n, total: 350_000n, logIndex: 1 }));
+    indexer.applyLog(defenseCompletedLog({ planetId: 7n, defenseId: 0n, total: 350_000n, logIndex: 2 }));
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    for (let index = 0; index < 6; index++) {
+      indexer.applyLog(attackLaunchLog({
+        missionId: BigInt(index + 1),
+        attacker,
+        targetPlanetId: 7n,
+        blockTimestampSeconds: nowSeconds - 3_600 + index,
+        logIndex: 100 + index,
+      }));
+    }
+    // Put both the attacker and the defender (player, owner of planet 7) into alliance 1.
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: "0x69801c80",
+      transactionHash: "0xally-create",
+      logIndex: "0x0",
+      topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+      data: abiStrings("VEY", "Veydrift Command")
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      blockTimestamp: "0x69801c81",
+      transactionHash: "0xally-owner",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+      data: abiWords(3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92",
+      blockTimestamp: "0x69801c82",
+      transactionHash: "0xally-member",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(attacker)],
+      data: abiWords(1n)
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+
+    const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      allowed: false,
+      blockedReason: "same_alliance",
+      blockedReasonLabel: "Attack blocked: target belongs to your alliance."
+    });
+  });
+
+  test("indexed highscore rankings report bashing_limit per planet (VEY-KANEO-489)", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const indexer = await twoPlanetIndexer(attacker);
+    // Equal veteran scores so neither score protection nor same-alliance applies; bashing is the gate.
+    indexer.applyLog(defenseCompletedLog({ planetId: 8n, defenseId: 0n, total: 350_000n, logIndex: 1 }));
+    indexer.applyLog(defenseCompletedLog({ planetId: 7n, defenseId: 0n, total: 350_000n, logIndex: 2 }));
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    for (let index = 0; index < 6; index++) {
+      indexer.applyLog(attackLaunchLog({
+        missionId: BigInt(index + 1),
+        attacker,
+        targetPlanetId: 7n,
+        blockTimestampSeconds: nowSeconds - 3_600 + index,
+        logIndex: 100 + index,
+      }));
+    }
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+
+    const response = await handler(new Request(`http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
+      allowed: false,
+      blockedReason: "bashing_limit",
+      blockedReasonLabel: "Attack blocked: bashing limit reached for this attacker, defender, and planet in the current 24-hour window."
     });
   });
 
@@ -2479,7 +2707,7 @@ describe("Veydrift backend", () => {
     });
 
     // The POST /index/rebuild route was removed (HTTP requests must never trigger an RPC read under the
-    // canonical-mirror contract); seed the index by calling the startup reconcile directly instead.
+    // canonical-mirror contract); seed the index by calling explicit rebuild directly instead.
     await expect(indexer.rebuild()).resolves.toMatchObject({
       indexedDebrisFields: 1,
       indexedMoonChanceReports: 1,
@@ -2584,7 +2812,7 @@ describe("Veydrift backend", () => {
     expect(chainReader.rebuildCalls).toBe(1);
   });
 
-  test("cold-starts exactly one canonical rebuild, then serves pages without re-reading chain (VEY-KANEO-461)", async () => {
+  test("cold-starts without canonical rebuild, then serves pages without re-reading chain (VEY-KANEO-497)", async () => {
     const chainReader = new MockChainReader();
     const chainSync = {
       start() {},
@@ -2595,35 +2823,27 @@ describe("Veydrift backend", () => {
         return () => {};
       }
     } as unknown as import("./chainSync").ChainSyncService;
-    // No injected indexer → createRequestHandler builds one over a fresh (cold) in-memory DB and must
-    // fire a single background canonical rebuild to bootstrap it (VEY-KANEO-461). The old code also
-    // ran a 30s sweep + per-request reads on top; this asserts neither happens.
+    // No injected indexer → createRequestHandler builds one over a fresh (cold) in-memory DB, but must
+    // NOT fire a canonical eth_call rebuild. Event replay/listeners are the automatic path; canonical
+    // rebuild is now explicit operator/test work only.
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
       chainSync
     });
 
-    // Let the fire-and-forget cold-start rebuild settle.
-    for (let i = 0; i < 50 && chainReader.rebuildCalls === 0; i += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-    expect(chainReader.rebuildCalls).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(chainReader.rebuildCalls).toBe(0);
 
-    // Serving player pages must not trigger any further chain history reads — steady state is the
-    // event-synced index only.
+    // Serving player pages must not trigger chain history reads either.
     await handler(new Request(`http://localhost/wallet/${player}/shipyard`));
     await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
     await handler(new Request(`http://localhost/wallet/${player}/defenses`));
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(chainReader.rebuildCalls).toBe(1);
+    expect(chainReader.rebuildCalls).toBe(0);
   });
 
-  // Canonical-mirror rework: the dedicated warm-DB failure-recovery path (maybeRecoverFailedReconciliation)
-  // was removed. Recovery of a poisoned warm DB now happens implicitly because the startup reconcile runs
-  // on EVERY boot — a re-run of rebuild() (what every boot does) re-reads the contracts, clears the stale
-  // error, and re-pins the baseline (VEY-KANEO-461).
-  test("the startup reconcile recovers a frozen baseline left by a failed prior reconcile", async () => {
+  test("an explicit operator reconcile recovers a frozen baseline left by a failed prior reconcile", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     // Warm the DB: a first reconcile succeeds and sets `lastReconciledAt`.
@@ -2638,10 +2858,10 @@ describe("Veydrift backend", () => {
     expect(indexer.snapshot().lastReconciledAt).not.toBeNull();
     expect(indexer.snapshot().lastReconciliationError).toBe("Unexpected end of JSON input");
     const callsBeforeBoot = chainReader.rebuildCalls;
-    // Restore a healthy reader so the next startup reconcile completes and clears the error.
+    // Restore a healthy reader so an explicit operator reconcile completes and clears the error.
     chainReader.listSettledPlanetEvents = MockChainReader.prototype.listSettledPlanetEvents;
 
-    // The next boot's canonical reconcile (always runs) recovers the DB.
+    // Explicit canonical reconcile recovers the DB; it is not run implicitly by server startup.
     await indexer.rebuild();
 
     expect(chainReader.rebuildCalls).toBe(callsBeforeBoot + 1);
@@ -2649,12 +2869,7 @@ describe("Veydrift backend", () => {
     expect(indexer.snapshot().lastReconciledAt).not.toBeNull();
   });
 
-  // Canonical-mirror rework: the startup reconcile now runs on EVERY boot (warm or cold) and overwrites
-  // the DB — contract state is canonical and always wins, and past data migrations changed contract state
-  // without emitting events, so a warm DB must NOT skip the canonical read. (This replaces the old
-  // "warm DB skips the boot rebuild" behavior, VEY-KANEO-461.) Steady-state per-request reads still issue
-  // no chain history reads — only this single boot reconcile does.
-  test("re-reconciles a healthy warm DB on every boot (canonical-mirror: contract always wins)", async () => {
+  test("only explicit startup reconcile opt-in runs a canonical rebuild", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
@@ -2668,11 +2883,11 @@ describe("Veydrift backend", () => {
       runStartupReconcile: true
     });
 
-    // Let the fire-and-forget startup reconcile run.
+    // Let the fire-and-forget explicit reconcile run.
     for (let i = 0; i < 50 && chainReader.rebuildCalls === 0; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
-    // Exactly one canonical rebuild on boot — no periodic sweep follows.
+    // Exactly one canonical rebuild from the opt-in path — no periodic sweep follows.
     expect(chainReader.rebuildCalls).toBe(1);
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(chainReader.rebuildCalls).toBe(1);
@@ -2702,7 +2917,7 @@ describe("Veydrift backend", () => {
     await expect(verify.json()).resolves.toMatchObject({ error: "not_found" });
 
     // Neither route triggered any chain history read (the indexer is injected, so the handler fires no
-    // startup reconcile of its own here, and the removed routes do no chain work).
+    // implicit reconcile of its own here, and the removed routes do no chain work).
     expect(chainReader.rebuildCalls).toBe(callsAfterSeed);
   });
 
@@ -5040,6 +5255,56 @@ function activeFleetMissionLogs(args: {
   targetPlanetId: bigint;
 }): IndexedRpcLog[] {
   return completedFleetMissionLogs(args).slice(0, 3);
+}
+
+// VEY-KANEO-489: a FleetMissionLaunched(Attack) log carrying the block timestamp the contract anchors
+// the bashing window on. missionType 3 = Attack (the only type that calls _recordAttack). data word 1
+// is the target planet id (word 0 origin, 2 arrival, 3 return, 4 randomness request).
+function attackLaunchLog({
+  missionId,
+  attacker,
+  targetPlanetId,
+  blockTimestampSeconds,
+  logIndex,
+}: {
+  missionId: bigint;
+  attacker: Address;
+  targetPlanetId: bigint;
+  blockTimestampSeconds: number;
+  logIndex: number;
+}): IndexedRpcLog {
+  return {
+    blockNumber: `0x${(0x1000 + logIndex).toString(16)}`,
+    blockTimestamp: blockTimestampSeconds.toString(),
+    data: abiWords(9n, targetPlanetId, 1_800_000_000n, 1_800_000_300n, 0n),
+    logIndex: `0x${logIndex.toString(16)}`,
+    removed: false,
+    topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(attacker), topic(3n)],
+    transactionHash: `0x${missionId.toString(16).padStart(64, "0")}`,
+  };
+}
+
+// VEY-KANEO-489: a DefenseCompleted log (one point per 1,000 resources of defense unit cost), used to
+// drive a wallet's highscore to a chosen value so attack-protection score gates can be exercised.
+function defenseCompletedLog({
+  planetId,
+  defenseId,
+  total,
+  logIndex,
+}: {
+  planetId: bigint;
+  defenseId: bigint;
+  total: bigint;
+  logIndex: number;
+}): IndexedRpcLog {
+  return {
+    blockNumber: `0x${(0x2000 + logIndex).toString(16)}`,
+    data: abiWords(total, total),
+    logIndex: `0x${logIndex.toString(16)}`,
+    removed: false,
+    topics: [defenseCompletedTopic, topic(planetId), topic(defenseId)],
+    transactionHash: `0x${`def${logIndex}`.padStart(64, "0")}`,
+  };
 }
 
 function fleetMissionLog({
