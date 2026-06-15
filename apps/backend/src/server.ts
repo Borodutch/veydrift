@@ -8,6 +8,7 @@ import {
   attackBlockReasonLabel,
   type AllianceIdentity,
   type AllianceState,
+  type AttackBlockReason,
   type AttackProtectionStatus,
   type ChainReader,
   type DefenseState,
@@ -637,7 +638,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           entries,
           allianceIntel,
           url.searchParams.get("currentWallet"),
-          highscoreAttackProtectionRequested(url)
+          highscoreAttackProtectionRequested(url),
+          indexer
         );
         const protectedRankings = highscoreRankingsWithProtection(rankings, protection);
         const currentPlayer = highscoreCurrentPlayerPages(sortedRankings, requestedCategories, pagination.pageSize, url.searchParams.get("currentWallet"));
@@ -2077,7 +2079,8 @@ function rankedHighscoreIndexedProtectionLookup(
   entries: readonly HighscoreEntry[],
   allianceIntel: ReadonlyMap<string, AllianceIdentity>,
   currentWallet: string | null | undefined,
-  includeAttackProtection: boolean
+  includeAttackProtection: boolean,
+  indexer?: SettlementIndexer | undefined
 ): Map<string, RankedHighscoreAttackProtection | null> {
   if (!includeAttackProtection || !currentWallet || !/^0x[a-fA-F0-9]{40}$/.test(currentWallet)) return new Map();
 
@@ -2088,6 +2091,12 @@ function rankedHighscoreIndexedProtectionLookup(
   const statuses = new Map<string, RankedHighscoreAttackProtection | null>();
   const attackerScore = BigInt(attacker.score.total);
   const attackerAlliance = allianceIntel.get(normalizedCurrentWallet) ?? null;
+  // VEY-KANEO-489: the bashing window is per-(attacker, defender, planet), so it is evaluated per planet
+  // rather than once per defender row. Alliance/score gates above are defender-level and short-circuit
+  // first, matching the contract's precedence (same_alliance -> score_protection -> bashing_limit).
+  const launchSecondsByTarget = indexer?.attackLaunchSecondsByTarget(normalizedCurrentWallet as `0x${string}`)
+    ?? new Map<string, number[]>();
+  const nowSeconds = Math.floor(Date.now() / 1_000);
   for (const row of rows) {
     const status = indexedScoreProtectionStatus(
       attackerScore,
@@ -2097,7 +2106,15 @@ function rankedHighscoreIndexedProtectionLookup(
       row
     );
     for (const planet of row.planets) {
-      statuses.set(planet.planetId, status);
+      const bashingLimited = status?.allowed
+        && indexedBashingLimitReached(launchSecondsByTarget.get(planet.planetId) ?? [], nowSeconds);
+      statuses.set(planet.planetId, bashingLimited
+        ? {
+            allowed: false,
+            blockedReason: "bashing_limit",
+            blockedReasonLabel: attackBlockReasonLabel("bashing_limit")
+          }
+        : status);
     }
   }
 
@@ -2161,6 +2178,37 @@ function indexedNewbieProtectionRatioBps(score: bigint): bigint {
   if (score < 50_000n) return 50_000n;
   if (score < 500_000n) return 100_000n;
   return 0n;
+}
+
+// VeydriftAntiRaidPrimitives.BASHING_WINDOW_SECONDS (24h) / MAX_ATTACKS_PER_BASHING_WINDOW. Mirrored
+// here so the indexed attack-protection preview reports bashing_limit the same way the contract gates
+// it, without a live attackProtectionStatus read (VEY-KANEO-489).
+const BASHING_WINDOW_SECONDS = 86_400;
+const MAX_ATTACKS_PER_BASHING_WINDOW = 6;
+
+// Mirror of VeydriftGameStorage._recordAttack + _currentAttackCount + isBashingLimitReached: replay the
+// attacker's prior Attack launches against one (defender, planet) in block order to derive the live
+// window count, then compare against the cap. The window is anchored at the first launch and re-anchors
+// whenever a launch lands >= 24h after the current anchor (matching the contract's reset), and the count
+// only stands while now is still inside that 24h window. `launchSeconds` must be ascending.
+// NOTE: the war/inactive bypass the contract applies (bashingWarException || defenderInactive) is not
+// modelled here — the indexed read model already does not track player activity or alliance-war context
+// for attack protection (defenderInactive is reported as false), so this mirrors that existing
+// limitation. VEY-KANEO-489 follow-up tracks modelling those exceptions.
+function indexedBashingLimitReached(launchSeconds: readonly number[], nowSeconds: number): boolean {
+  let windowStartedAt = 0;
+  let count = 0;
+  for (const launchedAt of launchSeconds) {
+    if (windowStartedAt === 0 || launchedAt >= windowStartedAt + BASHING_WINDOW_SECONDS) {
+      windowStartedAt = launchedAt;
+      count = 1;
+    } else {
+      count += 1;
+    }
+  }
+  const windowActive = windowStartedAt !== 0 && nowSeconds < windowStartedAt + BASHING_WINDOW_SECONDS;
+  const currentCount = windowActive ? count : 0;
+  return currentCount >= MAX_ATTACKS_PER_BASHING_WINDOW;
 }
 
 function sortedHighscores(entries: HighscoreEntry[], category: HighscoreCategory): HighscoreEntry[] {
@@ -2356,16 +2404,57 @@ function indexedAttackProtectionResponse(
   const defender = indexer.highscoreForWallet(target.owner, (planetsByOwner.get(target.owner.toLowerCase()) ?? []).map((planet) => planet.planetId));
   const attackerScore = BigInt(attacker.score.total);
   const defenderScore = BigInt(defender.score.total);
-  const scoreProtected = attackerScore > 0n && (defenderScore < attackerScore / 5n || defenderScore > attackerScore * 5n);
+  const attackerKey = wallet.toLowerCase();
+  const defenderKey = target.owner.toLowerCase();
+  // VEY-KANEO-489: model the contract's same_alliance gate, the HIGHEST-precedence reason in
+  // VeydriftGameStorage._attackProtectionStatus (SameAlliance -> ScoreProtection -> BashingLimit).
+  // Without it this single-target endpoint never returned `same_alliance`, so the frontend — which
+  // derives ally targets solely from this signal (galaxyActions.ts: isAllyTarget = blockedReason ===
+  // "same_alliance") — left the attack button enabled for allies and the launch reverted on-chain.
+  // allianceIntelForPlayers only returns members of *active* alliances, so a missing entry means "no
+  // alliance"; self-targets (attacker == owner) are never treated as same-alliance.
+  const allianceIntel = indexer.allianceIntelForPlayers([attackerKey, defenderKey]);
+  const attackerAlliance = allianceIntel.get(attackerKey) ?? null;
+  const defenderAlliance = allianceIntel.get(defenderKey) ?? null;
+  const sameAlliance = attackerKey !== defenderKey
+    && attackerAlliance !== null
+    && defenderAlliance !== null
+    && attackerAlliance.allianceId !== "0"
+    && attackerAlliance.allianceId === defenderAlliance.allianceId;
+  // VEY-KANEO-489: use the contract-faithful newbie/score-ratio gate (VeydriftAntiRaidPrimitives.
+  // isScoreProtected) instead of a naive 5x-score heuristic. The old heuristic false-blocked any two
+  // players whose scores differed >5x — including two veterans both past the newbie-protection ceiling,
+  // who the contract never score-protects (both ratios are 0). Kept raw (not gated by sameAlliance) so
+  // plunderBps below still reflects the score-protection state.
+  const scoreProtected = isIndexedScoreProtected(attackerScore, defenderScore);
+  // VEY-KANEO-489: also replay the per-(attacker, planet) bashing window the contract enforces. Self
+  // attacks are rejected upstream by the contract and carry no window; a self-target read just returns
+  // an empty launch history. same_alliance and score protection are checked first to match the
+  // contract's precedence (VeydriftGameStorage._attackProtectionStatus: SameAlliance -> ScoreProtection
+  // -> BashingLimit); skipping the launch-log replay when either short-circuits avoids needless work.
+  const bashingLimited = !sameAlliance
+    && !scoreProtected
+    && wallet.toLowerCase() !== target.owner.toLowerCase()
+    && indexedBashingLimitReached(
+      indexer.attackLaunchSecondsByTarget(wallet).get(targetPlanetId.toString()) ?? [],
+      Math.floor(Date.now() / 1_000)
+    );
+  const blockedReason: AttackBlockReason = sameAlliance
+    ? "same_alliance"
+    : scoreProtected
+      ? "score_protection"
+      : bashingLimited
+        ? "bashing_limit"
+        : "none";
 
   const body: AttackProtectionStatus & {
     source: typeof indexedSource;
   } = {
     wallet,
     targetPlanetId: targetPlanetId.toString(),
-    allowed: !scoreProtected,
-    blockedReason: scoreProtected ? "score_protection" : "none",
-    blockedReasonLabel: scoreProtected ? attackBlockReasonLabel("score_protection") : null,
+    allowed: blockedReason === "none",
+    blockedReason,
+    blockedReasonLabel: blockedReason === "none" ? null : attackBlockReasonLabel(blockedReason),
     relation: defenderScore > attackerScore ? "stronger" : defenderScore < attackerScore ? "weaker" : "peer",
     defenderHonorStatus: "neutral",
     plunderBps: scoreProtected ? 0 : 5000,
