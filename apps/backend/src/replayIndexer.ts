@@ -30,7 +30,8 @@ async function main(): Promise<void> {
   console.log(JSON.stringify({
     replay: {
       fromBlock: fromBlock.toString(),
-      toBlock: typeof toBlock === "bigint" ? toBlock.toString() : toBlock
+      toBlock: typeof toBlock === "bigint" ? toBlock.toString() : toBlock,
+      materializedRebuildFromStoredLogs: true
     },
     before,
     after
