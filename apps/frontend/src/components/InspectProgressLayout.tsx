@@ -32,17 +32,14 @@ export function useInspectDetailSelection<ItemKey>(
 
 export function InspectPageHeader({
   actions,
-  description,
   title,
 }: {
   actions?: ComponentChildren | undefined;
-  description: string;
   title: string;
 }) {
   return PageHeader({
     actions,
     bordered: false,
-    subtitle: description,
     title,
   });
 }

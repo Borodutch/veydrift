@@ -57,6 +57,26 @@ describe("RaidTargetFinderPage", () => {
     expect(disabledAttack?.props?.disabled).toBe(true);
     expect(disabledAttack?.props?.title).toBe("Attack blocked by score protection");
   });
+
+  test("row top-level cells match the desktop header order before actions", () => {
+    const row = RaidTargetRow({
+      attackAction: { label: "Attack" },
+      missionSubtext: { lines: [], overflow: 0 },
+      now: 1_770_000_000_000,
+      onAttackTarget: () => undefined,
+      onSelectPlanet: () => undefined,
+      target: raidTarget({ combatPower: 6_000, defensePower: 2_000, distance: 100, loot: 1_000 }),
+    });
+    const cells = directElementChildren(row);
+
+    expect(cells).toHaveLength(6);
+    expect(cells[1]?.props?.title).toBe("Distance from your active planet");
+    expect(cells[2]?.props?.title).toContain("LOOT M");
+    expect(cells[3]?.props?.title).toContain("Combat 6,000");
+    expect(cells[4]?.props?.title).toContain("Defense power 2,000");
+    expect(visibleText(cells[5])).toContain("Attack");
+    expect(visibleText(cells[5])).toContain("Inspect");
+  });
 });
 
 function raidTarget(overrides: Partial<RaidTarget> = {}): RaidTarget {
@@ -105,6 +125,15 @@ function elementNodes(node: ComponentChildren): VNode[] {
   const vnode = node as VNode;
   const children = elementNodes(vnode.props?.children);
   return [vnode, ...children];
+}
+
+function directElementChildren(node: ComponentChildren): VNode[] {
+  if (node === null || node === undefined || typeof node === "boolean" || typeof node === "string" || typeof node === "number") return [];
+  if (Array.isArray(node)) return node.filter((item): item is VNode => typeof item === "object" && item !== null);
+  const vnode = node as VNode;
+  const children = vnode.props?.children as ComponentChildren;
+  if (!Array.isArray(children)) return directElementChildren(children);
+  return children.filter((item): item is VNode => typeof item === "object" && item !== null);
 }
 
 function buttonWithText(node: ComponentChildren, text: string): VNode | undefined {

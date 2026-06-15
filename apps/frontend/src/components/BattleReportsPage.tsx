@@ -51,8 +51,6 @@ export function BattleReportsPage({
           </button>
           </>
         )}
-        eyebrow="Battle Reports"
-        subtitle="Shareable combat outcomes, losses, loot, debris, and round snapshots from resolved attacks."
         title="Public Combat Archive"
       />
 

@@ -13,7 +13,20 @@ import {
   type AcsDefendFuelBreakdown,
   type FleetDriveLevels,
 } from "../fleetMissionRules";
+import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { emptyMissionShips, type GalaxyAction, type MissionShipKey, type MissionShips } from "../galaxyActions";
+import {
+  buildingContractIds,
+  defenseCatalog,
+  defenseCombatStats,
+  productionPerHour,
+  researchCatalog,
+  shipCatalog,
+  shipCombatStats,
+  storageCaps,
+  type BuildingKey,
+  type ShipKey,
+} from "../playableMvp";
 import { shortAddress, type ChainShipyardState } from "../walletFlow";
 import { formatDuration } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
@@ -43,8 +56,13 @@ export type MissionLaunchDraft = {
 
 export const LOOT_RATIO_TOTAL_PERCENT = 100;
 const DEFAULT_LOOT_RATIO: MissionLootRatioDraft = { metal: 34, crystal: 33, deuterium: 33 };
+const GREEDY_LOOT_RATIO: MissionLootRatioDraft = { metal: 100, crystal: 0, deuterium: 0 };
+const RAID_PLUNDER_BPS = 5_000;
+const BPS = 10_000;
+const RESOURCE_KEYS = ["metal", "crystal", "deuterium"] as const;
 
 type EnabledGalaxyAction = Extract<GalaxyAction, { enabled: true }>;
+type ResourceKey = (typeof RESOURCE_KEYS)[number];
 
 type MissionResourceSnapshot = {
   metal: number;
@@ -56,6 +74,38 @@ type ShipOption = {
   key: MissionShipKey;
   id: number;
   label: string;
+  asset: string;
+};
+
+type UnitItem = {
+  key: string;
+  label: string;
+  count: number;
+  asset?: string | undefined;
+};
+
+export type BattleForecastState =
+  | {
+      kind: "uncertain";
+      label: "Uncertain";
+      detail: string;
+      attackerPower: number;
+      defenderPower: number | null;
+    }
+  | {
+      kind: "win" | "defeat" | "draw";
+      label: "Probable win" | "Probable defeat" | "Probable draw";
+      detail: string;
+      attackerPower: number;
+      defenderPower: number;
+    };
+
+export type TargetResourceIntel = {
+  current: MissionResourceSnapshot | null;
+  projectedArrival: MissionResourceSnapshot | null;
+  currentLootable: MissionResourceSnapshot | null;
+  projectedArrivalLootable: MissionResourceSnapshot | null;
+  projectionDetail: string;
 };
 
 // VEY-KANEO-493: the mission ship picker intentionally omits Pathfinder. It is an
@@ -64,19 +114,19 @@ type ShipOption = {
 // shipyard's `shipyardHiddenShipKeys` hiding. The `MissionShips`/`MissionShipKey` model
 // keeps `pathfinder` so the on-chain ship enum (index 14) stays aligned.
 export const missionShipOptions: ShipOption[] = [
-  { key: "smallCargo", id: 0, label: "Small Cargo" },
-  { key: "lightFighter", id: 1, label: "Light Fighter" },
-  { key: "recycler", id: 2, label: "Recycler" },
-  { key: "colonyShip", id: 3, label: "Colony Ship" },
-  { key: "largeCargo", id: 4, label: "Large Cargo" },
-  { key: "heavyFighter", id: 5, label: "Heavy Fighter" },
-  { key: "cruiser", id: 6, label: "Cruiser" },
-  { key: "battleship", id: 7, label: "Battleship" },
-  { key: "bomber", id: 8, label: "Bomber" },
-  { key: "destroyer", id: 10, label: "Destroyer" },
-  { key: "deathstar", id: 11, label: "Deathstar" },
-  { key: "battlecruiser", id: 12, label: "Battlecruiser" },
-  { key: "reaper", id: 13, label: "Reaper" },
+  { key: "smallCargo", id: 0, label: "Small Cargo", asset: shipAssetByKey.smallCargo },
+  { key: "lightFighter", id: 1, label: "Light Fighter", asset: shipAssetByKey.lightFighter },
+  { key: "recycler", id: 2, label: "Recycler", asset: shipAssetByKey.recycler },
+  { key: "colonyShip", id: 3, label: "Colony Ship", asset: shipAssetByKey.colonyShip },
+  { key: "largeCargo", id: 4, label: "Large Cargo", asset: shipAssetByKey.largeCargo },
+  { key: "heavyFighter", id: 5, label: "Heavy Fighter", asset: shipAssetByKey.heavyFighter },
+  { key: "cruiser", id: 6, label: "Cruiser", asset: shipAssetByKey.cruiser },
+  { key: "battleship", id: 7, label: "Battleship", asset: shipAssetByKey.battleship },
+  { key: "bomber", id: 8, label: "Bomber", asset: shipAssetByKey.bomber },
+  { key: "destroyer", id: 10, label: "Destroyer", asset: shipAssetByKey.destroyer },
+  { key: "deathstar", id: 11, label: "Dreadstar", asset: shipAssetByKey.deathstar },
+  { key: "battlecruiser", id: 12, label: "Battlecruiser", asset: shipAssetByKey.battlecruiser },
+  { key: "reaper", id: 13, label: "Reaper", asset: shipAssetByKey.reaper },
 ];
 
 const cargoShipKeys = new Set<MissionShipKey>(["smallCargo", "largeCargo", "recycler", "colonyShip"]);
@@ -168,12 +218,31 @@ export function MissionCreationPage({
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
   const lootRatioSupported = !joinAttackMode && !acsDefendMode && action.mode === "mission" && action.kind === "attack";
   const lootRatioActive = lootRatioSupported && lootRatioEnabled;
-  const lootRatioTotal = lootRatio.metal + lootRatio.crystal + lootRatio.deuterium;
+  const displayedLootRatio = lootRatioActive ? lootRatio : GREEDY_LOOT_RATIO;
+  const lootRatioTotal = displayedLootRatio.metal + displayedLootRatio.crystal + displayedLootRatio.deuterium;
   const timingSummary = missionTimingSummary(travelSeconds, nowMs);
   const stationedDefenders = action.kind === "attack" && action.mode === "mission"
     ? target?.publicState?.stationedDefenders ?? []
     : [];
   const stationedDefenderRows = stationedDefenderAttackWarningRows(stationedDefenders);
+  const targetFleetUnits = useMemo(() => compositionUnits(target?.publicState?.fleet, shipCatalog, shipAssetByKey), [target?.publicState?.fleet]);
+  const targetDefenseUnits = useMemo(() => compositionUnits(target?.publicState?.defenses, defenseCatalog, defenseAssetByKey), [target?.publicState?.defenses]);
+  const stationedDefenderUnits = useMemo(
+    () => stationedDefenderCompositionUnits(stationedDefenders),
+    [stationedDefenders],
+  );
+  const battleForecast = useMemo(
+    () => publicTargetBattleForecast(ships, target),
+    [ships, target],
+  );
+  const resourceIntel = useMemo(
+    () => targetResourceIntel(target, travelSeconds),
+    [target, travelSeconds],
+  );
+  const maxLootForecast = useMemo(
+    () => forecastRaidLoot(resourceIntel.projectedArrivalLootable, cargoCapacity, lootRatioActive ? lootRatio : null),
+    [cargoCapacity, lootRatio, lootRatioActive, resourceIntel.projectedArrivalLootable],
+  );
 
   // VEY-KANEO-440: ACS Defend holding-fuel preview. The fleet arrives naturally after `travelSeconds`,
   // then holds until the hostile attack lands; holding fuel scales with that gap and the Alliance Depot
@@ -229,6 +298,18 @@ export function MissionCreationPage({
     crystal: Math.max(0, Math.trunc(resources?.crystal ?? 0)),
     deuterium: Math.max(0, Math.trunc((resources?.deuterium ?? 0) - fuelCost)),
   };
+  const setShipQuantity = (key: MissionShipKey, value: number, owned: number) => setShips((current) => ({
+    ...current,
+    [key]: clampInteger(value, 0, owned),
+  }));
+  const updateLootPercent = (key: ResourceKey, value: number) => {
+    setLootRatioEnabled(true);
+    setLootRatio((current) => rebalanceLootRatio(current, key, value));
+  };
+  const updateLootAmount = (key: ResourceKey, value: number) => {
+    setLootRatioEnabled(true);
+    setLootRatio((current) => lootRatioFromUpToAmount(current, key, value, cargoCapacity));
+  };
 
   return (
     <div className="grid gap-4 p-4 sm:p-6">
@@ -249,15 +330,50 @@ export function MissionCreationPage({
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <section className="grid gap-3 rounded-lg border border-white/10 bg-white/[0.04] p-4">
-          <div className="grid gap-1">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Target</h3>
-            <div className="text-sm font-medium text-white">
-              {target?.name ?? `Coordinate ${coords.galaxy}:${coords.system}:${coords.position}`}
+        <section className="grid gap-4 rounded-lg border border-white/10 bg-white/[0.04] p-4">
+          <TargetIntelCard coords={coords} target={target} />
+
+          {lootRatioSupported ? (
+            <div className="grid gap-3 rounded-md border border-white/10 bg-black/15 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Probable outcome</h3>
+                  <p className={`mt-1 text-sm font-semibold ${battleForecast.kind === "win" ? "text-emerald-200" : battleForecast.kind === "defeat" ? "text-red-200" : battleForecast.kind === "draw" ? "text-amber-200" : "text-slate-300"}`}>
+                    {battleForecast.label}
+                  </p>
+                </div>
+                <div className="text-right text-xs text-slate-500">
+                  <div>Attack {battleForecast.attackerPower.toLocaleString()}</div>
+                  <div>Defense {battleForecast.defenderPower == null ? "unknown" : battleForecast.defenderPower.toLocaleString()}</div>
+                </div>
+              </div>
+              <p className="text-xs text-slate-500">{battleForecast.detail}</p>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <ResourceSummary title="Max loot at arrival" resources={maxLootForecast} />
+                <ResourceSummary title="Lootable at arrival" resources={resourceIntel.projectedArrivalLootable} />
+              </div>
             </div>
-            <div className="text-xs text-slate-500">
-              {target?.occupiedBy?.ownerDisplayName ?? target?.owner ?? "Open coordinate"}
+          ) : null}
+
+          <div className="grid gap-3 rounded-md border border-white/10 bg-black/15 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Destination intel</h3>
+              <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Public state</span>
             </div>
+            <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
+              <UnitSection emptyLabel="No public fleet is stationed here." title="Destination Fleet" units={targetFleetUnits} />
+              <UnitSection emptyLabel="No public defenses are deployed here." title="Defenses" units={targetDefenseUnits} />
+              {stationedDefenderUnits.length > 0 ? (
+                <UnitSection emptyLabel="No public held defenders are stationed here." title="Stationed Defenders" units={stationedDefenderUnits} />
+              ) : null}
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <ResourceSummary title="Resources now" resources={resourceIntel.current} />
+              <ResourceSummary title="Projected at arrival" resources={resourceIntel.projectedArrival} />
+              <ResourceSummary title="Lootable now" resources={resourceIntel.currentLootable} />
+              <ResourceSummary title="Lootable at arrival" resources={resourceIntel.projectedArrivalLootable} />
+            </div>
+            <p className="text-xs text-slate-500">{resourceIntel.projectionDetail}</p>
           </div>
 
           {stationedDefenderRows.length > 0 ? (
@@ -301,24 +417,13 @@ export function MissionCreationPage({
                   {availableShips.map((ship) => {
                     const owned = shipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0;
                     return (
-                      <label className="grid gap-1 rounded border border-white/10 bg-black/15 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_7rem] sm:items-center" key={ship.key}>
-                        <span className="min-w-0">
-                          <span className="block text-sm font-medium text-slate-200">{ship.label}</span>
-                          <span className="block text-xs text-slate-500">{owned.toLocaleString()} available</span>
-                        </span>
-                        <input
-                          className="h-9 rounded border border-white/10 bg-[#070913] px-2 text-right font-mono text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50"
-                          inputMode="numeric"
-                          max={owned}
-                          min={0}
-                          onInput={(event) => setShips((current) => ({
-                            ...current,
-                            [ship.key]: clampInteger(Number((event.currentTarget as HTMLInputElement).value), 0, owned),
-                          }))}
-                          type="number"
-                          value={ships[ship.key] ?? 0}
-                        />
-                      </label>
+                      <ShipQuantityRow
+                        key={ship.key}
+                        onChange={(value) => setShipQuantity(ship.key, value, owned)}
+                        owned={owned}
+                        ship={ship}
+                        value={ships[ship.key] ?? 0}
+                      />
                     );
                   })}
                 </div>
@@ -396,10 +501,10 @@ export function MissionCreationPage({
 
           {lootRatioSupported ? (
             <div className="grid gap-2">
-              <label className="flex items-center justify-between gap-2">
+              <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Loot ratio</span>
                 <span className="flex items-center gap-2 text-xs text-slate-400">
-                  Custom split
+                  {lootRatioEnabled ? "Custom split" : "Greedy default"}
                   <input
                     checked={lootRatioEnabled}
                     className="h-4 w-4 accent-signal [color-scheme:dark]"
@@ -407,40 +512,57 @@ export function MissionCreationPage({
                     type="checkbox"
                   />
                 </span>
-              </label>
-              {lootRatioEnabled ? (
-                <div className="grid gap-2">
-                  <div className="grid gap-2 sm:grid-cols-3">
-                    <PercentField label="Metal %" onChange={(metal) => setLootRatio((current) => ({ ...current, metal }))} value={lootRatio.metal} />
-                    <PercentField label="Crystal %" onChange={(crystal) => setLootRatio((current) => ({ ...current, crystal }))} value={lootRatio.crystal} />
-                    <PercentField label="Deuterium %" onChange={(deuterium) => setLootRatio((current) => ({ ...current, deuterium }))} value={lootRatio.deuterium} />
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                    <span className={lootRatioTotal === LOOT_RATIO_TOTAL_PERCENT ? "text-slate-500" : "text-amber-200"}>
-                      Total {lootRatioTotal}% (must equal {LOOT_RATIO_TOTAL_PERCENT}%)
-                    </span>
+              </div>
+              <div className="grid gap-2">
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {RESOURCE_KEYS.map((key) => (
+                    <PercentField
+                      key={key}
+                      label={`${resourceLabel(key)} %`}
+                      onChange={(value) => updateLootPercent(key, value)}
+                      value={displayedLootRatio[key]}
+                    />
+                  ))}
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {RESOURCE_KEYS.map((key) => (
+                    <ResourceField
+                      key={key}
+                      label={`${resourceLabel(key)} up to`}
+                      max={cargoCapacity}
+                      onChange={(value) => updateLootAmount(key, resourceDraftNumber(value))}
+                      value={String(Math.floor((cargoCapacity * displayedLootRatio[key]) / 100))}
+                    />
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span className={lootRatioTotal === LOOT_RATIO_TOTAL_PERCENT ? "text-slate-500" : "text-amber-200"}>
+                    Total {lootRatioTotal}% (must equal {LOOT_RATIO_TOTAL_PERCENT}%). Unfilled shares roll over metal, crystal, then deuterium.
+                  </span>
+                  <span className="flex gap-1.5">
                     <button
                       className="rounded border border-white/10 bg-white/[0.03] px-2 py-1 font-semibold text-slate-400 transition hover:border-white/20 hover:text-white"
-                      onClick={() => setLootRatio(DEFAULT_LOOT_RATIO)}
+                      onClick={() => {
+                        setLootRatioEnabled(false);
+                        setLootRatio(DEFAULT_LOOT_RATIO);
+                      }}
+                      type="button"
+                    >
+                      Greedy
+                    </button>
+                    <button
+                      className="rounded border border-white/10 bg-white/[0.03] px-2 py-1 font-semibold text-slate-400 transition hover:border-white/20 hover:text-white"
+                      onClick={() => {
+                        setLootRatioEnabled(true);
+                        setLootRatio(DEFAULT_LOOT_RATIO);
+                      }}
                       type="button"
                     >
                       Even split
                     </button>
-                  </div>
-                  {lootRatioTotal === LOOT_RATIO_TOTAL_PERCENT && cargoCapacity > 0 ? (
-                    <p className="text-xs text-slate-500">
-                      Up to {Math.floor((cargoCapacity * lootRatio.metal) / 100).toLocaleString()} metal /{" "}
-                      {Math.floor((cargoCapacity * lootRatio.crystal) / 100).toLocaleString()} crystal /{" "}
-                      {Math.floor((cargoCapacity * lootRatio.deuterium) / 100).toLocaleString()} deuterium of cargo capacity.
-                      Unfilled shares roll over to the other resources.
-                    </p>
-                  ) : (
-                    <p className="text-xs text-slate-500">Unfilled shares roll over to the other resources.</p>
-                  )}
+                  </span>
                 </div>
-              ) : (
-                <p className="text-xs text-slate-500">Loot fills greedily (metal, then crystal, then deuterium).</p>
-              )}
+              </div>
             </div>
           ) : null}
         </section>
@@ -467,6 +589,13 @@ export function MissionCreationPage({
             </>
           ) : null}
           <SummaryRow label="Cargo" value={cargoSupported ? `${cargoTotal.toLocaleString()} / ${cargoCapacity.toLocaleString()}` : "None"} />
+          {lootRatioSupported ? (
+            <SummaryRow
+              label="Max loot"
+              subvalue={lootRatioActive ? "Custom split" : "Greedy default"}
+              value={formatCompactResources(maxLootForecast)}
+            />
+          ) : null}
           {timingSummary ? (
             <>
               <SummaryRow label={holdingBreakdown ? "Reach planet" : "Arrival"} subvalue={timingSummary.arrivalClock} value={timingSummary.arrivalDuration} />
@@ -580,8 +709,9 @@ export function missionTimingSummary(travelSeconds: number, nowMs: number = Date
   };
 }
 
-function initialMissionShips(action: EnabledGalaxyAction): MissionShips {
-  return action.mode === "missile" ? emptyMissionShips() : { ...emptyMissionShips(), ...action.ships };
+export function initialMissionShips(action: EnabledGalaxyAction): MissionShips {
+  if (action.mode === "missile" || action.kind === "attack") return emptyMissionShips();
+  return { ...emptyMissionShips(), ...action.ships };
 }
 
 function missionShipOptionsForAction(action: EnabledGalaxyAction, shipyardState: ChainShipyardState | null): ShipOption[] {
@@ -625,6 +755,488 @@ function normalizeCargoDraft(cargo: MissionCargoDraft): MissionCargoDraft | unde
   return normalized.metal === "0" && normalized.crystal === "0" && normalized.deuterium === "0"
     ? undefined
     : normalized;
+}
+
+export function rebalanceLootRatio(
+  current: MissionLootRatioDraft,
+  changedKey: ResourceKey,
+  rawValue: number,
+): MissionLootRatioDraft {
+  const value = clampInteger(rawValue, 0, LOOT_RATIO_TOTAL_PERCENT);
+  const remaining = LOOT_RATIO_TOTAL_PERCENT - value;
+  const otherKeys = RESOURCE_KEYS.filter((key) => key !== changedKey);
+  const [firstOther, secondOther] = otherKeys as [ResourceKey, ResourceKey];
+  const otherTotal = otherKeys.reduce((total, key) => total + Math.max(0, current[key]), 0);
+  const next = { ...current, [changedKey]: value };
+
+  if (otherTotal <= 0) {
+    const first = Math.floor(remaining / 2);
+    next[firstOther] = first;
+    next[secondOther] = remaining - first;
+    return next;
+  }
+
+  const first = Math.floor((remaining * current[firstOther]) / otherTotal);
+  next[firstOther] = first;
+  next[secondOther] = remaining - first;
+  return next;
+}
+
+export function lootRatioFromUpToAmount(
+  current: MissionLootRatioDraft,
+  changedKey: ResourceKey,
+  rawValue: number,
+  cargoCapacity: number,
+): MissionLootRatioDraft {
+  if (cargoCapacity <= 0) return rebalanceLootRatio(current, changedKey, 0);
+  const percent = Math.round((clampInteger(rawValue, 0, cargoCapacity) * LOOT_RATIO_TOTAL_PERCENT) / cargoCapacity);
+  return rebalanceLootRatio(current, changedKey, percent);
+}
+
+export function forecastRaidLoot(
+  lootable: MissionResourceSnapshot | null,
+  capacity: number,
+  lootRatio: MissionLootRatioDraft | null,
+): MissionResourceSnapshot {
+  const remainingLootable = {
+    metal: Math.max(0, Math.trunc(lootable?.metal ?? 0)),
+    crystal: Math.max(0, Math.trunc(lootable?.crystal ?? 0)),
+    deuterium: Math.max(0, Math.trunc(lootable?.deuterium ?? 0)),
+  };
+  const result: MissionResourceSnapshot = { metal: 0, crystal: 0, deuterium: 0 };
+  let remainingCapacity = Math.max(0, Math.trunc(capacity));
+
+  if (lootRatio && lootRatio.metal + lootRatio.crystal + lootRatio.deuterium > 0) {
+    const metalTarget = Math.floor((remainingCapacity * lootRatio.metal) / LOOT_RATIO_TOTAL_PERCENT);
+    const crystalTarget = Math.floor((remainingCapacity * lootRatio.crystal) / LOOT_RATIO_TOTAL_PERCENT);
+    result.metal = Math.min(metalTarget, remainingLootable.metal);
+    result.crystal = Math.min(crystalTarget, remainingLootable.crystal);
+    result.deuterium = Math.min(remainingCapacity - metalTarget - crystalTarget, remainingLootable.deuterium);
+    remainingCapacity -= result.metal + result.crystal + result.deuterium;
+  }
+
+  for (const key of RESOURCE_KEYS) {
+    if (remainingCapacity <= 0) break;
+    const give = Math.min(remainingCapacity, remainingLootable[key] - result[key]);
+    result[key] += give;
+    remainingCapacity -= give;
+  }
+
+  return result;
+}
+
+export function targetResourceIntel(target: Planet | undefined, travelSeconds: number): TargetResourceIntel {
+  const current = publicResourceSnapshot(target);
+  if (!current) {
+    return {
+      current: null,
+      projectedArrival: null,
+      currentLootable: null,
+      projectedArrivalLootable: null,
+      projectionDetail: "Destination resources are not present in the public indexed state yet.",
+    };
+  }
+
+  const projected = projectedResourceSnapshot(target, current, travelSeconds);
+  return {
+    current,
+    projectedArrival: projected.resources,
+    currentLootable: plunderableResources(current),
+    projectedArrivalLootable: plunderableResources(projected.resources),
+    projectionDetail: projected.detail,
+  };
+}
+
+export function publicTargetBattleForecast(ships: MissionShips, target: Planet | undefined): BattleForecastState {
+  const attackerPower = missionShipsCombatPower(ships);
+  if (fleetMissionShipCount(ships) <= 0) {
+    return {
+      kind: "uncertain",
+      label: "Uncertain",
+      detail: "Select ships to preview the attack against public destination intel.",
+      attackerPower,
+      defenderPower: null,
+    };
+  }
+  if (!target?.publicState) {
+    return {
+      kind: "uncertain",
+      label: "Uncertain",
+      detail: "The target is not charted in the public indexed state, so exact destination fleet and defenses are unknown.",
+      attackerPower,
+      defenderPower: null,
+    };
+  }
+
+  const stationedPower = stationedDefendersCombatPower(target.publicState.stationedDefenders);
+  const defenderPower = compositionCombatPower(target.publicState.fleet, "ship")
+    + compositionCombatPower(target.publicState.defenses, "defense")
+    + stationedPower;
+  if (defenderPower <= 0) {
+    return {
+      kind: "win",
+      label: "Probable win",
+      detail: "No public stationed fleet or battlefield defenses are visible. Hidden state is not assumed.",
+      attackerPower,
+      defenderPower,
+    };
+  }
+  if (attackerPower >= defenderPower * 1.15) {
+    return {
+      kind: "win",
+      label: "Probable win",
+      detail: stationedPower > 0
+        ? "Your selected fleet materially exceeds visible public defender power, including stationed defenders. Combat randomness and unindexed changes can still alter the result."
+        : "Your selected fleet materially exceeds visible public defender power. Combat randomness and unindexed changes can still alter the result.",
+      attackerPower,
+      defenderPower,
+    };
+  }
+  if (attackerPower <= defenderPower * 0.85) {
+    return {
+      kind: "defeat",
+      label: "Probable defeat",
+      detail: stationedPower > 0
+        ? "Visible public defender power, including stationed defenders, materially exceeds your selected fleet. Add ships or reconsider the target."
+        : "Visible public defender power materially exceeds your selected fleet. Add ships or reconsider the target.",
+      attackerPower,
+      defenderPower,
+    };
+  }
+  return {
+    kind: "draw",
+    label: "Probable draw",
+    detail: stationedPower > 0
+      ? "Public attacker and defender power, including stationed defenders, are close enough that the battle outcome is uncertain."
+      : "Public attacker and defender power are close enough that the battle outcome is uncertain.",
+    attackerPower,
+    defenderPower,
+  };
+}
+
+export function ShipQuantityRow({
+  onChange,
+  owned,
+  ship,
+  value,
+}: {
+  onChange: (value: number) => void;
+  owned: number;
+  ship: ShipOption;
+  value: number;
+}) {
+  return (
+    <label className="grid gap-2 rounded border border-white/10 bg-black/15 px-3 py-2 sm:grid-cols-[minmax(0,1fr)_10rem] sm:items-center">
+      <span className="flex min-w-0 items-center gap-2">
+        <img alt="" className="h-9 w-9 shrink-0 rounded border border-white/10 object-contain" loading="lazy" src={ship.asset} />
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-medium text-slate-200">{ship.label}</span>
+          <span className="block text-xs text-slate-500">Fleet unit</span>
+        </span>
+      </span>
+      <span className="grid grid-cols-[2rem_minmax(0,1fr)_auto_2rem] items-center gap-1">
+        <button
+          aria-label={`Decrease ${ship.label}`}
+          className="h-9 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600"
+          disabled={value <= 0}
+          onClick={() => onChange(value - 1)}
+          type="button"
+        >
+          -
+        </button>
+        <input
+          aria-label={`${ship.label} quantity`}
+          className="h-9 min-w-0 rounded border border-white/10 bg-[#070913] px-2 text-right font-mono text-sm text-white outline-none [color-scheme:dark] focus:border-signal/50"
+          inputMode="numeric"
+          max={owned}
+          min={0}
+          onInput={(event) => onChange(Number((event.currentTarget as HTMLInputElement).value))}
+          type="number"
+          value={value}
+        />
+        <span className="whitespace-nowrap text-xs tabular-nums text-slate-500">/ {owned.toLocaleString()}</span>
+        <button
+          aria-label={`Increase ${ship.label}`}
+          className="h-9 rounded border border-white/10 bg-white/[0.03] text-sm font-semibold text-slate-300 transition hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:text-slate-600"
+          disabled={value >= owned}
+          onClick={() => onChange(value + 1)}
+          type="button"
+        >
+          +
+        </button>
+      </span>
+    </label>
+  );
+}
+
+export function TargetIntelCard({ coords, target }: { coords: Coordinates; target: Planet | undefined }) {
+  return (
+    <div className="grid gap-3 rounded-md border border-white/10 bg-black/15 p-3 sm:grid-cols-[5.5rem_minmax(0,1fr)]">
+      {target?.image ? (
+        <img
+          alt=""
+          className="h-20 w-20 rounded-md border border-white/10 object-cover"
+          loading="lazy"
+          src={target.image}
+        />
+      ) : (
+        <div className="grid h-20 w-20 place-items-center rounded-md border border-white/10 bg-white/[0.03] text-xs text-slate-500">
+          No image
+        </div>
+      )}
+      <div className="min-w-0">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Target</h3>
+        <div className="mt-1 text-sm font-medium text-white">
+          {target?.name ?? `Coordinate ${coords.galaxy}:${coords.system}:${coords.position}`}
+        </div>
+        <div className="mt-1 grid gap-1 text-xs text-slate-400 sm:grid-cols-2">
+          <TargetFact label="Coords" value={`[${coords.galaxy}:${coords.system}:${coords.position}]`} />
+          <TargetFact label="Commander" value={commanderLabel(target)} />
+          <TargetFact label="Alliance" value={allianceLabel(target)} />
+          <TargetFact label="Planet ID" value={target?.id ? `#${target.id}` : "Uncharted"} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TargetFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <span className="text-slate-600">{label}</span>{" "}
+      <span className="break-words text-slate-300">{value}</span>
+    </div>
+  );
+}
+
+function UnitSection({ emptyLabel, title, units }: { emptyLabel: string; title: string; units: UnitItem[] }) {
+  return (
+    <section className="grid gap-2 rounded border border-white/10 bg-[#070913]/60 p-3">
+      <h4 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{title}</h4>
+      <UnitIcons emptyLabel={emptyLabel} units={units} />
+    </section>
+  );
+}
+
+function UnitIcons({ emptyLabel, units }: { emptyLabel: string; units: UnitItem[] }) {
+  if (units.length === 0) return <p className="text-xs text-slate-500">{emptyLabel}</p>;
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {units.map((unit) => (
+        <span
+          className="inline-flex items-center gap-1 rounded border border-white/10 bg-black/20 px-1.5 py-1"
+          key={unit.key}
+          title={`${unit.label} x${unit.count.toLocaleString()}`}
+        >
+          {unit.asset ? <img alt="" className="h-6 w-6 rounded object-contain" loading="lazy" src={unit.asset} /> : null}
+          <span className="text-[11px] text-slate-300">{unit.label}</span>
+          <span className="text-[11px] font-semibold tabular-nums text-slate-100">x{unit.count.toLocaleString()}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ResourceSummary({ resources, title }: { resources: MissionResourceSnapshot | null; title: string }) {
+  return (
+    <section className="rounded border border-white/10 bg-[#070913]/60 p-3">
+      <h4 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{title}</h4>
+      <p className="mt-1 text-sm font-medium text-slate-200">{formatCompactResources(resources)}</p>
+    </section>
+  );
+}
+
+function compositionUnits(
+  rows: Array<{ id: number; count: number }> | undefined | null,
+  catalog: readonly { id: number; key: string; label: string }[],
+  assetByKey: Partial<Record<string, string>>,
+): UnitItem[] {
+  return (rows ?? [])
+    .filter((row) => row.count > 0)
+    .map((row, index) => {
+      const item = catalog.find((entry, catalogIndex) => (entry.id ?? catalogIndex) === row.id);
+      return {
+        key: item?.key ?? `id-${row.id}-${index}`,
+        label: item?.label ?? `ID ${row.id}`,
+        count: Math.trunc(row.count),
+        asset: item ? assetByKey[item.key] : undefined,
+      };
+    });
+}
+
+export function stationedDefenderCompositionUnits(
+  defenders: PublicStationedDefender[] | null | undefined,
+): UnitItem[] {
+  const counts = new Map<string, number>();
+  for (const defender of defenders ?? []) {
+    for (const [key, rawCount] of Object.entries(defender.ships)) {
+      const count = safeResourceNumber(rawCount);
+      if (count <= 0) continue;
+      counts.set(key, (counts.get(key) ?? 0) + count);
+    }
+  }
+  return shipCatalog
+    .map((ship) => ({
+      key: ship.key,
+      label: ship.label,
+      count: counts.get(ship.key) ?? 0,
+      asset: shipAssetByKey[ship.key],
+    }))
+    .filter((unit) => unit.count > 0);
+}
+
+function publicResourceSnapshot(target: Planet | undefined): MissionResourceSnapshot | null {
+  const publicResources = target?.publicState?.resources;
+  if (publicResources) {
+    return {
+      metal: safeResourceNumber(publicResources.metal),
+      crystal: safeResourceNumber(publicResources.crystal),
+      deuterium: safeResourceNumber(publicResources.deuterium),
+    };
+  }
+  if (!target?.resources) return null;
+  return {
+    metal: Math.max(0, Math.trunc(target.resources.metal)),
+    crystal: Math.max(0, Math.trunc(target.resources.crystal)),
+    deuterium: Math.max(0, Math.trunc(target.resources.deuterium)),
+  };
+}
+
+function projectedResourceSnapshot(
+  target: Planet | undefined,
+  current: MissionResourceSnapshot,
+  travelSeconds: number,
+): { resources: MissionResourceSnapshot; detail: string } {
+  const buildings = publicBuildingLevels(target);
+  if (!buildings || travelSeconds <= 0) {
+    return {
+      resources: current,
+      detail: "Projected arrival resources use the current public snapshot until public production data is available.",
+    };
+  }
+
+  const energyTechnologyLevel = publicResearchLevel(target, "energy");
+  const solarSatelliteCount = target?.publicState?.fleet?.find((row) => row.id === 9)?.count ?? 0;
+  const productionProfile = {
+    ...(target?.temperature.max != null ? { maxTemperature: target.temperature.max } : {}),
+    metalMultiplierBps: 10_000,
+    crystalMultiplierBps: 10_000,
+    deuteriumMultiplierBps: 10_000,
+  };
+  const production = productionPerHour(buildings, productionProfile, energyTechnologyLevel, solarSatelliteCount);
+  const caps = storageCaps(buildings);
+  const hours = Math.max(0, travelSeconds) / SECONDS_PER_HOUR;
+  return {
+    resources: {
+      metal: Math.min(caps.metal, current.metal + Math.floor(production.metal * hours)),
+      crystal: Math.min(caps.crystal, current.crystal + Math.floor(production.crystal * hours)),
+      deuterium: Math.min(caps.deuterium, current.deuterium + Math.floor(production.deuterium * hours)),
+    },
+    detail: "Projected arrival resources use public building/resource preview math and assume no new production, spending, transport, or combat changes before arrival.",
+  };
+}
+
+function publicBuildingLevels(target: Planet | undefined): Record<BuildingKey, number> | null {
+  const rows = target?.publicState?.buildings;
+  if (!rows) return null;
+  const buildings = Object.fromEntries(
+    Object.keys(buildingContractIds).map((key) => [key, 0]),
+  ) as Record<BuildingKey, number>;
+  for (const row of rows) {
+    const key = (Object.entries(buildingContractIds) as Array<[BuildingKey, number]>)
+      .find(([, id]) => id === row.id)?.[0];
+    if (key) buildings[key] = Math.max(0, Math.trunc(row.level));
+  }
+  return buildings;
+}
+
+function publicResearchLevel(target: Planet | undefined, key: "energy"): number {
+  const id = researchCatalog.find((entry) => entry.key === key)?.id;
+  if (id == null) return 0;
+  return target?.publicState?.research?.find((row) => row.id === id)?.level ?? 0;
+}
+
+function plunderableResources(resources: MissionResourceSnapshot): MissionResourceSnapshot {
+  return {
+    metal: Math.floor((resources.metal * RAID_PLUNDER_BPS) / BPS),
+    crystal: Math.floor((resources.crystal * RAID_PLUNDER_BPS) / BPS),
+    deuterium: Math.floor((resources.deuterium * RAID_PLUNDER_BPS) / BPS),
+  };
+}
+
+function missionShipsCombatPower(ships: MissionShips): number {
+  return missionShipOptions.reduce((total, option) => {
+    const count = Math.max(0, Math.trunc(ships[option.key] ?? 0));
+    const ship = shipCatalog.find((entry) => entry.key === option.key);
+    return total + count * (ship ? combatStatsPower(shipCombatStats(ship).rows) : 0);
+  }, 0);
+}
+
+function compositionCombatPower(
+  rows: Array<{ id: number; count: number }> | undefined | null,
+  kind: "ship" | "defense",
+): number {
+  return (rows ?? []).reduce((total, row) => {
+    const count = Math.max(0, Math.trunc(row.count));
+    if (kind === "ship") {
+      const ship = shipCatalog.find((entry) => entry.id === row.id);
+      return total + count * (ship ? combatStatsPower(shipCombatStats(ship).rows) : 0);
+    }
+    const defense = defenseCatalog.find((entry) => entry.id === row.id);
+    return total + count * (defense ? combatStatsPower(defenseCombatStats(defense).rows) : 0);
+  }, 0);
+}
+
+function stationedDefendersCombatPower(
+  defenders: PublicStationedDefender[] | null | undefined,
+): number {
+  return (defenders ?? []).reduce((total, defender) => {
+    return total + shipCatalog.reduce((shipTotal, ship) => {
+      const count = safeResourceNumber(defender.ships[ship.key]);
+      return shipTotal + count * combatStatsPower(shipCombatStats(ship).rows);
+    }, 0);
+  }, 0);
+}
+
+function combatStatsPower(rows: Array<{ label: string; value: number | string }>): number {
+  return rows.reduce((total, row) => {
+    if (typeof row.value !== "number") return total;
+    if (row.label === "Attack") return total + row.value;
+    if (row.label === "Shield") return total + row.value;
+    if (row.label === "Hull") return total + row.value / 10;
+    return total;
+  }, 0);
+}
+
+function commanderLabel(target: Planet | undefined): string {
+  return target?.occupiedBy?.ownerDisplayName
+    ?? target?.occupiedBy?.owner
+    ?? target?.owner
+    ?? "Open coordinate";
+}
+
+function allianceLabel(target: Planet | undefined): string {
+  const alliance = target?.occupiedBy?.alliance ?? target?.alliance;
+  if (!alliance) return "None";
+  return alliance.tag ? `${alliance.name} [${alliance.tag}]` : alliance.name;
+}
+
+function resourceLabel(key: ResourceKey): string {
+  return key === "metal" ? "Metal" : key === "crystal" ? "Crystal" : "Deuterium";
+}
+
+function formatCompactResources(resources: MissionResourceSnapshot | null): string {
+  if (!resources) return "Unknown";
+  return `${formatResourceAmount(resources.metal)} M / ${formatResourceAmount(resources.crystal)} C / ${formatResourceAmount(resources.deuterium)} D`;
+}
+
+function formatResourceAmount(value: number): string {
+  return Math.max(0, Math.trunc(value)).toLocaleString();
+}
+
+function safeResourceNumber(value: string | number | undefined): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
 }
 
 function ResourceField({

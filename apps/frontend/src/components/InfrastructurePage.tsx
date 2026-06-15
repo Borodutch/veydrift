@@ -138,7 +138,6 @@ export function InfrastructurePage({
           actions={onRefresh ? (
             <RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh infrastructure state" />
           ) : undefined}
-          description="Building levels and production are hidden until live infrastructure state loads."
           title="Infrastructure"
         />
         <InfrastructureLoadErrorPanel reason={initialLoadError} />
@@ -161,7 +160,6 @@ export function InfrastructurePage({
           ) : null}
           </>
         )}
-        description="Select a building to inspect real production, power, cost, and upgrade timing."
         title="Infrastructure"
       />
 
@@ -1015,7 +1013,7 @@ function compactEffect(
   if (effect.kind === "production") {
     if (!productionUpgrade) return fullResourceLabels[effect.resource];
 
-    return `${formatNumber(productionUpgrade.currentPerHour)}/h (${formatSigned(productionUpgrade.deltaPerHour)}/h)`;
+    return `${formatNumber(productionUpgrade.currentPerHour)}/h`;
   }
 
   if (effect.kind === "energy") {
@@ -1035,9 +1033,7 @@ function compactEffect(
   }
 
   if (effect.kind === "shipyard") {
-    return effect.unlocked
-      ? `x${formatNumber(effect.currentFactor)} (+${formatNumber(effect.relativeImprovementPercent)}%)`
-      : "Locked";
+    return effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Locked";
   }
 
   if (effect.kind === "researchSpeed") {
@@ -1056,5 +1052,5 @@ function compactEffect(
     return effect.currentFieldsAdded > 0 ? `+${formatNumber(effect.currentFieldsAdded)} fields` : "No expansion";
   }
 
-  return `x${formatNumber(effect.currentFactor)} (+${formatNumber(effect.relativeImprovementPercent)}%)`;
+  return `x${formatNumber(effect.currentFactor)}`;
 }

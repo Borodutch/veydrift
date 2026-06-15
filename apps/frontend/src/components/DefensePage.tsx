@@ -92,7 +92,6 @@ export function DefensePage({
   const [quantities, setQuantities] = useState<Record<string, ProductionQuantityInput>>({});
   const [localSelectedKey, setLocalSelectedKey] = useState<DefenseKey>("rocketLauncher");
   const selectedKey = selectedDefenseKey ?? localSelectedKey;
-  const shipyardLevel = defenseState?.shipyardLevel ?? 0;
   // VEY-KANEO-473: gate on the canonical settled-to-now balance (`resourcesAsOfNow`) the top bar
   // uses, falling back to the raw settled snapshot only when the accrued field is absent — so the
   // defense affordability number can never disagree with the bar.
@@ -105,11 +104,6 @@ export function DefensePage({
     <div className="grid gap-4">
       <PageHeader
         actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh defense state" />}
-        subtitle={defenseState?.homePlanetId
-          ? `Planet #${defenseState.homePlanetId} · Shipyard Level ${shipyardLevel}`
-          : productionAvailable
-            ? "On-chain VeydriftGame planet required for defense production"
-            : "Defense production contract unavailable on this deployment"}
         title="Defenses"
       />
 

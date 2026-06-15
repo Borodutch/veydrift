@@ -125,7 +125,6 @@ export function ResearchPage({
         actions={(
           <RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh research state" />
         )}
-        description="Select a technology to inspect real levels, prerequisites, cost, and on-chain action state."
         title="Research"
       />
 

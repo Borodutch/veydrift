@@ -127,6 +127,7 @@ export function MissionDetailPage({
           ) : null}
           <MissionFacts
             fleetVisibility={fleetVisibility}
+            reportOutcome={report?.outcome}
             hideFleetAndCargo={Boolean(report)}
             mission={mission}
             now={now}
@@ -195,6 +196,7 @@ function MissionFacts({
   now,
   onSelectCoordinates,
   onSelectPlayer,
+  reportOutcome,
 }: {
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   hideFleetAndCargo: boolean;
@@ -202,6 +204,7 @@ function MissionFacts({
   now: number;
   onSelectCoordinates: (coords: Coordinates) => void;
   onSelectPlayer: (wallet: string) => void;
+  reportOutcome?: BattleReport["outcome"] | undefined;
 }) {
   // The recall-cost row is authorized by the same wallet-scoped classification as the Recall button,
   // so the two never contradict each other (VEY-KANEO-424).
@@ -213,6 +216,7 @@ function MissionFacts({
         now={now}
         onSelectCoordinates={onSelectCoordinates}
         onSelectPlayer={onSelectPlayer}
+        reportOutcome={reportOutcome}
       />
       {/* When a battle report renders, the fleet and cargo are folded into the attacker side of the
           report, so the standalone panel is suppressed to avoid duplicating it. Non-combat / unresolved
@@ -245,20 +249,23 @@ function MissionRoute({
   now,
   onSelectCoordinates,
   onSelectPlayer,
+  reportOutcome,
 }: {
   mission: FleetMissionSummary;
   now: number;
   onSelectCoordinates: (coords: Coordinates) => void;
   onSelectPlayer: (wallet: string) => void;
+  reportOutcome?: BattleReport["outcome"] | undefined;
 }) {
   // The mission carries its own origin/target planet refs, so an empty shared lookup is enough —
   // `missionEndpoint` resolves the name, coordinates, commander, and planet art straight from them.
   const origin = missionEndpoint(mission, "origin", EMPTY_PLANET_LOOKUP);
   const target = missionEndpoint(mission, "target", EMPTY_PLANET_LOOKUP);
   const noFleetReturned = isNoFleetReturned(mission);
-  const originTiming = noFleetReturned
+  const defeatedAttackTiming = defeatedAttackOriginTiming(mission, reportOutcome);
+  const originTiming = defeatedAttackTiming ?? (noFleetReturned
     ? { label: "Return", value: "Completed, no fleet returned" }
-    : missionLegTiming(mission.returnAt, now, "Return", "Returned");
+    : missionLegTiming(mission.returnAt, now, "Return", "Returned"));
   const targetTiming = missionLegTiming(mission.arrivalAt, now, "Arrival", "Arrived");
 
   return (
@@ -407,7 +414,7 @@ function MissionBattleReport({
                         {stationedDefenders.map((defender) => (
                           <div className="grid gap-1" key={defender.missionId}>
                             <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-violet-200">
-                              {defender.defenderDisplayName ?? shortAddress(defender.defender)} until {stationedDefenderHoldLabel(defender.holdUntil, now)}
+                              {defender.defenderDisplayName ?? shortAddress(defender.defender)}
                             </span>
                             <UnitIcons units={shipUnits(defender.ships)} />
                           </div>
@@ -644,6 +651,18 @@ function isNoFleetReturned(mission: FleetMissionSummary): boolean {
   return !["Outbound", "Returning", "Recalled"].includes(mission.status) && Object.values(mission.ships).every((value) => Number(value) <= 0);
 }
 
+function defeatedAttackOriginTiming(
+  mission: FleetMissionSummary,
+  reportOutcome: BattleReport["outcome"] | undefined,
+): { label: string | null; value: string; subtext?: string } | null {
+  if (reportOutcome !== "DefenderWin" || !["Attack", "AcsAttack"].includes(mission.missionType)) {
+    return null;
+  }
+  return timestampToMs(mission.arrivalAt)
+    ? { label: null, value: "Defeated", subtext: formatCompactMissionTime(mission.arrivalAt) }
+    : { label: null, value: "Defeated" };
+}
+
 // VEY-KANEO-409: the recall cost only matters while a fleet is still in flight — it can be recalled
 // (Outbound), is on the way out (Outbound), or has already been recalled and is heading home
 // (Recalled). Once a mission has finished without being recalled, the row only ever reads
@@ -807,11 +826,6 @@ function compositionUnits(
         asset: item ? assetByKey[item.key] : undefined,
       };
     });
-}
-
-function stationedDefenderHoldLabel(holdUntil: string, now: number): string {
-  const holdUntilMs = timestampToMs(holdUntil);
-  return holdUntilMs === undefined ? formatUserTimestamp(Number(holdUntil) * 1_000) : formatDurationUntil(holdUntilMs, now);
 }
 
 const shipLabels: Record<string, string> = {

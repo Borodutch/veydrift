@@ -171,7 +171,6 @@ export function RiftPageHeader({
   return (
     <PageHeader
       actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh Rift state" />}
-      subtitle="Move open-market resource tokens into your empire instantly, or lock in-game resources for a 30-day Veydrift withdrawal window."
       title="Rift Stabilizer"
     />
   );

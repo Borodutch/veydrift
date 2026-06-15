@@ -471,7 +471,7 @@ describe("Infrastructure page display helpers", () => {
     });
   });
 
-  test("restores backend-anchored mine production deltas in catalog cards", () => {
+  test("keeps catalog cards to current production without next-level deltas", () => {
     const state = {
       ...createInitialPlayableState(1_000),
       buildings: {
@@ -486,7 +486,7 @@ describe("Infrastructure page display helpers", () => {
       "crystalMine",
       undefined,
       { metal: 0, crystal: 30, deuterium: 0 },
-    )).toBe("30/h (+26/h)");
+    )).toBe("30/h");
   });
 
   test("shows Robotics Factory as a Veydrift construction-time divisor", () => {
@@ -521,7 +521,7 @@ describe("Infrastructure page display helpers", () => {
     });
   });
 
-  test("shows Shipyard build-speed deltas in details, cards, and level rows", () => {
+  test("shows Shipyard build-speed deltas in details and level rows but not cards", () => {
     const state = createInitialPlayableState(1_000);
     const buildings = {
       ...state.buildings,
@@ -543,14 +543,14 @@ describe("Infrastructure page display helpers", () => {
       next: "x3",
       value: "x2",
     });
-    expect(infrastructureCatalogStatusText({ ...state, buildings }, "shipyard")).toBe("x2 (+50%)");
+    expect(infrastructureCatalogStatusText({ ...state, buildings }, "shipyard")).toBe("x2");
     expect(modalText).toContain("Shipyard levels");
     expect(modalText).toContain("Effect");
     expect(modalText).toContain("x2 ship speed (+100% faster)");
     expect(modalText).toContain("x3 ship speed (+50% faster)");
   });
 
-  test("shows Nanite Factory as construction-speed deltas, not generic facility levels", () => {
+  test("shows Nanite Factory as construction-speed deltas outside compact cards", () => {
     const state = createInitialPlayableState(1_000);
     const buildings = {
       ...state.buildings,
@@ -572,7 +572,7 @@ describe("Infrastructure page display helpers", () => {
       next: "x4",
       value: "x2",
     });
-    expect(infrastructureCatalogStatusText({ ...state, buildings }, "naniteFactory")).toBe("x2 (+100%)");
+    expect(infrastructureCatalogStatusText({ ...state, buildings }, "naniteFactory")).toBe("x2");
     expect(modalText).toContain("Nanite Factory levels");
     expect(modalText).toContain("Effect");
     expect(modalText).toContain("x2 construction speed (+100% faster)");

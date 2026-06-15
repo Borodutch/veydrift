@@ -126,7 +126,7 @@ describe("Mission Control battle reports", () => {
     })).join(" ");
 
     expect(text).toContain("Mission Control");
-    expect(text).toContain("Watch inbound attacks");
+    expect(text).not.toContain("Watch inbound attacks");
     // "Hostile inbound" persists as the active-row direction label, not as a summary stat card.
     expect(text).toContain("Hostile inbound");
     // The top summary stat-card row (Active missions / Due resolvers / Hostile inbound / Returns) is removed.
@@ -661,6 +661,57 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Ship classes");
     // VEY-380: the page URL is the shareable public URL, so the redundant "Share URL" field is dropped.
     expect(text).not.toContain("Share URL");
+  });
+
+  test("VEY-KANEO-508: defender-victory report shows stationed defender name without until-ready suffix and marks route defeated", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: {
+        ...mission("721", "Attack", "Returned", "0x1111111111111111111111111111111111111111", "7", "9", now - 120_000),
+        originPlanet: planetReference("7", "0x1111111111111111111111111111111111111111", "Attacker", "1:2:3"),
+        targetPlanet: planetReference("9", "0x3333333333333333333333333333333333333333", "Defender", "4:5:6"),
+      },
+      battleReport: {
+        ...battleReport("721"),
+        outcome: "DefenderWin",
+      },
+      defenderPlanetState: {
+        fleet: [],
+        defenses: [],
+        stationedDefenders: [
+          {
+            missionId: "defender-1",
+            defender: "0x9999999999999999999999999999999999999999",
+            defenderDisplayName: "ILLUSIVE MAN",
+            ships: { smallCargo: "2" },
+            holdUntil: Math.floor(now / 1_000).toString(),
+            allianceDepotLevel: 1,
+          },
+        ],
+      },
+    }))).join(" ");
+
+    expect(text).toContain("Defender victory");
+    expect(text).toContain("Defeated");
+    expect(text).not.toContain("Returned");
+    expect(text).toContain("Stationed defenders");
+    expect(text).toContain("ILLUSIVE MAN");
+    expect(text).not.toContain("ILLUSIVE MAN until");
+    expect(text).not.toContain("until Ready");
+    expect(text).toContain("Small Cargo ×2");
+  });
+
+  test("VEY-KANEO-508: normal returned attacker-win report keeps the returned route label", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: mission("722", "Attack", "Returned", "0x1111111111111111111111111111111111111111", "7", "9", now - 120_000),
+      battleReport: battleReport("722"),
+      defenderPlanetState: { fleet: [], defenses: [] },
+    }))).join(" ");
+
+    expect(text).toContain("Attacker victory");
+    expect(text).toContain("Returned");
+    expect(text).not.toContain("Defeated");
   });
 
   test("VEY-KANEO-427: hides the disabled Resolve order while an outbound mission is still in flight", () => {

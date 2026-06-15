@@ -186,7 +186,7 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     expect(text).toContain("Mission Control");
-    expect(text).toContain("Watch inbound attacks");
+    expect(text).not.toContain("Watch inbound attacks");
     // The top summary stat-card row was removed; the lists below convey the same counts.
     expect(text).not.toContain("Active missions 3");
     expect(text).not.toContain("Due resolvers");
