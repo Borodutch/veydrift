@@ -251,6 +251,7 @@ export type BuildingEffectMetrics =
       kind: "shipyard";
       currentFactor: number;
       nextFactor: number;
+      relativeImprovementPercent: number;
       unlocked: boolean;
       nextUnlocked: boolean;
     }
@@ -1706,9 +1707,13 @@ export function buildingEffectMetrics(
     };
   }
 
-  if (key === "roboticsFactory") {
-    const currentFactor = buildings.roboticsFactory + 1;
-    const nextFactor = nextBuildings.roboticsFactory + 1;
+  if (key === "roboticsFactory" || key === "naniteFactory") {
+    const currentFactor = key === "naniteFactory"
+      ? 2 ** buildings.naniteFactory
+      : buildings.roboticsFactory + 1;
+    const nextFactor = key === "naniteFactory"
+      ? 2 ** nextBuildings.naniteFactory
+      : nextBuildings.roboticsFactory + 1;
 
     return {
       kind: "constructionSpeed",
@@ -1719,10 +1724,14 @@ export function buildingEffectMetrics(
   }
 
   if (key === "shipyard") {
+    const currentFactor = Math.max(1, buildings.shipyard + 1);
+    const nextFactor = nextBuildings.shipyard + 1;
+
     return {
       kind: "shipyard",
-      currentFactor: Math.max(1, buildings.shipyard + 1),
-      nextFactor: nextBuildings.shipyard + 1,
+      currentFactor,
+      nextFactor,
+      relativeImprovementPercent: Math.round(((nextFactor / currentFactor) - 1) * 100),
       unlocked: buildings.shipyard > 0,
       nextUnlocked: nextBuildings.shipyard > 0,
     };
