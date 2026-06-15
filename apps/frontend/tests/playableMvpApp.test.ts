@@ -27,13 +27,10 @@ import {
   overviewResearchCompletionUnavailableReasonFor,
   preserveActiveResearchQueue,
   preserveActiveResearchState,
-  productionStartBlockedReasonFor,
-  readyProductionQueueReconcileCount,
   refreshedInfrastructureUnavailableReasonFor,
   refreshedInfrastructureUpgradeUnavailableReasonFor,
   researchCompletionUnavailableReasonFor,
   researchStateWithFallbackQueue,
-  isProductionQueueReadyToReconcile,
   researchStartUnavailableReasonAfterLiveRevalidation,
   researchStartUnavailableReasonFor,
   researchStateForCompletionRevalidation,
@@ -547,7 +544,6 @@ describe("Playable MVP app display helpers", () => {
     expect(researchStartUnavailableReasonFor({
       canTransact: true,
       knownResearchQueue: knownQueue,
-      now: 1_700_000_000_000,
       researchState: next,
     })).toBe("Another research is already active. Finish or refresh the active research before starting a new one.");
   });
@@ -570,7 +566,6 @@ describe("Playable MVP app display helpers", () => {
         calls.push(["queues", ...args]);
         return Promise.resolve(latestQueues);
       }) as never,
-      now: 1_700_000_000_000,
     });
 
     expect(result).toEqual({
@@ -594,62 +589,6 @@ describe("Playable MVP app display helpers", () => {
     ]);
   });
 
-  test("allows research start preflight when the active research queue is ready to reconcile", async () => {
-    const readyResearch = activeResearchQueue({ itemId: 0, targetLevel: 2 });
-    const latestResearch = researchState({ queue: readyResearch });
-    const latestQueues = walletQueues({ research: readyResearch });
-
-    const result = await researchStartUnavailableReasonAfterLiveRevalidation({
-      account: "0x2222222222222222222222222222222222222222",
-      activePlanetId: "7",
-      apiBaseUrl: "https://api.test",
-      fallback: researchState({ queue: readyResearch }),
-      loadResearchState: (() => Promise.resolve(latestResearch)) as never,
-      loadWalletQueues: (() => Promise.resolve(latestQueues)) as never,
-      now: 1_700_000_600_000,
-    });
-
-    expect(result.unavailableReason).toBeUndefined();
-  });
-
-  test("classifies ready production queues for pre-start reconciliation", () => {
-    const readyShipQueue = buildingQueue({
-      kind: "ship",
-      itemId: 9,
-      quantity: 3,
-      readyAt: "1700000000",
-      backlog: [
-        buildingQueue({ kind: "ship", itemId: 1, quantity: 1, readyAt: "1700000000" }),
-        buildingQueue({ kind: "ship", itemId: 2, quantity: 1, readyAt: "1700001200" }),
-      ],
-    });
-
-    expect(isProductionQueueReadyToReconcile(readyShipQueue, 1_700_000_000_000)).toBe(true);
-    expect(readyProductionQueueReconcileCount(readyShipQueue, 1_700_000_000_000)).toBe(2);
-    expect(productionStartBlockedReasonFor({
-      now: 1_700_000_000_000,
-      queue: readyShipQueue,
-      queueLabel: "Ship production",
-    })).toBeUndefined();
-  });
-
-  test("blocks new production starts while an active queue is not ready", () => {
-    const activeQueue = buildingQueue({
-      kind: "ship",
-      itemId: 9,
-      quantity: 3,
-      readyAt: "1700000600",
-    });
-
-    expect(isProductionQueueReadyToReconcile(activeQueue, 1_700_000_000_000)).toBe(false);
-    expect(readyProductionQueueReconcileCount(activeQueue, 1_700_000_000_000)).toBe(0);
-    expect(productionStartBlockedReasonFor({
-      now: 1_700_000_000_000,
-      queue: activeQueue,
-      queueLabel: "Ship production",
-    })).toBe("Ship production is still in progress. Wait for it to finish before starting a new queue.");
-  });
-
   test("keeps research start preflight blocked when live state transiently omits a known active queue", async () => {
     const latestResearch = researchState({ queue: null });
     const latestQueues = walletQueues({ research: null });
@@ -663,7 +602,6 @@ describe("Playable MVP app display helpers", () => {
       knownResearchQueue: knownQueue,
       loadResearchState: (() => Promise.resolve(latestResearch)) as never,
       loadWalletQueues: (() => Promise.resolve(latestQueues)) as never,
-      now: 1_700_000_000_000,
     });
 
     expect(result.unavailableReason).toBe("Another research is already active. Finish or refresh the active research before starting a new one.");
