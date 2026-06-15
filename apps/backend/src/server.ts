@@ -30,6 +30,7 @@ import {
   type RpcLog,
   type SettledPlanetEvent,
   type ShipyardState,
+  type StationedDefenderSummary,
   VeydriftGameReader
 } from "./evm";
 import { highscoreCategories, highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
@@ -432,7 +433,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             // indexer tracks the target planet's ship/defense composition (ShipCountChanged + defense
             // events), so the battle report can show real composition instead of a blanket caveat.
             // Null when the target planet is not charted in the indexed read model.
-            defenderPlanetState: defenderPlanetStateForReport(indexer, battleReport),
+            defenderPlanetState: defenderPlanetStateForReport(
+              indexer,
+              battleReport,
+              battleReport ? indexer.fleetMission(battleReport.missionId) : mission
+            ),
             source: indexedSource
           },
           { headers: indexedStateHeaders(indexedStateLabel(snapshot)) }
@@ -1616,14 +1621,20 @@ function occupiedPlanetRef(
 // genuinely cannot be derived and the frontend keeps a precise caveat instead of fabricating data.
 function defenderPlanetStateForReport(
   indexer: SettlementIndexer,
-  report: ReturnType<SettlementIndexer["battleReport"]>
-): { fleet: Array<{ id: number; count: number }>; defenses: Array<{ id: number; count: number }> } | null {
+  report: ReturnType<SettlementIndexer["battleReport"]>,
+  mission: FleetMissionSummary | null
+): {
+  fleet: Array<{ id: number; count: number }>;
+  defenses: Array<{ id: number; count: number }>;
+  stationedDefenders: StationedDefenderSummary[];
+} | null {
   if (!report) return null;
   const planet = indexer.planet(report.targetPlanetId);
   if (!planet) return null;
   return {
     fleet: indexer.shipRows(planet.planetId).map(({ id, count }) => ({ id, count })).filter((row) => row.count > 0),
-    defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })).filter((row) => row.count > 0)
+    defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })).filter((row) => row.count > 0),
+    stationedDefenders: indexer.stationedDefendersForBattle(mission, report)
   };
 }
 
@@ -1635,6 +1646,7 @@ function publicPlanetStateRef(
   buildings: Array<{ id: number; level: number }>;
   fleet: Array<{ id: number; count: number }>;
   defenses: Array<{ id: number; count: number }>;
+  stationedDefenders: StationedDefenderSummary[];
   research: Array<{ id: number; level: number }>;
   queues: {
     building: PlayerQueues["building"];
@@ -1654,6 +1666,7 @@ function publicPlanetStateRef(
     buildings: buildings.map(({ id, level }) => ({ id, level })),
     fleet: ships.map(({ id, count }) => ({ id, count })),
     defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
+    stationedDefenders: indexer.stationedDefendersForPlanet(planet.planetId),
     research: indexer.technologyRows(planet.owner).map(({ id, level }) => ({ id, level })),
     queues: {
       building: indexer.planetQueue(planet.planetId, "building"),

@@ -30,6 +30,7 @@ export interface PublicPlanetState {
   buildings?: Array<{ id: number; level: number }> | null;
   fleet?: Array<{ id: number; count: number }> | null;
   defenses?: Array<{ id: number; count: number }> | null;
+  stationedDefenders?: PublicStationedDefender[] | null;
   research?: Array<{ id: number; level: number }> | null;
   queues?: {
     building?: PublicQueueState | null;
@@ -37,6 +38,15 @@ export interface PublicPlanetState {
     ship?: PublicQueueState | null;
     research?: PublicQueueState | null;
   } | null;
+}
+
+export interface PublicStationedDefender {
+  missionId: string;
+  defender: string;
+  defenderDisplayName: string | null;
+  ships: Record<string, string>;
+  holdUntil: string;
+  allianceDepotLevel: number;
 }
 
 export interface PublicQueueState {

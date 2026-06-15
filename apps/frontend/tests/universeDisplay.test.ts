@@ -37,6 +37,7 @@ import {
   publicProductionRows,
   publicResourceRows,
   publicStateRows,
+  publicStationedDefenderRows,
   publicSignalRows,
   shouldShowPlanetDetailInitialLoader
 } from "../src/components/PlanetDetail";
@@ -193,6 +194,22 @@ describe("tester universe display data", () => {
       label: "Solar Satellite",
       value: "5",
     });
+    expect(publicStationedDefenderRows([
+      {
+        missionId: "41",
+        defender: "0x4444444444444444444444444444444444444444",
+        defenderDisplayName: "Ally Shield",
+        ships: { lightFighter: "15" },
+        holdUntil: "1770003600",
+        allianceDepotLevel: 2,
+      },
+    ])).toEqual([
+      expect.objectContaining({
+        label: "Ally Shield",
+        value: expect.stringContaining("15 ships until"),
+        tone: "accent",
+      }),
+    ]);
     expect(publicQueueRows(planet)).toContainEqual({
       label: "Building",
       value: "Metal Mine Level 13",
