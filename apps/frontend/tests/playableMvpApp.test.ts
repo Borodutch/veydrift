@@ -36,6 +36,7 @@ import {
   researchStateForCompletionRevalidation,
   researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
+  raidTargetPlanetForMission,
   missionOriginResources,
   shipyardStateForMissionActions,
   shipCompletionPlanetIdFor,
@@ -47,6 +48,7 @@ import {
   infrastructureUpgradeButtonLabel,
 } from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
+import type { RaidTarget } from "../src/raidTargetFinder";
 import type { ChainDefenseState, ChainInfrastructureState, ChainResearchState, ChainShipyardState, FleetMissionSummary, PlayerQueuesResponse, QueueStateResponse } from "../src/walletFlow";
 
 describe("Playable MVP app display helpers", () => {
@@ -428,6 +430,30 @@ describe("Playable MVP app display helpers", () => {
       spendableResources: undefined,
       planetResources: undefined,
     })).toBeUndefined();
+  });
+
+  test("carries Raid Finder target intel into attack mission public state", () => {
+    const target = raidTargetPlanetForMission(raidTarget({
+      planetId: "50",
+      name: "Border Foundry",
+      coordinates: { galaxy: 7, system: 41, position: 6 },
+      raidableResources: { metal: "1200", crystal: "450", deuterium: "125" },
+      loot: 1775,
+      shipUnits: [{ id: 4, count: 3, power: 900 }],
+      defenseUnits: [{ id: 0, count: 12, power: 1200 }],
+      combatPower: 2100,
+    }));
+
+    expect(target.id).toBe("50");
+    expect(target.name).toBe("Border Foundry");
+    expect(target.publicState?.resources).toEqual({
+      metal: "2400",
+      crystal: "900",
+      deuterium: "250",
+    });
+    expect(target.resources).toMatchObject({ metal: 2400, crystal: 900, deuterium: 250 });
+    expect(target.publicState?.fleet).toEqual([{ id: 4, count: 3 }]);
+    expect(target.publicState?.defenses).toEqual([{ id: 0, count: 12 }]);
   });
 
   test("blocks research completion transactions until the active queue is ready", () => {
@@ -2319,6 +2345,39 @@ function buildingQueue(overrides: Partial<QueueStateResponse> = {}): QueueStateR
     kind: "building",
     readyAt: "1700000000",
     targetLevel: 2,
+    ...overrides,
+  };
+}
+
+function raidTarget(overrides: Partial<RaidTarget> = {}): RaidTarget {
+  return {
+    planetId: "9",
+    name: "Raid target",
+    coordinates: { galaxy: 1, system: 2, position: 3 },
+    archetype: "temperate-ocean",
+    owner: "0x3333333333333333333333333333333333333333",
+    ownerDisplayName: "Raider",
+    alliance: null,
+    distance: 42,
+    loot: 0,
+    grossLoot: 0,
+    raidableResources: null,
+    combatPower: 0,
+    shipPower: 0,
+    shipCount: 0,
+    shipUnits: [],
+    combatShipUnits: [],
+    defensePower: 0,
+    defenseCount: 0,
+    defenseUnits: [],
+    protection: {
+      isProtected: false,
+      isSameAlliance: false,
+      blockedReason: "none",
+      blockedReasonLabel: null,
+      defenderInactive: false,
+    },
+    inbound: { count: 0, nextArrivalAtMs: null },
     ...overrides,
   };
 }

@@ -292,6 +292,74 @@ export type OnChainRefreshPlan = {
   applyResourceState: boolean;
 };
 
+function raidTargetFullResources(target: RaidTarget): { metal: string; crystal: string; deuterium: string } | null {
+  const raidableResources = target.raidableResources;
+  if (!raidableResources) return null;
+  const metal = safeResourceNumber(raidableResources.metal) ?? 0;
+  const crystal = safeResourceNumber(raidableResources.crystal) ?? 0;
+  const deuterium = safeResourceNumber(raidableResources.deuterium) ?? 0;
+  return {
+    metal: String(Math.max(0, Math.trunc(metal * 2))),
+    crystal: String(Math.max(0, Math.trunc(crystal * 2))),
+    deuterium: String(Math.max(0, Math.trunc(deuterium * 2))),
+  };
+}
+
+export function raidTargetPlanetForMission(target: RaidTarget): Planet {
+  const resources = raidTargetFullResources(target);
+  const hasPublicIntel = Boolean(
+    resources
+      || target.shipUnits.length > 0
+      || target.defenseUnits.length > 0
+      || target.combatPower > 0
+      || target.loot > 0
+  );
+
+  return {
+    id: target.planetId,
+    name: target.name?.trim() || `Planet ${target.planetId}`,
+    type: target.archetype,
+    image: planetImageForType(target.archetype),
+    position: target.coordinates.position,
+    galaxy: target.coordinates.galaxy,
+    system: target.coordinates.system,
+    owner: target.owner,
+    ownerId: target.owner,
+    alliance: target.alliance,
+    occupiedBy: {
+      planetId: target.planetId,
+      owner: target.owner,
+      ownerDisplayName: target.ownerDisplayName,
+      alliance: target.alliance,
+    },
+    debrisField: null,
+    moonChance: null,
+    publicState: hasPublicIntel
+      ? {
+          resources,
+          buildings: null,
+          fleet: target.shipUnits.map((unit) => ({ id: unit.id, count: unit.count })),
+          defenses: target.defenseUnits.map((unit) => ({ id: unit.id, count: unit.count })),
+          stationedDefenders: null,
+          research: null,
+          queues: null,
+        }
+      : null,
+    resources: resources
+      ? {
+          metal: safeResourceNumber(resources.metal) ?? 0,
+          crystal: safeResourceNumber(resources.crystal) ?? 0,
+          deuterium: safeResourceNumber(resources.deuterium) ?? 0,
+          energy: 0,
+        }
+      : { metal: 0, crystal: 0, deuterium: 0, energy: 0 },
+    temperature: { min: 0, max: 0 },
+    diameter: 0,
+    fields: 0,
+    hasMoon: false,
+  };
+}
+
 export function beginRefreshRequest(gate: RefreshFreshnessGate): number {
   gate.current += 1;
   return gate.current;
@@ -4358,33 +4426,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setPendingGalaxyMission({ action, target, coords });
   }, []);
 
-  const raidTargetPlanetForMission = useCallback((target: RaidTarget): Planet => ({
-    id: target.planetId,
-    name: target.name?.trim() || `Planet ${target.planetId}`,
-    type: target.archetype,
-    image: planetImageForType(target.archetype),
-    position: target.coordinates.position,
-    galaxy: target.coordinates.galaxy,
-    system: target.coordinates.system,
-    owner: target.owner,
-    ownerId: target.owner,
-    alliance: target.alliance,
-    occupiedBy: {
-      planetId: target.planetId,
-      owner: target.owner,
-      ownerDisplayName: target.ownerDisplayName,
-      alliance: target.alliance,
-    },
-    debrisField: null,
-    moonChance: null,
-    publicState: null,
-    resources: { metal: 0, crystal: 0, deuterium: 0, energy: 0 },
-    temperature: { min: 0, max: 0 },
-    diameter: 0,
-    fields: 0,
-    hasMoon: false,
-  }), []);
-
   const raidFinderAttackAction = useCallback((target: RaidTarget): GalaxyAction => {
     const planet = raidTargetPlanetForMission(target);
     return galaxyActionsForSlot({
@@ -4407,7 +4448,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       mission: "attack",
       reason: "Attack is unavailable for this target.",
     };
-  }, [account, activePlanetId, defenseState, onChainSettlement?.homePlanetId, raidTargetPlanetForMission, shipyardState]);
+  }, [account, activePlanetId, defenseState, onChainSettlement?.homePlanetId, shipyardState]);
 
   const raidFinderAttackActionState = useCallback((target: RaidTarget): RaidTargetAttackAction => {
     const action = raidFinderAttackAction(target);
@@ -4418,7 +4459,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const handleRaidFinderAttack = useCallback((target: RaidTarget) => {
     handleGalaxyAction(raidFinderAttackAction(target), raidTargetPlanetForMission(target), target.coordinates);
-  }, [handleGalaxyAction, raidFinderAttackAction, raidTargetPlanetForMission]);
+  }, [handleGalaxyAction, raidFinderAttackAction]);
 
   const handleConfirmGalaxyMission = useCallback((draft: MissionLaunchDraft) => {
     const pending = pendingGalaxyMission;

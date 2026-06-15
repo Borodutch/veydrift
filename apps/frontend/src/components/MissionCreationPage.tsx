@@ -335,22 +335,29 @@ export function MissionCreationPage({
 
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <section className="grid gap-3">
-          <TargetIntelCard coords={coords} target={target} />
-
           {lootRatioSupported ? (
-            <AttackOutcomePanel
+            <AttackIntelPanel
               battleForecast={battleForecast}
+              coords={coords}
               lootableAtArrival={resourceIntel.projectedArrivalLootable}
               maxLootForecast={maxLootForecast}
+              resourceIntel={resourceIntel}
+              stationedDefenderUnits={stationedDefenderUnits}
+              target={target}
+              targetDefenseUnits={targetDefenseUnits}
+              targetFleetUnits={targetFleetUnits}
             />
-          ) : null}
-
-          <DestinationIntelPanel
-            resourceIntel={resourceIntel}
-            stationedDefenderUnits={stationedDefenderUnits}
-            targetDefenseUnits={targetDefenseUnits}
-            targetFleetUnits={targetFleetUnits}
-          />
+          ) : (
+            <>
+              <TargetIntelCard coords={coords} target={target} />
+              <DestinationIntelPanel
+                resourceIntel={resourceIntel}
+                stationedDefenderUnits={stationedDefenderUnits}
+                targetDefenseUnits={targetDefenseUnits}
+                targetFleetUnits={targetFleetUnits}
+              />
+            </>
+          )}
 
           {stationedDefenderRows.length > 0 ? (
             <div className="rounded border border-violet-300/25 bg-violet-300/10 px-3 py-2 text-sm text-violet-100">
@@ -897,15 +904,38 @@ export function ShipQuantityRow({
 export function TargetIntelCard({ coords, target }: { coords: Coordinates; target: Planet | undefined }) {
   return (
     <div className="grid gap-3 rounded-md border border-white/10 bg-white/[0.04] p-3 sm:grid-cols-[5rem_minmax(0,1fr)]">
+      <TargetIdentityContent coords={coords} target={target} />
+    </div>
+  );
+}
+
+function TargetIdentityContent({
+  compact = false,
+  coords,
+  target,
+}: {
+  compact?: boolean | undefined;
+  coords: Coordinates;
+  target: Planet | undefined;
+}) {
+  const imageClassName = compact
+    ? "h-16 w-16 rounded-md border border-white/10 object-cover"
+    : "h-16 w-16 rounded-md border border-white/10 object-cover sm:h-20 sm:w-20";
+  const placeholderClassName = compact
+    ? "grid h-16 w-16 place-items-center rounded-md border border-white/10 bg-white/[0.03] text-xs text-slate-500"
+    : "grid h-16 w-16 place-items-center rounded-md border border-white/10 bg-white/[0.03] text-xs text-slate-500 sm:h-20 sm:w-20";
+
+  return (
+    <>
       {target?.image ? (
         <img
           alt=""
-          className="h-16 w-16 rounded-md border border-white/10 object-cover sm:h-20 sm:w-20"
+          className={imageClassName}
           loading="lazy"
           src={target.image}
         />
       ) : (
-        <div className="grid h-16 w-16 place-items-center rounded-md border border-white/10 bg-white/[0.03] text-xs text-slate-500 sm:h-20 sm:w-20">
+        <div className={placeholderClassName}>
           No image
         </div>
       )}
@@ -921,7 +951,52 @@ export function TargetIntelCard({ coords, target }: { coords: Coordinates; targe
           <TargetFact label="Planet ID" value={target?.id ? `#${target.id}` : "Uncharted"} />
         </div>
       </div>
-    </div>
+    </>
+  );
+}
+
+export function AttackIntelPanel({
+  battleForecast,
+  coords,
+  lootableAtArrival,
+  maxLootForecast,
+  resourceIntel,
+  stationedDefenderUnits,
+  target,
+  targetDefenseUnits,
+  targetFleetUnits,
+}: {
+  battleForecast: BattleForecastState;
+  coords: Coordinates;
+  lootableAtArrival: MissionResourceSnapshot | null;
+  maxLootForecast: MissionResourceSnapshot;
+  resourceIntel: TargetResourceIntel;
+  stationedDefenderUnits: UnitItem[];
+  target: Planet | undefined;
+  targetDefenseUnits: UnitItem[];
+  targetFleetUnits: UnitItem[];
+}) {
+  return (
+    <section className="grid gap-3 rounded-md border border-white/10 bg-white/[0.04] p-3">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:items-start">
+        <div className="grid gap-2 sm:grid-cols-[4rem_minmax(0,1fr)]">
+          <TargetIdentityContent compact coords={coords} target={target} />
+        </div>
+        <AttackOutcomeContent
+          battleForecast={battleForecast}
+          lootableAtArrival={lootableAtArrival}
+          maxLootForecast={maxLootForecast}
+        />
+      </div>
+      <div className="border-t border-white/10 pt-3">
+        <DestinationIntelContent
+          resourceIntel={resourceIntel}
+          stationedDefenderUnits={stationedDefenderUnits}
+          targetDefenseUnits={targetDefenseUnits}
+          targetFleetUnits={targetFleetUnits}
+        />
+      </div>
+    </section>
   );
 }
 
@@ -936,6 +1011,26 @@ export function AttackOutcomePanel({
 }) {
   return (
     <section className="grid gap-2 rounded-md border border-white/10 bg-black/15 p-3">
+      <AttackOutcomeContent
+        battleForecast={battleForecast}
+        lootableAtArrival={lootableAtArrival}
+        maxLootForecast={maxLootForecast}
+      />
+    </section>
+  );
+}
+
+function AttackOutcomeContent({
+  battleForecast,
+  lootableAtArrival,
+  maxLootForecast,
+}: {
+  battleForecast: BattleForecastState;
+  lootableAtArrival: MissionResourceSnapshot | null;
+  maxLootForecast: MissionResourceSnapshot;
+}) {
+  return (
+    <div className="grid gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Probable outcome</h3>
@@ -955,7 +1050,7 @@ export function AttackOutcomePanel({
         <ResourceSummary title="Max loot at arrival" resources={maxLootForecast} />
         <ResourceSummary title="Lootable at arrival" resources={lootableAtArrival} />
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -972,6 +1067,29 @@ export function DestinationIntelPanel({
 }) {
   return (
     <section className="grid gap-2 rounded-md border border-white/10 bg-black/15 p-3">
+      <DestinationIntelContent
+        resourceIntel={resourceIntel}
+        stationedDefenderUnits={stationedDefenderUnits}
+        targetDefenseUnits={targetDefenseUnits}
+        targetFleetUnits={targetFleetUnits}
+      />
+    </section>
+  );
+}
+
+function DestinationIntelContent({
+  resourceIntel,
+  stationedDefenderUnits,
+  targetDefenseUnits,
+  targetFleetUnits,
+}: {
+  resourceIntel: TargetResourceIntel;
+  stationedDefenderUnits: UnitItem[];
+  targetDefenseUnits: UnitItem[];
+  targetFleetUnits: UnitItem[];
+}) {
+  return (
+    <div className="grid gap-2">
       <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Destination intel</h3>
       <div className="grid gap-2 lg:grid-cols-2 xl:grid-cols-3">
         <UnitSection emptyLabel="No fleet is stationed here." title="Destination Fleet" units={targetFleetUnits} />
@@ -986,7 +1104,7 @@ export function DestinationIntelPanel({
         <ResourceSummary title="Lootable now" resources={resourceIntel.currentLootable} />
         <ResourceSummary title="Lootable at arrival" resources={resourceIntel.projectedArrivalLootable} />
       </div>
-    </section>
+    </div>
   );
 }
 

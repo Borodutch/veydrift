@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  AttackIntelPanel,
   AttackOutcomePanel,
   DestinationIntelPanel,
   forecastRaidLoot,
@@ -264,7 +265,50 @@ describe("mission creation", () => {
     ]);
   });
 
-  test("renders compact outcome and destination intel without public-state caveat copy", () => {
+  test("renders compact attack intel with target, outcome, destination units, and resources", () => {
+    const intel = AttackIntelPanel({
+      battleForecast: {
+        kind: "win",
+        label: "Probable win",
+        detail: "Visible defender power is lower than the selected fleet.",
+        attackerPower: 1_250,
+        defenderPower: 200,
+      },
+      coords: { galaxy: 7, system: 41, position: 6 },
+      lootableAtArrival: { metal: 500, crystal: 250, deuterium: 100 },
+      maxLootForecast: { metal: 300, crystal: 150, deuterium: 50 },
+      target: targetPlanet(),
+      resourceIntel: {
+        current: { metal: 1_000, crystal: 500, deuterium: 200 },
+        projectedArrival: { metal: 1_100, crystal: 550, deuterium: 225 },
+        currentLootable: { metal: 500, crystal: 250, deuterium: 100 },
+        projectedArrivalLootable: { metal: 550, crystal: 275, deuterium: 112 },
+        projectionDetail: "Arrival projection uses public building/resource preview math.",
+      },
+      stationedDefenderUnits: [],
+      targetDefenseUnits: [{ key: "rocketLauncher", label: "Rocket Launcher", count: 3 }],
+      targetFleetUnits: [{ key: "smallCargo", label: "Small Cargo", count: 2 }],
+    });
+    const text = collectText(intel).join(" ");
+
+    expect(text).toContain("Target");
+    expect(text).toContain("New Zion");
+    expect(text).toContain("[7:41:6]");
+    expect(text).toContain("Probable outcome");
+    expect(text).toContain("Probable win");
+    expect(text).toContain("Max loot at arrival");
+    expect(text).toContain("Destination intel");
+    expect(text).toContain("Destination Fleet");
+    expect(text).toContain("Small Cargo");
+    expect(text).toContain("Rocket Launcher");
+    expect(text).toContain("Resources now");
+    expect(text).toContain("1,000 M");
+    expect(text).not.toContain("Public state");
+    expect(text).not.toContain("Projected arrival resources use");
+    expect(text).not.toContain("not charted");
+  });
+
+  test("keeps the legacy standalone outcome and destination panels available for non-attack surfaces", () => {
     const outcome = AttackOutcomePanel({
       battleForecast: {
         kind: "win",
@@ -291,13 +335,8 @@ describe("mission creation", () => {
     const text = collectText([outcome, destination]).join(" ");
 
     expect(text).toContain("Probable outcome");
-    expect(text).toContain("Max loot at arrival");
     expect(text).toContain("Destination intel");
-    expect(text).toContain("Destination Fleet");
     expect(text).toContain("Resources now");
-    expect(text).not.toContain("Public state");
-    expect(text).not.toContain("Projected arrival resources use");
-    expect(text).not.toContain("not charted");
   });
 
   test("renders Greedy off as manual loot fields and Greedy on as concise copy only", () => {
