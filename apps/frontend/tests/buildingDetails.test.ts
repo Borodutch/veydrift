@@ -461,16 +461,16 @@ describe("building detail helpers", () => {
     });
   });
 
-  test("builds Metal Mine level table rows with costs, energy use, and build time (no client production)", () => {
+  test("builds Metal Mine level table rows with costs, production, energy use, and build time", () => {
     // VEY-KANEO-465 dropped per-building production AND build time from the level table.
-    // VEY-KANEO-472 restores the build-time column (production stays backend-owned): this
-    // static reference table already derives cost/energy client-side, so the per-level
-    // duration is computed the same way via the conformance-tested formula helper.
+    // VEY-KANEO-472 restored build time; VEY-KANEO-499 restores production with the same
+    // conformance-tested formulas that already derive cost/energy/storage client-side.
     const state = {
       ...createInitialPlayableState(1_000),
       buildings: {
         ...createInitialPlayableState(1_000).buildings,
         metalMine: 1,
+        solarPlant: 2,
       },
     };
     const rows = buildingLevelInfoRows(state.buildings, "metalMine", undefined, 3);
@@ -481,6 +481,7 @@ describe("building detail helpers", () => {
       effect: false,
       energyProduced: false,
       energyRequired: true,
+      production: true,
       storage: false,
     });
     expect(rows[0]).toMatchObject({
@@ -489,6 +490,7 @@ describe("building detail helpers", () => {
       energyRequired: 11,
       level: 1,
       next: false,
+      production: { deltaFromPrevious: 33, resource: "metal", value: 33 },
     });
     expect(rows[1]).toMatchObject({
       cost: { metal: 90, crystal: 22, deuterium: 0 },
@@ -496,9 +498,12 @@ describe("building detail helpers", () => {
       energyRequired: 24,
       level: 2,
       next: true,
+      production: { deltaFromPrevious: 39, resource: "metal", value: 72 },
     });
-    // Production stays backend-owned (absent); build time is restored on every row.
-    expect(rows.every((row) => !("production" in row))).toBe(true);
+    expect(rows[2]).toMatchObject({
+      level: 3,
+      production: { deltaFromPrevious: 47, resource: "metal", value: 119 },
+    });
     expect(rows.every((row) => typeof row.durationSeconds === "number" && row.durationSeconds > 0)).toBe(true);
   });
 
@@ -511,6 +516,7 @@ describe("building detail helpers", () => {
       effect: false,
       energyProduced: true,
       energyRequired: false,
+      production: false,
       storage: false,
     });
     expect(rows[0]).toMatchObject({
@@ -565,6 +571,7 @@ describe("building detail helpers", () => {
       effect: false,
       energyProduced: true,
       energyRequired: false,
+      production: false,
       storage: false,
     });
     expect(rows[0]).toMatchObject({
@@ -614,6 +621,7 @@ describe("building detail helpers", () => {
       effect: false,
       energyProduced: false,
       energyRequired: false,
+      production: false,
       storage: true,
     });
     expect(rows[0]).toMatchObject({
@@ -639,6 +647,7 @@ describe("building detail helpers", () => {
       effect: true,
       energyProduced: false,
       energyRequired: false,
+      production: false,
       storage: false,
     });
     expect(rows.map(({ effect, level }) => ({ effect, level }))).toEqual([
@@ -649,6 +658,23 @@ describe("building detail helpers", () => {
     ]);
     expect(rows[0]).toMatchObject({ current: true, next: false });
     expect(rows[1]).toMatchObject({ current: false, next: true });
+  });
+
+  test("builds Shipyard and Nanite rows with speed deltas in the level table", () => {
+    const state = createInitialPlayableState(1_000);
+    const shipyardRows = buildingLevelInfoRows({ ...state.buildings, shipyard: 1 }, "shipyard", undefined, 2);
+    const naniteRows = buildingLevelInfoRows({ ...state.buildings, naniteFactory: 1 }, "naniteFactory", undefined, 2);
+
+    expect(buildingLevelInfoColumns(shipyardRows).effect).toBe(true);
+    expect(buildingLevelInfoColumns(naniteRows).effect).toBe(true);
+    expect(shipyardRows.map(({ effect, level }) => ({ effect, level }))).toEqual([
+      { effect: "x2 ship speed (+100% faster)", level: 1 },
+      { effect: "x3 ship speed (+50% faster)", level: 2 },
+    ]);
+    expect(naniteRows.map(({ effect, level }) => ({ effect, level }))).toEqual([
+      { effect: "x2 construction speed (+100% faster)", level: 1 },
+      { effect: "x4 construction speed (+100% faster)", level: 2 },
+    ]);
   });
 
   test("builds Research Lab rows with Level 1 as the visible x1 baseline", () => {

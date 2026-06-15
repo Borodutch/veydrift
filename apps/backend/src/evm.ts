@@ -363,15 +363,10 @@ export type GlobalMissionArchiveResponse = {
   pagination: FleetMissionArchiveResponse["pagination"];
 };
 
-// VEY-KANEO-456: a single allied fleet stationed (AcsDefend) to defend a planet under attack, resolved
-// from the attack's `counterplayDefenderMissionIds` into the per-defender detail the Stationed defenses
-// panel renders. The defenders belong to alliance members, so their full mission summaries are not in
-// the viewing wallet's visibility feed; the read model surfaces just what the panel needs. `holdUntil`
-// is the AcsDefend mission's `arrivalAt` — the moment the hold elapses (the defended attack lands) and
-// the only authoritative expiry: VeydriftAllianceSystem pre-pays holding fuel for the whole window at
-// launch (the Alliance Depot offsets up to `level * 20_000` deuterium then), so there is no separate
-// depot-balance settlement. `allianceDepotLevel` (the defended planet's depot) lets the frontend derive
-// the deuterium upkeep rate + how long the depot sustains it, as-of-now, with no chain read or poller.
+// VEY-KANEO-456/498: a single allied fleet stationed to defend a planet. Reactive AcsDefend rows are
+// resolved from an attack's `counterplayDefenderMissionIds`; proactive DefenseHold rows are resolved
+// from their target planet and `defenseHoldUntil` window. Both are public chain state, so the read model
+// surfaces the compact composition public intel needs without a live chain read.
 export type StationedDefenderSummary = {
   missionId: string;
   defender: Address;
@@ -431,6 +426,10 @@ export type FleetMissionSummary = {
   // carry no battle randomness). The read model gates `needsResolution` on this request being
   // fulfilled so Mission Control never shows a phantom "Ready to resolve" before the keeper can settle.
   randomnessRequestId?: string;
+  // VEY-KANEO-498: DefenseHold-specific hold expiry from DefenseHoldStationed. A DefenseHold can defend
+  // attacks whose arrival is inside [arrivalAt, defenseHoldUntil]; returnAt includes the flight home and
+  // is therefore too broad for public attack-risk intel.
+  defenseHoldUntil?: string;
   // Derived as-of-now state (VEY-KANEO-464): arrival/return ETA in seconds and
   // whether each leg is due, computed server-side at request time from
   // `arrivalAt` / `returnAt`. Optional so internally-constructed summaries stay
@@ -3588,6 +3587,7 @@ export class VeydriftGameReader implements ChainReader {
         fleetMissionRecalledTopic,
         fleetMissionResolvedTopic,
         fleetMissionReturnExposedTopic,
+        defenseHoldStationedTopic,
         attackMissionJoinedTopic
       ]]
     });
@@ -3848,6 +3848,16 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
         ];
         missions.set(hostileMissionId, attack);
       }
+    } else if (topic === defenseHoldStationedTopic) {
+      const words = splitWords(log.data);
+      mission.owner = decodeAddressWord(topicAt(log.topics, 2));
+      mission.missionType = "DefenseHold";
+      mission.status = mission.status ?? "Outbound";
+      mission.originPlanetId = decodeUintWord(wordAt(words, 0)).toString();
+      mission.targetPlanetId = decodeUint(topicAt(log.topics, 3)).toString();
+      mission.arrivalAt = decodeUintWord(wordAt(words, 1)).toString();
+      mission.defenseHoldUntil = decodeUintWord(wordAt(words, 2)).toString();
+      mission.returnAt = decodeUintWord(wordAt(words, 3)).toString();
     } else if (topic === fleetMissionCargoTopic) {
       const words = splitWords(log.data);
       mission.cargo = decodeResources(words.slice(0, 3));
@@ -4233,6 +4243,7 @@ const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632
 const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
+const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
 const attackMissionJoinedTopic = "0xc584e0cc52df45c2a92cc5556e493377d69bfe3e3658d1adb13f27cfcc89b146";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
@@ -4442,6 +4453,7 @@ export function isFleetMissionLog(log: RpcLog): boolean {
     || topic === fleetMissionResolvedTopic
     || topic === fleetMissionReturnExposedTopic
     || topic === fleetMissionReturnedTopic
+    || topic === defenseHoldStationedTopic
     || topic === attackMissionJoinedTopic;
 }
 

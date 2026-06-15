@@ -134,6 +134,31 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
     expect(text).not.toContain(OLD_PLACEHOLDER);
   });
 
+  test("shows stationed defender fleets instead of None for a zero-static-defense battle", () => {
+    const defenderPlanetState: DefenderPlanetState = {
+      fleet: [],
+      defenses: [],
+      stationedDefenders: [
+        {
+          missionId: "41",
+          defender: "0x4444444444444444444444444444444444444444",
+          defenderDisplayName: "Ally Shield",
+          ships: { lightFighter: "15" },
+          holdUntil: "1770003600",
+          allianceDepotLevel: 2,
+        },
+      ],
+    };
+    const detail = { mission: combatMission(), battleReport: battleReport({ outcome: "DefenderWin" }), defenderPlanetState };
+    const text = renderDetailText(detail);
+    const unitTitles = renderDetailUnitTitles(detail);
+
+    expect(text).toContain("Stationed defenders");
+    expect(text).toContain("Ally Shield");
+    expect(unitTitles).toContain("Light Fighter ×15");
+    expect(text).not.toContain("Fleet / defenses None");
+  });
+
   test("keeps a precise caveat (not the old blanket placeholder) when the target planet isn't charted", () => {
     const text = renderDetailText({ mission: combatMission(), battleReport: battleReport(), defenderPlanetState: null });
 

@@ -9,6 +9,7 @@
     "check": "tsc --project tsconfig.json",
     "dev": "bun --watch src/index.ts",
     "index:replay": "bun src/replayIndexer.ts",
+    "index:sync": "bun src/replayIndexer.ts --canonical-sync",
     "start": "bun src/index.ts",
     "test": "bun test"
   },
