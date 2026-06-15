@@ -1,6 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import { missionDraftBlocker, missionShipOptions, missionTimingSummary } from "./components/MissionCreationPage";
+import {
+  forecastRaidLoot,
+  initialMissionShips,
+  lootRatioFromUpToAmount,
+  missionDraftBlocker,
+  missionShipOptions,
+  missionTimingSummary,
+  publicTargetBattleForecast,
+  rebalanceLootRatio,
+  ShipQuantityRow,
+  stationedDefenderCompositionUnits,
+  TargetIntelCard,
+  targetResourceIntel,
+} from "./components/MissionCreationPage";
 import type { GalaxyAction } from "./galaxyActions";
+import type { Planet } from "./types";
 
 const attackAction: Extract<GalaxyAction, { enabled: true }> = {
   enabled: true,
@@ -63,6 +77,186 @@ describe("mission creation", () => {
   test("omits expedition-only Pathfinder from the mission ship picker (VEY-KANEO-493)", () => {
     expect(missionShipOptions.some((option) => option.key === "pathfinder")).toBe(false);
     expect(missionShipOptions.some((option) => /pathfinder/i.test(option.label))).toBe(false);
+  });
+
+  test("starts attack mission ship quantities at zero instead of prefilling Heavy Fighter", () => {
+    const initial = initialMissionShips({
+      ...attackAction,
+      ships: {
+        ...attackAction.ships,
+        heavyFighter: 1,
+        smallCargo: 1,
+      },
+    });
+
+    expect(initial.heavyFighter).toBe(0);
+    expect(initial.smallCargo).toBe(0);
+    expect(Object.values(initial).every((count) => count === 0)).toBe(true);
+  });
+
+  test("renders attack target intel with planet image, coordinates, commander, and alliance", () => {
+    const node = TargetIntelCard({
+      coords: { galaxy: 7, system: 41, position: 6 },
+      target: targetPlanet(),
+    });
+    const text = collectText(node).join(" ");
+    const images = findElements(node, "img");
+
+    expect(text).toContain("Target");
+    expect(text).toContain("New Zion");
+    expect(text).toContain("[7:41:6]");
+    expect(text).toContain("Commander Vey");
+    expect(text).toContain("Veydrift [VEY]");
+    expect(text).toContain("#9");
+    expect(images.some((image) => image.props?.src === "/assets/game/style-pass/generated/planets/hot-desert.webp")).toBe(true);
+  });
+
+  test("renders ship quantity rows with image assets, keyboard input, / N availability, and steppers", () => {
+    const heavyFighter = missionShipOptions.find((option) => option.key === "heavyFighter");
+    expect(heavyFighter).toBeDefined();
+
+    const row = ShipQuantityRow({
+      onChange: () => undefined,
+      owned: 5,
+      ship: heavyFighter!,
+      value: 0,
+    });
+    const text = collectText(row).join(" ").replace(/\s+/g, " ");
+    const buttons = findElements(row, "button");
+    const inputs = findElements(row, "input");
+    const images = findElements(row, "img");
+
+    expect(text).toContain("Heavy Fighter");
+    expect(text).toContain("/ 5");
+    expect(buttons.map((button) => button.props?.["aria-label"])).toEqual([
+      "Decrease Heavy Fighter",
+      "Increase Heavy Fighter",
+    ]);
+    expect(inputs[0]?.props).toMatchObject({
+      "aria-label": "Heavy Fighter quantity",
+      inputMode: "numeric",
+      max: 5,
+      min: 0,
+      type: "number",
+      value: 0,
+    });
+    expect(images[0]?.props?.src).toBe(heavyFighter?.asset);
+  });
+
+  test("rebalances loot percentages and up-to amount edits to exactly 100%", () => {
+    expect(rebalanceLootRatio({ metal: 34, crystal: 33, deuterium: 33 }, "metal", 80)).toEqual({
+      metal: 80,
+      crystal: 10,
+      deuterium: 10,
+    });
+
+    expect(lootRatioFromUpToAmount({ metal: 34, crystal: 33, deuterium: 33 }, "crystal", 500, 2_000)).toEqual({
+      metal: 38,
+      crystal: 25,
+      deuterium: 37,
+    });
+  });
+
+  test("forecasts greedy and custom attack loot with contract-style rollover", () => {
+    const lootable = { metal: 500, crystal: 300, deuterium: 100 };
+
+    expect(forecastRaidLoot(lootable, 600, null)).toEqual({
+      metal: 500,
+      crystal: 100,
+      deuterium: 0,
+    });
+
+    expect(forecastRaidLoot(lootable, 600, { metal: 10, crystal: 80, deuterium: 10 })).toEqual({
+      metal: 240,
+      crystal: 300,
+      deuterium: 60,
+    });
+  });
+
+  test("builds target resource intel from public resources and projects lootable arrival state", () => {
+    const intel = targetResourceIntel(targetPlanet({
+      publicState: {
+        resources: { metal: "1000", crystal: "500", deuterium: "200" },
+        buildings: [
+          { id: 0, level: 2 },
+          { id: 1, level: 1 },
+          { id: 2, level: 1 },
+          { id: 3, level: 10 },
+        ],
+        fleet: [],
+        defenses: [],
+        research: [{ id: 0, level: 1 }],
+        queues: null,
+      },
+    }), 3_600);
+
+    expect(intel.current).toEqual({ metal: 1_000, crystal: 500, deuterium: 200 });
+    expect(intel.currentLootable).toEqual({ metal: 500, crystal: 250, deuterium: 100 });
+    expect(intel.projectedArrival?.metal).toBeGreaterThan(1_000);
+    expect(intel.projectedArrivalLootable?.metal).toBeGreaterThan(500);
+    expect(intel.projectionDetail).toContain("assume no new production");
+  });
+
+  test("forecasts public battle outcome without inventing hidden target state", () => {
+    expect(publicTargetBattleForecast(attackAction.ships, targetPlanet()).kind).toBe("uncertain");
+
+    const selectedShips = {
+      ...attackAction.ships,
+      cruiser: 3,
+    };
+    expect(publicTargetBattleForecast(selectedShips, targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleet: [],
+        defenses: [],
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    }))).toMatchObject({ kind: "win", label: "Probable win" });
+
+    expect(publicTargetBattleForecast({ ...attackAction.ships, lightFighter: 1 }, targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleet: [],
+        defenses: [{ id: 6, count: 3 }],
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    }))).toMatchObject({ kind: "defeat", label: "Probable defeat" });
+  });
+
+  test("includes public stationed defenders in attack intel and battle forecast", () => {
+    const target = targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleet: [],
+        defenses: [],
+        stationedDefenders: [{
+          missionId: "held-1",
+          defender: "0xdefender",
+          defenderDisplayName: "Defender",
+          ships: { lightFighter: "40", cruiser: "2" },
+          holdUntil: "1700003600",
+          allianceDepotLevel: 1,
+        }],
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    });
+    const selectedShips = { ...attackAction.ships, lightFighter: 1 };
+    const units = stationedDefenderCompositionUnits(target.publicState?.stationedDefenders);
+
+    expect(publicTargetBattleForecast(selectedShips, target)).toMatchObject({
+      kind: "defeat",
+      label: "Probable defeat",
+    });
+    expect(units).toEqual([
+      expect.objectContaining({ key: "lightFighter", label: "Light Fighter", count: 40 }),
+      expect.objectContaining({ key: "cruiser", label: "Cruiser", count: 2 }),
+    ]);
   });
 
   test("requires an origin and selected ships for fleet missions", () => {
@@ -299,3 +493,66 @@ describe("mission creation", () => {
     expect(missionTimingSummary(0)).toBeNull();
   });
 });
+
+function targetPlanet(overrides: Partial<Planet> = {}): Planet {
+  return {
+    id: "9",
+    name: "New Zion",
+    type: "hot-desert",
+    image: "/assets/game/style-pass/generated/planets/hot-desert.webp",
+    position: 6,
+    galaxy: 7,
+    system: 41,
+    owner: "0x5e7eec50657a5f283b7e33869af22999cdc9356",
+    ownerId: "0x5e7eec50657a5f283b7e33869af22999cdc9356",
+    alliance: { allianceId: "1", tag: "VEY", name: "Veydrift" },
+    occupiedBy: {
+      planetId: "9",
+      owner: "0x5e7eec50657a5f283b7e33869af22999cdc9356",
+      ownerDisplayName: "Commander Vey",
+      alliance: { allianceId: "1", tag: "VEY", name: "Veydrift" },
+    },
+    debrisField: null,
+    moonChance: null,
+    publicState: null,
+    resources: { metal: 0, crystal: 0, deuterium: 0, energy: 0 },
+    temperature: { min: 40, max: 80 },
+    diameter: 12_800,
+    fields: 163,
+    hasMoon: false,
+    ...overrides,
+  };
+}
+
+type FoundElement = { type?: unknown; props?: Record<string, unknown> & { children?: unknown } };
+
+function findElements(node: unknown, tag: string): FoundElement[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (Array.isArray(node)) return node.flatMap((child) => findElements(child, tag));
+  if (typeof node !== "object") return [];
+
+  const vnode = node as { type?: unknown; props?: Record<string, unknown> & { children?: unknown } };
+  if (typeof vnode.type === "function") {
+    const render = vnode.type as (props: Record<string, unknown>) => unknown;
+    return findElements(render({ ...(vnode.props ?? {}) }), tag);
+  }
+  const self = vnode.type === tag ? [vnode] : [];
+  return self.concat(findElements(vnode.props?.children, tag));
+}
+
+function collectText(node: unknown): string[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (Array.isArray(node)) return node.flatMap(collectText);
+  if (typeof node === "string" || typeof node === "number" || typeof node === "bigint") return [String(node)];
+  if (typeof node !== "object") return [];
+
+  const vnode = node as { type?: unknown; props?: Record<string, unknown> & { children?: unknown; title?: unknown; "aria-label"?: unknown } };
+  if (typeof vnode.type === "function") {
+    const render = vnode.type as (props: Record<string, unknown>) => unknown;
+    return collectText(render({ ...(vnode.props ?? {}) }));
+  }
+  const labels = typeof vnode.type === "string"
+    ? [vnode.props?.title, vnode.props?.["aria-label"]].filter((value): value is string => typeof value === "string")
+    : [];
+  return labels.concat(collectText(vnode.props?.children));
+}
