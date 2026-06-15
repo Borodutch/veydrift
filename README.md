@@ -387,18 +387,18 @@ connections across the workers, so a slow request handled by one worker no
 longer blocks the others (VEY-KANEO-466).
 
 - **Worker 0 is the single writer.** It runs chain-sync ingestion, the
-  cold-start index rebuild, the bounded per-planet reconciles, mission
-  resolution, and the randomness committer. The committers submit on-chain
-  transactions, so they must run on exactly one worker.
+  websocket/polling event replay, mission resolution, and the randomness
+  committer. The committers submit on-chain transactions, so they must run on
+  exactly one worker. Explicit operator syncs such as `bun run index:replay`
+  are run outside frontend request handling.
 - **The remaining workers are readers.** They serve read requests
   (`GET`/`HEAD`/`OPTIONS`) from the shared SQLite index database, which is opened
   in WAL mode (`PRAGMA journal_mode = WAL`) so many readers run concurrently with
-  the single writer. Readers skip every background loop. Every **mutating**
-  request (the few `POST` endpoints: display-name, `/index/rebuild`,
-  `/index/verify`, `/webhooks/alchemy`) is forwarded over loopback to the
-  writer's private listener, so the writer stays the sole mutator of the index
-  and the only holder of the in-memory indexer state (e.g. the bounded
-  fleet-mission reconcile queue). The writer binds that private listener on
+  the single writer. Readers skip every background loop. Every remaining
+  **mutating** request (display-name and `/webhooks/alchemy`) is forwarded over
+  loopback to the writer's private listener, so the writer stays the sole
+  request-time mutator of the index and the only holder of the in-memory indexer
+  state. The writer binds that private listener on
   `127.0.0.1:<PORT+1>` (override with `VEYDRIFT_WRITER_INTERNAL_PORT`) in
   addition to the shared reusePort socket.
 - The supervisor respawns a worker that exits unexpectedly and forwards
