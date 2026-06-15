@@ -876,7 +876,7 @@ function MissionRow({
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
       direction={missionRouteLeg(mission.status)}
-      fleet={<MissionFleet cargo={mission.cargo} loot={loot} losses={losses} ships={mission.ships} />}
+      fleet={<MissionFleet cargo={mission.cargo} loot={loot} losses={losses} missionType={mission.missionType} ships={mission.ships} />}
       groupId={mission.attackGroupId}
       headerTiming={activeMissionHeaderTiming(mission, now, noFleetReturned)}
       missionId={mission.missionId}
@@ -910,27 +910,39 @@ function MissionFleet({
   cargo,
   loot,
   losses,
+  missionType,
   ships,
 }: {
   cargo?: FleetMissionSummary["cargo"] | undefined;
   loot?: BattleReport["loot"] | undefined;
   losses?: MissionLossSummary | undefined;
+  missionType?: string | undefined;
   ships: Record<string, string>;
 }) {
+  // VEY-KANEO-495: a resolved attack that lost ships must not read like a normal completed mission.
+  // For the player's own offensive mission a DefenderWin is a failed attack, so the card shows a
+  // distinct red "Attack failed — fleet lost" flag (criterion 2). All resolved battles also state the
+  // outcome (coloured by result), the per-side fleet losses (criterion 1's resource-value fallback —
+  // per-ship loss counts are not in the served payload), and any debris created for follow-up harvest
+  // (criterion 3). A winning raid shows the green outcome and 0 losses, with no false loss flag.
+  const attackFailed = losses && missionType ? isFailedPlayerAttack(missionType, losses.outcome) : false;
   return (
     <div className="space-y-1">
       <FleetIcons ships={ships} />
       {cargo ? <p className="text-[11px] text-slate-500">Cargo {formatCargo(cargo)}</p> : null}
       {loot ? <p className="text-[11px] text-slate-500">Loot {formatCargo(loot)}</p> : null}
-      {/* VEY-KANEO-495: the resolved battle's outcome and fleet losses (attacker / defender), so a
-          resolved attack — and especially a failed one whose fleet was wiped — states what it cost
-          and whether it succeeded, rather than reading like the launch fleet came home intact. The
-          outcome reuses the neutral label already shown by the standalone battle-report row; losses
-          mirror its attacker / defender format. */}
       {losses ? (
         <>
-          <p className="text-[11px] text-slate-500">Outcome {battleOutcomeLabel(losses.outcome)}</p>
+          {attackFailed ? (
+            <p className="inline-flex items-center rounded border border-red-300/40 bg-red-500/15 px-1.5 py-0.5 text-[11px] font-medium text-red-200">
+              Attack failed — fleet lost
+            </p>
+          ) : null}
+          <p className={`text-[11px] ${battleOutcomeTextTone(losses.outcome)}`}>Outcome {battleOutcomeLabel(losses.outcome)}</p>
           <p className="text-[11px] text-slate-500">Losses {formatCargo(losses.attacker)} / {formatCargo(losses.defender)}</p>
+          {debrisTotal(losses.debris) > 0 ? (
+            <p className="text-[11px] text-slate-500">Debris {formatDebris(losses.debris)}</p>
+          ) : null}
         </>
       ) : null}
     </div>
@@ -1664,7 +1676,7 @@ function PastMissionSummaryRow({
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
       direction={missionRouteLeg(mission.status)}
-      fleet={<MissionFleet cargo={mission.cargo} loot={loot} losses={losses} ships={mission.ships} />}
+      fleet={<MissionFleet cargo={mission.cargo} loot={loot} losses={losses} missionType={mission.missionType} ships={mission.ships} />}
       groupId={mission.attackGroupId}
       missionId={mission.missionId}
       origin={origin}
@@ -1722,6 +1734,9 @@ function PastBattleReportRow({
             {isGroupedAttack ? "Group loot " : "Loot "}{formatCargo(lootShown)}
           </p>
           <p className="text-[11px] text-slate-500">Losses {formatCargo(report.attackerLosses)} / {formatCargo(report.defenderLosses)}</p>
+          {debrisTotal(report.debris) > 0 ? (
+            <p className="text-[11px] text-slate-500">Debris {formatDebris(report.debris)}</p>
+          ) : null}
           {isGroupedAttack ? (
             <p className="text-[11px] text-cyan-300/80">ACS group · {joinerCount} {joinerCount === 1 ? "joiner" : "joiners"}</p>
           ) : null}
@@ -2213,6 +2228,9 @@ export type MissionLossSummary = {
   outcome: BattleReport["outcome"];
   attacker: BattleReport["attackerLosses"];
   defender: BattleReport["defenderLosses"];
+  // Debris field (metal/crystal) created by the battle — surfaced for follow-up harvest planning
+  // (VEY-KANEO-495 criterion 3), alongside the per-side losses.
+  debris: BattleReport["debris"];
 };
 
 // Fleet losses keyed by mission id, gathered from every battle report visible across the live fleet
@@ -2221,7 +2239,7 @@ export type MissionLossSummary = {
 function lossesByMissionIdFromReports(reports: BattleReport[]): Map<string, MissionLossSummary> {
   const lookup = new Map<string, MissionLossSummary>();
   for (const report of reports) {
-    lookup.set(report.missionId, { outcome: report.outcome, attacker: report.attackerLosses, defender: report.defenderLosses });
+    lookup.set(report.missionId, { outcome: report.outcome, attacker: report.attackerLosses, defender: report.defenderLosses, debris: report.debris });
   }
   return lookup;
 }
@@ -2407,6 +2425,39 @@ function battleOutcomeLabel(outcome: BattleReport["outcome"]): string {
   if (outcome === "AttackerWin") return "Attacker win";
   if (outcome === "DefenderWin") return "Defender win";
   return "Draw";
+}
+
+// Offensive mission types where the player's own fleet is the attacker, so a DefenderWin report means
+// the player's attack failed (VEY-KANEO-495). Mirrors the attack set used by missionTypeTone.
+const OFFENSIVE_MISSION_TYPES = ["Attack", "AcsAttack", "MissileAttack"];
+
+function isOffensiveMissionType(missionType: string): boolean {
+  return OFFENSIVE_MISSION_TYPES.includes(missionType);
+}
+
+// VEY-KANEO-495: a resolved offensive mission whose report is a DefenderWin is the player's failed
+// attack — the case the ticket calls out (an attack that cost ships must not read like a normal
+// completed mission). Wins/draws are not flagged, so a successful raid shows no false loss flag.
+function isFailedPlayerAttack(missionType: string, outcome: BattleReport["outcome"]): boolean {
+  return isOffensiveMissionType(missionType) && outcome === "DefenderWin";
+}
+
+// Text colour for the resolved-battle outcome line on a mission card: red for the player's loss,
+// emerald for a win, amber for a draw. Keeps the outcome glanceable without a separate badge slot.
+function battleOutcomeTextTone(outcome: BattleReport["outcome"]): string {
+  if (outcome === "AttackerWin") return "text-emerald-300/80";
+  if (outcome === "DefenderWin") return "text-red-300/90";
+  return "text-amber-300/80";
+}
+
+function debrisTotal(debris: BattleReport["debris"]): number {
+  return Number(debris.metal) + Number(debris.crystal);
+}
+
+// Debris is metal/crystal only (no deuterium), so it has its own formatter rather than reusing
+// formatCargo, which expects a deuterium field.
+function formatDebris(debris: BattleReport["debris"]): string {
+  return `${formatResource(debris.metal)} M / ${formatResource(debris.crystal)} C`;
 }
 
 function shortHash(value: string): string {

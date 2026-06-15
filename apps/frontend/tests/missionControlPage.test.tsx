@@ -623,6 +623,7 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Past missions");
     expect(text).toContain("Outcome Attacker win");
     expect(text).toContain("Losses 100 M / 50 C / 0 D / 900 M / 250 C / 0 D");
+    expect(text).toContain("Debris 600 M / 150 C");
   });
 
   test("renders a standalone battle report row when no completed mission matches", () => {
@@ -794,9 +795,12 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     // The report's outcome renders as an "Outcome" line and the attacker / defender losses as a
-    // "Losses" line, so the card states whether the attack succeeded and what it cost.
+    // "Losses" line, so the card states whether the attack succeeded and what it cost. A win shows
+    // no failed-attack flag, and the debris created surfaces for follow-up harvest.
     expect(text).toContain("Outcome Attacker win");
     expect(text).toContain("Losses 100 M / 50 C / 0 D / 900 M / 250 C / 0 D");
+    expect(text).toContain("Debris 600 M / 150 C");
+    expect(text).not.toContain("Attack failed");
   });
 
   test("surfaces a failed attack's fleet losses on its mission card", () => {
@@ -825,13 +829,45 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     // The defender-win outcome is stated explicitly so a wiped-out attack reads as a failure, not
-    // just heavy losses next to the launch fleet.
+    // just heavy losses next to the launch fleet. A failed offensive mission also gets a distinct
+    // red "Attack failed — fleet lost" flag (VEY-KANEO-495 criterion 2), and the debris created by
+    // the battle is surfaced for follow-up harvest (criterion 3).
+    expect(text).toContain("Attack failed — fleet lost");
     expect(text).toContain("Outcome Defender win");
     expect(text).toContain("Losses 5,000 M / 3,000 C / 0 D / 200 M / 100 C / 0 D");
+    expect(text).toContain("Debris 600 M / 150 C");
+  });
+
+  test("does not flag a winning raid as a failed attack, and still shows debris", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        // A successful raid (AttackerWin) with zero attacker losses must read as a win, never as a
+        // failed attack (VEY-KANEO-495 acceptance criterion: no false loss flag on a winning raid).
+        returning: [mission({ missionId: "61", missionType: "Attack", status: "Returning" })],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [{
+          ...battleReport("61"),
+          outcome: "AttackerWin",
+          attackerLosses: { metal: "0", crystal: "0", deuterium: "0" },
+        }],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Outcome Attacker win");
+    expect(text).not.toContain("Attack failed");
+    expect(text).toContain("Debris 600 M / 150 C");
   });
 
   test("withholds fleet losses from a mission card until the fleet leaves its outbound leg", () => {
-    const losses = { outcome: "AttackerWin" as const, attacker: { metal: "100", crystal: "50", deuterium: "0" }, defender: { metal: "900", crystal: "250", deuterium: "0" } };
+    const losses = { outcome: "AttackerWin" as const, attacker: { metal: "100", crystal: "50", deuterium: "0" }, defender: { metal: "900", crystal: "250", deuterium: "0" }, debris: { metal: "600", crystal: "150" } };
     const lossesByMissionId = new Map([["55", losses]]);
 
     // An en-route outbound fleet has fought nothing yet — no losses line even if a report id collides.
