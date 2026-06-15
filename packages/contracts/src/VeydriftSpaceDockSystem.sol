@@ -134,6 +134,7 @@ contract VeydriftSpaceDockSystem {
     function startShipRepair(uint256 planetId, Ship ship, uint32 quantity) external {
         _requirePlanetOwner(planetId);
         if (quantity == 0) revert InvalidQuantity();
+        _reconcileReadyShipRepair(planetId);
         if (repairQueues[planetId].active) revert QueueActive();
         _requireFreshWreckage(planetId);
 
@@ -154,6 +155,17 @@ contract VeydriftSpaceDockSystem {
         if (!queue.active) revert QueueInactive();
         if (_currentTimestamp() < queue.readyAt) revert QueueNotReady(queue.readyAt);
 
+        _completeShipRepair(planetId, queue);
+    }
+
+    function _reconcileReadyShipRepair(uint256 planetId) private {
+        RepairQueue memory queue = repairQueues[planetId];
+        if (queue.active && _currentTimestamp() >= queue.readyAt) {
+            _completeShipRepair(planetId, queue);
+        }
+    }
+
+    function _completeShipRepair(uint256 planetId, RepairQueue memory queue) private {
         delete repairQueues[planetId];
         _repairedShips[planetId][queue.ship] += queue.quantity;
         emit ShipRepairFinished(planetId, queue.ship, queue.quantity);

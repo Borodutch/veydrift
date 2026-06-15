@@ -19,11 +19,11 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
         _settleDueColonizeArrivals(msg.sender);
         _settleDueCombatArrivals(msg.sender);
         if (quantity == 0) revert InvalidQuantity();
+        _settleResources(planetId);
         DefenseQueue memory activeQueue = defenseQueues[planetId];
 
         _requireDefenseDependencies(planetId, defense);
         _requireDefenseCapacity(planetId, defense, quantity);
-        _settleResources(planetId);
 
         Resources memory unitCost = _defenseCost(defense);
         Resources memory totalCost = _multiply(unitCost, quantity);

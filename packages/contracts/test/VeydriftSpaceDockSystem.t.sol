@@ -109,6 +109,27 @@ contract VeydriftSpaceDockSystemTest is Test {
         assertEq(spaceDock.repairedShipCount(planetId, Ship.LightFighter), 3);
     }
 
+    function testStartShipRepairSettlesReadyRepairBeforeStartingNextRepair() public {
+        uint256 planetId = _startPlanetWithSpaceDock(1);
+
+        vm.prank(admin);
+        spaceDock.recordCombatWreckage(planetId, Ship.LightFighter, 40);
+
+        vm.prank(player);
+        spaceDock.startShipRepair(planetId, Ship.LightFighter, 3);
+        (,,, uint64 readyAt) = spaceDock.repairQueues(planetId);
+        vm.warp(readyAt);
+
+        vm.prank(player);
+        spaceDock.startShipRepair(planetId, Ship.LightFighter, 2);
+
+        assertEq(spaceDock.repairedShipCount(planetId, Ship.LightFighter), 3);
+        (bool queueActive,, uint32 quantity,) = spaceDock.repairQueues(planetId);
+        assertTrue(queueActive);
+        assertEq(quantity, 2);
+        assertEq(spaceDock.repairableShipCount(planetId, Ship.LightFighter), 3);
+    }
+
     function testWreckageRequiresSpaceDockAndQualifyingLosses() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();

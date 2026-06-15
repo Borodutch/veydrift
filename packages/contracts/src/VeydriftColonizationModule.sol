@@ -43,9 +43,9 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         _settleDueColonizeArrivals(msg.sender);
         _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(planetId);
+        _settleResources(planetId);
         _validateShipProduction(planetId, ship, quantity);
         ShipQueue memory activeQueue = shipQueues[planetId];
-        _settleResources(planetId);
 
         Resources memory unitCost = _shipCost(ship);
         Resources memory totalCost = _multiply(unitCost, quantity);
