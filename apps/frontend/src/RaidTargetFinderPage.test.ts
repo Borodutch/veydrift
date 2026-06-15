@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   RAID_TARGET_FINDER_STORAGE_KEY,
   DEFAULT_RAID_TARGET_FILTERS,
+  DEFAULT_RAID_TARGET_SORT,
   hasActiveAlliance,
   persistRaidTargetSettings,
   readPersistedRaidTargetSettings,
@@ -46,6 +47,7 @@ describe("RaidTargetFinderPage persistence", () => {
         minLoot: 2500,
         maxDistance: 150,
       },
+      sort: { key: "distance", direction: "asc" },
     });
 
     expect(storage.has(RAID_TARGET_FINDER_STORAGE_KEY)).toBe(true);
@@ -58,6 +60,7 @@ describe("RaidTargetFinderPage persistence", () => {
         minLoot: 2500,
         maxDistance: 150,
       },
+      sort: { key: "distance", direction: "asc" },
     });
   });
 
@@ -67,6 +70,46 @@ describe("RaidTargetFinderPage persistence", () => {
 
     expect(readPersistedRaidTargetSettings()).toEqual({
       filters: DEFAULT_RAID_TARGET_FILTERS,
+      sort: DEFAULT_RAID_TARGET_SORT,
+    });
+  });
+
+  test("keeps legacy filter-only settings and defaults missing sort", () => {
+    const storage = installWindowStorage();
+    storage.set(RAID_TARGET_FINDER_STORAGE_KEY, JSON.stringify({
+      filters: {
+        hideProtected: false,
+        hideSameAlliance: true,
+        hideDefended: false,
+        hideActiveFleet: false,
+        minLoot: 900,
+        maxDistance: null,
+      },
+    }));
+
+    expect(readPersistedRaidTargetSettings()).toEqual({
+      filters: {
+        hideProtected: false,
+        hideSameAlliance: true,
+        hideDefended: false,
+        hideActiveFleet: false,
+        minLoot: 900,
+        maxDistance: null,
+      },
+      sort: DEFAULT_RAID_TARGET_SORT,
+    });
+  });
+
+  test("falls back to default sort when saved sort settings are corrupt", () => {
+    const storage = installWindowStorage();
+    storage.set(RAID_TARGET_FINDER_STORAGE_KEY, JSON.stringify({
+      filters: DEFAULT_RAID_TARGET_FILTERS,
+      sort: { key: "unknown", direction: "sideways" },
+    }));
+
+    expect(readPersistedRaidTargetSettings()).toEqual({
+      filters: DEFAULT_RAID_TARGET_FILTERS,
+      sort: DEFAULT_RAID_TARGET_SORT,
     });
   });
 

@@ -318,6 +318,7 @@ export class SettlementIndexer {
   private leaderboardCache:
     | { generation: number; planetsByOwner: Map<string, SettledPlanetEvent[]>; entries: HighscoreEntry[] }
     | null = null;
+  private attackLaunchSecondsCache = new Map<string, { generation: number; launchesByTarget: Map<string, number[]> }>();
 
   constructor(
     private readonly chainReader: Pick<
@@ -3686,6 +3687,11 @@ export class SettlementIndexer {
   // window), which biases toward not-blocking rather than fabricating a window position.
   attackLaunchSecondsByTarget(attacker: `0x${string}`): Map<string, number[]> {
     const normalizedAttacker = attacker.toLowerCase();
+    const cached = this.attackLaunchSecondsCache.get(normalizedAttacker);
+    if (cached && cached.generation === this.stateGeneration) {
+      return cached.launchesByTarget;
+    }
+
     const rows = this.db.query(`
       SELECT event_json
       FROM indexed_event_logs
@@ -3705,6 +3711,10 @@ export class SettlementIndexer {
       if (existing) existing.push(seconds);
       else byTarget.set(launch.targetPlanetId, [seconds]);
     }
+    this.attackLaunchSecondsCache.set(normalizedAttacker, {
+      generation: this.stateGeneration,
+      launchesByTarget: byTarget
+    });
     return byTarget;
   }
 

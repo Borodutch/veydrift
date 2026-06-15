@@ -42,7 +42,6 @@ export function MoonPage({
     <div className="grid gap-4">
       <PageHeader
         actions={onRefresh ? <RefreshButton loading={isLoading} onRefresh={onRefresh} title="Refresh moon state" /> : undefined}
-        bordered={false}
         title="Moon"
       />
 
