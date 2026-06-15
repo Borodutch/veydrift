@@ -149,9 +149,7 @@ export function RaidTargetFinderPage({
     <section className="space-y-4">
       <PageHeader
         actions={<RefreshButton loading={loading} onRefresh={load} title="Refresh raid targets" />}
-        eyebrow="Offense"
-        subtitle="Scout raidable planets across the universe. Protected and allied targets are filtered out by default; sort and filter by distance, loot, combat, and defense, and watch fleets already inbound."
-        title="Raid Target Finder"
+        title="Raid Finder"
         titleSize="xl"
       />
 
