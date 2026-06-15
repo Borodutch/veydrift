@@ -1408,6 +1408,34 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("serves contract-aligned unoccupied planet preview traits", async () => {
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader()
+    })(new Request("http://localhost/universe/galaxies/6/systems/439"));
+    const body = await response.json();
+    const unoccupied = body.planets.find((item: { position: number }) => item.position === 5);
+
+    expect(response.status).toBe(200);
+    expect(unoccupied).toMatchObject({
+      galaxy: 6,
+      system: 439,
+      position: 5,
+      fields: 176,
+      temperature: 26,
+      metalMultiplierBps: 10_000,
+      crystalMultiplierBps: 10_000,
+      deuteriumMultiplierBps: 12_280,
+      archetype: "warm-terracotta",
+      occupiedBy: null
+    });
+    expect(unoccupied).not.toMatchObject({
+      fields: 237,
+      temperature: 63,
+      archetype: "scorching-molten"
+    });
+  });
+
   test("returns indexed-not-ready for cold wallet planet reads without chain reader", async () => {
     const response = await createRequestHandler({
       config: configuredTestConfig,
