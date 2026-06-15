@@ -156,6 +156,15 @@ export function MissionControlPage({
     ...battleReportsFromArchiveRows(rawPastMissionRows),
     ...battleReportsFromArchiveRows(rawGlobalPastRows),
   ]);
+  // VEY-KANEO-495: fleet losses (attacker / defender) keyed by mission id, from the same battle
+  // reports as loot. A mission card pairs this with the outbound cargo and return-leg loot so a
+  // resolved attack — and especially a failed one whose committed fleet was wiped — shows what it
+  // cost, not just the fleet it launched with and any haul.
+  const lossesByMissionId = lossesByMissionIdFromReports([
+    ...battleReports,
+    ...battleReportsFromArchiveRows(rawPastMissionRows),
+    ...battleReportsFromArchiveRows(rawGlobalPastRows),
+  ]);
   const selectedReport = reportMissionId ? lookupMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
   const planetLookup = planetLookupFromMissionData(lookupMissions, walletPlanets);
   const walletAddress = fleetVisibility?.wallet ?? missionArchive?.wallet;
@@ -209,6 +218,7 @@ export function MissionControlPage({
             canTransact={canTransact}
             dueCount={due.length}
             lootByMissionId={lootByMissionId}
+            lossesByMissionId={lossesByMissionId}
             myRows={myMissionRows}
             now={now}
             onCounterplay={onCounterplay}
@@ -240,6 +250,7 @@ export function MissionControlPage({
             error={missionArchiveError}
             loading={missionArchiveLoading}
             lootByMissionId={lootByMissionId}
+            lossesByMissionId={lossesByMissionId}
             now={now}
             onAllPageChange={onGlobalMissionArchivePageChange}
             onOpenReport={onOpenReport}
@@ -631,6 +642,7 @@ function ActiveMissionSection({
   canTransact,
   dueCount,
   lootByMissionId,
+  lossesByMissionId,
   myRows,
   now,  onCounterplay,
   onJoinAttack,
@@ -647,6 +659,7 @@ function ActiveMissionSection({
   canTransact: boolean;
   dueCount: number;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
+  lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
   myRows: ActiveMissionRow[];
   now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
@@ -660,6 +673,7 @@ function ActiveMissionSection({
   const sharedRowProps = {
     canTransact,
     lootByMissionId,
+    lossesByMissionId,
     now,
     onCounterplay,
     onJoinAttack,
@@ -708,6 +722,7 @@ function ActiveMissionList({
   emptyLabel,
   initialPage = 0,
   lootByMissionId,
+  lossesByMissionId,
   now,  onCounterplay,
   onJoinAttack,
   onOpenReport,
@@ -721,6 +736,7 @@ function ActiveMissionList({
   emptyLabel: string;
   initialPage?: number | undefined;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
+  lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
   now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
   onOpenReport: (missionId: string) => void;
@@ -761,6 +777,7 @@ function ActiveMissionList({
               direction={direction}
               key={`${context}:${mission.missionId}`}
               loot={returnPhaseLoot(mission, lootByMissionId)}
+              losses={returnPhaseLosses(mission, lossesByMissionId)}
               mission={mission}
               now={now}              onCounterplay={onCounterplay}
               onJoinAttack={onJoinAttack}
@@ -783,6 +800,7 @@ function MissionRow({
   context,
   direction,
   loot,
+  losses,
   mission,
   now,  onCounterplay,
   onJoinAttack,
@@ -796,6 +814,7 @@ function MissionRow({
   context: ActiveMissionContext;
   direction: string;
   loot?: BattleReport["loot"] | undefined;
+  losses?: MissionLossSummary | undefined;
   mission: FleetMissionSummary;
   now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
@@ -857,7 +876,7 @@ function MissionRow({
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
       direction={missionRouteLeg(mission.status)}
-      fleet={<MissionFleet cargo={mission.cargo} loot={loot} ships={mission.ships} />}
+      fleet={<MissionFleet cargo={mission.cargo} loot={loot} losses={losses} missionType={mission.missionType} ships={mission.ships} />}
       groupId={mission.attackGroupId}
       headerTiming={activeMissionHeaderTiming(mission, now, noFleetReturned)}
       missionId={mission.missionId}
@@ -890,17 +909,42 @@ function activeMissionHeaderTiming(mission: FleetMissionSummary, now: number, no
 function MissionFleet({
   cargo,
   loot,
+  losses,
+  missionType,
   ships,
 }: {
   cargo?: FleetMissionSummary["cargo"] | undefined;
   loot?: BattleReport["loot"] | undefined;
+  losses?: MissionLossSummary | undefined;
+  missionType?: string | undefined;
   ships: Record<string, string>;
 }) {
+  // VEY-KANEO-495: a resolved attack that lost ships must not read like a normal completed mission.
+  // For the player's own offensive mission a DefenderWin is a failed attack, so the card shows a
+  // distinct red "Attack failed — fleet lost" flag (criterion 2). All resolved battles also state the
+  // outcome (coloured by result), the per-side fleet losses (criterion 1's resource-value fallback —
+  // per-ship loss counts are not in the served payload), and any debris created for follow-up harvest
+  // (criterion 3). A winning raid shows the green outcome and 0 losses, with no false loss flag.
+  const attackFailed = losses && missionType ? isFailedPlayerAttack(missionType, losses.outcome) : false;
   return (
     <div className="space-y-1">
       <FleetIcons ships={ships} />
       {cargo ? <p className="text-[11px] text-slate-500">Cargo {formatCargo(cargo)}</p> : null}
       {loot ? <p className="text-[11px] text-slate-500">Loot {formatCargo(loot)}</p> : null}
+      {losses ? (
+        <>
+          {attackFailed ? (
+            <p className="inline-flex items-center rounded border border-red-300/40 bg-red-500/15 px-1.5 py-0.5 text-[11px] font-medium text-red-200">
+              Attack failed — fleet lost
+            </p>
+          ) : null}
+          <p className={`text-[11px] ${battleOutcomeTextTone(losses.outcome)}`}>Outcome {battleOutcomeLabel(losses.outcome)}</p>
+          <p className="text-[11px] text-slate-500">Losses {formatCargo(losses.attacker)} / {formatCargo(losses.defender)}</p>
+          {debrisTotal(losses.debris) > 0 ? (
+            <p className="text-[11px] text-slate-500">Debris {formatDebris(losses.debris)}</p>
+          ) : null}
+        </>
+      ) : null}
     </div>
   );
 }
@@ -914,6 +958,18 @@ export function returnPhaseLoot(
 ): BattleReport["loot"] | undefined {
   if (mission.status === "Outbound") return undefined;
   return lootByMissionId.get(mission.missionId);
+}
+
+// VEY-KANEO-495: fleet losses are known the moment combat resolves, but — like loot — they belong to
+// the return leg, so they surface on a card only once the fleet has left its outbound leg (a battle
+// has actually happened). An en-route outbound fleet has fought nothing yet and stays loss-free even
+// if a report id collides; a mission with no matching report (e.g. a transport) shows no losses line.
+export function returnPhaseLosses(
+  mission: FleetMissionSummary,
+  lossesByMissionId: ReadonlyMap<string, MissionLossSummary>,
+): MissionLossSummary | undefined {
+  if (mission.status === "Outbound") return undefined;
+  return lossesByMissionId.get(mission.missionId);
 }
 
 // Status pill shown in every card header (VEY-400): "En route" for outbound fleets, "Returning"/
@@ -1396,6 +1452,7 @@ function PastMissionSection({
   error,
   loading,
   lootByMissionId,
+  lossesByMissionId,
   now,
   onAllPageChange,
   onOpenReport,
@@ -1417,6 +1474,7 @@ function PastMissionSection({
   error?: string | undefined;
   loading: boolean;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
+  lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
   now: number;
   onAllPageChange?: ((page: number) => void) | undefined;
   onOpenReport: (missionId: string) => void;
@@ -1449,7 +1507,7 @@ function PastMissionSection({
       rows,
     },
   };
-  const sharedRowProps = { lootByMissionId, now, onOpenReport, planetLookup, wallet, walletPlanetIds };
+  const sharedRowProps = { lootByMissionId, lossesByMissionId, now, onOpenReport, planetLookup, wallet, walletPlanetIds };
 
   return (
     <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-past-tab={pastTab}>
@@ -1493,6 +1551,7 @@ function PastMissionTable({
   initialClientPage = 0,
   loading,
   lootByMissionId,
+  lossesByMissionId,
   now,
   onOpenReport,
   onPageChange,
@@ -1504,6 +1563,7 @@ function PastMissionTable({
 }: PastMissionTabData & {
   initialClientPage?: number | undefined;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
+  lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
   now: number;
   onOpenReport: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
@@ -1543,6 +1603,7 @@ function PastMissionTable({
                   <PastMissionSummaryRow
                     key={`past-mission:${row.mission.missionId}`}
                     loot={returnPhaseLoot(row.mission, lootByMissionId)}
+                    losses={returnPhaseLosses(row.mission, lossesByMissionId)}
                     mission={row.mission}
                     now={now}
                     onOpenReport={onOpenReport}
@@ -1579,6 +1640,7 @@ function PastMissionTable({
 
 function PastMissionSummaryRow({
   loot,
+  losses,
   mission,
   now,
   onOpenReport,
@@ -1587,6 +1649,7 @@ function PastMissionSummaryRow({
   walletPlanetIds,
 }: {
   loot?: BattleReport["loot"] | undefined;
+  losses?: MissionLossSummary | undefined;
   mission: FleetMissionSummary;
   now: number;
   onOpenReport: (missionId: string) => void;
@@ -1613,7 +1676,7 @@ function PastMissionSummaryRow({
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
       direction={missionRouteLeg(mission.status)}
-      fleet={<MissionFleet cargo={mission.cargo} loot={loot} ships={mission.ships} />}
+      fleet={<MissionFleet cargo={mission.cargo} loot={loot} losses={losses} missionType={mission.missionType} ships={mission.ships} />}
       groupId={mission.attackGroupId}
       missionId={mission.missionId}
       origin={origin}
@@ -1671,6 +1734,9 @@ function PastBattleReportRow({
             {isGroupedAttack ? "Group loot " : "Loot "}{formatCargo(lootShown)}
           </p>
           <p className="text-[11px] text-slate-500">Losses {formatCargo(report.attackerLosses)} / {formatCargo(report.defenderLosses)}</p>
+          {debrisTotal(report.debris) > 0 ? (
+            <p className="text-[11px] text-slate-500">Debris {formatDebris(report.debris)}</p>
+          ) : null}
           {isGroupedAttack ? (
             <p className="text-[11px] text-cyan-300/80">ACS group · {joinerCount} {joinerCount === 1 ? "joiner" : "joiners"}</p>
           ) : null}
@@ -2155,6 +2221,29 @@ function lootByMissionIdFromReports(reports: BattleReport[]): Map<string, Battle
   return lookup;
 }
 
+// VEY-KANEO-495: the attacker/defender fleet losses for a resolved battle, surfaced on the mission
+// card's "Losses" line. On-chain CombatLosses is a single combined figure per battle (not split per
+// ACS participant), so each side's aggregate resource loss is taken straight from the report.
+export type MissionLossSummary = {
+  outcome: BattleReport["outcome"];
+  attacker: BattleReport["attackerLosses"];
+  defender: BattleReport["defenderLosses"];
+  // Debris field (metal/crystal) created by the battle — surfaced for follow-up harvest planning
+  // (VEY-KANEO-495 criterion 3), alongside the per-side losses.
+  debris: BattleReport["debris"];
+};
+
+// Fleet losses keyed by mission id, gathered from every battle report visible across the live fleet
+// feed and the paginated archives — mirrors lootByMissionIdFromReports so a card can pair the
+// outbound cargo, the return-leg loot, and the losses the battle cost on separate lines.
+function lossesByMissionIdFromReports(reports: BattleReport[]): Map<string, MissionLossSummary> {
+  const lookup = new Map<string, MissionLossSummary>();
+  for (const report of reports) {
+    lookup.set(report.missionId, { outcome: report.outcome, attacker: report.attackerLosses, defender: report.defenderLosses, debris: report.debris });
+  }
+  return lookup;
+}
+
 function planetLookupFromMissionData(
   missions: FleetMissionSummary[],
   walletPlanets: ManagedPlanetResponse[]
@@ -2336,6 +2425,39 @@ function battleOutcomeLabel(outcome: BattleReport["outcome"]): string {
   if (outcome === "AttackerWin") return "Attacker win";
   if (outcome === "DefenderWin") return "Defender win";
   return "Draw";
+}
+
+// Offensive mission types where the player's own fleet is the attacker, so a DefenderWin report means
+// the player's attack failed (VEY-KANEO-495). Mirrors the attack set used by missionTypeTone.
+const OFFENSIVE_MISSION_TYPES = ["Attack", "AcsAttack", "MissileAttack"];
+
+function isOffensiveMissionType(missionType: string): boolean {
+  return OFFENSIVE_MISSION_TYPES.includes(missionType);
+}
+
+// VEY-KANEO-495: a resolved offensive mission whose report is a DefenderWin is the player's failed
+// attack — the case the ticket calls out (an attack that cost ships must not read like a normal
+// completed mission). Wins/draws are not flagged, so a successful raid shows no false loss flag.
+function isFailedPlayerAttack(missionType: string, outcome: BattleReport["outcome"]): boolean {
+  return isOffensiveMissionType(missionType) && outcome === "DefenderWin";
+}
+
+// Text colour for the resolved-battle outcome line on a mission card: red for the player's loss,
+// emerald for a win, amber for a draw. Keeps the outcome glanceable without a separate badge slot.
+function battleOutcomeTextTone(outcome: BattleReport["outcome"]): string {
+  if (outcome === "AttackerWin") return "text-emerald-300/80";
+  if (outcome === "DefenderWin") return "text-red-300/90";
+  return "text-amber-300/80";
+}
+
+function debrisTotal(debris: BattleReport["debris"]): number {
+  return Number(debris.metal) + Number(debris.crystal);
+}
+
+// Debris is metal/crystal only (no deuterium), so it has its own formatter rather than reusing
+// formatCargo, which expects a deuterium field.
+function formatDebris(debris: BattleReport["debris"]): string {
+  return `${formatResource(debris.metal)} M / ${formatResource(debris.crystal)} C`;
 }
 
 function shortHash(value: string): string {

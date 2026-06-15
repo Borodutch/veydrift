@@ -58,7 +58,12 @@ type ShipOption = {
   label: string;
 };
 
-const missionShipOptions: ShipOption[] = [
+// VEY-KANEO-493: the mission ship picker intentionally omits Pathfinder. It is an
+// expedition-only vessel and expeditions are not implemented, so it can never be built
+// or owned and listing it here would only surface dead, confusing copy. This mirrors the
+// shipyard's `shipyardHiddenShipKeys` hiding. The `MissionShips`/`MissionShipKey` model
+// keeps `pathfinder` so the on-chain ship enum (index 14) stays aligned.
+export const missionShipOptions: ShipOption[] = [
   { key: "smallCargo", id: 0, label: "Small Cargo" },
   { key: "lightFighter", id: 1, label: "Light Fighter" },
   { key: "recycler", id: 2, label: "Recycler" },
@@ -72,10 +77,9 @@ const missionShipOptions: ShipOption[] = [
   { key: "deathstar", id: 11, label: "Deathstar" },
   { key: "battlecruiser", id: 12, label: "Battlecruiser" },
   { key: "reaper", id: 13, label: "Reaper" },
-  { key: "pathfinder", id: 14, label: "Pathfinder" },
 ];
 
-const cargoShipKeys = new Set<MissionShipKey>(["smallCargo", "largeCargo", "pathfinder", "recycler", "colonyShip"]);
+const cargoShipKeys = new Set<MissionShipKey>(["smallCargo", "largeCargo", "recycler", "colonyShip"]);
 
 export type AcsDefendComposeContext = {
   // Epoch ms when the hostile attack lands. The defending fleet's effective arrival is pinned to this
