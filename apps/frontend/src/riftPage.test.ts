@@ -1,18 +1,29 @@
 import { describe, expect, test } from "bun:test";
+import type { ComponentChildren } from "preact";
 import {
   formatRiftCountdown,
   isWithdrawalReady,
+  RiftPageHeader,
   riftRequirementFlairs,
   riftRequirementStatus,
 } from "./components/RiftPage";
 
 describe("RiftPage helpers", () => {
+  test("renders Rift Stabilizer as the page title without the old eyebrow or bridge title", () => {
+    const text = visibleText(RiftPageHeader({ loading: false, onRefresh: () => undefined }));
+
+    expect(text).toContain("Rift Stabilizer");
+    expect(text).toContain("Refresh");
+    expect(text).not.toContain("Veydrift Rift Stabilizer");
+    expect(text).not.toContain("Resource Bridge");
+  });
+
   test("maps locked Rift requirements to shared clickable requirement flairs", () => {
     expect(riftRequirementFlairs([
       {
         kind: "building",
         key: "interdimensionalRiftStabilizer",
-        label: "Interdimensional Rift Stabilizer",
+        label: "Rift Stabilizer",
         currentLevel: 0,
         requiredLevel: 1,
         binary: true,
@@ -47,7 +58,7 @@ describe("RiftPage helpers", () => {
         requiredLevel: 1,
       },
     ])).toEqual([
-      { label: "Interdimensional Rift Stabilizer", met: false, target: { kind: "building", key: "interdimensionalRiftStabilizer" } },
+      { label: "Rift Stabilizer", met: false, target: { kind: "building", key: "interdimensionalRiftStabilizer" } },
       { label: "Robotics Factory 4", met: false, target: { kind: "building", key: "roboticsFactory" } },
       { label: "Research Lab 2", met: true, target: { kind: "building", key: "researchLab" } },
       { label: "Energy Technology 5", met: false, target: { kind: "research", key: "energy" } },
@@ -106,3 +117,37 @@ describe("RiftPage helpers", () => {
     }, now)).toBe(true);
   });
 });
+
+function visibleText(node: ComponentChildren): string {
+  return textParts(node).join(" ").replace(/\s+/g, " ").trim();
+}
+
+function textParts(node: ComponentChildren): string[] {
+  if (node === null || node === undefined || typeof node === "boolean") {
+    return [];
+  }
+  if (typeof node === "string" || typeof node === "number" || typeof node === "bigint") {
+    return [String(node)];
+  }
+  if (Array.isArray(node)) {
+    return node.flatMap(textParts);
+  }
+  if (typeof node !== "object") {
+    return [];
+  }
+
+  const vnode = node as {
+    type?: unknown;
+    props?: { children?: ComponentChildren; title?: unknown; "aria-label"?: unknown };
+  };
+  if (typeof vnode.type === "function") {
+    if ("size" in (vnode.props ?? {}) || "strokeWidth" in (vnode.props ?? {})) return [];
+    const render = vnode.type as (props: Record<string, unknown>) => ComponentChildren;
+    return textParts(render({ ...(vnode.props ?? {}) }));
+  }
+
+  const labels = typeof vnode.type === "string"
+    ? [vnode.props?.["aria-label"], vnode.props?.title].filter((value): value is string => typeof value === "string")
+    : [];
+  return [...labels, ...textParts(vnode.props?.children)];
+}

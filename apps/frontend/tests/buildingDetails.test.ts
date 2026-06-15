@@ -413,7 +413,7 @@ describe("building detail helpers", () => {
     });
   });
 
-  test("treats the Rift bridge as a binary build instead of an upgrade ladder", () => {
+  test("treats the Rift Stabilizer as a binary build instead of an upgrade ladder", () => {
     const readyState = {
       ...createInitialPlayableState(1_000),
       buildings: {
@@ -431,7 +431,7 @@ describe("building detail helpers", () => {
 
     expect(buildingUpgradeStatus(readyState, "interdimensionalRiftStabilizer")).toMatchObject({
       disabled: false,
-      reason: "Ready to build Rift bridge",
+      reason: "Ready to build Rift Stabilizer",
       targetLevel: 1,
     });
     expect(buildingUpgradeStatus({
@@ -442,7 +442,7 @@ describe("building detail helpers", () => {
       },
     }, "interdimensionalRiftStabilizer")).toMatchObject({
       disabled: true,
-      reason: "Rift bridge built on this planet",
+      reason: "Rift Stabilizer built on this planet",
       targetLevel: 1,
     });
     expect(buildingUpgradeStatus({
@@ -450,14 +450,14 @@ describe("building detail helpers", () => {
       queue: {
         kind: "building",
         key: "interdimensionalRiftStabilizer",
-        label: "Interdimensional Rift Stabilizer",
+        label: "Rift Stabilizer",
         readyAt: 61_000,
         startedAt: 1_000,
         targetLevel: 1,
       },
     }, "metalMine", { now: 1_000 })).toMatchObject({
       disabled: true,
-      reason: "Another building is currently upgrading: Interdimensional Rift Stabilizer",
+      reason: "Another building is currently upgrading: Rift Stabilizer",
     });
   });
 

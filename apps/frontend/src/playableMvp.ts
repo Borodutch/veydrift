@@ -374,7 +374,7 @@ export const buildingCatalog: Array<{
   },
   {
     key: "interdimensionalRiftStabilizer",
-    label: "Interdimensional Rift Stabilizer",
+    label: "Rift Stabilizer",
     baseCost: { metal: 8_000, crystal: 8_000, deuterium: 4_000 },
     asset: "/assets/game/style-pass/generated/buildings/interdimensional-rift-stabilizer-mid.webp",
   },
@@ -1764,7 +1764,7 @@ export function buildingEffectMetrics(
       kind: "facility",
       currentLevel: buildings[key],
       nextLevel: 1,
-      label: "Rift bridge",
+      label: "Rift Stabilizer",
       binary: true,
     };
   }

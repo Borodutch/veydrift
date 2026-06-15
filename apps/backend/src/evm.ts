@@ -1989,12 +1989,12 @@ export class VeydriftGameReader implements ChainReader {
       return emptyRiftState(
         wallet,
         null,
-        "The deployed contract only supports first-planet settlement. The Rift bridge is not available on this deployment yet."
+        "The deployed contract only supports first-planet settlement. The Rift Stabilizer is not available on this deployment yet."
       );
     }
 
     if (!settlement.homePlanetId || !settlement.planet) {
-      return emptyRiftState(wallet, null, "Settle a home planet before using the Interdimensional Rift Stabilizer.");
+      return emptyRiftState(wallet, null, "Settle a home planet before using the Rift Stabilizer.");
     }
 
     const planetId = BigInt(settlement.homePlanetId);
@@ -2017,9 +2017,9 @@ export class VeydriftGameReader implements ChainReader {
     const pendingWithdrawals = await this.readRiftWithdrawals(wallet);
     const resources = await this.readRiftResources(wallet, settlement.planet.resources, pendingWithdrawals);
     const unavailableReason = riftLevel === null
-      ? "This deployment does not expose the Interdimensional Rift Stabilizer building yet."
+      ? "This deployment does not expose the Rift Stabilizer building yet."
       : !unlocked
-        ? "Build the Interdimensional Rift Stabilizer on this planet to unlock resource bridging."
+        ? "Build the Rift Stabilizer on this planet to unlock resource bridging."
         : !tokenAddressesConfigured
           ? "Resource token addresses are not configured for this deployment yet."
           : undefined;
@@ -4336,7 +4336,7 @@ export function riftRequirements(
     {
       kind: "building",
       key: "interdimensionalRiftStabilizer",
-      label: "Interdimensional Rift Stabilizer",
+      label: "Rift Stabilizer",
       currentLevel: riftBuilt === null ? null : riftBuilt ? 1 : 0,
       requiredLevel: 1,
       binary: true,

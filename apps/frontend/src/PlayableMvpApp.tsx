@@ -4182,7 +4182,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const handleDepositRiftResource = useCallback((resource: RiftResourceState, amount: string) => {
     if (!provider || !account || !gameContract || !riftState?.riftAvailable || !riftState.homePlanetId) {
-      setRiftAction({ status: "error", label: riftState?.unavailableReason ?? "Rift bridge is unavailable." });
+      setRiftAction({ status: "error", label: riftState?.unavailableReason ?? "Rift Stabilizer is unavailable." });
       return;
     }
     const homePlanetId = riftState.homePlanetId;
@@ -4207,7 +4207,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const handleRequestRiftWithdrawal = useCallback((resource: RiftResourceState, amount: string) => {
     if (!provider || !account || !gameContract || !riftState?.riftAvailable || !riftState.homePlanetId) {
-      setRiftAction({ status: "error", label: riftState?.unavailableReason ?? "Rift bridge is unavailable." });
+      setRiftAction({ status: "error", label: riftState?.unavailableReason ?? "Rift Stabilizer is unavailable." });
       return;
     }
     const homePlanetId = riftState.homePlanetId;
