@@ -362,9 +362,32 @@ export type DefenderPlanetState = {
   stationedDefenders?: StationedDefenderSummary[];
 };
 
+export type TargetCombatIntel = {
+  planetId: string;
+  activeMissions: FleetMissionSummary[];
+  combatPower: string;
+  combatShips: {
+    count: number;
+    power: string;
+    units?: TacticalUnitBreakdown[];
+  };
+  defenses: {
+    count: number;
+    power: string;
+    units?: TacticalUnitBreakdown[];
+  };
+  queues: {
+    defense: QueueStateResponse | null;
+    ship: QueueStateResponse | null;
+  };
+};
+
 export type MissionDetailResponse = {
   mission: FleetMissionSummary;
   battleReport: BattleReport | null;
+  // Public target fighting-strength snapshot for the mission target. Null means the target planet is
+  // not charted in the indexed state; undefined only appears with older API responses.
+  targetCombatIntel?: TargetCombatIntel | null;
   // The defender planet's current indexed fleet/defenses composition, used to populate the
   // Battle Report's defender block. Null/undefined when the target planet is not charted, so the
   // composition cannot be derived from the indexed state.

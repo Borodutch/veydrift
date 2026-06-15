@@ -1304,6 +1304,130 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("mission detail exposes target combat intel before a battle report exists (VEY-KANEO-516)", async () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const otherAttacker = "0x5555555555555555555555555555555555555555" as Address;
+    const defender = "0x4444444444444444444444444444444444444444" as Address;
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.applyEvent({
+      ...planet,
+      planetId: "9",
+      owner: defender,
+      eventName: "PlanetStarted",
+      transactionHash: "0xtargetplanet",
+      blockNumber: "100"
+    });
+    indexer.applyLog({
+      blockNumber: "0x65",
+      transactionHash: "0xshipcount",
+      logIndex: "0x0",
+      removed: false,
+      topics: [planetShipCountChangedTopic, topic(9n), topic(1n)],
+      data: abiWords(12n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x66",
+      transactionHash: "0xdefensedone",
+      logIndex: "0x0",
+      removed: false,
+      topics: [defenseCompletedTopic, topic(9n), topic(4n)],
+      data: abiWords(3n, 3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x67",
+      transactionHash: "0xdefensequeued",
+      logIndex: "0x0",
+      removed: false,
+      topics: [defenseQueuedTopic, topic(9n), topic(4n)],
+      data: abiWords(2n, 1_800_000_400n, 9000n, 3000n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x68",
+      transactionHash: "0xshipqueued",
+      logIndex: "0x0",
+      removed: false,
+      topics: [shipQueuedTopic, topic(9n), topic(1n)],
+      data: abiWords(4n, 1_800_000_500n, 12000n, 4000n, 0n)
+    });
+    indexer.applyLog(fleetMissionLog({
+      topics: [fleetMissionLaunchedTopic, topic(51n), addressTopic(attacker), topic(3n)],
+      data: abiWords(7n, 9n, 1_800_000_000n, 1_800_000_300n),
+      logIndex: 510
+    }));
+    indexer.applyLog(fleetMissionLog({
+      topics: [fleetMissionCargoTopic, topic(51n)],
+      data: abiWords(0n, 0n, 0n, 1n),
+      logIndex: 511
+    }));
+    indexer.applyLog(fleetMissionLog({
+      topics: [fleetMissionShipsTopic, topic(51n)],
+      data: abiWords(...Array.from({ length: 14 }, (_, index) => index === 1 ? 5n : 0n)),
+      logIndex: 512
+    }));
+    indexer.applyLog(fleetMissionLog({
+      topics: [fleetMissionLaunchedTopic, topic(52n), addressTopic(otherAttacker), topic(3n)],
+      data: abiWords(7n, 9n, 1_800_000_100n, 1_800_000_400n),
+      logIndex: 520
+    }));
+    indexer.applyLog(fleetMissionLog({
+      topics: [fleetMissionCargoTopic, topic(52n)],
+      data: abiWords(0n, 0n, 0n, 1n),
+      logIndex: 521
+    }));
+    indexer.applyLog(fleetMissionLog({
+      topics: [fleetMissionShipsTopic, topic(52n)],
+      data: abiWords(...Array.from({ length: 14 }, (_, index) => index === 0 ? 3n : 0n)),
+      logIndex: 522
+    }));
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    })(new Request("http://localhost/mission/51"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.battleReport).toBeNull();
+    const targetCombatIntel = body.targetCombatIntel;
+    expect(BigInt(targetCombatIntel.combatPower)).toBeGreaterThan(0n);
+    expect(targetCombatIntel.activeMissions.map((entry: { missionId: string }) => entry.missionId).sort()).toEqual(["51", "52"]);
+    expect(targetCombatIntel).toMatchObject({
+      planetId: "9",
+      combatPower: expect.any(String),
+      combatShips: {
+        count: 12,
+        power: expect.any(String),
+        units: [expect.objectContaining({ id: 1, count: 12, power: expect.any(String) })]
+      },
+      defenses: {
+        count: 3,
+        power: expect.any(String),
+        units: [expect.objectContaining({ id: 4, count: 3, power: expect.any(String) })]
+      },
+      activeMissions: expect.arrayContaining([
+        expect.objectContaining({ missionId: "51", owner: attacker, targetPlanetId: "9" }),
+        expect.objectContaining({ missionId: "52", owner: otherAttacker, targetPlanetId: "9" })
+      ]),
+      queues: {
+        defense: expect.objectContaining({
+          active: true,
+          itemId: 4,
+          quantity: 2,
+          readyAt: "1800000400"
+        }),
+        ship: expect.objectContaining({
+          active: true,
+          itemId: 1,
+          quantity: 4,
+          readyAt: "1800000500"
+        })
+      }
+    });
+    expect(body.defenderPlanetState).toBeNull();
+  });
+
   test("mission detail exposes battle-time DefenseHold defenders when planet fleet and defenses are zero (VEY-498)", async () => {
     const attacker = "0x3333333333333333333333333333333333333333" as Address;
     const defender = "0x4444444444444444444444444444444444444444" as Address;
