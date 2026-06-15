@@ -3677,6 +3677,102 @@ describe("SettlementIndexer", () => {
     expect(indexer.planet(planet.planetId)?.resources).toEqual({ metal: "250", crystal: "8000", deuterium: "120" });
   });
 
+  test("explicit canonical sync replays logs then repairs canonical rows from chain snapshots", async () => {
+    let fetchedLogs = 0;
+    let readCanonicalInfrastructure = 0;
+    const liveInfrastructure: InfrastructureState = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      infrastructureAvailable: true,
+      resources: { metal: "777", crystal: "888", deuterium: "999" },
+      productionPerHour: { metal: "0", crystal: "0", deuterium: "0" },
+      energyBalance: { produced: "0", required: "0", scaleBps: "10000" },
+      storageCaps: { metal: "1000000", crystal: "1000000", deuterium: "1000000" },
+      protectedResources: { metal: "0", crystal: "0", deuterium: "0" },
+      raidableResources: { metal: "0", crystal: "0", deuterium: "0" },
+      technologyLevels: {},
+      buildings: deriveBuildingRows((id) => (id === 0 ? 2 : 0)),
+      queue: null
+    };
+    const liveShipyard: ShipyardState = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      planetId: planet.planetId,
+      productionAvailable: true,
+      resources: null,
+      fleetSlots: { active: 0, limit: 1 },
+      shipyardLevel: 0,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: deriveShipRows((id) => (id === 1 ? 0 : 0)),
+      queue: null
+    };
+    const liveDefense: DefenseState = {
+      wallet: player,
+      homePlanetId: planet.planetId,
+      productionAvailable: true,
+      resources: null,
+      shipyardLevel: 0,
+      naniteLevel: 0,
+      missileSiloLevel: 0,
+      technologyLevels: {},
+      defenses: deriveDefenseRows((id) => (id === 2 ? 5 : 0)),
+      queue: null
+    };
+    const indexer = new SettlementIndexer({
+      async listContractLogs() {
+        fetchedLogs += 1;
+        return [
+          {
+            blockNumber: "0x91",
+            transactionHash: "0xstale-ship",
+            logIndex: "0x0",
+            topics: [planetShipCountChangedTopic, topic(7n), topic(1n)],
+            data: abiWords(12n)
+          },
+          {
+            blockNumber: "0x90",
+            transactionHash: "0xplanet",
+            logIndex: "0x0",
+            topics: [planetStartedTopic, addressTopic(player), topic(7n)],
+            data: abiWords(2n, 44n, 9n, 211n, signedWord(-8n))
+          }
+        ];
+      },
+      async listCurrentPlanets() { return [planet]; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async getInfrastructureState() {
+        readCanonicalInfrastructure += 1;
+        return liveInfrastructure;
+      },
+      async getShipyardState() { return liveShipyard; },
+      async getDefenseState() { return liveDefense; },
+      async getPlayerQueues() {
+        return {
+          wallet: player,
+          homePlanetId: planet.planetId,
+          building: null,
+          defense: null,
+          ship: null,
+          research: null
+        };
+      }
+    }, 100n);
+
+    const result = await indexer.syncCanonicalState(100n, 0x91n);
+
+    expect(fetchedLogs).toBe(1);
+    expect(readCanonicalInfrastructure).toBe(1);
+    expect(result.replay.indexedEventLogs).toBeGreaterThan(0);
+    expect(result.rebuild.lastReconciliationError).toBeNull();
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(2);
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(0);
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(5);
+    expect(indexer.planet(planet.planetId)?.resources).toEqual({ metal: "777", crystal: "888", deuterium: "999" });
+  });
+
   test("records reconciliation failures for health/debug visibility", async () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

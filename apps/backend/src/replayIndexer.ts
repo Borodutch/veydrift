@@ -3,6 +3,7 @@ import { VeydriftGameReader } from "./evm";
 import { SettlementIndexer } from "./indexer";
 
 type ReplayArgs = {
+  canonicalSync: boolean;
   fromBlock?: bigint;
   toBlock?: bigint | "latest";
 };
@@ -25,15 +26,20 @@ async function main(): Promise<void> {
   const before = indexer.snapshot();
   const fromBlock = args.fromBlock ?? replayFromBlock(before.latestIndexedBlock, loaded.config.indexFromBlock);
   const toBlock = args.toBlock ?? "latest";
-  const after = await indexer.replayContractLogs(fromBlock, toBlock);
+  const result = args.canonicalSync
+    ? await indexer.syncCanonicalState(fromBlock, toBlock)
+    : { replay: await indexer.replayContractLogs(fromBlock, toBlock), rebuild: null };
+  const after = result.rebuild ?? result.replay;
 
   console.log(JSON.stringify({
     replay: {
       fromBlock: fromBlock.toString(),
       toBlock: typeof toBlock === "bigint" ? toBlock.toString() : toBlock,
-      materializedRebuildFromStoredLogs: true
+      materializedRebuildFromStoredLogs: true,
+      canonicalSync: args.canonicalSync
     },
     before,
+    ...(result.rebuild ? { afterReplay: result.replay } : {}),
     after
   }, null, 2));
 }
@@ -50,11 +56,13 @@ function replayFromBlock(latestIndexedBlock: string | null, configuredFromBlock:
 }
 
 function parseArgs(args: string[]): ReplayArgs {
-  const parsed: ReplayArgs = {};
+  const parsed: ReplayArgs = { canonicalSync: false };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     const value = args[index + 1];
-    if (arg === "--from-block") {
+    if (arg === "--canonical-sync") {
+      parsed.canonicalSync = true;
+    } else if (arg === "--from-block") {
       if (!value) throw new Error("--from-block requires a value");
       parsed.fromBlock = BigInt(value);
       index += 1;

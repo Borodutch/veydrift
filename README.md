@@ -71,18 +71,29 @@ bun run dev:frontend
 - `POST /webhooks/alchemy`
 - `GET /graphql` / `POST /graphql` for the existing minimal service status response
 
-Index DB alignment is an explicit operator action through the backend package script, not an HTTP
-route:
+Index DB alignment is an explicit operator action through backend package scripts, not an HTTP
+route. Use the canonical sync when historical DB state must be repaired against on-chain truth:
+
+```sh
+cd apps/backend
+bun run index:sync -- --from-block <block>
+```
+
+The sync command first fetches/stores raw contract logs for the requested range, rebuilds
+materialized event-derived DB tables from the full stored `indexed_event_logs` ledger, then runs the
+explicit canonical rebuild that reads current on-chain resources, buildings, ships, defenses, queues,
+research, moons, and alliance snapshots. This is the operator-only repair path for historical drift
+that cannot be reconstructed from old event logs alone.
+
+For a log-only rematerialization that performs no canonical state reads, use:
 
 ```sh
 cd apps/backend
 bun run index:replay -- --from-block <block>
 ```
 
-The replay command first fetches/stores raw contract logs for the requested range, then rebuilds the
-materialized event-derived DB tables from the full stored `indexed_event_logs` ledger. This lets an
-operator repair stale rows left by older indexer handlers without adding request-time, startup, or
-periodic canonical RPC self-heal.
+Both commands are explicit operator tools and do not add request-time, startup, or periodic
+canonical RPC self-heal.
 
 Copy `apps/backend/.env.example` to `apps/backend/.env` and provide the Base
 Sepolia RPC configuration before using chain-backed routes:
@@ -132,8 +143,9 @@ that DB through contract event replay/listeners only. `GET /health` reports the
 last reconciled block, latest indexed block, in-progress state, reorg detection,
 and last reconciliation error. `GET /chain/events` streams backend chain-event
 notifications to the frontend. Manual DB alignment is intentionally separated
-from HTTP routes and runs through `bun run index:replay -- --from-block <block>`,
-which fetches missing logs and re-materializes stored-log side effects locally.
+from HTTP routes and runs through `bun run index:sync -- --from-block <block>`
+when canonical on-chain repair is required, or `bun run index:replay -- --from-block <block>`
+when only stored-log rematerialization is intended.
 `POST /webhooks/alchemy` accepts Alchemy contract log webhook payloads, verifies
 `X-Alchemy-Signature` when `VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY` is configured,
 and applies duplicate-safe indexed event updates.
@@ -369,9 +381,11 @@ downtime-free. This is intentional: the SQLite index DB is opened synchronously
 during request-handler construction (before Bun binds the port), so persisted
 indexed reads are serveable the instant `/health` first answers, while the heavy
 event replay continues through the chain-sync poller and never blocks readiness.
-Operator-run DB alignment is explicit (`bun run index:replay -- --from-block <block>`) rather than
-a backend startup self-heal; it replays missing RPC logs and rebuilds materialized tables from the
-stored event ledger. The same readiness gate is embedded as a Docker `HEALTHCHECK` in
+Operator-run DB alignment is explicit (`bun run index:sync -- --from-block <block>`) rather than
+a backend startup self-heal; it replays missing RPC logs, rebuilds materialized tables from the
+stored event ledger, and runs the explicit canonical repair read. Use
+`bun run index:replay -- --from-block <block>` only for log-only rematerialization. The same
+readiness gate is embedded as a Docker `HEALTHCHECK` in
 `apps/backend/Dockerfile.test`, so the Dockerfile rollback build path carries it
 automatically; Nixpacks builds cannot embed a `HEALTHCHECK`, so the EasyPanel
 Health Check above is required for the primary Nixpacks deploy.
