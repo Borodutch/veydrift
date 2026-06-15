@@ -65,12 +65,7 @@ export function RiftPage({
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh Rift state" />}
-        eyebrow="Rift Stabilizer"
-        subtitle="Move open-market resource tokens into your empire instantly, or lock in-game resources for a 30-day Veydrift withdrawal window."
-        title="Resource Bridge"
-      />
+      <RiftPageHeader loading={loading} onRefresh={onRefresh} />
 
       {/* Only surface failures. Success/pending action banners are intentionally
           not rendered so the page does not flash transient status banners. */}
@@ -163,6 +158,22 @@ export function RiftPage({
         </>
       )}
     </section>
+  );
+}
+
+export function RiftPageHeader({
+  loading,
+  onRefresh,
+}: {
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <PageHeader
+      actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh Rift state" />}
+      subtitle="Move open-market resource tokens into your empire instantly, or lock in-game resources for a 30-day Veydrift withdrawal window."
+      title="Rift Stabilizer"
+    />
   );
 }
 
