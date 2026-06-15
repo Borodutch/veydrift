@@ -4679,6 +4679,42 @@ describe("SettlementIndexer", () => {
     expect(third).not.toBe(first);
     expect(third.entries).toEqual(indexer.highscoreEntriesForOwners(indexer.settledPlanetsByOwner()));
   });
+
+  test("memoizes attack launch timestamps for highscore protection scans until indexed state changes", () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: "0x64",
+      transactionHash: "0xattack-cache-1",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(50n), addressTopic(attacker), topic(3n)],
+      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
+    });
+
+    const first = indexer.attackLaunchSecondsByTarget(attacker);
+    const second = indexer.attackLaunchSecondsByTarget(attacker);
+
+    expect(second).toBe(first);
+    expect(first.get("99")).toEqual([100]);
+
+    indexer.applyLog({
+      blockNumber: "0x91",
+      blockTimestamp: "0xc8",
+      transactionHash: "0xattack-cache-2",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(51n), addressTopic(attacker), topic(3n)],
+      data: abiWords(7n, 99n, 1770001300n, 1770002500n, 0n)
+    });
+
+    const third = indexer.attackLaunchSecondsByTarget(attacker);
+    expect(third).not.toBe(first);
+    expect(third.get("99")).toEqual([100, 200]);
+  });
 });
 
 describe("attack needsResolution is gated on battle randomness (VEY-KANEO-479)", () => {
