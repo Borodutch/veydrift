@@ -53,11 +53,14 @@ export type BuildingEnergyDetail =
       kind: "none";
     };
 
-const solarPrerequisiteMineKeys = new Set<BuildingKey>([
-  "metalMine",
-  "crystalMine",
-  "deuteriumSynthesizer",
-]);
+export type FrontendOnlyBuildingRequirementOptions = {
+  starterPlanet?: boolean | undefined;
+};
+
+export type FrontendOnlyBuildingRequirement = {
+  key: BuildingKey;
+  level: number;
+};
 
 export type BuildingLevelInfoRow = {
   cost: Resources;
@@ -97,6 +100,7 @@ export function buildingUpgradeStatus(
     now?: number | undefined;
     productionRates?: Resources | undefined;
     spendableResources?: Resources | undefined;
+    starterPlanet?: boolean | undefined;
   } = {},
 ): BuildingUpgradeStatus {
   const cost = options.chainCost ?? buildingCost(state.buildings, key);
@@ -143,12 +147,14 @@ export function buildingUpgradeStatus(
     };
   }
 
-  const solarPrerequisite = mineSolarPlantPrerequisiteFor(state, key);
-  if (solarPrerequisite) {
+  const starterPrerequisite = missingFrontendOnlyBuildingRequirementFor(state, key, {
+    starterPlanet: options.starterPlanet,
+  });
+  if (starterPrerequisite) {
     return {
       cost,
       disabled: true,
-      reason: `Requires ${solarPrerequisite}`,
+      reason: `Requires ${starterPrerequisite}`,
       targetLevel,
       durationSeconds,
     };
@@ -248,9 +254,12 @@ export function buildingLevelInfoColumns(rows: BuildingLevelInfoRow[]): Building
   };
 }
 
-export function formatBuildingRequirements(key: BuildingKey): string {
+export function formatBuildingRequirements(
+  key: BuildingKey,
+  options: FrontendOnlyBuildingRequirementOptions = {},
+): string {
   const requirements = [
-    ...frontendOnlyBuildingRequirementsFor(key),
+    ...frontendOnlyBuildingRequirementsFor(key, options).map(formatFrontendOnlyBuildingRequirement),
     ...buildingRequirementsFor(key).map(formatBuildingRequirement),
   ];
 
@@ -262,14 +271,54 @@ export function formatBuildingRequirements(key: BuildingKey): string {
 export function mineSolarPlantPrerequisiteFor(
   state: Pick<PlayableState, "buildings">,
   key: BuildingKey,
+  options: FrontendOnlyBuildingRequirementOptions = {},
 ): string | undefined {
-  return solarPrerequisiteMineKeys.has(key) && state.buildings.solarPlant < 1
+  return frontendOnlyBuildingRequirementsFor(key, options).some((requirement) => requirement.key === "solarPlant")
+    && state.buildings.solarPlant < 1
     ? "Solar Plant level 1"
     : undefined;
 }
 
-function frontendOnlyBuildingRequirementsFor(key: BuildingKey): string[] {
-  return solarPrerequisiteMineKeys.has(key) ? ["Solar Plant level 1"] : [];
+export function missingFrontendOnlyBuildingRequirementFor(
+  state: Pick<PlayableState, "buildings">,
+  key: BuildingKey,
+  options: FrontendOnlyBuildingRequirementOptions = {},
+): string | undefined {
+  const missing = frontendOnlyBuildingRequirementsFor(key, options)
+    .find((requirement) => state.buildings[requirement.key] < requirement.level);
+  return missing ? formatFrontendOnlyBuildingRequirement(missing) : undefined;
+}
+
+export function frontendOnlyBuildingRequirementsFor(
+  key: BuildingKey,
+  { starterPlanet = false }: FrontendOnlyBuildingRequirementOptions = {},
+): FrontendOnlyBuildingRequirement[] {
+  if (!starterPlanet) return [];
+
+  if (key === "metalMine") {
+    return [{ key: "solarPlant", level: 1 }];
+  }
+
+  if (key === "crystalMine") {
+    return [
+      { key: "metalMine", level: 1 },
+      { key: "solarPlant", level: 1 },
+    ];
+  }
+
+  if (key === "deuteriumSynthesizer") {
+    return [
+      { key: "metalMine", level: 1 },
+      { key: "crystalMine", level: 1 },
+      { key: "solarPlant", level: 1 },
+    ];
+  }
+
+  return [];
+}
+
+export function formatFrontendOnlyBuildingRequirement(requirement: FrontendOnlyBuildingRequirement): string {
+  return `${buildingLabel(requirement.key)} level ${requirement.level}`;
 }
 
 function formatBuildingRequirement(requirement: ReturnType<typeof buildingRequirementsFor>[number]): string {
