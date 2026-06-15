@@ -4,7 +4,6 @@ import {
   DEFAULT_RAID_TARGET_SORT,
   buildRaidTargets,
   filterRaidTargets,
-  floatActiveMissionTargetsFirst,
   hasActiveAlliance,
   inboundFleetsByTarget,
   incomingThreats,
@@ -30,6 +29,7 @@ describe("persisted raid target settings", () => {
       hideProtected: false,
       hideSameAlliance: false,
       hideDefended: true,
+      hideActiveFleet: true,
       minLoot: 1234.9,
       maxDistance: 987.6,
       unrelated: "ignored",
@@ -39,6 +39,7 @@ describe("persisted raid target settings", () => {
       hideProtected: false,
       hideSameAlliance: false,
       hideDefended: true,
+      hideActiveFleet: true,
       minLoot: 1234,
       maxDistance: 987,
     });
@@ -71,6 +72,7 @@ function planet(overrides: Partial<HighscorePlanet> & { planetId: string }): Hig
       grossResourceTotal: "3200",
       ships: { count: 2, power: "300" },
       defenses: { count: 1, power: "200" },
+      combatShips: { count: 1, power: "200", units: [{ id: 1, count: 1, power: "4000" }] },
       combatPower: "500",
     },
     ...overrides,
@@ -170,17 +172,32 @@ describe("buildRaidTargets", () => {
     expect(targets.map((target) => target.planetId)).toEqual(["home"]);
   });
 
-  test("computes loot, combat, defense and distance from tactical intel", () => {
+  test("computes loot, combat, defense, unit breakdowns, and distance from tactical intel", () => {
     const target = buildRaidTargets({
-      entries: [entry({ wallet: "0xa", planets: [planet({ planetId: "1", coordinates: { galaxy: 1, system: 1, position: 5 } })] })],
+      entries: [entry({ wallet: "0xa", planets: [planet({
+        planetId: "1",
+        coordinates: { galaxy: 1, system: 1, position: 5 },
+        tactical: {
+          raidableResources: { metal: "1000", crystal: "500", deuterium: "100" },
+          raidableResourceTotal: "1600",
+          grossResourceTotal: "3200",
+          ships: { count: 2, power: "6500", units: [{ id: 1, count: 1, power: "4000" }, { id: 9, count: 1, power: "2500" }] },
+          defenses: { count: 1, power: "2000", units: [{ id: 0, count: 1, power: "2000" }] },
+          combatShips: { count: 1, power: "4000", units: [{ id: 1, count: 1, power: "4000" }] },
+          combatPower: "6000",
+        },
+      })] })],
       origin: ORIGIN,
     })[0]!;
     expect(target.loot).toBe(1600);
     // LOOT is the ~50% plunder of the planet's full accrued public resources (VEY-KANEO-454).
     expect(target.grossLoot).toBe(3200);
-    expect(target.combatPower).toBe(500);
-    expect(target.shipPower).toBe(300);
-    expect(target.defensePower).toBe(200);
+    expect(target.combatPower).toBe(6000);
+    expect(target.shipPower).toBe(6500);
+    expect(target.defensePower).toBe(2000);
+    expect(target.shipUnits.map((unit) => unit.id)).toEqual([1, 9]);
+    expect(target.combatShipUnits.map((unit) => unit.id)).toEqual([1]);
+    expect(target.defenseUnits).toEqual([{ id: 0, count: 1, power: 2000 }]);
     expect(target.distance).toBeGreaterThan(0);
   });
 
@@ -261,6 +278,7 @@ describe("filterRaidTargets", () => {
       entry({ wallet: "0xally", planets: [planet({ planetId: "a" })], attackProtection: { allowed: false, blockedReason: "same_alliance", blockedReasonLabel: null } }),
       entry({ wallet: "0xrich", planets: [planet({ planetId: "rich", tactical: { raidableResources: { metal: "0", crystal: "0", deuterium: "0" }, raidableResourceTotal: "9000", ships: { count: 0, power: "0" }, defenses: { count: 0, power: "0" }, combatPower: "0" } })] }),
       entry({ wallet: "0xdefended", planets: [planet({ planetId: "def", tactical: { raidableResources: { metal: "0", crystal: "0", deuterium: "0" }, raidableResourceTotal: "10", ships: { count: 0, power: "0" }, defenses: { count: 5, power: "5000" }, combatPower: "5000" } })] }),
+      entry({ wallet: "0xcombatfleet", planets: [planet({ planetId: "fleet", tactical: { raidableResources: { metal: "0", crystal: "0", deuterium: "0" }, raidableResourceTotal: "20", ships: { count: 1, power: "4000" }, defenses: { count: 0, power: "0" }, combatShips: { count: 1, power: "4000", units: [{ id: 1, count: 1, power: "4000" }] }, combatPower: "4000" } })] }),
     ],
     origin: ORIGIN,
   });
@@ -268,12 +286,22 @@ describe("filterRaidTargets", () => {
   test("default filters hide protected and same-alliance targets", () => {
     const visible = filterRaidTargets(targets, DEFAULT_RAID_TARGET_FILTERS);
     const ids = visible.map((target) => target.planetId).sort();
-    expect(ids).toEqual(["def", "rich"]);
+    expect(ids).toEqual(["def", "fleet", "rich"]);
   });
 
-  test("hideDefended removes targets with any defense power", () => {
+  test("hideDefended removes targets with any displayed combat threat", () => {
     const visible = filterRaidTargets(targets, { ...DEFAULT_RAID_TARGET_FILTERS, hideDefended: true });
     expect(visible.map((target) => target.planetId)).toEqual(["rich"]);
+  });
+
+  test("hideActiveFleet removes targets with active mission subtext without changing the remaining sort order", () => {
+    const visible = sortRaidTargets(
+      filterRaidTargets(targets, { ...DEFAULT_RAID_TARGET_FILTERS, hideActiveFleet: true }, {
+        hasActiveFleetActivity: (target) => target.planetId === "fleet",
+      }),
+      DEFAULT_RAID_TARGET_SORT,
+    );
+    expect(visible.map((target) => target.planetId)).toEqual(["rich", "def"]);
   });
 
   test("minLoot threshold excludes low-value targets", () => {
@@ -287,7 +315,7 @@ describe("filterRaidTargets", () => {
       hideProtected: false,
       hideSameAlliance: false,
     });
-    expect(visible).toHaveLength(4);
+    expect(visible).toHaveLength(5);
   });
 
   test("maxDistance excludes far targets but keeps unknown-distance ones", () => {
@@ -325,6 +353,9 @@ describe("sortRaidTargets", () => {
       shipCount: 0,
       defensePower: 0,
       defenseCount: 0,
+      shipUnits: [],
+      combatShipUnits: [],
+      defenseUnits: [],
       protection: { isProtected: false, isSameAlliance: false, blockedReason: "none", blockedReasonLabel: null, defenderInactive: false },
       inbound: { count: 0, nextArrivalAtMs: null },
       ...partial,
@@ -419,39 +450,5 @@ describe("incomingThreats", () => {
     expect(incomingThreats(undefined)).toEqual([]);
     const threats = incomingThreats(visibility({ incoming: [mission({ missionId: "done", status: "Resolved" })] }));
     expect(threats).toEqual([]);
-  });
-});
-
-describe("floatActiveMissionTargetsFirst", () => {
-  const targets = buildRaidTargets({
-    entries: [
-      entry({ wallet: "0xa", planets: [planet({ planetId: "1" })] }),
-      entry({ wallet: "0xb", planets: [planet({ planetId: "2" })] }),
-      entry({ wallet: "0xc", planets: [planet({ planetId: "3" })] }),
-    ],
-  });
-
-  test("floats targets with active fleet activity to the top, preserving order within each group", () => {
-    const { ordered, activeCount } = floatActiveMissionTargetsFirst(
-      targets,
-      (target) => target.planetId === "3",
-    );
-    expect(ordered.map((target) => target.planetId)).toEqual(["3", "1", "2"]);
-    expect(activeCount).toBe(1);
-  });
-
-  test("keeps the original order and reports zero when nothing is active", () => {
-    const { ordered, activeCount } = floatActiveMissionTargetsFirst(targets, () => false);
-    expect(ordered.map((target) => target.planetId)).toEqual(["1", "2", "3"]);
-    expect(activeCount).toBe(0);
-  });
-
-  test("does not drop or duplicate targets when several are active", () => {
-    const { ordered, activeCount } = floatActiveMissionTargetsFirst(
-      targets,
-      (target) => target.planetId !== "1",
-    );
-    expect(ordered.map((target) => target.planetId)).toEqual(["2", "3", "1"]);
-    expect(activeCount).toBe(2);
   });
 });

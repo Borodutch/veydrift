@@ -20,6 +20,7 @@ import type {
   HighscoreEntry,
   HighscorePlanet,
   OnChainResources,
+  TacticalUnitBreakdown,
 } from "./walletFlow";
 
 export type RaidTargetAlliance = {
@@ -46,6 +47,12 @@ export type RaidTargetInbound = {
   nextArrivalAtMs: number | null;
 };
 
+export type RaidTargetUnitBreakdown = {
+  id: number;
+  count: number;
+  power: number;
+};
+
 export type RaidTarget = {
   planetId: string;
   name: string | null;
@@ -66,8 +73,11 @@ export type RaidTarget = {
   combatPower: number;
   shipPower: number;
   shipCount: number;
+  shipUnits: RaidTargetUnitBreakdown[];
+  combatShipUnits: RaidTargetUnitBreakdown[];
   defensePower: number;
   defenseCount: number;
+  defenseUnits: RaidTargetUnitBreakdown[];
   protection: RaidTargetProtection;
   inbound: RaidTargetInbound;
 };
@@ -84,6 +94,7 @@ export type RaidTargetFilters = {
   hideProtected: boolean;
   hideSameAlliance: boolean;
   hideDefended: boolean;
+  hideActiveFleet: boolean;
   minLoot: number;
   maxDistance: number | null;
 };
@@ -97,6 +108,7 @@ export const DEFAULT_RAID_TARGET_FILTERS: RaidTargetFilters = {
   hideProtected: true,
   hideSameAlliance: true,
   hideDefended: false,
+  hideActiveFleet: false,
   minLoot: 0,
   maxDistance: null,
 };
@@ -134,6 +146,9 @@ export function normalizeRaidTargetFilters(value: unknown): RaidTargetFilters {
     hideDefended: typeof candidate.hideDefended === "boolean"
       ? candidate.hideDefended
       : DEFAULT_RAID_TARGET_FILTERS.hideDefended,
+    hideActiveFleet: typeof candidate.hideActiveFleet === "boolean"
+      ? candidate.hideActiveFleet
+      : DEFAULT_RAID_TARGET_FILTERS.hideActiveFleet,
     minLoot: persistedNumber(candidate.minLoot, DEFAULT_RAID_TARGET_FILTERS.minLoot),
     maxDistance: persistedNullableNumber(candidate.maxDistance, DEFAULT_RAID_TARGET_FILTERS.maxDistance),
   };
@@ -171,6 +186,17 @@ export function persistRaidTargetSettings(settings: RaidTargetPersistedSettings)
   } catch {
     // Private browsing/storage quota failures should not break scouting.
   }
+}
+
+function unitBreakdown(units: TacticalUnitBreakdown[] | null | undefined): RaidTargetUnitBreakdown[] {
+  if (!units || units.length === 0) return [];
+  return units
+    .map((unit) => ({
+      id: unit.id,
+      count: Math.max(0, Math.trunc(unit.count)),
+      power: safeNumber(unit.power),
+    }))
+    .filter((unit) => unit.count > 0);
 }
 
 function timestampToMs(value: string | number | null | undefined): number | null {
@@ -304,8 +330,11 @@ export function buildRaidTargets({
         combatPower: safeNumber(tactical?.combatPower),
         shipPower: safeNumber(tactical?.ships.power),
         shipCount: tactical?.ships.count ?? 0,
+        shipUnits: unitBreakdown(tactical?.ships.units),
+        combatShipUnits: unitBreakdown(tactical?.combatShips?.units),
         defensePower: safeNumber(tactical?.defenses.power),
         defenseCount: tactical?.defenses.count ?? 0,
+        defenseUnits: unitBreakdown(tactical?.defenses.units),
         protection,
         inbound: inboundSummary(inboundByTarget.get(planet.planetId)),
       });
@@ -318,11 +347,15 @@ export function buildRaidTargets({
 export function filterRaidTargets(
   targets: RaidTarget[],
   filters: RaidTargetFilters,
+  options: {
+    hasActiveFleetActivity?: ((target: RaidTarget) => boolean) | undefined;
+  } = {},
 ): RaidTarget[] {
   return targets.filter((target) => {
     if (filters.hideProtected && target.protection.isProtected) return false;
     if (filters.hideSameAlliance && target.protection.isSameAlliance) return false;
-    if (filters.hideDefended && target.defensePower > 0) return false;
+    if (filters.hideDefended && target.combatPower > 0) return false;
+    if (filters.hideActiveFleet && options.hasActiveFleetActivity?.(target)) return false;
     if (target.loot < filters.minLoot) return false;
     if (
       filters.maxDistance !== null
@@ -384,6 +417,7 @@ export function prepareRaidTargets({
   fleetVisibility,
   filters,
   sort,
+  hasActiveFleetActivity,
 }: {
   entries: HighscoreEntry[];
   origin?: Coordinates | null | undefined;
@@ -391,9 +425,10 @@ export function prepareRaidTargets({
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   filters: RaidTargetFilters;
   sort: RaidTargetSort;
+  hasActiveFleetActivity?: ((target: RaidTarget) => boolean) | undefined;
 }): RaidTarget[] {
   const targets = buildRaidTargets({ entries, origin, currentWallet, fleetVisibility });
-  return sortRaidTargets(filterRaidTargets(targets, filters), sort);
+  return sortRaidTargets(filterRaidTargets(targets, filters, { hasActiveFleetActivity }), sort);
 }
 
 export type RaidTargetTotals = {
@@ -419,26 +454,6 @@ export function raidTargetTotals(
     protected: protectedCount,
     sameAlliance: sameAllianceCount,
   };
-}
-
-// VEY-KANEO-448: stable partition that floats raid targets with active fleet-mission activity to the
-// top of the already-sorted list (preserving the viewer's chosen sort within each group). The enriched
-// per-planet mission subtext (incoming third-party attacks/transports, returning fleets) is the most
-// time-sensitive raid intel, but on a loot/distance-sorted field a mission-bearing target can sit far
-// down the list — so the enrichment is effectively invisible without scrolling. Floating active targets
-// up keeps that intel discoverable. `hasActiveMission` is injected by the caller (which owns the
-// universe-wide mission feed and its classification), keeping this module free of mission/DOM concerns.
-export function floatActiveMissionTargetsFirst(
-  sortedTargets: RaidTarget[],
-  hasActiveMission: (target: RaidTarget) => boolean,
-): { ordered: RaidTarget[]; activeCount: number } {
-  const active: RaidTarget[] = [];
-  const quiet: RaidTarget[] = [];
-  for (const target of sortedTargets) {
-    if (hasActiveMission(target)) active.push(target);
-    else quiet.push(target);
-  }
-  return { ordered: active.concat(quiet), activeCount: active.length };
 }
 
 export type IncomingThreat = {

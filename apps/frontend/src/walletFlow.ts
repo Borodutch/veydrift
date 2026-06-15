@@ -727,13 +727,26 @@ export type HighscorePlanet = {
     ships: {
       count: number;
       power: string;
+      units?: TacticalUnitBreakdown[];
     };
     defenses: {
       count: number;
       power: string;
+      units?: TacticalUnitBreakdown[];
+    };
+    combatShips?: {
+      count: number;
+      power: string;
+      units?: TacticalUnitBreakdown[];
     };
     combatPower: string;
   };
+};
+
+export type TacticalUnitBreakdown = {
+  id: number;
+  count: number;
+  power: string;
 };
 
 export type HighscoreResponse = {

@@ -11,7 +11,6 @@ import {
   DEFAULT_RAID_TARGET_SORT,
   buildRaidTargets,
   filterRaidTargets,
-  floatActiveMissionTargetsFirst,
   hasActiveAlliance,
   incomingThreats,
   persistRaidTargetSettings,
@@ -22,12 +21,19 @@ import {
   type RaidTargetFilters,
   type RaidTargetSort,
   type RaidTargetSortKey,
+  type RaidTargetUnitBreakdown,
 } from "../raidTargetFinder";
+import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton } from "./PageHeader";
 import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RaidTargetsSkeleton } from "./LoadingSkeletons";
 import { AfkFlair } from "./AfkFlair";
+
+export type RaidTargetAttackAction = {
+  label: string;
+  disabledReason?: string | undefined;
+};
 
 type RaidTargetFinderPageProps = {
   // Universe-wide active fleet missions (the unfiltered `/missions?status=active` feed). Drives the
@@ -38,7 +44,9 @@ type RaidTargetFinderPageProps = {
   currentAllianceId?: string | null | undefined;
   currentWallet?: string | undefined;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
+  attackActionForTarget?: ((target: RaidTarget) => RaidTargetAttackAction | null | undefined) | undefined;
   now?: number | undefined;
+  onAttackTarget?: ((target: RaidTarget) => void) | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
@@ -63,7 +71,9 @@ export function RaidTargetFinderPage({
   currentAllianceId,
   currentWallet,
   fleetVisibility,
+  attackActionForTarget,
   now = Date.now(),
+  onAttackTarget,
   onSelectAlliance,
   onSelectPlanet,
   onSelectPlayer,
@@ -122,33 +132,34 @@ export function RaidTargetFinderPage({
     () => buildRaidTargets({ entries, origin: originCoordinates, currentWallet, fleetVisibility }),
     [entries, originCoordinates, currentWallet, fleetVisibility],
   );
-  const visibleTargets = useMemo(
-    () => sortRaidTargets(filterRaidTargets(allTargets, effectiveFilters), sort),
-    [allTargets, effectiveFilters, sort],
-  );
-  const totals = useMemo(() => raidTargetTotals(allTargets, visibleTargets), [allTargets, visibleTargets]);
-  const threats = useMemo(() => incomingThreats(fleetVisibility), [fleetVisibility]);
   const missionsByPlanetId = useMemo(() => activeMissionsByPlanetId(activeMissions ?? []), [activeMissions]);
-  // Per-target mission subtext (VEY-KANEO-448), computed once so it can both order the list (float
-  // targets with active fleet activity up) and render each row without recomputing.
-  const subtextByPlanetId = useMemo(() => {
+  const allTargetSubtextByPlanetId = useMemo(() => {
     const map = new Map<string, ReturnType<typeof planetMissionSubtext>>();
-    for (const target of visibleTargets) {
+    for (const target of allTargets) {
       map.set(
         target.planetId,
         planetMissionSubtext(target.planetId, target.owner, missionsByPlanetId.get(target.planetId) ?? [], now),
       );
     }
     return map;
-  }, [visibleTargets, missionsByPlanetId, now]);
-  const { ordered: orderedTargets, activeCount } = useMemo(
-    () =>
-      floatActiveMissionTargetsFirst(
-        visibleTargets,
-        (target) => (subtextByPlanetId.get(target.planetId)?.lines.length ?? 0) > 0,
-      ),
-    [visibleTargets, subtextByPlanetId],
+  }, [allTargets, missionsByPlanetId, now]);
+  const hasActiveFleetActivity = useMemo(
+    () => (target: RaidTarget) => (allTargetSubtextByPlanetId.get(target.planetId)?.lines.length ?? 0) > 0,
+    [allTargetSubtextByPlanetId],
   );
+  const visibleTargets = useMemo(
+    () => sortRaidTargets(filterRaidTargets(allTargets, effectiveFilters, { hasActiveFleetActivity }), sort),
+    [allTargets, effectiveFilters, hasActiveFleetActivity, sort],
+  );
+  const totals = useMemo(() => raidTargetTotals(allTargets, visibleTargets), [allTargets, visibleTargets]);
+  const threats = useMemo(() => incomingThreats(fleetVisibility), [fleetVisibility]);
+  const subtextByPlanetId = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof planetMissionSubtext>>();
+    for (const target of visibleTargets) {
+      map.set(target.planetId, allTargetSubtextByPlanetId.get(target.planetId) ?? planetMissionSubtext(target.planetId, target.owner, [], now));
+    }
+    return map;
+  }, [visibleTargets, allTargetSubtextByPlanetId, now]);
 
   const toggleSort = (key: RaidTargetSortKey) => {
     setSort((current) =>
@@ -201,13 +212,15 @@ export function RaidTargetFinderPage({
               : "No raid targets loaded yet."}
           </div>
         ) : (
-          orderedTargets.map((target) => (
+          visibleTargets.map((target) => (
             <RaidTargetRow
+              attackAction={attackActionForTarget?.(target) ?? null}
               key={target.planetId}
               missionSubtext={
                 subtextByPlanetId.get(target.planetId) ?? planetMissionSubtext(target.planetId, target.owner, [], now)
               }
               now={now}
+              onAttackTarget={onAttackTarget}
               onSelectAlliance={onSelectAlliance}
               onSelectPlanet={onSelectPlanet}
               onSelectPlayer={onSelectPlayer}
@@ -216,21 +229,6 @@ export function RaidTargetFinderPage({
           ))
         )}
       </div>
-
-      <p className="text-xs leading-5 text-slate-500">
-        Intel mirrors the public highscore feed (top {raidTargetFinderPageSize} commanders). Loot is the plunderable
-        haul — roughly half (the on-chain plunder rate) of the target's current production-accrued unprotected
-        resources, so it reads lower than the planet's full public stockpile by design. Loot and combat reflect the
-        last indexed state and may change before your fleet arrives.
-        {activeCount > 0 ? (
-          <>
-            {" "}
-            <span className="text-slate-400">
-              {activeCount} {activeCount === 1 ? "target has" : "targets have"} active fleet activity (shown first).
-            </span>
-          </>
-        ) : null}
-      </p>
     </section>
   );
 }
@@ -290,7 +288,7 @@ function IncomingThreatsBanner({
   );
 }
 
-function RaidTargetFilterControls({
+export function RaidTargetFilterControls({
   filters,
   onChange,
   showAllianceFilter,
@@ -325,6 +323,11 @@ function RaidTargetFilterControls({
           active={filters.hideDefended}
           label="Hide defended"
           onToggle={() => onChange({ ...filters, hideDefended: !filters.hideDefended })}
+        />
+        <FilterToggle
+          active={filters.hideActiveFleet}
+          label="Hide active fleet"
+          onToggle={() => onChange({ ...filters, hideActiveFleet: !filters.hideActiveFleet })}
         />
         <span className="ml-auto text-xs text-slate-400">
           <span className="font-mono text-cyan-100">{totals.visible}</span>
@@ -417,7 +420,7 @@ function RaidTargetTableHeader({
   sort: RaidTargetSort;
 }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_88px] sm:px-3">
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_88px_auto] sm:px-3">
       <span>Target</span>
       {sortColumns.map((column) => (
         <button
@@ -440,21 +443,25 @@ function RaidTargetTableHeader({
           ) : null}
         </button>
       ))}
-      <span className="sm:hidden" />
+      <span className="text-right">Action</span>
     </div>
   );
 }
 
-function RaidTargetRow({
+export function RaidTargetRow({
+  attackAction,
   missionSubtext,
   now,
+  onAttackTarget,
   onSelectAlliance,
   onSelectPlanet,
   onSelectPlayer,
   target,
 }: {
+  attackAction?: RaidTargetAttackAction | null | undefined;
   missionSubtext: ReturnType<typeof planetMissionSubtext>;
   now: number;
+  onAttackTarget?: ((target: RaidTarget) => void) | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
@@ -470,7 +477,7 @@ function RaidTargetRow({
 
   return (
     <div
-      className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b px-2 py-2.5 text-sm last:border-b-0 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_88px] sm:px-3 ${rowTone}`}
+      className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b px-2 py-2.5 text-sm last:border-b-0 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_88px_auto] sm:px-3 ${rowTone}`}
     >
       <div className="flex min-w-0 items-center gap-2.5">
         <span className="relative h-7 w-7 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30">
@@ -568,14 +575,27 @@ function RaidTargetRow({
         </div>
       </div>
 
-      <button
-        className="row-span-2 inline-flex shrink-0 items-center gap-1 self-start rounded border border-signal/25 px-2 py-1 text-xs font-medium text-signal transition hover:bg-signal/10 disabled:cursor-default disabled:opacity-50 sm:hidden"
-        disabled={!onSelectPlanet}
-        onClick={() => onSelectPlanet?.(target.coordinates)}
-        type="button"
-      >
-        <Crosshair aria-hidden="true" size={12} /> Inspect
-      </button>
+      <div className="row-span-2 flex shrink-0 flex-col items-end gap-1 self-start sm:row-span-1">
+        {attackAction ? (
+          <button
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded border border-rose-300/25 px-2 text-xs font-semibold text-rose-100 transition hover:bg-rose-300/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
+            disabled={Boolean(attackAction.disabledReason) || !onAttackTarget}
+            onClick={() => onAttackTarget?.(target)}
+            title={attackAction.disabledReason ?? "Attack this planet"}
+            type="button"
+          >
+            <Swords aria-hidden="true" size={12} /> {attackAction.label}
+          </button>
+        ) : null}
+        <button
+          className="inline-flex h-7 shrink-0 items-center gap-1 rounded border border-signal/25 px-2 text-xs font-medium text-signal transition hover:bg-signal/10 disabled:cursor-default disabled:opacity-50"
+          disabled={!onSelectPlanet}
+          onClick={() => onSelectPlanet?.(target.coordinates)}
+          type="button"
+        >
+          <Crosshair aria-hidden="true" size={12} /> Inspect
+        </button>
+      </div>
 
       <span
         className="hidden text-right font-mono text-slate-400 sm:block"
@@ -647,10 +667,34 @@ function raidableResourcesLabel(target: RaidTarget): string {
   return breakdown;
 }
 
-function combatLabel(target: RaidTarget): string {
-  return `Combat ${fullNumber(String(target.combatPower))} from ${target.shipCount} ships and ${target.defenseCount} defenses`;
+export function combatLabel(target: RaidTarget): string {
+  const sections = [
+    unitBreakdownSection("Ships", target.combatShipUnits, shipLabelForId),
+    unitBreakdownSection("Defenses", target.defenseUnits, defenseLabelForId),
+  ].filter(Boolean);
+  const fallback = `from ${target.shipCount} ships and ${target.defenseCount} defenses`;
+  return `Combat ${fullNumber(String(target.combatPower))}${sections.length > 0 ? ` — ${sections.join("; ")}` : ` ${fallback}`}`;
 }
 
-function defenseLabel(target: RaidTarget): string {
-  return `Defense power ${fullNumber(String(target.defensePower))} from ${target.defenseCount} defenses`;
+export function defenseLabel(target: RaidTarget): string {
+  const section = unitBreakdownSection("Defenses", target.defenseUnits, defenseLabelForId);
+  return `Defense power ${fullNumber(String(target.defensePower))}${section ? ` — ${section}` : ` from ${target.defenseCount} defenses`}`;
+}
+
+function unitBreakdownSection(
+  label: string,
+  units: readonly RaidTargetUnitBreakdown[],
+  labelForId: (id: number) => string,
+): string | null {
+  const rows = units.filter((unit) => unit.count > 0);
+  if (rows.length === 0) return null;
+  return `${label}: ${rows.map((unit) => `${labelForId(unit.id)} x${unit.count} (${compactNumber(unit.power)})`).join(", ")}`;
+}
+
+function shipLabelForId(id: number): string {
+  return shipCatalog.find((ship) => ship.id === id)?.label ?? `Ship ${id}`;
+}
+
+function defenseLabelForId(id: number): string {
+  return defenseCatalog.find((defense) => defense.id === id)?.label ?? `Defense ${id}`;
 }
