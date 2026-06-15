@@ -8,6 +8,7 @@ import {
   InfrastructureLoadErrorPanel,
   InfrastructureRefreshErrorPanel,
   MetricDeltaSubtext,
+  buildingProductionUpgradeEffect,
   deduplicatedInfrastructureActionNotice,
   detailEffectRows,
   infrastructureUpgradeButtonLabel,
@@ -111,14 +112,15 @@ describe("Infrastructure page display helpers", () => {
     expect(button.props.title).toBe("Level table");
   });
 
-  test("renders Metal Mine modal rows with cost, energy use, and build time (no client production)", () => {
-    // VEY-KANEO-465 dropped per-building production AND build time. VEY-KANEO-472 restores
-    // the build-time column (production stays backend-owned).
+  test("renders Metal Mine modal rows with cost, production, energy use, and build time", () => {
+    // VEY-KANEO-465 dropped per-building production AND build time. VEY-KANEO-499 keeps
+    // both visible in the level info popup with per-level production deltas.
     const state = {
       ...createInitialPlayableState(1_000),
       buildings: {
         ...createInitialPlayableState(1_000).buildings,
         metalMine: 1,
+        solarPlant: 2,
       },
     };
     const modal = BuildingLevelInfoModal({
@@ -136,8 +138,10 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("Metal 90, Crystal 22");
     expect(text).toContain("24 required");
     expect(text).toContain("Build time");
-    expect(text).not.toContain("Production");
-    expect(text).not.toContain("Metal/h");
+    expect(text).toContain("Production output");
+    expect(text).toContain("33 Metal/h (+33/h)");
+    expect(text).toContain("72 Metal/h (+39/h)");
+    expect(text).toContain("119 Metal/h (+47/h)");
   });
 
   test("keeps double-digit level labels separate from current and next badges", () => {
@@ -430,6 +434,61 @@ describe("Infrastructure page display helpers", () => {
     });
   });
 
+  test("restores backend-anchored mine production deltas in details", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        metalMine: 1,
+        solarPlant: 2,
+      },
+    };
+    const effect = buildingEffectMetrics(state.buildings, "metalMine");
+    const productionUpgrade = buildingProductionUpgradeEffect(
+      state,
+      "metalMine",
+      undefined,
+      { metal: 42, crystal: 0, deuterium: 0 },
+      effect,
+    );
+    const rows = detailEffectRows(
+      effect,
+      buildingEnergyDetail(state.buildings, "metalMine"),
+      productionUpgrade,
+    );
+
+    expect(rows).toContainEqual({
+      delta: "+39/h",
+      label: "Metal output",
+      next: "81/h",
+      value: "42/h",
+    });
+    expect(rows).toContainEqual({
+      delta: "+13",
+      label: "Energy required",
+      next: "24 required",
+      value: "11 required",
+    });
+  });
+
+  test("restores backend-anchored mine production deltas in catalog cards", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        crystalMine: 1,
+        solarPlant: 2,
+      },
+    };
+
+    expect(infrastructureCatalogStatusText(
+      state,
+      "crystalMine",
+      undefined,
+      { metal: 0, crystal: 30, deuterium: 0 },
+    )).toBe("30/h (+26/h)");
+  });
+
   test("shows Robotics Factory as a Veydrift construction-time divisor", () => {
     const state = createInitialPlayableState(1_000);
     const effect = buildingEffectMetrics(state.buildings, "roboticsFactory");
@@ -460,6 +519,65 @@ describe("Infrastructure page display helpers", () => {
       next: "x3",
       value: "x2",
     });
+  });
+
+  test("shows Shipyard build-speed deltas in details, cards, and level rows", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      shipyard: 1,
+    };
+    const effect = buildingEffectMetrics(buildings, "shipyard");
+    const rows = detailEffectRows(effect, buildingEnergyDetail(buildings, "shipyard"));
+    const modal = BuildingLevelInfoModal({
+      buildingLabel: "Shipyard",
+      currentLevel: 1,
+      rows: buildingLevelInfoRows(buildings, "shipyard", undefined, 2),
+      onClose: () => undefined,
+    });
+    const modalText = visibleText(modal);
+
+    expect(rows).toContainEqual({
+      delta: "+50% faster",
+      label: "Ship production speed",
+      next: "x3",
+      value: "x2",
+    });
+    expect(infrastructureCatalogStatusText({ ...state, buildings }, "shipyard")).toBe("x2 (+50%)");
+    expect(modalText).toContain("Shipyard levels");
+    expect(modalText).toContain("Effect");
+    expect(modalText).toContain("x2 ship speed (+100% faster)");
+    expect(modalText).toContain("x3 ship speed (+50% faster)");
+  });
+
+  test("shows Nanite Factory as construction-speed deltas, not generic facility levels", () => {
+    const state = createInitialPlayableState(1_000);
+    const buildings = {
+      ...state.buildings,
+      naniteFactory: 1,
+    };
+    const effect = buildingEffectMetrics(buildings, "naniteFactory");
+    const rows = detailEffectRows(effect, buildingEnergyDetail(buildings, "naniteFactory"));
+    const modal = BuildingLevelInfoModal({
+      buildingLabel: "Nanite Factory",
+      currentLevel: 1,
+      rows: buildingLevelInfoRows(buildings, "naniteFactory", undefined, 2),
+      onClose: () => undefined,
+    });
+    const modalText = visibleText(modal);
+
+    expect(rows).toContainEqual({
+      delta: "+100% faster than current",
+      label: "Construction time divisor",
+      next: "x4",
+      value: "x2",
+    });
+    expect(infrastructureCatalogStatusText({ ...state, buildings }, "naniteFactory")).toBe("x2 (+100%)");
+    expect(modalText).toContain("Nanite Factory levels");
+    expect(modalText).toContain("Effect");
+    expect(modalText).toContain("x2 construction speed (+100% faster)");
+    expect(modalText).toContain("x4 construction speed (+100% faster)");
+    expect(modalText).not.toContain("Level 1Level 2");
   });
 
   test("renders selected active building queue timer with progress", () => {
