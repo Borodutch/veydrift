@@ -100,6 +100,7 @@ export const DEFAULT_RAID_TARGET_FILTERS: RaidTargetFilters = {
   minLoot: 0,
   maxDistance: null,
 };
+export const RAID_TARGET_FINDER_STORAGE_KEY = "veydrift.raidTargetFinder.v1";
 
 const ATTACKABLE_MISSION_TYPES = new Set(["Attack", "AcsAttack"]);
 
@@ -107,6 +108,69 @@ function safeNumber(value: string | number | null | undefined): number {
   if (value === null || value === undefined) return 0;
   const parsed = typeof value === "number" ? value : Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function persistedNumber(value: unknown, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.trunc(value));
+}
+
+function persistedNullableNumber(value: unknown, fallback: number | null): number | null {
+  if (value === null) return null;
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.trunc(value));
+}
+
+export function normalizeRaidTargetFilters(value: unknown): RaidTargetFilters {
+  if (!value || typeof value !== "object") return DEFAULT_RAID_TARGET_FILTERS;
+  const candidate = value as Partial<Record<keyof RaidTargetFilters, unknown>>;
+  return {
+    hideProtected: typeof candidate.hideProtected === "boolean"
+      ? candidate.hideProtected
+      : DEFAULT_RAID_TARGET_FILTERS.hideProtected,
+    hideSameAlliance: typeof candidate.hideSameAlliance === "boolean"
+      ? candidate.hideSameAlliance
+      : DEFAULT_RAID_TARGET_FILTERS.hideSameAlliance,
+    hideDefended: typeof candidate.hideDefended === "boolean"
+      ? candidate.hideDefended
+      : DEFAULT_RAID_TARGET_FILTERS.hideDefended,
+    minLoot: persistedNumber(candidate.minLoot, DEFAULT_RAID_TARGET_FILTERS.minLoot),
+    maxDistance: persistedNullableNumber(candidate.maxDistance, DEFAULT_RAID_TARGET_FILTERS.maxDistance),
+  };
+}
+
+export function hasActiveAlliance(allianceId: string | null | undefined): boolean {
+  return Boolean(allianceId && allianceId !== "0");
+}
+
+export type RaidTargetPersistedSettings = {
+  filters: RaidTargetFilters;
+};
+
+export function readPersistedRaidTargetSettings(): RaidTargetPersistedSettings {
+  const fallback = { filters: DEFAULT_RAID_TARGET_FILTERS };
+  if (typeof window === "undefined") return fallback;
+
+  try {
+    const raw = window.localStorage.getItem(RAID_TARGET_FINDER_STORAGE_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as { filters?: unknown };
+    return {
+      filters: normalizeRaidTargetFilters(parsed.filters),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+export function persistRaidTargetSettings(settings: RaidTargetPersistedSettings) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(RAID_TARGET_FINDER_STORAGE_KEY, JSON.stringify(settings));
+  } catch {
+    // Private browsing/storage quota failures should not break scouting.
+  }
 }
 
 function timestampToMs(value: string | number | null | undefined): number | null {
