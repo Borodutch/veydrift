@@ -804,6 +804,44 @@ export class SettlementIndexer {
     return mission ? this.withFleetMissionPlanetReferences(mission) : null;
   }
 
+  stationedDefendersForPlanet(planetId: string, asOfSeconds = Math.floor(Date.now() / 1_000)): StationedDefenderSummary[] {
+    return this.indexedFleetMissionSummaries()
+      .filter((mission) => this.isActiveDefenseHoldForPlanet(mission, planetId, asOfSeconds))
+      .map((mission) => this.stationedDefenderSummary(mission, this.defenseHoldWindowEnd(mission)))
+      .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
+  }
+
+  stationedDefendersForBattle(
+    attack: FleetMissionSummary | null | undefined,
+    report: BattleReport | null | undefined
+  ): StationedDefenderSummary[] {
+    if (!attack && !report) return [];
+    const attackArrival = Number(attack?.arrivalAt);
+    if (!Number.isFinite(attackArrival)) return [];
+
+    const summaries = this.indexedFleetMissionSummaries();
+    const summariesById = new Map(summaries.map((mission) => [mission.missionId, mission]));
+    const defenders = new Map<string, StationedDefenderSummary>();
+
+    if (attack) {
+      for (const missionId of attack.counterplayDefenderMissionIds ?? []) {
+        const defender = summariesById.get(missionId);
+        if (!defender || !this.isBattleTimeCounterplay(defender, attack, attackArrival)) continue;
+        defenders.set(defender.missionId, this.stationedDefenderSummary(defender, this.counterplayHoldUntil(defender)));
+      }
+    }
+
+    const targetPlanetId = report?.targetPlanetId ?? attack?.targetPlanetId;
+    if (targetPlanetId) {
+      for (const defender of summaries) {
+        if (!this.isBattleTimeDefenseHoldForPlanet(defender, targetPlanetId, attackArrival)) continue;
+        defenders.set(defender.missionId, this.stationedDefenderSummary(defender, this.defenseHoldWindowEnd(defender)));
+      }
+    }
+
+    return [...defenders.values()].sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
+  }
+
   battleReport(missionId: string): BattleReport | null {
     return this.indexedBattleReports().find((report) => report.missionId === missionId) ?? null;
   }
@@ -3610,6 +3648,68 @@ export class SettlementIndexer {
       .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
   }
 
+  private stationedDefenderSummary(defender: FleetMissionSummary, holdUntil: string): StationedDefenderSummary {
+    const targetPlanet = defender.targetPlanet ?? this.fleetMissionPlanetReference(defender.targetPlanetId);
+    return {
+      missionId: defender.missionId,
+      defender: defender.owner,
+      defenderDisplayName: this.playerProfile(defender.owner).displayName,
+      ships: defender.ships,
+      holdUntil,
+      allianceDepotLevel: targetPlanet?.allianceDepotLevel ?? 0
+    };
+  }
+
+  private isActiveDefenseHoldForPlanet(
+    mission: FleetMissionSummary,
+    planetId: string,
+    asOfSeconds: number
+  ): boolean {
+    const holdUntil = Number(this.defenseHoldWindowEnd(mission));
+    return mission.missionType === "DefenseHold"
+      && mission.status === "Outbound"
+      && mission.targetPlanetId === planetId
+      && Number(mission.arrivalAt) <= asOfSeconds
+      && Number.isFinite(holdUntil)
+      && holdUntil > asOfSeconds
+      && hasAnyShips(mission.ships);
+  }
+
+  private isBattleTimeCounterplay(
+    defender: FleetMissionSummary,
+    attack: FleetMissionSummary,
+    attackArrival: number
+  ): boolean {
+    return ["AcsDefend", "Intercept", "DefenseHold"].includes(defender.missionType)
+      && defender.targetPlanetId === attack.targetPlanetId
+      && Number(defender.arrivalAt) <= attackArrival
+      && Number(this.counterplayHoldUntil(defender)) >= attackArrival
+      && hasAnyShips(defender.ships);
+  }
+
+  private isBattleTimeDefenseHoldForPlanet(
+    defender: FleetMissionSummary,
+    planetId: string,
+    attackArrival: number
+  ): boolean {
+    return defender.missionType === "DefenseHold"
+      && defender.targetPlanetId === planetId
+      && Number(defender.arrivalAt) <= attackArrival
+      && Number(this.defenseHoldWindowEnd(defender)) >= attackArrival
+      && hasAnyShips(defender.ships);
+  }
+
+  private counterplayHoldUntil(defender: FleetMissionSummary): string {
+    return defender.defenseHoldUntil ?? defender.arrivalAt;
+  }
+
+  private defenseHoldWindowEnd(defender: FleetMissionSummary): string {
+    // New deployments emit DefenseHoldStationed with the exact hold expiry. Older live missions only
+    // have FleetMissionLaunched, where returnAt is hold expiry plus flight-home time; use it as a
+    // conservative public-intel fallback so legacy held defenders are not invisible.
+    return defender.defenseHoldUntil ?? defender.returnAt;
+  }
+
   // VEY-KANEO-471: build one fully-populated synthetic incoming attack (with two stationed defenders)
   // so QA can verify the Stationed defenses panel — defender identity, per-unit assets + counts, live
   // hold countdown, and Alliance Depot upkeep/sustain — without staging a real multi-wallet ACS Defend
@@ -4110,6 +4210,16 @@ function subtractNonNegative(left: bigint, right: bigint): bigint {
 
 function riftWithdrawalKey(event: IndexedRiftResourceEvent): string {
   return `${event.transactionHash.toLowerCase()}:${event.planetId}:${event.resourceId}:${event.amount}`;
+}
+
+function hasAnyShips(ships: Record<string, string>): boolean {
+  return Object.values(ships).some((count) => {
+    try {
+      return BigInt(count) > 0n;
+    } catch {
+      return Number(count) > 0;
+    }
+  });
 }
 
 // Parse a stored block-height string to bigint, treating null/garbage as block 0 so callers can

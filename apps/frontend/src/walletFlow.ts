@@ -272,6 +272,7 @@ export type FleetMissionSummary = {
   // for Attack missions only). Surfaced for parity with the backend summary; readiness is driven by
   // `needsResolution`, which the backend already gates on this request's fulfillment.
   randomnessRequestId?: string;
+  defenseHoldUntil?: string;
 };
 
 // VEY-KANEO-456: one allied fleet stationed (AcsDefend) to defend a planet under attack. `holdUntil` is
@@ -351,6 +352,7 @@ export type FleetMissionArchiveResponse = {
 export type DefenderPlanetState = {
   fleet: Array<{ id: number; count: number }>;
   defenses: Array<{ id: number; count: number }>;
+  stationedDefenders?: StationedDefenderSummary[];
 };
 
 export type MissionDetailResponse = {

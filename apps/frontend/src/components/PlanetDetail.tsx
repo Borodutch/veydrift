@@ -6,6 +6,7 @@ import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress, type ChainDefenseState, type ChainShipyardState } from "../walletFlow";
 import { isImageReady } from "../imageLoadState";
 import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog } from "../playableMvp";
+import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { GalaxyActionButtons, type AttackProtectionStatus, type GalaxyActionState, formatAttackBlockReason } from "./GalaxyView";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
@@ -360,6 +361,10 @@ export function PlanetDetail({
         <PublicStatePanel
           title="Defenses"
           rows={publicStateRows(planet.publicState?.defenses, defenseCatalog, "count")}
+        />
+        <PublicStatePanel
+          title="Stationed Defenders"
+          rows={publicStationedDefenderRows(planet.publicState?.stationedDefenders)}
         />
         <PublicStatePanel
           title="Research"
@@ -740,6 +745,18 @@ export function publicStateRows(
     }));
 }
 
+export function publicStationedDefenderRows(
+  defenders: PublicPlanetState["stationedDefenders"] | null | undefined
+): PlanetRecordRow[] {
+  return (defenders ?? [])
+    .filter((defender) => stationedDefenderShipCount(defender.ships) > 0)
+    .map((defender) => ({
+      label: defender.defenderDisplayName ?? shortAddress(defender.defender),
+      value: `${stationedDefenderShipCount(defender.ships).toLocaleString()} ships until ${formatUserTimestamp(timestampToMs(defender.holdUntil))}`,
+      tone: "accent" as const,
+    }));
+}
+
 export function publicQueueRows(planet: Planet): PlanetRecordRow[] {
   const queues = planet.publicState?.queues;
   if (!queues) return [{ label: "Queues", value: "Public queue data unavailable", tone: "muted" }];
@@ -754,6 +771,13 @@ export function publicQueueRows(planet: Planet): PlanetRecordRow[] {
   return rows.some((row) => row.tone === "accent")
     ? rows
     : [{ label: "Queues", value: "No active public queues", tone: "muted" }];
+}
+
+function stationedDefenderShipCount(ships: Record<string, string>): number {
+  return Object.values(ships).reduce((total, count) => {
+    const parsed = Number(count);
+    return total + (Number.isFinite(parsed) && parsed > 0 ? parsed : 0);
+  }, 0);
 }
 
 function queueRow(
