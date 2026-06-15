@@ -328,7 +328,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        return await indexedSettlementFundingResponse(indexer, chainReader, wallet);
+        return indexedSettlementFundingResponse(indexer, loaded.config);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -2340,23 +2340,36 @@ function indexedReadNotReadyResponse(surface: string, indexer: SettlementIndexer
   );
 }
 
-async function indexedSettlementFundingResponse(
+function indexedSettlementFundingResponse(
   indexer: SettlementIndexer | undefined,
-  chainReader: ChainReader | undefined,
-  wallet: `0x${string}`
-): Promise<Response> {
-  // VEY-KANEO-478: settlement funding is the deliberate, narrow exception to the canonical-mirror "no
-  // RPC on the request path" rule. It is NOT indexed contract game-state: it is the wallet's native ETH
-  // balance (a cheap eth_getBalance) plus the planet start price (a memoized chain constant), and the
-  // Settle button onboarding flow needs it live. So while the index is cold/booting we still serve a
-  // retryable DB-only not-ready response (never touching the chain), but once the index is warm we serve
-  // the real funding read so new players can settle their first planet.
-  if (!hasWarmPlanetIndex(indexer) || !chainReader) {
+  config: BackendConfig
+): Response {
+  // VEY-KANEO-497: frontend API reads must not trigger backend RPC, including the
+  // first-planet funding helper. The wallet-specific native ETH balance is left
+  // to the wallet/chain at transaction submission time; the start price is served
+  // only when operators provide static metadata that matches the deployment.
+  if (!hasWarmPlanetIndex(indexer)) {
     return indexedReadNotReadyResponse("settlement funding", indexer);
   }
 
-  const funding = await chainReader.getSettlementFunding(wallet);
-  return indexedJsonResponse(funding, indexer.snapshot());
+  const resourceTokensConfigured = Boolean(
+    config.resourceTokenAddresses.metal
+      && config.resourceTokenAddresses.crystal
+      && config.resourceTokenAddresses.deuterium
+  );
+  const startPriceWei = config.settlementStartPriceWei ?? null;
+  return indexedJsonResponse({
+    affordable: Boolean(startPriceWei) && resourceTokensConfigured,
+    balanceWei: null,
+    contractKind: "game",
+    startPriceWei,
+    ...(resourceTokensConfigured
+      ? {}
+      : { unavailableReason: "Resource token reserves are not configured for this game deployment yet." }),
+    ...(resourceTokensConfigured && !startPriceWei
+      ? { unavailableReason: "Settlement start price is not configured for this game deployment yet." }
+      : {})
+  }, indexer.snapshot());
 }
 
 function indexedAllianceResponse(wallet: `0x${string}`, indexer: SettlementIndexer | undefined): Response {

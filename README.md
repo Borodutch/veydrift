@@ -105,14 +105,18 @@ The backend accepts `ALCHEMY_BASE_SEPOLIA_API_KEY`,
 For websocket chain sync it accepts `VEYDRIFT_WS_RPC_URL` or
 `ALCHEMY_BASE_SEPOLIA_WS_URL`, and falls back to
 `wss://base-sepolia.g.alchemy.com/v2/<key>` when only
-`ALCHEMY_BASE_SEPOLIA_API_KEY` is set. HTTP RPC remains the startup snapshot and
-request/response fallback.
+`ALCHEMY_BASE_SEPOLIA_API_KEY` is set. HTTP RPC is for writer-side event replay,
+explicit operator sync, and mutating/on-chain workers; frontend/API read
+requests must be served from the SQLite index or configured static metadata.
 `VEYDRIFT_GAME_CONTRACT_ADDRESS` or the legacy `VEYDRIFT_CONTRACT_ADDRESS` must
 point at the deployed `VeydriftGame` proxy for game-state APIs and runtime
 Shipyard transactions.
 `VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS` is the compact first-planet settlement
 contract used for settlement/universe context and must not be used as the game
 contract.
+`VEYDRIFT_SETTLEMENT_START_PRICE_WEI` is the configured static start price used
+by `GET /wallet/:address/settlement-funding`; the endpoint deliberately does
+not call RPC to read `startPrice` or the wallet's native ETH balance.
 `VEYDRIFT_METAL_TOKEN_ADDRESS`, `VEYDRIFT_CRYSTAL_TOKEN_ADDRESS`, and
 `VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS` expose the upgradeable ERC-20 resource token
 proxies deployed for the game.
@@ -317,6 +321,7 @@ VEYDRIFT_CHAIN_ID=84532
 VEYDRIFT_CONTRACT_ADDRESS=<Base Sepolia VeydriftGame proxy address>
 VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS=<Base Sepolia compact settlement address>
 VEYDRIFT_GAME_CONTRACT_ADDRESS=<Base Sepolia VeydriftGame proxy address>
+VEYDRIFT_SETTLEMENT_START_PRICE_WEI=<VeydriftGame startPrice in wei, for example 50000000000000000>
 VEYDRIFT_METAL_TOKEN_ADDRESS=<Base Sepolia VeydriftMetal ERC-20 proxy address>
 VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=<Base Sepolia VeydriftCrystal ERC-20 proxy address>
 VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=<Base Sepolia VeydriftDeuterium ERC-20 proxy address>

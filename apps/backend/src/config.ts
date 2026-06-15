@@ -37,6 +37,10 @@ export type BackendConfig = {
   resourceTokenAddresses: ResourceTokenAddresses;
   rpcUrl?: string;
   rpcSource: "alchemy-key" | "alchemy-url" | "custom-url" | "missing";
+  // Optional static metadata for frontend settlement launch funding. HTTP request
+  // paths must not read this from RPC; operators should update this when the
+  // deployed contract's startPrice changes.
+  settlementStartPriceWei?: string;
   settlementContractAddress?: `0x${string}`;
   wsRpcUrl?: string;
   wsRpcSource: "alchemy-key" | "alchemy-url" | "custom-url" | "missing";
@@ -80,6 +84,7 @@ export type SafeConfigSummary = {
   hasWsRpcUrl: boolean;
   resourceTokenAddressesConfigured: boolean;
   settlementContractConfigured: boolean;
+  settlementStartPriceConfigured: boolean;
   indexFromBlock: string;
   logChunkSpan: string;
   qaSyntheticStationedDefenders: boolean;
@@ -128,6 +133,11 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   const indexFromBlock = parseBigInt(env.VEYDRIFT_INDEX_FROM_BLOCK, "VEYDRIFT_INDEX_FROM_BLOCK", problems) ?? 0n;
   const parsedLogChunkSpan = parseBigInt(env.VEYDRIFT_LOG_CHUNK_SPAN, "VEYDRIFT_LOG_CHUNK_SPAN", problems);
   const logChunkSpan = parsedLogChunkSpan && parsedLogChunkSpan > 0n ? parsedLogChunkSpan : defaultLogChunkSpan;
+  const settlementStartPriceWei = parseBigInt(
+    env.VEYDRIFT_SETTLEMENT_START_PRICE_WEI,
+    "VEYDRIFT_SETTLEMENT_START_PRICE_WEI",
+    problems
+  );
   const rebuildDeadlineMs =
     parsePositiveInteger(env.VEYDRIFT_REBUILD_DEADLINE_MS, "VEYDRIFT_REBUILD_DEADLINE_MS", problems)
       ?? defaultRebuildDeadlineMs;
@@ -227,6 +237,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       resourceTokenAddresses,
       rpcSource,
       ...(rpcUrl ? { rpcUrl } : {}),
+      ...(settlementStartPriceWei !== undefined ? { settlementStartPriceWei: settlementStartPriceWei.toString() } : {}),
       ...(settlementContractAddress ? { settlementContractAddress } : {}),
       wsRpcSource,
       ...(wsRpcUrl ? { wsRpcUrl } : {})
@@ -264,6 +275,7 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
         && config.resourceTokenAddresses.deuterium
     ),
     settlementContractConfigured: Boolean(config.settlementContractAddress),
+    settlementStartPriceConfigured: config.settlementStartPriceWei !== undefined,
     indexFromBlock: config.indexFromBlock.toString(),
     logChunkSpan: (config.logChunkSpan ?? defaultLogChunkSpan).toString(),
     // VEY-KANEO-471: surfaced on /health so QA can confirm the harness is active on a test deploy and
