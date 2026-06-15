@@ -8,6 +8,7 @@
     "build": "tsc --project tsconfig.json",
     "check": "tsc --project tsconfig.json",
     "dev": "bun --watch src/index.ts",
+    "index:replay": "bun src/replayIndexer.ts",
     "start": "bun src/index.ts",
     "test": "bun test"
   },

@@ -68,10 +68,16 @@ bun run dev:frontend
 - `GET /planets/:planetId`
 - `GET /universe/galaxies/:galaxy/systems/:system`
 - `GET /universe/systems?galaxy=1&center=250&radius=2`
-- `POST /index/rebuild`
-- `POST /index/verify/:planetId` (append `?heal=true` to self-heal)
 - `POST /webhooks/alchemy`
 - `GET /graphql` / `POST /graphql` for the existing minimal service status response
+
+Index DB alignment is an explicit operator action through the backend package script, not an HTTP
+route:
+
+```sh
+cd apps/backend
+bun run index:replay -- --from-block <block>
+```
 
 Copy `apps/backend/.env.example` to `apps/backend/.env` and provide the Base
 Sepolia RPC configuration before using chain-backed routes:
@@ -111,19 +117,13 @@ contract.
 `VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS` expose the upgradeable ERC-20 resource token
 proxies deployed for the game.
 Health/debug responses only report safe configuration metadata and never echo
-RPC URLs or API keys. Ownership remains canonical onchain; when the default
-backend starts with valid chain config it kicks off a background SQLite index
-reconciliation from `VEYDRIFT_INDEX_FROM_BLOCK` and reports the last
-reconciled block, latest indexed block, in-progress state, reorg detection, and
-last reconciliation error in `GET /health`. The websocket chain sync keeps the
-SQLite-backed contract state index warm, `GET /chain/events` streams backend
-chain-event notifications to the frontend, and `POST /index/rebuild` remains
-the manual HTTP fallback for rebuilding settlement events.
-`POST /index/verify/:planetId` compares a single planet's stored canonical state
-against the authoritative on-chain getters (`previewResources`, `buildingLevel`,
-`shipCount`, `defenseCount`) and reports any divergence without a full rebuild;
-with `?heal=true` it re-syncs just that planet's resources/buildings/ships/defenses
-to the contract values so the served canonical state equals on-chain.
+RPC URLs or API keys. Ownership remains canonical onchain; the normal backend
+serves frontend/API reads from the SQLite-backed contract state index and mutates
+that DB through contract event replay/listeners only. `GET /health` reports the
+last reconciled block, latest indexed block, in-progress state, reorg detection,
+and last reconciliation error. `GET /chain/events` streams backend chain-event
+notifications to the frontend. Manual DB alignment is intentionally separated
+from HTTP routes and runs through `bun run index:replay -- --from-block <block>`.
 `POST /webhooks/alchemy` accepts Alchemy contract log webhook payloads, verifies
 `X-Alchemy-Signature` when `VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY` is configured,
 and applies duplicate-safe indexed event updates.
@@ -357,8 +357,9 @@ second of the new container binding the port and keeps the cutover effectively
 downtime-free. This is intentional: the SQLite index DB is opened synchronously
 during request-handler construction (before Bun binds the port), so persisted
 indexed reads are serveable the instant `/health` first answers, while the heavy
-chain reconcile runs in the background and never blocks readiness (it is fired as
-`void indexer.rebuild()` — see `apps/backend/src/server.ts`). The same readiness gate is embedded as a Docker `HEALTHCHECK` in
+event replay continues through the chain-sync poller and never blocks readiness.
+Operator-run DB alignment is explicit (`bun run index:replay -- --from-block <block>`) rather than
+a backend startup self-heal. The same readiness gate is embedded as a Docker `HEALTHCHECK` in
 `apps/backend/Dockerfile.test`, so the Dockerfile rollback build path carries it
 automatically; Nixpacks builds cannot embed a `HEALTHCHECK`, so the EasyPanel
 Health Check above is required for the primary Nixpacks deploy.

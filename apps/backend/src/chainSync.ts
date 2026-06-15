@@ -14,6 +14,8 @@ type LogBackfiller = {
   listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
 };
 
+type ChainSyncIndexer = Partial<Pick<SettlementIndexer, "applyLog" | "snapshot">>;
+
 export type ChainSyncSnapshot = {
   connected: boolean;
   eventsReceived: number;
@@ -65,13 +67,13 @@ export class ChainSyncService {
   private pollInProgress = false;
   private pollFailureCount = 0;
   // Next block the poll loop must scan FROM. null until the first successful head fetch, after which we
-  // anchor at the live head: the boot canonical reconcile (indexer.rebuild) seeds all prior state, so
-  // the poll only needs to ingest events that land AFTER startup.
+  // resume from the durable DB cursor. A cold/manual event replay may seed history; the live poll must
+  // never skip directly to head because there is no startup canonical self-heal to cover the gap.
   private cursor: bigint | null = null;
 
   constructor(
     private readonly config: BackendConfig,
-    private readonly indexer: Partial<Pick<SettlementIndexer, "applyLog">> | undefined,
+    private readonly indexer: ChainSyncIndexer | undefined,
     private readonly options: {
       logBackfiller?: LogBackfiller;
       pollIntervalMs?: number;
@@ -178,11 +180,7 @@ export class ChainSyncService {
       this.markConnected();
 
       if (this.cursor === null) {
-        // First successful poll. Anchor at the live head — boot canonical reconcile seeds prior state.
-        this.cursor = head;
-        this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, head);
-        this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
-        return;
+        this.cursor = this.initialCursor();
       }
 
       if (head <= this.cursor) {
@@ -191,7 +189,7 @@ export class ChainSyncService {
         return;
       }
 
-      const fromBlock = this.cursor + 1n;
+      const fromBlock = this.cursor < 0n ? 0n : this.cursor + 1n;
       const logs = await backfiller.listContractLogs(fromBlock, head);
       const { applied, lastHash } = this.applyLogs(logs, applyLog);
       // Advance the cursor to the scanned head ONLY after a clean ingest — a throw skips this and the
@@ -259,6 +257,18 @@ export class ChainSyncService {
       this.lastConnectedAt = new Date().toISOString();
     }
     this.lastError = null;
+  }
+
+  private initialCursor(): bigint {
+    const latestIndexedBlock = this.indexer?.snapshot?.().latestIndexedBlock;
+    if (latestIndexedBlock) {
+      try {
+        return BigInt(latestIndexedBlock);
+      } catch {
+        // Fall through to the configured replay base.
+      }
+    }
+    return this.config.indexFromBlock > 0n ? this.config.indexFromBlock - 1n : -1n;
   }
 
   private notify(event: ChainSyncEvent): void {

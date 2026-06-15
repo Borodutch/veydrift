@@ -94,26 +94,46 @@ function planetStartedLog(block: string, planetId: bigint, tx: string): RpcLog {
 }
 
 describe("ChainSyncService (polling)", () => {
-  test("anchors the cursor at head on the first poll, then ingests only new ranges", async () => {
+  test("replays from configured base on the first poll, then ingests only new ranges", async () => {
     const indexer = makeIndexer();
     const seeded = planetStartedLog("0x191", 7n, "0xseed");
-    const backfiller = new MockBackfiller(0x190n, () => [seeded]);
+    const backfiller = new MockBackfiller(0x192n, () => [seeded]);
     const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
 
-    // First poll only anchors at head — it must NOT replay history (the boot reconcile seeds that).
+    // First poll event-replays from the configured base. There is no boot canonical self-heal to seed
+    // history, so startup must not skip straight to head.
     await service.poll();
-    expect(backfiller.ranges).toEqual([]);
-    expect(service.snapshot().latestSyncedBlock).toBe(String(0x190n));
-    expect(service.snapshot().connected).toBe(true);
-
-    // Head advances; the next poll ingests exactly (cursor+1 .. head) and applies the log.
-    backfiller.head = 0x192n;
-    await service.poll();
-    expect(backfiller.ranges).toEqual([{ from: 0x191n, to: 0x192n }]);
+    expect(backfiller.ranges).toEqual([{ from: 100n, to: 0x192n }]);
     expect(indexer.snapshot().indexedPlanets).toBeGreaterThanOrEqual(1);
     expect(service.snapshot().latestSyncedBlock).toBe(String(0x192n));
+    expect(service.snapshot().connected).toBe(true);
     expect(service.snapshot().eventsReceived).toBeGreaterThanOrEqual(1);
 
+    // Head advances; the next poll ingests exactly (cursor+1 .. head).
+    backfiller.head = 0x193n;
+    await service.poll();
+    expect(backfiller.ranges.at(-1)).toEqual({ from: 0x193n, to: 0x193n });
+    expect(service.snapshot().latestSyncedBlock).toBe(String(0x193n));
+
+    service.stop();
+  });
+
+  test("resumes from the DB latestIndexedBlock on startup instead of skipping to live head", async () => {
+    const indexer = makeIndexer();
+    indexer.applyLog({
+      ...planetStartedLog("0x180", 7n, "0xexisting"),
+      logIndex: "0x0"
+    });
+    const backfiller = new MockBackfiller(0x182n, () => [{
+      ...planetStartedLog("0x181", 8n, "0xmissed"),
+      logIndex: "0x0"
+    }]);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(backfiller.ranges).toEqual([{ from: 0x181n, to: 0x182n }]);
+    expect(indexer.snapshot().indexedPlanets).toBe(2);
     service.stop();
   });
 
@@ -150,11 +170,9 @@ describe("ChainSyncService (polling)", () => {
         data: abiWords(0n)
       }
     ];
-    const backfiller = new MockBackfiller(0x17fn, () => logs);
+    const backfiller = new MockBackfiller(0x190n, () => logs);
     const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
 
-    await service.poll(); // anchor at 0x17f
-    backfiller.head = 0x190n;
     await service.poll(); // ingest the whole sequence
 
     expect(indexer.shipRows("7").find((ship) => ship.id === 1)?.count).toBe(3);
@@ -172,11 +190,9 @@ describe("ChainSyncService (polling)", () => {
       data: abiWords(5n)
     };
     const logs: TestLog[] = [planetStartedLog("0x180", 7n, "0xplanet"), countLog];
-    const backfiller = new MockBackfiller(0x17fn, () => logs);
+    const backfiller = new MockBackfiller(0x182n, () => logs);
     const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
 
-    await service.poll(); // anchor
-    backfiller.head = 0x182n;
     await service.poll(); // ingest -> count 5
     const afterFirst = service.snapshot().eventsReceived;
     expect(indexer.shipRows("7").find((ship) => ship.id === 1)?.count).toBe(5);
@@ -193,10 +209,10 @@ describe("ChainSyncService (polling)", () => {
   test("a transient poll failure records the error, keeps the cursor, and recovers next tick", async () => {
     const indexer = makeIndexer();
     const seeded = planetStartedLog("0x181", 7n, "0xseed");
-    const backfiller = new MockBackfiller(0x180n, () => [seeded]);
+    const backfiller = new MockBackfiller(0x180n, (from) => from === 0x181n ? [seeded] : []);
     const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
 
-    await service.poll(); // anchor at 0x180
+    await service.poll(); // replay through 0x180, no logs
     // Head moved, but the ingest getLogs fails transiently. Cursor must NOT advance.
     backfiller.head = 0x182n;
     backfiller.logsError = new Error("Unexpected end of JSON input");

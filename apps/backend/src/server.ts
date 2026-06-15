@@ -113,10 +113,8 @@ export type ServerDependencies = {
   // run on exactly one worker. "reader" workers skip every background loop and serve reads from the
   // shared WAL database. Explicitly injected services (tests) always take precedence over the role.
   role?: WorkerRole;
-  // Test seam for the canonical-mirror startup reconcile. Production never injects `indexer`, so the
-  // default (`!dependencies.indexer`) leaves the every-boot rebuild firing in production. Tests that inject
-  // a warm indexer default to NOT auto-reconciling (so they can assert "no chain read" precisely); the
-  // canonical-mirror boot test sets this true to force-and-count the single startup reconcile.
+  // Test/operator seam for an explicit canonical rebuild. Production defaults to false: the normal
+  // backend no longer self-heals from eth_call at boot. Chain-sync event replay is the automatic path.
   runStartupReconcile?: boolean;
 };
 
@@ -166,19 +164,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
   chainSync?.start();
   randomnessCommitter?.start();
-  const runStartupReconcile = dependencies.runStartupReconcile ?? !dependencies.indexer;
+  const runStartupReconcile = dependencies.runStartupReconcile ?? false;
   if (isWriter && runStartupReconcile && indexer && loaded.problems.length === 0) {
-    // Canonical-mirror contract: the SQLite read model is reconciled DIRECTLY from the contracts EXACTLY
-    // ONCE, at startup, and the contract state always wins — `rebuild()` clears the canonical tables and
-    // re-reads full canonical state (planets, resources, buildings, defenses, ships, research, queues,
-    // moons, alliances) on EVERY boot, warm or cold. Past data migrations changed contract state without
-    // emitting events, so event replay alone is incomplete; the startup canonical read is the only thing
-    // that makes the DB a faithful mirror. After this, the DB mutates ONLY via the websocket event
-    // listener (chainSync -> indexer.applyLog) — no per-request eth_call, no periodic sweep, no runtime
-    // self-heal. Fire it in the background (never await) so GET /health still answers within a second or
-    // two of start (see README "Backend redeploy health gate"). Do not turn this into an await.
+    // Explicit operator/test rebuild only. This path performs canonical eth_call reads and therefore must
+    // never run automatically for frontend/API serving; normal mutation comes from event replay/listeners.
     void indexer.rebuild().catch((error) => {
-      console.error("Veydrift index startup reconciliation failed", error);
+      console.error("Veydrift explicit index reconciliation failed", error);
     });
   }
   if (cacheReader) {
@@ -939,9 +930,8 @@ function isIndexableChainReader(
 }
 
 // Predicate kept for diagnostics/tests: true when a warm DB inherited a recorded reconcile failure
-// (lastReconciliationError set, not currently reconciling). Under the canonical-mirror contract the
-// startup reconcile now runs on EVERY boot and overwrites the DB regardless, so a failed prior reconcile
-// is automatically re-attempted at startup — there is no longer a separate runtime recovery path.
+// (lastReconciliationError set, not currently reconciling). The backend no longer auto-runs canonical
+// reconcile at startup; recovery is an explicit operator action or event-log replay.
 export function shouldRecoverFailedReconciliation(
   snapshot: Pick<IndexerSnapshot, "lastReconciledAt" | "lastReconciliationError" | "reconciliationInProgress">
 ): boolean {
