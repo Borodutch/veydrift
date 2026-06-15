@@ -15,6 +15,13 @@ export type BackendConfig = {
   // loadBackendConfig always populates it (default 5 min); optional only so existing BackendConfig
   // literals/fixtures that predate this field keep type-checking.
   rebuildDeadlineMs?: number;
+  // Chain-sync HTTP poll cadence (ms). The indexer mutates ONLY from polled contract logs — no
+  // websocket subscription, no self-heal/reconcile sweep. Each poll resolves head (eth_blockNumber)
+  // and ingests the new block range; the contract's events carry absolute post-state
+  // (PlanetShipCountChanged/PlanetDefenseCountChanged emit the resulting total) so re-scanning an
+  // overlapping range is idempotent. Optional only so pre-existing BackendConfig literals/fixtures keep
+  // type-checking; loadBackendConfig always populates the default.
+  pollIntervalMs?: number;
   missionResolutionEnabled: boolean;
   missionResolverAddress?: `0x${string}`;
   // VEY-KANEO-471: QA staging flag. When VEYDRIFT_QA_SYNTHETIC_STATIONED_DEFENDERS is truthy AND the
@@ -99,6 +106,11 @@ const defaultLogChunkSpan = 90_000n;
 // seed every boot and it never committed. Keep it bounded (so a genuine hang still surfaces a real error
 // and the boot-time recovery retries) but generous enough for the full contract-read seed to finish.
 const defaultRebuildDeadlineMs = 1_800_000;
+// Chain-sync HTTP poll cadence. Each tick resolves head (eth_blockNumber) and ingests the new block
+// range through the indexer. 4s (~2 Base blocks) keeps live-event latency low while staying cheap on
+// the single self-hosted node — an empty range is one eth_getLogs over a few-hundred-block window.
+// Operators can tune it via VEYDRIFT_POLL_INTERVAL_MS.
+const defaultPollIntervalMs = 4_000;
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 const privateKeyPattern = /^0x[a-fA-F0-9]{64}$/;
 const deploymentModes = new Set<DeploymentMode>(["local", "test", "staging", "production"]);
@@ -119,6 +131,9 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   const rebuildDeadlineMs =
     parsePositiveInteger(env.VEYDRIFT_REBUILD_DEADLINE_MS, "VEYDRIFT_REBUILD_DEADLINE_MS", problems)
       ?? defaultRebuildDeadlineMs;
+  const pollIntervalMs =
+    parsePositiveInteger(env.VEYDRIFT_POLL_INTERVAL_MS, "VEYDRIFT_POLL_INTERVAL_MS", problems)
+      ?? defaultPollIntervalMs;
   const { rpcUrl, rpcSource } = resolveRpcUrl(env);
   const { wsRpcUrl, wsRpcSource } = resolveWsRpcUrl(env);
   const gameContractAddress = parseAddress(
@@ -201,6 +216,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       indexFromBlock,
       logChunkSpan,
       rebuildDeadlineMs,
+      pollIntervalMs,
       missionResolutionEnabled: deploymentMode === "test" && Boolean(missionResolverAddress),
       ...(missionResolverAddress ? { missionResolverAddress } : {}),
       qaSyntheticStationedDefenders,
