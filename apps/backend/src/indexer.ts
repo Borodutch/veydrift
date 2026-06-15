@@ -1328,6 +1328,15 @@ export class SettlementIndexer {
     return this.snapshot();
   }
 
+  async syncCanonicalState(fromBlock = this.fromBlock, toBlock: bigint | "latest" = "latest"): Promise<{
+    replay: IndexerSnapshot;
+    rebuild: IndexerSnapshot;
+  }> {
+    const replay = await this.replayContractLogs(fromBlock, toBlock);
+    const rebuild = await this.rebuild();
+    return { replay, rebuild };
+  }
+
   async rebuildPlanets(): Promise<IndexerSnapshot> {
     if (this.rebuildPromise) {
       return this.rebuildPromise;
