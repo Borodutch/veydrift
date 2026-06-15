@@ -108,6 +108,74 @@ function renderDetailUnitTitles(detail: MissionDetailResponse, fleetVisibility =
 }
 
 describe("MissionDetailPage defender Fleet / Defenses block", () => {
+  test("shows target combat intel before a combat mission has a battle report", () => {
+    const detail: MissionDetailResponse = {
+      mission: combatMission({ status: "Outbound", arrivalAt: "1770003600", returnAt: "1770007200" }),
+      battleReport: null,
+      targetCombatIntel: {
+        planetId: "9",
+        activeMissions: [
+          combatMission({ missionId: "1", status: "Outbound", owner: "0x1111111111111111111111111111111111111111", arrivalAt: "1770003600", returnAt: "1770007200" }),
+          combatMission({ missionId: "2", status: "Outbound", owner: "0x2222222222222222222222222222222222222222", arrivalAt: "1770004200", returnAt: "1770007800" }),
+        ],
+        combatPower: "16000",
+        combatShips: {
+          count: 12,
+          power: "48000",
+          units: [{ id: 1, count: 12, power: "48000" }],
+        },
+        defenses: {
+          count: 3,
+          power: "60000",
+          units: [{ id: 4, count: 3, power: "60000" }],
+        },
+        queues: {
+          defense: {
+            active: true,
+            kind: "defense",
+            itemId: 4,
+            quantity: 2,
+            readyAt: "1770003900",
+            cost: { metal: "9000", crystal: "3000", deuterium: "0" },
+          },
+          ship: {
+            active: true,
+            kind: "ship",
+            itemId: 1,
+            quantity: 4,
+            readyAt: "1770004500",
+            cost: { metal: "12000", crystal: "4000", deuterium: "0" },
+          },
+        },
+      },
+    };
+    const text = renderDetailText(detail);
+    const unitTitles = renderDetailUnitTitles(detail);
+
+    expect(text).toContain("Target Combat Intel");
+    expect(text).toContain("Combat power");
+    expect(text).toContain("16,000");
+    expect(text).toContain("Defense queue Gauss Cannon x2");
+    expect(text).toContain("Ship queue Light Fighter x4");
+    expect(text).toContain("Target traffic");
+    expect(text).toContain("Attack # 2");
+    expect(text).toContain("0x2222...2222");
+    expect(unitTitles).toContain("Light Fighter ×12");
+    expect(unitTitles).toContain("Gauss Cannon ×3");
+    expect(text).not.toContain("Battle Report");
+  });
+
+  test("shows a precise target combat intel caveat when the target is uncharted", () => {
+    const text = renderDetailText({
+      mission: combatMission({ status: "Outbound", arrivalAt: "1770003600", returnAt: "1770007200" }),
+      battleReport: null,
+      targetCombatIntel: null,
+    });
+
+    expect(text).toContain("Target Combat Intel");
+    expect(text).toContain("combat intelligence can't be derived");
+  });
+
   test("shows the defender's indexed fleet and defenses composition", () => {
     const defenderPlanetState: DefenderPlanetState = {
       fleet: [{ id: 1, count: 12 }], // Light Fighter

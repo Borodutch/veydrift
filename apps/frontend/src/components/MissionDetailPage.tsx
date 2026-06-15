@@ -5,7 +5,7 @@ import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { defenseCatalog, shipCatalog, type ShipKey } from "../playableMvp";
 import type { Coordinates } from "../types";
-import { type BattleReport, type BattleReportParticipant, type DefenderPlanetState, type FleetMissionSummary, type FleetMissionVisibilityResponse, type MissionDetailResponse } from "../walletFlow";
+import { type BattleReport, type BattleReportParticipant, type DefenderPlanetState, type FleetMissionSummary, type FleetMissionVisibilityResponse, type MissionDetailResponse, type QueueStateResponse, type TargetCombatIntel } from "../walletFlow";
 import { isFleetRecallable, missionLifecycleActions, type MissionLifecycleAction } from "./MissionControlPage";
 import {
   MissionRouteCell,
@@ -134,12 +134,69 @@ export function MissionDetailPage({
             onSelectCoordinates={onSelectCoordinates}
             onSelectPlayer={onSelectPlayer}
           />
+          <TargetCombatIntelPanel intel={detail?.targetCombatIntel} mission={mission} now={now} />
           <MissionBattleReport defenderState={detail?.defenderPlanetState ?? undefined} mission={mission} now={now} report={report} />
         </>
       ) : (
         <Notice>No mission selected.</Notice>
       )}
     </section>
+  );
+}
+
+function TargetCombatIntelPanel({
+  intel,
+  mission,
+  now,
+}: {
+  intel: TargetCombatIntel | null | undefined;
+  mission: FleetMissionSummary;
+  now: number;
+}) {
+  if (!isCombatMission(mission) || intel === undefined) return null;
+
+  if (!intel) {
+    return (
+      <Panel title="Target Combat Intel">
+        <Row label="Status" value="The target planet isn't charted in the indexed state, so its combat intelligence can't be derived." />
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel title="Target Combat Intel">
+      <Row label="Combat power" value={formatResource(intel.combatPower)} />
+      <Row label="Combat ships" value={<TacticalUnitIcons units={intel.combatShips.units} catalog={shipCatalog} assetByKey={shipAssetByKey} />} />
+      <Row label="Defenses" value={<TacticalUnitIcons units={intel.defenses.units} catalog={defenseCatalog} assetByKey={defenseAssetByKey} />} />
+      <Row label="Defense queue" value={queueLabel(intel.queues.defense, defenseCatalog, now)} />
+      <Row label="Ship queue" value={queueLabel(intel.queues.ship, shipCatalog, now)} />
+      <Row label="Target traffic" value={<TargetMissionTraffic missions={intel.activeMissions} now={now} />} />
+    </Panel>
+  );
+}
+
+function TargetMissionTraffic({
+  missions,
+  now,
+}: {
+  missions: FleetMissionSummary[];
+  now: number;
+}) {
+  if (missions.length === 0) return <>None</>;
+  return (
+    <div className="grid gap-1">
+      {missions.map((entry) => (
+        <div className="min-w-0" key={entry.missionId}>
+          <span className="font-medium text-slate-200">{missionTypeLabel(entry.missionType)} #{entry.missionId}</span>
+          <span className="text-slate-500"> · </span>
+          <span>{shortAddress(entry.owner)}</span>
+          <span className="text-slate-500"> · </span>
+          <span>{entry.status}</span>
+          <span className="text-slate-500"> · </span>
+          <span>{missionTrafficTiming(entry, now)}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -724,6 +781,34 @@ function missionLegTiming(
   return { label, value: formatMissionTime(value, now) };
 }
 
+function missionTrafficTiming(mission: FleetMissionSummary, now: number): string {
+  if (mission.status === "Returning" || mission.status === "Recalled") {
+    return `returns ${formatMissionTime(mission.returnAt, now)}`;
+  }
+  if (mission.status === "Returned") {
+    return `returned ${formatCompactMissionTime(mission.returnAt)}`;
+  }
+  return `arrives ${formatMissionTime(mission.arrivalAt, now)}`;
+}
+
+function queueLabel(
+  queue: QueueStateResponse | null,
+  catalog: readonly { id: number; label: string }[],
+  now: number,
+): string {
+  if (!queue?.active) return "None";
+  const item = catalog.find((entry, index) => (entry.id ?? index) === queue.itemId);
+  const itemLabel = item?.label ?? (queue.itemId == null ? queue.kind ?? "Queue" : `ID ${queue.itemId}`);
+  const quantity = queue.quantity ? ` x${queue.quantity.toLocaleString()}` : "";
+  const level = queue.targetLevel ? ` L${queue.targetLevel.toLocaleString()}` : "";
+  const readiness = queue.asOfNow?.complete
+    ? "Ready"
+    : queue.readyAt
+      ? formatMissionTime(queue.readyAt, now)
+      : "ready time unknown";
+  return `${itemLabel}${quantity}${level} - ${readiness}`;
+}
+
 // Short "month day, time" stamp (e.g. "Jun 7, 3:40 PM") used as muted subtext under
 // a completed leg's past-tense word. The short month/day and the clock are formatted
 // separately and joined with a comma so the result stays in this compact form rather
@@ -826,6 +911,18 @@ function compositionUnits(
         asset: item ? assetByKey[item.key] : undefined,
       };
     });
+}
+
+function TacticalUnitIcons({
+  assetByKey,
+  catalog,
+  units,
+}: {
+  assetByKey: Record<string, string>;
+  catalog: readonly { id: number; key: string; label: string }[];
+  units: Array<{ id: number; count: number }> | undefined;
+}) {
+  return <UnitIcons units={compositionUnits(units, catalog, assetByKey)} />;
 }
 
 const shipLabels: Record<string, string> = {

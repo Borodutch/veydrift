@@ -441,6 +441,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           {
             mission,
             battleReport,
+            targetCombatIntel: targetCombatIntelForMission(indexer, mission),
             // The defender's surviving fleet/defenses are not in the on-chain combat log, but the
             // indexer tracks the target planet's ship/defense composition (ShipCountChanged + defense
             // events), so the battle report can show real composition instead of a blanket caveat.
@@ -1678,6 +1679,42 @@ function defenderPlanetStateForReport(
     fleet: indexer.shipRows(planet.planetId).map(({ id, count }) => ({ id, count })).filter((row) => row.count > 0),
     defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })).filter((row) => row.count > 0),
     stationedDefenders: indexer.stationedDefendersForBattle(mission, report)
+  };
+}
+
+function targetCombatIntelForMission(
+  indexer: SettlementIndexer,
+  mission: FleetMissionSummary
+): Pick<RankedHighscorePlanet["tactical"], "combatPower" | "combatShips" | "defenses"> & {
+  planetId: string;
+  activeMissions: FleetMissionSummary[];
+  queues: {
+    defense: PlayerQueues["defense"];
+    ship: PlayerQueues["ship"];
+  };
+} | null {
+  const planet = indexer.planet(mission.targetPlanetId);
+  if (!planet) return null;
+
+  const accrued = accruedPlanetState(indexer, planet);
+  const tactical = indexedPlanetTacticalSummary(
+    accrued,
+    indexer.infrastructureRows(planet.planetId),
+    indexer.shipRows(planet.planetId),
+    indexer.defenseRows(planet.planetId),
+    indexer.technologyLevels(planet.owner)
+  );
+
+  return {
+    planetId: planet.planetId,
+    activeMissions: indexer.allActiveFleetMissions().filter((entry) => entry.targetPlanetId === planet.planetId),
+    combatPower: tactical.combatPower,
+    combatShips: tactical.combatShips,
+    defenses: tactical.defenses,
+    queues: {
+      defense: indexer.planetQueue(planet.planetId, "defense"),
+      ship: indexer.planetQueue(planet.planetId, "ship")
+    }
   };
 }
 
