@@ -68,10 +68,16 @@ bun run dev:frontend
 - `GET /planets/:planetId`
 - `GET /universe/galaxies/:galaxy/systems/:system`
 - `GET /universe/systems?galaxy=1&center=250&radius=2`
-- `POST /index/rebuild`
-- `POST /index/verify/:planetId` (append `?heal=true` to self-heal)
 - `POST /webhooks/alchemy`
 - `GET /graphql` / `POST /graphql` for the existing minimal service status response
+
+Index DB alignment is an explicit operator action through the backend package script, not an HTTP
+route:
+
+```sh
+cd apps/backend
+bun run index:replay -- --from-block <block>
+```
 
 Copy `apps/backend/.env.example` to `apps/backend/.env` and provide the Base
 Sepolia RPC configuration before using chain-backed routes:
@@ -99,31 +105,29 @@ The backend accepts `ALCHEMY_BASE_SEPOLIA_API_KEY`,
 For websocket chain sync it accepts `VEYDRIFT_WS_RPC_URL` or
 `ALCHEMY_BASE_SEPOLIA_WS_URL`, and falls back to
 `wss://base-sepolia.g.alchemy.com/v2/<key>` when only
-`ALCHEMY_BASE_SEPOLIA_API_KEY` is set. HTTP RPC remains the startup snapshot and
-request/response fallback.
+`ALCHEMY_BASE_SEPOLIA_API_KEY` is set. HTTP RPC is for writer-side event replay,
+explicit operator sync, and mutating/on-chain workers; frontend/API read
+requests must be served from the SQLite index or configured static metadata.
 `VEYDRIFT_GAME_CONTRACT_ADDRESS` or the legacy `VEYDRIFT_CONTRACT_ADDRESS` must
 point at the deployed `VeydriftGame` proxy for game-state APIs and runtime
 Shipyard transactions.
 `VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS` is the compact first-planet settlement
 contract used for settlement/universe context and must not be used as the game
 contract.
+`VEYDRIFT_SETTLEMENT_START_PRICE_WEI` is the configured static start price used
+by `GET /wallet/:address/settlement-funding`; the endpoint deliberately does
+not call RPC to read `startPrice` or the wallet's native ETH balance.
 `VEYDRIFT_METAL_TOKEN_ADDRESS`, `VEYDRIFT_CRYSTAL_TOKEN_ADDRESS`, and
 `VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS` expose the upgradeable ERC-20 resource token
 proxies deployed for the game.
 Health/debug responses only report safe configuration metadata and never echo
-RPC URLs or API keys. Ownership remains canonical onchain; when the default
-backend starts with valid chain config it kicks off a background SQLite index
-reconciliation from `VEYDRIFT_INDEX_FROM_BLOCK` and reports the last
-reconciled block, latest indexed block, in-progress state, reorg detection, and
-last reconciliation error in `GET /health`. The websocket chain sync keeps the
-SQLite-backed contract state index warm, `GET /chain/events` streams backend
-chain-event notifications to the frontend, and `POST /index/rebuild` remains
-the manual HTTP fallback for rebuilding settlement events.
-`POST /index/verify/:planetId` compares a single planet's stored canonical state
-against the authoritative on-chain getters (`previewResources`, `buildingLevel`,
-`shipCount`, `defenseCount`) and reports any divergence without a full rebuild;
-with `?heal=true` it re-syncs just that planet's resources/buildings/ships/defenses
-to the contract values so the served canonical state equals on-chain.
+RPC URLs or API keys. Ownership remains canonical onchain; the normal backend
+serves frontend/API reads from the SQLite-backed contract state index and mutates
+that DB through contract event replay/listeners only. `GET /health` reports the
+last reconciled block, latest indexed block, in-progress state, reorg detection,
+and last reconciliation error. `GET /chain/events` streams backend chain-event
+notifications to the frontend. Manual DB alignment is intentionally separated
+from HTTP routes and runs through `bun run index:replay -- --from-block <block>`.
 `POST /webhooks/alchemy` accepts Alchemy contract log webhook payloads, verifies
 `X-Alchemy-Signature` when `VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY` is configured,
 and applies duplicate-safe indexed event updates.
@@ -317,6 +321,7 @@ VEYDRIFT_CHAIN_ID=84532
 VEYDRIFT_CONTRACT_ADDRESS=<Base Sepolia VeydriftGame proxy address>
 VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS=<Base Sepolia compact settlement address>
 VEYDRIFT_GAME_CONTRACT_ADDRESS=<Base Sepolia VeydriftGame proxy address>
+VEYDRIFT_SETTLEMENT_START_PRICE_WEI=<VeydriftGame startPrice in wei, for example 50000000000000000>
 VEYDRIFT_METAL_TOKEN_ADDRESS=<Base Sepolia VeydriftMetal ERC-20 proxy address>
 VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=<Base Sepolia VeydriftCrystal ERC-20 proxy address>
 VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=<Base Sepolia VeydriftDeuterium ERC-20 proxy address>
@@ -357,8 +362,9 @@ second of the new container binding the port and keeps the cutover effectively
 downtime-free. This is intentional: the SQLite index DB is opened synchronously
 during request-handler construction (before Bun binds the port), so persisted
 indexed reads are serveable the instant `/health` first answers, while the heavy
-chain reconcile runs in the background and never blocks readiness (it is fired as
-`void indexer.rebuild()` — see `apps/backend/src/server.ts`). The same readiness gate is embedded as a Docker `HEALTHCHECK` in
+event replay continues through the chain-sync poller and never blocks readiness.
+Operator-run DB alignment is explicit (`bun run index:replay -- --from-block <block>`) rather than
+a backend startup self-heal. The same readiness gate is embedded as a Docker `HEALTHCHECK` in
 `apps/backend/Dockerfile.test`, so the Dockerfile rollback build path carries it
 automatically; Nixpacks builds cannot embed a `HEALTHCHECK`, so the EasyPanel
 Health Check above is required for the primary Nixpacks deploy.
@@ -381,18 +387,18 @@ connections across the workers, so a slow request handled by one worker no
 longer blocks the others (VEY-KANEO-466).
 
 - **Worker 0 is the single writer.** It runs chain-sync ingestion, the
-  cold-start index rebuild, the bounded per-planet reconciles, mission
-  resolution, and the randomness committer. The committers submit on-chain
-  transactions, so they must run on exactly one worker.
+  websocket/polling event replay, mission resolution, and the randomness
+  committer. The committers submit on-chain transactions, so they must run on
+  exactly one worker. Explicit operator syncs such as `bun run index:replay`
+  are run outside frontend request handling.
 - **The remaining workers are readers.** They serve read requests
   (`GET`/`HEAD`/`OPTIONS`) from the shared SQLite index database, which is opened
   in WAL mode (`PRAGMA journal_mode = WAL`) so many readers run concurrently with
-  the single writer. Readers skip every background loop. Every **mutating**
-  request (the few `POST` endpoints: display-name, `/index/rebuild`,
-  `/index/verify`, `/webhooks/alchemy`) is forwarded over loopback to the
-  writer's private listener, so the writer stays the sole mutator of the index
-  and the only holder of the in-memory indexer state (e.g. the bounded
-  fleet-mission reconcile queue). The writer binds that private listener on
+  the single writer. Readers skip every background loop. Every remaining
+  **mutating** request (display-name and `/webhooks/alchemy`) is forwarded over
+  loopback to the writer's private listener, so the writer stays the sole
+  request-time mutator of the index and the only holder of the in-memory indexer
+  state. The writer binds that private listener on
   `127.0.0.1:<PORT+1>` (override with `VEYDRIFT_WRITER_INTERNAL_PORT`) in
   addition to the shared reusePort socket.
 - The supervisor respawns a worker that exits unexpectedly and forwards

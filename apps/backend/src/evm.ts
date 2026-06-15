@@ -757,7 +757,7 @@ export type AllianceState = {
 export type AllianceRoleName = "none" | "member" | "officer" | "owner";
 
 // Canonical-mirror seed shapes for the alliance sub-states that have no on-chain enumeration getter
-// covered by the directory snapshot. Read from contract getters once on the startup rebuild and used
+// covered by the directory snapshot. Read from contract getters during explicit rebuild and used
 // to DELETE+replace the corresponding indexed tables (see SettlementIndexer.rebuildUncached).
 export type AllianceJoinRequestSnapshot = {
   allianceId: string;
@@ -902,6 +902,7 @@ export interface ChainReader {
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
   listAllianceLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listContractLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  getBlockNumber?(): Promise<bigint>;
   rpcMetrics?(): RpcMetrics;
 }
 
@@ -2224,7 +2225,7 @@ export class VeydriftGameReader implements ChainReader {
 
   // Canonical-mirror seed: pending alliance invites. The contract has no per-alliance enumeration getter,
   // so iterate the candidate-wallet set (known players) × allianceIds and keep the invites the contract
-  // reports as active. Bounded in alpha; runs only on the startup rebuild, never per request.
+  // reports as active. Bounded in alpha; runs only during explicit rebuild, never per request.
   async listAllianceInviteState(candidateWallets: readonly Address[]): Promise<AllianceInviteSnapshot[]> {
     if (!this.allianceContractAddress) return [];
 
@@ -2666,6 +2667,11 @@ export class VeydriftGameReader implements ChainReader {
    * filter. Mirrors the websocket `logs` subscription so chain-sync gap recovery can
    * backfill ONLY the missed range incrementally instead of triggering a full rebuild.
    */
+  /** Current chain head (eth_blockNumber). Drives the chain-sync poll cursor. */
+  async getBlockNumber(): Promise<bigint> {
+    return decodeUint(await this.transport.request<string>("eth_blockNumber", []));
+  }
+
   async listContractLogs(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<RpcLog[]> {
     const addresses = this.indexedContractAddresses();
     if (addresses.length === 0) return [];

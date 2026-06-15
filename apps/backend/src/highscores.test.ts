@@ -115,4 +115,26 @@ describe("highscore formulas", () => {
       defense: "4",
     });
   });
+
+  test("totalUserScore mirrors the contract _totalUserScore weights (not the display total)", () => {
+    // Contract VeydriftGameStorage._totalUserScore: tech (id+1)*15, +1000 per planet,
+    // building (id+1)*10, defense (id+1)*2, ship (id+1)*4. Moon buildings excluded.
+    const entry = calculateHighscore({
+      wallet: "0x2222222222222222222222222222222222222222" as Address,
+      homePlanetId: "1",
+      planetCount: 1,
+      planets: [
+        {
+          buildings: [{ id: 0, level: 2 }], // 2 * 1 * 10 = 20
+          moonBuildings: [{ id: 0, level: 9 }], // excluded from totalUserScore
+          defenses: [{ id: 1, count: 3 }], // 3 * 2 * 2 = 12
+          ships: [{ id: 2, count: 1 }], // 1 * 3 * 4 = 12
+        },
+      ],
+      technologies: [{ id: 0, level: 1 }], // 1 * 1 * 15 = 15
+    });
+    // 15 + (1000 + 20 + 12 + 12) = 1059. Distinct from the resource-based score.total.
+    expect(entry.totalUserScore).toBe("1059");
+    expect(entry.totalUserScore).not.toBe(entry.score.total);
+  });
 });

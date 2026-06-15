@@ -12,6 +12,7 @@ describe("CachedChainReader", () => {
       wallet,
       homePlanetId: "7",
       planetCount: 1,
+      totalUserScore: "1000",
       score: {
         total: "15",
         economy: "0",

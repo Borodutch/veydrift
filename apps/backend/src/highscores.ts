@@ -40,6 +40,12 @@ export type HighscoreEntry = {
   homePlanetId: string | null;
   planetCount: number;
   score: ScoreBreakdown;
+  // Mirror of the contract's VeydriftGameStorage._totalUserScore (building/tech/ship/defense LEVELS
+  // weighted by enum id), which is what the on-chain attack-protection gate
+  // (VeydriftAntiRaidPrimitives.isScoreProtected) uses. DISTINCT from score.total (the resource-based
+  // display leaderboard). Attack-protection must compare on this scale, otherwise the 50k/500k newbie
+  // thresholds make every player read as a newbie (VEY-KANEO-489 follow-up).
+  totalUserScore: string;
 };
 
 type Cost = readonly [bigint, bigint, bigint];
@@ -176,10 +182,34 @@ export function calculateHighscore(input: HighscoreInput): HighscoreEntry {
   ), 0n);
   const total = economy + research + military;
 
+  // Contract-parity protection score (VeydriftGameStorage._totalUserScore): NOT resource-based.
+  // Weights mirror the contract exactly — tech (id+1)*15, +1000 per owned planet, building (id+1)*10,
+  // defense (id+1)*2, ship (id+1)*4. Moon buildings are intentionally excluded (the contract's
+  // _totalUserScore loops the Building enum on _ownedPlanetIds only). Computed here from the same
+  // building/tech/ship/defense data the leaderboard already iterates, so the rankings hot path reads it
+  // off the entry with zero extra planet-detail hydration.
+  let totalUserScore = 0n;
+  for (const technology of input.technologies) {
+    totalUserScore += BigInt(Math.max(0, technology.level)) * BigInt(technology.id + 1) * 15n;
+  }
+  for (const planet of input.planets) {
+    totalUserScore += 1_000n;
+    for (const building of planet.buildings) {
+      totalUserScore += BigInt(Math.max(0, building.level)) * BigInt(building.id + 1) * 10n;
+    }
+    for (const defense of planet.defenses) {
+      totalUserScore += BigInt(Math.max(0, defense.count)) * BigInt(defense.id + 1) * 2n;
+    }
+    for (const ship of planet.ships) {
+      totalUserScore += BigInt(Math.max(0, ship.count)) * BigInt(ship.id + 1) * 4n;
+    }
+  }
+
   return {
     wallet: input.wallet,
     homePlanetId: input.homePlanetId,
     planetCount: input.planetCount,
+    totalUserScore: totalUserScore.toString(),
     score: {
       total: total.toString(),
       economy: economy.toString(),
