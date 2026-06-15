@@ -1968,6 +1968,11 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_technology_levels").run();
     this.db.query("DELETE FROM contract_production_queues").run();
     this.db.query("DELETE FROM contract_moon_building_queues").run();
+    this.db.query("DELETE FROM contract_alliances").run();
+    this.db.query("DELETE FROM contract_alliance_members").run();
+    this.db.query("DELETE FROM contract_alliance_invites").run();
+    this.db.query("DELETE FROM contract_alliance_join_requests").run();
+    this.db.query("DELETE FROM contract_alliance_diplomacy").run();
   }
 
   private applyStoredLogSideEffects(log: IndexedRpcLog): void {

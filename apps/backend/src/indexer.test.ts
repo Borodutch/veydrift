@@ -3733,6 +3733,10 @@ describe("SettlementIndexer", () => {
   test("explicit contract-log replay rebuilds stale materialized state from stored logs", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");
+    const officer = "0x3333333333333333333333333333333333333333" as Address;
+    const applicant = "0x4444444444444444444444444444444444444444" as Address;
+    const invitee = "0x5555555555555555555555555555555555555555" as Address;
+    const staleWallet = "0x6666666666666666666666666666666666666666" as Address;
     try {
       const first = new SettlementIndexer({
         async listDebrisFieldEvents() { return []; },
@@ -3776,6 +3780,44 @@ describe("SettlementIndexer", () => {
         topics: [planetDefenseCountChangedTopic, topic(7n), topic(2n)],
         data: abiWords(6n)
       });
+      first.applyLog({
+        blockNumber: "0x94",
+        blockTimestamp: "0x69801c80",
+        transactionHash: "0xalliance-create",
+        logIndex: "0x0",
+        topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+        data: abiStrings("VEY", "Veydrift Command")
+      });
+      first.applyLog({
+        blockNumber: "0x95",
+        blockTimestamp: "0x69801c81",
+        transactionHash: "0xalliance-owner",
+        logIndex: "0x0",
+        topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+        data: abiWords(3n)
+      });
+      first.applyLog({
+        blockNumber: "0x96",
+        blockTimestamp: "0x69801c82",
+        transactionHash: "0xalliance-invite",
+        logIndex: "0x0",
+        topics: [allianceInviteCreatedTopic, topic(1n), addressTopic(officer), addressTopic(invitee)],
+        data: "0x"
+      });
+      first.applyLog({
+        blockNumber: "0x97",
+        transactionHash: "0xalliance-request",
+        logIndex: "0x0",
+        topics: [allianceJoinRequestedTopic, topic(1n), addressTopic(applicant)],
+        data: abiWords(1770003000n)
+      });
+      first.applyLog({
+        blockNumber: "0x98",
+        transactionHash: "0xalliance-diplomacy",
+        logIndex: "0x0",
+        topics: [allianceDiplomacyUpdatedTopic, topic(1n), topic(2n)],
+        data: abiWords(3n)
+      });
 
       const staleDb = new Database(databasePath);
       try {
@@ -3785,6 +3827,16 @@ describe("SettlementIndexer", () => {
         staleDb.query("UPDATE contract_defense_counts SET count = 99 WHERE planet_id = ? AND defense_id = ?").run("7", 2);
         staleDb.query("INSERT INTO contract_ship_counts (planet_id, ship_id, count) VALUES (?, ?, ?)").run("7", 5, 77);
         staleDb.query("INSERT INTO contract_defense_counts (planet_id, defense_id, count) VALUES (?, ?, ?)").run("7", 5, 88);
+        staleDb.query(`
+          INSERT INTO contract_alliances (
+            alliance_id, active, tag, name, description, owner, created_at, member_count, event_json
+          )
+          VALUES (?, 1, ?, ?, '', lower(?), ?, ?, '{}')
+        `).run("9", "OLD", "Stale Alliance", staleWallet, "1770000000", 1);
+        staleDb.query("INSERT INTO contract_alliance_members (alliance_id, wallet, role_id, joined_at) VALUES (?, lower(?), ?, ?)").run("1", staleWallet, 1, "1770000000");
+        staleDb.query("INSERT INTO contract_alliance_invites (alliance_id, player, inviter, invited_at) VALUES (?, lower(?), lower(?), ?)").run("1", staleWallet, player, "1770000000");
+        staleDb.query("INSERT INTO contract_alliance_join_requests (alliance_id, requester, requested_at) VALUES (?, lower(?), ?)").run("1", staleWallet, "1770000000");
+        staleDb.query("INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at) VALUES (?, ?, ?, ?)").run("9", "1", 2, "1770000000");
       } finally {
         staleDb.close();
       }
@@ -3825,6 +3877,25 @@ describe("SettlementIndexer", () => {
         });
         expect(repairedDb.query("SELECT count FROM contract_ship_counts WHERE planet_id = ? AND ship_id = ?").get("7", 5)).toBeNull();
         expect(repairedDb.query("SELECT count FROM contract_defense_counts WHERE planet_id = ? AND defense_id = ?").get("7", 5)).toBeNull();
+        expect(repairedDb.query("SELECT alliance_id FROM contract_alliances ORDER BY alliance_id").all()).toEqual([
+          { alliance_id: "1" }
+        ]);
+        expect(repairedDb.query("SELECT member_count FROM contract_alliances WHERE alliance_id = ?").get("1")).toEqual({
+          member_count: 1
+        });
+        expect(repairedDb.query("SELECT wallet, role_id FROM contract_alliance_members WHERE alliance_id = ? ORDER BY wallet").all("1")).toEqual([
+          { wallet: player, role_id: 3 }
+        ]);
+        expect(repairedDb.query("SELECT player, inviter FROM contract_alliance_invites WHERE alliance_id = ? ORDER BY player").all("1")).toEqual([
+          { player: invitee, inviter: officer }
+        ]);
+        expect(repairedDb.query("SELECT requester, requested_at FROM contract_alliance_join_requests WHERE alliance_id = ? ORDER BY requester").all("1")).toEqual([
+          { requester: applicant, requested_at: "1770003000" }
+        ]);
+        expect(repairedDb.query("SELECT alliance_id, other_alliance_id, status_id FROM contract_alliance_diplomacy ORDER BY alliance_id, other_alliance_id").all()).toEqual([
+          { alliance_id: "1", other_alliance_id: "2", status_id: 3 },
+          { alliance_id: "2", other_alliance_id: "1", status_id: 3 }
+        ]);
       } finally {
         repairedDb.close();
       }
