@@ -1339,12 +1339,13 @@ export class SettlementIndexer {
     return { applied: false, duplicate: false, ignored: true, removed: false, snapshot: this.snapshot() };
   }
 
-  async rebuild(): Promise<IndexerSnapshot> {
+  async rebuild(options: { deadlineMs?: number } = {}): Promise<IndexerSnapshot> {
     if (this.rebuildPromise) {
       return this.rebuildPromise;
     }
 
-    this.rebuildPromise = this.rebuildUncached()
+    const deadlineMs = options.deadlineMs ?? this.rebuildDeadlineMs;
+    this.rebuildPromise = this.rebuildUncached(deadlineMs)
       .catch((error) => {
         this.recordReconciliationError(error);
         throw error;
@@ -1394,12 +1395,16 @@ export class SettlementIndexer {
     return this.snapshot();
   }
 
-  async syncCanonicalState(fromBlock = this.fromBlock, toBlock: bigint | "latest" = "latest"): Promise<{
+  async syncCanonicalState(
+    fromBlock = this.fromBlock,
+    toBlock: bigint | "latest" = "latest",
+    options: { rebuildDeadlineMs?: number } = {}
+  ): Promise<{
     replay: IndexerSnapshot;
     rebuild: IndexerSnapshot;
   }> {
     const replay = await this.replayContractLogs(fromBlock, toBlock);
-    const rebuild = await this.rebuild();
+    const rebuild = await this.rebuild({ deadlineMs: options.rebuildDeadlineMs ?? 0 });
     return { replay, rebuild };
   }
 
@@ -1471,9 +1476,8 @@ export class SettlementIndexer {
   // instead of leaving the index stuck in reconciliation_in_progress with lastReconciliationError=null
   // forever. The abandoned reads resolve into the void (no DB write runs unless the inputs arrive in
   // time); rebuild()'s catch records the error and the boot-time recovery retries it.
-  private withRebuildDeadline<T>(read: Promise<T>): Promise<T> {
-    if (!this.rebuildDeadlineMs) return read;
-    const deadlineMs = this.rebuildDeadlineMs;
+  private withRebuildDeadline<T>(read: Promise<T>, deadlineMs: number): Promise<T> {
+    if (!deadlineMs) return read;
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         reject(new Error(`cold reindex chain read exceeded ${deadlineMs}ms deadline`));
@@ -1486,7 +1490,7 @@ export class SettlementIndexer {
     });
   }
 
-  private async rebuildUncached(): Promise<IndexerSnapshot> {
+  private async rebuildUncached(deadlineMs: number): Promise<IndexerSnapshot> {
     const {
       settledPlanetEvents,
       planetEvents,
@@ -1498,7 +1502,7 @@ export class SettlementIndexer {
       allianceJoinRequests,
       allianceInvites,
       allianceDiplomacy
-    } = await this.withRebuildDeadline(this.readRebuildInputs());
+    } = await this.withRebuildDeadline(this.readRebuildInputs(), deadlineMs);
     const rebuild = this.db.transaction(() => {
       this.db.query("DELETE FROM indexed_planets").run();
       this.db.query("DELETE FROM indexed_debris_fields").run();

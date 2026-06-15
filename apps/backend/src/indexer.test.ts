@@ -9,6 +9,7 @@ import { SettlementIndexer } from "./indexer";
 import { deriveBuildingRows, deriveDefenseRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
 
 const player = "0x2222222222222222222222222222222222222222" as Address;
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 setSystemTime(new Date("2026-01-01T00:00:00Z"));
 afterAll(() => setSystemTime());
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
@@ -3771,6 +3772,43 @@ describe("SettlementIndexer", () => {
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(0);
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(5);
     expect(indexer.planet(planet.planetId)?.resources).toEqual({ metal: "777", crystal: "888", deuterium: "999" });
+  });
+
+  test("explicit canonical sync is not aborted by the normal cold rebuild deadline", async () => {
+    const reader = {
+      async listContractLogs() {
+        return [
+          {
+            blockNumber: "0x90",
+            transactionHash: "0xplanet",
+            logIndex: "0x0",
+            topics: [planetStartedTopic, addressTopic(player), topic(7n)],
+            data: abiWords(2n, 44n, 9n, 211n, signedWord(-8n))
+          }
+        ];
+      },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() {
+        await wait(30);
+        return [planet];
+      }
+    };
+
+    await expect(new SettlementIndexer(reader, 100n, { rebuildDeadlineMs: 10 }).rebuild())
+      .rejects.toThrow(/exceeded 10ms deadline/);
+
+    const operatorSync = new SettlementIndexer(reader, 100n, { rebuildDeadlineMs: 10 });
+    await expect(operatorSync.syncCanonicalState(100n, 0x90n)).resolves.toMatchObject({
+      rebuild: {
+        indexedPlanets: 1,
+        lastReconciliationError: null
+      }
+    });
+    expect(operatorSync.snapshot()).toMatchObject({
+      indexedPlanets: 1,
+      lastReconciliationError: null
+    });
   });
 
   test("records reconciliation failures for health/debug visibility", async () => {
