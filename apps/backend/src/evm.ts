@@ -4445,6 +4445,26 @@ export function isFleetMissionLog(log: RpcLog): boolean {
     || topic === attackMissionJoinedTopic;
 }
 
+// VEY-KANEO-489: decode a FleetMissionLaunched log into the attacker + target it records against the
+// per-(attacker, defender, planet) bashing window. Only `Attack` missions call _recordAttack on the
+// contract (VeydriftGameplayModule._sendFleet); AcsAttack joiners, AcsDefend, and the non-combat types
+// never increment the window, and every non-launch fleet log is irrelevant — all of those return null.
+// The contract anchors each window at block.timestamp of the launch, so the indexed read model can
+// replay it from these logs (plus their block timestamps) instead of a live attackProtectionStatus call.
+export function decodeAttackMissionLaunch(
+  log: RpcLog
+): { attacker: Address; targetPlanetId: string } | null {
+  try {
+    if (topicAt(log.topics, 0) !== fleetMissionLaunchedTopic) return null;
+    if (missionTypeLabel(decodeUint(topicAt(log.topics, 3))) !== "Attack") return null;
+    const attacker = decodeAddressWord(topicAt(log.topics, 2)).toLowerCase() as Address;
+    const targetPlanetId = decodeUintWord(wordAt(splitWords(log.data), 1)).toString();
+    return { attacker, targetPlanetId };
+  } catch {
+    return null;
+  }
+}
+
 // A fleet-mission log that signals a mission reaching an end state — combat resolved, a return-leg
 // exposed, or the fleet physically home. The event-driven ship read model uses these to trigger a
 // bounded, per-planet canonical reconcile for combat missions (whose survivor/defender losses the

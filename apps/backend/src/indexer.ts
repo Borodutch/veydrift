@@ -11,6 +11,7 @@ import {
 import {
   attachAttackGroupParticipants,
   decodeAllianceLog,
+  decodeAttackMissionLaunch,
   decodeBattleReports,
   decodeCompleteFleetMissionLogs,
   decodeDebrisFieldLog,
@@ -3406,6 +3407,42 @@ export class SettlementIndexer {
       }
     }
     return fulfilled;
+  }
+
+  // VEY-KANEO-489: replay every Attack `attacker` has launched, grouped by target planet, as ascending
+  // launch timestamps. The contract anchors each per-(attacker, defender, planet) bashing window at
+  // block.timestamp of the launch (VeydriftGameStorage._recordAttack runs in the FleetMissionLaunched
+  // transaction), so the server can derive the live window count from these and apply the same
+  // MAX_ATTACKS_PER_BASHING_WINDOW / 24h reset the contract enforces — letting the indexed
+  // attack-protection preview report bashing_limit instead of silently allowing a blocked attack.
+  // We key only by (attacker, planet), dropping the contract's defender dimension: planet ids are
+  // minted monotonically (nextPlanetId++) and never reassigned to a different non-zero owner (attacks
+  // loot but never capture; abandonment cannot re-mint an id), so a given planet id maps to exactly one
+  // defender over its lifetime — making (attacker, planet) equivalent to (attacker, defender, planet).
+  // Launches whose block lacks an ingested timestamp are skipped (they cannot be placed in the 24h
+  // window), which biases toward not-blocking rather than fabricating a window position.
+  attackLaunchSecondsByTarget(attacker: `0x${string}`): Map<string, number[]> {
+    const normalizedAttacker = attacker.toLowerCase();
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
+    `).all() as EventRow[];
+    const byTarget = new Map<string, number[]>();
+    for (const row of rows) {
+      const log = parseEvent<IndexedRpcLog>(row.event_json);
+      const launch = decodeAttackMissionLaunch(log);
+      if (!launch || launch.attacker.toLowerCase() !== normalizedAttacker) continue;
+      const launchedAt = blockTimestampSeconds(log);
+      if (launchedAt === undefined) continue;
+      const seconds = Number(launchedAt);
+      if (!Number.isFinite(seconds)) continue;
+      const existing = byTarget.get(launch.targetPlanetId);
+      if (existing) existing.push(seconds);
+      else byTarget.set(launch.targetPlanetId, [seconds]);
+    }
+    return byTarget;
   }
 
   private indexedBattleReports(): BattleReport[] {
