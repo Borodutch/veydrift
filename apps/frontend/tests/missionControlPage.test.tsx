@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionControlPage, StationedDefenseSection, formatMissionTime, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseLoot } from "../src/components/MissionControlPage";
+import { MissionControlPage, StationedDefenseSection, formatMissionTime, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseLoot, returnPhaseLosses } from "../src/components/MissionControlPage";
 import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
@@ -602,6 +602,30 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Battle report");
   });
 
+  // VEY-KANEO-495: the past/completed mission card (PastMissionSummaryRow) renders losses through a
+  // different component path than the active card, so assert the Losses line surfaces there too once a
+  // completed mission collapses with its battle report into one archive row.
+  test("shows fleet losses on a completed mission's past archive card", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [mission({ missionId: "77", missionType: "Attack", status: "Returned" })],
+        battleReports: [battleReport("77")],
+      },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Past missions");
+    expect(text).toContain("Outcome Attacker win");
+    expect(text).toContain("Losses 100 M / 50 C / 0 D / 900 M / 250 C / 0 D");
+    expect(text).toContain("Debris 600 M / 150 C");
+  });
+
   test("renders a standalone battle report row when no completed mission matches", () => {
     const page = missionControlPage({
       fleetVisibility: {
@@ -744,6 +768,115 @@ describe("MissionControlPage", () => {
     expect(returnPhaseLoot(mission({ missionId: "55", status: "Returned" }), lootByMissionId)).toBe(loot);
     // No matching report -> no loot line at all (e.g. a returning transport).
     expect(returnPhaseLoot(mission({ missionId: "999", status: "Returned" }), lootByMissionId)).toBeUndefined();
+  });
+
+  // VEY-KANEO-495: a resolved attack must show what it cost on its own card. Before this the card
+  // showed the committed fleet + loot only, so a failed attack read as if the fleet came home intact.
+  test("shows attacker and defender fleet losses on a resolved attack's mission card", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [mission({
+          missionId: "55",
+          missionType: "Attack",
+          status: "Returning",
+          cargo: { metal: "10", crystal: "0", deuterium: "0" },
+        })],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [battleReport("55")],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    // The report's outcome renders as an "Outcome" line and the attacker / defender losses as a
+    // "Losses" line, so the card states whether the attack succeeded and what it cost. A win shows
+    // no failed-attack flag, and the debris created surfaces for follow-up harvest.
+    expect(text).toContain("Outcome Attacker win");
+    expect(text).toContain("Losses 100 M / 50 C / 0 D / 900 M / 250 C / 0 D");
+    expect(text).toContain("Debris 600 M / 150 C");
+    expect(text).not.toContain("Attack failed");
+  });
+
+  test("surfaces a failed attack's fleet losses on its mission card", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        // A defender-win battle where the attacker took heavy losses and grabbed no loot. The card
+        // must surface those losses rather than only the committed fleet it launched with.
+        returning: [mission({ missionId: "60", missionType: "Attack", status: "Returning" })],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [{
+          ...battleReport("60"),
+          outcome: "DefenderWin",
+          loot: { metal: "0", crystal: "0", deuterium: "0" },
+          attackerLosses: { metal: "5000", crystal: "3000", deuterium: "0" },
+          defenderLosses: { metal: "200", crystal: "100", deuterium: "0" },
+        }],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    // The defender-win outcome is stated explicitly so a wiped-out attack reads as a failure, not
+    // just heavy losses next to the launch fleet. A failed offensive mission also gets a distinct
+    // red "Attack failed — fleet lost" flag (VEY-KANEO-495 criterion 2), and the debris created by
+    // the battle is surfaced for follow-up harvest (criterion 3).
+    expect(text).toContain("Attack failed — fleet lost");
+    expect(text).toContain("Outcome Defender win");
+    expect(text).toContain("Losses 5,000 M / 3,000 C / 0 D / 200 M / 100 C / 0 D");
+    expect(text).toContain("Debris 600 M / 150 C");
+  });
+
+  test("does not flag a winning raid as a failed attack, and still shows debris", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        // A successful raid (AttackerWin) with zero attacker losses must read as a win, never as a
+        // failed attack (VEY-KANEO-495 acceptance criterion: no false loss flag on a winning raid).
+        returning: [mission({ missionId: "61", missionType: "Attack", status: "Returning" })],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [{
+          ...battleReport("61"),
+          outcome: "AttackerWin",
+          attackerLosses: { metal: "0", crystal: "0", deuterium: "0" },
+        }],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Outcome Attacker win");
+    expect(text).not.toContain("Attack failed");
+    expect(text).toContain("Debris 600 M / 150 C");
+  });
+
+  test("withholds fleet losses from a mission card until the fleet leaves its outbound leg", () => {
+    const losses = { outcome: "AttackerWin" as const, attacker: { metal: "100", crystal: "50", deuterium: "0" }, defender: { metal: "900", crystal: "250", deuterium: "0" }, debris: { metal: "600", crystal: "150" } };
+    const lossesByMissionId = new Map([["55", losses]]);
+
+    // An en-route outbound fleet has fought nothing yet — no losses line even if a report id collides.
+    expect(returnPhaseLosses(mission({ missionId: "55", status: "Outbound" }), lossesByMissionId)).toBeUndefined();
+    // Once the fleet is returning/returned, the battle's losses are surfaced for the card's Losses line.
+    expect(returnPhaseLosses(mission({ missionId: "55", status: "Returning" }), lossesByMissionId)).toBe(losses);
+    expect(returnPhaseLosses(mission({ missionId: "55", status: "Returned" }), lossesByMissionId)).toBe(losses);
+    // No matching report -> no losses line at all (e.g. a returning transport).
+    expect(returnPhaseLosses(mission({ missionId: "999", status: "Returned" }), lossesByMissionId)).toBeUndefined();
   });
 
   test("surfaces joinable attacks under the Alliance tab (no stat-card row)", () => {
