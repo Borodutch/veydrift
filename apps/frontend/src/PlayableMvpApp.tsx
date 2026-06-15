@@ -120,6 +120,7 @@ import {
   fetchShipyardState,
   fetchResearchState,
   fetchRiftState,
+  fetchWalletOverviewSnapshot,
   fetchWalletPlanets,
   fetchFleetMissionArchive,
   fetchFleetMissionVisibility,
@@ -1379,6 +1380,17 @@ export async function loadWalletPlanetSyncSnapshot(
   account: string,
   activePlanetId: string | undefined,
 ): Promise<WalletPlanetSyncSnapshot> {
+  try {
+    return await fetchWalletOverviewSnapshot(apiBaseUrl, account, activePlanetId);
+  } catch (error) {
+    if (!isMissingOverviewSnapshotEndpoint(error)) {
+      throw error;
+    }
+    // Older backends do not expose the combined DB-backed overview snapshot yet.
+    // Fall back to the previous indexed fan-out path so deployed frontend/backend
+    // rollouts can overlap without blanking Overview.
+  }
+
   const planetsResult = await settlePromise(fetchWalletPlanets(apiBaseUrl, account));
   const indexedSettlement = settlementFromIndexedPlanets(
     account,
@@ -1459,6 +1471,10 @@ function settlePromise<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>>
     (value) => ({ status: "fulfilled", value }),
     (reason) => ({ status: "rejected", reason }),
   );
+}
+
+function isMissingOverviewSnapshotEndpoint(error: unknown): boolean {
+  return error instanceof Error && /Overview snapshot API failed: 404\b/.test(error.message);
 }
 
 function settlementFromIndexedPlanets(

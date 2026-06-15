@@ -319,6 +319,13 @@ export type FleetMissionVisibilityResponse = {
   battleReports: BattleReport[];
 };
 
+export type WalletOverviewSnapshotResponse = {
+  fleetVisibility: FleetMissionVisibilityResponse;
+  planetsResponse: WalletPlanetsResponse;
+  queues: PlayerQueuesResponse;
+  settlement: WalletSettlementResponse;
+};
+
 export type FleetMissionArchiveEntry =
   | { kind: "mission"; mission: FleetMissionSummary }
   | { kind: "battleReport"; report: BattleReport };
@@ -2514,6 +2521,20 @@ type FleetMissionVisibilityOptions = WalletReadOptions & {
 
 export async function fetchWalletQueues(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<PlayerQueuesResponse> {
   return fetchWalletJson<PlayerQueuesResponse>(apiUrl, wallet, withWalletReadOptions("queues", planetId, options), "Queues");
+}
+
+export async function fetchWalletOverviewSnapshot(
+  apiUrl: string,
+  wallet: string,
+  planetId?: string,
+  options: WalletReadOptions = {}
+): Promise<WalletOverviewSnapshotResponse> {
+  return fetchWalletJson<WalletOverviewSnapshotResponse>(
+    apiUrl,
+    wallet,
+    withWalletReadOptions("overview", planetId, options),
+    "Overview snapshot"
+  );
 }
 
 export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string, options: FleetMissionVisibilityOptions = {}): Promise<FleetMissionVisibilityResponse> {
