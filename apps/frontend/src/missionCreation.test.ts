@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  AttackOutcomePanel,
+  DestinationIntelPanel,
   forecastRaidLoot,
   initialMissionShips,
+  LootRatioControls,
   lootRatioFromUpToAmount,
   missionDraftBlocker,
   missionShipOptions,
@@ -194,11 +197,13 @@ describe("mission creation", () => {
     expect(intel.currentLootable).toEqual({ metal: 500, crystal: 250, deuterium: 100 });
     expect(intel.projectedArrival?.metal).toBeGreaterThan(1_000);
     expect(intel.projectedArrivalLootable?.metal).toBeGreaterThan(500);
-    expect(intel.projectionDetail).toContain("assume no new production");
+    expect(intel.projectionDetail).toContain("assumes no new production");
   });
 
   test("forecasts public battle outcome without inventing hidden target state", () => {
-    expect(publicTargetBattleForecast(attackAction.ships, targetPlanet()).kind).toBe("uncertain");
+    const uncharted = publicTargetBattleForecast(attackAction.ships, targetPlanet());
+    expect(uncharted.kind).toBe("uncertain");
+    expect(uncharted.detail).not.toContain("not charted in the public indexed state");
 
     const selectedShips = {
       ...attackAction.ships,
@@ -257,6 +262,82 @@ describe("mission creation", () => {
       expect.objectContaining({ key: "lightFighter", label: "Light Fighter", count: 40 }),
       expect.objectContaining({ key: "cruiser", label: "Cruiser", count: 2 }),
     ]);
+  });
+
+  test("renders compact outcome and destination intel without public-state caveat copy", () => {
+    const outcome = AttackOutcomePanel({
+      battleForecast: {
+        kind: "win",
+        label: "Probable win",
+        detail: "Visible defender power is lower than the selected fleet.",
+        attackerPower: 1_250,
+        defenderPower: 200,
+      },
+      lootableAtArrival: { metal: 500, crystal: 250, deuterium: 100 },
+      maxLootForecast: { metal: 300, crystal: 150, deuterium: 50 },
+    });
+    const destination = DestinationIntelPanel({
+      resourceIntel: {
+        current: { metal: 1_000, crystal: 500, deuterium: 200 },
+        projectedArrival: { metal: 1_100, crystal: 550, deuterium: 225 },
+        currentLootable: { metal: 500, crystal: 250, deuterium: 100 },
+        projectedArrivalLootable: { metal: 550, crystal: 275, deuterium: 112 },
+        projectionDetail: "Arrival projection uses public building/resource preview math.",
+      },
+      stationedDefenderUnits: [],
+      targetDefenseUnits: [{ key: "rocketLauncher", label: "Rocket Launcher", count: 3 }],
+      targetFleetUnits: [{ key: "smallCargo", label: "Small Cargo", count: 2 }],
+    });
+    const text = collectText([outcome, destination]).join(" ");
+
+    expect(text).toContain("Probable outcome");
+    expect(text).toContain("Max loot at arrival");
+    expect(text).toContain("Destination intel");
+    expect(text).toContain("Destination Fleet");
+    expect(text).toContain("Resources now");
+    expect(text).not.toContain("Public state");
+    expect(text).not.toContain("Projected arrival resources use");
+    expect(text).not.toContain("not charted");
+  });
+
+  test("renders Greedy off as manual loot fields and Greedy on as concise copy only", () => {
+    const manual = LootRatioControls({
+      cargoCapacity: 600,
+      greedyLootEnabled: false,
+      lootRatio: { metal: 34, crystal: 33, deuterium: 33 },
+      lootRatioTotal: 100,
+      onAmountChange: () => undefined,
+      onGreedyChange: () => undefined,
+      onPercentChange: () => undefined,
+      onResetEven: () => undefined,
+    });
+    const greedy = LootRatioControls({
+      cargoCapacity: 600,
+      greedyLootEnabled: true,
+      lootRatio: { metal: 34, crystal: 33, deuterium: 33 },
+      lootRatioTotal: 100,
+      onAmountChange: () => undefined,
+      onGreedyChange: () => undefined,
+      onPercentChange: () => undefined,
+      onResetEven: () => undefined,
+    });
+    const manualText = collectText(manual).join(" ");
+    const greedyText = collectText(greedy).join(" ");
+    const manualInputs = findElements(manual, "input");
+    const greedyInputs = findElements(greedy, "input");
+
+    expect(manualText).toContain("Greedy");
+    expect(manualText).toContain("Metal %");
+    expect(manualText).toContain("Metal up to");
+    expect(manualText).toContain("Even split");
+    expect(manualInputs).toHaveLength(7);
+    expect(manualInputs[0]?.props?.checked).toBe(false);
+
+    expect(greedyText).toContain("Greedy fills cargo from available loot automatically");
+    expect(greedyText).not.toContain("Metal %");
+    expect(greedyText).not.toContain("Metal up to");
+    expect(greedyInputs).toHaveLength(1);
+    expect(greedyInputs[0]?.props?.checked).toBe(true);
   });
 
   test("requires an origin and selected ships for fleet missions", () => {
