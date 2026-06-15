@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { ComponentChildren, VNode } from "preact";
 import { formatProductionPrice, selectedProductionItem } from "../src/components/ProductionCatalog";
 import {
@@ -70,6 +72,16 @@ function visibleText(node: ComponentChildren): string {
 }
 
 describe("Defense page display helpers", () => {
+  test("does not wire the stationed defenses panel into the Defenses screen (VEY-KANEO-512)", () => {
+    const source = readFileSync(
+      fileURLToPath(new URL("../src/components/DefensePage.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    expect(source).not.toContain("StationedDefenseSection");
+    expect(source).not.toContain("fleetVisibility");
+  });
+
   test("formats defense prices like building cost rows", () => {
     expect(formatProductionPrice({ metal: 2_000, crystal: 6_000, deuterium: 0 })).toBe("Metal 2,000, Crystal 6,000");
   });
