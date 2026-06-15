@@ -83,7 +83,9 @@ The sync command first fetches/stores raw contract logs for the requested range,
 materialized event-derived DB tables from the full stored `indexed_event_logs` ledger, then runs the
 explicit canonical rebuild that reads current on-chain resources, buildings, ships, defenses, queues,
 research, moons, and alliance snapshots. This is the operator-only repair path for historical drift
-that cannot be reconstructed from old event logs alone.
+that cannot be reconstructed from old event logs alone. Unlike startup cold rebuilds, the canonical
+sync does not apply `VEYDRIFT_REBUILD_DEADLINE_MS` by default; pass
+`--sync-deadline-ms <milliseconds>` only when an operator intentionally wants to cap a manual run.
 
 For a log-only rematerialization that performs no canonical state reads, use:
 
@@ -383,7 +385,8 @@ indexed reads are serveable the instant `/health` first answers, while the heavy
 event replay continues through the chain-sync poller and never blocks readiness.
 Operator-run DB alignment is explicit (`bun run index:sync -- --from-block <block>`) rather than
 a backend startup self-heal; it replays missing RPC logs, rebuilds materialized tables from the
-stored event ledger, and runs the explicit canonical repair read. Use
+stored event ledger, and runs the explicit canonical repair read without the startup rebuild deadline
+unless `--sync-deadline-ms <milliseconds>` is supplied. Use
 `bun run index:replay -- --from-block <block>` only for log-only rematerialization. The same
 readiness gate is embedded as a Docker `HEALTHCHECK` in
 `apps/backend/Dockerfile.test`, so the Dockerfile rollback build path carries it

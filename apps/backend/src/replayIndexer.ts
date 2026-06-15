@@ -4,6 +4,7 @@ import { SettlementIndexer } from "./indexer";
 
 type ReplayArgs = {
   canonicalSync: boolean;
+  canonicalSyncRebuildDeadlineMs?: number;
   fromBlock?: bigint;
   toBlock?: bigint | "latest";
 };
@@ -27,7 +28,9 @@ async function main(): Promise<void> {
   const fromBlock = args.fromBlock ?? replayFromBlock(before.latestIndexedBlock, loaded.config.indexFromBlock);
   const toBlock = args.toBlock ?? "latest";
   const result = args.canonicalSync
-    ? await indexer.syncCanonicalState(fromBlock, toBlock)
+    ? await indexer.syncCanonicalState(fromBlock, toBlock, {
+      rebuildDeadlineMs: args.canonicalSyncRebuildDeadlineMs ?? 0
+    })
     : { replay: await indexer.replayContractLogs(fromBlock, toBlock), rebuild: null };
   const after = result.rebuild ?? result.replay;
 
@@ -36,7 +39,8 @@ async function main(): Promise<void> {
       fromBlock: fromBlock.toString(),
       toBlock: typeof toBlock === "bigint" ? toBlock.toString() : toBlock,
       materializedRebuildFromStoredLogs: true,
-      canonicalSync: args.canonicalSync
+      canonicalSync: args.canonicalSync,
+      canonicalSyncRebuildDeadlineMs: args.canonicalSync ? args.canonicalSyncRebuildDeadlineMs ?? null : null
     },
     before,
     ...(result.rebuild ? { afterReplay: result.replay } : {}),
@@ -69,6 +73,14 @@ function parseArgs(args: string[]): ReplayArgs {
     } else if (arg === "--to-block") {
       if (!value) throw new Error("--to-block requires a value");
       parsed.toBlock = value === "latest" ? "latest" : BigInt(value);
+      index += 1;
+    } else if (arg === "--sync-deadline-ms") {
+      if (!value) throw new Error("--sync-deadline-ms requires a value");
+      const deadlineMs = Number(value);
+      if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 0) {
+        throw new Error("--sync-deadline-ms must be a non-negative integer");
+      }
+      parsed.canonicalSyncRebuildDeadlineMs = deadlineMs;
       index += 1;
     } else {
       throw new Error(`Unknown argument: ${arg}`);
