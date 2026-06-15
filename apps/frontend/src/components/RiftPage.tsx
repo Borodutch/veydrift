@@ -65,10 +65,7 @@ export function RiftPage({
 
   return (
     <section className="grid gap-4">
-      <PageHeader
-        actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh Rift state" />}
-        title="Resource Bridge"
-      />
+      <RiftPageHeader loading={loading} onRefresh={onRefresh} />
 
       {/* Only surface failures. Success/pending action banners are intentionally
           not rendered so the page does not flash transient status banners. */}
@@ -164,6 +161,21 @@ export function RiftPage({
   );
 }
 
+export function RiftPageHeader({
+  loading,
+  onRefresh,
+}: {
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <PageHeader
+      actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh Rift state" />}
+      title="Rift Stabilizer"
+    />
+  );
+}
+
 function LockedRiftState({
   onOpenRequirement,
   riftState,
@@ -178,9 +190,9 @@ function LockedRiftState({
   return (
     <div className="grid gap-4 rounded-lg border border-amber-200/20 bg-amber-200/5 p-4">
       <div>
-        <h3 className="text-base font-semibold text-amber-100">Rift bridge locked</h3>
+        <h3 className="text-base font-semibold text-amber-100">Rift Stabilizer locked</h3>
         <p className="mt-1 text-sm leading-6 text-amber-100/75">
-          {unavailableReason ?? "Build the Interdimensional Rift Stabilizer before moving resources through the bridge."}
+          {unavailableReason ?? "Build the Rift Stabilizer before moving resources through the bridge."}
         </p>
       </div>
 

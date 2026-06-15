@@ -73,7 +73,7 @@ const APPROVED_BUILDING_ASSETS = [
   },
   {
     key: "interdimensionalRiftStabilizer",
-    label: "Interdimensional Rift Stabilizer",
+    label: "Rift Stabilizer",
     sha256: "ba1c702dc91797791f810c0dc1a7b6db2b5ad8a5034ede515a1dad16805582b9",
   },
 ] as const;

@@ -121,7 +121,7 @@ export function buildingUpgradeStatus(
     return {
       cost,
       disabled: true,
-      reason: "Rift bridge built on this planet",
+      reason: "Rift Stabilizer built on this planet",
       targetLevel,
       durationSeconds,
     };
@@ -191,7 +191,7 @@ export function buildingUpgradeStatus(
   return {
     cost,
     disabled: false,
-    reason: binary ? "Ready to build Rift bridge" : `Ready for Level ${targetLevel}`,
+    reason: binary ? "Ready to build Rift Stabilizer" : `Ready for Level ${targetLevel}`,
     targetLevel,
     durationSeconds,
   };
@@ -527,7 +527,7 @@ function speedEffectForBuilding(key: BuildingKey, level: number): string {
   }
 
   if (key === "interdimensionalRiftStabilizer") {
-    return level > 0 ? "Rift bridge online" : "Rift bridge locked";
+    return level > 0 ? "Rift Stabilizer online" : "Rift Stabilizer locked";
   }
 
   return `x${formatNumber(level + 1)} construction speed`;
@@ -550,7 +550,7 @@ function buildingLabel(key: BuildingKey): string {
     terraformer: "Terraformer",
     allianceDepot: "Alliance Depot",
     missileSilo: "Missile Silo",
-    interdimensionalRiftStabilizer: "Interdimensional Rift Stabilizer",
+    interdimensionalRiftStabilizer: "Rift Stabilizer",
   };
   return labels[key];
 }

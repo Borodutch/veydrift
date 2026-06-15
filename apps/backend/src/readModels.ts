@@ -303,7 +303,7 @@ export function deriveRiftRequirements(
     {
       kind: "building",
       key: "interdimensionalRiftStabilizer",
-      label: "Interdimensional Rift Stabilizer",
+      label: "Rift Stabilizer",
       currentLevel: bridgeBuilt === null ? null : bridgeBuilt ? 1 : 0,
       requiredLevel: 1,
       binary: true,

@@ -259,7 +259,7 @@ function ActiveBuildingBadge({ label }: { label: string }) {
 }
 
 function buildingStatusText(label: string, currentLevel: number): string {
-  if (label === "Interdimensional Rift Stabilizer") {
+  if (label === "Rift Stabilizer") {
     return currentLevel > 0 ? "Built" : "Not built";
   }
 
@@ -407,7 +407,7 @@ function BuildingDetailPanel({
           <RequirementFlairs onOpenRequirement={onOpenRequirement} requirements={requirementStates} />
         </InspectInfoBlock>
         {binary && built ? (
-          <InspectInfoBlock label="Rift bridge" value="Built" />
+          <InspectInfoBlock label="Rift Stabilizer" value="Built" />
         ) : (
           <>
             <InspectInfoBlock label={binary ? "Build cost" : "Upgrade cost"} value={formatCost(status.cost)} />
@@ -471,7 +471,7 @@ export function infrastructureUpgradeButtonLabel({
   defaultLabel: string;
   statusDisabled: boolean;
 }): string {
-  return binary ? "Build Rift Bridge" : defaultLabel;
+  return binary ? "Build Rift Stabilizer" : defaultLabel;
 }
 
 export function deduplicatedInfrastructureActionNotice(
