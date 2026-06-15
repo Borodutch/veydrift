@@ -575,6 +575,25 @@ export function RaidTargetRow({
         </div>
       </div>
 
+      <span
+        className="hidden text-right font-mono text-slate-400 sm:block"
+        title="Distance from your active planet"
+      >
+        {distanceLabel(target.distance)}
+      </span>
+      <span
+        className="hidden min-w-0 truncate text-right font-mono text-emerald-100 sm:block"
+        title={raidableResourcesLabel(target)}
+      >
+        {compactNumber(target.loot)}
+      </span>
+      <span className="hidden text-right font-mono text-rose-100 sm:block" title={combatLabel(target)}>
+        {compactNumber(target.combatPower)}
+      </span>
+      <span className="hidden text-right font-mono text-orange-100 sm:block" title={defenseLabel(target)}>
+        {compactNumber(target.defensePower)}
+      </span>
+
       <div className="row-span-2 flex shrink-0 flex-col items-end gap-1 self-start sm:row-span-1">
         {attackAction ? (
           <button
@@ -596,25 +615,6 @@ export function RaidTargetRow({
           <Crosshair aria-hidden="true" size={12} /> Inspect
         </button>
       </div>
-
-      <span
-        className="hidden text-right font-mono text-slate-400 sm:block"
-        title="Distance from your active planet"
-      >
-        {distanceLabel(target.distance)}
-      </span>
-      <span
-        className="hidden min-w-0 truncate text-right font-mono text-emerald-100 sm:block"
-        title={raidableResourcesLabel(target)}
-      >
-        {compactNumber(target.loot)}
-      </span>
-      <span className="hidden text-right font-mono text-rose-100 sm:block" title={combatLabel(target)}>
-        {compactNumber(target.combatPower)}
-      </span>
-      <span className="hidden text-right font-mono text-orange-100 sm:block" title={defenseLabel(target)}>
-        {compactNumber(target.defensePower)}
-      </span>
     </div>
   );
 }
