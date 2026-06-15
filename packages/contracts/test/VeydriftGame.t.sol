@@ -2234,6 +2234,53 @@ contract VeydriftGameTest is Test {
         assertFalse(game.defenseQueue(planetId).active);
     }
 
+    function testStartShipProductionSettlesReadyQueueBeforeStartingNextBatch() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setResources(planetId, 1_000_000, 1_000_000, 1_000_000);
+
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 2);
+        VeydriftGameStorage.ShipQueue memory firstQueue = game.shipQueue(planetId);
+        vm.warp(firstQueue.readyAt);
+
+        vm.prank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 1);
+
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 2);
+        VeydriftGameStorage.ShipQueue memory nextQueue = game.shipQueue(planetId);
+        assertTrue(nextQueue.active);
+        assertEq(uint8(nextQueue.ship), uint8(Ship.SmallCargo));
+        assertEq(nextQueue.quantity, 1);
+        assertEq(nextQueue.cost.metal, 2_000);
+        assertEq(nextQueue.cost.crystal, 2_000);
+    }
+
+    function testStartDefenseProductionSettlesReadyQueueBeforeStartingNextBatch() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.Shipyard, 1);
+        _setResources(planetId, 1_000_000, 1_000_000, 1_000_000);
+
+        vm.prank(player);
+        game.startDefenseProduction(planetId, Defense.RocketLauncher, 3);
+        VeydriftGameStorage.DefenseQueue memory firstQueue = game.defenseQueue(planetId);
+        vm.warp(firstQueue.readyAt);
+
+        vm.prank(player);
+        game.startDefenseProduction(planetId, Defense.RocketLauncher, 1);
+
+        assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 3);
+        VeydriftGameStorage.DefenseQueue memory nextQueue = game.defenseQueue(planetId);
+        assertTrue(nextQueue.active);
+        assertEq(uint8(nextQueue.defense), uint8(Defense.RocketLauncher));
+        assertEq(nextQueue.quantity, 1);
+        assertEq(nextQueue.cost.metal, 2_000);
+        assertEq(nextQueue.cost.crystal, 0);
+    }
+
     // VEY-KANEO-468: research (player-scoped) is applied lazily by the player's next mutating call.
     function testMutatingCallSettlesDueResearchWithoutFinishTx() public {
         vm.prank(player);
