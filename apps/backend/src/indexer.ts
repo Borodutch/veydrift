@@ -2131,7 +2131,9 @@ export class SettlementIndexer {
     const reconciledAt = Math.floor(Date.now() / 1_000).toString();
     const blockNumber = this.metadata("lastReconciledBlock") ?? "0";
     for (const [planetId, resources] of state.resources) {
-      this.upsertPlanetResourceSnapshot(planetId, resources, reconciledAt, "0x", blockNumber);
+      // Reconcile reads the freshest on-chain balance, so it is authoritative even though it is stamped
+      // with lastReconciledBlock rather than a real event block — force past the monotonic guard.
+      this.upsertPlanetResourceSnapshot(planetId, resources, reconciledAt, "0x", blockNumber, true);
     }
     for (const [planetId, buildings] of state.buildings) {
       for (const building of buildings) {
@@ -2404,13 +2406,37 @@ export class SettlementIndexer {
     `).get(planetId) as PlanetResourceRow | null;
   }
 
+  // Resource snapshots must be monotonic by block, mirroring the `latestIndexedBlock` head clamp
+  // (recordLatestBlock). PlanetSettled carries the authoritative post-mutation balance, including the
+  // DECREASING balance a raid or spend produces. Logs do not always reach us in block order — a gap/
+  // self-heal backfill or reconcile re-applies a previously-missed OLDER range after the live head feed
+  // has already advanced. An unconditional write let that stale, higher pre-mutation balance clobber the
+  // newer, lower one, so the read model over-reported resources; the frontend then let the player queue
+  // an upgrade they could not afford on-chain and the transaction reverted (VEY-KANEO-491). Skip any
+  // event-driven write whose block is strictly older than the stored snapshot. `force` is reserved for
+  // the full-reconcile canonical path (applyCanonicalState), which reads the freshest on-chain state and
+  // is authoritative regardless of the block label it is stamped with.
   private upsertPlanetResourceSnapshot(
     planetId: string,
     resources: ResourceColumns,
     lastSettledAt: string,
     transactionHash: string,
-    blockNumber: string
+    blockNumber: string,
+    force = false
   ): void {
+    if (!force) {
+      const existing = this.db
+        .query("SELECT block_number FROM contract_planet_resources WHERE planet_id = ?")
+        .get(planetId) as Pick<PlanetResourceRow, "block_number"> | null;
+      if (existing) {
+        try {
+          if (BigInt(blockNumber) < BigInt(existing.block_number)) return;
+        } catch {
+          // If either block label isn't a parseable integer (e.g. the "0" seed marker meeting a malformed
+          // value), fall through and let the latest write win rather than silently dropping it.
+        }
+      }
+    }
     this.db.query(`
       INSERT INTO contract_planet_resources (
         planet_id, metal, crystal, deuterium, last_settled_at, transaction_hash, block_number
