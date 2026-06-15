@@ -18,9 +18,11 @@ import {
   buildingUpgradeStatus,
   formatCost,
   formatDuration,
+  formatFrontendOnlyBuildingRequirement,
   formatNumber,
   formatSigned,
-  mineSolarPlantPrerequisiteFor,
+  frontendOnlyBuildingRequirementsFor,
+  missingFrontendOnlyBuildingRequirementFor,
 } from "../buildingDetails";
 import { buildingQueueLabel } from "../overviewData";
 import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../buildingActionNotice";
@@ -50,11 +52,6 @@ const fullResourceLabels: Record<keyof Resources, string> = {
   deuterium: "Deuterium",
 };
 
-const solarPrerequisiteMineKeys = new Set<BuildingKey>([
-  "metalMine",
-  "crystalMine",
-  "deuteriumSynthesizer",
-]);
 type BuildingQueueItem = Extract<NonNullable<PlayableState["queue"]>, { kind: "building" }>;
 
 const buildingDescriptions: Record<BuildingKey, string> = {
@@ -92,6 +89,7 @@ interface InfrastructurePageProps {
   productionRates?: Resources | undefined;
   selectedBuildingKey?: BuildingKey | undefined;
   spendableResources?: Resources | undefined;
+  starterPlanet?: boolean | undefined;
   state: PlayableState;
   settledState: PlayableState;
   now?: number | undefined;
@@ -115,6 +113,7 @@ export function InfrastructurePage({
   productionRates,
   selectedBuildingKey,
   spendableResources,
+  starterPlanet = false,
   settledState,
   onUpgrade,
 }: InfrastructurePageProps) {
@@ -173,7 +172,7 @@ export function InfrastructurePage({
           const currentLevel = settledState.buildings[building.key];
           const isSelected = building.key === selectedBuilding.key;
           const missingRequirement = unmetBuildingRequirement(settledState, building.key);
-          const solarPrerequisite = mineSolarPlantPrerequisiteFor(settledState, building.key);
+          const starterPrerequisite = missingFrontendOnlyBuildingRequirementFor(settledState, building.key, { starterPlanet });
 
           return (
             <InspectCatalogTile
@@ -183,8 +182,8 @@ export function InfrastructurePage({
               isSelected={isSelected}
               key={building.key}
               label={building.label}
-              statusText={solarPrerequisite ? `Requires ${solarPrerequisite}` : missingRequirement ? "Locked" : infrastructureCatalogStatusText(settledState, building.key, planetProductionProfile, productionRates)}
-              statusTone={solarPrerequisite || missingRequirement ? "warning" : "accent"}
+              statusText={starterPrerequisite ? `Requires ${starterPrerequisite}` : missingRequirement ? "Locked" : infrastructureCatalogStatusText(settledState, building.key, planetProductionProfile, productionRates)}
+              statusTone={starterPrerequisite || missingRequirement ? "warning" : "accent"}
               onClick={() => handleSelectBuilding(building.key)}
             />
           );
@@ -203,6 +202,7 @@ export function InfrastructurePage({
             planetProductionProfile={planetProductionProfile}
             productionRates={productionRates}
             spendableResources={spendableResources}
+            starterPlanet={starterPlanet}
             state={settledState}
           />
         )}
@@ -281,6 +281,7 @@ function BuildingDetailPanel({
   planetProductionProfile,
   productionRates,
   spendableResources,
+  starterPlanet,
   state,
 }: {
   actionNotice?: InfrastructureActionNotice | undefined;
@@ -295,6 +296,7 @@ function BuildingDetailPanel({
   planetProductionProfile?: PlanetProductionProfile | undefined;
   productionRates?: Resources | undefined;
   spendableResources?: Resources | undefined;
+  starterPlanet?: boolean | undefined;
   state: PlayableState;
 }) {
   const currentLevel = state.buildings[building.key];
@@ -313,6 +315,7 @@ function BuildingDetailPanel({
     now,
     productionRates,
     spendableResources,
+    starterPlanet,
   });
   const effectRows = detailEffectRows(
     effect,
@@ -344,7 +347,7 @@ function BuildingDetailPanel({
   // so the panel does not flash a transient status banner on every action.
   const visibleActionNotice = dedupedActionNotice?.tone === "error" ? dedupedActionNotice : undefined;
   const isSelectedBuildingQueued = activeBuildingQueue?.key === building.key;
-  const requirementStates = getBuildingRequirementStates(state, building.key);
+  const requirementStates = getBuildingRequirementStates(state, building.key, { starterPlanet });
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const noticeClass = "border-rose-300/20 bg-rose-300/10 text-rose-200";
 
@@ -754,10 +757,16 @@ export function MetricDeltaSubtext({
 export function getBuildingRequirementStates(
   state: Pick<PlayableState, "buildings" | "research">,
   key: BuildingKey,
+  options: {
+    starterPlanet?: boolean | undefined;
+  } = {},
 ): RequirementFlair[] {
-  const frontendOnlyRequirements: RequirementFlair[] = solarPrerequisiteMineKeys.has(key)
-    ? [{ label: "Solar Plant level 1", met: state.buildings.solarPlant >= 1, target: { kind: "building", key: "solarPlant" as const } }]
-    : [];
+  const frontendOnlyRequirements: RequirementFlair[] = frontendOnlyBuildingRequirementsFor(key, options)
+    .map((requirement) => ({
+      label: formatFrontendOnlyBuildingRequirement(requirement),
+      met: state.buildings[requirement.key] >= requirement.level,
+      target: { kind: "building" as const, key: requirement.key },
+    }));
 
   return [
     ...frontendOnlyRequirements,

@@ -1642,6 +1642,34 @@ describe("Playable MVP app display helpers", () => {
     })).toContain("Requires");
   });
 
+  test("applies starter mine prerequisites during refreshed home-planet building preflight only", () => {
+    const starterState = infrastructureState({
+      resources: { metal: "10000", crystal: "10000", deuterium: "10000" },
+    });
+
+    expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
+      buildingKey: "deuteriumSynthesizer",
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "7",
+      infrastructureChainState: starterState,
+      isWalletConnected: true,
+      onChainResources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+      runtimeConfigStatus: "ready",
+      starterPlanet: true,
+    })).toBe("Requires Metal Mine level 1");
+
+    expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
+      buildingKey: "deuteriumSynthesizer",
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "8",
+      infrastructureChainState: starterState,
+      isWalletConnected: true,
+      onChainResources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+      runtimeConfigStatus: "ready",
+      starterPlanet: false,
+    })).toBeUndefined();
+  });
+
   test("blocks Shipyard upgrades while refreshed backend infrastructure is stale", () => {
     expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
       buildingKey: "shipyard",
