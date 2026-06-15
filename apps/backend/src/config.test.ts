@@ -71,6 +71,20 @@ describe("backend config", () => {
     expect(result.config.indexDbPath).toBe("/tmp/veydrift-contract-state.sqlite");
   });
 
+  test("accepts a static settlement start price for RPC-free funding reads", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc",
+      VEYDRIFT_SETTLEMENT_START_PRICE_WEI: "50000000000000000"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config.settlementStartPriceWei).toBe("50000000000000000");
+    expect(result.config).toMatchObject({
+      settlementStartPriceWei: "50000000000000000"
+    });
+  });
+
   test("defaults the chain-sync poll cadence and accepts env overrides", () => {
     const defaults = loadBackendConfig({
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",

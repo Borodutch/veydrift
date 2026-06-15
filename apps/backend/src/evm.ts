@@ -757,7 +757,7 @@ export type AllianceState = {
 export type AllianceRoleName = "none" | "member" | "officer" | "owner";
 
 // Canonical-mirror seed shapes for the alliance sub-states that have no on-chain enumeration getter
-// covered by the directory snapshot. Read from contract getters once on the startup rebuild and used
+// covered by the directory snapshot. Read from contract getters during explicit rebuild and used
 // to DELETE+replace the corresponding indexed tables (see SettlementIndexer.rebuildUncached).
 export type AllianceJoinRequestSnapshot = {
   allianceId: string;
@@ -2225,7 +2225,7 @@ export class VeydriftGameReader implements ChainReader {
 
   // Canonical-mirror seed: pending alliance invites. The contract has no per-alliance enumeration getter,
   // so iterate the candidate-wallet set (known players) × allianceIds and keep the invites the contract
-  // reports as active. Bounded in alpha; runs only on the startup rebuild, never per request.
+  // reports as active. Bounded in alpha; runs only during explicit rebuild, never per request.
   async listAllianceInviteState(candidateWallets: readonly Address[]): Promise<AllianceInviteSnapshot[]> {
     if (!this.allianceContractAddress) return [];
 
