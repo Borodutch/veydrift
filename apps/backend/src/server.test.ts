@@ -3938,14 +3938,14 @@ describe("Veydrift backend", () => {
         expect.objectContaining({ id: 9, energyPerUnit: "22" })
       ])
     });
-    // Lazy on-chain reconciliation (VEY-KANEO-468): the research (itemId 4, readyAt in the past)
-    // has settled as-of-now, so there is no active research queue (its level is projected up).
+    // Contract-mirror rows stay on indexed event state: the elapsed research queue no longer
+    // occupies the active slot, but the level does not advance before ResearchCompleted.
     expect(research).toMatchObject({
       source: "contract-state-indexer",
       queue: null
     });
     expect(research.technologies).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: 4, level: 2 })])
+      expect.arrayContaining([expect.objectContaining({ id: 4, level: 0 })])
     );
     // Personal state endpoints expose accrued resourcesAsOfNow (VEY-KANEO-464). This
     // fixture has no mines (zero production), so the projection equals canonical
