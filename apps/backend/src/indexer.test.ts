@@ -3730,6 +3730,138 @@ describe("SettlementIndexer", () => {
     expect(indexer.shipRows("7").find((ship) => ship.id === 1)?.count).toBe(3);
   });
 
+  test("explicit contract-log replay rebuilds stale materialized state from stored logs", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    try {
+      const first = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      }, 100n, { databasePath });
+
+      first.applyEvent(planet);
+      first.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xsettled",
+        logIndex: "0x0",
+        topics: [planetSettledTopic, topic(7n)],
+        data: abiWords(1200n, 800n, 400n, 1770000300n)
+      });
+      first.applyLog({
+        blockNumber: "0x91",
+        transactionHash: "0xbuilding",
+        logIndex: "0x0",
+        topics: [buildingCompletedTopic, topic(7n), topic(3n)],
+        data: abiWords(2n)
+      });
+      first.applyLog({
+        blockNumber: "0x92",
+        transactionHash: "0xship",
+        logIndex: "0x10",
+        topics: [planetShipCountChangedTopic, topic(7n), topic(1n)],
+        data: abiWords(4n)
+      });
+      first.applyLog({
+        blockNumber: "0x92",
+        transactionHash: "0xship-earlier",
+        logIndex: "0x2",
+        topics: [planetShipCountChangedTopic, topic(7n), topic(1n)],
+        data: abiWords(2n)
+      });
+      first.applyLog({
+        blockNumber: "0x93",
+        transactionHash: "0xdefense",
+        logIndex: "0x0",
+        topics: [planetDefenseCountChangedTopic, topic(7n), topic(2n)],
+        data: abiWords(6n)
+      });
+
+      const staleDb = new Database(databasePath);
+      try {
+        staleDb.query("UPDATE contract_planet_resources SET metal = '999999', crystal = '999999', deuterium = '999999' WHERE planet_id = ?").run("7");
+        staleDb.query("UPDATE contract_building_levels SET level = 10 WHERE planet_id = ? AND building_id = ?").run("7", 3);
+        staleDb.query("UPDATE contract_ship_counts SET count = 99 WHERE planet_id = ? AND ship_id = ?").run("7", 1);
+        staleDb.query("UPDATE contract_defense_counts SET count = 99 WHERE planet_id = ? AND defense_id = ?").run("7", 2);
+        staleDb.query("INSERT INTO contract_ship_counts (planet_id, ship_id, count) VALUES (?, ?, ?)").run("7", 5, 77);
+        staleDb.query("INSERT INTO contract_defense_counts (planet_id, defense_id, count) VALUES (?, ?, ?)").run("7", 5, 88);
+      } finally {
+        staleDb.close();
+      }
+
+      let fetchedLogs = 0;
+      const replayed = new SettlementIndexer({
+        async listDebrisFieldEvents() { throw new Error("debris canonical read must not run"); },
+        async listMoonChanceReportEvents() { throw new Error("moon canonical read must not run"); },
+        async listSettledPlanetEvents() { throw new Error("settlement canonical read must not run"); },
+        async getInfrastructureState() { throw new Error("infrastructure eth_call must not run"); },
+        async getShipyardState() { throw new Error("shipyard eth_call must not run"); },
+        async getDefenseState() { throw new Error("defense eth_call must not run"); },
+        async getPlayerQueues() { throw new Error("queue eth_call must not run"); },
+        async listContractLogs() {
+          fetchedLogs += 1;
+          return [];
+        }
+      }, 100n, { databasePath });
+
+      await replayed.replayContractLogs(0x94n, 0x94n);
+
+      expect(fetchedLogs).toBe(1);
+      const repairedDb = new Database(databasePath, { readonly: true });
+      try {
+        expect(repairedDb.query("SELECT metal, crystal, deuterium FROM contract_planet_resources WHERE planet_id = ?").get("7")).toEqual({
+          metal: "1200",
+          crystal: "800",
+          deuterium: "400"
+        });
+        expect(repairedDb.query("SELECT level FROM contract_building_levels WHERE planet_id = ? AND building_id = ?").get("7", 3)).toEqual({
+          level: 2
+        });
+        expect(repairedDb.query("SELECT count FROM contract_ship_counts WHERE planet_id = ? AND ship_id = ?").get("7", 1)).toEqual({
+          count: 4
+        });
+        expect(repairedDb.query("SELECT count FROM contract_defense_counts WHERE planet_id = ? AND defense_id = ?").get("7", 2)).toEqual({
+          count: 6
+        });
+        expect(repairedDb.query("SELECT count FROM contract_ship_counts WHERE planet_id = ? AND ship_id = ?").get("7", 5)).toBeNull();
+        expect(repairedDb.query("SELECT count FROM contract_defense_counts WHERE planet_id = ? AND defense_id = ?").get("7", 5)).toBeNull();
+      } finally {
+        repairedDb.close();
+      }
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  test("explicit contract-log replay leaves materialized state intact when no stored ledger exists", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    try {
+      const indexer = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; },
+        async listContractLogs() { return []; }
+      }, 100n, { databasePath });
+      indexer.applyEvent(planet);
+
+      const db = new Database(databasePath);
+      try {
+        db.query("INSERT INTO contract_building_levels (planet_id, building_id, level) VALUES (?, ?, ?)").run("7", 0, 5);
+      } finally {
+        db.close();
+      }
+
+      expect(indexer.infrastructureRows("7").find((building) => building.id === 0)?.level).toBe(5);
+
+      await indexer.replayContractLogs(200n, 200n);
+
+      expect(indexer.infrastructureRows("7").find((building) => building.id === 0)?.level).toBe(5);
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("a failed reconcile never takes a previously reconciled index out of service (VEY-KANEO-461)", async () => {
     const reader = {
       async listDebrisFieldEvents() { return []; },

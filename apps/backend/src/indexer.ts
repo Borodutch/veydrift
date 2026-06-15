@@ -1320,6 +1320,7 @@ export class SettlementIndexer {
     for (const log of sortRpcLogs(logs)) {
       this.applyLog(log);
     }
+    this.rebuildMaterializedStateFromEventLogs();
     this.setMetadata("lastEventReplayAt", new Date().toISOString());
     if (typeof toBlock === "bigint") {
       this.recordLatestBlock(toBlock.toString());
@@ -1925,6 +1926,80 @@ export class SettlementIndexer {
         this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
       } else if (isAllianceLog(log)) {
         this.applyAllianceEvent(decodeAllianceLog(log));
+      }
+    }
+  }
+
+  private rebuildMaterializedStateFromEventLogs(): void {
+    this.db.transaction(() => {
+      const rows = this.db.query(`
+        SELECT event_json
+        FROM indexed_event_logs
+        WHERE removed = 0
+        ORDER BY CAST(block_number AS INTEGER) ASC
+      `).all() as EventRow[];
+      if (rows.length === 0) return;
+
+      this.clearEventDerivedMaterializedState();
+      const logs = rows.map((row) => parseEvent<IndexedRpcLog>(row.event_json));
+      for (const log of sortRpcLogs(logs)) {
+        this.applyStoredLogSideEffects(log);
+      }
+      this.touch();
+    })();
+  }
+
+  private clearEventDerivedMaterializedState(): void {
+    this.db.query("DELETE FROM indexed_planet_queues").run();
+    this.db.query("DELETE FROM indexed_building_levels").run();
+    this.db.query("DELETE FROM indexed_defense_counts").run();
+    this.db.query("DELETE FROM indexed_ship_counts").run();
+    this.db.query("DELETE FROM indexed_research_levels").run();
+    this.db.query("DELETE FROM indexed_moons").run();
+    this.db.query("DELETE FROM indexed_moon_building_levels").run();
+    this.db.query("DELETE FROM indexed_rift_balances").run();
+    this.db.query("DELETE FROM indexed_rift_withdrawals").run();
+    this.db.query("DELETE FROM contract_planet_resources").run();
+    this.db.query("DELETE FROM contract_debris_fields").run();
+    this.db.query("DELETE FROM contract_moon_chance_reports").run();
+    this.db.query("DELETE FROM contract_building_levels").run();
+    this.db.query("DELETE FROM contract_defense_counts").run();
+    this.db.query("DELETE FROM contract_ship_counts").run();
+    this.db.query("DELETE FROM contract_technology_levels").run();
+    this.db.query("DELETE FROM contract_production_queues").run();
+    this.db.query("DELETE FROM contract_moon_building_queues").run();
+  }
+
+  private applyStoredLogSideEffects(log: IndexedRpcLog): void {
+    if (isSettledPlanetLog(log)) {
+      this.applyEvent(decodeSettledPlanetLog(log));
+    } else if (isPlanetSettledLog(log)) {
+      this.applyPlanetSettledEvent(decodePlanetSettledLog(log));
+    } else if (isPlanetRenamedLog(log)) {
+      this.applyPlanetRenamedEvent(decodePlanetRenamedLog(log));
+    } else if (isDebrisFieldLog(log)) {
+      this.applyDebrisEvent(decodeDebrisFieldLog(log));
+    } else if (isShipCountChangedLog(log)) {
+      this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
+    } else if (isDefenseCountChangedLog(log)) {
+      this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
+    } else if (isIndexedQueueStartedLog(log)) {
+      this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), {
+        settledAt: blockTimestampSeconds(log) ?? Math.floor(Date.now() / 1_000).toString()
+      });
+    } else if (isIndexedQueueCompletedLog(log)) {
+      this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
+    } else if (isMoonCreatedLog(log)) {
+      this.applyMoonCreatedEvent(decodeMoonCreatedLog(log));
+    } else if (isRiftResourceLog(log)) {
+      this.applyRiftResourceEvent(decodeRiftResourceLog(log));
+    } else if (isAllianceLog(log)) {
+      this.applyAllianceEvent(decodeAllianceLog(log));
+    } else if (isFleetMissionLog(log) || isMoonChanceReportLog(log) || isRandomnessFulfilledLog(log)) {
+      if (isMoonChanceReportLog(log)) {
+        this.applyMoonChanceEvent(decodeMoonChanceReportLog(log));
+      } else {
+        this.touch();
       }
     }
   }
