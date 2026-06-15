@@ -2100,7 +2100,9 @@ function rankedHighscoreIndexedProtectionLookup(
   if (!attacker) return new Map();
 
   const statuses = new Map<string, RankedHighscoreAttackProtection | null>();
-  const attackerScore = BigInt(attacker.score.total);
+  // VEY-KANEO-489 follow-up: score-protection must use the contract's _totalUserScore (cached on the
+  // leaderboard entry), not the resource-based display total (which made everyone read as a newbie).
+  const attackerScore = BigInt(attacker.totalUserScore);
   const attackerAlliance = allianceIntel.get(normalizedCurrentWallet) ?? null;
   // VEY-KANEO-489: the bashing window is per-(attacker, defender, planet), so it is evaluated per planet
   // rather than once per defender row. Alliance/score gates above are defender-level and short-circuit
@@ -2111,7 +2113,7 @@ function rankedHighscoreIndexedProtectionLookup(
   for (const row of rows) {
     const status = indexedScoreProtectionStatus(
       attackerScore,
-      BigInt(row.score.total),
+      BigInt(row.totalUserScore),
       attackerAlliance,
       normalizedCurrentWallet,
       row
@@ -2415,6 +2417,12 @@ function indexedAttackProtectionResponse(
   const defender = indexer.highscoreForWallet(target.owner, (planetsByOwner.get(target.owner.toLowerCase()) ?? []).map((planet) => planet.planetId));
   const attackerScore = BigInt(attacker.score.total);
   const defenderScore = BigInt(defender.score.total);
+  // VEY-KANEO-489 follow-up: the score-protection gate must use the contract's _totalUserScore
+  // (HighscoreEntry.totalUserScore), NOT the resource-based display total above. The display total is
+  // on a ~hundreds scale, so against the contract's 50k/500k thresholds every player read as a newbie
+  // and the UI false-flagged score_protection. relation label keeps the display total.
+  const attackerProtectionScore = BigInt(attacker.totalUserScore);
+  const defenderProtectionScore = BigInt(defender.totalUserScore);
   const attackerKey = wallet.toLowerCase();
   const defenderKey = target.owner.toLowerCase();
   // VEY-KANEO-489: model the contract's same_alliance gate, the HIGHEST-precedence reason in
@@ -2437,7 +2445,7 @@ function indexedAttackProtectionResponse(
   // players whose scores differed >5x — including two veterans both past the newbie-protection ceiling,
   // who the contract never score-protects (both ratios are 0). Kept raw (not gated by sameAlliance) so
   // plunderBps below still reflects the score-protection state.
-  const scoreProtected = isIndexedScoreProtected(attackerScore, defenderScore);
+  const scoreProtected = isIndexedScoreProtected(attackerProtectionScore, defenderProtectionScore);
   // VEY-KANEO-489: also replay the per-(attacker, planet) bashing window the contract enforces. Self
   // attacks are rejected upstream by the contract and carry no window; a self-target read just returns
   // an empty launch history. same_alliance and score protection are checked first to match the
