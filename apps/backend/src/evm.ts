@@ -437,6 +437,23 @@ export type FleetMissionSummary = {
   asOfNow?: MissionAsOfNow;
 };
 
+export type CanonicalFleetMissionSnapshot = {
+  missionId: string;
+  statusId: number;
+  missionTypeId: number;
+  status: string;
+  missionType: string;
+  owner: Address;
+  originPlanetId: string;
+  targetPlanetId: string;
+  departureAt: string;
+  arrivalAt: string;
+  returnAt: string;
+  fuelCost: string;
+  cargo: Resources;
+  randomnessRequestId: string | null;
+};
+
 export type FleetMissionPlanetReference = {
   planetId: string;
   owner: Address;
@@ -893,6 +910,7 @@ export interface ChainReader {
   listAllianceJoinRequestState?(): Promise<AllianceJoinRequestSnapshot[]>;
   listAllianceInviteState?(candidateWallets: readonly Address[]): Promise<AllianceInviteSnapshot[]>;
   listAllianceDiplomacyState?(): Promise<AllianceDiplomacySnapshot[]>;
+  listCanonicalFleetMissions?(): Promise<CanonicalFleetMissionSnapshot[]>;
   listCurrentPlanets?(): Promise<SettledPlanetEvent[]>;
   listResolvableFleetMissions?(): Promise<ResolvableFleetMission[]>;
   listReturnableFleetMissions?(): Promise<ReturnableFleetMission[]>;
@@ -1598,6 +1616,21 @@ export class VeydriftGameReader implements ChainReader {
         returnAt,
         targetPlanetId
       }));
+  }
+
+  async listCanonicalFleetMissions(): Promise<CanonicalFleetMissionSnapshot[]> {
+    const nextFleetId = await this.readOptionalUintCall("0x80198ce1", []);
+    if (!nextFleetId || nextFleetId <= 1n) return [];
+
+    const calls: Array<{ selector: string; args: string[] }> = [];
+    for (let missionId = 1n; missionId < nextFleetId; missionId += 1n) {
+      calls.push({ selector: "0xf158c946", args: [encodeUint(missionId)] });
+    }
+
+    const results = await this.batchCallContract(this.gameContractAddress, calls);
+    return results
+      .map((result, index) => this.decodeCanonicalFleetMission(BigInt(index + 1), result))
+      .filter((mission): mission is CanonicalFleetMissionSnapshot => mission !== null);
   }
 
   async getInfrastructureState(wallet: Address, selectedPlanetId?: bigint): Promise<InfrastructureState> {
@@ -3602,6 +3635,32 @@ export class VeydriftGameReader implements ChainReader {
       ...mission,
       needsResolution: fleetMissionNeedsResolution(mission, nowSeconds, fulfilledRandomnessRequestIds)
     }));
+  }
+
+  private decodeCanonicalFleetMission(missionId: bigint, result: string): CanonicalFleetMissionSnapshot | null {
+    const words = splitWords(result);
+    const statusId = Number(decodeUintWord(wordAt(words, 0)));
+    const missionTypeId = Number(decodeUintWord(wordAt(words, 1)));
+    const owner = decodeAddressWord(wordAt(words, 2));
+    if (statusId === 0 || owner === zeroAddress) return null;
+
+    const randomnessRequestId = decodeUintWord(wordAt(words, 12)).toString();
+    return {
+      missionId: missionId.toString(),
+      statusId,
+      missionTypeId,
+      status: missionStatusLabel(BigInt(statusId)),
+      missionType: missionTypeLabel(BigInt(missionTypeId)),
+      owner,
+      originPlanetId: decodeUintWord(wordAt(words, 3)).toString(),
+      targetPlanetId: decodeUintWord(wordAt(words, 4)).toString(),
+      departureAt: decodeUintWord(wordAt(words, 5)).toString(),
+      arrivalAt: decodeUintWord(wordAt(words, 6)).toString(),
+      returnAt: decodeUintWord(wordAt(words, 7)).toString(),
+      fuelCost: decodeUintWord(wordAt(words, 8)).toString(),
+      cargo: decodeResources(words.slice(9, 12)),
+      randomnessRequestId: randomnessRequestId === "0" ? null : randomnessRequestId
+    };
   }
 
   // VEY-KANEO-479: the set of RandomnessEngine request ids already fulfilled on-chain, or null when no

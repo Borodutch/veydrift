@@ -30,6 +30,7 @@ import {
 import { shortAddress, type ChainShipyardState } from "../walletFlow";
 import { formatDuration } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import { PageHeader } from "./PageHeader";
 
 export type MissionCargoDraft = {
   metal?: string | undefined;
@@ -62,9 +63,9 @@ const BPS = 10_000;
 const RESOURCE_KEYS = ["metal", "crystal", "deuterium"] as const;
 
 type EnabledGalaxyAction = Extract<GalaxyAction, { enabled: true }>;
-type ResourceKey = (typeof RESOURCE_KEYS)[number];
+export type ResourceKey = (typeof RESOURCE_KEYS)[number];
 
-type MissionResourceSnapshot = {
+export type MissionResourceSnapshot = {
   metal: number;
   crystal: number;
   deuterium: number;
@@ -77,7 +78,7 @@ type ShipOption = {
   asset: string;
 };
 
-type UnitItem = {
+export type UnitItem = {
   key: string;
   label: string;
   count: number;
@@ -201,7 +202,7 @@ export function MissionCreationPage({
   const [speedPercent, setSpeedPercent] = useState(DEFAULT_MISSION_SPEED_PERCENT);
   const [ships, setShips] = useState<MissionShips>(() => initialMissionShips(action));
   const [cargo, setCargo] = useState<MissionCargoDraft>({});
-  const [lootRatioEnabled, setLootRatioEnabled] = useState(false);
+  const [greedyLootEnabled, setGreedyLootEnabled] = useState(false);
   const [lootRatio, setLootRatio] = useState<MissionLootRatioDraft>(DEFAULT_LOOT_RATIO);
   const [primaryTargetId, setPrimaryTargetId] = useState(action.mode === "missile" ? action.primaryTargetId : 0);
   const [quantity, setQuantity] = useState(action.mode === "missile" ? action.quantity : 1);
@@ -217,7 +218,7 @@ export function MissionCreationPage({
   const cargoSupported = action.mode === "mission" && (action.kind === "transport" || action.kind === "deploy");
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
   const lootRatioSupported = !joinAttackMode && !acsDefendMode && action.mode === "mission" && action.kind === "attack";
-  const lootRatioActive = lootRatioSupported && lootRatioEnabled;
+  const lootRatioActive = lootRatioSupported && !greedyLootEnabled;
   const displayedLootRatio = lootRatioActive ? lootRatio : GREEDY_LOOT_RATIO;
   const lootRatioTotal = displayedLootRatio.metal + displayedLootRatio.crystal + displayedLootRatio.deuterium;
   const timingSummary = missionTimingSummary(travelSeconds, nowMs);
@@ -240,8 +241,8 @@ export function MissionCreationPage({
     [target, travelSeconds],
   );
   const maxLootForecast = useMemo(
-    () => forecastRaidLoot(resourceIntel.projectedArrivalLootable, cargoCapacity, lootRatioActive ? lootRatio : null),
-    [cargoCapacity, lootRatio, lootRatioActive, resourceIntel.projectedArrivalLootable],
+    () => forecastRaidLoot(resourceIntel.projectedArrivalLootable, cargoCapacity, greedyLootEnabled ? null : lootRatio),
+    [cargoCapacity, greedyLootEnabled, lootRatio, resourceIntel.projectedArrivalLootable],
   );
 
   // VEY-KANEO-440: ACS Defend holding-fuel preview. The fleet arrives naturally after `travelSeconds`,
@@ -303,84 +304,59 @@ export function MissionCreationPage({
     [key]: clampInteger(value, 0, owned),
   }));
   const updateLootPercent = (key: ResourceKey, value: number) => {
-    setLootRatioEnabled(true);
+    setGreedyLootEnabled(false);
     setLootRatio((current) => rebalanceLootRatio(current, key, value));
   };
   const updateLootAmount = (key: ResourceKey, value: number) => {
-    setLootRatioEnabled(true);
+    setGreedyLootEnabled(false);
     setLootRatio((current) => lootRatioFromUpToAmount(current, key, value, cargoCapacity));
   };
 
   return (
-    <div className="grid gap-4 p-4 sm:p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-white">{joinAttackMode || acsDefendMode || defenseHoldMode ? action.label : `${action.label} Mission`}</h2>
-          <p className="mt-0.5 text-xs text-slate-400">
+    <section className="grid gap-3 p-3 sm:p-4">
+      <PageHeader
+        actions={(
+          <button
+            className="rounded-md border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
+            onClick={onBack}
+            type="button"
+          >
+            Back
+          </button>
+        )}
+        beforeTitle={(
+          <p className="mb-1 text-xs text-slate-400">
             {originLabel ?? "Active planet"} to [{coords.galaxy}:{coords.system}:{coords.position}]
           </p>
-        </div>
-        <button
-          className="rounded border border-white/15 bg-white/8 px-3 py-1.5 text-sm text-slate-300 transition-colors hover:bg-white/15 hover:text-white"
-          onClick={onBack}
-          type="button"
-        >
-          Back
-        </button>
-      </div>
+        )}
+        title={joinAttackMode || acsDefendMode || defenseHoldMode ? action.label : `${action.label} Mission`}
+        titleSize="xl"
+      />
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <section className="grid gap-4 rounded-lg border border-white/10 bg-white/[0.04] p-4">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <section className="grid gap-3">
           <TargetIntelCard coords={coords} target={target} />
 
           {lootRatioSupported ? (
-            <div className="grid gap-3 rounded-md border border-white/10 bg-black/15 p-3">
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div>
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Probable outcome</h3>
-                  <p className={`mt-1 text-sm font-semibold ${battleForecast.kind === "win" ? "text-emerald-200" : battleForecast.kind === "defeat" ? "text-red-200" : battleForecast.kind === "draw" ? "text-amber-200" : "text-slate-300"}`}>
-                    {battleForecast.label}
-                  </p>
-                </div>
-                <div className="text-right text-xs text-slate-500">
-                  <div>Attack {battleForecast.attackerPower.toLocaleString()}</div>
-                  <div>Defense {battleForecast.defenderPower == null ? "unknown" : battleForecast.defenderPower.toLocaleString()}</div>
-                </div>
-              </div>
-              <p className="text-xs text-slate-500">{battleForecast.detail}</p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <ResourceSummary title="Max loot at arrival" resources={maxLootForecast} />
-                <ResourceSummary title="Lootable at arrival" resources={resourceIntel.projectedArrivalLootable} />
-              </div>
-            </div>
+            <AttackOutcomePanel
+              battleForecast={battleForecast}
+              lootableAtArrival={resourceIntel.projectedArrivalLootable}
+              maxLootForecast={maxLootForecast}
+            />
           ) : null}
 
-          <div className="grid gap-3 rounded-md border border-white/10 bg-black/15 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Destination intel</h3>
-              <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Public state</span>
-            </div>
-            <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
-              <UnitSection emptyLabel="No public fleet is stationed here." title="Destination Fleet" units={targetFleetUnits} />
-              <UnitSection emptyLabel="No public defenses are deployed here." title="Defenses" units={targetDefenseUnits} />
-              {stationedDefenderUnits.length > 0 ? (
-                <UnitSection emptyLabel="No public held defenders are stationed here." title="Stationed Defenders" units={stationedDefenderUnits} />
-              ) : null}
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <ResourceSummary title="Resources now" resources={resourceIntel.current} />
-              <ResourceSummary title="Projected at arrival" resources={resourceIntel.projectedArrival} />
-              <ResourceSummary title="Lootable now" resources={resourceIntel.currentLootable} />
-              <ResourceSummary title="Lootable at arrival" resources={resourceIntel.projectedArrivalLootable} />
-            </div>
-            <p className="text-xs text-slate-500">{resourceIntel.projectionDetail}</p>
-          </div>
+          <DestinationIntelPanel
+            resourceIntel={resourceIntel}
+            stationedDefenderUnits={stationedDefenderUnits}
+            targetDefenseUnits={targetDefenseUnits}
+            targetFleetUnits={targetFleetUnits}
+          />
 
           {stationedDefenderRows.length > 0 ? (
             <div className="rounded border border-violet-300/25 bg-violet-300/10 px-3 py-2 text-sm text-violet-100">
               <p className="font-semibold">Stationed defenders can join this battle.</p>
               <p className="mt-1 text-xs text-violet-100/80">
-                Public planet fleet and defense counts do not include these held fleets. They can defend
+                Planet fleet and defense counts do not include these held fleets. They can defend
                 attacks that land before their hold expires.
               </p>
               <ul className="mt-2 grid gap-1 text-xs text-violet-100/90">
@@ -500,70 +476,19 @@ export function MissionCreationPage({
           ) : null}
 
           {lootRatioSupported ? (
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Loot ratio</span>
-                <span className="flex items-center gap-2 text-xs text-slate-400">
-                  {lootRatioEnabled ? "Custom split" : "Greedy default"}
-                  <input
-                    checked={lootRatioEnabled}
-                    className="h-4 w-4 accent-signal [color-scheme:dark]"
-                    onChange={(event) => setLootRatioEnabled((event.currentTarget as HTMLInputElement).checked)}
-                    type="checkbox"
-                  />
-                </span>
-              </div>
-              <div className="grid gap-2">
-                <div className="grid gap-2 sm:grid-cols-3">
-                  {RESOURCE_KEYS.map((key) => (
-                    <PercentField
-                      key={key}
-                      label={`${resourceLabel(key)} %`}
-                      onChange={(value) => updateLootPercent(key, value)}
-                      value={displayedLootRatio[key]}
-                    />
-                  ))}
-                </div>
-                <div className="grid gap-2 sm:grid-cols-3">
-                  {RESOURCE_KEYS.map((key) => (
-                    <ResourceField
-                      key={key}
-                      label={`${resourceLabel(key)} up to`}
-                      max={cargoCapacity}
-                      onChange={(value) => updateLootAmount(key, resourceDraftNumber(value))}
-                      value={String(Math.floor((cargoCapacity * displayedLootRatio[key]) / 100))}
-                    />
-                  ))}
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <span className={lootRatioTotal === LOOT_RATIO_TOTAL_PERCENT ? "text-slate-500" : "text-amber-200"}>
-                    Total {lootRatioTotal}% (must equal {LOOT_RATIO_TOTAL_PERCENT}%). Unfilled shares roll over metal, crystal, then deuterium.
-                  </span>
-                  <span className="flex gap-1.5">
-                    <button
-                      className="rounded border border-white/10 bg-white/[0.03] px-2 py-1 font-semibold text-slate-400 transition hover:border-white/20 hover:text-white"
-                      onClick={() => {
-                        setLootRatioEnabled(false);
-                        setLootRatio(DEFAULT_LOOT_RATIO);
-                      }}
-                      type="button"
-                    >
-                      Greedy
-                    </button>
-                    <button
-                      className="rounded border border-white/10 bg-white/[0.03] px-2 py-1 font-semibold text-slate-400 transition hover:border-white/20 hover:text-white"
-                      onClick={() => {
-                        setLootRatioEnabled(true);
-                        setLootRatio(DEFAULT_LOOT_RATIO);
-                      }}
-                      type="button"
-                    >
-                      Even split
-                    </button>
-                  </span>
-                </div>
-              </div>
-            </div>
+            <LootRatioControls
+              cargoCapacity={cargoCapacity}
+              greedyLootEnabled={greedyLootEnabled}
+              lootRatio={displayedLootRatio}
+              lootRatioTotal={lootRatioTotal}
+              onAmountChange={updateLootAmount}
+              onGreedyChange={setGreedyLootEnabled}
+              onPercentChange={updateLootPercent}
+              onResetEven={() => {
+                setGreedyLootEnabled(false);
+                setLootRatio(DEFAULT_LOOT_RATIO);
+              }}
+            />
           ) : null}
         </section>
 
@@ -592,7 +517,7 @@ export function MissionCreationPage({
           {lootRatioSupported ? (
             <SummaryRow
               label="Max loot"
-              subvalue={lootRatioActive ? "Custom split" : "Greedy default"}
+              subvalue={greedyLootEnabled ? "Greedy" : "Manual split"}
               value={formatCompactResources(maxLootForecast)}
             />
           ) : null}
@@ -627,7 +552,7 @@ export function MissionCreationPage({
           </button>
         </aside>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -862,7 +787,7 @@ export function publicTargetBattleForecast(ships: MissionShips, target: Planet |
     return {
       kind: "uncertain",
       label: "Uncertain",
-      detail: "The target is not charted in the public indexed state, so exact destination fleet and defenses are unknown.",
+      detail: "Destination fleet and defense data is unavailable, so exact defender strength is unknown.",
       attackerPower,
       defenderPower: null,
     };
@@ -971,16 +896,16 @@ export function ShipQuantityRow({
 
 export function TargetIntelCard({ coords, target }: { coords: Coordinates; target: Planet | undefined }) {
   return (
-    <div className="grid gap-3 rounded-md border border-white/10 bg-black/15 p-3 sm:grid-cols-[5.5rem_minmax(0,1fr)]">
+    <div className="grid gap-3 rounded-md border border-white/10 bg-white/[0.04] p-3 sm:grid-cols-[5rem_minmax(0,1fr)]">
       {target?.image ? (
         <img
           alt=""
-          className="h-20 w-20 rounded-md border border-white/10 object-cover"
+          className="h-16 w-16 rounded-md border border-white/10 object-cover sm:h-20 sm:w-20"
           loading="lazy"
           src={target.image}
         />
       ) : (
-        <div className="grid h-20 w-20 place-items-center rounded-md border border-white/10 bg-white/[0.03] text-xs text-slate-500">
+        <div className="grid h-16 w-16 place-items-center rounded-md border border-white/10 bg-white/[0.03] text-xs text-slate-500 sm:h-20 sm:w-20">
           No image
         </div>
       )}
@@ -1000,6 +925,149 @@ export function TargetIntelCard({ coords, target }: { coords: Coordinates; targe
   );
 }
 
+export function AttackOutcomePanel({
+  battleForecast,
+  lootableAtArrival,
+  maxLootForecast,
+}: {
+  battleForecast: BattleForecastState;
+  lootableAtArrival: MissionResourceSnapshot | null;
+  maxLootForecast: MissionResourceSnapshot;
+}) {
+  return (
+    <section className="grid gap-2 rounded-md border border-white/10 bg-black/15 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Probable outcome</h3>
+          <p className={`mt-0.5 text-sm font-semibold ${battleForecast.kind === "win" ? "text-emerald-200" : battleForecast.kind === "defeat" ? "text-red-200" : battleForecast.kind === "draw" ? "text-amber-200" : "text-slate-300"}`}>
+            {battleForecast.label}
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-right text-[11px] text-slate-500">
+          <span>Attack</span>
+          <span className="font-medium tabular-nums text-slate-300">{battleForecast.attackerPower.toLocaleString()}</span>
+          <span>Defense</span>
+          <span className="font-medium tabular-nums text-slate-300">{battleForecast.defenderPower == null ? "unknown" : battleForecast.defenderPower.toLocaleString()}</span>
+        </div>
+      </div>
+      <p className="text-xs text-slate-500">{battleForecast.detail}</p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <ResourceSummary title="Max loot at arrival" resources={maxLootForecast} />
+        <ResourceSummary title="Lootable at arrival" resources={lootableAtArrival} />
+      </div>
+    </section>
+  );
+}
+
+export function DestinationIntelPanel({
+  resourceIntel,
+  stationedDefenderUnits,
+  targetDefenseUnits,
+  targetFleetUnits,
+}: {
+  resourceIntel: TargetResourceIntel;
+  stationedDefenderUnits: UnitItem[];
+  targetDefenseUnits: UnitItem[];
+  targetFleetUnits: UnitItem[];
+}) {
+  return (
+    <section className="grid gap-2 rounded-md border border-white/10 bg-black/15 p-3">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Destination intel</h3>
+      <div className="grid gap-2 lg:grid-cols-2 xl:grid-cols-3">
+        <UnitSection emptyLabel="No fleet is stationed here." title="Destination Fleet" units={targetFleetUnits} />
+        <UnitSection emptyLabel="No defenses are deployed here." title="Defenses" units={targetDefenseUnits} />
+        {stationedDefenderUnits.length > 0 ? (
+          <UnitSection emptyLabel="No held defenders are stationed here." title="Stationed Defenders" units={stationedDefenderUnits} />
+        ) : null}
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <ResourceSummary title="Resources now" resources={resourceIntel.current} />
+        <ResourceSummary title="Projected at arrival" resources={resourceIntel.projectedArrival} />
+        <ResourceSummary title="Lootable now" resources={resourceIntel.currentLootable} />
+        <ResourceSummary title="Lootable at arrival" resources={resourceIntel.projectedArrivalLootable} />
+      </div>
+    </section>
+  );
+}
+
+export function LootRatioControls({
+  cargoCapacity,
+  greedyLootEnabled,
+  lootRatio,
+  lootRatioTotal,
+  onAmountChange,
+  onGreedyChange,
+  onPercentChange,
+  onResetEven,
+}: {
+  cargoCapacity: number;
+  greedyLootEnabled: boolean;
+  lootRatio: MissionLootRatioDraft;
+  lootRatioTotal: number;
+  onAmountChange: (key: ResourceKey, value: number) => void;
+  onGreedyChange: (enabled: boolean) => void;
+  onPercentChange: (key: ResourceKey, value: number) => void;
+  onResetEven: () => void;
+}) {
+  return (
+    <div className="grid gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Loot ratio</span>
+        <span className="flex items-center gap-2 text-xs text-slate-400">
+          Greedy
+          <input
+            checked={greedyLootEnabled}
+            className="h-4 w-4 accent-signal [color-scheme:dark]"
+            onChange={(event) => onGreedyChange((event.currentTarget as HTMLInputElement).checked)}
+            type="checkbox"
+          />
+        </span>
+      </div>
+      {greedyLootEnabled ? (
+        <p className="rounded border border-white/10 bg-black/15 px-3 py-2 text-xs text-slate-400">
+          Greedy fills cargo from available loot automatically: metal first, then crystal, then deuterium.
+        </p>
+      ) : (
+        <div className="grid gap-2">
+          <div className="grid gap-2 sm:grid-cols-3">
+            {RESOURCE_KEYS.map((key) => (
+              <PercentField
+                key={key}
+                label={`${resourceLabel(key)} %`}
+                onChange={(value) => onPercentChange(key, value)}
+                value={lootRatio[key]}
+              />
+            ))}
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {RESOURCE_KEYS.map((key) => (
+              <ResourceField
+                key={key}
+                label={`${resourceLabel(key)} up to`}
+                max={cargoCapacity}
+                onChange={(value) => onAmountChange(key, resourceDraftNumber(value))}
+                value={String(Math.floor((cargoCapacity * lootRatio[key]) / 100))}
+              />
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+            <span className={lootRatioTotal === LOOT_RATIO_TOTAL_PERCENT ? "text-slate-500" : "text-amber-200"}>
+              Total {lootRatioTotal}% (must equal {LOOT_RATIO_TOTAL_PERCENT}%). Unfilled shares roll over metal, crystal, then deuterium.
+            </span>
+            <button
+              className="rounded border border-white/10 bg-white/[0.03] px-2 py-1 font-semibold text-slate-400 transition hover:border-white/20 hover:text-white"
+              onClick={onResetEven}
+              type="button"
+            >
+              Even split
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TargetFact({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
@@ -1011,7 +1079,7 @@ function TargetFact({ label, value }: { label: string; value: string }) {
 
 function UnitSection({ emptyLabel, title, units }: { emptyLabel: string; title: string; units: UnitItem[] }) {
   return (
-    <section className="grid gap-2 rounded border border-white/10 bg-[#070913]/60 p-3">
+    <section className="grid gap-1.5 rounded border border-white/10 bg-[#070913]/60 p-2">
       <h4 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{title}</h4>
       <UnitIcons emptyLabel={emptyLabel} units={units} />
     </section>
@@ -1039,7 +1107,7 @@ function UnitIcons({ emptyLabel, units }: { emptyLabel: string; units: UnitItem[
 
 function ResourceSummary({ resources, title }: { resources: MissionResourceSnapshot | null; title: string }) {
   return (
-    <section className="rounded border border-white/10 bg-[#070913]/60 p-3">
+    <section className="rounded border border-white/10 bg-[#070913]/60 p-2">
       <h4 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{title}</h4>
       <p className="mt-1 text-sm font-medium text-slate-200">{formatCompactResources(resources)}</p>
     </section>
@@ -1111,7 +1179,7 @@ function projectedResourceSnapshot(
   if (!buildings || travelSeconds <= 0) {
     return {
       resources: current,
-      detail: "Projected arrival resources use the current public snapshot until public production data is available.",
+      detail: "Arrival projection falls back to the current resource snapshot until production data is available.",
     };
   }
 
@@ -1132,7 +1200,7 @@ function projectedResourceSnapshot(
       crystal: Math.min(caps.crystal, current.crystal + Math.floor(production.crystal * hours)),
       deuterium: Math.min(caps.deuterium, current.deuterium + Math.floor(production.deuterium * hours)),
     },
-    detail: "Projected arrival resources use public building/resource preview math and assume no new production, spending, transport, or combat changes before arrival.",
+    detail: "Arrival projection uses public building/resource preview math and assumes no new production, spending, transport, or combat changes before arrival.",
   };
 }
 
