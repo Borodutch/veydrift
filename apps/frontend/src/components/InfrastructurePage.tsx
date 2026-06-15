@@ -6,6 +6,7 @@ import {
   buildingCatalog,
   buildingEffectMetrics,
   buildingRequirementsFor,
+  productionPerHour,
   isBinaryBuilding,
   researchCatalog,
   unmetBuildingRequirement,
@@ -17,9 +18,11 @@ import {
   buildingUpgradeStatus,
   formatCost,
   formatDuration,
+  formatFrontendOnlyBuildingRequirement,
   formatNumber,
   formatSigned,
-  mineSolarPlantPrerequisiteFor,
+  frontendOnlyBuildingRequirementsFor,
+  missingFrontendOnlyBuildingRequirementFor,
 } from "../buildingDetails";
 import { buildingQueueLabel } from "../overviewData";
 import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../buildingActionNotice";
@@ -49,11 +52,6 @@ const fullResourceLabels: Record<keyof Resources, string> = {
   deuterium: "Deuterium",
 };
 
-const solarPrerequisiteMineKeys = new Set<BuildingKey>([
-  "metalMine",
-  "crystalMine",
-  "deuteriumSynthesizer",
-]);
 type BuildingQueueItem = Extract<NonNullable<PlayableState["queue"]>, { kind: "building" }>;
 
 const buildingDescriptions: Record<BuildingKey, string> = {
@@ -91,6 +89,7 @@ interface InfrastructurePageProps {
   productionRates?: Resources | undefined;
   selectedBuildingKey?: BuildingKey | undefined;
   spendableResources?: Resources | undefined;
+  starterPlanet?: boolean | undefined;
   state: PlayableState;
   settledState: PlayableState;
   now?: number | undefined;
@@ -114,6 +113,7 @@ export function InfrastructurePage({
   productionRates,
   selectedBuildingKey,
   spendableResources,
+  starterPlanet = false,
   settledState,
   onUpgrade,
 }: InfrastructurePageProps) {
@@ -172,7 +172,7 @@ export function InfrastructurePage({
           const currentLevel = settledState.buildings[building.key];
           const isSelected = building.key === selectedBuilding.key;
           const missingRequirement = unmetBuildingRequirement(settledState, building.key);
-          const solarPrerequisite = mineSolarPlantPrerequisiteFor(settledState, building.key);
+          const starterPrerequisite = missingFrontendOnlyBuildingRequirementFor(settledState, building.key, { starterPlanet });
 
           return (
             <InspectCatalogTile
@@ -182,8 +182,8 @@ export function InfrastructurePage({
               isSelected={isSelected}
               key={building.key}
               label={building.label}
-              statusText={solarPrerequisite ? `Requires ${solarPrerequisite}` : missingRequirement ? "Locked" : infrastructureCatalogStatusText(settledState, building.key, planetProductionProfile)}
-              statusTone={solarPrerequisite || missingRequirement ? "warning" : "accent"}
+              statusText={starterPrerequisite ? `Requires ${starterPrerequisite}` : missingRequirement ? "Locked" : infrastructureCatalogStatusText(settledState, building.key, planetProductionProfile, productionRates)}
+              statusTone={starterPrerequisite || missingRequirement ? "warning" : "accent"}
               onClick={() => handleSelectBuilding(building.key)}
             />
           );
@@ -202,6 +202,7 @@ export function InfrastructurePage({
             planetProductionProfile={planetProductionProfile}
             productionRates={productionRates}
             spendableResources={spendableResources}
+            starterPlanet={starterPlanet}
             state={settledState}
           />
         )}
@@ -280,6 +281,7 @@ function BuildingDetailPanel({
   planetProductionProfile,
   productionRates,
   spendableResources,
+  starterPlanet,
   state,
 }: {
   actionNotice?: InfrastructureActionNotice | undefined;
@@ -294,6 +296,7 @@ function BuildingDetailPanel({
   planetProductionProfile?: PlanetProductionProfile | undefined;
   productionRates?: Resources | undefined;
   spendableResources?: Resources | undefined;
+  starterPlanet?: boolean | undefined;
   state: PlayableState;
 }) {
   const currentLevel = state.buildings[building.key];
@@ -312,14 +315,20 @@ function BuildingDetailPanel({
     now,
     productionRates,
     spendableResources,
+    starterPlanet,
   });
-  const effectRows = detailEffectRows(effect, energy);
+  const effectRows = detailEffectRows(
+    effect,
+    energy,
+    buildingProductionUpgradeEffect(state, building.key, planetProductionProfile, productionRates),
+  );
   const levelInfoRows = buildingLevelInfoRows(
     state.buildings,
     building.key,
     planetProductionProfile,
     undefined,
     energyTechnologyLevel,
+    state.ships.solarSatellite,
   );
   const binary = isBinaryBuilding(building.key);
   const built = currentLevel > 0;
@@ -338,7 +347,7 @@ function BuildingDetailPanel({
   // so the panel does not flash a transient status banner on every action.
   const visibleActionNotice = dedupedActionNotice?.tone === "error" ? dedupedActionNotice : undefined;
   const isSelectedBuildingQueued = activeBuildingQueue?.key === building.key;
-  const requirementStates = getBuildingRequirementStates(state, building.key);
+  const requirementStates = getBuildingRequirementStates(state, building.key, { starterPlanet });
   const [isInfoOpen, setIsInfoOpen] = useState(false);
   const noticeClass = "border-rose-300/20 bg-rose-300/10 text-rose-200";
 
@@ -588,6 +597,7 @@ export function BuildingLevelInfoModal({
                 {columns.constructionTime && <LevelInfoHeader className="min-w-32">Build time</LevelInfoHeader>}
                 {columns.storage && <LevelInfoHeader className="min-w-40">Storage</LevelInfoHeader>}
                 {columns.effect && <LevelInfoHeader className="min-w-44">Effect</LevelInfoHeader>}
+                {columns.production && <LevelInfoHeader className="min-w-44">Production output</LevelInfoHeader>}
                 {columns.energyRequired && <LevelInfoHeader className="min-w-36">Energy use</LevelInfoHeader>}
                 {columns.energyProduced && <LevelInfoHeader className="min-w-40">Energy output</LevelInfoHeader>}
                 {columns.deuteriumConsumed && <LevelInfoHeader className="min-w-44">Deuterium use</LevelInfoHeader>}
@@ -622,6 +632,13 @@ export function BuildingLevelInfoModal({
                     </LevelInfoCell>
                   )}
                   {columns.effect && <LevelInfoCell>{row.effect ?? "N/A"}</LevelInfoCell>}
+                  {columns.production && (
+                    <LevelInfoCell>
+                      {row.production
+                        ? `${formatNumber(row.production.value)} ${fullResourceLabels[row.production.resource]}/h${row.production.deltaFromPrevious !== 0 ? ` (${formatSigned(row.production.deltaFromPrevious)}/h)` : ""}`
+                        : "N/A"}
+                    </LevelInfoCell>
+                  )}
                   {columns.energyRequired && (
                     <LevelInfoCell>
                       {row.energyRequired === undefined ? "N/A" : `${formatNumber(row.energyRequired)} required`}
@@ -740,10 +757,16 @@ export function MetricDeltaSubtext({
 export function getBuildingRequirementStates(
   state: Pick<PlayableState, "buildings" | "research">,
   key: BuildingKey,
+  options: {
+    starterPlanet?: boolean | undefined;
+  } = {},
 ): RequirementFlair[] {
-  const frontendOnlyRequirements: RequirementFlair[] = solarPrerequisiteMineKeys.has(key)
-    ? [{ label: "Solar Plant level 1", met: state.buildings.solarPlant >= 1, target: { kind: "building", key: "solarPlant" as const } }]
-    : [];
+  const frontendOnlyRequirements: RequirementFlair[] = frontendOnlyBuildingRequirementsFor(key, options)
+    .map((requirement) => ({
+      label: formatFrontendOnlyBuildingRequirement(requirement),
+      met: state.buildings[requirement.key] >= requirement.level,
+      target: { kind: "building" as const, key: requirement.key },
+    }));
 
   return [
     ...frontendOnlyRequirements,
@@ -767,7 +790,18 @@ function formatRequirementFlair(requirement: BuildingRequirement): string {
   return `${label ?? requirement.key} ${requirement.level}`;
 }
 
-export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnType<typeof buildingEnergyDetail>) {
+export type ProductionUpgradeEffect = {
+  currentPerHour: number;
+  deltaPerHour: number;
+  nextPerHour: number;
+  resource: keyof Resources;
+};
+
+export function detailEffectRows(
+  effect: BuildingEffectMetrics,
+  energy: ReturnType<typeof buildingEnergyDetail>,
+  productionUpgrade?: ProductionUpgradeEffect | undefined,
+) {
   const rows: Array<{
     delta?: string;
     label: string;
@@ -777,9 +811,16 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
   }> = [];
 
   if (effect.kind === "production") {
-    // Per-building production rate is backend-owned game state (VEY-KANEO-465): the
-    // frontend no longer derives or displays a client-computed /h figure. The mine's
-    // energy-required row is still appended below.
+    if (productionUpgrade) {
+      rows.push({
+        ...(productionUpgrade.deltaPerHour !== 0
+          ? { delta: `${formatSigned(productionUpgrade.deltaPerHour)}/h` }
+          : {}),
+        label: `${fullResourceLabels[productionUpgrade.resource]} output`,
+        next: `${formatNumber(productionUpgrade.nextPerHour)}/h`,
+        value: `${formatNumber(productionUpgrade.currentPerHour)}/h`,
+      });
+    }
   } else if (effect.kind === "energy") {
     const output = energy.kind === "produces"
       ? {
@@ -843,8 +884,11 @@ export function detailEffectRows(effect: BuildingEffectMetrics, energy: ReturnTy
     });
   } else if (effect.kind === "shipyard") {
     rows.push({
-      label: "Shipyard speed",
-      next: effect.nextUnlocked && !effect.unlocked ? "Unlocks orbital production" : `x${formatNumber(effect.nextFactor)}`,
+      ...(effect.relativeImprovementPercent !== 0
+        ? { delta: `+${formatNumber(effect.relativeImprovementPercent)}% faster` }
+        : {}),
+      label: "Ship production speed",
+      next: `x${formatNumber(effect.nextFactor)}`,
       value: effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Not built",
     });
   } else if (effect.kind === "researchSpeed") {
@@ -907,19 +951,71 @@ export function infrastructureCatalogStatusText(
   state: PlayableState,
   key: BuildingKey,
   profile?: PlanetProductionProfile | undefined,
+  productionRates?: Resources | undefined,
 ): string {
-  return compactEffect(buildingEffectMetrics(
+  const effect = buildingEffectMetrics(
     state.buildings,
     key,
     profile,
     state.research.energy,
-  ));
+  );
+
+  return compactEffect(
+    effect,
+    buildingProductionUpgradeEffect(state, key, profile, productionRates, effect),
+  );
 }
 
-function compactEffect(effect: BuildingEffectMetrics): string {
+export function buildingProductionUpgradeEffect(
+  state: PlayableState,
+  key: BuildingKey,
+  profile?: PlanetProductionProfile | undefined,
+  productionRates?: Resources | undefined,
+  effect: BuildingEffectMetrics = buildingEffectMetrics(
+    state.buildings,
+    key,
+    profile,
+    state.research.energy,
+  ),
+): ProductionUpgradeEffect | undefined {
+  if (effect.kind !== "production" || !productionRates) return undefined;
+
+  const nextBuildings = {
+    ...state.buildings,
+    [key]: state.buildings[key] + 1,
+  };
+  const currentModeled = productionPerHour(
+    state.buildings,
+    profile,
+    state.research.energy,
+    state.ships.solarSatellite,
+  );
+  const nextModeled = productionPerHour(
+    nextBuildings,
+    profile,
+    state.research.energy,
+    state.ships.solarSatellite,
+  );
+  const modeledDelta = nextModeled[effect.resource] - currentModeled[effect.resource];
+  const currentPerHour = productionRates[effect.resource];
+  const nextPerHour = Math.max(0, currentPerHour + modeledDelta);
+
+  return {
+    currentPerHour,
+    deltaPerHour: nextPerHour - currentPerHour,
+    nextPerHour,
+    resource: effect.resource,
+  };
+}
+
+function compactEffect(
+  effect: BuildingEffectMetrics,
+  productionUpgrade?: ProductionUpgradeEffect | undefined,
+): string {
   if (effect.kind === "production") {
-    // Backend owns production rates (VEY-KANEO-465); show what the mine produces, not a derived /h.
-    return fullResourceLabels[effect.resource];
+    if (!productionUpgrade) return fullResourceLabels[effect.resource];
+
+    return `${formatNumber(productionUpgrade.currentPerHour)}/h (${formatSigned(productionUpgrade.deltaPerHour)}/h)`;
   }
 
   if (effect.kind === "energy") {
@@ -939,7 +1035,9 @@ function compactEffect(effect: BuildingEffectMetrics): string {
   }
 
   if (effect.kind === "shipyard") {
-    return effect.unlocked ? `x${formatNumber(effect.currentFactor)}` : "Locked";
+    return effect.unlocked
+      ? `x${formatNumber(effect.currentFactor)} (+${formatNumber(effect.relativeImprovementPercent)}%)`
+      : "Locked";
   }
 
   if (effect.kind === "researchSpeed") {
@@ -958,5 +1056,5 @@ function compactEffect(effect: BuildingEffectMetrics): string {
     return effect.currentFieldsAdded > 0 ? `+${formatNumber(effect.currentFieldsAdded)} fields` : "No expansion";
   }
 
-  return `x${formatNumber(effect.currentFactor)}`;
+  return `x${formatNumber(effect.currentFactor)} (+${formatNumber(effect.relativeImprovementPercent)}%)`;
 }

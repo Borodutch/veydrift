@@ -1,5 +1,5 @@
 import { useMemo, useState } from "preact/hooks";
-import type { Coordinates, Planet } from "../types";
+import type { Coordinates, Planet, PublicStationedDefender } from "../types";
 import {
   DEFAULT_MISSION_SPEED_PERCENT,
   MISSION_SPEED_OPTIONS,
@@ -14,9 +14,9 @@ import {
   type FleetDriveLevels,
 } from "../fleetMissionRules";
 import { emptyMissionShips, type GalaxyAction, type MissionShipKey, type MissionShips } from "../galaxyActions";
-import type { ChainShipyardState } from "../walletFlow";
+import { shortAddress, type ChainShipyardState } from "../walletFlow";
 import { formatDuration } from "../durationFormat";
-import { formatUserTimestamp } from "../timestampFormat";
+import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 
 export type MissionCargoDraft = {
   metal?: string | undefined;
@@ -170,6 +170,10 @@ export function MissionCreationPage({
   const lootRatioActive = lootRatioSupported && lootRatioEnabled;
   const lootRatioTotal = lootRatio.metal + lootRatio.crystal + lootRatio.deuterium;
   const timingSummary = missionTimingSummary(travelSeconds, nowMs);
+  const stationedDefenders = action.kind === "attack" && action.mode === "mission"
+    ? target?.publicState?.stationedDefenders ?? []
+    : [];
+  const stationedDefenderRows = stationedDefenderAttackWarningRows(stationedDefenders);
 
   // VEY-KANEO-440: ACS Defend holding-fuel preview. The fleet arrives naturally after `travelSeconds`,
   // then holds until the hostile attack lands; holding fuel scales with that gap and the Alliance Depot
@@ -255,6 +259,24 @@ export function MissionCreationPage({
               {target?.occupiedBy?.ownerDisplayName ?? target?.owner ?? "Open coordinate"}
             </div>
           </div>
+
+          {stationedDefenderRows.length > 0 ? (
+            <div className="rounded border border-violet-300/25 bg-violet-300/10 px-3 py-2 text-sm text-violet-100">
+              <p className="font-semibold">Stationed defenders can join this battle.</p>
+              <p className="mt-1 text-xs text-violet-100/80">
+                Public planet fleet and defense counts do not include these held fleets. They can defend
+                attacks that land before their hold expires.
+              </p>
+              <ul className="mt-2 grid gap-1 text-xs text-violet-100/90">
+                {stationedDefenderRows.map((row) => (
+                  <li className="flex min-w-0 justify-between gap-3" key={row.missionId}>
+                    <span className="truncate">{row.label}</span>
+                    <span className="shrink-0 tabular-nums">{row.value}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           {action.mode === "missile" ? (
             <div className="grid gap-3 sm:grid-cols-2">
@@ -566,6 +588,25 @@ function missionShipOptionsForAction(action: EnabledGalaxyAction, shipyardState:
   if (action.mode === "missile") return [];
   const allowed = allowedShipKeysForAction(action);
   return missionShipOptions.filter((ship) => allowed.has(ship.key) && (shipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0) > 0);
+}
+
+export function stationedDefenderAttackWarningRows(
+  defenders: PublicStationedDefender[] | null | undefined
+): Array<{ missionId: string; label: string; value: string }> {
+  return (defenders ?? [])
+    .filter((defender) => stationedDefenderShipCount(defender.ships) > 0)
+    .map((defender) => ({
+      missionId: defender.missionId,
+      label: defender.defenderDisplayName ?? shortAddress(defender.defender),
+      value: `${stationedDefenderShipCount(defender.ships).toLocaleString()} ships until ${formatUserTimestamp(timestampToMs(defender.holdUntil))}`,
+    }));
+}
+
+function stationedDefenderShipCount(ships: Record<string, string>): number {
+  return Object.values(ships).reduce((total, count) => {
+    const parsed = Number(count);
+    return total + (Number.isFinite(parsed) && parsed > 0 ? parsed : 0);
+  }, 0);
 }
 
 function allowedShipKeysForAction(action: EnabledGalaxyAction): Set<MissionShipKey> {

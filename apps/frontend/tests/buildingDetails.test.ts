@@ -161,41 +161,109 @@ describe("building detail helpers", () => {
     });
   });
 
-  test("blocks mine upgrades until Solar Plant level 1 exists", () => {
+  test("blocks starter-planet mine upgrades behind ordered frontend-only prerequisites", () => {
     const state = {
       ...createInitialPlayableState(1_000),
       resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
     };
 
-    for (const key of ["metalMine", "crystalMine", "deuteriumSynthesizer"] as const) {
-      expect(mineSolarPlantPrerequisiteFor(state, key)).toBe("Solar Plant level 1");
-      expect(formatBuildingRequirements(key)).toContain("Solar Plant level 1");
-      expect(buildingUpgradeStatus(state, key)).toMatchObject({
-        disabled: true,
-        reason: "Requires Solar Plant level 1",
-        targetLevel: 1,
-      });
-    }
+    expect(mineSolarPlantPrerequisiteFor(state, "metalMine", { starterPlanet: true })).toBe("Solar Plant level 1");
+    expect(formatBuildingRequirements("metalMine", { starterPlanet: true })).toBe("Solar Plant level 1");
+    expect(buildingUpgradeStatus(state, "metalMine", { starterPlanet: true })).toMatchObject({
+      disabled: true,
+      reason: "Requires Solar Plant level 1",
+      targetLevel: 1,
+    });
+
+    expect(formatBuildingRequirements("crystalMine", { starterPlanet: true })).toBe("Metal Mine level 1, Solar Plant level 1");
+    expect(buildingUpgradeStatus(state, "crystalMine", { starterPlanet: true })).toMatchObject({
+      disabled: true,
+      reason: "Requires Metal Mine level 1",
+      targetLevel: 1,
+    });
+
+    expect(formatBuildingRequirements("deuteriumSynthesizer", { starterPlanet: true })).toBe(
+      "Metal Mine level 1, Crystal Mine level 1, Solar Plant level 1",
+    );
+    expect(buildingUpgradeStatus(state, "deuteriumSynthesizer", { starterPlanet: true })).toMatchObject({
+      disabled: true,
+      reason: "Requires Metal Mine level 1",
+      targetLevel: 1,
+    });
   });
 
-  test("allows mine upgrades after Solar Plant level 1 exists", () => {
+  test("allows starter-planet mine upgrades after starter prerequisites exist", () => {
     const state = {
       ...createInitialPlayableState(1_000),
       buildings: {
         ...createInitialPlayableState(1_000).buildings,
+        metalMine: 1,
+        crystalMine: 1,
         solarPlant: 1,
       },
       resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
     };
 
     for (const key of ["metalMine", "crystalMine", "deuteriumSynthesizer"] as const) {
+      expect(mineSolarPlantPrerequisiteFor(state, key, { starterPlanet: true })).toBeUndefined();
+      expect(buildingUpgradeStatus(state, key, { starterPlanet: true })).toMatchObject({
+        disabled: false,
+        reason: `Ready for Level ${state.buildings[key] + 1}`,
+        targetLevel: state.buildings[key] + 1,
+      });
+    }
+  });
+
+  test("does not apply starter mine prerequisites on non-starter planets", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    for (const key of ["metalMine", "crystalMine", "deuteriumSynthesizer"] as const) {
       expect(mineSolarPlantPrerequisiteFor(state, key)).toBeUndefined();
+      expect(formatBuildingRequirements(key)).toBe("None");
       expect(buildingUpgradeStatus(state, key)).toMatchObject({
         disabled: false,
         reason: "Ready for Level 1",
         targetLevel: 1,
       });
     }
+  });
+
+  test("reports the next missing Deuterium Synthesizer starter prerequisite after Metal Mine exists", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        metalMine: 1,
+      },
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    expect(buildingUpgradeStatus(state, "deuteriumSynthesizer", { starterPlanet: true })).toMatchObject({
+      disabled: true,
+      reason: "Requires Crystal Mine level 1",
+      targetLevel: 1,
+    });
+  });
+
+  test("exposes starter mine prerequisites as visible requirement flairs only on starter planets", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        metalMine: 1,
+      },
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    expect(getBuildingRequirementStates(state, "deuteriumSynthesizer", { starterPlanet: true })).toEqual([
+      { label: "Metal Mine level 1", met: true, target: { kind: "building", key: "metalMine" } },
+      { label: "Crystal Mine level 1", met: false, target: { kind: "building", key: "crystalMine" } },
+      { label: "Solar Plant level 1", met: false, target: { kind: "building", key: "solarPlant" } },
+    ]);
+    expect(getBuildingRequirementStates(state, "deuteriumSynthesizer")).toEqual([]);
   });
 
   test("keeps Solar Plant buildable at level 0", () => {
@@ -393,16 +461,16 @@ describe("building detail helpers", () => {
     });
   });
 
-  test("builds Metal Mine level table rows with costs, energy use, and build time (no client production)", () => {
+  test("builds Metal Mine level table rows with costs, production, energy use, and build time", () => {
     // VEY-KANEO-465 dropped per-building production AND build time from the level table.
-    // VEY-KANEO-472 restores the build-time column (production stays backend-owned): this
-    // static reference table already derives cost/energy client-side, so the per-level
-    // duration is computed the same way via the conformance-tested formula helper.
+    // VEY-KANEO-472 restored build time; VEY-KANEO-499 restores production with the same
+    // conformance-tested formulas that already derive cost/energy/storage client-side.
     const state = {
       ...createInitialPlayableState(1_000),
       buildings: {
         ...createInitialPlayableState(1_000).buildings,
         metalMine: 1,
+        solarPlant: 2,
       },
     };
     const rows = buildingLevelInfoRows(state.buildings, "metalMine", undefined, 3);
@@ -413,6 +481,7 @@ describe("building detail helpers", () => {
       effect: false,
       energyProduced: false,
       energyRequired: true,
+      production: true,
       storage: false,
     });
     expect(rows[0]).toMatchObject({
@@ -421,6 +490,7 @@ describe("building detail helpers", () => {
       energyRequired: 11,
       level: 1,
       next: false,
+      production: { deltaFromPrevious: 33, resource: "metal", value: 33 },
     });
     expect(rows[1]).toMatchObject({
       cost: { metal: 90, crystal: 22, deuterium: 0 },
@@ -428,9 +498,12 @@ describe("building detail helpers", () => {
       energyRequired: 24,
       level: 2,
       next: true,
+      production: { deltaFromPrevious: 39, resource: "metal", value: 72 },
     });
-    // Production stays backend-owned (absent); build time is restored on every row.
-    expect(rows.every((row) => !("production" in row))).toBe(true);
+    expect(rows[2]).toMatchObject({
+      level: 3,
+      production: { deltaFromPrevious: 47, resource: "metal", value: 119 },
+    });
     expect(rows.every((row) => typeof row.durationSeconds === "number" && row.durationSeconds > 0)).toBe(true);
   });
 
@@ -443,6 +516,7 @@ describe("building detail helpers", () => {
       effect: false,
       energyProduced: true,
       energyRequired: false,
+      production: false,
       storage: false,
     });
     expect(rows[0]).toMatchObject({
@@ -497,6 +571,7 @@ describe("building detail helpers", () => {
       effect: false,
       energyProduced: true,
       energyRequired: false,
+      production: false,
       storage: false,
     });
     expect(rows[0]).toMatchObject({
@@ -546,6 +621,7 @@ describe("building detail helpers", () => {
       effect: false,
       energyProduced: false,
       energyRequired: false,
+      production: false,
       storage: true,
     });
     expect(rows[0]).toMatchObject({
@@ -571,6 +647,7 @@ describe("building detail helpers", () => {
       effect: true,
       energyProduced: false,
       energyRequired: false,
+      production: false,
       storage: false,
     });
     expect(rows.map(({ effect, level }) => ({ effect, level }))).toEqual([
@@ -581,6 +658,23 @@ describe("building detail helpers", () => {
     ]);
     expect(rows[0]).toMatchObject({ current: true, next: false });
     expect(rows[1]).toMatchObject({ current: false, next: true });
+  });
+
+  test("builds Shipyard and Nanite rows with speed deltas in the level table", () => {
+    const state = createInitialPlayableState(1_000);
+    const shipyardRows = buildingLevelInfoRows({ ...state.buildings, shipyard: 1 }, "shipyard", undefined, 2);
+    const naniteRows = buildingLevelInfoRows({ ...state.buildings, naniteFactory: 1 }, "naniteFactory", undefined, 2);
+
+    expect(buildingLevelInfoColumns(shipyardRows).effect).toBe(true);
+    expect(buildingLevelInfoColumns(naniteRows).effect).toBe(true);
+    expect(shipyardRows.map(({ effect, level }) => ({ effect, level }))).toEqual([
+      { effect: "x2 ship speed (+100% faster)", level: 1 },
+      { effect: "x3 ship speed (+50% faster)", level: 2 },
+    ]);
+    expect(naniteRows.map(({ effect, level }) => ({ effect, level }))).toEqual([
+      { effect: "x2 construction speed (+100% faster)", level: 1 },
+      { effect: "x4 construction speed (+100% faster)", level: 2 },
+    ]);
   });
 
   test("builds Research Lab rows with Level 1 as the visible x1 baseline", () => {
