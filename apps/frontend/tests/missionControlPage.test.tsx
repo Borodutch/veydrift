@@ -621,6 +621,7 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     expect(text).toContain("Past missions");
+    expect(text).toContain("Outcome Attacker win");
     expect(text).toContain("Losses 100 M / 50 C / 0 D / 900 M / 250 C / 0 D");
   });
 
@@ -792,7 +793,9 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    // attackerLosses / defenderLosses from the battle report render as one "Losses" line.
+    // The report's outcome renders as an "Outcome" line and the attacker / defender losses as a
+    // "Losses" line, so the card states whether the attack succeeded and what it cost.
+    expect(text).toContain("Outcome Attacker win");
     expect(text).toContain("Losses 100 M / 50 C / 0 D / 900 M / 250 C / 0 D");
   });
 
@@ -821,11 +824,14 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
+    // The defender-win outcome is stated explicitly so a wiped-out attack reads as a failure, not
+    // just heavy losses next to the launch fleet.
+    expect(text).toContain("Outcome Defender win");
     expect(text).toContain("Losses 5,000 M / 3,000 C / 0 D / 200 M / 100 C / 0 D");
   });
 
   test("withholds fleet losses from a mission card until the fleet leaves its outbound leg", () => {
-    const losses = { attacker: { metal: "100", crystal: "50", deuterium: "0" }, defender: { metal: "900", crystal: "250", deuterium: "0" } };
+    const losses = { outcome: "AttackerWin" as const, attacker: { metal: "100", crystal: "50", deuterium: "0" }, defender: { metal: "900", crystal: "250", deuterium: "0" } };
     const lossesByMissionId = new Map([["55", losses]]);
 
     // An en-route outbound fleet has fought nothing yet — no losses line even if a report id collides.

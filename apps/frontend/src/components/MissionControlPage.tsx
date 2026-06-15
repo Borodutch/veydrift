@@ -922,11 +922,16 @@ function MissionFleet({
       <FleetIcons ships={ships} />
       {cargo ? <p className="text-[11px] text-slate-500">Cargo {formatCargo(cargo)}</p> : null}
       {loot ? <p className="text-[11px] text-slate-500">Loot {formatCargo(loot)}</p> : null}
-      {/* VEY-KANEO-495: the battle's fleet losses (attacker / defender), so a resolved attack — and
-          especially a failed one whose fleet was wiped — shows what it cost rather than reading like
-          the launch fleet came home intact. Mirrors the Past Missions battle-report row's format. */}
+      {/* VEY-KANEO-495: the resolved battle's outcome and fleet losses (attacker / defender), so a
+          resolved attack — and especially a failed one whose fleet was wiped — states what it cost
+          and whether it succeeded, rather than reading like the launch fleet came home intact. The
+          outcome reuses the neutral label already shown by the standalone battle-report row; losses
+          mirror its attacker / defender format. */}
       {losses ? (
-        <p className="text-[11px] text-slate-500">Losses {formatCargo(losses.attacker)} / {formatCargo(losses.defender)}</p>
+        <>
+          <p className="text-[11px] text-slate-500">Outcome {battleOutcomeLabel(losses.outcome)}</p>
+          <p className="text-[11px] text-slate-500">Losses {formatCargo(losses.attacker)} / {formatCargo(losses.defender)}</p>
+        </>
       ) : null}
     </div>
   );
@@ -2205,6 +2210,7 @@ function lootByMissionIdFromReports(reports: BattleReport[]): Map<string, Battle
 // card's "Losses" line. On-chain CombatLosses is a single combined figure per battle (not split per
 // ACS participant), so each side's aggregate resource loss is taken straight from the report.
 export type MissionLossSummary = {
+  outcome: BattleReport["outcome"];
   attacker: BattleReport["attackerLosses"];
   defender: BattleReport["defenderLosses"];
 };
@@ -2215,7 +2221,7 @@ export type MissionLossSummary = {
 function lossesByMissionIdFromReports(reports: BattleReport[]): Map<string, MissionLossSummary> {
   const lookup = new Map<string, MissionLossSummary>();
   for (const report of reports) {
-    lookup.set(report.missionId, { attacker: report.attackerLosses, defender: report.defenderLosses });
+    lookup.set(report.missionId, { outcome: report.outcome, attacker: report.attackerLosses, defender: report.defenderLosses });
   }
   return lookup;
 }
