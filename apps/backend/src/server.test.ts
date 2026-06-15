@@ -1922,7 +1922,8 @@ describe("Veydrift backend", () => {
     expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
       allowed: false,
       blockedReason: "bashing_limit",
-      blockedReasonLabel: "Attack blocked: bashing limit reached for this attacker, defender, and planet in the current 24-hour window."
+      blockedReasonLabel: "Attack blocked: bashing limit reached for this attacker, defender, and planet in the current 24-hour window.",
+      defenderInactive: false
     });
   });
 
@@ -4603,7 +4604,8 @@ describe("Veydrift backend", () => {
     expect(body.rankings.total[0].attackProtection).toEqual({
       allowed: true,
       blockedReason: "none",
-      blockedReasonLabel: null
+      blockedReasonLabel: null,
+      defenderInactive: false
     });
     expect(body.currentPlayer).toMatchObject({
       wallet: owners[2],
@@ -4862,7 +4864,8 @@ describe("Veydrift backend", () => {
     expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
       allowed: false,
       blockedReason: "score_protection",
-      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection."
+      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+      defenderInactive: false
     });
   });
 
@@ -4921,7 +4924,8 @@ describe("Veydrift backend", () => {
     expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
       allowed: false,
       blockedReason: "score_protection",
-      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection."
+      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+      defenderInactive: false
     });
   });
 

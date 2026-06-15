@@ -1851,7 +1851,7 @@ type RankedHighscoreEntry = HighscoreEntry & {
   rank: number;
 };
 
-type RankedHighscoreAttackProtection = Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel">;
+type RankedHighscoreAttackProtection = Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel" | "defenderInactive">;
 
 type RankedHighscorePlanet = {
   planetId: string;
@@ -2115,7 +2115,8 @@ function rankedHighscoreIndexedProtectionLookup(
         ? {
             allowed: false,
             blockedReason: "bashing_limit",
-            blockedReasonLabel: attackBlockReasonLabel("bashing_limit")
+            blockedReasonLabel: attackBlockReasonLabel("bashing_limit"),
+            defenderInactive: false
           }
         : status);
     }
@@ -2135,7 +2136,8 @@ function indexedScoreProtectionStatus(
     return {
       allowed: true,
       blockedReason: "none",
-      blockedReasonLabel: null
+      blockedReasonLabel: null,
+      defenderInactive: false
     };
   }
 
@@ -2149,7 +2151,8 @@ function indexedScoreProtectionStatus(
     return {
       allowed: false,
       blockedReason: "same_alliance",
-      blockedReasonLabel: attackBlockReasonLabel("same_alliance")
+      blockedReasonLabel: attackBlockReasonLabel("same_alliance"),
+      defenderInactive: false
     };
   }
 
@@ -2157,14 +2160,16 @@ function indexedScoreProtectionStatus(
     return {
       allowed: true,
       blockedReason: "none",
-      blockedReasonLabel: null
+      blockedReasonLabel: null,
+      defenderInactive: false
     };
   }
 
   return {
     allowed: false,
     blockedReason: "score_protection",
-    blockedReasonLabel: attackBlockReasonLabel("score_protection")
+    blockedReasonLabel: attackBlockReasonLabel("score_protection"),
+    defenderInactive: false
   };
 }
 

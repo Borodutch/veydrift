@@ -276,6 +276,7 @@ describe("tester universe display data", () => {
       blockedReason: "same_alliance" as const,
       blockedReasonLabel: "Attack blocked: target belongs to your alliance.",
       defenderHonorStatus: "honorable" as const,
+      defenderInactive: true,
       plunderBps: 7500,
       relation: "weaker" as const,
     };
@@ -286,7 +287,7 @@ describe("tester universe display data", () => {
       "Honor target",
       "Loot: 75%",
     ]);
-    expect(formatAttackRuleLabels(sameAllianceStatus).join(" ")).not.toMatch(/\bHonorable\b|plunder/i);
+    expect(formatAttackRuleLabels(sameAllianceStatus).join(" ")).not.toMatch(/\bHonorable\b|Inactive target\b|plunder/i);
     expect(formatAttackBlockReason({
       allowed: false,
       blockedReason: "same_alliance",

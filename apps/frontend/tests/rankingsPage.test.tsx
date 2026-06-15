@@ -321,6 +321,25 @@ describe("RankingsPage", () => {
     expect(visibleText(row)).toContain("Protected");
   });
 
+  test("renders an AFK flair for inactive ranking defenders", () => {
+    const inactiveEntry = rankingEntry({
+      attackProtection: {
+        allowed: true,
+        blockedReason: "none",
+        blockedReasonLabel: null,
+        defenderInactive: true,
+      },
+    });
+    const table = RankingsTable({
+      entries: [inactiveEntry],
+      loading: false,
+    });
+    const row = rowWithWallet(table, inactiveEntry.wallet);
+
+    expect(visibleText(row)).toContain("AFK");
+    expect(visibleText(row)).not.toContain("Protected");
+  });
+
   test("opens the ranked commander inspect page from the commander label", () => {
     const selectedPlayers: string[] = [];
     const table = RankingsTable({

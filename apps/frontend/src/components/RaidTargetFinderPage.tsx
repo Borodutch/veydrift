@@ -24,6 +24,7 @@ import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton } from "./PageHeader";
 import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RaidTargetsSkeleton } from "./LoadingSkeletons";
+import { AfkFlair } from "./AfkFlair";
 
 type RaidTargetFinderPageProps = {
   // Universe-wide active fleet missions (the unfiltered `/missions?status=active` feed). Drives the
@@ -467,6 +468,7 @@ function RaidTargetRow({
               {target.name?.trim() || coordinateLabel(target.coordinates)}
             </button>
             <span className="shrink-0 font-mono text-[10px] text-slate-500">{coordinateLabel(target.coordinates)}</span>
+            {target.protection.defenderInactive ? <AfkFlair /> : null}
             {target.protection.isProtected ? (
               <span
                 className="inline-flex shrink-0 items-center gap-1 rounded border border-red-200/30 bg-red-200/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none text-red-100"

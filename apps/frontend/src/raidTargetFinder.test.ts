@@ -169,6 +169,7 @@ describe("buildRaidTargets", () => {
         entry({
           wallet: "0xopen",
           planets: [planet({ planetId: "o" })],
+          attackProtection: { allowed: true, blockedReason: "none", blockedReasonLabel: null, defenderInactive: true },
         }),
       ],
     });
@@ -179,6 +180,7 @@ describe("buildRaidTargets", () => {
     expect(ally.protection.isProtected).toBe(false);
     expect(open.protection.isProtected).toBe(false);
     expect(open.protection.isSameAlliance).toBe(false);
+    expect(open.protection.defenderInactive).toBe(true);
   });
 
   test("marks targets with the viewer's inbound fleets", () => {
@@ -285,7 +287,7 @@ describe("sortRaidTargets", () => {
       shipCount: 0,
       defensePower: 0,
       defenseCount: 0,
-      protection: { isProtected: false, isSameAlliance: false, blockedReason: "none", blockedReasonLabel: null },
+      protection: { isProtected: false, isSameAlliance: false, blockedReason: "none", blockedReasonLabel: null, defenderInactive: false },
       inbound: { count: 0, nextArrivalAtMs: null },
       ...partial,
     };

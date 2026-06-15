@@ -36,6 +36,7 @@ export type RaidTargetProtection = {
   isSameAlliance: boolean;
   blockedReason: "none" | "bashing_limit" | "score_protection" | "same_alliance";
   blockedReasonLabel: string | null;
+  defenderInactive: boolean;
 };
 
 export type RaidTargetInbound = {
@@ -130,6 +131,7 @@ function classifyProtection(entry: HighscoreEntry): RaidTargetProtection {
     isSameAlliance,
     blockedReason,
     blockedReasonLabel: protection?.blockedReasonLabel ?? null,
+    defenderInactive: protection?.defenderInactive === true,
   };
 }
 
