@@ -38,6 +38,7 @@ import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { InlineSyncIndicator } from "./VeydriftLoader";
 import { GalaxyRowsSkeleton } from "./LoadingSkeletons";
+import { AfkFlair } from "./AfkFlair";
 
 const SMALL_CARGO_SHIP_ID = 0;
 const defaultMissionShips = (): Partial<MissionShips> => ({ smallCargo: 1 });
@@ -746,6 +747,7 @@ function GalaxySlot({
                 Home
               </span>
             ) : null}
+            {attackProtection?.defenderInactive ? <AfkFlair /> : null}
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
             <span>{formatGalaxyHeatLabel(planet.temperature)}</span>
@@ -915,7 +917,6 @@ export function formatAttackRuleLabels(status: AttackProtectionStatus | undefine
   if (status.relation === "weaker") labels.push("Weaker target");
   if (status.defenderHonorStatus === "honorable") labels.push("Honor target");
   if (status.defenderHonorStatus === "bandit") labels.push("Bandit target");
-  if (status.defenderInactive) labels.push("Inactive target");
   if (status.plunderBps && status.plunderBps !== 5000) {
     labels.push(`Loot: ${Math.floor(status.plunderBps / 100)}%`);
   }

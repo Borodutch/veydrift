@@ -30,6 +30,7 @@ import {
   type RpcLog,
   type SettledPlanetEvent,
   type ShipyardState,
+  type StationedDefenderSummary,
   VeydriftGameReader
 } from "./evm";
 import { highscoreCategories, highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
@@ -432,7 +433,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             // indexer tracks the target planet's ship/defense composition (ShipCountChanged + defense
             // events), so the battle report can show real composition instead of a blanket caveat.
             // Null when the target planet is not charted in the indexed read model.
-            defenderPlanetState: defenderPlanetStateForReport(indexer, battleReport),
+            defenderPlanetState: defenderPlanetStateForReport(
+              indexer,
+              battleReport,
+              battleReport ? indexer.fleetMission(battleReport.missionId) : mission
+            ),
             source: indexedSource
           },
           { headers: indexedStateHeaders(indexedStateLabel(snapshot)) }
@@ -1616,14 +1621,20 @@ function occupiedPlanetRef(
 // genuinely cannot be derived and the frontend keeps a precise caveat instead of fabricating data.
 function defenderPlanetStateForReport(
   indexer: SettlementIndexer,
-  report: ReturnType<SettlementIndexer["battleReport"]>
-): { fleet: Array<{ id: number; count: number }>; defenses: Array<{ id: number; count: number }> } | null {
+  report: ReturnType<SettlementIndexer["battleReport"]>,
+  mission: FleetMissionSummary | null
+): {
+  fleet: Array<{ id: number; count: number }>;
+  defenses: Array<{ id: number; count: number }>;
+  stationedDefenders: StationedDefenderSummary[];
+} | null {
   if (!report) return null;
   const planet = indexer.planet(report.targetPlanetId);
   if (!planet) return null;
   return {
     fleet: indexer.shipRows(planet.planetId).map(({ id, count }) => ({ id, count })).filter((row) => row.count > 0),
-    defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })).filter((row) => row.count > 0)
+    defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })).filter((row) => row.count > 0),
+    stationedDefenders: indexer.stationedDefendersForBattle(mission, report)
   };
 }
 
@@ -1635,6 +1646,7 @@ function publicPlanetStateRef(
   buildings: Array<{ id: number; level: number }>;
   fleet: Array<{ id: number; count: number }>;
   defenses: Array<{ id: number; count: number }>;
+  stationedDefenders: StationedDefenderSummary[];
   research: Array<{ id: number; level: number }>;
   queues: {
     building: PlayerQueues["building"];
@@ -1654,6 +1666,7 @@ function publicPlanetStateRef(
     buildings: buildings.map(({ id, level }) => ({ id, level })),
     fleet: ships.map(({ id, count }) => ({ id, count })),
     defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
+    stationedDefenders: indexer.stationedDefendersForPlanet(planet.planetId),
     research: indexer.technologyRows(planet.owner).map(({ id, level }) => ({ id, level })),
     queues: {
       building: indexer.planetQueue(planet.planetId, "building"),
@@ -1851,7 +1864,7 @@ type RankedHighscoreEntry = HighscoreEntry & {
   rank: number;
 };
 
-type RankedHighscoreAttackProtection = Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel">;
+type RankedHighscoreAttackProtection = Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel" | "defenderInactive">;
 
 type RankedHighscorePlanet = {
   planetId: string;
@@ -2102,6 +2115,7 @@ function rankedHighscoreIndexedProtectionLookup(
   const attacker = entries.find((entry) => entry.wallet.toLowerCase() === normalizedCurrentWallet);
   if (!attacker) return new Map();
 
+  const rankedRows = [...rows];
   const statuses = new Map<string, RankedHighscoreAttackProtection | null>();
   // VEY-KANEO-489 follow-up: score-protection must use the contract's _totalUserScore (cached on the
   // leaderboard entry), not the resource-based display total (which made everyone read as a newbie).
@@ -2112,23 +2126,29 @@ function rankedHighscoreIndexedProtectionLookup(
   // first, matching the contract's precedence (same_alliance -> score_protection -> bashing_limit).
   const launchSecondsByTarget = indexer?.attackLaunchSecondsByTarget(normalizedCurrentWallet as `0x${string}`)
     ?? new Map<string, number[]>();
+  const playerActivity = indexer?.playerLastActiveSeconds([...new Set(rankedRows.map((row) => row.wallet))])
+    ?? new Map<string, number>();
   const nowSeconds = Math.floor(Date.now() / 1_000);
-  for (const row of rows) {
+  for (const row of rankedRows) {
+    const defenderInactive = indexedDefenderInactive(playerActivity.get(row.wallet.toLowerCase()), nowSeconds);
     const status = indexedScoreProtectionStatus(
       attackerScore,
       BigInt(row.totalUserScore),
       attackerAlliance,
       normalizedCurrentWallet,
-      row
+      row,
+      defenderInactive
     );
     for (const planet of row.planets) {
       const bashingLimited = status?.allowed
+        && !defenderInactive
         && indexedBashingLimitReached(launchSecondsByTarget.get(planet.planetId) ?? [], nowSeconds);
       statuses.set(planet.planetId, bashingLimited
         ? {
             allowed: false,
             blockedReason: "bashing_limit",
-            blockedReasonLabel: attackBlockReasonLabel("bashing_limit")
+            blockedReasonLabel: attackBlockReasonLabel("bashing_limit"),
+            defenderInactive
           }
         : status);
     }
@@ -2142,13 +2162,15 @@ function indexedScoreProtectionStatus(
   defenderScore: bigint,
   attackerAlliance: AllianceIdentity | null,
   currentWallet: string,
-  row: RankedHighscoreEntry
+  row: RankedHighscoreEntry,
+  defenderInactive: boolean
 ): RankedHighscoreAttackProtection | null {
   if (row.wallet.toLowerCase() === currentWallet) {
     return {
       allowed: true,
       blockedReason: "none",
-      blockedReasonLabel: null
+      blockedReasonLabel: null,
+      defenderInactive
     };
   }
 
@@ -2162,22 +2184,25 @@ function indexedScoreProtectionStatus(
     return {
       allowed: false,
       blockedReason: "same_alliance",
-      blockedReasonLabel: attackBlockReasonLabel("same_alliance")
+      blockedReasonLabel: attackBlockReasonLabel("same_alliance"),
+      defenderInactive
     };
   }
 
-  if (!isIndexedScoreProtected(attackerScore, defenderScore)) {
+  if (defenderInactive || !isIndexedScoreProtected(attackerScore, defenderScore)) {
     return {
       allowed: true,
       blockedReason: "none",
-      blockedReasonLabel: null
+      blockedReasonLabel: null,
+      defenderInactive
     };
   }
 
   return {
     allowed: false,
     blockedReason: "score_protection",
-    blockedReasonLabel: attackBlockReasonLabel("score_protection")
+    blockedReasonLabel: attackBlockReasonLabel("score_protection"),
+    defenderInactive
   };
 }
 
@@ -2201,16 +2226,16 @@ function indexedNewbieProtectionRatioBps(score: bigint): bigint {
 // it, without a live attackProtectionStatus read (VEY-KANEO-489).
 const BASHING_WINDOW_SECONDS = 86_400;
 const MAX_ATTACKS_PER_BASHING_WINDOW = 6;
+const PLAYER_INACTIVE_SECONDS = 7 * 24 * 60 * 60;
 
 // Mirror of VeydriftGameStorage._recordAttack + _currentAttackCount + isBashingLimitReached: replay the
 // attacker's prior Attack launches against one (defender, planet) in block order to derive the live
 // window count, then compare against the cap. The window is anchored at the first launch and re-anchors
 // whenever a launch lands >= 24h after the current anchor (matching the contract's reset), and the count
 // only stands while now is still inside that 24h window. `launchSeconds` must be ascending.
-// NOTE: the war/inactive bypass the contract applies (bashingWarException || defenderInactive) is not
-// modelled here — the indexed read model already does not track player activity or alliance-war context
-// for attack protection (defenderInactive is reported as false), so this mirrors that existing
-// limitation. VEY-KANEO-489 follow-up tracks modelling those exceptions.
+// The alliance-war bashing bypass is not modelled here because the indexed read model does not track
+// war context yet. Callers pass inactive defenders around this helper so the contract's inactivity
+// bypass still applies.
 function indexedBashingLimitReached(launchSeconds: readonly number[], nowSeconds: number): boolean {
   let windowStartedAt = 0;
   let count = 0;
@@ -2225,6 +2250,12 @@ function indexedBashingLimitReached(launchSeconds: readonly number[], nowSeconds
   const windowActive = windowStartedAt !== 0 && nowSeconds < windowStartedAt + BASHING_WINDOW_SECONDS;
   const currentCount = windowActive ? count : 0;
   return currentCount >= MAX_ATTACKS_PER_BASHING_WINDOW;
+}
+
+function indexedDefenderInactive(lastActiveAt: number | undefined, nowSeconds: number): boolean {
+  return lastActiveAt !== undefined
+    && lastActiveAt > 0
+    && nowSeconds >= lastActiveAt + PLAYER_INACTIVE_SECONDS;
 }
 
 function sortedHighscores(entries: HighscoreEntry[], category: HighscoreCategory): HighscoreEntry[] {
@@ -2474,6 +2505,10 @@ function indexedAttackProtectionResponse(
   const allianceIntel = indexer.allianceIntelForPlayers([attackerKey, defenderKey]);
   const attackerAlliance = allianceIntel.get(attackerKey) ?? null;
   const defenderAlliance = allianceIntel.get(defenderKey) ?? null;
+  const defenderInactive = indexedDefenderInactive(
+    indexer.playerLastActiveSeconds([defenderKey]).get(defenderKey),
+    Math.floor(Date.now() / 1_000)
+  );
   const sameAlliance = attackerKey !== defenderKey
     && attackerAlliance !== null
     && defenderAlliance !== null
@@ -2484,7 +2519,8 @@ function indexedAttackProtectionResponse(
   // players whose scores differed >5x — including two veterans both past the newbie-protection ceiling,
   // who the contract never score-protects (both ratios are 0). Kept raw (not gated by sameAlliance) so
   // plunderBps below still reflects the score-protection state.
-  const scoreProtected = isIndexedScoreProtected(attackerProtectionScore, defenderProtectionScore);
+  const scoreProtected = !defenderInactive
+    && isIndexedScoreProtected(attackerProtectionScore, defenderProtectionScore);
   // VEY-KANEO-489: also replay the per-(attacker, planet) bashing window the contract enforces. Self
   // attacks are rejected upstream by the contract and carry no window; a self-target read just returns
   // an empty launch history. same_alliance and score protection are checked first to match the
@@ -2492,6 +2528,7 @@ function indexedAttackProtectionResponse(
   // -> BashingLimit); skipping the launch-log replay when either short-circuits avoids needless work.
   const bashingLimited = !sameAlliance
     && !scoreProtected
+    && !defenderInactive
     && wallet.toLowerCase() !== target.owner.toLowerCase()
     && indexedBashingLimitReached(
       indexer.attackLaunchSecondsByTarget(wallet).get(targetPlanetId.toString()) ?? [],
@@ -2516,7 +2553,7 @@ function indexedAttackProtectionResponse(
     relation: defenderScore > attackerScore ? "stronger" : defenderScore < attackerScore ? "weaker" : "peer",
     defenderHonorStatus: "neutral",
     plunderBps: scoreProtected ? 0 : 5000,
-    defenderInactive: false,
+    defenderInactive,
     source: indexedSource
   };
 

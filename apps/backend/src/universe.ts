@@ -1,5 +1,6 @@
-import { listPopulatedPlanetSlots, listSlotProfiles, parsePlanetSlot } from "@veydrift/universe";
-import type { PlanetSlot, PlanetSlotProfile } from "@veydrift/universe";
+import { listPopulatedPlanetSlots } from "@veydrift/universe";
+import type { PlanetSlot } from "@veydrift/universe";
+import { encodeAbiParameters, keccak256, stringToHex } from "viem";
 
 export type Coordinates = {
   galaxy: number;
@@ -38,6 +39,7 @@ export type SystemSnapshot = {
 export const maxGalaxy = 9;
 export const maxSystem = 499;
 export const maxPosition = 15;
+const planetSeedDomain = keccak256(stringToHex("veydrift.planet.v1"));
 
 export function planetMetadata(
   chainId: number,
@@ -45,14 +47,12 @@ export function planetMetadata(
   coordinates: Coordinates
 ): PlanetMetadata {
   validateCoordinates(coordinates);
-  const seed = hashSeed(
-    `${chainId}:${settlementContractAddress.toLowerCase()}:${coordinates.galaxy}:${coordinates.system}:${coordinates.position}`
-  );
+  const seed = planetSeed(chainId, coordinates);
   const fields = 160 + Number(seed % 80n);
-  const temperature = midpointTemperatureForSlot(
-    parsePlanetSlot(coordinates.position),
-    seed >> 8n,
-    seed >> 24n
+  const temperature = slotTemperature(
+    coordinates.position,
+    (seed >> 16n) % 21n,
+    (seed >> 24n) % 21n
   );
   const multipliers = planetMultipliers(temperature, fields);
 
@@ -127,11 +127,12 @@ export function planetMultipliers(
   temperature: number,
   fields: number
 ): Pick<PlanetMetadata, "metalMultiplierBps" | "crystalMultiplierBps" | "deuteriumMultiplierBps"> {
-  const temperatureIndex = temperature + 180;
+  fields;
+  const deuteriumMultiplierBps = 12_800 - temperature * 20;
   return {
-    metalMultiplierBps: 9500 + ((temperatureIndex * 4) % 1000),
-    crystalMultiplierBps: 9600 + ((fields * 3) % 800),
-    deuteriumMultiplierBps: 10800 - temperatureIndex * 3
+    metalMultiplierBps: 10_000,
+    crystalMultiplierBps: 10_000,
+    deuteriumMultiplierBps: Math.max(0, deuteriumMultiplierBps)
   };
 }
 
@@ -145,52 +146,45 @@ export function planetArchetypeForTemperature(temperature: number): PlanetArchet
   return "scorching-molten";
 }
 
-function hashSeed(input: string): bigint {
-  let hash = 14695981039346656037n;
-  for (let index = 0; index < input.length; index += 1) {
-    hash ^= BigInt(input.charCodeAt(index));
-    hash = BigInt.asUintN(64, hash * 1099511628211n);
-  }
-  return hash;
-}
-
 function universeSeed(chainId: number, settlementContractAddress: string): string {
   return `${chainId}:${settlementContractAddress.toLowerCase()}`;
 }
 
-function midpointTemperatureForSlot(
-  position: PlanetSlot,
-  lowRoll: bigint,
-  highRoll: bigint
-): number {
-  const maxTemperatureC = centeredMaxTemperatureForSlot(
-    slotProfileForPosition(position),
-    lowRoll,
-    highRoll
+function planetSeed(chainId: number, coordinates: Coordinates): bigint {
+  const encoded = encodeAbiParameters(
+    [
+      { type: "bytes32" },
+      { type: "uint256" },
+      { type: "uint16" },
+      { type: "uint16" },
+      { type: "uint8" }
+    ],
+    [
+      planetSeedDomain,
+      BigInt(Math.trunc(chainId)),
+      coordinates.galaxy,
+      coordinates.system,
+      coordinates.position
+    ]
   );
-  return maxTemperatureC - 20;
+  return BigInt(keccak256(encoded));
 }
 
-function centeredMaxTemperatureForSlot(
-  profile: PlanetSlotProfile,
+function slotTemperature(
+  position: number,
   lowRoll: bigint,
   highRoll: bigint
 ): number {
-  if (lowRoll <= highRoll) {
-    return intInRange(profile.minMaxTemperatureC, profile.averageMaxTemperatureC, lowRoll);
-  }
-
-  return intInRange(profile.averageMaxTemperatureC, profile.maxMaxTemperatureC, highRoll);
+  const [minValue, maxValue] = slotMaxTemperatureProfile(position);
+  return intInRange(minValue, maxValue, lowRoll + highRoll);
 }
 
-function slotProfileForPosition(position: PlanetSlot): PlanetSlotProfile {
-  const profile = listSlotProfiles()[position - 1];
-
-  if (!profile) {
-    throw new RangeError("Planet slot must be an integer from 1 to 15.");
-  }
-
-  return profile;
+function slotMaxTemperatureProfile(position: number): readonly [number, number] {
+  if (position <= 3) return [40, 120];
+  if (position <= 6) return [-10, 80];
+  if (position <= 9) return [-40, 40];
+  if (position <= 12) return [-80, 10];
+  return [-120, -20];
 }
 
 function intInRange(min: number, max: number, roll: bigint): number {

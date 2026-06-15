@@ -360,6 +360,7 @@ function MissionBattleReport({
   // fall back to a precise caveat only when the target planet is not charted in the indexed state.
   const defenderFleetUnits = compositionUnits(defenderState?.fleet, shipCatalog, shipAssetByKey);
   const defenderDefenseUnits = compositionUnits(defenderState?.defenses, defenseCatalog, defenseAssetByKey);
+  const stationedDefenders = defenderState?.stationedDefenders ?? [];
 
   return (
     <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
@@ -394,10 +395,27 @@ function MissionBattleReport({
           {/* Fleet/defenses are the defender planet's indexed composition (surviving force). "None"
               when the planet had no fleet/defenses; a precise caveat only when it isn't charted. */}
           {defenderState ? (
-            defenderFleetUnits.length > 0 || defenderDefenseUnits.length > 0 ? (
+            defenderFleetUnits.length > 0 || defenderDefenseUnits.length > 0 || stationedDefenders.length > 0 ? (
               <>
                 <Row label="Fleet" value={<UnitIcons units={defenderFleetUnits} />} />
                 <Row label="Defenses" value={<UnitIcons units={defenderDefenseUnits} />} />
+                {stationedDefenders.length > 0 ? (
+                  <Row
+                    label="Stationed defenders"
+                    value={
+                      <div className="grid gap-2">
+                        {stationedDefenders.map((defender) => (
+                          <div className="grid gap-1" key={defender.missionId}>
+                            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-violet-200">
+                              {defender.defenderDisplayName ?? shortAddress(defender.defender)} until {stationedDefenderHoldLabel(defender.holdUntil, now)}
+                            </span>
+                            <UnitIcons units={shipUnits(defender.ships)} />
+                          </div>
+                        ))}
+                      </div>
+                    }
+                  />
+                ) : null}
               </>
             ) : (
               <Row label="Fleet / defenses" value="None" />
@@ -789,6 +807,11 @@ function compositionUnits(
         asset: item ? assetByKey[item.key] : undefined,
       };
     });
+}
+
+function stationedDefenderHoldLabel(holdUntil: string, now: number): string {
+  const holdUntilMs = timestampToMs(holdUntil);
+  return holdUntilMs === undefined ? formatUserTimestamp(Number(holdUntil) * 1_000) : formatDurationUntil(holdUntilMs, now);
 }
 
 const shipLabels: Record<string, string> = {

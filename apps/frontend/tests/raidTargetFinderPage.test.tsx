@@ -8,6 +8,7 @@ describe("RaidTargetFinderPage", () => {
     const controls = RaidTargetFilterControls({
       filters: DEFAULT_RAID_TARGET_FILTERS,
       onChange: () => undefined,
+      showAllianceFilter: true,
       totals: { total: 10, visible: 6, protected: 1, sameAlliance: 1 },
     });
 
@@ -79,7 +80,7 @@ function raidTarget(overrides: Partial<RaidTarget> = {}): RaidTarget {
     defensePower: 0,
     defenseCount: 0,
     defenseUnits: [],
-    protection: { isProtected: false, isSameAlliance: false, blockedReason: "none", blockedReasonLabel: null },
+    protection: { isProtected: false, isSameAlliance: false, blockedReason: "none", blockedReasonLabel: null, defenderInactive: false },
     inbound: { count: 0, nextArrivalAtMs: null },
     ...overrides,
   };

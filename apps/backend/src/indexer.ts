@@ -21,6 +21,7 @@ import {
   decodeMoonChanceReportLog,
   decodePlanetSettledLog,
   decodePlanetRenamedLog,
+  decodeFleetMissionLogs,
   decodeRandomnessFulfilledRequestId,
   decodeRiftResourceLog,
   decodeSettledPlanetLog,
@@ -239,6 +240,11 @@ type PlanetResourceRow = ResourceColumns & {
 type PlayerProfileRow = {
   display_name: string | null;
   updated_at: string | null;
+  wallet: string;
+};
+
+type PlayerActivityRow = {
+  last_active_at: string;
   wallet: string;
 };
 
@@ -487,6 +493,26 @@ export class SettlementIndexer {
   playerProfiles(wallets: Iterable<string>): Map<string, PlayerProfile> {
     const uniqueWallets = [...new Set([...wallets].map((wallet) => wallet.toLowerCase()))];
     return new Map(uniqueWallets.map((wallet) => [wallet, this.playerProfile(wallet)]));
+  }
+
+  playerLastActiveSeconds(wallets: Iterable<string>): Map<string, number> {
+    const uniqueWallets = [...new Set([...wallets].map((wallet) => wallet.toLowerCase()))];
+    const activity = new Map<string, number>();
+    for (const walletChunk of chunks(uniqueWallets, 500)) {
+      if (walletChunk.length === 0) continue;
+      const rows = this.db.query(`
+        SELECT wallet, last_active_at
+        FROM indexed_player_activity
+        WHERE wallet IN (${walletChunk.map(() => "?").join(",")})
+      `).all(...walletChunk) as PlayerActivityRow[];
+      for (const row of rows) {
+        const seconds = Number(row.last_active_at);
+        if (Number.isFinite(seconds) && seconds > 0) {
+          activity.set(row.wallet.toLowerCase(), seconds);
+        }
+      }
+    }
+    return activity;
   }
 
   allianceState(wallet: `0x${string}`): AllianceState {
@@ -802,6 +828,44 @@ export class SettlementIndexer {
     const mission = this.indexedFleetMissionSummaries()
       .find((summary) => summary.missionId === missionId);
     return mission ? this.withFleetMissionPlanetReferences(mission) : null;
+  }
+
+  stationedDefendersForPlanet(planetId: string, asOfSeconds = Math.floor(Date.now() / 1_000)): StationedDefenderSummary[] {
+    return this.indexedFleetMissionSummaries()
+      .filter((mission) => this.isActiveDefenseHoldForPlanet(mission, planetId, asOfSeconds))
+      .map((mission) => this.stationedDefenderSummary(mission, this.defenseHoldWindowEnd(mission)))
+      .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
+  }
+
+  stationedDefendersForBattle(
+    attack: FleetMissionSummary | null | undefined,
+    report: BattleReport | null | undefined
+  ): StationedDefenderSummary[] {
+    if (!attack && !report) return [];
+    const attackArrival = Number(attack?.arrivalAt);
+    if (!Number.isFinite(attackArrival)) return [];
+
+    const summaries = this.indexedFleetMissionSummaries();
+    const summariesById = new Map(summaries.map((mission) => [mission.missionId, mission]));
+    const defenders = new Map<string, StationedDefenderSummary>();
+
+    if (attack) {
+      for (const missionId of attack.counterplayDefenderMissionIds ?? []) {
+        const defender = summariesById.get(missionId);
+        if (!defender || !this.isBattleTimeCounterplay(defender, attack, attackArrival)) continue;
+        defenders.set(defender.missionId, this.stationedDefenderSummary(defender, this.counterplayHoldUntil(defender)));
+      }
+    }
+
+    const targetPlanetId = report?.targetPlanetId ?? attack?.targetPlanetId;
+    if (targetPlanetId) {
+      for (const defender of summaries) {
+        if (!this.isBattleTimeDefenseHoldForPlanet(defender, targetPlanetId, attackArrival)) continue;
+        defenders.set(defender.missionId, this.stationedDefenderSummary(defender, this.defenseHoldWindowEnd(defender)));
+      }
+    }
+
+    return [...defenders.values()].sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
   }
 
   battleReport(missionId: string): BattleReport | null {
@@ -1204,6 +1268,8 @@ export class SettlementIndexer {
       return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
     }
 
+    this.recordPlayerActivityFromLog(eventId, log);
+
     if (isSettledPlanetLog(log)) {
       this.applyEvent(decodeSettledPlanetLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
@@ -1498,6 +1564,11 @@ export class SettlementIndexer {
         wallet TEXT PRIMARY KEY,
         display_name TEXT,
         updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS indexed_player_activity (
+        wallet TEXT PRIMARY KEY,
+        last_active_at TEXT NOT NULL,
+        event_id TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS indexed_planets (
         planet_id TEXT PRIMARY KEY,
@@ -3380,6 +3451,66 @@ export class SettlementIndexer {
     this.recordLatestBlock(log.blockNumber);
   }
 
+  private recordPlayerActivityFromLog(eventId: string, log: IndexedRpcLog): void {
+    const lastActiveAt = blockTimestampSeconds(log);
+    if (!lastActiveAt) return;
+
+    const owner = this.playerActivityOwnerForLog(log);
+    if (!owner) return;
+
+    this.db.query(`
+      INSERT INTO indexed_player_activity (wallet, last_active_at, event_id)
+      VALUES (lower(?), ?, ?)
+      ON CONFLICT(wallet) DO UPDATE SET
+        last_active_at = CASE
+          WHEN CAST(excluded.last_active_at AS INTEGER) > CAST(indexed_player_activity.last_active_at AS INTEGER)
+          THEN excluded.last_active_at
+          ELSE indexed_player_activity.last_active_at
+        END,
+        event_id = CASE
+          WHEN CAST(excluded.last_active_at AS INTEGER) > CAST(indexed_player_activity.last_active_at AS INTEGER)
+          THEN excluded.event_id
+          ELSE indexed_player_activity.event_id
+        END
+    `).run(owner, lastActiveAt, eventId);
+  }
+
+  private playerActivityOwnerForLog(log: IndexedRpcLog): Address | null {
+    try {
+      if (isSettledPlanetLog(log)) return decodeSettledPlanetLog(log).owner;
+      if (isPlanetRenamedLog(log)) return decodePlanetRenamedLog(log).owner;
+      if (isRiftResourceLog(log)) return decodeRiftResourceLog(log).owner;
+
+      if (isIndexedQueueStartedLog(log)) {
+        const event = decodeIndexedQueueStartedLog(log);
+        return event.owner ?? this.ownerForPlanetActivity(event.planetId);
+      }
+
+      if (isIndexedQueueCompletedLog(log)) {
+        const event = decodeIndexedQueueCompletedLog(log);
+        return event.owner ?? this.ownerForPlanetActivity(event.planetId);
+      }
+
+      if (isPlanetSettledLog(log)) return this.ownerForPlanetActivity(decodePlanetSettledLog(log).planetId);
+      if (isShipCountChangedLog(log)) return this.ownerForPlanetActivity(decodeShipCountChangedLog(log).planetId);
+      if (isDefenseCountChangedLog(log)) return this.ownerForPlanetActivity(decodeDefenseCountChangedLog(log).planetId);
+      if (isMoonCreatedLog(log)) return decodeMoonCreatedLog(log).owner;
+
+      if (isFleetMissionLog(log)) {
+        const mission = [...decodeFleetMissionLogs([log]).values()][0];
+        return mission?.owner ?? null;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  private ownerForPlanetActivity(planetId: string | undefined): Address | null {
+    if (!planetId) return null;
+    return this.planet(planetId)?.owner ?? null;
+  }
+
   private recordRemovedLog(eventId: string, log: IndexedRpcLog): void {
     this.db.query(`
       INSERT OR IGNORE INTO indexed_event_logs (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
@@ -3617,6 +3748,68 @@ export class SettlementIndexer {
         allianceDepotLevel
       }))
       .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
+  }
+
+  private stationedDefenderSummary(defender: FleetMissionSummary, holdUntil: string): StationedDefenderSummary {
+    const targetPlanet = defender.targetPlanet ?? this.fleetMissionPlanetReference(defender.targetPlanetId);
+    return {
+      missionId: defender.missionId,
+      defender: defender.owner,
+      defenderDisplayName: this.playerProfile(defender.owner).displayName,
+      ships: defender.ships,
+      holdUntil,
+      allianceDepotLevel: targetPlanet?.allianceDepotLevel ?? 0
+    };
+  }
+
+  private isActiveDefenseHoldForPlanet(
+    mission: FleetMissionSummary,
+    planetId: string,
+    asOfSeconds: number
+  ): boolean {
+    const holdUntil = Number(this.defenseHoldWindowEnd(mission));
+    return mission.missionType === "DefenseHold"
+      && mission.status === "Outbound"
+      && mission.targetPlanetId === planetId
+      && Number(mission.arrivalAt) <= asOfSeconds
+      && Number.isFinite(holdUntil)
+      && holdUntil > asOfSeconds
+      && hasAnyShips(mission.ships);
+  }
+
+  private isBattleTimeCounterplay(
+    defender: FleetMissionSummary,
+    attack: FleetMissionSummary,
+    attackArrival: number
+  ): boolean {
+    return ["AcsDefend", "Intercept", "DefenseHold"].includes(defender.missionType)
+      && defender.targetPlanetId === attack.targetPlanetId
+      && Number(defender.arrivalAt) <= attackArrival
+      && Number(this.counterplayHoldUntil(defender)) >= attackArrival
+      && hasAnyShips(defender.ships);
+  }
+
+  private isBattleTimeDefenseHoldForPlanet(
+    defender: FleetMissionSummary,
+    planetId: string,
+    attackArrival: number
+  ): boolean {
+    return defender.missionType === "DefenseHold"
+      && defender.targetPlanetId === planetId
+      && Number(defender.arrivalAt) <= attackArrival
+      && Number(this.defenseHoldWindowEnd(defender)) >= attackArrival
+      && hasAnyShips(defender.ships);
+  }
+
+  private counterplayHoldUntil(defender: FleetMissionSummary): string {
+    return defender.defenseHoldUntil ?? defender.arrivalAt;
+  }
+
+  private defenseHoldWindowEnd(defender: FleetMissionSummary): string {
+    // New deployments emit DefenseHoldStationed with the exact hold expiry. Older live missions only
+    // have FleetMissionLaunched, where returnAt is hold expiry plus flight-home time; use it as a
+    // conservative public-intel fallback so legacy held defenders are not invisible.
+    return defender.defenseHoldUntil ?? defender.returnAt;
   }
 
   // VEY-KANEO-471: build one fully-populated synthetic incoming attack (with two stationed defenders)
@@ -4119,6 +4312,16 @@ function subtractNonNegative(left: bigint, right: bigint): bigint {
 
 function riftWithdrawalKey(event: IndexedRiftResourceEvent): string {
   return `${event.transactionHash.toLowerCase()}:${event.planetId}:${event.resourceId}:${event.amount}`;
+}
+
+function hasAnyShips(ships: Record<string, string>): boolean {
+  return Object.values(ships).some((count) => {
+    try {
+      return BigInt(count) > 0n;
+    } catch {
+      return Number(count) > 0;
+    }
+  });
 }
 
 // Parse a stored block-height string to bigint, treating null/garbage as block 0 so callers can

@@ -11,8 +11,11 @@ import {
   DEFAULT_RAID_TARGET_SORT,
   buildRaidTargets,
   filterRaidTargets,
+  hasActiveAlliance,
   incomingThreats,
+  persistRaidTargetSettings,
   raidTargetTotals,
+  readPersistedRaidTargetSettings,
   sortRaidTargets,
   type RaidTarget,
   type RaidTargetFilters,
@@ -25,6 +28,7 @@ import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton } from "./PageHeader";
 import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RaidTargetsSkeleton } from "./LoadingSkeletons";
+import { AfkFlair } from "./AfkFlair";
 
 export type RaidTargetAttackAction = {
   label: string;
@@ -37,6 +41,7 @@ type RaidTargetFinderPageProps = {
   // fleets exactly like Rankings (VEY-KANEO-448). Defaults to empty so the page renders without it.
   activeMissions?: readonly FleetMissionSummary[] | undefined;
   apiBaseUrl: string | undefined;
+  currentAllianceId?: string | null | undefined;
   currentWallet?: string | undefined;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   attackActionForTarget?: ((target: RaidTarget) => RaidTargetAttackAction | null | undefined) | undefined;
@@ -60,11 +65,10 @@ const sortColumns: Array<{ key: RaidTargetSortKey; label: string; hint: string }
   { key: "defense", label: "Defense", hint: "Stationary defense power" },
 ];
 
-const raidTargetFilterStorageKey = "veydrift.raidTargetFinder.filters.v1";
-
 export function RaidTargetFinderPage({
   activeMissions,
   apiBaseUrl,
+  currentAllianceId,
   currentWallet,
   fleetVisibility,
   attackActionForTarget,
@@ -79,8 +83,17 @@ export function RaidTargetFinderPage({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [hasLoaded, setHasLoaded] = useState(false);
-  const [filters, setFilters] = useState<RaidTargetFilters>(() => readStoredRaidTargetFilters());
+  const [filters, setFilters] = useState<RaidTargetFilters>(() => readPersistedRaidTargetSettings().filters);
   const [sort, setSort] = useState<RaidTargetSort>(DEFAULT_RAID_TARGET_SORT);
+  const showAllianceFilter = hasActiveAlliance(currentAllianceId);
+  const effectiveFilters = useMemo(
+    () => showAllianceFilter ? filters : { ...filters, hideSameAlliance: false },
+    [filters, showAllianceFilter],
+  );
+
+  useEffect(() => {
+    persistRaidTargetSettings({ filters });
+  }, [filters]);
 
   const load = () => {
     if (!apiBaseUrl) {
@@ -135,8 +148,8 @@ export function RaidTargetFinderPage({
     [allTargetSubtextByPlanetId],
   );
   const visibleTargets = useMemo(
-    () => sortRaidTargets(filterRaidTargets(allTargets, filters, { hasActiveFleetActivity }), sort),
-    [allTargets, filters, hasActiveFleetActivity, sort],
+    () => sortRaidTargets(filterRaidTargets(allTargets, effectiveFilters, { hasActiveFleetActivity }), sort),
+    [allTargets, effectiveFilters, hasActiveFleetActivity, sort],
   );
   const totals = useMemo(() => raidTargetTotals(allTargets, visibleTargets), [allTargets, visibleTargets]);
   const threats = useMemo(() => incomingThreats(fleetVisibility), [fleetVisibility]);
@@ -147,10 +160,6 @@ export function RaidTargetFinderPage({
     }
     return map;
   }, [visibleTargets, allTargetSubtextByPlanetId, now]);
-
-  useEffect(() => {
-    writeStoredRaidTargetFilters(filters);
-  }, [filters]);
 
   const toggleSort = (key: RaidTargetSortKey) => {
     setSort((current) =>
@@ -165,9 +174,7 @@ export function RaidTargetFinderPage({
     <section className="space-y-4">
       <PageHeader
         actions={<RefreshButton loading={loading} onRefresh={load} title="Refresh raid targets" />}
-        eyebrow="Offense"
-        subtitle="Scout raidable planets across the universe. Protected and allied targets are filtered out by default; sort and filter by distance, loot, combat, and defense, and watch fleets already inbound."
-        title="Raid Target Finder"
+        title="Raid Finder"
         titleSize="xl"
       />
 
@@ -185,7 +192,12 @@ export function RaidTargetFinderPage({
         </div>
       ) : null}
 
-      <RaidTargetFilterControls filters={filters} onChange={setFilters} totals={totals} />
+      <RaidTargetFilterControls
+        filters={filters}
+        onChange={setFilters}
+        showAllianceFilter={showAllianceFilter}
+        totals={totals}
+      />
 
       <div className="min-w-0 max-w-full overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
         <RaidTargetTableHeader onSort={toggleSort} sort={sort} />
@@ -219,34 +231,6 @@ export function RaidTargetFinderPage({
       </div>
     </section>
   );
-}
-
-function readStoredRaidTargetFilters(): RaidTargetFilters {
-  if (typeof window === "undefined") return DEFAULT_RAID_TARGET_FILTERS;
-  try {
-    const raw = window.localStorage.getItem(raidTargetFilterStorageKey);
-    if (!raw) return DEFAULT_RAID_TARGET_FILTERS;
-    const parsed = JSON.parse(raw) as Partial<RaidTargetFilters>;
-    return {
-      hideProtected: parsed.hideProtected ?? DEFAULT_RAID_TARGET_FILTERS.hideProtected,
-      hideSameAlliance: parsed.hideSameAlliance ?? DEFAULT_RAID_TARGET_FILTERS.hideSameAlliance,
-      hideDefended: parsed.hideDefended ?? DEFAULT_RAID_TARGET_FILTERS.hideDefended,
-      hideActiveFleet: parsed.hideActiveFleet ?? DEFAULT_RAID_TARGET_FILTERS.hideActiveFleet,
-      minLoot: typeof parsed.minLoot === "number" && Number.isFinite(parsed.minLoot) ? Math.max(0, parsed.minLoot) : DEFAULT_RAID_TARGET_FILTERS.minLoot,
-      maxDistance: typeof parsed.maxDistance === "number" && Number.isFinite(parsed.maxDistance) ? Math.max(0, parsed.maxDistance) : null,
-    };
-  } catch {
-    return DEFAULT_RAID_TARGET_FILTERS;
-  }
-}
-
-function writeStoredRaidTargetFilters(filters: RaidTargetFilters): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(raidTargetFilterStorageKey, JSON.stringify(filters));
-  } catch {
-    // Ignore storage quota/private-mode failures; filters still work in memory.
-  }
 }
 
 function IncomingThreatsBanner({
@@ -307,12 +291,19 @@ function IncomingThreatsBanner({
 export function RaidTargetFilterControls({
   filters,
   onChange,
+  showAllianceFilter,
   totals,
 }: {
   filters: RaidTargetFilters;
   onChange: (filters: RaidTargetFilters) => void;
+  showAllianceFilter: boolean;
   totals: ReturnType<typeof raidTargetTotals>;
 }) {
+  const suppressedTotals = [
+    totals.protected > 0 ? `${totals.protected} protected` : null,
+    showAllianceFilter && totals.sameAlliance > 0 ? `${totals.sameAlliance} allied` : null,
+  ].filter(Boolean);
+
   return (
     <div className="grid gap-3 rounded-md border border-white/10 bg-white/[0.02] p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -321,11 +312,13 @@ export function RaidTargetFilterControls({
           label="Hide protected"
           onToggle={() => onChange({ ...filters, hideProtected: !filters.hideProtected })}
         />
-        <FilterToggle
-          active={filters.hideSameAlliance}
-          label="Hide alliance"
-          onToggle={() => onChange({ ...filters, hideSameAlliance: !filters.hideSameAlliance })}
-        />
+        {showAllianceFilter ? (
+          <FilterToggle
+            active={filters.hideSameAlliance}
+            label="Hide alliance"
+            onToggle={() => onChange({ ...filters, hideSameAlliance: !filters.hideSameAlliance })}
+          />
+        ) : null}
         <FilterToggle
           active={filters.hideDefended}
           label="Hide defended"
@@ -340,9 +333,9 @@ export function RaidTargetFilterControls({
           <span className="font-mono text-cyan-100">{totals.visible}</span>
           <span className="text-slate-600"> / </span>
           <span className="font-mono">{totals.total}</span> targets
-          {totals.protected > 0 || totals.sameAlliance > 0 ? (
+          {suppressedTotals.length > 0 ? (
             <span className="ml-2 text-slate-500">
-              ({totals.protected} protected, {totals.sameAlliance} allied)
+              ({suppressedTotals.join(", ")})
             </span>
           ) : null}
         </span>
@@ -508,6 +501,7 @@ export function RaidTargetRow({
               {target.name?.trim() || coordinateLabel(target.coordinates)}
             </button>
             <span className="shrink-0 font-mono text-[10px] text-slate-500">{coordinateLabel(target.coordinates)}</span>
+            {target.protection.defenderInactive ? <AfkFlair /> : null}
             {target.protection.isProtected ? (
               <span
                 className="inline-flex shrink-0 items-center gap-1 rounded border border-red-200/30 bg-red-200/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none text-red-100"

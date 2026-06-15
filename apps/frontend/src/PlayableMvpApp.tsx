@@ -1222,6 +1222,7 @@ export function refreshedInfrastructureUpgradeUnavailableReasonFor({
   isWalletConnected,
   onChainResources,
   runtimeConfigStatus,
+  starterPlanet = false,
 }: {
   buildingKey: BuildingKey;
   gameContract?: string | undefined;
@@ -1230,6 +1231,7 @@ export function refreshedInfrastructureUpgradeUnavailableReasonFor({
   isWalletConnected: boolean;
   onChainResources?: PlayableState["resources"] | undefined;
   runtimeConfigStatus: RuntimeConfigState["status"];
+  starterPlanet?: boolean | undefined;
 }): string | undefined {
   const unavailableReason = refreshedInfrastructureUnavailableReasonFor({
     gameContract,
@@ -1250,7 +1252,10 @@ export function refreshedInfrastructureUpgradeUnavailableReasonFor({
       resources: refreshedResources ?? onChainResources ?? refreshedState.resources,
     },
     buildingKey,
-    { chainCost: buildingCosts(infrastructureChainState)[buildingKey] },
+    {
+      chainCost: buildingCosts(infrastructureChainState)[buildingKey],
+      starterPlanet,
+    },
   );
 
   return status.disabled ? status.reason : undefined;
@@ -3446,6 +3451,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           isWalletConnected,
           onChainResources,
           runtimeConfigStatus: runtimeConfig.status,
+          starterPlanet: selectedManagedPlanet?.isHomePlanet ?? planetId === onChainSettlement?.homePlanetId,
         });
         if (unavailableReason) {
           setBuildingAction({ status: "error", buildingKey: key, label: unavailableReason });
@@ -3498,6 +3504,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     refreshLiveInfrastructureState,
     refreshStartedBuildingState,
     runtimeConfig.status,
+    selectedManagedPlanet?.isHomePlanet,
     transactionActionGate,
   ]);
 
@@ -5026,6 +5033,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           productionRates={productionRatesForEta}
           selectedBuildingKey={selectedBuildingKey}
           spendableResources={spendableResources}
+          starterPlanet={selectedManagedPlanet?.isHomePlanet ?? activePlanetId === onChainSettlement?.homePlanetId}
           settledState={infrastructureState}
           state={state}
         />
@@ -5253,6 +5261,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           activeMissions={allActiveMissions}
           apiBaseUrl={apiBaseUrl}
           attackActionForTarget={raidFinderAttackActionState}
+          currentAllianceId={allianceState?.membership.allianceId}
           currentWallet={account}
           fleetVisibility={fleetVisibility}
           now={now}

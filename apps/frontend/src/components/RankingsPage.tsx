@@ -9,6 +9,7 @@ import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RankingsRowsSkeleton } from "./LoadingSkeletons";
+import { AfkFlair } from "./AfkFlair";
 
 type RankingsPageProps = {
   // Universe-wide active fleet missions (the unfiltered `/missions?status=active` feed). Shown as
@@ -436,6 +437,7 @@ function RankingRow({
       && entry.attackProtection.blockedReason !== "none"
       && entry.attackProtection.blockedReason !== "same_alliance"
   );
+  const isAfk = entry.attackProtection?.defenderInactive === true;
   const rowTone = isCurrentPlayer
     ? "border-cyan-300/25 bg-cyan-300/[0.09] shadow-[inset_3px_0_0_rgba(103,232,249,0.7)]"
     : isAttackProtected
@@ -494,6 +496,7 @@ function RankingRow({
                 You
               </span>
             ) : null}
+            {isAfk ? <AfkFlair /> : null}
             {isAttackProtected ? (
               <span
                 className="shrink-0 rounded border border-red-200/30 bg-red-200/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-normal text-red-100"

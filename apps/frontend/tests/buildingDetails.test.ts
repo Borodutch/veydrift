@@ -161,41 +161,109 @@ describe("building detail helpers", () => {
     });
   });
 
-  test("blocks mine upgrades until Solar Plant level 1 exists", () => {
+  test("blocks starter-planet mine upgrades behind ordered frontend-only prerequisites", () => {
     const state = {
       ...createInitialPlayableState(1_000),
       resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
     };
 
-    for (const key of ["metalMine", "crystalMine", "deuteriumSynthesizer"] as const) {
-      expect(mineSolarPlantPrerequisiteFor(state, key)).toBe("Solar Plant level 1");
-      expect(formatBuildingRequirements(key)).toContain("Solar Plant level 1");
-      expect(buildingUpgradeStatus(state, key)).toMatchObject({
-        disabled: true,
-        reason: "Requires Solar Plant level 1",
-        targetLevel: 1,
-      });
-    }
+    expect(mineSolarPlantPrerequisiteFor(state, "metalMine", { starterPlanet: true })).toBe("Solar Plant level 1");
+    expect(formatBuildingRequirements("metalMine", { starterPlanet: true })).toBe("Solar Plant level 1");
+    expect(buildingUpgradeStatus(state, "metalMine", { starterPlanet: true })).toMatchObject({
+      disabled: true,
+      reason: "Requires Solar Plant level 1",
+      targetLevel: 1,
+    });
+
+    expect(formatBuildingRequirements("crystalMine", { starterPlanet: true })).toBe("Metal Mine level 1, Solar Plant level 1");
+    expect(buildingUpgradeStatus(state, "crystalMine", { starterPlanet: true })).toMatchObject({
+      disabled: true,
+      reason: "Requires Metal Mine level 1",
+      targetLevel: 1,
+    });
+
+    expect(formatBuildingRequirements("deuteriumSynthesizer", { starterPlanet: true })).toBe(
+      "Metal Mine level 1, Crystal Mine level 1, Solar Plant level 1",
+    );
+    expect(buildingUpgradeStatus(state, "deuteriumSynthesizer", { starterPlanet: true })).toMatchObject({
+      disabled: true,
+      reason: "Requires Metal Mine level 1",
+      targetLevel: 1,
+    });
   });
 
-  test("allows mine upgrades after Solar Plant level 1 exists", () => {
+  test("allows starter-planet mine upgrades after starter prerequisites exist", () => {
     const state = {
       ...createInitialPlayableState(1_000),
       buildings: {
         ...createInitialPlayableState(1_000).buildings,
+        metalMine: 1,
+        crystalMine: 1,
         solarPlant: 1,
       },
       resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
     };
 
     for (const key of ["metalMine", "crystalMine", "deuteriumSynthesizer"] as const) {
+      expect(mineSolarPlantPrerequisiteFor(state, key, { starterPlanet: true })).toBeUndefined();
+      expect(buildingUpgradeStatus(state, key, { starterPlanet: true })).toMatchObject({
+        disabled: false,
+        reason: `Ready for Level ${state.buildings[key] + 1}`,
+        targetLevel: state.buildings[key] + 1,
+      });
+    }
+  });
+
+  test("does not apply starter mine prerequisites on non-starter planets", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    for (const key of ["metalMine", "crystalMine", "deuteriumSynthesizer"] as const) {
       expect(mineSolarPlantPrerequisiteFor(state, key)).toBeUndefined();
+      expect(formatBuildingRequirements(key)).toBe("None");
       expect(buildingUpgradeStatus(state, key)).toMatchObject({
         disabled: false,
         reason: "Ready for Level 1",
         targetLevel: 1,
       });
     }
+  });
+
+  test("reports the next missing Deuterium Synthesizer starter prerequisite after Metal Mine exists", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        metalMine: 1,
+      },
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    expect(buildingUpgradeStatus(state, "deuteriumSynthesizer", { starterPlanet: true })).toMatchObject({
+      disabled: true,
+      reason: "Requires Crystal Mine level 1",
+      targetLevel: 1,
+    });
+  });
+
+  test("exposes starter mine prerequisites as visible requirement flairs only on starter planets", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        metalMine: 1,
+      },
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    expect(getBuildingRequirementStates(state, "deuteriumSynthesizer", { starterPlanet: true })).toEqual([
+      { label: "Metal Mine level 1", met: true, target: { kind: "building", key: "metalMine" } },
+      { label: "Crystal Mine level 1", met: false, target: { kind: "building", key: "crystalMine" } },
+      { label: "Solar Plant level 1", met: false, target: { kind: "building", key: "solarPlant" } },
+    ]);
+    expect(getBuildingRequirementStates(state, "deuteriumSynthesizer")).toEqual([]);
   });
 
   test("keeps Solar Plant buildable at level 0", () => {
