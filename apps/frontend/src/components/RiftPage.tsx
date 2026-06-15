@@ -4,7 +4,6 @@ import { formatUserTimestamp } from "../timestampFormat";
 import type { ChainRiftState, PendingWithdrawal, RiftResourceKey, RiftResourceState } from "../walletFlow";
 import { PageHeader, RefreshButton } from "./PageHeader";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
-import { InlineSyncIndicator } from "./VeydriftLoader";
 import { RiftSkeleton } from "./LoadingSkeletons";
 
 type RiftActionState =
@@ -74,8 +73,6 @@ export function RiftPage({
           {actionState.label}
         </Notice>
       )}
-
-      {loading && riftState ? <InlineSyncIndicator label="Refreshing Rift" /> : null}
 
       {initialLoading ? (
         <RiftSkeleton />
