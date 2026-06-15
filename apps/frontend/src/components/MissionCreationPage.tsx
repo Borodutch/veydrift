@@ -227,6 +227,10 @@ export function MissionCreationPage({
   const stationedDefenderRows = stationedDefenderAttackWarningRows(stationedDefenders);
   const targetFleetUnits = useMemo(() => compositionUnits(target?.publicState?.fleet, shipCatalog, shipAssetByKey), [target?.publicState?.fleet]);
   const targetDefenseUnits = useMemo(() => compositionUnits(target?.publicState?.defenses, defenseCatalog, defenseAssetByKey), [target?.publicState?.defenses]);
+  const stationedDefenderUnits = useMemo(
+    () => stationedDefenderCompositionUnits(stationedDefenders),
+    [stationedDefenders],
+  );
   const battleForecast = useMemo(
     () => publicTargetBattleForecast(ships, target),
     [ships, target],
@@ -356,9 +360,12 @@ export function MissionCreationPage({
               <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Destination intel</h3>
               <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Public state</span>
             </div>
-            <div className="grid gap-3 lg:grid-cols-2">
+            <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
               <UnitSection emptyLabel="No public fleet is stationed here." title="Destination Fleet" units={targetFleetUnits} />
               <UnitSection emptyLabel="No public defenses are deployed here." title="Defenses" units={targetDefenseUnits} />
+              {stationedDefenderUnits.length > 0 ? (
+                <UnitSection emptyLabel="No public held defenders are stationed here." title="Stationed Defenders" units={stationedDefenderUnits} />
+              ) : null}
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <ResourceSummary title="Resources now" resources={resourceIntel.current} />
@@ -861,8 +868,10 @@ export function publicTargetBattleForecast(ships: MissionShips, target: Planet |
     };
   }
 
+  const stationedPower = stationedDefendersCombatPower(target.publicState.stationedDefenders);
   const defenderPower = compositionCombatPower(target.publicState.fleet, "ship")
-    + compositionCombatPower(target.publicState.defenses, "defense");
+    + compositionCombatPower(target.publicState.defenses, "defense")
+    + stationedPower;
   if (defenderPower <= 0) {
     return {
       kind: "win",
@@ -876,7 +885,9 @@ export function publicTargetBattleForecast(ships: MissionShips, target: Planet |
     return {
       kind: "win",
       label: "Probable win",
-      detail: "Your selected fleet materially exceeds visible public defender power. Combat randomness and unindexed changes can still alter the result.",
+      detail: stationedPower > 0
+        ? "Your selected fleet materially exceeds visible public defender power, including stationed defenders. Combat randomness and unindexed changes can still alter the result."
+        : "Your selected fleet materially exceeds visible public defender power. Combat randomness and unindexed changes can still alter the result.",
       attackerPower,
       defenderPower,
     };
@@ -885,7 +896,9 @@ export function publicTargetBattleForecast(ships: MissionShips, target: Planet |
     return {
       kind: "defeat",
       label: "Probable defeat",
-      detail: "Visible public defender power materially exceeds your selected fleet. Add ships or reconsider the target.",
+      detail: stationedPower > 0
+        ? "Visible public defender power, including stationed defenders, materially exceeds your selected fleet. Add ships or reconsider the target."
+        : "Visible public defender power materially exceeds your selected fleet. Add ships or reconsider the target.",
       attackerPower,
       defenderPower,
     };
@@ -893,7 +906,9 @@ export function publicTargetBattleForecast(ships: MissionShips, target: Planet |
   return {
     kind: "draw",
     label: "Probable draw",
-    detail: "Public attacker and defender power are close enough that the battle outcome is uncertain.",
+    detail: stationedPower > 0
+      ? "Public attacker and defender power, including stationed defenders, are close enough that the battle outcome is uncertain."
+      : "Public attacker and defender power are close enough that the battle outcome is uncertain.",
     attackerPower,
     defenderPower,
   };
@@ -1049,6 +1064,27 @@ function compositionUnits(
     });
 }
 
+export function stationedDefenderCompositionUnits(
+  defenders: PublicStationedDefender[] | null | undefined,
+): UnitItem[] {
+  const counts = new Map<string, number>();
+  for (const defender of defenders ?? []) {
+    for (const [key, rawCount] of Object.entries(defender.ships)) {
+      const count = safeResourceNumber(rawCount);
+      if (count <= 0) continue;
+      counts.set(key, (counts.get(key) ?? 0) + count);
+    }
+  }
+  return shipCatalog
+    .map((ship) => ({
+      key: ship.key,
+      label: ship.label,
+      count: counts.get(ship.key) ?? 0,
+      asset: shipAssetByKey[ship.key],
+    }))
+    .filter((unit) => unit.count > 0);
+}
+
 function publicResourceSnapshot(target: Planet | undefined): MissionResourceSnapshot | null {
   const publicResources = target?.publicState?.resources;
   if (publicResources) {
@@ -1148,6 +1184,17 @@ function compositionCombatPower(
     }
     const defense = defenseCatalog.find((entry) => entry.id === row.id);
     return total + count * (defense ? combatStatsPower(defenseCombatStats(defense).rows) : 0);
+  }, 0);
+}
+
+function stationedDefendersCombatPower(
+  defenders: PublicStationedDefender[] | null | undefined,
+): number {
+  return (defenders ?? []).reduce((total, defender) => {
+    return total + shipCatalog.reduce((shipTotal, ship) => {
+      const count = safeResourceNumber(defender.ships[ship.key]);
+      return shipTotal + count * combatStatsPower(shipCombatStats(ship).rows);
+    }, 0);
   }, 0);
 }
 

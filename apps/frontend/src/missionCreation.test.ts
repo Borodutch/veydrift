@@ -9,6 +9,7 @@ import {
   publicTargetBattleForecast,
   rebalanceLootRatio,
   ShipQuantityRow,
+  stationedDefenderCompositionUnits,
   TargetIntelCard,
   targetResourceIntel,
 } from "./components/MissionCreationPage";
@@ -224,6 +225,38 @@ describe("mission creation", () => {
         queues: null,
       },
     }))).toMatchObject({ kind: "defeat", label: "Probable defeat" });
+  });
+
+  test("includes public stationed defenders in attack intel and battle forecast", () => {
+    const target = targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleet: [],
+        defenses: [],
+        stationedDefenders: [{
+          missionId: "held-1",
+          defender: "0xdefender",
+          defenderDisplayName: "Defender",
+          ships: { lightFighter: "40", cruiser: "2" },
+          holdUntil: "1700003600",
+          allianceDepotLevel: 1,
+        }],
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    });
+    const selectedShips = { ...attackAction.ships, lightFighter: 1 };
+    const units = stationedDefenderCompositionUnits(target.publicState?.stationedDefenders);
+
+    expect(publicTargetBattleForecast(selectedShips, target)).toMatchObject({
+      kind: "defeat",
+      label: "Probable defeat",
+    });
+    expect(units).toEqual([
+      expect.objectContaining({ key: "lightFighter", label: "Light Fighter", count: 40 }),
+      expect.objectContaining({ key: "cruiser", label: "Cruiser", count: 2 }),
+    ]);
   });
 
   test("requires an origin and selected ships for fleet missions", () => {
