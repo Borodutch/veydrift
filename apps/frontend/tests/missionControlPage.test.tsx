@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionControlPage, StationedDefenseSection, formatMissionTime, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseLoot } from "../src/components/MissionControlPage";
+import { MissionControlPage, StationedDefenseSection, formatMissionTime, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseLoot, returnPhaseLosses } from "../src/components/MissionControlPage";
 import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
@@ -744,6 +744,75 @@ describe("MissionControlPage", () => {
     expect(returnPhaseLoot(mission({ missionId: "55", status: "Returned" }), lootByMissionId)).toBe(loot);
     // No matching report -> no loot line at all (e.g. a returning transport).
     expect(returnPhaseLoot(mission({ missionId: "999", status: "Returned" }), lootByMissionId)).toBeUndefined();
+  });
+
+  // VEY-KANEO-495: a resolved attack must show what it cost on its own card. Before this the card
+  // showed the committed fleet + loot only, so a failed attack read as if the fleet came home intact.
+  test("shows attacker and defender fleet losses on a resolved attack's mission card", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [mission({
+          missionId: "55",
+          missionType: "Attack",
+          status: "Returning",
+          cargo: { metal: "10", crystal: "0", deuterium: "0" },
+        })],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [battleReport("55")],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    // attackerLosses / defenderLosses from the battle report render as one "Losses" line.
+    expect(text).toContain("Losses 100 M / 50 C / 0 D / 900 M / 250 C / 0 D");
+  });
+
+  test("surfaces a failed attack's fleet losses on its mission card", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        // A defender-win battle where the attacker took heavy losses and grabbed no loot. The card
+        // must surface those losses rather than only the committed fleet it launched with.
+        returning: [mission({ missionId: "60", missionType: "Attack", status: "Returning" })],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [{
+          ...battleReport("60"),
+          outcome: "DefenderWin",
+          loot: { metal: "0", crystal: "0", deuterium: "0" },
+          attackerLosses: { metal: "5000", crystal: "3000", deuterium: "0" },
+          defenderLosses: { metal: "200", crystal: "100", deuterium: "0" },
+        }],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Losses 5,000 M / 3,000 C / 0 D / 200 M / 100 C / 0 D");
+  });
+
+  test("withholds fleet losses from a mission card until the fleet leaves its outbound leg", () => {
+    const losses = { attacker: { metal: "100", crystal: "50", deuterium: "0" }, defender: { metal: "900", crystal: "250", deuterium: "0" } };
+    const lossesByMissionId = new Map([["55", losses]]);
+
+    // An en-route outbound fleet has fought nothing yet — no losses line even if a report id collides.
+    expect(returnPhaseLosses(mission({ missionId: "55", status: "Outbound" }), lossesByMissionId)).toBeUndefined();
+    // Once the fleet is returning/returned, the battle's losses are surfaced for the card's Losses line.
+    expect(returnPhaseLosses(mission({ missionId: "55", status: "Returning" }), lossesByMissionId)).toBe(losses);
+    expect(returnPhaseLosses(mission({ missionId: "55", status: "Returned" }), lossesByMissionId)).toBe(losses);
+    // No matching report -> no losses line at all (e.g. a returning transport).
+    expect(returnPhaseLosses(mission({ missionId: "999", status: "Returned" }), lossesByMissionId)).toBeUndefined();
   });
 
   test("surfaces joinable attacks under the Alliance tab (no stat-card row)", () => {
