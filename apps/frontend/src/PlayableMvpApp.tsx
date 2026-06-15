@@ -150,9 +150,6 @@ import {
   sendDepositResourceTransaction,
   sendRenamePlanetTransaction,
   sendRequestResourceWithdrawalTransaction,
-  sendFinishBuildingUpgradeTransaction,
-  sendFinishDefenseProductionTransaction,
-  sendFinishShipProductionTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartMoonBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
@@ -167,7 +164,6 @@ import {
   sendApproveAllianceJoinRequestTransaction,
   sendCancelAllianceJoinRequestTransaction,
   sendDismissAllianceJoinRequestTransaction,
-  sendFinishResearchTransaction,
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
@@ -229,43 +225,6 @@ export function walletSpendableResourcesFor({
   onChainResources: PlayableState["resources"] | undefined;
 }): PlayableState["resources"] | undefined {
   return isWalletConnected ? onChainResources : undefined;
-}
-
-export function isProductionQueueReadyToReconcile(
-  queue: QueueStateResponse | null | undefined,
-  now = Date.now(),
-): boolean {
-  if (!queue?.active) return false;
-  if (queue.asOfNow) return queue.asOfNow.complete;
-  const readyAt = timestampToMs(queue.readyAt);
-  return readyAt !== undefined && readyAt <= now;
-}
-
-export function readyProductionQueueReconcileCount(
-  queue: QueueStateResponse | null | undefined,
-  now = Date.now(),
-): number {
-  if (!isProductionQueueReadyToReconcile(queue, now)) return 0;
-  let count = 1;
-  for (const backlog of queue?.backlog ?? []) {
-    if (!isProductionQueueReadyToReconcile(backlog, now)) break;
-    count += 1;
-  }
-  return count;
-}
-
-export function productionStartBlockedReasonFor({
-  queue,
-  queueLabel,
-  now = Date.now(),
-}: {
-  queue: QueueStateResponse | null | undefined;
-  queueLabel: string;
-  now?: number | undefined;
-}): string | undefined {
-  if (!queue?.active) return undefined;
-  if (readyProductionQueueReconcileCount(queue, now) > 0) return undefined;
-  return `${queueLabel} is still in progress. Wait for it to finish before starting a new queue.`;
 }
 
 // VEY-KANEO-453: the mission fuel/cargo gates must read the same canonical spendable
@@ -942,13 +901,11 @@ export function researchStateWithPreservedActiveQueue({
 export function researchStartUnavailableReasonFor({
   canTransact,
   knownResearchQueue,
-  now = Date.now(),
   researchState,
   walletResearchQueue,
 }: {
   canTransact: boolean;
   knownResearchQueue?: ChainResearchState["queue"] | PlayerQueuesResponse["research"] | undefined;
-  now?: number | undefined;
   researchState: ChainResearchState | null;
   walletResearchQueue?: PlayerQueuesResponse["research"] | undefined;
 }): string | undefined {
@@ -968,10 +925,11 @@ export function researchStartUnavailableReasonFor({
     return "No VeydriftGame home planet is available for research.";
   }
 
-  const activeQueue = activeResearchQueue(researchState.queue)
+  if (
+    activeResearchQueue(researchState.queue)
     || activeResearchQueue(walletResearchQueue)
-    || activeResearchQueue(knownResearchQueue);
-  if (activeQueue && !isProductionQueueReadyToReconcile(activeQueue, now)) {
+    || activeResearchQueue(knownResearchQueue)
+  ) {
     return researchStartActiveQueueLabel;
   }
 
@@ -986,7 +944,6 @@ export async function researchStartUnavailableReasonAfterLiveRevalidation({
   knownResearchQueue,
   loadResearchState = fetchResearchState,
   loadWalletQueues = fetchWalletQueues,
-  now = Date.now(),
 }: {
   account: string | undefined;
   activePlanetId: string | undefined;
@@ -995,7 +952,6 @@ export async function researchStartUnavailableReasonAfterLiveRevalidation({
   knownResearchQueue?: ChainResearchState["queue"] | PlayerQueuesResponse["research"] | undefined;
   loadResearchState?: typeof fetchResearchState;
   loadWalletQueues?: typeof fetchWalletQueues;
-  now?: number | undefined;
 }): Promise<{
   researchState: ChainResearchState | null;
   queues: PlayerQueuesResponse | null;
@@ -1008,7 +964,6 @@ export async function researchStartUnavailableReasonAfterLiveRevalidation({
       unavailableReason: researchStartUnavailableReasonFor({
         canTransact: true,
         knownResearchQueue,
-        now,
         researchState: fallback,
       }),
     };
@@ -1025,7 +980,6 @@ export async function researchStartUnavailableReasonAfterLiveRevalidation({
     unavailableReason: researchStartUnavailableReasonFor({
       canTransact: true,
       knownResearchQueue,
-      now,
       researchState,
       walletResearchQueue: queues.research,
     }),
@@ -3488,40 +3442,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       setBuildingAction({ status: "pending", buildingKey: key, label: "Refreshing infrastructure state" });
 
       try {
-        let liveInfrastructure = await refreshLiveInfrastructureState();
-        const activeQueue = liveInfrastructure?.queue?.active ? liveInfrastructure.queue : activeBuildingQueue;
-        const blockedReason = productionStartBlockedReasonFor({
-          now: Date.now(),
-          queue: activeQueue,
-          queueLabel: "Building construction",
-        });
-        if (blockedReason) {
-          setBuildingAction({ status: "error", buildingKey: key, label: blockedReason });
-          return;
-        }
-
-        if (activeQueue?.active && readyProductionQueueReconcileCount(activeQueue, Date.now()) > 0) {
-          setBuildingAction({
-            status: "pending",
-            buildingKey: key,
-            label: "Completing ready building construction before starting the next upgrade.",
-          });
-          const finishLabel = "Building completion";
-          const finishTxHash = await sendFinishBuildingUpgradeTransaction(provider, account, gameContract, planetId);
-          setBuildingAction({
-            status: "pending",
-            buildingKey: key,
-            label: transactionConfirmingLabel(finishLabel, finishTxHash),
-          });
-          await confirmSubmittedTransaction(finishTxHash);
-          setBuildingAction({ status: "pending", buildingKey: key, label: transactionSyncingLabel(finishLabel) });
-          await refreshFinishedBuildingState({
-            itemId: activeQueue.itemId,
-            targetLevel: activeQueue.targetLevel,
-          });
-          liveInfrastructure = await refreshLiveInfrastructureState();
-        }
-
+        const liveInfrastructure = await refreshLiveInfrastructureState();
         const unavailableReason = refreshedInfrastructureUpgradeUnavailableReasonFor({
           buildingKey: key,
           gameContract,
@@ -3573,7 +3494,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     account,
     activePlanetId,
     apiBaseUrl,
-    activeBuildingQueue,
     confirmSubmittedTransaction,
     gameContract,
     infrastructureUnavailableReason,
@@ -3581,7 +3501,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     onChainResources,
     onChainSettlement?.homePlanetId,
     provider,
-    refreshFinishedBuildingState,
     refreshLiveInfrastructureState,
     refreshStartedBuildingState,
     runtimeConfig.status,
@@ -3812,43 +3731,20 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    const blockedReason = productionStartBlockedReasonFor({
-      queue: activeShipyardProductionQueue,
-      queueLabel: "Ship production",
-    });
-    if (blockedReason) {
-      setShipyardAction({ status: "error", label: blockedReason });
-      return;
-    }
+    const currentQueuedQuantity =
+      activeShipyardProductionQueue?.itemId === shipId
+        ? activeShipyardProductionQueue.quantity ?? 0
+        : 0;
+    const expectedQuantity = currentQueuedQuantity + quantity;
 
-    const readyQueueFinishCount = readyProductionQueueReconcileCount(activeShipyardProductionQueue);
-    const expectedQuantity = quantity;
-
-    void runShipyardTransaction("Ship production", `shipyard:start:${shipId}`, async () => {
-      for (let index = 0; index < readyQueueFinishCount; index += 1) {
-        const finishLabel = readyQueueFinishCount === 1
-          ? "Ready ship production completion"
-          : `Ready ship production completion ${index + 1}/${readyQueueFinishCount}`;
-        setShipyardAction({
-          status: "pending",
-          label: `${finishLabel}: confirm the game-state update in your wallet before starting the next production.`,
-        });
-        const finishTxHash = await sendFinishShipProductionTransaction(provider, account, gameContract, planetId);
-        setShipyardAction({ status: "pending", label: transactionConfirmingLabel(finishLabel, finishTxHash) });
-        await confirmSubmittedTransaction(finishTxHash);
-        setShipyardAction({ status: "pending", label: transactionSyncingLabel(finishLabel) });
-      }
-
-      setShipyardAction({ status: "pending", label: transactionAwaitingWalletLabel("Ship production") });
-      return sendStartShipProductionTransaction(
-        provider,
-        account,
-        gameContract,
-        planetId,
-        shipId,
-        quantity,
-      );
-    }, () => refreshStartedShipProductionState({
+    void runShipyardTransaction("Ship production", `shipyard:start:${shipId}`, () => sendStartShipProductionTransaction(
+      provider,
+      account,
+      gameContract,
+      planetId,
+      shipId,
+      quantity,
+    ), () => refreshStartedShipProductionState({
       itemId: shipId,
       planetId,
       quantity: expectedQuantity,
@@ -3856,7 +3752,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [
     account,
     activeShipyardProductionQueue,
-    confirmSubmittedTransaction,
     gameContract,
     provider,
     refreshStartedShipProductionState,
@@ -3872,43 +3767,20 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     const planetId = defenseState.homePlanetId;
-    const blockedReason = productionStartBlockedReasonFor({
-      queue: activeDefenseProductionQueue,
-      queueLabel: "Defense production",
-    });
-    if (blockedReason) {
-      setDefenseAction({ status: "error", label: blockedReason });
-      return;
-    }
+    const currentQueuedQuantity =
+      activeDefenseProductionQueue?.itemId === defenseId
+        ? activeDefenseProductionQueue.quantity ?? 0
+        : 0;
+    const expectedQuantity = currentQueuedQuantity + quantity;
 
-    const readyQueueFinishCount = readyProductionQueueReconcileCount(activeDefenseProductionQueue);
-    const expectedQuantity = quantity;
-
-    void runDefenseTransaction("Defense production", `defense:start:${defenseId}`, async () => {
-      for (let index = 0; index < readyQueueFinishCount; index += 1) {
-        const finishLabel = readyQueueFinishCount === 1
-          ? "Ready defense production completion"
-          : `Ready defense production completion ${index + 1}/${readyQueueFinishCount}`;
-        setDefenseAction({
-          status: "pending",
-          label: `${finishLabel}: confirm the game-state update in your wallet before starting the next production.`,
-        });
-        const finishTxHash = await sendFinishDefenseProductionTransaction(provider, account, gameContract, planetId);
-        setDefenseAction({ status: "pending", label: transactionConfirmingLabel(finishLabel, finishTxHash) });
-        await confirmSubmittedTransaction(finishTxHash);
-        setDefenseAction({ status: "pending", label: transactionSyncingLabel(finishLabel) });
-      }
-
-      setDefenseAction({ status: "pending", label: transactionAwaitingWalletLabel("Defense production") });
-      return sendStartDefenseProductionTransaction(
-        provider,
-        account,
-        gameContract,
-        planetId,
-        defenseId,
-        quantity,
-      );
-    }, () => refreshStartedDefenseProductionState({
+    void runDefenseTransaction("Defense production", `defense:start:${defenseId}`, () => sendStartDefenseProductionTransaction(
+      provider,
+      account,
+      gameContract,
+      planetId,
+      defenseId,
+      quantity,
+    ), () => refreshStartedDefenseProductionState({
       itemId: defenseId,
       planetId,
       quantity: expectedQuantity,
@@ -3916,7 +3788,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [
     account,
     activeDefenseProductionQueue,
-    confirmSubmittedTransaction,
     defenseState?.homePlanetId,
     gameContract,
     provider,
@@ -4251,54 +4122,17 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           return;
         }
 
-        const queueToReconcile = activeResearchQueue(stateForTransaction.queue)
-          ?? activeResearchQueue(queues?.research)
-          ?? activeResearchQueue(knownResearchQueue);
-        const readyResearchFinishCount = readyProductionQueueReconcileCount(queueToReconcile);
-        const completedReadyLevel =
-          readyResearchFinishCount > 0
-          && queueToReconcile?.itemId === technologyId
-          && queueToReconcile.targetLevel !== undefined
-            ? queueToReconcile.targetLevel
-            : 0;
-        const currentLevel = Math.max(
-          completedReadyLevel,
-          stateForTransaction.technologies.find((technology) => technology.id === technologyId)?.level
+        const currentLevel = stateForTransaction.technologies.find((technology) => technology.id === technologyId)?.level
           ?? stateForTransaction.technologyLevels[technologyId.toString()]
-          ?? 0,
-        );
+          ?? 0;
 
-        void runResearchTransaction(researchStartTransactionLabel(technologyId, key, {
-          ...stateForTransaction,
-          technologyLevels: {
-            ...stateForTransaction.technologyLevels,
-            [technologyId.toString()]: currentLevel,
-          },
-          technologies: stateForTransaction.technologies.map((technology) =>
-            technology.id === technologyId ? { ...technology, level: currentLevel } : technology
-          ),
-        }), async () => {
-          for (let index = 0; index < readyResearchFinishCount; index += 1) {
-            const finishLabel = "Ready research completion";
-            setResearchAction({
-              status: "pending",
-              label: `${finishLabel}: confirm the game-state update in your wallet before starting the next research.`,
-            });
-            const finishTxHash = await sendFinishResearchTransaction(provider, account, gameContract);
-            setResearchAction({ status: "pending", label: transactionConfirmingLabel(finishLabel, finishTxHash) });
-            await confirmSubmittedTransaction(finishTxHash);
-            setResearchAction({ status: "pending", label: transactionSyncingLabel(finishLabel) });
-          }
-
-          setResearchAction({ status: "pending", label: transactionAwaitingWalletLabel("Research") });
-          return sendStartResearchTransaction(
-            provider,
-            account,
-            gameContract,
-            homePlanetId,
-            technologyId,
-          );
-        }, () => refreshStartedResearchState({
+        void runResearchTransaction(researchStartTransactionLabel(technologyId, key, stateForTransaction), () => sendStartResearchTransaction(
+          provider,
+          account,
+          gameContract,
+          homePlanetId,
+          technologyId,
+        ), () => refreshStartedResearchState({
           itemId: technologyId,
           targetLevel: currentLevel + 1,
         }));
@@ -4314,7 +4148,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     account,
     activePlanetId,
     apiBaseUrl,
-    confirmSubmittedTransaction,
     gameContract,
     effectiveResearchState,
     onChainQueues?.research,

@@ -1857,19 +1857,6 @@ export async function sendStartShipProductionTransaction(
   });
 }
 
-export async function sendFinishShipProductionTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string
-): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.finishShipProduction, [planetId])
-  });
-}
-
 export async function sendApproveResourceTokenTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -1939,19 +1926,6 @@ export async function sendStartDefenseProductionTransaction(
     from: account,
     to: contractAddress,
     data: encodeGameCall(GAME_SELECTORS.startDefenseProduction, [planetId, defenseId, quantity])
-  });
-}
-
-export async function sendFinishDefenseProductionTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string
-): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.finishDefenseProduction, [planetId])
   });
 }
 
@@ -2144,19 +2118,6 @@ export async function sendStartBuildingUpgradeTransaction(
   });
 }
 
-export async function sendFinishBuildingUpgradeTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string
-): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.finishBuildingUpgrade, [planetId])
-  });
-}
-
 export async function sendRenamePlanetTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -2195,18 +2156,6 @@ export async function sendStartResearchTransaction(
     from: account,
     to: contractAddress,
     data: encodeGameCall(GAME_SELECTORS.startResearch, [planetId, technologyId])
-  });
-}
-
-export async function sendFinishResearchTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string
-): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: GAME_SELECTORS.finishResearch
   });
 }
 
