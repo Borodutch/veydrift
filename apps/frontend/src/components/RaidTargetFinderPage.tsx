@@ -8,7 +8,6 @@ import { fetchHighscores, shortAddress, type FleetMissionSummary, type Highscore
 import type { FleetMissionVisibilityResponse } from "../walletFlow";
 import {
   DEFAULT_RAID_TARGET_FILTERS,
-  DEFAULT_RAID_TARGET_SORT,
   buildRaidTargets,
   filterRaidTargets,
   hasActiveAlliance,
@@ -83,8 +82,9 @@ export function RaidTargetFinderPage({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [hasLoaded, setHasLoaded] = useState(false);
-  const [filters, setFilters] = useState<RaidTargetFilters>(() => readPersistedRaidTargetSettings().filters);
-  const [sort, setSort] = useState<RaidTargetSort>(DEFAULT_RAID_TARGET_SORT);
+  const [persistedSettings] = useState(() => readPersistedRaidTargetSettings());
+  const [filters, setFilters] = useState<RaidTargetFilters>(() => persistedSettings.filters);
+  const [sort, setSort] = useState<RaidTargetSort>(() => persistedSettings.sort);
   const showAllianceFilter = hasActiveAlliance(currentAllianceId);
   const effectiveFilters = useMemo(
     () => showAllianceFilter ? filters : { ...filters, hideSameAlliance: false },
@@ -92,8 +92,8 @@ export function RaidTargetFinderPage({
   );
 
   useEffect(() => {
-    persistRaidTargetSettings({ filters });
-  }, [filters]);
+    persistRaidTargetSettings({ filters, sort });
+  }, [filters, sort]);
 
   const load = () => {
     if (!apiBaseUrl) {
