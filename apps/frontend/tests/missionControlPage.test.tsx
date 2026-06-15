@@ -602,6 +602,28 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Battle report");
   });
 
+  // VEY-KANEO-495: the past/completed mission card (PastMissionSummaryRow) renders losses through a
+  // different component path than the active card, so assert the Losses line surfaces there too once a
+  // completed mission collapses with its battle report into one archive row.
+  test("shows fleet losses on a completed mission's past archive card", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [mission({ missionId: "77", missionType: "Attack", status: "Returned" })],
+        battleReports: [battleReport("77")],
+      },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Past missions");
+    expect(text).toContain("Losses 100 M / 50 C / 0 D / 900 M / 250 C / 0 D");
+  });
+
   test("renders a standalone battle report row when no completed mission matches", () => {
     const page = missionControlPage({
       fleetVisibility: {
