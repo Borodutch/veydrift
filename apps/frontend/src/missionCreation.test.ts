@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { missionDraftBlocker, missionTimingSummary } from "./components/MissionCreationPage";
+import { missionDraftBlocker, missionShipOptions, missionTimingSummary } from "./components/MissionCreationPage";
 import type { GalaxyAction } from "./galaxyActions";
 
 const attackAction: Extract<GalaxyAction, { enabled: true }> = {
@@ -60,6 +60,11 @@ const defenseHoldAction: Extract<GalaxyAction, { enabled: true }> = {
 };
 
 describe("mission creation", () => {
+  test("omits expedition-only Pathfinder from the mission ship picker (VEY-KANEO-493)", () => {
+    expect(missionShipOptions.some((option) => option.key === "pathfinder")).toBe(false);
+    expect(missionShipOptions.some((option) => /pathfinder/i.test(option.label))).toBe(false);
+  });
+
   test("requires an origin and selected ships for fleet missions", () => {
     expect(missionDraftBlocker({
       action: attackAction,

@@ -17,7 +17,9 @@ import {
   researchCatalog,
   researchCost,
   researchDurationEstimate,
+  researchEffectRows,
   researchRequirementsFor,
+  researchUnlockRows,
   shipDurationEstimate,
   shipCatalog,
   shipCombatStats,
@@ -140,10 +142,41 @@ describe("playable MVP contract display helpers", () => {
       [11, "deathstar", "Dreadstar"],
       [12, "battlecruiser", "Battlecruiser"],
       [13, "reaper", "Reaper"],
-      [14, "pathfinder", "Pathfinder"],
+      // VEY-KANEO-493: enum slot 14 keeps the `pathfinder` key for on-chain index alignment,
+      // but its user-visible label is a neutral placeholder, never the external-game name.
+      [14, "pathfinder", "Restricted Vessel"],
       [15, "crawler", "Crawler"],
     ]);
     expect(shipCatalog.map((ship) => ship.asset)).toEqual(shipAssetManifest.map((asset) => asset.src));
+  });
+
+  test("scrubs the external-game 'Pathfinder' name from all user-visible ship copy (VEY-KANEO-493)", () => {
+    // The enum slot (key + index) is retained for on-chain alignment, but no rendered label
+    // or description may contain the banned name.
+    expect(shipCatalog.some((ship) => ship.key === "pathfinder")).toBe(true);
+    for (const ship of shipCatalog) {
+      expect(/pathfinder/i.test(ship.label)).toBe(false);
+      expect(/pathfinder/i.test(ship.description ?? "")).toBe(false);
+    }
+  });
+
+  test("never surfaces the shipyard-hidden expedition slot in research effect or unlock copy (VEY-KANEO-493)", () => {
+    // The hidden `pathfinder` slot keeps its drive math + enum index for fidelity, but its
+    // neutral placeholder label must not leak into any player-readable research copy.
+    const hidden = shipCatalog.find((ship) => ship.key === "pathfinder");
+    expect(hidden).toBeDefined();
+    const hiddenLabel = hidden!.label;
+
+    const state = createInitialPlayableState(10_000);
+    const driveTargets = researchEffectRows(state, "hyperspaceDrive").map((row) => row.target);
+    expect(driveTargets.some((target) => target.includes(hiddenLabel))).toBe(false);
+
+    // Hyperspace Drive (level 2) and Shielding (level 4) both gate the hidden slot, but it is
+    // non-buildable and must never appear as a research unlock.
+    for (const research of ["hyperspaceDrive", "shielding"] as const) {
+      const unlocks = researchUnlockRows(research);
+      expect(unlocks.some((row) => row.includes(hiddenLabel))).toBe(false);
+    }
   });
 
   test("uses canonical Veydrift representative ship requirements and duration estimates", () => {
