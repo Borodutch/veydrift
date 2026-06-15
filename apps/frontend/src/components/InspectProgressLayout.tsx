@@ -39,7 +39,6 @@ export function InspectPageHeader({
 }) {
   return PageHeader({
     actions,
-    bordered: false,
     title,
   });
 }
