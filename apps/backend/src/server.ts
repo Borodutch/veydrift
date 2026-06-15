@@ -313,6 +313,18 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/overview$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        const indexed = indexedWalletOverviewWarmResponse(indexer, wallet, selectedPlanetId(url));
+        if (indexed) return indexed;
+        return indexedReadNotReadyResponse("overview snapshot", indexer);
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/settlement$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
@@ -1013,6 +1025,37 @@ function indexedWalletPlanetsWarmResponse(
 
   const snapshot = indexer.snapshot();
   return indexedWarmJsonResponse(withPlayerProfile(indexedWalletPlanets(indexer, wallet), indexer, wallet), "wallet planets", snapshot);
+}
+
+function indexedWalletOverviewWarmResponse(
+  indexer: SettlementIndexer | undefined,
+  wallet: `0x${string}`,
+  selectedPlanetId: bigint | undefined
+): Response | null {
+  if (!indexer || !hasWarmPlanetIndex(indexer)) return null;
+
+  const snapshot = indexer.snapshot();
+  const selectedSettlement = indexedWalletSettlement(indexer, wallet, selectedPlanetId);
+  const homeSettlement = selectedSettlement ?? indexedWalletSettlement(indexer, wallet, undefined);
+  const settlement = homeSettlement?.settlement ?? indexer.walletSettlement(wallet);
+  const queuePlanetId = homeSettlement?.planet?.planetId ?? settlement.homePlanetId;
+  const planetsResponse = indexedWalletPlanets(indexer, wallet);
+  const queues = indexer.playerQueues(wallet, queuePlanetId);
+  const fleetVisibility = indexedFleetVisibility(
+    wallet,
+    settlement,
+    homeSettlement?.planet ?? null,
+    indexedWarmDetail("fleet visibility"),
+    indexer,
+    { includeArchive: false }
+  );
+
+  return indexedWarmJsonResponse({
+    settlement: withPlayerProfile(settlement, indexer, wallet),
+    planetsResponse: withPlayerProfile(planetsResponse, indexer, wallet),
+    queues,
+    fleetVisibility
+  }, "overview snapshot", snapshot);
 }
 
 type IndexedMoonNotReadyBody = MoonState & {

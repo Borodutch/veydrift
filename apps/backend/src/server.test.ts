@@ -3644,6 +3644,75 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("serves Overview as one DB-backed indexed snapshot without chain reader calls", async () => {
+    const chainReader = new MockChainReader();
+    let liveReadCalled = false;
+    chainReader.getWalletPlanets = async () => {
+      liveReadCalled = true;
+      throw new Error("overview should not call wallet planet RPC");
+    };
+    chainReader.getPlayerQueues = async () => {
+      liveReadCalled = true;
+      throw new Error("overview should not call player queue RPC");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm overview index should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123"
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/overview`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(liveReadCalled).toBe(false);
+    expect(body).toMatchObject({
+      source: "contract-state-indexer",
+      detail: "overview snapshot loaded from DB-indexed contract state.",
+      settlement: {
+        wallet: player,
+        homePlanetId: planet.planetId,
+        planet: {
+          planetId: planet.planetId
+        }
+      },
+      planetsResponse: {
+        wallet: player,
+        homePlanetId: planet.planetId,
+        planets: [
+          {
+            planetId: planet.planetId
+          }
+        ]
+      },
+      queues: {
+        wallet: player,
+        homePlanetId: planet.planetId,
+        building: null,
+        defense: null,
+        ship: null,
+        research: null
+      },
+      fleetVisibility: {
+        wallet: player,
+        homePlanetId: planet.planetId,
+        completedMissions: [],
+        battleReports: []
+      }
+    });
+  });
+
   test("serves indexed building queues and levels without chain reader calls when warm", async () => {
     const chainReader = new MockChainReader();
     chainReader.getPlayerQueues = async () => {
