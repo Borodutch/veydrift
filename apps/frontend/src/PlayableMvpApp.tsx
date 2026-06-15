@@ -5195,6 +5195,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         <RaidTargetFinderPage
           activeMissions={allActiveMissions}
           apiBaseUrl={apiBaseUrl}
+          currentAllianceId={allianceState?.membership.allianceId}
           currentWallet={account}
           fleetVisibility={fleetVisibility}
           now={now}

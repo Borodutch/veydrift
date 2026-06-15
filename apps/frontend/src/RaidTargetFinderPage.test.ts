@@ -1,0 +1,76 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import {
+  RAID_TARGET_FINDER_STORAGE_KEY,
+  DEFAULT_RAID_TARGET_FILTERS,
+  hasActiveAlliance,
+  persistRaidTargetSettings,
+  readPersistedRaidTargetSettings,
+} from "./raidTargetFinder";
+
+const originalWindowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+
+afterEach(() => {
+  if (originalWindowDescriptor) {
+    Object.defineProperty(globalThis, "window", originalWindowDescriptor);
+  } else {
+    Reflect.deleteProperty(globalThis, "window");
+  }
+});
+
+function installWindowStorage() {
+  const values = new Map<string, string>();
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage: {
+        getItem: (key: string) => values.get(key) ?? null,
+        setItem: (key: string, value: string) => {
+          values.set(key, value);
+        },
+      },
+    },
+  });
+  return values;
+}
+
+describe("RaidTargetFinderPage persistence", () => {
+  test("persists and restores Raid Finder filter settings from localStorage", () => {
+    const storage = installWindowStorage();
+
+    persistRaidTargetSettings({
+      filters: {
+        hideProtected: false,
+        hideSameAlliance: false,
+        hideDefended: true,
+        minLoot: 2500,
+        maxDistance: 150,
+      },
+    });
+
+    expect(storage.has(RAID_TARGET_FINDER_STORAGE_KEY)).toBe(true);
+    expect(readPersistedRaidTargetSettings()).toEqual({
+      filters: {
+        hideProtected: false,
+        hideSameAlliance: false,
+        hideDefended: true,
+        minLoot: 2500,
+        maxDistance: 150,
+      },
+    });
+  });
+
+  test("falls back to defaults when saved settings are corrupt", () => {
+    const storage = installWindowStorage();
+    storage.set(RAID_TARGET_FINDER_STORAGE_KEY, "{bad json");
+
+    expect(readPersistedRaidTargetSettings()).toEqual({
+      filters: DEFAULT_RAID_TARGET_FILTERS,
+    });
+  });
+
+  test("uses active alliance membership to decide Hide alliance visibility", () => {
+    expect(hasActiveAlliance("0")).toBe(false);
+    expect(hasActiveAlliance(null)).toBe(false);
+    expect(hasActiveAlliance("12")).toBe(true);
+  });
+});

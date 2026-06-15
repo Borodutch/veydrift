@@ -12,8 +12,11 @@ import {
   buildRaidTargets,
   filterRaidTargets,
   floatActiveMissionTargetsFirst,
+  hasActiveAlliance,
   incomingThreats,
+  persistRaidTargetSettings,
   raidTargetTotals,
+  readPersistedRaidTargetSettings,
   sortRaidTargets,
   type RaidTarget,
   type RaidTargetFilters,
@@ -32,6 +35,7 @@ type RaidTargetFinderPageProps = {
   // fleets exactly like Rankings (VEY-KANEO-448). Defaults to empty so the page renders without it.
   activeMissions?: readonly FleetMissionSummary[] | undefined;
   apiBaseUrl: string | undefined;
+  currentAllianceId?: string | null | undefined;
   currentWallet?: string | undefined;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   now?: number | undefined;
@@ -56,6 +60,7 @@ const sortColumns: Array<{ key: RaidTargetSortKey; label: string; hint: string }
 export function RaidTargetFinderPage({
   activeMissions,
   apiBaseUrl,
+  currentAllianceId,
   currentWallet,
   fleetVisibility,
   now = Date.now(),
@@ -68,8 +73,17 @@ export function RaidTargetFinderPage({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [hasLoaded, setHasLoaded] = useState(false);
-  const [filters, setFilters] = useState<RaidTargetFilters>(DEFAULT_RAID_TARGET_FILTERS);
+  const [filters, setFilters] = useState<RaidTargetFilters>(() => readPersistedRaidTargetSettings().filters);
   const [sort, setSort] = useState<RaidTargetSort>(DEFAULT_RAID_TARGET_SORT);
+  const showAllianceFilter = hasActiveAlliance(currentAllianceId);
+  const effectiveFilters = useMemo(
+    () => showAllianceFilter ? filters : { ...filters, hideSameAlliance: false },
+    [filters, showAllianceFilter],
+  );
+
+  useEffect(() => {
+    persistRaidTargetSettings({ filters });
+  }, [filters]);
 
   const load = () => {
     if (!apiBaseUrl) {
@@ -109,8 +123,8 @@ export function RaidTargetFinderPage({
     [entries, originCoordinates, currentWallet, fleetVisibility],
   );
   const visibleTargets = useMemo(
-    () => sortRaidTargets(filterRaidTargets(allTargets, filters), sort),
-    [allTargets, filters, sort],
+    () => sortRaidTargets(filterRaidTargets(allTargets, effectiveFilters), sort),
+    [allTargets, effectiveFilters, sort],
   );
   const totals = useMemo(() => raidTargetTotals(allTargets, visibleTargets), [allTargets, visibleTargets]);
   const threats = useMemo(() => incomingThreats(fleetVisibility), [fleetVisibility]);
@@ -167,7 +181,12 @@ export function RaidTargetFinderPage({
         </div>
       ) : null}
 
-      <RaidTargetFilterControls filters={filters} onChange={setFilters} totals={totals} />
+      <RaidTargetFilterControls
+        filters={filters}
+        onChange={setFilters}
+        showAllianceFilter={showAllianceFilter}
+        totals={totals}
+      />
 
       <div className="min-w-0 max-w-full overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
         <RaidTargetTableHeader onSort={toggleSort} sort={sort} />
@@ -274,12 +293,19 @@ function IncomingThreatsBanner({
 function RaidTargetFilterControls({
   filters,
   onChange,
+  showAllianceFilter,
   totals,
 }: {
   filters: RaidTargetFilters;
   onChange: (filters: RaidTargetFilters) => void;
+  showAllianceFilter: boolean;
   totals: ReturnType<typeof raidTargetTotals>;
 }) {
+  const suppressedTotals = [
+    totals.protected > 0 ? `${totals.protected} protected` : null,
+    showAllianceFilter && totals.sameAlliance > 0 ? `${totals.sameAlliance} allied` : null,
+  ].filter(Boolean);
+
   return (
     <div className="grid gap-3 rounded-md border border-white/10 bg-white/[0.02] p-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -288,11 +314,13 @@ function RaidTargetFilterControls({
           label="Hide protected"
           onToggle={() => onChange({ ...filters, hideProtected: !filters.hideProtected })}
         />
-        <FilterToggle
-          active={filters.hideSameAlliance}
-          label="Hide alliance"
-          onToggle={() => onChange({ ...filters, hideSameAlliance: !filters.hideSameAlliance })}
-        />
+        {showAllianceFilter ? (
+          <FilterToggle
+            active={filters.hideSameAlliance}
+            label="Hide alliance"
+            onToggle={() => onChange({ ...filters, hideSameAlliance: !filters.hideSameAlliance })}
+          />
+        ) : null}
         <FilterToggle
           active={filters.hideDefended}
           label="Hide defended"
@@ -302,9 +330,9 @@ function RaidTargetFilterControls({
           <span className="font-mono text-cyan-100">{totals.visible}</span>
           <span className="text-slate-600"> / </span>
           <span className="font-mono">{totals.total}</span> targets
-          {totals.protected > 0 || totals.sameAlliance > 0 ? (
+          {suppressedTotals.length > 0 ? (
             <span className="ml-2 text-slate-500">
-              ({totals.protected} protected, {totals.sameAlliance} allied)
+              ({suppressedTotals.join(", ")})
             </span>
           ) : null}
         </span>

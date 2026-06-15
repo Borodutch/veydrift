@@ -5,8 +5,10 @@ import {
   buildRaidTargets,
   filterRaidTargets,
   floatActiveMissionTargetsFirst,
+  hasActiveAlliance,
   inboundFleetsByTarget,
   incomingThreats,
+  normalizeRaidTargetFilters,
   prepareRaidTargets,
   raidTargetTotals,
   sortRaidTargets,
@@ -21,6 +23,42 @@ import type {
 import type { Coordinates } from "./types";
 
 const ORIGIN: Coordinates = { galaxy: 1, system: 1, position: 1 };
+
+describe("persisted raid target settings", () => {
+  test("normalizes saved filters and keeps them scoped to the known Raid Finder shape", () => {
+    const filters = normalizeRaidTargetFilters({
+      hideProtected: false,
+      hideSameAlliance: false,
+      hideDefended: true,
+      minLoot: 1234.9,
+      maxDistance: 987.6,
+      unrelated: "ignored",
+    });
+
+    expect(filters).toEqual({
+      hideProtected: false,
+      hideSameAlliance: false,
+      hideDefended: true,
+      minLoot: 1234,
+      maxDistance: 987,
+    });
+  });
+
+  test("falls back safely for corrupt persisted filters", () => {
+    expect(normalizeRaidTargetFilters({ minLoot: -10, maxDistance: Number.NaN })).toEqual({
+      ...DEFAULT_RAID_TARGET_FILTERS,
+      minLoot: 0,
+    });
+    expect(normalizeRaidTargetFilters("bad")).toEqual(DEFAULT_RAID_TARGET_FILTERS);
+  });
+
+  test("detects whether the viewer has an active alliance for control visibility", () => {
+    expect(hasActiveAlliance(undefined)).toBe(false);
+    expect(hasActiveAlliance(null)).toBe(false);
+    expect(hasActiveAlliance("0")).toBe(false);
+    expect(hasActiveAlliance("7")).toBe(true);
+  });
+});
 
 function planet(overrides: Partial<HighscorePlanet> & { planetId: string }): HighscorePlanet {
   return {
