@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { BackendConfig } from "./config";
 import {
   attachAttackGroupParticipants,
+  decodeAttackMissionLaunch,
   decodeBattleReportLogs,
   decodeFleetMissionLogs,
   decodePlanetRenamedLog,
@@ -1915,6 +1916,36 @@ function stringTail(value: string): string {
 function addressTopic(address: string): string {
   return `0x${addressWord(address)}`;
 }
+
+describe("decodeAttackMissionLaunch (VEY-KANEO-489)", () => {
+  const attacker = "0x0000000000000000000000000000000000000abc" as Address;
+
+  test("decodes the attacker and target from an Attack launch", () => {
+    const log = makeLog({
+      topics: [fleetMissionLaunchedTopic, topic(1n), addressTopic(attacker), topic(3n)],
+      data: dataWords([word(9n), word(7n), word(1_800_000_000n), word(1_800_000_300n), word(0n)])
+    });
+    expect(decodeAttackMissionLaunch(log)).toEqual({
+      attacker: attacker.toLowerCase() as Address,
+      targetPlanetId: "7"
+    });
+  });
+
+  test("returns null for non-Attack launches and non-launch logs", () => {
+    // Transport (missionType 0) never records a bashing attack.
+    const transport = makeLog({
+      topics: [fleetMissionLaunchedTopic, topic(1n), addressTopic(attacker), topic(0n)],
+      data: dataWords([word(9n), word(7n), word(1_800_000_000n), word(1_800_000_300n)])
+    });
+    expect(decodeAttackMissionLaunch(transport)).toBeNull();
+    // A cargo log shares the mission but is not a launch.
+    const cargo = makeLog({
+      topics: [fleetMissionCargoTopic, topic(1n)],
+      data: dataWords([word(0n), word(0n), word(0n), word(1n)])
+    });
+    expect(decodeAttackMissionLaunch(cargo)).toBeNull();
+  });
+});
 
 function fleetMissionLogs({
   missionId,
