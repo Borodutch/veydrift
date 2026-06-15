@@ -3758,9 +3758,16 @@ describe("SettlementIndexer", () => {
       first.applyLog({
         blockNumber: "0x92",
         transactionHash: "0xship",
-        logIndex: "0x0",
+        logIndex: "0x10",
         topics: [planetShipCountChangedTopic, topic(7n), topic(1n)],
         data: abiWords(4n)
+      });
+      first.applyLog({
+        blockNumber: "0x92",
+        transactionHash: "0xship-earlier",
+        logIndex: "0x2",
+        topics: [planetShipCountChangedTopic, topic(7n), topic(1n)],
+        data: abiWords(2n)
       });
       first.applyLog({
         blockNumber: "0x93",

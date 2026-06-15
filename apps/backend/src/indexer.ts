@@ -1936,13 +1936,14 @@ export class SettlementIndexer {
         SELECT event_json
         FROM indexed_event_logs
         WHERE removed = 0
-        ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
+        ORDER BY CAST(block_number AS INTEGER) ASC
       `).all() as EventRow[];
       if (rows.length === 0) return;
 
       this.clearEventDerivedMaterializedState();
-      for (const row of rows) {
-        this.applyStoredLogSideEffects(parseEvent<IndexedRpcLog>(row.event_json));
+      const logs = rows.map((row) => parseEvent<IndexedRpcLog>(row.event_json));
+      for (const log of sortRpcLogs(logs)) {
+        this.applyStoredLogSideEffects(log);
       }
       this.touch();
     })();
