@@ -1178,7 +1178,7 @@ export class SettlementIndexer {
       ...(riftBuilt ? {} : {
         unavailableReason: riftBuilt === null
           ? "Settle a home planet before using the Rift."
-          : "Build the Interdimensional Rift Stabilizer before using the Rift."
+          : "Build the Rift Stabilizer before using the Rift."
       }),
       withdrawalDelaySeconds: "2592000",
       requirements: riftRequirements(

@@ -67,7 +67,7 @@ export function RiftPage({
     <section className="grid gap-4">
       <PageHeader
         actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh Rift state" />}
-        eyebrow="Veydrift Rift Stabilizer"
+        eyebrow="Rift Stabilizer"
         subtitle="Move open-market resource tokens into your empire instantly, or lock in-game resources for a 30-day Veydrift withdrawal window."
         title="Resource Bridge"
       />
@@ -180,9 +180,9 @@ function LockedRiftState({
   return (
     <div className="grid gap-4 rounded-lg border border-amber-200/20 bg-amber-200/5 p-4">
       <div>
-        <h3 className="text-base font-semibold text-amber-100">Rift bridge locked</h3>
+        <h3 className="text-base font-semibold text-amber-100">Rift Stabilizer locked</h3>
         <p className="mt-1 text-sm leading-6 text-amber-100/75">
-          {unavailableReason ?? "Build the Interdimensional Rift Stabilizer before moving resources through the bridge."}
+          {unavailableReason ?? "Build the Rift Stabilizer before moving resources through the bridge."}
         </p>
       </div>
 

@@ -12,7 +12,7 @@ describe("RiftPage helpers", () => {
       {
         kind: "building",
         key: "interdimensionalRiftStabilizer",
-        label: "Interdimensional Rift Stabilizer",
+        label: "Rift Stabilizer",
         currentLevel: 0,
         requiredLevel: 1,
         binary: true,
@@ -47,7 +47,7 @@ describe("RiftPage helpers", () => {
         requiredLevel: 1,
       },
     ])).toEqual([
-      { label: "Interdimensional Rift Stabilizer", met: false, target: { kind: "building", key: "interdimensionalRiftStabilizer" } },
+      { label: "Rift Stabilizer", met: false, target: { kind: "building", key: "interdimensionalRiftStabilizer" } },
       { label: "Robotics Factory 4", met: false, target: { kind: "building", key: "roboticsFactory" } },
       { label: "Research Lab 2", met: true, target: { kind: "building", key: "researchLab" } },
       { label: "Energy Technology 5", met: false, target: { kind: "research", key: "energy" } },

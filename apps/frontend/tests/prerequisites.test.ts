@@ -62,12 +62,12 @@ describe("Veydrift prerequisite gating", () => {
     })).toEqual([]);
   });
 
-  test("exposes Interdimensional Rift Stabilizer as deployed building id 15 with current build prerequisites", () => {
+  test("exposes Rift Stabilizer as deployed building id 15 with current build prerequisites", () => {
     const state = createInitialPlayableState(1_000);
     const stabilizer = buildingCatalog.find((building) => building.key === "interdimensionalRiftStabilizer");
 
     expect(stabilizer).toMatchObject({
-      label: "Interdimensional Rift Stabilizer",
+      label: "Rift Stabilizer",
       baseCost: { metal: 8_000, crystal: 8_000, deuterium: 4_000 },
       asset: "/assets/game/style-pass/generated/buildings/interdimensional-rift-stabilizer-mid.webp",
     });
