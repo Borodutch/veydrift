@@ -1408,12 +1408,19 @@ describe("Veydrift backend", () => {
             raidableResourceTotal: "7350",
             ships: {
               count: 2,
-              power: expect.any(String)
+              power: expect.any(String),
+              units: expect.any(Array)
             },
             defenses: {
               count: 4,
-              power: expect.any(String)
+              power: expect.any(String),
+              units: expect.any(Array)
             },
+            combatShips: expect.objectContaining({
+              count: expect.any(Number),
+              power: expect.any(String),
+              units: expect.any(Array)
+            }),
             combatPower: expect.any(String)
           },
           queues: {
@@ -4405,12 +4412,19 @@ describe("Veydrift backend", () => {
             raidableResourceTotal: "7350",
             ships: {
               count: expect.any(Number),
-              power: expect.any(String)
+              power: expect.any(String),
+              units: expect.any(Array)
             },
             defenses: {
               count: expect.any(Number),
-              power: expect.any(String)
+              power: expect.any(String),
+              units: expect.any(Array)
             },
+            combatShips: expect.objectContaining({
+              count: expect.any(Number),
+              power: expect.any(String),
+              units: expect.any(Array)
+            }),
             combatPower: expect.any(String)
           }
         }
@@ -4733,8 +4747,9 @@ describe("Veydrift backend", () => {
         tactical: expect.objectContaining({
           raidableResources: expect.any(Object),
           raidableResourceTotal: expect.any(String),
-          ships: expect.objectContaining({ count: expect.any(Number), power: expect.any(String) }),
-          defenses: expect.objectContaining({ count: expect.any(Number), power: expect.any(String) }),
+          ships: expect.objectContaining({ count: expect.any(Number), power: expect.any(String), units: expect.any(Array) }),
+          defenses: expect.objectContaining({ count: expect.any(Number), power: expect.any(String), units: expect.any(Array) }),
+          combatShips: expect.objectContaining({ count: expect.any(Number), power: expect.any(String), units: expect.any(Array) }),
           combatPower: expect.any(String)
         })
       }),
@@ -4750,8 +4765,9 @@ describe("Veydrift backend", () => {
         tactical: expect.objectContaining({
           raidableResources: expect.any(Object),
           raidableResourceTotal: expect.any(String),
-          ships: expect.objectContaining({ count: expect.any(Number), power: expect.any(String) }),
-          defenses: expect.objectContaining({ count: expect.any(Number), power: expect.any(String) }),
+          ships: expect.objectContaining({ count: expect.any(Number), power: expect.any(String), units: expect.any(Array) }),
+          defenses: expect.objectContaining({ count: expect.any(Number), power: expect.any(String), units: expect.any(Array) }),
+          combatShips: expect.objectContaining({ count: expect.any(Number), power: expect.any(String), units: expect.any(Array) }),
           combatPower: expect.any(String)
         })
       })

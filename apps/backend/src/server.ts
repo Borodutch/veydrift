@@ -1874,13 +1874,26 @@ type RankedHighscorePlanet = {
     ships: {
       count: number;
       power: string;
+      units: RankedTacticalUnitBreakdown[];
     };
     defenses: {
       count: number;
       power: string;
+      units: RankedTacticalUnitBreakdown[];
+    };
+    combatShips: {
+      count: number;
+      power: string;
+      units: RankedTacticalUnitBreakdown[];
     };
     combatPower: string;
   };
+};
+
+type RankedTacticalUnitBreakdown = {
+  id: number;
+  count: number;
+  power: string;
 };
 
 type HighscoreCategory = keyof ScoreBreakdown;
@@ -2280,8 +2293,18 @@ export function indexedPlanetTacticalSummary(
     // Rankings call sites), so its resources match the public universe surface. This is the
     // full stockpile LOOT is plundered from at the ~50% on-chain rate. (VEY-KANEO-454)
     grossResourceTotal: resourceTotal(fallbackResources).toString(),
-    ships: shipSummary,
-    defenses: defenseSummary,
+    ships: {
+      ...shipSummary,
+      units: tacticalUnitBreakdown(ships),
+    },
+    defenses: {
+      ...defenseSummary,
+      units: tacticalUnitBreakdown(defenses),
+    },
+    combatShips: {
+      ...combatShipSummary,
+      units: tacticalUnitBreakdown(ships.filter((ship) => isCombatShipId(ship.id))),
+    },
     combatPower: (BigInt(combatShipSummary.power) + BigInt(defenseSummary.power)).toString()
   };
 }
@@ -2294,6 +2317,19 @@ function tacticalUnitSummary(units: Array<{ count: number; cost?: Resources | nu
       power: (BigInt(summary.power) + resourceTotal(unit.cost ?? null) * BigInt(count)).toString()
     };
   }, { count: 0, power: "0" } as { count: number; power: string });
+}
+
+function tacticalUnitBreakdown(units: Array<{ id: number; count: number; cost?: Resources | null | undefined }>): RankedTacticalUnitBreakdown[] {
+  return units
+    .map((unit) => {
+      const count = Math.max(0, unit.count);
+      return {
+        id: unit.id,
+        count,
+        power: (resourceTotal(unit.cost ?? null) * BigInt(count)).toString()
+      };
+    })
+    .filter((unit) => unit.count > 0);
 }
 
 function resourceTotal(resources: Resources | null | undefined): bigint {

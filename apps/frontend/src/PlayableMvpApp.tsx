@@ -100,10 +100,13 @@ import {
 } from "./postTransactionRefresh";
 import {
   emptyMissionShips,
+  galaxyActionsForSlot,
   missionTypeId,
   type GalaxyAction,
   type MissionShips,
 } from "./galaxyActions";
+import type { RaidTargetAttackAction } from "./components/RaidTargetFinderPage";
+import type { RaidTarget } from "./raidTargetFinder";
 import {
   type FleetDriveLevels,
   fleetMissionAvailableCargoCapacity,
@@ -4332,6 +4335,68 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setPendingGalaxyMission({ action, target, coords });
   }, []);
 
+  const raidTargetPlanetForMission = useCallback((target: RaidTarget): Planet => ({
+    id: target.planetId,
+    name: target.name?.trim() || `Planet ${target.planetId}`,
+    type: target.archetype,
+    image: planetImageForType(target.archetype),
+    position: target.coordinates.position,
+    galaxy: target.coordinates.galaxy,
+    system: target.coordinates.system,
+    owner: target.owner,
+    ownerId: target.owner,
+    alliance: target.alliance,
+    occupiedBy: {
+      planetId: target.planetId,
+      owner: target.owner,
+      ownerDisplayName: target.ownerDisplayName,
+      alliance: target.alliance,
+    },
+    debrisField: null,
+    moonChance: null,
+    publicState: null,
+    resources: { metal: 0, crystal: 0, deuterium: 0, energy: 0 },
+    temperature: { min: 0, max: 0 },
+    diameter: 0,
+    fields: 0,
+    hasMoon: false,
+  }), []);
+
+  const raidFinderAttackAction = useCallback((target: RaidTarget): GalaxyAction => {
+    const planet = raidTargetPlanetForMission(target);
+    return galaxyActionsForSlot({
+      account,
+      attackProtection: {
+        allowed: target.protection.blockedReason === "none",
+        blockedReason: target.protection.blockedReason,
+        blockedReasonLabel: target.protection.blockedReasonLabel,
+      },
+      defenseState,
+      homePlanetId: onChainSettlement?.homePlanetId,
+      isOrigin: activePlanetId === target.planetId,
+      planet,
+      shipyardState,
+    }).find((action) => action.kind === "attack") ?? {
+      enabled: false,
+      kind: "attack",
+      label: "Attack",
+      mode: "mission",
+      mission: "attack",
+      reason: "Attack is unavailable for this target.",
+    };
+  }, [account, activePlanetId, defenseState, onChainSettlement?.homePlanetId, raidTargetPlanetForMission, shipyardState]);
+
+  const raidFinderAttackActionState = useCallback((target: RaidTarget): RaidTargetAttackAction => {
+    const action = raidFinderAttackAction(target);
+    return action.enabled
+      ? { label: action.label }
+      : { label: action.label, disabledReason: action.reason };
+  }, [raidFinderAttackAction]);
+
+  const handleRaidFinderAttack = useCallback((target: RaidTarget) => {
+    handleGalaxyAction(raidFinderAttackAction(target), raidTargetPlanetForMission(target), target.coordinates);
+  }, [handleGalaxyAction, raidFinderAttackAction, raidTargetPlanetForMission]);
+
   const handleConfirmGalaxyMission = useCallback((draft: MissionLaunchDraft) => {
     const pending = pendingGalaxyMission;
     if (!pending) return;
@@ -5187,9 +5252,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         <RaidTargetFinderPage
           activeMissions={allActiveMissions}
           apiBaseUrl={apiBaseUrl}
+          attackActionForTarget={raidFinderAttackActionState}
           currentWallet={account}
           fleetVisibility={fleetVisibility}
           now={now}
+          onAttackTarget={handleRaidFinderAttack}
           onSelectAlliance={handleSelectAlliance}
           onSelectPlanet={handleSelectPlanet}
           onSelectPlayer={handleSelectPlayer}
