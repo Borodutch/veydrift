@@ -44,7 +44,11 @@ import {
   parseRiftTokenAmount,
   sendApproveResourceTokenTransaction,
   sendDepositResourceTransaction,
+  sendFinishBuildingUpgradeTransaction,
+  sendFinishDefenseProductionTransaction,
+  sendFinishResearchTransaction,
   sendFinishResourceWithdrawalTransaction,
+  sendFinishShipProductionTransaction,
   sendCreateColonyTransaction,
   sendJoinAttackMissionTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
@@ -1616,6 +1620,72 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: encodeGameCall("0xfec06283", [7, 0, 2])
+          }
+        ]
+      }
+    ]);
+  });
+
+  test("submits production finish transactions", async () => {
+    const requests: unknown[] = [];
+    let sentTransactions = 0;
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      sentTransactions += 1;
+      return `0xfinish${sentTransactions}`;
+    });
+
+    await expect(
+      sendFinishBuildingUpgradeTransaction(provider, account, contract, "7")
+    ).resolves.toBe("0xfinish1");
+    await expect(
+      sendFinishShipProductionTransaction(provider, account, contract, "7")
+    ).resolves.toBe("0xfinish2");
+    await expect(
+      sendFinishDefenseProductionTransaction(provider, account, contract, "7")
+    ).resolves.toBe("0xfinish3");
+    await expect(
+      sendFinishResearchTransaction(provider, account, contract)
+    ).resolves.toBe("0xfinish4");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x6ab2f9d4", [7])
+          }
+        ]
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0x7bd93154", [7])
+          }
+        ]
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodeGameCall("0xa5a0d597", [7])
+          }
+        ]
+      },
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: "0xba2fbdc8"
           }
         ]
       }
