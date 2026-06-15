@@ -150,7 +150,7 @@ export class CachedChainReader implements ChainReader {
     return this.cached("alliance-directory", () => this.inner.listAllianceDirectoryState!());
   }
 
-  // Canonical-mirror seed reads. These run only on the indexer's startup rebuild (never per request), so
+  // Canonical-mirror seed reads. These run only on explicit indexer rebuilds (never per request), so
   // forward to the inner reader without caching; absent inner methods degrade to "no chain seed".
   listAllianceJoinRequestState(): Promise<AllianceJoinRequestSnapshot[]> {
     if (!this.inner.listAllianceJoinRequestState) {
