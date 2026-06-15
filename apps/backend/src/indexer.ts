@@ -51,6 +51,7 @@ import {
   type AllianceJoinRequestSnapshot,
   type AllianceInviteSnapshot,
   type AllianceDiplomacySnapshot,
+  type CanonicalFleetMissionSnapshot,
   type BattleReport,
   type DebrisFieldEvent,
   type DefenseState,
@@ -336,6 +337,7 @@ export class SettlementIndexer {
         | "listAllianceInviteState"
         | "listAllianceDiplomacyState"
         | "listAllianceLogs"
+        | "listCanonicalFleetMissions"
         | "listContractLogs"
         | "listCurrentPlanets"
     >,
@@ -911,11 +913,7 @@ export class SettlementIndexer {
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
     return deriveShipRows(
-      (id) => this.asOfNowCount(
-        this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
-        this.queueSettlement(`ship:${planetId}`).completed,
-        id
-      ),
+      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
       this.planet(planetId)?.temperature,
       durationLevels
     );
@@ -932,11 +930,7 @@ export class SettlementIndexer {
   // needed. Builds emit ShipCompleted, also applied. (VEY-KANEO-461)
   availableShipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
     return deriveShipRows(
-      (id) => this.asOfNowCount(
-        this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
-        this.queueSettlement(`ship:${planetId}`).completed,
-        id
-      ),
+      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
       this.planet(planetId)?.temperature,
       durationLevels
     );
@@ -952,11 +946,7 @@ export class SettlementIndexer {
   // already integrate authoritatively from the event stream.
 
   defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
-    return deriveDefenseRows((id) => this.asOfNowCount(
-      this.indexedLevel("contract_defense_counts", "defense_id", planetId, id),
-      this.queueSettlement(`defense:${planetId}`).completed,
-      id
-    ), durationLevels);
+    return deriveDefenseRows((id) => this.indexedLevel("contract_defense_counts", "defense_id", planetId, id), durationLevels);
   }
 
   technologyLevels(wallet: `0x${string}`): Record<string, number> {
@@ -968,11 +958,6 @@ export class SettlementIndexer {
     `).all(wallet) as LevelRow[];
 
     const levels = Object.fromEntries(rows.map((row) => [String(row.id), row.value]));
-    for (const entry of this.queueSettlement(`research:${wallet.toLowerCase()}`).completed) {
-      if (entry.itemId === undefined || entry.targetLevel === undefined) continue;
-      const key = String(entry.itemId);
-      levels[key] = Math.max(levels[key] ?? 0, entry.targetLevel);
-    }
     return levels;
   }
 
@@ -983,12 +968,6 @@ export class SettlementIndexer {
 
   private queueSettlement(queueKeyValue: string) {
     return settleQueueAsOfNow(this.queueState(queueKeyValue), nowSeconds());
-  }
-
-  private asOfNowCount(base: number, completed: QueueState[], itemId: number): number {
-    return completed
-      .filter((entry) => entry.itemId === itemId && entry.quantity !== undefined)
-      .reduce((total, entry) => total + (entry.quantity ?? 0), base);
   }
 
   private moonBuildingLevelAsOfNow(planetId: string, buildingId: number): number {
@@ -2161,6 +2140,7 @@ export class SettlementIndexer {
       researchQueues: new Map(),
       moonBuildings: new Map(),
       moonQueues: new Map(),
+      fleetMissions: new Map(),
       verifiedEmptyQueues: new Set()
     };
     const owners = new Set(planets.map((planet) => planet.owner.toLowerCase() as `0x${string}`));
@@ -2262,6 +2242,11 @@ export class SettlementIndexer {
       }));
     }
 
+    const fleetMissions = await this.chainReader.listCanonicalFleetMissions?.();
+    for (const mission of fleetMissions ?? []) {
+      state.fleetMissions.set(mission.missionId, mission);
+    }
+
     return state;
   }
 
@@ -2284,6 +2269,7 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_technology_levels").run();
     this.db.query("DELETE FROM contract_production_queues").run();
     this.db.query("DELETE FROM contract_moon_building_queues").run();
+    this.db.query("DELETE FROM contract_fleet_missions").run();
     this.db.query("DELETE FROM contract_alliances").run();
     this.db.query("DELETE FROM contract_alliance_members").run();
     this.db.query("DELETE FROM contract_alliance_invites").run();
@@ -2349,6 +2335,53 @@ export class SettlementIndexer {
     for (const [planetId, queue] of state.moonQueues) {
       this.upsertCanonicalMoonQueue(planetId, queue);
     }
+    for (const mission of state.fleetMissions.values()) {
+      this.upsertCanonicalFleetMission(mission);
+    }
+  }
+
+  private upsertCanonicalFleetMission(mission: CanonicalFleetMissionSnapshot): void {
+    this.db.query(`
+      INSERT INTO contract_fleet_missions (
+        mission_id, status_id, mission_type_id, owner, origin_planet_id, target_planet_id,
+        departure_at, arrival_at, return_at, fuel_cost,
+        metal_cargo, crystal_cargo, deuterium_cargo, ships_json, randomness_request_id, event_json
+      )
+      VALUES (?, ?, ?, lower(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(mission_id) DO UPDATE SET
+        status_id = excluded.status_id,
+        mission_type_id = excluded.mission_type_id,
+        owner = excluded.owner,
+        origin_planet_id = excluded.origin_planet_id,
+        target_planet_id = excluded.target_planet_id,
+        departure_at = excluded.departure_at,
+        arrival_at = excluded.arrival_at,
+        return_at = excluded.return_at,
+        fuel_cost = excluded.fuel_cost,
+        metal_cargo = excluded.metal_cargo,
+        crystal_cargo = excluded.crystal_cargo,
+        deuterium_cargo = excluded.deuterium_cargo,
+        ships_json = excluded.ships_json,
+        randomness_request_id = excluded.randomness_request_id,
+        event_json = excluded.event_json
+    `).run(
+      mission.missionId,
+      mission.statusId,
+      mission.missionTypeId,
+      mission.owner,
+      mission.originPlanetId,
+      mission.targetPlanetId,
+      mission.departureAt,
+      mission.arrivalAt,
+      mission.returnAt,
+      mission.fuelCost,
+      mission.cargo.metal,
+      mission.cargo.crystal,
+      mission.cargo.deuterium,
+      "{}",
+      mission.randomnessRequestId,
+      JSON.stringify(mission)
+    );
   }
 
   private upsertCanonicalMoonQueue(planetId: string, queue: QueueState): void {
@@ -3636,7 +3669,8 @@ export class SettlementIndexer {
     // VEY-KANEO-479: decode leaves `needsResolution` at its default; compute it here so an arrived
     // Attack only reads "Ready to resolve" once its battle randomness is fulfilled (gated on the
     // ingested RandomnessFulfilled logs). Harvest and the other types stay on the plain arrival check.
-    const missions = decodeCompleteFleetMissionLogs(logs);
+    const eventMissions = decodeCompleteFleetMissionLogs(logs);
+    const missions = this.mergeCanonicalFleetMissions(eventMissions);
     const nowSeconds = Math.floor(Date.now() / 1_000);
     // Only an arrived Attack awaiting its randomness needs the fulfillment scan; skip it (and the
     // extra full-table read it does) whenever nothing is actually gated, which is the common case.
@@ -3651,6 +3685,60 @@ export class SettlementIndexer {
       ...mission,
       needsResolution: fleetMissionNeedsResolution(mission, nowSeconds, fulfilledRandomnessRequestIds)
     }));
+  }
+
+  private mergeCanonicalFleetMissions(eventMissions: FleetMissionSummary[]): FleetMissionSummary[] {
+    const byId = new Map(eventMissions.map((mission) => [mission.missionId, mission]));
+    const canonicalRows = this.db.query(`
+      SELECT *
+      FROM contract_fleet_missions
+      WHERE status_id != 0
+      ORDER BY CAST(mission_id AS INTEGER) ASC
+    `).all() as ContractFleetMissionRow[];
+
+    for (const row of canonicalRows) {
+      const eventMission = byId.get(row.mission_id);
+      byId.set(row.mission_id, this.canonicalFleetMissionSummary(row, eventMission));
+    }
+
+    return [...byId.values()];
+  }
+
+  private canonicalFleetMissionSummary(row: ContractFleetMissionRow, eventMission?: FleetMissionSummary): FleetMissionSummary {
+    const cargo = {
+      metal: row.metal_cargo,
+      crystal: row.crystal_cargo,
+      deuterium: row.deuterium_cargo
+    };
+    const base = eventMission ?? {
+      missionId: row.mission_id,
+      recallCost: null,
+      attackGroupId: null,
+      joinedAttackMissionIds: [],
+      defendsMissionId: null,
+      counterplayDefenderMissionIds: [],
+      returnCargo: null,
+      ships: parseJson<Record<string, string>>(row.ships_json, {}),
+      transactionHash: "0x",
+      blockNumber: this.metadata("lastReconciledBlock") ?? "0",
+      launchBlockNumber: this.metadata("lastReconciledBlock") ?? "0",
+      needsResolution: false
+    };
+    return {
+      ...base,
+      missionId: row.mission_id,
+      status: fleetMissionStatusLabel(row.status_id),
+      missionType: fleetMissionTypeLabel(row.mission_type_id),
+      owner: row.owner as `0x${string}`,
+      originPlanetId: row.origin_planet_id,
+      targetPlanetId: row.target_planet_id,
+      arrivalAt: row.arrival_at,
+      returnAt: row.return_at,
+      fuelCost: row.fuel_cost,
+      cargo,
+      recallCost: row.status_id === 1 && base.recallCost === null ? projectedFleetRecallCost(row.fuel_cost) : base.recallCost,
+      ...(row.randomness_request_id ? { randomnessRequestId: row.randomness_request_id } : {})
+    };
   }
 
   // VEY-KANEO-479: request ids the RandomnessEngine has fulfilled, read from the ingested
@@ -3992,11 +4080,30 @@ type CanonicalReconciliationState = {
   ships: Map<string, ShipyardState["ships"]>;
   research: Map<`0x${string}`, ResearchState["technologies"]>;
   researchQueues: Map<`0x${string}`, QueueState>;
+  fleetMissions: Map<string, CanonicalFleetMissionSnapshot>;
   // Canonical moon building levels by moon home-planet id, and the planet's active moon-building queue.
   // Seeded from getMoonState (wallet -> home-planet moon). null entries are intentionally absent.
   moonBuildings: Map<string, MoonState["buildings"]>;
   moonQueues: Map<string, QueueState>;
   verifiedEmptyQueues: Set<string>;
+};
+
+type ContractFleetMissionRow = {
+  mission_id: string;
+  status_id: number;
+  mission_type_id: number;
+  owner: string;
+  origin_planet_id: string;
+  target_planet_id: string;
+  departure_at: string;
+  arrival_at: string;
+  return_at: string;
+  fuel_cost: string;
+  metal_cargo: string;
+  crystal_cargo: string;
+  deuterium_cargo: string;
+  ships_json: string;
+  randomness_request_id: string | null;
 };
 
 function moonChanceReportKey(event: MoonChanceReportEvent): string {
@@ -4013,6 +4120,47 @@ function queueKey(event: Pick<IndexedQueueStartedEvent | IndexedQueueCompletedEv
 
 function isPlanetQueueKind(value: string): value is "building" | "defense" | "ship" {
   return value === "building" || value === "defense" || value === "ship";
+}
+
+function fleetMissionTypeLabel(id: number): string {
+  return [
+    "Transport",
+    "Deploy",
+    "Colonize",
+    "Attack",
+    "Harvest",
+    "AcsDefend",
+    "Intercept",
+    "MissileAttack",
+    "AcsAttack",
+    "DefenseHold"
+  ][id] ?? `Unknown:${id}`;
+}
+
+function fleetMissionStatusLabel(id: number): string {
+  return [
+    "None",
+    "Outbound",
+    "Returning",
+    "Resolved",
+    "Returned",
+    "Recalled"
+  ][id] ?? `Unknown:${id}`;
+}
+
+function projectedFleetRecallCost(fuelCost: string): string {
+  const fuel = BigInt(fuelCost);
+  if (fuel <= 0n) return "0";
+  const cost = (fuel * 2_500n) / 10_000n;
+  return (cost === 0n ? 1n : cost).toString();
+}
+
+function parseJson<T>(value: string, fallback: T): T {
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
 }
 
 function openIndexerDatabase(databasePath: string): Database {

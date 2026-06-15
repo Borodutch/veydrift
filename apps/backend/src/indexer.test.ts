@@ -2029,6 +2029,55 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("elapsed production queues do not inflate contract-mirror unit counts before completion events", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xready-ship",
+      logIndex: "0x0",
+      topics: [shipQueuedTopic, topic(7n), topic(3n)],
+      data: abiWords(2n, 1767225500n, 2000n, 1000n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xready-defense",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(1n)],
+      data: abiWords(5n, 1767225500n, 4000n, 2000n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x85",
+      transactionHash: "0xready-research",
+      logIndex: "0x0",
+      topics: [researchQueuedTopic, addressTopic(player), topic(4n)],
+      data: abiWords(2n, 1767225500n, 800n, 400n, 200n)
+    });
+
+    expect(indexer.playerQueues(player, planet.planetId)).toMatchObject({
+      ship: null,
+      defense: null,
+      research: null
+    });
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 3)).toMatchObject({
+      id: 3,
+      count: 0
+    });
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 3)).toMatchObject({
+      id: 3,
+      count: 0
+    });
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)).toMatchObject({
+      id: 1,
+      count: 0
+    });
+    expect(indexer.technologyLevels(player)).not.toHaveProperty("4");
+  });
+
   test("indexes moon creation and moon building queues", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
@@ -3676,6 +3725,111 @@ describe("SettlementIndexer", () => {
     expect(indexer.shipRows(planet.planetId).find((row) => row.id === 1)?.count).toBe(2);
     expect(indexer.defenseRows(planet.planetId).find((row) => row.id === 2)?.count).toBe(7);
     expect(indexer.planet(planet.planetId)?.resources).toEqual({ metal: "250", crystal: "8000", deuterium: "120" });
+  });
+
+  test("explicit rebuild seeds canonical active fleet missions missing from event logs", async () => {
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return [planet]; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async listCanonicalFleetMissions() {
+        return [{
+          missionId: "90",
+          statusId: 1,
+          missionTypeId: 0,
+          status: "Outbound",
+          missionType: "Transport",
+          owner: player,
+          originPlanetId: planet.planetId,
+          targetPlanetId: "8",
+          departureAt: "1799999900",
+          arrivalAt: "1800000000",
+          returnAt: "1800000300",
+          fuelCost: "4",
+          cargo: { metal: "10", crystal: "20", deuterium: "30" },
+          randomnessRequestId: null
+        }];
+      }
+    }, 100n);
+
+    await indexer.rebuild();
+
+    expect(indexer.allActiveFleetMissions()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          missionId: "90",
+          status: "Outbound",
+          missionType: "Transport",
+          owner: player,
+          originPlanetId: planet.planetId,
+          targetPlanetId: "8",
+          cargo: { metal: "10", crystal: "20", deuterium: "30" }
+        })
+      ])
+    );
+  });
+
+  test("explicit rebuild uses canonical fleet mission status to repair active mission counts", async () => {
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return [planet]; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async listCanonicalFleetMissions() {
+        return [{
+          missionId: "91",
+          statusId: 4,
+          missionTypeId: 0,
+          status: "Returned",
+          missionType: "Transport",
+          owner: player,
+          originPlanetId: planet.planetId,
+          targetPlanetId: "8",
+          departureAt: "1799999900",
+          arrivalAt: "1800000000",
+          returnAt: "1800000300",
+          fuelCost: "4",
+          cargo: { metal: "10", crystal: "20", deuterium: "30" },
+          randomnessRequestId: null
+        }];
+      }
+    }, 100n);
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xmission91",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(91n), addressTopic(player), topic(0n)],
+      data: abiWords(BigInt(planet.planetId), 8n, 1800000000n, 1800000300n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xmission91",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(91n)],
+      data: abiWords(10n, 20n, 30n, 4n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xmission91",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(91n)],
+      data: abiWords(2n, ...Array.from({ length: 13 }, () => 0n))
+    });
+    expect(indexer.allActiveFleetMissions().map((mission) => mission.missionId)).toContain("91");
+
+    await indexer.rebuild();
+
+    expect(indexer.allActiveFleetMissions().map((mission) => mission.missionId)).not.toContain("91");
+    expect(indexer.allCompletedFleetMissions()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          missionId: "91",
+          status: "Returned",
+          ships: expect.objectContaining({ smallCargo: "2" })
+        })
+      ])
+    );
   });
 
   test("explicit canonical sync replays logs then repairs canonical rows from chain snapshots", async () => {
