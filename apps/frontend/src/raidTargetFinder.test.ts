@@ -8,6 +8,7 @@ import {
   inboundFleetsByTarget,
   incomingThreats,
   normalizeRaidTargetFilters,
+  normalizeRaidTargetSort,
   prepareRaidTargets,
   raidTargetTotals,
   sortRaidTargets,
@@ -51,6 +52,15 @@ describe("persisted raid target settings", () => {
       minLoot: 0,
     });
     expect(normalizeRaidTargetFilters("bad")).toEqual(DEFAULT_RAID_TARGET_FILTERS);
+  });
+
+  test("normalizes saved sort preferences and falls back safely for corrupt values", () => {
+    expect(normalizeRaidTargetSort({ key: "distance", direction: "asc", unrelated: true })).toEqual({
+      key: "distance",
+      direction: "asc",
+    });
+    expect(normalizeRaidTargetSort({ key: "owner", direction: "sideways" })).toEqual(DEFAULT_RAID_TARGET_SORT);
+    expect(normalizeRaidTargetSort("bad")).toEqual(DEFAULT_RAID_TARGET_SORT);
   });
 
   test("detects whether the viewer has an active alliance for control visibility", () => {
