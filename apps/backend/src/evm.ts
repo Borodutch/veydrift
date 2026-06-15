@@ -902,6 +902,7 @@ export interface ChainReader {
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
   listAllianceLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listContractLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  getBlockNumber?(): Promise<bigint>;
   rpcMetrics?(): RpcMetrics;
 }
 
@@ -2666,6 +2667,11 @@ export class VeydriftGameReader implements ChainReader {
    * filter. Mirrors the websocket `logs` subscription so chain-sync gap recovery can
    * backfill ONLY the missed range incrementally instead of triggering a full rebuild.
    */
+  /** Current chain head (eth_blockNumber). Drives the chain-sync poll cursor. */
+  async getBlockNumber(): Promise<bigint> {
+    return decodeUint(await this.transport.request<string>("eth_blockNumber", []));
+  }
+
   async listContractLogs(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<RpcLog[]> {
     const addresses = this.indexedContractAddresses();
     if (addresses.length === 0) return [];

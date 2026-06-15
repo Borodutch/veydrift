@@ -899,17 +899,28 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 }
 
 /**
- * Build the incremental log backfiller the chain-sync self-heal and gap recovery depend on.
- * Returns undefined only when the reader cannot list raw contract logs; the production
- * reader (VeydriftGameReader) exposes a public `listContractLogs`, so self-heal is wired
- * by default. Exported so a test can assert production construction enables self-heal and
- * the wiring can't silently regress to a no-op.
+ * Build the HTTP-poll log source the chain-sync ingester depends on. Returns undefined unless the
+ * reader can both resolve the chain head (eth_blockNumber) and list raw contract logs; the production
+ * reader (VeydriftGameReader) exposes both, so polling is wired by default. Exported so a test can
+ * assert production construction enables ingestion and the wiring can't silently regress to a no-op.
  */
 export function deriveLogBackfiller(
   reader: ChainReader | undefined
-): { listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]> } | undefined {
-  if (reader && typeof reader.listContractLogs === "function") {
-    return { listContractLogs: reader.listContractLogs.bind(reader) };
+):
+  | {
+      getHeadBlock: () => Promise<bigint>;
+      listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
+    }
+  | undefined {
+  if (
+    reader &&
+    typeof reader.listContractLogs === "function" &&
+    typeof reader.getBlockNumber === "function"
+  ) {
+    return {
+      getHeadBlock: reader.getBlockNumber.bind(reader),
+      listContractLogs: reader.listContractLogs.bind(reader)
+    };
   }
   return undefined;
 }
