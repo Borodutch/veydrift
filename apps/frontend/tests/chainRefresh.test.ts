@@ -114,9 +114,9 @@ describe("playable chain refresh", () => {
     expect(source).toContain("confirmSubmittedTransaction(txHash)");
     expect(source).toContain("sendStartBuildingUpgradeTransaction(\n          provider,\n          account,\n          gameContract,\n          planetId,\n          building,\n        )");
     expect(source).not.toContain("building,\n          { readProvider },");
-    // VEY-KANEO-507: ready production queues are reconciled with explicit wallet transactions
-    // before the next start transaction, while still avoiding browser-side read providers.
-    expect(source).toContain("sendFinishBuildingUpgradeTransaction");
+    // VEY-KANEO-507: ready production queues reconcile inside the upgraded contracts,
+    // so the frontend no longer adds a manual finish-before-start wallet transaction.
+    expect(source).not.toContain("sendFinishBuildingUpgradeTransaction");
     expect(source).not.toContain("sendCollectResourcesTransaction");
   });
 });
