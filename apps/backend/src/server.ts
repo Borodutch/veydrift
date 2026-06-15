@@ -8,6 +8,7 @@ import {
   attackBlockReasonLabel,
   type AllianceIdentity,
   type AllianceState,
+  type AttackBlockReason,
   type AttackProtectionStatus,
   type ChainReader,
   type DefenseState,
@@ -112,10 +113,8 @@ export type ServerDependencies = {
   // run on exactly one worker. "reader" workers skip every background loop and serve reads from the
   // shared WAL database. Explicitly injected services (tests) always take precedence over the role.
   role?: WorkerRole;
-  // Test seam for the canonical-mirror startup reconcile. Production never injects `indexer`, so the
-  // default (`!dependencies.indexer`) leaves the every-boot rebuild firing in production. Tests that inject
-  // a warm indexer default to NOT auto-reconciling (so they can assert "no chain read" precisely); the
-  // canonical-mirror boot test sets this true to force-and-count the single startup reconcile.
+  // Test/operator seam for an explicit canonical rebuild. Production defaults to false: the normal
+  // backend no longer self-heals from eth_call at boot. Chain-sync event replay is the automatic path.
   runStartupReconcile?: boolean;
 };
 
@@ -165,19 +164,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
   chainSync?.start();
   randomnessCommitter?.start();
-  const runStartupReconcile = dependencies.runStartupReconcile ?? !dependencies.indexer;
+  const runStartupReconcile = dependencies.runStartupReconcile ?? false;
   if (isWriter && runStartupReconcile && indexer && loaded.problems.length === 0) {
-    // Canonical-mirror contract: the SQLite read model is reconciled DIRECTLY from the contracts EXACTLY
-    // ONCE, at startup, and the contract state always wins — `rebuild()` clears the canonical tables and
-    // re-reads full canonical state (planets, resources, buildings, defenses, ships, research, queues,
-    // moons, alliances) on EVERY boot, warm or cold. Past data migrations changed contract state without
-    // emitting events, so event replay alone is incomplete; the startup canonical read is the only thing
-    // that makes the DB a faithful mirror. After this, the DB mutates ONLY via the websocket event
-    // listener (chainSync -> indexer.applyLog) — no per-request eth_call, no periodic sweep, no runtime
-    // self-heal. Fire it in the background (never await) so GET /health still answers within a second or
-    // two of start (see README "Backend redeploy health gate"). Do not turn this into an await.
+    // Explicit operator/test rebuild only. This path performs canonical eth_call reads and therefore must
+    // never run automatically for frontend/API serving; normal mutation comes from event replay/listeners.
     void indexer.rebuild().catch((error) => {
-      console.error("Veydrift index startup reconciliation failed", error);
+      console.error("Veydrift explicit index reconciliation failed", error);
     });
   }
   if (cacheReader) {
@@ -336,7 +328,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        return await indexedSettlementFundingResponse(indexer, chainReader, wallet);
+        return indexedSettlementFundingResponse(indexer, loaded.config);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -637,7 +629,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           entries,
           allianceIntel,
           url.searchParams.get("currentWallet"),
-          highscoreAttackProtectionRequested(url)
+          highscoreAttackProtectionRequested(url),
+          indexer
         );
         const protectedRankings = highscoreRankingsWithProtection(rankings, protection);
         const currentPlayer = highscoreCurrentPlayerPages(sortedRankings, requestedCategories, pagination.pageSize, url.searchParams.get("currentWallet"));
@@ -899,17 +892,28 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 }
 
 /**
- * Build the incremental log backfiller the chain-sync self-heal and gap recovery depend on.
- * Returns undefined only when the reader cannot list raw contract logs; the production
- * reader (VeydriftGameReader) exposes a public `listContractLogs`, so self-heal is wired
- * by default. Exported so a test can assert production construction enables self-heal and
- * the wiring can't silently regress to a no-op.
+ * Build the HTTP-poll log source the chain-sync ingester depends on. Returns undefined unless the
+ * reader can both resolve the chain head (eth_blockNumber) and list raw contract logs; the production
+ * reader (VeydriftGameReader) exposes both, so polling is wired by default. Exported so a test can
+ * assert production construction enables ingestion and the wiring can't silently regress to a no-op.
  */
 export function deriveLogBackfiller(
   reader: ChainReader | undefined
-): { listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]> } | undefined {
-  if (reader && typeof reader.listContractLogs === "function") {
-    return { listContractLogs: reader.listContractLogs.bind(reader) };
+):
+  | {
+      getHeadBlock: () => Promise<bigint>;
+      listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
+    }
+  | undefined {
+  if (
+    reader &&
+    typeof reader.listContractLogs === "function" &&
+    typeof reader.getBlockNumber === "function"
+  ) {
+    return {
+      getHeadBlock: reader.getBlockNumber.bind(reader),
+      listContractLogs: reader.listContractLogs.bind(reader)
+    };
   }
   return undefined;
 }
@@ -926,9 +930,8 @@ function isIndexableChainReader(
 }
 
 // Predicate kept for diagnostics/tests: true when a warm DB inherited a recorded reconcile failure
-// (lastReconciliationError set, not currently reconciling). Under the canonical-mirror contract the
-// startup reconcile now runs on EVERY boot and overwrites the DB regardless, so a failed prior reconcile
-// is automatically re-attempted at startup — there is no longer a separate runtime recovery path.
+// (lastReconciliationError set, not currently reconciling). The backend no longer auto-runs canonical
+// reconcile at startup; recovery is an explicit operator action or event-log replay.
 export function shouldRecoverFailedReconciliation(
   snapshot: Pick<IndexerSnapshot, "lastReconciledAt" | "lastReconciliationError" | "reconciliationInProgress">
 ): boolean {
@@ -2077,7 +2080,8 @@ function rankedHighscoreIndexedProtectionLookup(
   entries: readonly HighscoreEntry[],
   allianceIntel: ReadonlyMap<string, AllianceIdentity>,
   currentWallet: string | null | undefined,
-  includeAttackProtection: boolean
+  includeAttackProtection: boolean,
+  indexer?: SettlementIndexer | undefined
 ): Map<string, RankedHighscoreAttackProtection | null> {
   if (!includeAttackProtection || !currentWallet || !/^0x[a-fA-F0-9]{40}$/.test(currentWallet)) return new Map();
 
@@ -2086,18 +2090,34 @@ function rankedHighscoreIndexedProtectionLookup(
   if (!attacker) return new Map();
 
   const statuses = new Map<string, RankedHighscoreAttackProtection | null>();
-  const attackerScore = BigInt(attacker.score.total);
+  // VEY-KANEO-489 follow-up: score-protection must use the contract's _totalUserScore (cached on the
+  // leaderboard entry), not the resource-based display total (which made everyone read as a newbie).
+  const attackerScore = BigInt(attacker.totalUserScore);
   const attackerAlliance = allianceIntel.get(normalizedCurrentWallet) ?? null;
+  // VEY-KANEO-489: the bashing window is per-(attacker, defender, planet), so it is evaluated per planet
+  // rather than once per defender row. Alliance/score gates above are defender-level and short-circuit
+  // first, matching the contract's precedence (same_alliance -> score_protection -> bashing_limit).
+  const launchSecondsByTarget = indexer?.attackLaunchSecondsByTarget(normalizedCurrentWallet as `0x${string}`)
+    ?? new Map<string, number[]>();
+  const nowSeconds = Math.floor(Date.now() / 1_000);
   for (const row of rows) {
     const status = indexedScoreProtectionStatus(
       attackerScore,
-      BigInt(row.score.total),
+      BigInt(row.totalUserScore),
       attackerAlliance,
       normalizedCurrentWallet,
       row
     );
     for (const planet of row.planets) {
-      statuses.set(planet.planetId, status);
+      const bashingLimited = status?.allowed
+        && indexedBashingLimitReached(launchSecondsByTarget.get(planet.planetId) ?? [], nowSeconds);
+      statuses.set(planet.planetId, bashingLimited
+        ? {
+            allowed: false,
+            blockedReason: "bashing_limit",
+            blockedReasonLabel: attackBlockReasonLabel("bashing_limit")
+          }
+        : status);
     }
   }
 
@@ -2161,6 +2181,37 @@ function indexedNewbieProtectionRatioBps(score: bigint): bigint {
   if (score < 50_000n) return 50_000n;
   if (score < 500_000n) return 100_000n;
   return 0n;
+}
+
+// VeydriftAntiRaidPrimitives.BASHING_WINDOW_SECONDS (24h) / MAX_ATTACKS_PER_BASHING_WINDOW. Mirrored
+// here so the indexed attack-protection preview reports bashing_limit the same way the contract gates
+// it, without a live attackProtectionStatus read (VEY-KANEO-489).
+const BASHING_WINDOW_SECONDS = 86_400;
+const MAX_ATTACKS_PER_BASHING_WINDOW = 6;
+
+// Mirror of VeydriftGameStorage._recordAttack + _currentAttackCount + isBashingLimitReached: replay the
+// attacker's prior Attack launches against one (defender, planet) in block order to derive the live
+// window count, then compare against the cap. The window is anchored at the first launch and re-anchors
+// whenever a launch lands >= 24h after the current anchor (matching the contract's reset), and the count
+// only stands while now is still inside that 24h window. `launchSeconds` must be ascending.
+// NOTE: the war/inactive bypass the contract applies (bashingWarException || defenderInactive) is not
+// modelled here — the indexed read model already does not track player activity or alliance-war context
+// for attack protection (defenderInactive is reported as false), so this mirrors that existing
+// limitation. VEY-KANEO-489 follow-up tracks modelling those exceptions.
+function indexedBashingLimitReached(launchSeconds: readonly number[], nowSeconds: number): boolean {
+  let windowStartedAt = 0;
+  let count = 0;
+  for (const launchedAt of launchSeconds) {
+    if (windowStartedAt === 0 || launchedAt >= windowStartedAt + BASHING_WINDOW_SECONDS) {
+      windowStartedAt = launchedAt;
+      count = 1;
+    } else {
+      count += 1;
+    }
+  }
+  const windowActive = windowStartedAt !== 0 && nowSeconds < windowStartedAt + BASHING_WINDOW_SECONDS;
+  const currentCount = windowActive ? count : 0;
+  return currentCount >= MAX_ATTACKS_PER_BASHING_WINDOW;
 }
 
 function sortedHighscores(entries: HighscoreEntry[], category: HighscoreCategory): HighscoreEntry[] {
@@ -2289,23 +2340,36 @@ function indexedReadNotReadyResponse(surface: string, indexer: SettlementIndexer
   );
 }
 
-async function indexedSettlementFundingResponse(
+function indexedSettlementFundingResponse(
   indexer: SettlementIndexer | undefined,
-  chainReader: ChainReader | undefined,
-  wallet: `0x${string}`
-): Promise<Response> {
-  // VEY-KANEO-478: settlement funding is the deliberate, narrow exception to the canonical-mirror "no
-  // RPC on the request path" rule. It is NOT indexed contract game-state: it is the wallet's native ETH
-  // balance (a cheap eth_getBalance) plus the planet start price (a memoized chain constant), and the
-  // Settle button onboarding flow needs it live. So while the index is cold/booting we still serve a
-  // retryable DB-only not-ready response (never touching the chain), but once the index is warm we serve
-  // the real funding read so new players can settle their first planet.
-  if (!hasWarmPlanetIndex(indexer) || !chainReader) {
+  config: BackendConfig
+): Response {
+  // VEY-KANEO-497: frontend API reads must not trigger backend RPC, including the
+  // first-planet funding helper. The wallet-specific native ETH balance is left
+  // to the wallet/chain at transaction submission time; the start price is served
+  // only when operators provide static metadata that matches the deployment.
+  if (!hasWarmPlanetIndex(indexer)) {
     return indexedReadNotReadyResponse("settlement funding", indexer);
   }
 
-  const funding = await chainReader.getSettlementFunding(wallet);
-  return indexedJsonResponse(funding, indexer.snapshot());
+  const resourceTokensConfigured = Boolean(
+    config.resourceTokenAddresses.metal
+      && config.resourceTokenAddresses.crystal
+      && config.resourceTokenAddresses.deuterium
+  );
+  const startPriceWei = config.settlementStartPriceWei ?? null;
+  return indexedJsonResponse({
+    affordable: Boolean(startPriceWei) && resourceTokensConfigured,
+    balanceWei: null,
+    contractKind: "game",
+    startPriceWei,
+    ...(resourceTokensConfigured
+      ? {}
+      : { unavailableReason: "Resource token reserves are not configured for this game deployment yet." }),
+    ...(resourceTokensConfigured && !startPriceWei
+      ? { unavailableReason: "Settlement start price is not configured for this game deployment yet." }
+      : {})
+  }, indexer.snapshot());
 }
 
 function indexedAllianceResponse(wallet: `0x${string}`, indexer: SettlementIndexer | undefined): Response {
@@ -2356,16 +2420,63 @@ function indexedAttackProtectionResponse(
   const defender = indexer.highscoreForWallet(target.owner, (planetsByOwner.get(target.owner.toLowerCase()) ?? []).map((planet) => planet.planetId));
   const attackerScore = BigInt(attacker.score.total);
   const defenderScore = BigInt(defender.score.total);
-  const scoreProtected = attackerScore > 0n && (defenderScore < attackerScore / 5n || defenderScore > attackerScore * 5n);
+  // VEY-KANEO-489 follow-up: the score-protection gate must use the contract's _totalUserScore
+  // (HighscoreEntry.totalUserScore), NOT the resource-based display total above. The display total is
+  // on a ~hundreds scale, so against the contract's 50k/500k thresholds every player read as a newbie
+  // and the UI false-flagged score_protection. relation label keeps the display total.
+  const attackerProtectionScore = BigInt(attacker.totalUserScore);
+  const defenderProtectionScore = BigInt(defender.totalUserScore);
+  const attackerKey = wallet.toLowerCase();
+  const defenderKey = target.owner.toLowerCase();
+  // VEY-KANEO-489: model the contract's same_alliance gate, the HIGHEST-precedence reason in
+  // VeydriftGameStorage._attackProtectionStatus (SameAlliance -> ScoreProtection -> BashingLimit).
+  // Without it this single-target endpoint never returned `same_alliance`, so the frontend — which
+  // derives ally targets solely from this signal (galaxyActions.ts: isAllyTarget = blockedReason ===
+  // "same_alliance") — left the attack button enabled for allies and the launch reverted on-chain.
+  // allianceIntelForPlayers only returns members of *active* alliances, so a missing entry means "no
+  // alliance"; self-targets (attacker == owner) are never treated as same-alliance.
+  const allianceIntel = indexer.allianceIntelForPlayers([attackerKey, defenderKey]);
+  const attackerAlliance = allianceIntel.get(attackerKey) ?? null;
+  const defenderAlliance = allianceIntel.get(defenderKey) ?? null;
+  const sameAlliance = attackerKey !== defenderKey
+    && attackerAlliance !== null
+    && defenderAlliance !== null
+    && attackerAlliance.allianceId !== "0"
+    && attackerAlliance.allianceId === defenderAlliance.allianceId;
+  // VEY-KANEO-489: use the contract-faithful newbie/score-ratio gate (VeydriftAntiRaidPrimitives.
+  // isScoreProtected) instead of a naive 5x-score heuristic. The old heuristic false-blocked any two
+  // players whose scores differed >5x — including two veterans both past the newbie-protection ceiling,
+  // who the contract never score-protects (both ratios are 0). Kept raw (not gated by sameAlliance) so
+  // plunderBps below still reflects the score-protection state.
+  const scoreProtected = isIndexedScoreProtected(attackerProtectionScore, defenderProtectionScore);
+  // VEY-KANEO-489: also replay the per-(attacker, planet) bashing window the contract enforces. Self
+  // attacks are rejected upstream by the contract and carry no window; a self-target read just returns
+  // an empty launch history. same_alliance and score protection are checked first to match the
+  // contract's precedence (VeydriftGameStorage._attackProtectionStatus: SameAlliance -> ScoreProtection
+  // -> BashingLimit); skipping the launch-log replay when either short-circuits avoids needless work.
+  const bashingLimited = !sameAlliance
+    && !scoreProtected
+    && wallet.toLowerCase() !== target.owner.toLowerCase()
+    && indexedBashingLimitReached(
+      indexer.attackLaunchSecondsByTarget(wallet).get(targetPlanetId.toString()) ?? [],
+      Math.floor(Date.now() / 1_000)
+    );
+  const blockedReason: AttackBlockReason = sameAlliance
+    ? "same_alliance"
+    : scoreProtected
+      ? "score_protection"
+      : bashingLimited
+        ? "bashing_limit"
+        : "none";
 
   const body: AttackProtectionStatus & {
     source: typeof indexedSource;
   } = {
     wallet,
     targetPlanetId: targetPlanetId.toString(),
-    allowed: !scoreProtected,
-    blockedReason: scoreProtected ? "score_protection" : "none",
-    blockedReasonLabel: scoreProtected ? attackBlockReasonLabel("score_protection") : null,
+    allowed: blockedReason === "none",
+    blockedReason,
+    blockedReasonLabel: blockedReason === "none" ? null : attackBlockReasonLabel(blockedReason),
     relation: defenderScore > attackerScore ? "stronger" : defenderScore < attackerScore ? "weaker" : "peer",
     defenderHonorStatus: "neutral",
     plunderBps: scoreProtected ? 0 : 5000,

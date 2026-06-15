@@ -3057,6 +3057,122 @@ contract VeydriftGameTest is Test {
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
     }
 
+    function testAttackResolutionBouncesWhenTargetBecomesScoreProtectedMidFlight() public {
+        vm.warp(8 days);
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setTechnologyLevel(player, Technology.Computer, 2);
+
+        // Attacker and the newbie target start close enough in score that the launch is NOT
+        // score-protected and the attack is allowed to depart.
+        _setShipCount(originPlanetId, Ship.SmallCargo, 50);
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 50);
+        _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(targetPlanetId, 500_000, 500_000, 500_000);
+
+        (VeydriftGameStorage.AttackBlockReason launchReason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(launchReason), uint8(VeydriftGameStorage.AttackBlockReason.None));
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            123
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        // While the fleet is in flight the attacker's empire balloons far past the newbie target,
+        // so the target is now score-protected and must not be raided on impact (the "attack gap").
+        _setShipCount(originPlanetId, Ship.Battleship, 1_000_000);
+        (VeydriftGameStorage.AttackBlockReason impactReason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(impactReason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection));
+
+        uint32 defenderShipsBefore = game.shipCount(targetPlanetId, Ship.SmallCargo);
+
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 1);
+        game.resolveFleetMission(missionId);
+
+        // The attack fleet bounced: it is returning with its ship intact and empty cargo (no
+        // plunder loaded), and the protected defender kept all of its ships. A real battle would
+        // have either loaded plunder into the cargo or destroyed the lone attacker (status
+        // Resolved), so this state is only reachable when no combat ran.
+        (
+            VeydriftGameStorage.FleetMissionStatus status,,,
+            VeydriftGameStorage.Resources memory cargo
+        ) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(cargo.metal, 0);
+        assertEq(cargo.crystal, 0);
+        assertEq(cargo.deuterium, 0);
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 49);
+        assertEq(game.shipCount(targetPlanetId, Ship.SmallCargo), defenderShipsBefore);
+    }
+
+    function testAttackResolutionBouncesWhenTargetJoinsAttackerAllianceMidFlight() public {
+        vm.warp(8 days);
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        _setTechnologyLevel(player, Technology.Computer, 2);
+
+        // Comparable scores so neither score protection nor same-alliance applies at launch.
+        _setShipCount(originPlanetId, Ship.SmallCargo, 50);
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 50);
+        _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(targetPlanetId, 500_000, 500_000, 500_000);
+
+        (VeydriftGameStorage.AttackBlockReason launchReason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(launchReason), uint8(VeydriftGameStorage.AttackBlockReason.None));
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            123
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        // While the fleet is in flight the target joins the attacker's alliance, so the impact is
+        // now a same-alliance attack that must not be raided through the "attack gap".
+        uint256 allianceId = _createAlliance(player);
+        vm.prank(player);
+        allianceSystem.inviteMember(allianceId, defender);
+        vm.prank(defender);
+        allianceSystem.acceptInvite(allianceId);
+        (VeydriftGameStorage.AttackBlockReason impactReason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(impactReason), uint8(VeydriftGameStorage.AttackBlockReason.SameAlliance));
+
+        uint32 defenderShipsBefore = game.shipCount(targetPlanetId, Ship.SmallCargo);
+
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 1);
+        game.resolveFleetMission(missionId);
+
+        // Same-alliance target is not raided on impact: the fleet bounces home untouched.
+        (
+            VeydriftGameStorage.FleetMissionStatus status,,,
+            VeydriftGameStorage.Resources memory cargo
+        ) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(cargo.metal, 0);
+        assertEq(cargo.crystal, 0);
+        assertEq(cargo.deuterium, 0);
+        assertEq(game.shipCount(originPlanetId, Ship.SmallCargo), 49);
+        assertEq(game.shipCount(targetPlanetId, Ship.SmallCargo), defenderShipsBefore);
+    }
+
     function testBashingLimitBlocksSeventhAttackUnlessDefenderIsInactive() public {
         vm.warp(8 days);
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
@@ -3102,6 +3218,60 @@ contract VeydriftGameTest is Test {
         );
         (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(allowedMissionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+    }
+
+    function testBashingLimitedAttackStillLootsAtResolutionSinceCapIsEnforcedAtLaunch() public {
+        // The bashing window count is incremented at LAUNCH (_recordAttack), so the 6/24h cap is
+        // enforced when fleets depart and the 7th attack cannot launch. A within-cap raid therefore
+        // reads as BashingLimit at impact yet must still resolve and loot: the resolution-time
+        // protection re-check (VEY-KANEO-492) deliberately covers only ScoreProtection/SameAlliance,
+        // not the launch-enforced bashing limit, so legitimately launched raids are never bounced.
+        vm.warp(8 days);
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setTechnologyLevel(player, Technology.Computer, 5);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 6);
+        _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(targetPlanetId, 10_000, 4_000, 3_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        uint256 firstMissionId;
+        for (uint256 i = 0; i < VeydriftAntiRaidPrimitives.MAX_ATTACKS_PER_BASHING_WINDOW; i++) {
+            vm.prank(player);
+            uint256 launchedId = game.launchFleetMission(
+                originPlanetId,
+                targetPlanetId,
+                VeydriftGameStorage.FleetMissionType.Attack,
+                ships,
+                VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+                i
+            );
+            if (i == 0) {
+                firstMissionId = launchedId;
+            }
+        }
+
+        // The window is now at the bashing cap: the target reads as BashingLimit.
+        (VeydriftGameStorage.AttackBlockReason reason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(reason), uint8(VeydriftGameStorage.AttackBlockReason.BashingLimit));
+
+        (, uint64 arrivalAt,,) = _fleetMission(firstMissionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(firstMissionId, 777);
+        game.resolveFleetMission(firstMissionId);
+
+        // BashingLimit does not bounce at resolution: the raid still wins and loots 50% of the metal
+        // (cargo-capped), exactly like an unthrottled raid.
+        (
+            VeydriftGameStorage.FleetMissionStatus status,,,
+            VeydriftGameStorage.Resources memory cargo
+        ) = _fleetMission(firstMissionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(cargo.metal, 5_000);
+        assertEq(game.planet(targetPlanetId).resources.metal, 5_000);
+        assertEq(game.planet(targetPlanetId).resources.crystal, 4_000);
+        assertEq(game.planet(targetPlanetId).resources.deuterium, 3_000);
     }
 
     function testAttackRejectsSameAllianceTargetPlanet() public {

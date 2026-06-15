@@ -757,7 +757,7 @@ export type AllianceState = {
 export type AllianceRoleName = "none" | "member" | "officer" | "owner";
 
 // Canonical-mirror seed shapes for the alliance sub-states that have no on-chain enumeration getter
-// covered by the directory snapshot. Read from contract getters once on the startup rebuild and used
+// covered by the directory snapshot. Read from contract getters during explicit rebuild and used
 // to DELETE+replace the corresponding indexed tables (see SettlementIndexer.rebuildUncached).
 export type AllianceJoinRequestSnapshot = {
   allianceId: string;
@@ -902,6 +902,7 @@ export interface ChainReader {
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
   listAllianceLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listContractLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  getBlockNumber?(): Promise<bigint>;
   rpcMetrics?(): RpcMetrics;
 }
 
@@ -2224,7 +2225,7 @@ export class VeydriftGameReader implements ChainReader {
 
   // Canonical-mirror seed: pending alliance invites. The contract has no per-alliance enumeration getter,
   // so iterate the candidate-wallet set (known players) × allianceIds and keep the invites the contract
-  // reports as active. Bounded in alpha; runs only on the startup rebuild, never per request.
+  // reports as active. Bounded in alpha; runs only during explicit rebuild, never per request.
   async listAllianceInviteState(candidateWallets: readonly Address[]): Promise<AllianceInviteSnapshot[]> {
     if (!this.allianceContractAddress) return [];
 
@@ -2666,6 +2667,11 @@ export class VeydriftGameReader implements ChainReader {
    * filter. Mirrors the websocket `logs` subscription so chain-sync gap recovery can
    * backfill ONLY the missed range incrementally instead of triggering a full rebuild.
    */
+  /** Current chain head (eth_blockNumber). Drives the chain-sync poll cursor. */
+  async getBlockNumber(): Promise<bigint> {
+    return decodeUint(await this.transport.request<string>("eth_blockNumber", []));
+  }
+
   async listContractLogs(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<RpcLog[]> {
     const addresses = this.indexedContractAddresses();
     if (addresses.length === 0) return [];
@@ -4437,6 +4443,26 @@ export function isFleetMissionLog(log: RpcLog): boolean {
     || topic === fleetMissionReturnExposedTopic
     || topic === fleetMissionReturnedTopic
     || topic === attackMissionJoinedTopic;
+}
+
+// VEY-KANEO-489: decode a FleetMissionLaunched log into the attacker + target it records against the
+// per-(attacker, defender, planet) bashing window. Only `Attack` missions call _recordAttack on the
+// contract (VeydriftGameplayModule._sendFleet); AcsAttack joiners, AcsDefend, and the non-combat types
+// never increment the window, and every non-launch fleet log is irrelevant — all of those return null.
+// The contract anchors each window at block.timestamp of the launch, so the indexed read model can
+// replay it from these logs (plus their block timestamps) instead of a live attackProtectionStatus call.
+export function decodeAttackMissionLaunch(
+  log: RpcLog
+): { attacker: Address; targetPlanetId: string } | null {
+  try {
+    if (topicAt(log.topics, 0) !== fleetMissionLaunchedTopic) return null;
+    if (missionTypeLabel(decodeUint(topicAt(log.topics, 3))) !== "Attack") return null;
+    const attacker = decodeAddressWord(topicAt(log.topics, 2)).toLowerCase() as Address;
+    const targetPlanetId = decodeUintWord(wordAt(splitWords(log.data), 1)).toString();
+    return { attacker, targetPlanetId };
+  } catch {
+    return null;
+  }
 }
 
 // A fleet-mission log that signals a mission reaching an end state — combat resolved, a return-leg

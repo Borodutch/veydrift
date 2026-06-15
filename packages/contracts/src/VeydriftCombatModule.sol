@@ -397,6 +397,22 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             return;
         }
 
+        // VEY-KANEO-492: attack protection is enforced at RESOLUTION as well as at launch. A target
+        // that entered score/newbie protection or joined the attacker's alliance while the fleet was
+        // in flight must not be raided through the launch->impact "attack gap". Bounce the whole
+        // attack group home with no combat, losses, debris, or plunder. BashingLimit is deliberately
+        // not re-checked here: its window count is incremented at launch, so re-checking it would
+        // bounce every legitimately launched attack once the window filled. ScoreProtection and
+        // SameAlliance are the two highest AttackBlockReason values, so a single >= comparison
+        // selects exactly the "must not be raided" reasons.
+        (AttackBlockReason protectionReason,) =
+            _attackProtectionPreview(mission.owner, mission.targetPlanetId);
+        if (uint8(protectionReason) >= uint8(AttackBlockReason.ScoreProtection)) {
+            _returnLinkedMissions(missionId, mission);
+            mission.status = FleetMissionStatus.Returning;
+            return;
+        }
+
         BattleSettlement memory settlement = _runBattle(missionId, mission);
 
         if (settlement.outcome == BattleOutcome.AttackerWin) {
@@ -415,7 +431,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             mission.returnAt = uint64(block.timestamp);
             activeFleetMissionCount[mission.owner] -= 1;
             _decreaseInternalResources(mission.cargo);
-            mission.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
+            delete mission.cargo;
         }
 
         Resources memory debris = _reserveLimitedIncrease(
@@ -1352,7 +1368,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                     joined.returnAt = uint64(block.timestamp);
                     activeFleetMissionCount[joined.owner] -= 1;
                     _decreaseInternalResources(joined.cargo);
-                    joined.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
+                    delete joined.cargo;
                 } else {
                     joined.status = FleetMissionStatus.Returning;
                     joined.returnAt = uint64(
@@ -1398,7 +1414,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                     counterplay.returnAt = uint64(block.timestamp);
                     activeFleetMissionCount[counterplay.owner] -= 1;
                     _decreaseInternalResources(counterplay.cargo);
-                    counterplay.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
+                    delete counterplay.cargo;
                 } else {
                     counterplay.status = FleetMissionStatus.Returning;
                     counterplay.returnAt = uint64(
