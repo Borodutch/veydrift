@@ -575,6 +575,107 @@ describe("SettlementIndexer", () => {
     expect(Number(projected?.resources.metal)).toBe(previewOracle);
   });
 
+  test("does not settle resources to a different active building queue's readyAt on replay", () => {
+    const startTs = 1_781_631_864;
+    const futureReadyAt = 1_781_648_416;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent({ ...planet, lastSettledAt: startTs.toString() });
+
+    indexer.applyLog({
+      blockNumber: "0x100",
+      blockTimestamp: `0x${startTs.toString(16)}`,
+      transactionHash: "0xfuture-building-start",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(3n)],
+      data: abiWords(17n, BigInt(futureReadyAt), 0n, 0n, 0n)
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x101",
+      blockTimestamp: `0x${(startTs + 60).toString(16)}`,
+      transactionHash: "0xold-building-finish",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(2n)],
+      data: abiWords(8n)
+    });
+
+    const served = indexer.walletSettlement(player).planet;
+    expect(served?.lastSettledAt).toBe(startTs.toString());
+    expect(indexer.planetQueue(planet.planetId, "building")).toMatchObject({
+      itemId: 3,
+      targetLevel: 17,
+      readyAt: futureReadyAt.toString()
+    });
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 2)?.level).toBe(8);
+  });
+
+  test("startup event replay repairs stale resource snapshots from stored PlanetSettled logs", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    try {
+      const first = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      }, 100n, { databasePath });
+      first.applyEvent(planet);
+      first.applyLog({
+        blockNumber: "0x100",
+        blockTimestamp: "0x6a2ad09c",
+        transactionHash: "0xstored-settle",
+        logIndex: "0x2",
+        topics: [planetSettledTopic, topic(7n)],
+        data: abiWords(15704n, 13731n, 9994n, 1781631864n)
+      });
+
+      const staleDb = new Database(databasePath);
+      try {
+        staleDb.query(`
+          UPDATE contract_planet_resources
+          SET metal = '25419', crystal = '18411', deuterium = '10738',
+            last_settled_at = '1781648416', log_index = '0x0'
+          WHERE planet_id = ?
+        `).run("7");
+        staleDb.query(`
+          UPDATE contract_planets
+          SET last_settled_at = '1781648416'
+          WHERE planet_id = ?
+        `).run("7");
+      } finally {
+        staleDb.close();
+      }
+
+      new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      }, 100n, { databasePath });
+
+      const repairedDb = new Database(databasePath, { readonly: true });
+      try {
+        expect(repairedDb.query(`
+          SELECT metal, crystal, deuterium, last_settled_at, log_index
+          FROM contract_planet_resources
+          WHERE planet_id = ?
+        `).get("7")).toEqual({
+          metal: "15704",
+          crystal: "13731",
+          deuterium: "9994",
+          last_settled_at: "1781631864",
+          log_index: "0x2"
+        });
+      } finally {
+        repairedDb.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("does not optimistically raise the storage cap above the contract until the upgrade finishes on-chain (VEY-KANEO-483)", () => {
     // A crystal-storage upgrade whose build timer has elapsed by wall-clock must NOT raise the
     // backend storage cap. The contract only bumps storageCaps(planetId) when finishBuildingUpgrade
@@ -1005,6 +1106,69 @@ describe("SettlementIndexer", () => {
     });
 
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
+  });
+
+  test("legacy combat round counts remove a unique stale defender unit when loss resources prove it was absent", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-small-cargo",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(2n, 2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-light-fighter",
+      logIndex: "0x1",
+      topics: [shipCompletedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n, 2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-stale-light-laser",
+      logIndex: "0x2",
+      topics: [defenseCompletedTopic, topic(7n), topic(1n)],
+      data: abiWords(1n, 1n)
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlegacy-battle-stale-defense",
+      logIndex: "0x0",
+      topics: [attackBattleResolvedTopic, topic(228n), addressTopic(player), topic(7n)],
+      data: abiWords(1n, 2n, 123n, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlegacy-battle-stale-defense",
+      logIndex: "0x1",
+      topics: [combatRoundResolvedTopic, topic(228n), topic(1n)],
+      data: abiWords(10n, 1n, 0n, 0n, 7000n, 5000n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlegacy-battle-stale-defense",
+      logIndex: "0x2",
+      topics: [combatRoundResolvedTopic, topic(228n), topic(2n)],
+      data: abiWords(10n, 0n, 0n, 0n, 3000n, 1000n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlegacy-battle-stale-defense",
+      logIndex: "0x3",
+      topics: [combatLossesTopic, topic(228n)],
+      data: abiWords(0n, 0n, 0n, 10000n, 6000n, 0n)
+    });
+
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(0);
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)?.count).toBe(0);
   });
 
   test("stored-log replay sorts hex log indexes numerically inside the same transaction", () => {
