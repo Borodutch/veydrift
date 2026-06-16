@@ -1400,6 +1400,8 @@ export class SettlementIndexer {
       throw new Error("current-state seed is unavailable: chain reader cannot read raw canonical planet state");
     }
 
+    const before = this.snapshot();
+    const overlapFromBlock = nextBlockOrBase(before.latestIndexedBlock, this.fromBlock);
     const planetEvents = await this.chainReader.listCurrentPlanets();
     await this.healCurrentCanonicalPlanets(
       planetEvents,
@@ -1428,6 +1430,9 @@ export class SettlementIndexer {
     }
 
     const latestBlock = this.chainReader.getBlockNumber ? (await this.chainReader.getBlockNumber()).toString() : null;
+    if (latestBlock !== null) {
+      await this.replayCurrentHealOverlapLogs(overlapFromBlock, BigInt(latestBlock));
+    }
 
     await this.runHealWrite("alliance snapshots", () => {
       this.applyAllianceDirectorySnapshot(allianceDirectory);
@@ -1439,6 +1444,21 @@ export class SettlementIndexer {
       this.recordSuccessfulReconciliation(latestBlock);
     });
     return this.snapshot();
+  }
+
+  private async replayCurrentHealOverlapLogs(fromBlock: bigint, toBlock: bigint): Promise<void> {
+    if (toBlock < fromBlock) return;
+    if (!this.chainReader.listContractLogs) return;
+
+    const logs = sortRpcLogs(await this.chainReader.listContractLogs(fromBlock, toBlock));
+    for (const log of logs) {
+      await this.runHealOperation(`record overlap log ${indexedLogKey(log)}`, () => {
+        this.applyLog(log);
+      });
+      await this.runHealWrite(`replay overlap log ${indexedLogKey(log)}`, () => {
+        this.applyStoredLogSideEffects(log);
+      });
+    }
   }
 
   private async healCurrentCanonicalPlanets(
@@ -2565,12 +2585,16 @@ export class SettlementIndexer {
   }
 
   private async runHealWrite(label: string, write: () => void): Promise<void> {
-    const transaction = this.db.transaction(write);
+    await this.runHealOperation(label, () => {
+      this.db.transaction(write)();
+    });
+  }
+
+  private async runHealOperation<T>(label: string, operation: () => T): Promise<T> {
     const maxAttempts = 8;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
-        transaction();
-        return;
+        return operation();
       } catch (error) {
         if (!isSqliteBusyError(error) || attempt === maxAttempts) {
           throw error;
@@ -4864,6 +4888,14 @@ function safeBlockNumber(value: string | null): bigint {
     return BigInt(value);
   } catch {
     return 0n;
+  }
+}
+
+function nextBlockOrBase(value: string | null, base: bigint): bigint {
+  try {
+    return value ? BigInt(value) + 1n : base;
+  } catch {
+    return base;
   }
 }
 

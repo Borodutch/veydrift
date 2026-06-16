@@ -3972,7 +3972,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.planet(planet.planetId)?.resources).toEqual({ metal: "777", crystal: "888", deuterium: "999" });
   });
 
-  test("current-state seed skips event replay and high-level readers for raw canonical rows", async () => {
+  test("current-state seed uses raw canonical rows and replays overlap logs", async () => {
     const stalePlanet = {
       ...planet,
       resources: {
@@ -3998,6 +3998,7 @@ describe("SettlementIndexer", () => {
       }
     };
     let rawReads = 0;
+    const overlapArgs: Array<{ fromBlock: unknown; toBlock: unknown }> = [];
     const indexer = new SettlementIndexer({
       async listCurrentPlanets() { return [stalePlanet]; },
       async getCanonicalPlanetState(planetId) {
@@ -4009,7 +4010,18 @@ describe("SettlementIndexer", () => {
       async listDebrisFieldEvents() { throw new Error("event backfill should not run"); },
       async listMoonChanceReportEvents() { throw new Error("event backfill should not run"); },
       async listSettledPlanetEvents() { throw new Error("settled event scan should not run"); },
-      async listContractLogs() { throw new Error("contract log replay should not run"); },
+      async listContractLogs(fromBlock, toBlock) {
+        overlapArgs.push({ fromBlock, toBlock });
+        return [
+          {
+            blockNumber: "0x121",
+            transactionHash: "0xabc",
+            logIndex: "0x0",
+            topics: [planetShipCountChangedTopic, topic(BigInt(planet.planetId)), topic(1n)],
+            data: abiWords(10n)
+          }
+        ];
+      },
       async getInfrastructureState() { throw new Error("high-level infrastructure reader should not run"); },
       async getShipyardState() { throw new Error("high-level shipyard reader should not run"); },
       async getDefenseState() { throw new Error("high-level defense reader should not run"); },
@@ -4030,9 +4042,10 @@ describe("SettlementIndexer", () => {
     });
 
     expect(rawReads).toBe(1);
+    expect(overlapArgs).toEqual([{ fromBlock: 0x121n, toBlock: 0x123n }]);
     expect(indexer.planet(planet.planetId)?.resources).toEqual(rawState.resources);
     expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(4);
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(8);
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(10);
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(6);
     expect(indexer.shipRows("99").find((ship) => ship.id === 2)?.count).toBe(3);
   });
