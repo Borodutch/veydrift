@@ -3405,26 +3405,30 @@ export class SettlementIndexer {
     latestAbsoluteUnitTotals: Map<string, LegacyAbsoluteUnitTotal>,
     sourceLog: IndexedRpcLog
   ): void {
-    const mutations: LegacyUnitMutation[] = [];
-    if (!this.hasTransactionUnitCountChanged(event.transactionHash, "defense", event.originPlanetId, 9)) {
-      mutations.push({ kind: "defense", planetId: event.originPlanetId, itemId: 9, delta: -event.launched });
-    }
-    if (event.intercepted > 0 && !this.hasTransactionUnitCountChanged(event.transactionHash, "defense", event.targetPlanetId, 8)) {
-      mutations.push({ kind: "defense", planetId: event.targetPlanetId, itemId: 8, delta: -event.intercepted });
-    }
-    if (
-      event.destroyedPrimary > 0
-      && !this.hasTransactionUnitCountChanged(event.transactionHash, "defense", event.targetPlanetId, event.primaryTargetDefenseId)
-    ) {
-      mutations.push({
-        kind: "defense",
-        planetId: event.targetPlanetId,
-        itemId: event.primaryTargetDefenseId,
-        delta: -event.destroyedPrimary
-      });
-    }
+    const mutationKey = `legacy:ipm:${event.transactionHash.toLowerCase()}`;
+    const mutations = this.storedLegacyUnitMutations(mutationKey) ?? (() => {
+      const inferred: LegacyUnitMutation[] = [];
+      if (!this.hasTransactionUnitCountChanged(event.transactionHash, "defense", event.originPlanetId, 9)) {
+        inferred.push({ kind: "defense", planetId: event.originPlanetId, itemId: 9, delta: -event.launched });
+      }
+      if (event.intercepted > 0 && !this.hasTransactionUnitCountChanged(event.transactionHash, "defense", event.targetPlanetId, 8)) {
+        inferred.push({ kind: "defense", planetId: event.targetPlanetId, itemId: 8, delta: -event.intercepted });
+      }
+      if (
+        event.destroyedPrimary > 0
+        && !this.hasTransactionUnitCountChanged(event.transactionHash, "defense", event.targetPlanetId, event.primaryTargetDefenseId)
+      ) {
+        inferred.push({
+          kind: "defense",
+          planetId: event.targetPlanetId,
+          itemId: event.primaryTargetDefenseId,
+          delta: -event.destroyedPrimary
+        });
+      }
+      return inferred;
+    })();
     this.applyLegacyUnitMutationsOnce(
-      `legacy:ipm:${event.transactionHash.toLowerCase()}`,
+      mutationKey,
       this.filterLegacyMutationsForStoredReplay(mutations, sourceLog, latestAbsoluteUnitTotals),
       event,
       { allowExistingMarker: true }
@@ -3458,7 +3462,8 @@ export class SettlementIndexer {
     const report = decodeBattleReportLogs(battleLogs, missionId);
     if (!report || isZeroResources(report.defenderLosses)) return;
 
-    const mutations = this.solvePlanetBattleLossMutations(report.targetPlanetId, report.defenderLosses);
+    const mutations = this.storedLegacyUnitMutations(mutationKey)
+      ?? this.solvePlanetBattleLossMutations(report.targetPlanetId, report.defenderLosses);
     if (!mutations) return;
     this.applyLegacyUnitMutationsOnce(
       mutationKey,
@@ -3854,6 +3859,26 @@ export class SettlementIndexer {
 
   private hasLegacyUnitMutation(mutationKey: string): boolean {
     return Boolean(this.db.query("SELECT 1 FROM indexed_legacy_unit_mutations WHERE mutation_key = ?").get(mutationKey));
+  }
+
+  private storedLegacyUnitMutations(mutationKey: string): LegacyUnitMutation[] | null {
+    const row = this.db.query("SELECT event_json FROM indexed_legacy_unit_mutations WHERE mutation_key = ?").get(mutationKey) as
+      | { event_json: string }
+      | null;
+    if (!row) return null;
+    const payload = parseEvent<{ mutations?: unknown }>(row.event_json);
+    if (!Array.isArray(payload.mutations)) return null;
+    const mutations = payload.mutations.filter((mutation): mutation is LegacyUnitMutation => {
+      if (!mutation || typeof mutation !== "object") return false;
+      const candidate = mutation as Partial<LegacyUnitMutation>;
+      return (
+        (candidate.kind === "ship" || candidate.kind === "defense")
+        && typeof candidate.planetId === "string"
+        && typeof candidate.itemId === "number"
+        && typeof candidate.delta === "number"
+      );
+    });
+    return mutations.length > 0 ? mutations : null;
   }
 
   private applyLegacyUnitMutationsOnce(
