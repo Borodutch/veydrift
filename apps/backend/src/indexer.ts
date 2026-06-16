@@ -51,6 +51,7 @@ import {
   type AllianceJoinRequestSnapshot,
   type AllianceInviteSnapshot,
   type AllianceDiplomacySnapshot,
+  type CanonicalPlanetChainState,
   type CanonicalFleetMissionSnapshot,
   type BattleReport,
   type DebrisFieldEvent,
@@ -342,6 +343,8 @@ export class SettlementIndexer {
         | "listCanonicalFleetMissions"
         | "listContractLogs"
         | "listCurrentPlanets"
+        | "getBlockNumber"
+        | "getCanonicalPlanetState"
     >,
     private readonly fromBlock: bigint,
     options: SettlementIndexerOptions = {}
@@ -1389,6 +1392,55 @@ export class SettlementIndexer {
     return { replay, rebuild };
   }
 
+  async seedCurrentCanonicalState(options: { planetConcurrency?: number } = {}): Promise<IndexerSnapshot> {
+    if (!this.chainReader.listCurrentPlanets) {
+      throw new Error("current-state seed is unavailable: chain reader cannot enumerate current planets");
+    }
+    if (!this.chainReader.getCanonicalPlanetState) {
+      throw new Error("current-state seed is unavailable: chain reader cannot read raw canonical planet state");
+    }
+
+    const planetEvents = await this.chainReader.listCurrentPlanets();
+    const canonicalState = await this.readCurrentCanonicalState(
+      planetEvents,
+      options.planetConcurrency ?? CANONICAL_READ_PLANET_CHUNK
+    );
+    const allianceDirectory = this.chainReader.listAllianceDirectoryState
+      ? await this.chainReader.listAllianceDirectoryState()
+      : [];
+    const allianceCandidateWallets = Array.from(
+      new Set(planetEvents.map((planet) => planet.owner.toLowerCase() as Address))
+    );
+    const allianceJoinRequests = this.chainReader.listAllianceJoinRequestState
+      ? await this.chainReader.listAllianceJoinRequestState()
+      : null;
+    const allianceInvites = this.chainReader.listAllianceInviteState
+      ? await this.chainReader.listAllianceInviteState(allianceCandidateWallets)
+      : null;
+    const allianceDiplomacy = this.chainReader.listAllianceDiplomacyState
+      ? await this.chainReader.listAllianceDiplomacyState()
+      : null;
+    const latestBlock = this.chainReader.getBlockNumber ? (await this.chainReader.getBlockNumber()).toString() : null;
+
+    const seed = this.db.transaction(() => {
+      this.db.query("DELETE FROM indexed_planets").run();
+      this.clearCanonicalState();
+      for (const event of planetEvents) {
+        this.upsertPlanet(event);
+      }
+      this.applyCanonicalState(canonicalState);
+      this.applyAllianceDirectorySnapshot(allianceDirectory);
+      this.applyAllianceJoinRequestSnapshot(allianceJoinRequests);
+      this.applyAllianceInviteSnapshot(allianceInvites);
+      this.applyAllianceDiplomacySnapshot(allianceDiplomacy);
+      this.recordSuccessfulAllianceReconciliation();
+      this.touch();
+      this.recordSuccessfulReconciliation(latestBlock);
+    });
+    seed();
+    return this.snapshot();
+  }
+
   async rebuildPlanets(): Promise<IndexerSnapshot> {
     if (this.rebuildPromise) {
       return this.rebuildPromise;
@@ -2252,6 +2304,102 @@ export class SettlementIndexer {
     }
 
     return state;
+  }
+
+  private async readCurrentCanonicalState(
+    planets: SettledPlanetEvent[],
+    planetConcurrency: number
+  ): Promise<CanonicalReconciliationState> {
+    const state: CanonicalReconciliationState = {
+      resources: new Map(),
+      planetQueues: new Map(),
+      buildings: new Map(),
+      defenses: new Map(),
+      ships: new Map(),
+      research: new Map(),
+      researchQueues: new Map(),
+      moonBuildings: new Map(),
+      moonQueues: new Map(),
+      fleetMissions: new Map(),
+      verifiedEmptyQueues: new Set()
+    };
+    const owners = new Set(planets.map((planet) => planet.owner.toLowerCase() as `0x${string}`));
+    const chunkSize = Math.max(1, Math.floor(planetConcurrency));
+    const readPlanet = this.chainReader.getCanonicalPlanetState;
+    if (!readPlanet) {
+      throw new Error("current-state seed is unavailable: chain reader cannot read raw canonical planet state");
+    }
+
+    for (const planetChunk of chunks(planets, chunkSize)) {
+      const rows = await Promise.all(
+        planetChunk.map((planet) => readPlanet.call(this.chainReader, BigInt(planet.planetId)))
+      );
+      for (const row of rows) {
+        this.addCurrentCanonicalPlanetState(state, row);
+      }
+    }
+
+    for (const ownerChunk of chunks([...owners], chunkSize)) {
+      await Promise.all(ownerChunk.map(async (owner) => {
+        const [research, moon] = await Promise.all([
+          this.chainReader.getResearchState?.(owner),
+          this.chainReader.getMoonState?.(owner)
+        ]);
+
+        if (moon?.moon?.exists && moon.homePlanetId) {
+          state.moonBuildings.set(moon.homePlanetId, moon.buildings);
+          if (moon.queue?.active) {
+            state.moonQueues.set(moon.homePlanetId, moon.queue);
+          }
+        }
+
+        if (!research) return;
+        if (research.homePlanetId) {
+          this.addCanonicalResources(state, research.homePlanetId, research.resources);
+        }
+        state.research.set(owner, research.technologies);
+        if (research.queue?.active) {
+          this.addActiveResearchQueue(state.researchQueues, owner, research.queue);
+          state.verifiedEmptyQueues.delete(`research:${owner.toLowerCase()}`);
+        } else {
+          state.verifiedEmptyQueues.add(`research:${owner.toLowerCase()}`);
+        }
+      }));
+    }
+
+    const fleetMissions = await this.chainReader.listCanonicalFleetMissions?.();
+    for (const mission of fleetMissions ?? []) {
+      state.fleetMissions.set(mission.missionId, mission);
+    }
+
+    return state;
+  }
+
+  private addCurrentCanonicalPlanetState(state: CanonicalReconciliationState, row: CanonicalPlanetChainState): void {
+    const planetId = row.planetId;
+    this.addCanonicalResources(state, planetId, row.resources);
+    state.buildings.set(planetId, row.buildings);
+    state.defenses.set(planetId, row.defenses);
+    state.ships.set(planetId, row.ships);
+
+    this.addActiveQueue(state.planetQueues, `building:${planetId}`, row.queues.building);
+    this.addActiveQueue(state.planetQueues, `defense:${planetId}`, row.queues.defense);
+    this.addActiveQueue(state.planetQueues, `ship:${planetId}`, row.queues.ship);
+    if (row.queues.building?.active) {
+      state.verifiedEmptyQueues.delete(`building:${planetId}`);
+    } else {
+      state.verifiedEmptyQueues.add(`building:${planetId}`);
+    }
+    if (row.queues.defense?.active) {
+      state.verifiedEmptyQueues.delete(`defense:${planetId}`);
+    } else {
+      state.verifiedEmptyQueues.add(`defense:${planetId}`);
+    }
+    if (row.queues.ship?.active) {
+      state.verifiedEmptyQueues.delete(`ship:${planetId}`);
+    } else {
+      state.verifiedEmptyQueues.add(`ship:${planetId}`);
+    }
   }
 
   private clearCanonicalState(): void {

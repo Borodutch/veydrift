@@ -92,6 +92,15 @@ export type WalletPlanets = {
   planets: ManagedPlanet[];
 };
 
+export type CanonicalPlanetChainState = {
+  planetId: string;
+  resources: Resources;
+  buildings: InfrastructureState["buildings"];
+  defenses: DefenseState["defenses"];
+  ships: ShipyardState["ships"];
+  queues: Pick<PlayerQueues, "building" | "defense" | "ship">;
+};
+
 export type WalletSettlement = {
   wallet: Address;
   hasFirstPlanet: boolean;
@@ -913,6 +922,7 @@ export interface ChainReader {
   listAllianceDiplomacyState?(): Promise<AllianceDiplomacySnapshot[]>;
   listCanonicalFleetMissions?(): Promise<CanonicalFleetMissionSnapshot[]>;
   listCurrentPlanets?(): Promise<SettledPlanetEvent[]>;
+  getCanonicalPlanetState?(planetId: bigint): Promise<CanonicalPlanetChainState>;
   listResolvableFleetMissions?(): Promise<ResolvableFleetMission[]>;
   listReturnableFleetMissions?(): Promise<ReturnableFleetMission[]>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
@@ -2629,6 +2639,35 @@ export class VeydriftGameReader implements ChainReader {
         resources: decodeResources(words.slice(10, 13))
       } satisfies SettledPlanetEvent];
     });
+  }
+
+  async getCanonicalPlanetState(planetId: bigint): Promise<CanonicalPlanetChainState> {
+    const [
+      resources,
+      buildings,
+      defenses,
+      ships,
+      building,
+      defense,
+      ship
+    ] = await Promise.all([
+      this.readResources("0x0adbf924", planetId),
+      this.readBuildingRows(planetId),
+      this.readDefenseRows(planetId),
+      this.readShipRows(planetId),
+      this.readPlanetQueue("0xb8e835ab", planetId, "building"),
+      this.readDefenseQueue(planetId),
+      this.readShipQueue(planetId)
+    ]);
+
+    return {
+      planetId: planetId.toString(),
+      resources,
+      buildings,
+      defenses,
+      ships,
+      queues: { building, defense, ship }
+    };
   }
 
   async listMoonChanceReportEvents(
