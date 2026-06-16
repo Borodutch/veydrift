@@ -3889,9 +3889,19 @@ export class SettlementIndexer {
     mutations: LegacyUnitMutation[],
     transactionHash: string
   ): LegacyUnitMutation[] {
-    return mutations.filter((mutation) =>
-      !this.hasTransactionUnitCountChanged(transactionHash, mutation.kind, mutation.planetId, mutation.itemId)
-    );
+    return mutations.filter((mutation) => {
+      if (!this.hasTransactionUnitCountChanged(transactionHash, mutation.kind, mutation.planetId, mutation.itemId)) return true;
+      return this.hasTransactionUnitCompleted(transactionHash, mutation);
+    });
+  }
+
+  private hasTransactionUnitCompleted(transactionHash: string, mutation: LegacyUnitMutation): boolean {
+    return this.indexedLogsForTransaction(transactionHash).some((txLog) => {
+      if (!isIndexedQueueCompletedLog(txLog)) return false;
+      const event = decodeIndexedQueueCompletedLog(txLog);
+      if (event.planetId !== mutation.planetId || event.itemId !== mutation.itemId) return false;
+      return mutation.kind === "ship" ? event.eventName === "ShipCompleted" : event.eventName === "DefenseCompleted";
+    });
   }
 
   private currentLegacyUnitCount(mutation: LegacyUnitMutation): number {
