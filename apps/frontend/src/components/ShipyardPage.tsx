@@ -242,6 +242,9 @@ export function shipProductionItems({
     const durationSeconds = chainShip?.durationSeconds === undefined
       ? undefined
       : chainShip.durationSeconds * quantity;
+    const energyPerUnit = ship.key === "solarSatellite"
+      ? formatSolarSatelliteEnergyPerUnit(chainShip?.energyPerUnit)
+      : undefined;
     const missing = shipUnavailable ? ["Unavailable on current deployment"] : getMissingRequirements(ship, shipyardState);
     const requirements = getShipRequirementStates(ship, shipyardState);
     const affordable = resources && totalCost ? canAfford(resources, totalCost) : false;
@@ -272,6 +275,7 @@ export function shipProductionItems({
       detailSections: shipDetailSections({
         cost: totalCost,
         durationSeconds,
+        energyPerUnit,
         owned,
         ship,
       }),
@@ -316,11 +320,13 @@ function shipNotes(ship: (typeof shipCatalog)[number]): string[] {
 function shipDetailSections({
   cost,
   durationSeconds,
+  energyPerUnit,
   owned,
   ship,
 }: {
   cost: Resources | undefined;
   durationSeconds: number | undefined;
+  energyPerUnit: string | undefined;
   owned: number | undefined;
   ship: (typeof shipCatalog)[number];
 }): ProductionDetailSection[] {
@@ -342,6 +348,9 @@ function shipDetailSections({
           label: "At planet",
           value: owned === undefined ? "unavailable" : owned.toLocaleString("en-US"),
         },
+        ...(energyPerUnit === undefined
+          ? []
+          : [{ label: "Energy output", value: energyPerUnit, wide: true } as const]),
         { label: "Price", value: cost ? formatProductionPrice(cost) : "-", wide: true },
         ...(durationSeconds === undefined
           ? []
@@ -349,6 +358,13 @@ function shipDetailSections({
       ],
     },
   ];
+}
+
+function formatSolarSatelliteEnergyPerUnit(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const energy = Number(value);
+  if (!Number.isFinite(energy)) return undefined;
+  return `+${Math.floor(energy).toLocaleString("en-US")} energy/unit`;
 }
 
 function formatShipSummaryStat(label: string, value: number | string): string {
