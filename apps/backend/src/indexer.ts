@@ -115,9 +115,13 @@ export type IndexerSnapshot = {
   indexedRiftBalances: number;
   fromBlock: string;
   lastRebuiltAt: string | null;
+  lastCurrentStateHealAt: string | null;
+  lastCurrentStateHealRunId: string | null;
   lastReconciledAt: string | null;
   lastReconciledBlock: string | null;
   lastReconciliationError: string | null;
+  currentStateHealInProgress: boolean;
+  currentStateHealRunId: string | null;
   latestIndexedBlock: string | null;
   pendingReconciliationReason: string | null;
   reconciliationInProgress: boolean;
@@ -312,6 +316,8 @@ export class SettlementIndexer {
   private readonly db: Database;
   private planetRebuildPromise: Promise<IndexerSnapshot> | null = null;
   private rebuildPromise: Promise<IndexerSnapshot> | null = null;
+  private currentStateHealPromise: Promise<IndexerSnapshot> | null = null;
+  private currentStateHealRunId: string | null = null;
   private targetedHealPlanetIds = new Set<string>();
   private targetedHealPromise: Promise<void> | null = null;
   // Monotonic counter bumped by touch() on every applied state mutation. Read paths memoize
@@ -367,7 +373,8 @@ export class SettlementIndexer {
   private readonly rebuildDeadlineMs: number;
 
   snapshot(): IndexerSnapshot {
-    const reconciliationInProgress = this.rebuildPromise !== null || this.planetRebuildPromise !== null;
+    const currentStateHealInProgress = this.currentStateHealPromise !== null;
+    const reconciliationInProgress = this.rebuildPromise !== null || this.planetRebuildPromise !== null || currentStateHealInProgress;
     const indexedPlanets = this.count("indexed_planets");
     const lastReconciledAt = this.metadata("lastReconciledAt");
     const allianceReconciledAt = this.metadata("allianceReconciledAt") ?? lastReconciledAt;
@@ -404,9 +411,13 @@ export class SettlementIndexer {
       indexedRiftBalances: this.count("indexed_rift_balances"),
       fromBlock: this.fromBlock.toString(),
       lastRebuiltAt: this.metadata("lastRebuiltAt"),
+      lastCurrentStateHealAt: this.metadata("lastCurrentStateHealAt"),
+      lastCurrentStateHealRunId: this.metadata("lastCurrentStateHealRunId"),
       lastReconciledAt,
       lastReconciledBlock,
       lastReconciliationError,
+      currentStateHealInProgress,
+      currentStateHealRunId: this.currentStateHealRunId,
       latestIndexedBlock: this.metadata("latestIndexedBlock"),
       pendingReconciliationReason,
       reconciliationInProgress,
@@ -1430,6 +1441,39 @@ export class SettlementIndexer {
   }
 
   async seedCurrentCanonicalState(options: { planetConcurrency?: number } = {}): Promise<IndexerSnapshot> {
+    if (this.currentStateHealPromise) {
+      return this.currentStateHealPromise;
+    }
+
+    this.currentStateHealPromise = this.seedCurrentCanonicalStateUncached(options)
+      .catch((error) => {
+        this.recordReconciliationError(error);
+        throw error;
+      })
+      .finally(() => {
+        this.currentStateHealPromise = null;
+        this.currentStateHealRunId = null;
+        this.planetRebuildPromise = null;
+      });
+    this.planetRebuildPromise = this.currentStateHealPromise;
+    return this.currentStateHealPromise;
+  }
+
+  startCurrentStateHealOnce(runId: string, options: { planetConcurrency?: number } = {}): Promise<IndexerSnapshot> {
+    const normalizedRunId = runId.trim().slice(0, 128);
+    if (!normalizedRunId) return Promise.resolve(this.snapshot());
+    if (this.metadata("lastCurrentStateHealRunId") === normalizedRunId) {
+      return Promise.resolve(this.snapshot());
+    }
+    this.currentStateHealRunId = normalizedRunId;
+    return this.seedCurrentCanonicalState(options).then((snapshot) => {
+      this.setMetadata("lastCurrentStateHealRunId", normalizedRunId);
+      this.setMetadata("lastCurrentStateHealAt", new Date().toISOString());
+      return this.snapshot();
+    });
+  }
+
+  private async seedCurrentCanonicalStateUncached(options: { planetConcurrency?: number } = {}): Promise<IndexerSnapshot> {
     if (!this.chainReader.listCurrentPlanets) {
       throw new Error("current-state seed is unavailable: chain reader cannot enumerate current planets");
     }

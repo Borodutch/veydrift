@@ -8,6 +8,8 @@ export type BackendConfig = {
   gameContractAddress?: `0x${string}`;
   indexDbPath: string;
   indexFromBlock: bigint;
+  currentStateHealRunId?: string;
+  currentStateHealConcurrency?: number;
   logChunkSpan?: bigint;
   // VEY-KANEO-485: hard deadline (ms) for the chain-read phase of a full cold rebuild. If the
   // deploy->head backfill does not finish in this window the rebuild rejects with a real error
@@ -116,6 +118,7 @@ const defaultRebuildDeadlineMs = 1_800_000;
 // the single self-hosted node — an empty range is one eth_getLogs over a few-hundred-block window.
 // Operators can tune it via VEYDRIFT_POLL_INTERVAL_MS.
 const defaultPollIntervalMs = 4_000;
+const defaultCurrentStateHealConcurrency = 25;
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 const privateKeyPattern = /^0x[a-fA-F0-9]{64}$/;
 const deploymentModes = new Set<DeploymentMode>(["local", "test", "staging", "production"]);
@@ -144,6 +147,10 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   const pollIntervalMs =
     parsePositiveInteger(env.VEYDRIFT_POLL_INTERVAL_MS, "VEYDRIFT_POLL_INTERVAL_MS", problems)
       ?? defaultPollIntervalMs;
+  const currentStateHealConcurrency =
+    parsePositiveInteger(env.VEYDRIFT_CURRENT_STATE_HEAL_CONCURRENCY, "VEYDRIFT_CURRENT_STATE_HEAL_CONCURRENCY", problems)
+      ?? defaultCurrentStateHealConcurrency;
+  const currentStateHealRunId = normalizeRunId(env.VEYDRIFT_CURRENT_STATE_HEAL_RUN_ID);
   const { rpcUrl, rpcSource } = resolveRpcUrl(env);
   const { wsRpcUrl, wsRpcSource } = resolveWsRpcUrl(env);
   const gameContractAddress = parseAddress(
@@ -224,6 +231,8 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       ...(gameContractAddress ? { gameContractAddress } : {}),
       indexDbPath: env.VEYDRIFT_INDEX_DB_PATH ?? defaultIndexDbPath,
       indexFromBlock,
+      ...(currentStateHealRunId ? { currentStateHealRunId } : {}),
+      currentStateHealConcurrency,
       logChunkSpan,
       rebuildDeadlineMs,
       pollIntervalMs,
@@ -306,6 +315,11 @@ function parseDeploymentMode(value: string | undefined, problems: ConfigProblem[
     message: "Expected one of local, test, staging, production."
   });
   return defaultDeploymentMode;
+}
+
+function normalizeRunId(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.slice(0, 128) : undefined;
 }
 
 // VEY-KANEO-471: lenient truthy parse for opt-in QA env flags ("1"/"true"/"yes"/"on", any case).
