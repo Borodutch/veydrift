@@ -4988,15 +4988,17 @@ describe("Veydrift backend", () => {
         }
       ],
       planetCount: 1,
+      // The mock reader's active queues have readyAt before this suite's fixed clock, so highscore
+      // rankings include the same request-time lazy-completion projection as detail reads.
       score: {
-        total: "8095",
+        total: "8105",
         economy: "8080",
-        research: "1",
-        researchLevels: "1",
-        military: "14",
-        fleet: "8",
-        fleetCount: "2",
-        defense: "6"
+        research: "3",
+        researchLevels: "2",
+        military: "22",
+        fleet: "12",
+        fleetCount: "3",
+        defense: "10"
       }
     });
     expect(body.source).toBe("contract-state-indexer");
@@ -5558,14 +5560,14 @@ describe("Veydrift backend", () => {
       homePlanetId: planet.planetId,
       planetCount: 1,
       score: {
-        total: "8095",
+        total: "8105",
         economy: "8080",
-        research: "1",
-        researchLevels: "1",
-        military: "14",
-        fleet: "8",
-        fleetCount: "2",
-        defense: "6"
+        research: "3",
+        researchLevels: "2",
+        military: "22",
+        fleet: "12",
+        fleetCount: "3",
+        defense: "10"
       }
     });
   });

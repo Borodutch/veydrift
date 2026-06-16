@@ -336,10 +336,15 @@ export class SettlementIndexer {
   // changed state — never per request (VEY-KANEO-467).
   private stateGeneration = 0;
   // Memoized full highscore leaderboard (every owner's score + their planets). The leaderboard is a
-  // pure function of indexed state (no time/accrual component), so it is valid until the next
-  // touch(); see highscoreLeaderboard / stateVersion.
+  // function of indexed state plus request-time lazy-completion projection. It is valid until the next
+  // touch() or until the next active queue readyAt can change projected levels/counts.
   private leaderboardCache:
-    | { generation: number; planetsByOwner: Map<string, SettledPlanetEvent[]>; entries: HighscoreEntry[] }
+    | {
+      generation: number;
+      asOfNowValidUntilSec: number;
+      planetsByOwner: Map<string, SettledPlanetEvent[]>;
+      entries: HighscoreEntry[];
+    }
     | null = null;
   private attackLaunchSecondsCache = new Map<string, { generation: number; launchesByTarget: Map<string, number[]> }>();
 
@@ -1023,8 +1028,8 @@ export class SettlementIndexer {
     return deriveTechnologyRows((id) => levels[String(id)] ?? 0, labLevel);
   }
 
-  private queueSettlement(queueKeyValue: string) {
-    return settleQueueAsOfNow(this.queueState(queueKeyValue), nowSeconds());
+  private queueSettlement(queueKeyValue: string, nowSec = nowSeconds()) {
+    return settleQueueAsOfNow(this.queueState(queueKeyValue), nowSec);
   }
 
   private completedQueueQuantities(queueKeyValue: string): Map<number, number> {
@@ -1034,6 +1039,50 @@ export class SettlementIndexer {
       quantities.set(completed.itemId, (quantities.get(completed.itemId) ?? 0) + completed.quantity);
     }
     return quantities;
+  }
+
+  private projectedQueueLevelRows(rows: readonly LevelRow[] | undefined, queueKeyValue: string, nowSec: number): LevelRow[] {
+    const levels = new Map((rows ?? []).map((row) => [row.id, row.value]));
+    for (const completed of this.queueSettlement(queueKeyValue, nowSec).completed) {
+      if (typeof completed.itemId !== "number" || typeof completed.targetLevel !== "number") continue;
+      levels.set(completed.itemId, Math.max(levels.get(completed.itemId) ?? 0, completed.targetLevel));
+    }
+    return sortedLevelRows(levels);
+  }
+
+  private projectedQueueQuantityRows(rows: readonly LevelRow[] | undefined, queueKeyValue: string, nowSec: number): LevelRow[] {
+    const quantities = new Map((rows ?? []).map((row) => [row.id, row.value]));
+    for (const completed of this.queueSettlement(queueKeyValue, nowSec).completed) {
+      if (typeof completed.itemId !== "number" || typeof completed.quantity !== "number") continue;
+      quantities.set(completed.itemId, (quantities.get(completed.itemId) ?? 0) + completed.quantity);
+    }
+    return sortedLevelRows(quantities);
+  }
+
+  private nextHighscoreProjectionInvalidationSec(
+    planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
+    nowSec: number
+  ): number {
+    let next = Number.POSITIVE_INFINITY;
+    for (const [owner, planets] of planetsByOwner) {
+      next = Math.min(next, this.nextQueueProjectionInvalidationSec(`research:${owner.toLowerCase()}`, nowSec));
+      for (const planet of planets) {
+        next = Math.min(
+          next,
+          this.nextQueueProjectionInvalidationSec(`building:${planet.planetId}`, nowSec),
+          this.nextQueueProjectionInvalidationSec(`defense:${planet.planetId}`, nowSec),
+          this.nextQueueProjectionInvalidationSec(`ship:${planet.planetId}`, nowSec)
+        );
+      }
+    }
+    return next;
+  }
+
+  private nextQueueProjectionInvalidationSec(queueKeyValue: string, nowSec: number): number {
+    const readyAt = this.queueSettlement(queueKeyValue, nowSec).queue?.readyAt;
+    const readyAtSec = readyAt === undefined || readyAt === null ? Number.POSITIVE_INFINITY : Number(readyAt);
+    if (!Number.isFinite(readyAtSec) || readyAtSec <= 0) return Number.POSITIVE_INFINITY;
+    return readyAtSec <= nowSec ? nowSec : readyAtSec;
   }
 
   private moonBuildingLevelAsOfNow(planetId: string, buildingId: number): number {
@@ -1066,7 +1115,7 @@ export class SettlementIndexer {
     });
   }
 
-  highscoreEntriesForOwners(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): HighscoreEntry[] {
+  highscoreEntriesForOwners(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>, nowSec = nowSeconds()): HighscoreEntry[] {
     const ownersAndPlanets = [...planetsByOwner.entries()];
     if (ownersAndPlanets.length === 0) return [];
 
@@ -1084,12 +1133,12 @@ export class SettlementIndexer {
         homePlanetId: homePlanet?.planetId ?? null,
         planetCount: planets.length,
         planets: planets.map((planet) => ({
-          buildings: levelRows(buildingsByPlanet.get(planet.planetId)),
+          buildings: levelRows(this.projectedQueueLevelRows(buildingsByPlanet.get(planet.planetId), `building:${planet.planetId}`, nowSec)),
           moonBuildings: levelRows(moonBuildingsByPlanet.get(planet.planetId)),
-          defenses: countRows(defensesByPlanet.get(planet.planetId)),
-          ships: countRows(shipsByPlanet.get(planet.planetId))
+          defenses: countRows(this.projectedQueueQuantityRows(defensesByPlanet.get(planet.planetId), `defense:${planet.planetId}`, nowSec)),
+          ships: countRows(this.projectedQueueQuantityRows(shipsByPlanet.get(planet.planetId), `ship:${planet.planetId}`, nowSec))
         })),
-        technologies: levelRows(technologiesByOwner.get(owner.toLowerCase()))
+        technologies: levelRows(this.projectedQueueLevelRows(technologiesByOwner.get(owner.toLowerCase()), `research:${owner.toLowerCase()}`, nowSec))
       });
     });
   }
@@ -1101,13 +1150,19 @@ export class SettlementIndexer {
   // (VEY-KANEO-467). The accrual-to-now projection still runs per request, but only for the
   // bounded set of planets visible on the requested page (see rankedHighscorePlanets).
   highscoreLeaderboard(): { planetsByOwner: Map<string, SettledPlanetEvent[]>; entries: HighscoreEntry[] } {
+    const nowSec = nowSeconds();
     const cached = this.leaderboardCache;
-    if (cached && cached.generation === this.stateGeneration) {
+    if (cached && cached.generation === this.stateGeneration && nowSec < cached.asOfNowValidUntilSec) {
       return cached;
     }
     const planetsByOwner = this.settledPlanetsByOwner();
-    const entries = this.highscoreEntriesForOwners(planetsByOwner);
-    this.leaderboardCache = { generation: this.stateGeneration, planetsByOwner, entries };
+    const entries = this.highscoreEntriesForOwners(planetsByOwner, nowSec);
+    this.leaderboardCache = {
+      generation: this.stateGeneration,
+      asOfNowValidUntilSec: this.nextHighscoreProjectionInvalidationSec(planetsByOwner, nowSec),
+      planetsByOwner,
+      entries
+    };
     return this.leaderboardCache;
   }
 
@@ -5320,6 +5375,12 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
     result.push(items.slice(index, index + size));
   }
   return result;
+}
+
+function sortedLevelRows(rowsById: ReadonlyMap<number, number>): LevelRow[] {
+  return [...rowsById.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([id, value]) => ({ id, value }));
 }
 
 function levelRows(rows: readonly LevelRow[] | undefined): Array<{ id: number; level: number }> {
