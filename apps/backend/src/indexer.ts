@@ -24,6 +24,7 @@ import {
   decodeFleetMissionLogs,
   decodeRandomnessFulfilledRequestId,
   decodeRiftResourceLog,
+  canonicalHealPlanetIdsForLog,
   decodeSettledPlanetLog,
   decodeShipCountChangedLog,
   decodeDefenseCountChangedLog,
@@ -1487,6 +1488,7 @@ export class SettlementIndexer {
     if (!this.chainReader.listContractLogs) return;
 
     const logs = sortRpcLogs(await this.chainReader.listContractLogs(fromBlock, toBlock));
+    const targetedHealPlanetIds = new Set<string>();
     for (const log of logs) {
       await this.runHealOperation(`record overlap log ${indexedLogKey(log)}`, () => {
         this.applyLog(log);
@@ -1494,6 +1496,12 @@ export class SettlementIndexer {
       await this.runHealWrite(`replay overlap log ${indexedLogKey(log)}`, () => {
         this.applyStoredLogSideEffects(log);
       });
+      for (const planetId of canonicalHealPlanetIdsForLog(log)) {
+        targetedHealPlanetIds.add(planetId);
+      }
+    }
+    if (targetedHealPlanetIds.size > 0) {
+      await this.healCanonicalPlanets([...targetedHealPlanetIds]);
     }
   }
 

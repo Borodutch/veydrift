@@ -4019,6 +4019,13 @@ describe("SettlementIndexer", () => {
             logIndex: "0x0",
             topics: [planetShipCountChangedTopic, topic(BigInt(planet.planetId)), topic(1n)],
             data: abiWords(10n)
+          },
+          {
+            blockNumber: "0x122",
+            transactionHash: "0xdef",
+            logIndex: "0x0",
+            topics: [fleetMissionReturnedTopic, topic(70n), addressTopic(player), topic(BigInt(planet.planetId))],
+            data: "0x"
           }
         ];
       },
@@ -4041,11 +4048,11 @@ describe("SettlementIndexer", () => {
       lastReconciliationError: null
     });
 
-    expect(rawReads).toBe(1);
+    expect(rawReads).toBe(2);
     expect(overlapArgs).toEqual([{ fromBlock: 0x121n, toBlock: 0x123n }]);
     expect(indexer.planet(planet.planetId)?.resources).toEqual(rawState.resources);
     expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(4);
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(10);
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(8);
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(6);
     expect(indexer.shipRows("99").find((ship) => ship.id === 2)?.count).toBe(3);
   });
