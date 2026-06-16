@@ -1,20 +1,21 @@
 import type { BackendConfig } from "./config";
+import { canonicalHealPlanetIdsForLog } from "./evm";
 import type { RpcLog } from "./evm";
 import type { SettlementIndexer } from "./indexer";
 
 // HTTP-poll ingestion source. `getHeadBlock` resolves the current chain head (eth_blockNumber) and
 // `listContractLogs` returns every indexed-contract log in a block range (chunked internally). The
-// indexer mutates ONLY from these polled logs — there is no websocket subscription and no self-heal /
+// indexer primarily mutates from these polled logs — there is no websocket subscription and no global
 // canonical-reconcile sweep. A dropped-transport problem cannot exist because each poll re-derives the
-// range from the durable cursor and re-scans head; the contract's events carry absolute post-state
-// (PlanetShipCountChanged/PlanetDefenseCountChanged emit the resulting total, PlanetSettled the final
-// balance) and applyLog dedups by txHash:logIndex, so re-scanning an overlapping range is idempotent.
+// range from the durable cursor and re-scans head; applyLog dedups by txHash:logIndex, so overlapping
+// ranges are idempotent. Combat/fleet logs may also enqueue a planet-scoped canonical heal when the
+// contract does not emit enough per-unit survivor data to update ship/defense rows from logs alone.
 type LogBackfiller = {
   getHeadBlock(): Promise<bigint>;
   listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
 };
 
-type ChainSyncIndexer = Partial<Pick<SettlementIndexer, "applyLog" | "snapshot">>;
+type ChainSyncIndexer = Partial<Pick<SettlementIndexer, "applyLog" | "healCanonicalPlanets" | "snapshot">>;
 
 export type ChainSyncSnapshot = {
   connected: boolean;
@@ -236,6 +237,7 @@ export class ChainSyncService {
           this.lastEventAt = new Date().toISOString();
           applied += 1;
           lastHash = log.transactionHash;
+          this.queueTargetedCanonicalHeal(log);
         }
         if (result.removed) {
           // A reorg-removed log. The contract re-emits the canonical post-state on the new chain, and
@@ -249,6 +251,12 @@ export class ChainSyncService {
       }
     }
     return { applied, lastHash };
+  }
+
+  private queueTargetedCanonicalHeal(log: RpcLog): void {
+    const planetIds = canonicalHealPlanetIdsForLog(log);
+    if (planetIds.length === 0) return;
+    void this.indexer?.healCanonicalPlanets?.(planetIds);
   }
 
   private markConnected(): void {

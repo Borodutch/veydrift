@@ -311,6 +311,8 @@ export class SettlementIndexer {
   private readonly db: Database;
   private planetRebuildPromise: Promise<IndexerSnapshot> | null = null;
   private rebuildPromise: Promise<IndexerSnapshot> | null = null;
+  private targetedHealPlanetIds = new Set<string>();
+  private targetedHealPromise: Promise<void> | null = null;
   // Monotonic counter bumped by touch() on every applied state mutation. Read paths memoize
   // whole-universe derivations against it and recompute only when integrated events actually
   // changed state — never per request (VEY-KANEO-467).
@@ -1357,11 +1359,45 @@ export class SettlementIndexer {
     return this.snapshot();
   }
 
-  // NOTE: the runtime per-planet RPC self-heal (verifyCanonicalState / healPlanetCanonicalState) has been
-  // REMOVED. It was the request-time and combat-triggered "re-read this planet from chain and re-pin
-  // contract_* to it" path. Under the canonical-mirror contract NO request or runtime event may issue an
-  // RPC read: the contract_* tables are maintained by event-listener/event-replay callbacks (applyLog).
-  // Drift correction is an explicit operator sync, not runtime self-heal.
+  healCanonicalPlanets(planetIds: string[]): Promise<void> {
+    for (const planetId of planetIds) {
+      if (this.planet(planetId)) this.targetedHealPlanetIds.add(planetId);
+    }
+    if (this.targetedHealPlanetIds.size === 0) return Promise.resolve();
+    if (!this.targetedHealPromise) {
+      this.targetedHealPromise = this.drainTargetedHealQueue()
+        .catch((error) => {
+          console.error("Veydrift targeted canonical heal failed", error);
+        })
+        .finally(() => {
+          this.targetedHealPromise = null;
+          if (this.targetedHealPlanetIds.size > 0) {
+            void this.healCanonicalPlanets([]);
+          }
+        });
+    }
+    return this.targetedHealPromise;
+  }
+
+  private async drainTargetedHealQueue(): Promise<void> {
+    if (!this.chainReader.getCanonicalPlanetState) return;
+
+    while (this.targetedHealPlanetIds.size > 0) {
+      const planetIds = [...this.targetedHealPlanetIds].slice(0, CANONICAL_READ_PLANET_CHUNK);
+      for (const planetId of planetIds) {
+        this.targetedHealPlanetIds.delete(planetId);
+      }
+      const planets = planetIds
+        .map((planetId) => this.planet(planetId))
+        .filter((planet): planet is SettledPlanetEvent => planet !== null);
+      await this.healCurrentCanonicalPlanets(planets, CANONICAL_READ_PLANET_CHUNK);
+    }
+  }
+
+  // NOTE: the request-time per-planet RPC self-heal (verifyCanonicalState / healPlanetCanonicalState) has
+  // been removed. Runtime healing is allowed only from listener-triggered, queued, planet-scoped events
+  // such as combat settlement, where the contract does not emit enough per-unit data to reconstruct exact
+  // ship/defense survivors from logs alone. User reads never issue these RPC repairs.
 
   async replayContractLogs(fromBlock = this.fromBlock, toBlock: bigint | "latest" = "latest"): Promise<IndexerSnapshot> {
     if (!this.chainReader.listContractLogs) {

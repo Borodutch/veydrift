@@ -4587,6 +4587,36 @@ export function isFleetMissionSettlementLog(log: RpcLog): boolean {
     || topic === fleetMissionReturnedTopic;
 }
 
+export function canonicalHealPlanetIdsForLog(log: RpcLog): string[] {
+  const topic = topicAt(log.topics, 0);
+  const planetIds = new Set<string>();
+  const addDataWord = (index: number) => {
+    const value = decodeUintWord(wordAt(splitWords(log.data), index));
+    if (value > 0n) planetIds.add(value.toString());
+  };
+  const addTopic = (index: number) => {
+    const value = decodeUint(topicAt(log.topics, index));
+    if (value > 0n) planetIds.add(value.toString());
+  };
+
+  try {
+    if (topic === attackBattleResolvedTopic || topic === combatDebrisSignaledTopic) {
+      addTopic(topic === attackBattleResolvedTopic ? 3 : 2);
+    } else if (topic === fleetMissionLaunchedTopic) {
+      addDataWord(0);
+    } else if (topic === fleetMissionReturnExposedTopic) {
+      addDataWord(0);
+      addDataWord(1);
+    } else if (topic === fleetMissionReturnedTopic) {
+      addTopic(3);
+    }
+  } catch {
+    return [];
+  }
+
+  return [...planetIds];
+}
+
 // The mission id a single fleet-mission log refers to. Returns null for the attack-joined link log
 // (which carries two ids in topics 1/2 and is not itself a settlement) and for non-fleet logs.
 export function fleetMissionLogMissionId(log: RpcLog): string | null {
