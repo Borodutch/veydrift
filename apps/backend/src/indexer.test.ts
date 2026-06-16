@@ -45,6 +45,10 @@ const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
+const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
+const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
+const interplanetaryMissileAttackTopic = "0x44a8c2b7632935050468ed4d9acfb1e99a09cec32fd65811964b95b3693f872c";
 const randomnessFulfilledTopic = "0x864b23caf5999ffe7e7b5bc685db237bcef9eb7bd6423c2fd395d9b4663372f5";
 const planet: SettledPlanetEvent = {
   eventName: "PlanetStarted",
@@ -816,6 +820,191 @@ describe("SettlementIndexer", () => {
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(2);
     // Ship types not committed to the mission emitted no event and stay at their built count.
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(4);
+  });
+
+  test("legacy fleet launch logs debit origin ships when no PlanetShipCountChanged total exists", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xlegacy-build-sc",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(2n, 2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xlegacy-build-lf",
+      logIndex: "0x1",
+      topics: [shipCompletedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n, 2n)
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlegacy-launch",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(64n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 55n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlegacy-launch",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(64n)],
+      data: abiWords(0n, 0n, 0n, 1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlegacy-launch",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(64n)],
+      data: abiWords(2n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlegacy-launch",
+      logIndex: "0x3",
+      topics: [fleetMissionShipsTopic, topic(64n)],
+      data: abiWords(2n, 2n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(0);
+  });
+
+  test("modern PlanetShipCountChanged totals remain authoritative over legacy launch compatibility", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-modern",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(1n)],
+      data: abiWords(5n, 5n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xmodern-launch",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(65n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 55n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xmodern-launch",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(65n)],
+      data: abiWords(0n, 0n, 0n, 1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xmodern-launch",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(65n)],
+      data: abiWords(0n, 3n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xmodern-launch",
+      logIndex: "0x3",
+      topics: [planetShipCountChangedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n)
+    });
+
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(2);
+  });
+
+  test("legacy missile attack logs mutate defense counts when no PlanetDefenseCountChanged total exists", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    const target = { ...planet, planetId: "8" };
+    indexer.applyEvent(planet);
+    indexer.applyEvent(target);
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xorigin-ipm",
+      logIndex: "0x0",
+      topics: [defenseCompletedTopic, topic(7n), topic(9n)],
+      data: abiWords(3n, 3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xtarget-abm",
+      logIndex: "0x1",
+      topics: [defenseCompletedTopic, topic(8n), topic(8n)],
+      data: abiWords(1n, 1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xtarget-light-laser",
+      logIndex: "0x2",
+      topics: [defenseCompletedTopic, topic(8n), topic(1n)],
+      data: abiWords(5n, 5n)
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlegacy-ipm",
+      logIndex: "0x0",
+      topics: [interplanetaryMissileAttackTopic, addressTopic(player), topic(7n), topic(8n)],
+      data: abiWords(1n, 3n, 1n, 2n, 2n)
+    });
+
+    expect(indexer.defenseRows("7").find((defense) => defense.id === 9)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 8)?.count).toBe(0);
+    expect(indexer.defenseRows("8").find((defense) => defense.id === 1)?.count).toBe(3);
+  });
+
+  test("legacy combat losses apply when the defender loss vector has one exact unit solution", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-combat-cargo",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(2n, 2n)
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlegacy-battle",
+      logIndex: "0x0",
+      topics: [attackBattleResolvedTopic, topic(77n), addressTopic(player), topic(7n)],
+      data: abiWords(1n, 1n, 123n, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlegacy-battle",
+      logIndex: "0x1",
+      topics: [combatRoundResolvedTopic, topic(77n), topic(1n)],
+      data: abiWords(1n, 0n, 0n, 0n, 4000n, 4000n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlegacy-battle",
+      logIndex: "0x2",
+      topics: [combatLossesTopic, topic(77n)],
+      data: abiWords(0n, 0n, 0n, 4000n, 4000n, 0n)
+    });
+
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
   });
 
   test("availableShipRows applies a Colonize launch's colony-ship debit, leaving no phantom at origin (VEY-KANEO-490)", () => {

@@ -236,6 +236,20 @@ export type IndexedDefenseCountChangedEvent = {
   total: number;
 };
 
+export type InterplanetaryMissileAttackEvent = {
+  eventName: "InterplanetaryMissileAttack";
+  transactionHash: string;
+  blockNumber: string;
+  attacker: Address;
+  originPlanetId: string;
+  targetPlanetId: string;
+  primaryTargetDefenseId: number;
+  launched: number;
+  intercepted: number;
+  hits: number;
+  destroyedPrimary: number;
+};
+
 export type IndexedAllianceEvent =
   | {
       eventName: "AllianceCreated";
@@ -4348,6 +4362,7 @@ const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5
 const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
 const combatDebrisSignaledTopic = "0xd0fbe8b5c73fec6dcfc5fef85459b695d1c9fedb4f94f9748ecaeff785192f14";
+const interplanetaryMissileAttackTopic = "0x44a8c2b7632935050468ed4d9acfb1e99a09cec32fd65811964b95b3693f872c";
 // RandomnessEngine.RandomnessFulfilled(uint256 indexed requestId, address indexed requester,
 // bytes32 indexed purposeHash, uint64 fulfilledAt, uint256 randomWord). Emitted when the fulfiller
 // reveals the random word for a request — the moment a randomness-gated mission (an Attack battle)
@@ -4495,6 +4510,10 @@ export function isShipCountChangedLog(log: RpcLog): boolean {
 
 export function isDefenseCountChangedLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === planetDefenseCountChangedTopic;
+}
+
+export function isInterplanetaryMissileAttackLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === interplanetaryMissileAttackTopic;
 }
 
 export function isIndexedQueueStartedLog(log: RpcLog): boolean {
@@ -4697,6 +4716,24 @@ export function decodeDefenseCountChangedLog(log: RpcLog): IndexedDefenseCountCh
     planetId: decodeUint(topicAt(log.topics, 1)).toString(),
     defenseId: Number(decodeUint(topicAt(log.topics, 2))),
     total: Number(decodeUintWord(wordAt(words, 0)))
+  };
+}
+
+export function decodeInterplanetaryMissileAttackLog(log: RpcLog): InterplanetaryMissileAttackEvent {
+  const words = splitWords(log.data);
+
+  return {
+    eventName: "InterplanetaryMissileAttack",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    attacker: decodeAddressWord(topicAt(log.topics, 1)),
+    originPlanetId: decodeUint(topicAt(log.topics, 2)).toString(),
+    targetPlanetId: decodeUint(topicAt(log.topics, 3)).toString(),
+    primaryTargetDefenseId: Number(decodeUintWord(wordAt(words, 0))),
+    launched: Number(decodeUintWord(wordAt(words, 1))),
+    intercepted: Number(decodeUintWord(wordAt(words, 2))),
+    hits: Number(decodeUintWord(wordAt(words, 3))),
+    destroyedPrimary: Number(decodeUintWord(wordAt(words, 4)))
   };
 }
 
