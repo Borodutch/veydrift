@@ -1457,6 +1457,29 @@ export class SettlementIndexer {
     return this.snapshot();
   }
 
+  applyLegacyUnitMutationsFromEventLogs(): IndexerSnapshot {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
+    `).all() as EventRow[];
+
+    for (const row of rows) {
+      const log = parseEvent<IndexedRpcLog>(row.event_json);
+      if (isInterplanetaryMissileAttackLog(log)) {
+        this.applyInterplanetaryMissileAttackCompatibilityEvent(decodeInterplanetaryMissileAttackLog(log));
+      } else if (isFleetMissionLog(log)) {
+        this.applyFleetMissionCompatibilityEvent(log);
+      } else if (isBattleReportLog(log)) {
+        this.applyBattleCompatibilityEvent(log);
+      }
+    }
+    this.setMetadata("lastLegacyUnitMutationReplayAt", new Date().toISOString());
+    this.touch();
+    return this.snapshot();
+  }
+
   async syncCanonicalState(
     fromBlock = this.fromBlock,
     toBlock: bigint | "latest" = "latest",
