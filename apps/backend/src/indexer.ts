@@ -1464,15 +1464,17 @@ export class SettlementIndexer {
       WHERE removed = 0
       ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
     `).all() as EventRow[];
+    const logs = rows.map((row) => parseEvent<IndexedRpcLog>(row.event_json));
+    const latestCompletionTotals = legacyCompletionTotals(logs);
 
-    for (const row of rows) {
-      const log = parseEvent<IndexedRpcLog>(row.event_json);
+    for (const log of logs) {
       if (isInterplanetaryMissileAttackLog(log)) {
-        this.applyInterplanetaryMissileAttackCompatibilityEvent(decodeInterplanetaryMissileAttackLog(log));
-      } else if (isFleetMissionLog(log)) {
-        this.applyFleetMissionCompatibilityEvent(log);
+        this.applyGuardedInterplanetaryMissileAttackCompatibilityEvent(
+          decodeInterplanetaryMissileAttackLog(log),
+          latestCompletionTotals
+        );
       } else if (isBattleReportLog(log)) {
-        this.applyBattleCompatibilityEvent(log);
+        this.applyGuardedBattleCompatibilityEvent(log, latestCompletionTotals);
       }
     }
     this.setMetadata("lastLegacyUnitMutationReplayAt", new Date().toISOString());
@@ -3404,6 +3406,35 @@ export class SettlementIndexer {
     this.applyLegacyUnitMutationsOnce(`legacy:ipm:${event.transactionHash.toLowerCase()}`, mutations, event);
   }
 
+  private applyGuardedInterplanetaryMissileAttackCompatibilityEvent(
+    event: InterplanetaryMissileAttackEvent,
+    latestCompletionTotals: Map<string, number>
+  ): void {
+    const mutations: LegacyUnitMutation[] = [];
+    if (!this.hasTransactionUnitCountChanged(event.transactionHash, "defense", event.originPlanetId, 9)) {
+      mutations.push({ kind: "defense", planetId: event.originPlanetId, itemId: 9, delta: -event.launched });
+    }
+    if (event.intercepted > 0 && !this.hasTransactionUnitCountChanged(event.transactionHash, "defense", event.targetPlanetId, 8)) {
+      mutations.push({ kind: "defense", planetId: event.targetPlanetId, itemId: 8, delta: -event.intercepted });
+    }
+    if (
+      event.destroyedPrimary > 0
+      && !this.hasTransactionUnitCountChanged(event.transactionHash, "defense", event.targetPlanetId, event.primaryTargetDefenseId)
+    ) {
+      mutations.push({
+        kind: "defense",
+        planetId: event.targetPlanetId,
+        itemId: event.primaryTargetDefenseId,
+        delta: -event.destroyedPrimary
+      });
+    }
+    this.applyLegacyUnitMutationsOnce(
+      `legacy:ipm:${event.transactionHash.toLowerCase()}`,
+      this.filterLegacyMutationsAtCompletionTotal(mutations, latestCompletionTotals),
+      event
+    );
+  }
+
   private applyBattleCompatibilityEvent(log: IndexedRpcLog): void {
     if (this.hasTransactionUnitCountChanged(log.transactionHash, "ship") || this.hasTransactionUnitCountChanged(log.transactionHash, "defense")) {
       return;
@@ -3420,6 +3451,28 @@ export class SettlementIndexer {
     const mutations = this.solvePlanetBattleLossMutations(report.targetPlanetId, report.defenderLosses);
     if (!mutations) return;
     this.applyLegacyUnitMutationsOnce(mutationKey, mutations, log);
+  }
+
+  private applyGuardedBattleCompatibilityEvent(log: IndexedRpcLog, latestCompletionTotals: Map<string, number>): void {
+    if (this.hasTransactionUnitCountChanged(log.transactionHash, "ship") || this.hasTransactionUnitCountChanged(log.transactionHash, "defense")) {
+      return;
+    }
+    const missionId = battleLogMissionId(log);
+    if (!missionId) return;
+    const mutationKey = `legacy:battle:${missionId}`;
+    if (this.hasLegacyUnitMutation(mutationKey)) return;
+    const battleLogs = this.indexedLogsForTransaction(log.transactionHash)
+      .filter((candidate) => isBattleReportLog(candidate) && battleLogMissionId(candidate) === missionId);
+    const report = decodeBattleReportLogs(battleLogs, missionId);
+    if (!report || isZeroResources(report.defenderLosses)) return;
+
+    const mutations = this.solvePlanetBattleLossMutations(report.targetPlanetId, report.defenderLosses);
+    if (!mutations) return;
+    this.applyLegacyUnitMutationsOnce(
+      mutationKey,
+      this.filterLegacyMutationsAtCompletionTotal(mutations, latestCompletionTotals),
+      log
+    );
   }
 
   private solvePlanetBattleLossMutations(planetId: string, losses: Resources): LegacyUnitMutation[] | null {
@@ -3822,6 +3875,24 @@ export class SettlementIndexer {
     for (const mutation of nonZeroMutations) {
       this.adjustLegacyUnitCount(mutation);
     }
+  }
+
+  private filterLegacyMutationsAtCompletionTotal(
+    mutations: LegacyUnitMutation[],
+    latestCompletionTotals: Map<string, number>
+  ): LegacyUnitMutation[] {
+    return mutations.filter((mutation) => {
+      const latestCompletionTotal = latestCompletionTotals.get(legacyUnitMutationKey(mutation));
+      if (latestCompletionTotal === undefined) return false;
+      return this.currentLegacyUnitCount(mutation) === latestCompletionTotal;
+    });
+  }
+
+  private currentLegacyUnitCount(mutation: LegacyUnitMutation): number {
+    if (mutation.kind === "ship") {
+      return this.indexedLevel("contract_ship_counts", "ship_id", mutation.planetId, mutation.itemId);
+    }
+    return this.indexedLevel("contract_defense_counts", "defense_id", mutation.planetId, mutation.itemId);
   }
 
   private adjustLegacyUnitCount(mutation: LegacyUnitMutation): void {
@@ -5336,6 +5407,24 @@ function numericResources(resources: Resources): { metal: number; crystal: numbe
 
 function isZeroResources(resources: Resources): boolean {
   return Number(resources.metal) === 0 && Number(resources.crystal) === 0 && Number(resources.deuterium) === 0;
+}
+
+function legacyCompletionTotals(logs: IndexedRpcLog[]): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const log of logs) {
+    if (!isIndexedQueueCompletedLog(log)) continue;
+    const event = decodeIndexedQueueCompletedLog(log);
+    if (event.eventName === "ShipCompleted" && event.total !== undefined) {
+      totals.set(`ship:${event.planetId}:${event.itemId}`, event.total);
+    } else if (event.eventName === "DefenseCompleted" && event.total !== undefined) {
+      totals.set(`defense:${event.planetId}:${event.itemId}`, event.total);
+    }
+  }
+  return totals;
+}
+
+function legacyUnitMutationKey(mutation: LegacyUnitMutation): string {
+  return `${mutation.kind}:${mutation.planetId}:${mutation.itemId}`;
 }
 
 function isSqliteBusyError(error: unknown): boolean {
