@@ -4015,6 +4015,13 @@ describe("SettlementIndexer", () => {
       async getDefenseState() { throw new Error("high-level defense reader should not run"); },
       async getPlayerQueues() { throw new Error("high-level queue reader should not run"); }
     }, 100n);
+    indexer.applyLog({
+      blockNumber: "0x120",
+      transactionHash: "0x999",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(99n), topic(2n)],
+      data: abiWords(3n)
+    });
 
     await expect(indexer.seedCurrentCanonicalState({ planetConcurrency: 25 })).resolves.toMatchObject({
       indexedPlanets: 1,
@@ -4027,6 +4034,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(4);
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(8);
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(6);
+    expect(indexer.shipRows("99").find((ship) => ship.id === 2)?.count).toBe(3);
   });
 
   test("explicit canonical sync is not aborted by the normal cold rebuild deadline", async () => {

@@ -1401,7 +1401,7 @@ export class SettlementIndexer {
     }
 
     const planetEvents = await this.chainReader.listCurrentPlanets();
-    const canonicalState = await this.readCurrentCanonicalState(
+    await this.healCurrentCanonicalPlanets(
       planetEvents,
       options.planetConcurrency ?? CANONICAL_READ_PLANET_CHUNK
     );
@@ -1420,15 +1420,16 @@ export class SettlementIndexer {
     const allianceDiplomacy = this.chainReader.listAllianceDiplomacyState
       ? await this.chainReader.listAllianceDiplomacyState()
       : null;
+    await this.healCurrentCanonicalOwnerState(allianceCandidateWallets, options.planetConcurrency ?? CANONICAL_READ_PLANET_CHUNK);
+
+    const fleetMissions = await this.chainReader.listCanonicalFleetMissions?.();
+    if (fleetMissions) {
+      this.replaceCanonicalFleetMissions(fleetMissions);
+    }
+
     const latestBlock = this.chainReader.getBlockNumber ? (await this.chainReader.getBlockNumber()).toString() : null;
 
     const seed = this.db.transaction(() => {
-      this.db.query("DELETE FROM indexed_planets").run();
-      this.clearCanonicalState();
-      for (const event of planetEvents) {
-        this.upsertPlanet(event);
-      }
-      this.applyCanonicalState(canonicalState);
       this.applyAllianceDirectorySnapshot(allianceDirectory);
       this.applyAllianceJoinRequestSnapshot(allianceJoinRequests);
       this.applyAllianceInviteSnapshot(allianceInvites);
@@ -1439,6 +1440,52 @@ export class SettlementIndexer {
     });
     seed();
     return this.snapshot();
+  }
+
+  private async healCurrentCanonicalPlanets(
+    planets: SettledPlanetEvent[],
+    planetConcurrency: number
+  ): Promise<void> {
+    const readPlanet = this.chainReader.getCanonicalPlanetState;
+    if (!readPlanet) {
+      throw new Error("current-state seed is unavailable: chain reader cannot read raw canonical planet state");
+    }
+    const chunkSize = Math.max(1, Math.floor(planetConcurrency));
+
+    for (const planetChunk of chunks(planets, chunkSize)) {
+      const rows = await Promise.all(
+        planetChunk.map((planet) => readPlanet.call(this.chainReader, BigInt(planet.planetId)))
+      );
+      for (let index = 0; index < rows.length; index += 1) {
+        const planet = planetChunk[index];
+        const row = rows[index];
+        if (!planet || !row) continue;
+        this.healPlanetIdentity(planet);
+        this.healPlanetResources(row);
+        this.healPlanetBuildings(row);
+        this.healPlanetShips(row);
+        this.healPlanetDefenses(row);
+        this.healPlanetQueues(row);
+      }
+    }
+  }
+
+  private async healCurrentCanonicalOwnerState(owners: Address[], ownerConcurrency: number): Promise<void> {
+    if (!this.chainReader.getResearchState && !this.chainReader.getMoonState) return;
+    const chunkSize = Math.max(1, Math.floor(ownerConcurrency));
+    for (const ownerChunk of chunks(owners, chunkSize)) {
+      const rows = await Promise.all(ownerChunk.map(async (owner) => {
+        const [research, moon] = await Promise.all([
+          this.chainReader.getResearchState?.(owner),
+          this.chainReader.getMoonState?.(owner)
+        ]);
+        return { owner, research, moon };
+      }));
+      for (const row of rows) {
+        if (row.research) this.healOwnerResearch(row.owner, row.research);
+        if (row.moon?.moon?.exists && row.moon.homePlanetId) this.healPlanetMoon(row.moon.homePlanetId, row.moon);
+      }
+    }
   }
 
   async rebuildPlanets(): Promise<IndexerSnapshot> {
@@ -2402,6 +2449,122 @@ export class SettlementIndexer {
     }
   }
 
+  private healPlanetIdentity(planet: SettledPlanetEvent): void {
+    this.db.transaction(() => {
+      this.upsertPlanet(planet);
+      this.touch();
+    })();
+  }
+
+  private healPlanetResources(row: CanonicalPlanetChainState): void {
+    this.db.transaction(() => {
+      const reconciledAt = Math.floor(Date.now() / 1_000).toString();
+      const blockNumber = this.metadata("lastReconciledBlock") ?? this.metadata("latestIndexedBlock") ?? "0";
+      this.upsertPlanetResourceSnapshot(row.planetId, row.resources, reconciledAt, "0x", blockNumber, "0x0", true);
+      this.touch();
+    })();
+  }
+
+  private healPlanetBuildings(row: CanonicalPlanetChainState): void {
+    this.db.transaction(() => {
+      this.db.query("DELETE FROM indexed_building_levels WHERE planet_id = ?").run(row.planetId);
+      this.db.query("DELETE FROM contract_building_levels WHERE planet_id = ?").run(row.planetId);
+      for (const building of row.buildings) {
+        this.upsertIndexedLevel("indexed_building_levels", "building_id", "level", row.planetId, building.id, building.level);
+        this.upsertIndexedLevel("contract_building_levels", "building_id", "level", row.planetId, building.id, building.level);
+      }
+      this.touch();
+    })();
+  }
+
+  private healPlanetShips(row: CanonicalPlanetChainState): void {
+    this.db.transaction(() => {
+      this.db.query("DELETE FROM indexed_ship_counts WHERE planet_id = ?").run(row.planetId);
+      this.db.query("DELETE FROM contract_ship_counts WHERE planet_id = ?").run(row.planetId);
+      for (const ship of row.ships) {
+        this.upsertIndexedLevel("indexed_ship_counts", "ship_id", "count", row.planetId, ship.id, ship.count);
+        this.upsertIndexedLevel("contract_ship_counts", "ship_id", "count", row.planetId, ship.id, ship.count);
+      }
+      this.touch();
+    })();
+  }
+
+  private healPlanetDefenses(row: CanonicalPlanetChainState): void {
+    this.db.transaction(() => {
+      this.db.query("DELETE FROM indexed_defense_counts WHERE planet_id = ?").run(row.planetId);
+      this.db.query("DELETE FROM contract_defense_counts WHERE planet_id = ?").run(row.planetId);
+      for (const defense of row.defenses) {
+        this.upsertIndexedLevel("indexed_defense_counts", "defense_id", "count", row.planetId, defense.id, defense.count);
+        this.upsertIndexedLevel("contract_defense_counts", "defense_id", "count", row.planetId, defense.id, defense.count);
+      }
+      this.touch();
+    })();
+  }
+
+  private healPlanetQueues(row: CanonicalPlanetChainState): void {
+    this.db.transaction(() => {
+      for (const kind of ["building", "defense", "ship"] as const) {
+        const key = `${kind}:${row.planetId}`;
+        this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(key);
+        this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(key);
+      }
+      this.addActiveQueueToDb("building", row.planetId, row.queues.building);
+      this.addActiveQueueToDb("defense", row.planetId, row.queues.defense);
+      this.addActiveQueueToDb("ship", row.planetId, row.queues.ship);
+      this.touch();
+    })();
+  }
+
+  private addActiveQueueToDb(kind: "building" | "defense" | "ship", planetId: string, queue: QueueState | null | undefined): void {
+    if (!queue?.active) return;
+    this.upsertCanonicalQueue(kind, planetId, null, queue);
+  }
+
+  private healOwnerResearch(owner: Address, research: ResearchState): void {
+    this.db.transaction(() => {
+      this.db.query("DELETE FROM indexed_research_levels WHERE owner = lower(?)").run(owner);
+      this.db.query("DELETE FROM contract_technology_levels WHERE owner = lower(?)").run(owner);
+      for (const technology of research.technologies) {
+        this.db.query(`
+          INSERT INTO indexed_research_levels (owner, technology_id, level)
+          VALUES (lower(?), ?, ?)
+          ON CONFLICT(owner, technology_id) DO UPDATE SET level = excluded.level
+        `).run(owner, technology.id, technology.level);
+        this.db.query(`
+          INSERT INTO contract_technology_levels (owner, technology_id, level)
+          VALUES (lower(?), ?, ?)
+          ON CONFLICT(owner, technology_id) DO UPDATE SET level = excluded.level
+        `).run(owner, technology.id, technology.level);
+      }
+      const key = `research:${owner.toLowerCase()}`;
+      this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(key);
+      this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(key);
+      this.addActiveResearchQueueToDb(owner, research.queue);
+      this.touch();
+    })();
+  }
+
+  private addActiveResearchQueueToDb(owner: Address, queue: QueueState | null | undefined): void {
+    if (!queue?.active) return;
+    this.upsertCanonicalQueue("research", null, owner, queue);
+  }
+
+  private healPlanetMoon(planetId: string, moon: MoonState): void {
+    this.db.transaction(() => {
+      this.db.query("DELETE FROM indexed_moon_building_levels WHERE planet_id = ?").run(planetId);
+      this.db.query("DELETE FROM contract_moon_building_levels WHERE planet_id = ?").run(planetId);
+      for (const building of moon.buildings) {
+        this.upsertIndexedLevel("indexed_moon_building_levels", "building_id", "level", planetId, building.id, building.level);
+        this.upsertIndexedLevel("contract_moon_building_levels", "moon_building_id", "level", planetId, building.id, building.level);
+      }
+      this.db.query("DELETE FROM contract_moon_building_queues WHERE planet_id = ?").run(planetId);
+      if (moon.queue?.active) {
+        this.upsertCanonicalMoonQueue(planetId, moon.queue);
+      }
+      this.touch();
+    })();
+  }
+
   private clearCanonicalState(): void {
     this.db.query("DELETE FROM indexed_planet_queues").run();
     this.db.query("DELETE FROM indexed_building_levels").run();
@@ -2490,6 +2653,22 @@ export class SettlementIndexer {
     for (const mission of state.fleetMissions.values()) {
       this.upsertCanonicalFleetMission(mission);
     }
+  }
+
+  private replaceCanonicalFleetMissions(missions: CanonicalFleetMissionSnapshot[]): void {
+    this.db.transaction(() => {
+      const liveIds = new Set(missions.map((mission) => mission.missionId));
+      const existingRows = this.db.query("SELECT mission_id FROM contract_fleet_missions").all() as Array<{ mission_id: string }>;
+      for (const row of existingRows) {
+        if (!liveIds.has(row.mission_id)) {
+          this.db.query("DELETE FROM contract_fleet_missions WHERE mission_id = ?").run(row.mission_id);
+        }
+      }
+      for (const mission of missions) {
+        this.upsertCanonicalFleetMission(mission);
+      }
+      this.touch();
+    })();
   }
 
   private upsertCanonicalFleetMission(mission: CanonicalFleetMissionSnapshot): void {
