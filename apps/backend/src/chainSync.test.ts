@@ -12,6 +12,8 @@ const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe2
 // including combat losses (overwrite-to-total).
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3";
+const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 
 function topicWord(value: bigint): string {
   return `0x${value.toString(16).padStart(64, "0")}`;
@@ -255,6 +257,73 @@ describe("ChainSyncService (polling)", () => {
     await service.poll();
 
     expect(indexer.shipRows("7").find((ship) => ship.id === 1)?.count).toBe(9);
+    service.stop();
+  });
+
+  test("queues a targeted canonical heal for applied combat settlement logs", async () => {
+    const healCalls: string[][] = [];
+    const indexer = {
+      applyLog: () => ({
+        applied: true,
+        duplicate: false,
+        ignored: false,
+        removed: false,
+        snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
+      }),
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>,
+      healCanonicalPlanets: async (planetIds: string[]) => {
+        healCalls.push(planetIds);
+      }
+    };
+    const combatLog: TestLog = {
+      blockNumber: "0x181",
+      transactionHash: "0xcombat",
+      logIndex: "0x0",
+      topics: [
+        attackBattleResolvedTopic,
+        topicWord(99n), // mission id
+        ownerTopic(player),
+        topicWord(8n) // target planet id
+      ],
+      data: abiWords(1n, 2n, 3n, 4n)
+    };
+    const backfiller = new MockBackfiller(0x181n, () => [combatLog]);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(healCalls).toEqual([["8"]]);
+    service.stop();
+  });
+
+  test("queues origin and target canonical heals for exposed fleet returns", async () => {
+    const healCalls: string[][] = [];
+    const indexer = {
+      applyLog: () => ({
+        applied: true,
+        duplicate: false,
+        ignored: false,
+        removed: false,
+        snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
+      }),
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>,
+      healCanonicalPlanets: async (planetIds: string[]) => {
+        healCalls.push(planetIds);
+      }
+    };
+    const returnLog: TestLog = {
+      blockNumber: "0x181",
+      transactionHash: "0xreturn-exposed",
+      logIndex: "0x0",
+      topics: [fleetMissionReturnExposedTopic, topicWord(42n), ownerTopic(player)],
+      data: abiWords(12n, 23n, 2n, 5n)
+    };
+    const backfiller = new MockBackfiller(0x181n, () => [returnLog]);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(healCalls).toEqual([["12", "23"]]);
     service.stop();
   });
 
