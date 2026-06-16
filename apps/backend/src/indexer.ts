@@ -1466,19 +1466,22 @@ export class SettlementIndexer {
     const logs = sortedEventRows(rows);
     const latestAbsoluteUnitTotals = latestAbsoluteUnitTotalsFromLogs(logs);
 
+    let appliedMutations = 0;
     for (const log of logs) {
       if (isInterplanetaryMissileAttackLog(log)) {
-        this.applyGuardedInterplanetaryMissileAttackCompatibilityEvent(
+        appliedMutations += this.applyGuardedInterplanetaryMissileAttackCompatibilityEvent(
           decodeInterplanetaryMissileAttackLog(log),
           latestAbsoluteUnitTotals,
           log
         );
       } else if (isBattleReportLog(log)) {
-        this.applyGuardedBattleCompatibilityEvent(log, latestAbsoluteUnitTotals);
+        appliedMutations += this.applyGuardedBattleCompatibilityEvent(log, latestAbsoluteUnitTotals);
       }
     }
-    this.setMetadata("lastLegacyUnitMutationReplayAt", new Date().toISOString());
-    this.touch();
+    if (appliedMutations > 0) {
+      this.setMetadata("lastLegacyUnitMutationReplayAt", new Date().toISOString());
+      this.touch();
+    }
     return this.snapshot();
   }
 
@@ -2237,6 +2240,7 @@ export class SettlementIndexer {
     `).run(now);
 
     this.replayMaterializedStateFromEventLogs();
+    this.applyLegacyUnitMutationsFromEventLogs();
   }
 
   private replayMaterializedStateFromEventLogs(): void {
@@ -3404,7 +3408,7 @@ export class SettlementIndexer {
     event: InterplanetaryMissileAttackEvent,
     latestAbsoluteUnitTotals: Map<string, LegacyAbsoluteUnitTotal>,
     sourceLog: IndexedRpcLog
-  ): void {
+  ): number {
     const mutationKey = `legacy:ipm:${event.transactionHash.toLowerCase()}`;
     const mutations = this.storedLegacyUnitMutations(mutationKey) ?? (() => {
       const inferred: LegacyUnitMutation[] = [];
@@ -3427,7 +3431,7 @@ export class SettlementIndexer {
       }
       return inferred;
     })();
-    this.applyLegacyUnitMutationsOnce(
+    return this.applyLegacyUnitMutationsOnce(
       mutationKey,
       this.filterLegacyMutationsForStoredReplay(mutations, sourceLog, latestAbsoluteUnitTotals),
       event,
@@ -3453,19 +3457,19 @@ export class SettlementIndexer {
   private applyGuardedBattleCompatibilityEvent(
     log: IndexedRpcLog,
     latestAbsoluteUnitTotals: Map<string, LegacyAbsoluteUnitTotal>
-  ): void {
+  ): number {
     const missionId = battleLogMissionId(log);
-    if (!missionId) return;
+    if (!missionId) return 0;
     const mutationKey = `legacy:battle:${missionId}`;
     const battleLogs = this.indexedLogsForTransaction(log.transactionHash)
       .filter((candidate) => isBattleReportLog(candidate) && battleLogMissionId(candidate) === missionId);
     const report = decodeBattleReportLogs(battleLogs, missionId);
-    if (!report || isZeroResources(report.defenderLosses)) return;
+    if (!report || isZeroResources(report.defenderLosses)) return 0;
 
     const mutations = this.storedLegacyUnitMutations(mutationKey)
       ?? this.solvePlanetBattleLossMutations(report.targetPlanetId, report.defenderLosses);
-    if (!mutations) return;
-    this.applyLegacyUnitMutationsOnce(
+    if (!mutations) return 0;
+    return this.applyLegacyUnitMutationsOnce(
       mutationKey,
       this.filterLegacyMutationsForStoredReplay(mutations, log, latestAbsoluteUnitTotals),
       log,
@@ -3886,9 +3890,9 @@ export class SettlementIndexer {
     mutations: LegacyUnitMutation[],
     source: unknown,
     options: { allowExistingMarker?: boolean } = {}
-  ): void {
+  ): number {
     const nonZeroMutations = mutations.filter((mutation) => mutation.delta !== 0);
-    if (nonZeroMutations.length === 0) return;
+    if (nonZeroMutations.length === 0) return 0;
     const payload = JSON.stringify({ source, mutations: nonZeroMutations });
     if (options.allowExistingMarker) {
       this.db.query(`
@@ -3901,11 +3905,12 @@ export class SettlementIndexer {
         INSERT OR IGNORE INTO indexed_legacy_unit_mutations (mutation_key, event_json)
         VALUES (?, ?)
       `).run(mutationKey, payload);
-      if (inserted.changes === 0) return;
+      if (inserted.changes === 0) return 0;
     }
     for (const mutation of nonZeroMutations) {
       this.adjustLegacyUnitCount(mutation);
     }
+    return nonZeroMutations.length;
   }
 
   private filterLegacyMutationsForStoredReplay(
