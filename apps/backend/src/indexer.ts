@@ -1424,12 +1424,12 @@ export class SettlementIndexer {
 
     const fleetMissions = await this.chainReader.listCanonicalFleetMissions?.();
     if (fleetMissions) {
-      this.replaceCanonicalFleetMissions(fleetMissions);
+      await this.replaceCanonicalFleetMissions(fleetMissions);
     }
 
     const latestBlock = this.chainReader.getBlockNumber ? (await this.chainReader.getBlockNumber()).toString() : null;
 
-    const seed = this.db.transaction(() => {
+    await this.runHealWrite("alliance snapshots", () => {
       this.applyAllianceDirectorySnapshot(allianceDirectory);
       this.applyAllianceJoinRequestSnapshot(allianceJoinRequests);
       this.applyAllianceInviteSnapshot(allianceInvites);
@@ -1438,7 +1438,6 @@ export class SettlementIndexer {
       this.touch();
       this.recordSuccessfulReconciliation(latestBlock);
     });
-    seed();
     return this.snapshot();
   }
 
@@ -1460,12 +1459,12 @@ export class SettlementIndexer {
         const planet = planetChunk[index];
         const row = rows[index];
         if (!planet || !row) continue;
-        this.healPlanetIdentity(planet);
-        this.healPlanetResources(row);
-        this.healPlanetBuildings(row);
-        this.healPlanetShips(row);
-        this.healPlanetDefenses(row);
-        this.healPlanetQueues(row);
+        await this.healPlanetIdentity(planet);
+        await this.healPlanetResources(row);
+        await this.healPlanetBuildings(row);
+        await this.healPlanetShips(row);
+        await this.healPlanetDefenses(row);
+        await this.healPlanetQueues(row);
       }
     }
   }
@@ -1482,8 +1481,8 @@ export class SettlementIndexer {
         return { owner, research, moon };
       }));
       for (const row of rows) {
-        if (row.research) this.healOwnerResearch(row.owner, row.research);
-        if (row.moon?.moon?.exists && row.moon.homePlanetId) this.healPlanetMoon(row.moon.homePlanetId, row.moon);
+        if (row.research) await this.healOwnerResearch(row.owner, row.research);
+        if (row.moon?.moon?.exists && row.moon.homePlanetId) await this.healPlanetMoon(row.moon.homePlanetId, row.moon);
       }
     }
   }
@@ -2449,24 +2448,24 @@ export class SettlementIndexer {
     }
   }
 
-  private healPlanetIdentity(planet: SettledPlanetEvent): void {
-    this.db.transaction(() => {
+  private async healPlanetIdentity(planet: SettledPlanetEvent): Promise<void> {
+    await this.runHealWrite(`planet ${planet.planetId} identity`, () => {
       this.upsertPlanet(planet);
       this.touch();
-    })();
+    });
   }
 
-  private healPlanetResources(row: CanonicalPlanetChainState): void {
-    this.db.transaction(() => {
+  private async healPlanetResources(row: CanonicalPlanetChainState): Promise<void> {
+    await this.runHealWrite(`planet ${row.planetId} resources`, () => {
       const reconciledAt = Math.floor(Date.now() / 1_000).toString();
       const blockNumber = this.metadata("lastReconciledBlock") ?? this.metadata("latestIndexedBlock") ?? "0";
       this.upsertPlanetResourceSnapshot(row.planetId, row.resources, reconciledAt, "0x", blockNumber, "0x0", true);
       this.touch();
-    })();
+    });
   }
 
-  private healPlanetBuildings(row: CanonicalPlanetChainState): void {
-    this.db.transaction(() => {
+  private async healPlanetBuildings(row: CanonicalPlanetChainState): Promise<void> {
+    await this.runHealWrite(`planet ${row.planetId} buildings`, () => {
       this.db.query("DELETE FROM indexed_building_levels WHERE planet_id = ?").run(row.planetId);
       this.db.query("DELETE FROM contract_building_levels WHERE planet_id = ?").run(row.planetId);
       for (const building of row.buildings) {
@@ -2474,11 +2473,11 @@ export class SettlementIndexer {
         this.upsertIndexedLevel("contract_building_levels", "building_id", "level", row.planetId, building.id, building.level);
       }
       this.touch();
-    })();
+    });
   }
 
-  private healPlanetShips(row: CanonicalPlanetChainState): void {
-    this.db.transaction(() => {
+  private async healPlanetShips(row: CanonicalPlanetChainState): Promise<void> {
+    await this.runHealWrite(`planet ${row.planetId} ships`, () => {
       this.db.query("DELETE FROM indexed_ship_counts WHERE planet_id = ?").run(row.planetId);
       this.db.query("DELETE FROM contract_ship_counts WHERE planet_id = ?").run(row.planetId);
       for (const ship of row.ships) {
@@ -2486,11 +2485,11 @@ export class SettlementIndexer {
         this.upsertIndexedLevel("contract_ship_counts", "ship_id", "count", row.planetId, ship.id, ship.count);
       }
       this.touch();
-    })();
+    });
   }
 
-  private healPlanetDefenses(row: CanonicalPlanetChainState): void {
-    this.db.transaction(() => {
+  private async healPlanetDefenses(row: CanonicalPlanetChainState): Promise<void> {
+    await this.runHealWrite(`planet ${row.planetId} defenses`, () => {
       this.db.query("DELETE FROM indexed_defense_counts WHERE planet_id = ?").run(row.planetId);
       this.db.query("DELETE FROM contract_defense_counts WHERE planet_id = ?").run(row.planetId);
       for (const defense of row.defenses) {
@@ -2498,11 +2497,11 @@ export class SettlementIndexer {
         this.upsertIndexedLevel("contract_defense_counts", "defense_id", "count", row.planetId, defense.id, defense.count);
       }
       this.touch();
-    })();
+    });
   }
 
-  private healPlanetQueues(row: CanonicalPlanetChainState): void {
-    this.db.transaction(() => {
+  private async healPlanetQueues(row: CanonicalPlanetChainState): Promise<void> {
+    await this.runHealWrite(`planet ${row.planetId} queues`, () => {
       for (const kind of ["building", "defense", "ship"] as const) {
         const key = `${kind}:${row.planetId}`;
         this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(key);
@@ -2512,7 +2511,7 @@ export class SettlementIndexer {
       this.addActiveQueueToDb("defense", row.planetId, row.queues.defense);
       this.addActiveQueueToDb("ship", row.planetId, row.queues.ship);
       this.touch();
-    })();
+    });
   }
 
   private addActiveQueueToDb(kind: "building" | "defense" | "ship", planetId: string, queue: QueueState | null | undefined): void {
@@ -2520,8 +2519,8 @@ export class SettlementIndexer {
     this.upsertCanonicalQueue(kind, planetId, null, queue);
   }
 
-  private healOwnerResearch(owner: Address, research: ResearchState): void {
-    this.db.transaction(() => {
+  private async healOwnerResearch(owner: Address, research: ResearchState): Promise<void> {
+    await this.runHealWrite(`owner ${owner} research`, () => {
       this.db.query("DELETE FROM indexed_research_levels WHERE owner = lower(?)").run(owner);
       this.db.query("DELETE FROM contract_technology_levels WHERE owner = lower(?)").run(owner);
       for (const technology of research.technologies) {
@@ -2541,7 +2540,7 @@ export class SettlementIndexer {
       this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(key);
       this.addActiveResearchQueueToDb(owner, research.queue);
       this.touch();
-    })();
+    });
   }
 
   private addActiveResearchQueueToDb(owner: Address, queue: QueueState | null | undefined): void {
@@ -2549,8 +2548,8 @@ export class SettlementIndexer {
     this.upsertCanonicalQueue("research", null, owner, queue);
   }
 
-  private healPlanetMoon(planetId: string, moon: MoonState): void {
-    this.db.transaction(() => {
+  private async healPlanetMoon(planetId: string, moon: MoonState): Promise<void> {
+    await this.runHealWrite(`planet ${planetId} moon`, () => {
       this.db.query("DELETE FROM indexed_moon_building_levels WHERE planet_id = ?").run(planetId);
       this.db.query("DELETE FROM contract_moon_building_levels WHERE planet_id = ?").run(planetId);
       for (const building of moon.buildings) {
@@ -2562,7 +2561,24 @@ export class SettlementIndexer {
         this.upsertCanonicalMoonQueue(planetId, moon.queue);
       }
       this.touch();
-    })();
+    });
+  }
+
+  private async runHealWrite(label: string, write: () => void): Promise<void> {
+    const transaction = this.db.transaction(write);
+    const maxAttempts = 8;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        transaction();
+        return;
+      } catch (error) {
+        if (!isSqliteBusyError(error) || attempt === maxAttempts) {
+          throw error;
+        }
+        await delay(250 * attempt);
+      }
+    }
+    throw new Error(`failed to heal ${label}`);
   }
 
   private clearCanonicalState(): void {
@@ -2655,8 +2671,8 @@ export class SettlementIndexer {
     }
   }
 
-  private replaceCanonicalFleetMissions(missions: CanonicalFleetMissionSnapshot[]): void {
-    this.db.transaction(() => {
+  private async replaceCanonicalFleetMissions(missions: CanonicalFleetMissionSnapshot[]): Promise<void> {
+    await this.runHealWrite("fleet missions", () => {
       const liveIds = new Set(missions.map((mission) => mission.missionId));
       const existingRows = this.db.query("SELECT mission_id FROM contract_fleet_missions").all() as Array<{ mission_id: string }>;
       for (const row of existingRows) {
@@ -2668,7 +2684,7 @@ export class SettlementIndexer {
         this.upsertCanonicalFleetMission(mission);
       }
       this.touch();
-    })();
+    });
   }
 
   private upsertCanonicalFleetMission(mission: CanonicalFleetMissionSnapshot): void {
@@ -4814,6 +4830,16 @@ function decodeIntegerString(value: string): bigint {
 
 function subtractNonNegative(left: bigint, right: bigint): bigint {
   return left > right ? left - right : 0n;
+}
+
+function isSqliteBusyError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes("database is locked") || message.includes("sqlite_busy") || message.includes("sqlite_locked");
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function riftWithdrawalKey(event: IndexedRiftResourceEvent): string {
