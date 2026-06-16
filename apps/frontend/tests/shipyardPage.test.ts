@@ -411,6 +411,11 @@ describe("Shipyard page display helpers", () => {
         { label: "Fuel use", value: "No fuel" },
       ],
     });
+    expect(solarSatellite?.detailSections?.find((section) => section.title === "Build")?.stats).toContainEqual({
+      label: "Energy output",
+      value: "+22 energy/unit",
+      wide: true,
+    });
   });
 
   test("explains the Crawler mine-production boost as a special note", () => {
