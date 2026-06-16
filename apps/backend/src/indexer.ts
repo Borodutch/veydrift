@@ -2795,6 +2795,7 @@ export class SettlementIndexer {
       for (const mission of missions) {
         this.upsertCanonicalFleetMission(mission);
       }
+      this.setMetadata("lastFleetMissionsReconciledAt", new Date().toISOString());
       this.touch();
     });
   }
@@ -4161,7 +4162,20 @@ export class SettlementIndexer {
   }
 
   private mergeCanonicalFleetMissions(eventMissions: FleetMissionSummary[]): FleetMissionSummary[] {
-    const byId = new Map(eventMissions.map((mission) => [mission.missionId, mission]));
+    const baselineBlock = safeBigInt(this.metadata("lastReconciledBlock"), 0n);
+    const hasCanonicalFleetMissionBaseline = this.metadata("lastFleetMissionsReconciledAt") !== null;
+    const eventById = new Map(eventMissions.map((mission) => [mission.missionId, mission]));
+    const byId = new Map<string, FleetMissionSummary>();
+    for (const mission of eventMissions) {
+      const isStaleActiveMission =
+        hasCanonicalFleetMissionBaseline
+        &&
+        isActiveFleetMissionStatus(mission.status)
+        && safeBigInt(mission.blockNumber, 0n) <= baselineBlock;
+      if (!isStaleActiveMission) {
+        byId.set(mission.missionId, mission);
+      }
+    }
     const canonicalRows = this.db.query(`
       SELECT *
       FROM contract_fleet_missions
@@ -4170,7 +4184,16 @@ export class SettlementIndexer {
     `).all() as ContractFleetMissionRow[];
 
     for (const row of canonicalRows) {
-      const eventMission = byId.get(row.mission_id);
+      const eventMission = eventById.get(row.mission_id);
+      const canonicalStatus = fleetMissionStatusLabel(row.status_id);
+      if (
+        eventMission
+        && safeBigInt(eventMission.blockNumber, 0n) > baselineBlock
+        && isActiveFleetMissionStatus(canonicalStatus)
+      ) {
+        byId.set(row.mission_id, eventMission);
+        continue;
+      }
       byId.set(row.mission_id, this.canonicalFleetMissionSummary(row, eventMission));
     }
 
@@ -4604,6 +4627,15 @@ function isPlanetQueueKind(value: string): value is "building" | "defense" | "sh
   return value === "building" || value === "defense" || value === "ship";
 }
 
+function safeBigInt(value: string | null | undefined, fallback: bigint): bigint {
+  if (!value) return fallback;
+  try {
+    return BigInt(value);
+  } catch {
+    return fallback;
+  }
+}
+
 function fleetMissionTypeLabel(id: number): string {
   return [
     "Transport",
@@ -4628,6 +4660,10 @@ function fleetMissionStatusLabel(id: number): string {
     "Returned",
     "Recalled"
   ][id] ?? `Unknown:${id}`;
+}
+
+function isActiveFleetMissionStatus(status: string): boolean {
+  return status === "Outbound" || status === "Returning" || status === "Recalled";
 }
 
 function projectedFleetRecallCost(fuelCost: string): string {
