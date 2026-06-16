@@ -1007,6 +1007,113 @@ describe("SettlementIndexer", () => {
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
   });
 
+  test("stored-log replay sorts hex log indexes numerically inside the same transaction", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    try {
+      const first = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      }, 100n, { databasePath });
+      first.applyEvent(planet);
+      first.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xsame-tx-order",
+        logIndex: "0x5",
+        topics: [shipCompletedTopic, topic(7n), topic(0n)],
+        data: abiWords(3n, 3n)
+      });
+      first.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xsame-tx-order",
+        logIndex: "0xf",
+        topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+        data: abiWords(2n)
+      });
+      first.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xsame-tx-order",
+        logIndex: "0x12",
+        topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+        data: abiWords(0n)
+      });
+      expect(first.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
+
+      const staleDb = new Database(databasePath);
+      try {
+        staleDb.query("UPDATE contract_ship_counts SET count = 2 WHERE planet_id = ? AND ship_id = ?").run("7", 0);
+        staleDb.query("UPDATE indexed_ship_counts SET count = 2 WHERE planet_id = ? AND ship_id = ?").run("7", 0);
+      } finally {
+        staleDb.close();
+      }
+
+      const replayed = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      }, 100n, { databasePath });
+      expect(replayed.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("legacy unit replay reapplies a marked mutation when the count still matches the absolute event total", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    try {
+      const indexer = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      }, 100n, { databasePath });
+      indexer.applyEvent(planet);
+      indexer.applyLog({
+        blockNumber: "0x83",
+        transactionHash: "0xbuild-combat-cargo",
+        logIndex: "0x0",
+        topics: [shipCompletedTopic, topic(7n), topic(0n)],
+        data: abiWords(2n, 2n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xlegacy-battle",
+        logIndex: "0x0",
+        topics: [attackBattleResolvedTopic, topic(77n), addressTopic(player), topic(7n)],
+        data: abiWords(1n, 1n, 123n, 0n, 0n, 0n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xlegacy-battle",
+        logIndex: "0x1",
+        topics: [combatRoundResolvedTopic, topic(77n), topic(1n)],
+        data: abiWords(1n, 0n, 0n, 0n, 4000n, 4000n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xlegacy-battle",
+        logIndex: "0x2",
+        topics: [combatLossesTopic, topic(77n)],
+        data: abiWords(0n, 0n, 0n, 4000n, 4000n, 0n)
+      });
+      expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
+
+      const staleDb = new Database(databasePath);
+      try {
+        staleDb.query("UPDATE contract_ship_counts SET count = 2 WHERE planet_id = ? AND ship_id = ?").run("7", 0);
+        staleDb.query("UPDATE indexed_ship_counts SET count = 2 WHERE planet_id = ? AND ship_id = ?").run("7", 0);
+      } finally {
+        staleDb.close();
+      }
+
+      indexer.applyLegacyUnitMutationsFromEventLogs();
+      expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("availableShipRows applies a Colonize launch's colony-ship debit, leaving no phantom at origin (VEY-KANEO-490)", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
