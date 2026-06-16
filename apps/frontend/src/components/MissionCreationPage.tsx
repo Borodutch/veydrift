@@ -599,11 +599,14 @@ export function missionDraftBlocker({
   if (!originCoords) return "Active origin planet is unavailable.";
   // Interplanetary missiles do not occupy fleet slots, so they skip the fleet-slot gate below.
   if (action.mode === "missile") return quantity > 0 ? undefined : "Choose at least one missile.";
-  // Every fleet mission (attack/transport/deploy/harvest/colonize) consumes a fleet slot, capped at
-  // 1 + Computer Technology level on-chain (FleetSlotLimitReached). Block before submit when the cap is
-  // reached and name the lever. Fail open when the backend did not provide slot counts so a valid
-  // launch is never blocked; the on-chain revert remains the backstop.
-  if (fleetSlots && fleetSlots.limit > 0 && fleetSlots.active >= fleetSlots.limit) {
+  // Every fleet mission (attack/transport/deploy/harvest/colonize) consumes a fleet slot, capped by the
+  // contract's Computer Technology-derived limit (FleetSlotLimitReached). Block before submit when the
+  // cap is reached, and also block while slot state is missing so stale UI cannot open a reverting
+  // wallet transaction.
+  if (!fleetSlots || fleetSlots.limit <= 0) {
+    return "Fleet slot state is still loading — wait for Computer Technology limits to sync before launching.";
+  }
+  if (fleetSlots.active >= fleetSlots.limit) {
     return `Fleet slots full (${fleetSlots.active}/${fleetSlots.limit}) — research Computer Technology to raise the limit, or wait for a fleet to return.`;
   }
   if (selectedShipCount <= 0) return "Choose at least one ship.";
