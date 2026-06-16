@@ -12,11 +12,13 @@ import {
   attachAttackGroupParticipants,
   decodeAllianceLog,
   decodeAttackMissionLaunch,
+  decodeBattleReportLogs,
   decodeBattleReports,
   decodeCompleteFleetMissionLogs,
   decodeDebrisFieldLog,
   decodeIndexedQueueCompletedLog,
   decodeIndexedQueueStartedLog,
+  decodeInterplanetaryMissileAttackLog,
   decodeMoonCreatedLog,
   decodeMoonChanceReportLog,
   decodePlanetSettledLog,
@@ -36,6 +38,7 @@ import {
   isFleetMissionLog,
   isIndexedQueueCompletedLog,
   isIndexedQueueStartedLog,
+  isInterplanetaryMissileAttackLog,
   isAllianceLog,
   isMoonCreatedLog,
   isMoonChanceReportLog,
@@ -68,6 +71,7 @@ import {
   type IndexedRiftResourceEvent,
   type IndexedShipCountChangedEvent,
   type IndexedDefenseCountChangedEvent,
+  type InterplanetaryMissileAttackEvent,
   type InfrastructureState,
   type ManagedPlanet,
   type MoonState,
@@ -162,6 +166,13 @@ type MetadataRow = {
 
 type EventRow = {
   event_json: string;
+};
+
+type LegacyUnitMutation = {
+  kind: "ship" | "defense";
+  planetId: string;
+  itemId: number;
+  delta: number;
 };
 
 type QueueRow = {
@@ -1305,6 +1316,10 @@ export class SettlementIndexer {
       this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
+    if (isInterplanetaryMissileAttackLog(log)) {
+      this.applyInterplanetaryMissileAttackCompatibilityEvent(decodeInterplanetaryMissileAttackLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
     if (isIndexedQueueStartedLog(log)) {
       this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), {
         settledAt: blockTimestampSeconds(log) ?? Math.floor(Date.now() / 1_000).toString()
@@ -1328,10 +1343,12 @@ export class SettlementIndexer {
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isFleetMissionLog(log)) {
-      // Fleet-mission state is decoded from the event log on read. Combat ship/defense thinning that the
-      // mission settlement applies is reported separately by PlanetShipCountChanged /
-      // PlanetDefenseCountChanged events (integrated above), so no runtime RPC re-read is needed: the
-      // combat-triggered per-planet canonical reconcile has been removed (canonical-mirror contract).
+      this.applyFleetMissionCompatibilityEvent(log);
+      this.touch();
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isBattleReportLog(log)) {
+      this.applyBattleCompatibilityEvent(log);
       this.touch();
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
@@ -1810,6 +1827,8 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS indexed_event_logs_block_idx
         ON indexed_event_logs (block_number);
+      CREATE INDEX IF NOT EXISTS indexed_event_logs_transaction_idx
+        ON indexed_event_logs (transaction_hash);
       CREATE TABLE IF NOT EXISTS indexed_planet_queues (
         queue_key TEXT PRIMARY KEY,
         kind TEXT NOT NULL,
@@ -1969,6 +1988,10 @@ export class SettlementIndexer {
         defense_id INTEGER NOT NULL,
         count INTEGER NOT NULL,
         PRIMARY KEY (planet_id, defense_id)
+      );
+      CREATE TABLE IF NOT EXISTS indexed_legacy_unit_mutations (
+        mutation_key TEXT PRIMARY KEY,
+        event_json TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS contract_moons (
         planet_id TEXT PRIMARY KEY,
@@ -2210,6 +2233,12 @@ export class SettlementIndexer {
         this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
       } else if (isDefenseCountChangedLog(log)) {
         this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
+      } else if (isInterplanetaryMissileAttackLog(log)) {
+        this.applyInterplanetaryMissileAttackCompatibilityEvent(decodeInterplanetaryMissileAttackLog(log));
+      } else if (isFleetMissionLog(log)) {
+        this.applyFleetMissionCompatibilityEvent(log);
+      } else if (isBattleReportLog(log)) {
+        this.applyBattleCompatibilityEvent(log);
       } else if (isAllianceLog(log)) {
         this.applyAllianceEvent(decodeAllianceLog(log));
       }
@@ -2251,6 +2280,7 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_building_levels").run();
     this.db.query("DELETE FROM contract_defense_counts").run();
     this.db.query("DELETE FROM contract_ship_counts").run();
+    this.db.query("DELETE FROM indexed_legacy_unit_mutations").run();
     this.db.query("DELETE FROM contract_technology_levels").run();
     this.db.query("DELETE FROM contract_production_queues").run();
     this.db.query("DELETE FROM contract_moon_building_queues").run();
@@ -2274,6 +2304,8 @@ export class SettlementIndexer {
       this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
     } else if (isDefenseCountChangedLog(log)) {
       this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
+    } else if (isInterplanetaryMissileAttackLog(log)) {
+      this.applyInterplanetaryMissileAttackCompatibilityEvent(decodeInterplanetaryMissileAttackLog(log));
     } else if (isIndexedQueueStartedLog(log)) {
       this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), {
         settledAt: blockTimestampSeconds(log) ?? Math.floor(Date.now() / 1_000).toString()
@@ -2286,9 +2318,15 @@ export class SettlementIndexer {
       this.applyRiftResourceEvent(decodeRiftResourceLog(log));
     } else if (isAllianceLog(log)) {
       this.applyAllianceEvent(decodeAllianceLog(log));
-    } else if (isFleetMissionLog(log) || isMoonChanceReportLog(log) || isRandomnessFulfilledLog(log)) {
+    } else if (isFleetMissionLog(log) || isBattleReportLog(log) || isMoonChanceReportLog(log) || isRandomnessFulfilledLog(log)) {
       if (isMoonChanceReportLog(log)) {
         this.applyMoonChanceEvent(decodeMoonChanceReportLog(log));
+      } else if (isFleetMissionLog(log)) {
+        this.applyFleetMissionCompatibilityEvent(log);
+        this.touch();
+      } else if (isBattleReportLog(log)) {
+        this.applyBattleCompatibilityEvent(log);
+        this.touch();
       } else {
         this.touch();
       }
@@ -3307,6 +3345,91 @@ export class SettlementIndexer {
     this.touch();
   }
 
+  private applyFleetMissionCompatibilityEvent(log: IndexedRpcLog): void {
+    const txLogs = this.indexedLogsForTransaction(log.transactionHash);
+    const missions = decodeCompleteFleetMissionLogs(txLogs);
+    for (const mission of missions) {
+      const mutationKey = `legacy:fleet-launch:${mission.missionId}`;
+      if (this.hasLegacyUnitMutation(mutationKey)) continue;
+      const mutations: LegacyUnitMutation[] = [];
+      for (const [shipKey, value] of Object.entries(mission.ships)) {
+        const shipId = shipKeyToId(shipKey);
+        const quantity = Number(value);
+        if (shipId === null || !Number.isFinite(quantity) || quantity <= 0) continue;
+        if (this.hasTransactionUnitCountChanged(log.transactionHash, "ship", mission.originPlanetId, shipId)) continue;
+        mutations.push({ kind: "ship", planetId: mission.originPlanetId, itemId: shipId, delta: -quantity });
+      }
+      this.applyLegacyUnitMutationsOnce(mutationKey, mutations, log);
+    }
+  }
+
+  private applyInterplanetaryMissileAttackCompatibilityEvent(event: InterplanetaryMissileAttackEvent): void {
+    const mutations: LegacyUnitMutation[] = [];
+    if (!this.hasTransactionUnitCountChanged(event.transactionHash, "defense", event.originPlanetId, 9)) {
+      mutations.push({ kind: "defense", planetId: event.originPlanetId, itemId: 9, delta: -event.launched });
+    }
+    if (event.intercepted > 0 && !this.hasTransactionUnitCountChanged(event.transactionHash, "defense", event.targetPlanetId, 8)) {
+      mutations.push({ kind: "defense", planetId: event.targetPlanetId, itemId: 8, delta: -event.intercepted });
+    }
+    if (
+      event.destroyedPrimary > 0
+      && !this.hasTransactionUnitCountChanged(event.transactionHash, "defense", event.targetPlanetId, event.primaryTargetDefenseId)
+    ) {
+      mutations.push({
+        kind: "defense",
+        planetId: event.targetPlanetId,
+        itemId: event.primaryTargetDefenseId,
+        delta: -event.destroyedPrimary
+      });
+    }
+    this.applyLegacyUnitMutationsOnce(`legacy:ipm:${event.transactionHash.toLowerCase()}`, mutations, event);
+  }
+
+  private applyBattleCompatibilityEvent(log: IndexedRpcLog): void {
+    if (this.hasTransactionUnitCountChanged(log.transactionHash, "ship") || this.hasTransactionUnitCountChanged(log.transactionHash, "defense")) {
+      return;
+    }
+    const missionId = battleLogMissionId(log);
+    if (!missionId) return;
+    const mutationKey = `legacy:battle:${missionId}`;
+    if (this.hasLegacyUnitMutation(mutationKey)) return;
+    const battleLogs = this.indexedLogsForTransaction(log.transactionHash)
+      .filter((candidate) => isBattleReportLog(candidate) && battleLogMissionId(candidate) === missionId);
+    const report = decodeBattleReportLogs(battleLogs, missionId);
+    if (!report || isZeroResources(report.defenderLosses)) return;
+
+    const mutations = this.solvePlanetBattleLossMutations(report.targetPlanetId, report.defenderLosses);
+    if (!mutations) return;
+    this.applyLegacyUnitMutationsOnce(mutationKey, mutations, log);
+  }
+
+  private solvePlanetBattleLossMutations(planetId: string, losses: Resources): LegacyUnitMutation[] | null {
+    const candidates: BattleLossCandidate[] = [];
+    for (const shipId of shipIds) {
+      const count = this.indexedLevel("contract_ship_counts", "ship_id", planetId, shipId);
+      if (count <= 0) continue;
+      const cost = shipCostForLegacyLoss(shipId);
+      if (!cost || isZeroResources(cost)) continue;
+      candidates.push({ kind: "ship", planetId, itemId: shipId, max: count, cost });
+    }
+    for (const defenseId of defenseIds.filter((id) => id <= 7)) {
+      const count = this.indexedLevel("contract_defense_counts", "defense_id", planetId, defenseId);
+      if (count <= 0) continue;
+      const cost = defenseCostForLegacyLoss(defenseId);
+      if (!cost || isZeroResources(cost)) continue;
+      candidates.push({ kind: "defense", planetId, itemId: defenseId, max: count, cost });
+    }
+
+    const solution = uniqueLossSolution(candidates, losses);
+    if (!solution) return null;
+    return solution.map(({ candidate, destroyed }) => ({
+      kind: candidate.kind,
+      planetId,
+      itemId: candidate.itemId,
+      delta: candidate.kind === "defense" ? -(destroyed - Math.floor((destroyed * 7) / 10)) : -destroyed
+    })).filter((mutation) => mutation.delta !== 0);
+  }
+
   private applyQueueCompletedEvent(event: IndexedQueueCompletedEvent): void {
     // A building completion raises the planet's production rate. The contract
     // settles [lastSettledAt, readyAt] at the OLD rate, completes the building,
@@ -3636,6 +3759,62 @@ export class SettlementIndexer {
     return queue;
   }
 
+  private indexedLogsForTransaction(transactionHash: string): IndexedRpcLog[] {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0 AND lower(transaction_hash) = lower(?)
+      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
+    `).all(transactionHash) as EventRow[];
+    return rows.map((row) => parseEvent<IndexedRpcLog>(row.event_json));
+  }
+
+  private hasTransactionUnitCountChanged(
+    transactionHash: string,
+    kind: "ship" | "defense",
+    planetId?: string,
+    itemId?: number
+  ): boolean {
+    return this.indexedLogsForTransaction(transactionHash).some((txLog) => {
+      if (kind === "ship" && isShipCountChangedLog(txLog)) {
+        const event = decodeShipCountChangedLog(txLog);
+        return (planetId === undefined || event.planetId === planetId) && (itemId === undefined || event.shipId === itemId);
+      }
+      if (kind === "defense" && isDefenseCountChangedLog(txLog)) {
+        const event = decodeDefenseCountChangedLog(txLog);
+        return (planetId === undefined || event.planetId === planetId) && (itemId === undefined || event.defenseId === itemId);
+      }
+      return false;
+    });
+  }
+
+  private hasLegacyUnitMutation(mutationKey: string): boolean {
+    return Boolean(this.db.query("SELECT 1 FROM indexed_legacy_unit_mutations WHERE mutation_key = ?").get(mutationKey));
+  }
+
+  private applyLegacyUnitMutationsOnce(mutationKey: string, mutations: LegacyUnitMutation[], source: unknown): void {
+    const nonZeroMutations = mutations.filter((mutation) => mutation.delta !== 0);
+    if (nonZeroMutations.length === 0) return;
+    const inserted = this.db.query(`
+      INSERT OR IGNORE INTO indexed_legacy_unit_mutations (mutation_key, event_json)
+      VALUES (?, ?)
+    `).run(mutationKey, JSON.stringify({ source, mutations: nonZeroMutations }));
+    if (inserted.changes === 0) return;
+    for (const mutation of nonZeroMutations) {
+      this.adjustLegacyUnitCount(mutation);
+    }
+  }
+
+  private adjustLegacyUnitCount(mutation: LegacyUnitMutation): void {
+    if (mutation.kind === "ship") {
+      this.adjustIndexedLevel("indexed_ship_counts", "ship_id", "count", mutation.planetId, mutation.itemId, mutation.delta);
+      this.adjustIndexedLevel("contract_ship_counts", "ship_id", "count", mutation.planetId, mutation.itemId, mutation.delta);
+    } else {
+      this.adjustIndexedLevel("indexed_defense_counts", "defense_id", "count", mutation.planetId, mutation.itemId, mutation.delta);
+      this.adjustIndexedLevel("contract_defense_counts", "defense_id", "count", mutation.planetId, mutation.itemId, mutation.delta);
+    }
+  }
+
   private indexedLevel(
     table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
     idColumn: string,
@@ -3664,6 +3843,18 @@ export class SettlementIndexer {
       VALUES (?, ?, ?)
       ON CONFLICT(planet_id, ${idColumn}) DO UPDATE SET ${valueColumn} = excluded.${valueColumn}
     `).run(planetId, itemId, value);
+  }
+
+  private adjustIndexedLevel(
+    table: "contract_defense_counts" | "contract_ship_counts" | "indexed_defense_counts" | "indexed_ship_counts",
+    idColumn: string,
+    valueColumn: string,
+    planetId: string,
+    itemId: number,
+    delta: number
+  ): void {
+    const current = this.indexedLevel(table, idColumn, planetId, itemId);
+    this.upsertIndexedLevel(table, idColumn, valueColumn, planetId, itemId, Math.max(0, current + delta));
   }
 
   private upsertIndexedLevelAtLeast(
@@ -4991,6 +5182,141 @@ function decodeIntegerString(value: string): bigint {
 
 function subtractNonNegative(left: bigint, right: bigint): bigint {
   return left > right ? left - right : 0n;
+}
+
+type BattleLossCandidate = {
+  kind: "ship" | "defense";
+  planetId: string;
+  itemId: number;
+  max: number;
+  cost: Resources;
+};
+
+type BattleLossPick = {
+  candidate: BattleLossCandidate;
+  destroyed: number;
+};
+
+const shipKeyIds = new Map<string, number>([
+  ["smallCargo", 0],
+  ["lightFighter", 1],
+  ["recycler", 2],
+  ["colonyShip", 3],
+  ["largeCargo", 4],
+  ["heavyFighter", 5],
+  ["cruiser", 6],
+  ["battleship", 7],
+  ["bomber", 8],
+  ["solarSatellite", 9],
+  ["destroyer", 10],
+  ["deathstar", 11],
+  ["battlecruiser", 12],
+  ["reaper", 13],
+  ["pathfinder", 14],
+  ["crawler", 15]
+]);
+
+const legacyShipCosts: readonly Resources[] = [
+  { metal: "2000", crystal: "2000", deuterium: "0" },
+  { metal: "3000", crystal: "1000", deuterium: "0" },
+  { metal: "10000", crystal: "6000", deuterium: "2000" },
+  { metal: "10000", crystal: "20000", deuterium: "10000" },
+  { metal: "6000", crystal: "6000", deuterium: "0" },
+  { metal: "6000", crystal: "4000", deuterium: "0" },
+  { metal: "20000", crystal: "7000", deuterium: "2000" },
+  { metal: "45000", crystal: "15000", deuterium: "0" },
+  { metal: "50000", crystal: "25000", deuterium: "15000" },
+  { metal: "0", crystal: "2000", deuterium: "500" },
+  { metal: "60000", crystal: "50000", deuterium: "15000" },
+  { metal: "5000000", crystal: "4000000", deuterium: "1000000" },
+  { metal: "30000", crystal: "40000", deuterium: "15000" },
+  { metal: "85000", crystal: "55000", deuterium: "20000" },
+  { metal: "8000", crystal: "15000", deuterium: "8000" },
+  { metal: "2000", crystal: "2000", deuterium: "1000" }
+];
+
+const legacyDefenseCosts: readonly Resources[] = [
+  { metal: "2000", crystal: "0", deuterium: "0" },
+  { metal: "1500", crystal: "500", deuterium: "0" },
+  { metal: "6000", crystal: "2000", deuterium: "0" },
+  { metal: "10000", crystal: "10000", deuterium: "0" },
+  { metal: "20000", crystal: "15000", deuterium: "2000" },
+  { metal: "2000", crystal: "6000", deuterium: "0" },
+  { metal: "50000", crystal: "50000", deuterium: "30000" },
+  { metal: "50000", crystal: "50000", deuterium: "0" },
+  { metal: "8000", crystal: "0", deuterium: "2000" },
+  { metal: "12500", crystal: "2500", deuterium: "10000" }
+];
+
+function shipKeyToId(key: string): number | null {
+  return shipKeyIds.get(key) ?? null;
+}
+
+function shipCostForLegacyLoss(shipId: number): Resources | null {
+  return legacyShipCosts[shipId] ?? null;
+}
+
+function defenseCostForLegacyLoss(defenseId: number): Resources | null {
+  return legacyDefenseCosts[defenseId] ?? null;
+}
+
+function battleLogMissionId(log: RpcLog): string | null {
+  try {
+    return BigInt(log.topics[1] ?? "0x0").toString();
+  } catch {
+    return null;
+  }
+}
+
+function uniqueLossSolution(candidates: BattleLossCandidate[], losses: Resources): BattleLossPick[] | null {
+  const target = numericResources(losses);
+  const solutions: BattleLossPick[][] = [];
+
+  const search = (index: number, remaining: { metal: number; crystal: number; deuterium: number }, picks: BattleLossPick[]) => {
+    if (solutions.length > 1) return;
+    if (remaining.metal === 0 && remaining.crystal === 0 && remaining.deuterium === 0) {
+      solutions.push([...picks]);
+      return;
+    }
+    if (index >= candidates.length) return;
+    const candidate = candidates[index]!;
+    const cost = numericResources(candidate.cost);
+    let maxDestroyed = candidate.max;
+    if (cost.metal > 0) maxDestroyed = Math.min(maxDestroyed, Math.floor(remaining.metal / cost.metal));
+    else if (remaining.metal !== 0) maxDestroyed = 0;
+    if (cost.crystal > 0) maxDestroyed = Math.min(maxDestroyed, Math.floor(remaining.crystal / cost.crystal));
+    else if (remaining.crystal !== 0 && cost.metal === 0 && cost.deuterium === 0) maxDestroyed = 0;
+    if (cost.deuterium > 0) maxDestroyed = Math.min(maxDestroyed, Math.floor(remaining.deuterium / cost.deuterium));
+    else if (remaining.deuterium !== 0 && cost.metal === 0 && cost.crystal === 0) maxDestroyed = 0;
+
+    for (let destroyed = maxDestroyed; destroyed >= 0; destroyed -= 1) {
+      const next = {
+        metal: remaining.metal - cost.metal * destroyed,
+        crystal: remaining.crystal - cost.crystal * destroyed,
+        deuterium: remaining.deuterium - cost.deuterium * destroyed
+      };
+      if (next.metal < 0 || next.crystal < 0 || next.deuterium < 0) continue;
+      if (destroyed > 0) picks.push({ candidate, destroyed });
+      search(index + 1, next, picks);
+      if (destroyed > 0) picks.pop();
+      if (solutions.length > 1) return;
+    }
+  };
+
+  search(0, target, []);
+  return solutions.length === 1 ? solutions[0]! : null;
+}
+
+function numericResources(resources: Resources): { metal: number; crystal: number; deuterium: number } {
+  return {
+    metal: Number(resources.metal),
+    crystal: Number(resources.crystal),
+    deuterium: Number(resources.deuterium)
+  };
+}
+
+function isZeroResources(resources: Resources): boolean {
+  return Number(resources.metal) === 0 && Number(resources.crystal) === 0 && Number(resources.deuterium) === 0;
 }
 
 function isSqliteBusyError(error: unknown): boolean {
