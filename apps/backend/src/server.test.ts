@@ -62,6 +62,7 @@ const defenseCompletedTopic = "0xcc99fccb631bf08aef4833c0cbd43ed8d19a40eacce0fe2
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
+const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
@@ -3521,6 +3522,59 @@ describe("Veydrift backend", () => {
     expect(overviewBody.planetsResponse.planets[0].resources.metal).toBe(canonicalMetal);
     expect(overviewBody.planetsResponse.planets[0].resourcesAsOfNow.metal).toBe(previewResourcesMetal);
     expect(infrastructureBody.raidableResources.metal).toBe("2532");
+  });
+
+  test("returned loot resource credit updates every wallet current-resource feeder (VEY-KANEO-517)", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("returned-loot resource endpoints must not read live infrastructure state");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm returned-loot resource endpoints should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      lastSettledAt: Math.floor(Date.now() / 1_000).toString(),
+      resources: { metal: "2022", crystal: "1005", deuterium: "1259" }
+    });
+    for (const log of activeFleetMissionLogs({ missionId: 915n, owner: player, originPlanetId: 7n, targetPlanetId: 8n })) {
+      indexer.applyLog(log);
+    }
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xreturned-loot-credit",
+      logIndex: "0x1",
+      topics: [planetSettledTopic, topic(7n)],
+      data: abiWords(5000n, 2824n, 1359n, BigInt(Math.floor(Date.now() / 1_000)))
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xreturned-mission",
+      logIndex: "0x2",
+      topics: [fleetMissionReturnedTopic, topic(915n), addressTopic(player), topic(7n)],
+      data: "0x"
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const settlementBody = await (await handler(new Request(`http://localhost/wallet/${player}/settlement`))).json();
+    const planetsBody = await (await handler(new Request(`http://localhost/wallet/${player}/planets`))).json();
+    const infrastructureBody = await (await handler(new Request(`http://localhost/wallet/${player}/infrastructure`))).json();
+    const overviewBody = await (await handler(new Request(`http://localhost/wallet/${player}/overview`))).json();
+
+    const credited = { metal: "5000", crystal: "2824", deuterium: "1359" };
+    expect(settlementBody.planet.resourcesAsOfNow).toEqual(credited);
+    expect(planetsBody.planets[0].resourcesAsOfNow).toEqual(credited);
+    expect(infrastructureBody.resourcesAsOfNow).toEqual(credited);
+    expect(overviewBody.settlement.planet.resourcesAsOfNow).toEqual(credited);
+    expect(overviewBody.planetsResponse.planets[0].resourcesAsOfNow).toEqual(credited);
   });
 
   test("planet roster serves the settled resource snapshot at lastSettledAt, with the accrued balance in resourcesAsOfNow (VEY-KANEO-488)", async () => {

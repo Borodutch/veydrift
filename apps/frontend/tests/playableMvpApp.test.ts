@@ -27,6 +27,8 @@ import {
   overviewResearchCompletionUnavailableReasonFor,
   preserveActiveResearchQueue,
   preserveActiveResearchState,
+  resourceSnapshotFreshnessForInfrastructure,
+  resourceSnapshotFreshnessForSettlement,
   refreshedInfrastructureUnavailableReasonFor,
   refreshedInfrastructureUpgradeUnavailableReasonFor,
   researchCompletionUnavailableReasonFor,
@@ -38,9 +40,11 @@ import {
   researchStartTransactionLabel,
   raidTargetPlanetForMission,
   missionOriginResources,
+  shouldApplyResourceSnapshot,
   shipyardStateForMissionActions,
   shipCompletionPlanetIdFor,
   topBarEnergyFor,
+  walletCurrentResourcesFor,
   walletSpendableResourcesFor,
   walletSnapshotHydrationKey,
 } from "../src/PlayableMvpApp";
@@ -380,6 +384,41 @@ describe("Playable MVP app display helpers", () => {
       isWalletConnected: false,
       onChainResources: resources,
     })).toBeUndefined();
+  });
+
+  test("prefers settlement current resources over stale infrastructure top-bar resources (VEY-KANEO-517)", () => {
+    expect(walletCurrentResourcesFor({
+      settlementResources: { metal: "5000", crystal: "2824", deuterium: "1359" },
+      infrastructureResourcesAsOfNow: { metal: "2022", crystal: "1005", deuterium: "1259" },
+      infrastructureResources: { metal: "1900", crystal: "900", deuterium: "1200" },
+    })).toEqual({ metal: 5000, crystal: 2824, deuterium: 1359 });
+
+    expect(walletCurrentResourcesFor({
+      settlementResources: null,
+      infrastructureResourcesAsOfNow: { metal: "2022", crystal: "1005", deuterium: "1259" },
+      infrastructureResources: { metal: "1900", crystal: "900", deuterium: "1200" },
+    })).toEqual({ metal: 2022, crystal: 1005, deuterium: 1259 });
+  });
+
+  test("resource freshness accepts returned-loot credits with unchanged lastSettledAt (VEY-KANEO-517)", () => {
+    const current = resourceSnapshotFreshnessForSettlement({
+      homePlanetId: "7",
+      planet: {
+        planetId: "7",
+        lastSettledAt: "1770000300",
+        resources: { metal: "2022", crystal: "1005", deuterium: "1259" },
+        resourcesAsOfNow: { metal: "2022", crystal: "1005", deuterium: "1259" },
+      } as never,
+    } as never);
+    const returnedLoot = resourceSnapshotFreshnessForInfrastructure({
+      homePlanetId: "7",
+      planetId: "7",
+      planetLastSettledAt: "1770000300",
+      resources: { metal: "5000", crystal: "2824", deuterium: "1359" },
+      resourcesAsOfNow: { metal: "5000", crystal: "2824", deuterium: "1359" },
+    } as never);
+
+    expect(shouldApplyResourceSnapshot(current, returnedLoot)).toBe(true);
   });
 
   test("mission origin resources track the canonical spendable balance, not the lagging backend snapshot", () => {

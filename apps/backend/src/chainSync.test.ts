@@ -230,6 +230,66 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
+  test("sorts live polled logs by block and logIndex before applying them", async () => {
+    const indexer = makeIndexer();
+    const logs: TestLog[] = [
+      {
+        blockNumber: "0x181",
+        transactionHash: "0xship-newer",
+        logIndex: "0x2",
+        topics: [planetShipCountChangedTopic, topicWord(7n), topicWord(1n)],
+        data: abiWords(9n)
+      },
+      planetStartedLog("0x180", 7n, "0xplanet"),
+      {
+        blockNumber: "0x181",
+        transactionHash: "0xship-older",
+        logIndex: "0x1",
+        topics: [planetShipCountChangedTopic, topicWord(7n), topicWord(1n)],
+        data: abiWords(4n)
+      }
+    ];
+    const backfiller = new MockBackfiller(0x181n, () => logs);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(indexer.shipRows("7").find((ship) => ship.id === 1)?.count).toBe(9);
+    service.stop();
+  });
+
+  test("an applyLog failure aborts the range so the next poll retries it", async () => {
+    const indexer = makeIndexer();
+    let attempt = 0;
+    const badPlanetLog: TestLog = {
+      ...planetStartedLog("0x181", 7n, "0xbad-planet"),
+      logIndex: "0x0",
+      data: "0x"
+    };
+    const goodPlanetLog: TestLog = {
+      ...planetStartedLog("0x181", 7n, "0xgood-planet"),
+      logIndex: "0x0"
+    };
+    const backfiller = new MockBackfiller(0x181n, () => {
+      attempt += 1;
+      return attempt === 1 ? [badPlanetLog] : [goodPlanetLog];
+    });
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+    expect(service.snapshot().lastError).toBeTruthy();
+    expect(indexer.snapshot().indexedPlanets).toBe(0);
+
+    await service.poll();
+    expect(backfiller.ranges).toEqual([
+      { from: 100n, to: 0x181n },
+      { from: 100n, to: 0x181n }
+    ]);
+    expect(indexer.snapshot().indexedPlanets).toBe(1);
+    expect(service.snapshot().lastError).toBeNull();
+    service.stop();
+  });
+
   test("connected flips false only after sustained consecutive poll failures", async () => {
     const indexer = makeIndexer();
     const backfiller = new MockBackfiller(0x180n);

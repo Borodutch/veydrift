@@ -1814,6 +1814,50 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("same-block PlanetSettled freshness follows logIndex order, not arrival order (VEY-KANEO-517)", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xresource-newer",
+      logIndex: "0x2",
+      topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+      data: abiWords(9000n, 8000n, 7000n, 1770000300n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xresource-older",
+      logIndex: "0x1",
+      topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+      data: abiWords(1000n, 1000n, 1000n, 1770000300n)
+    });
+
+    expect(indexer.walletSettlement(player).planet?.resources).toEqual({
+      metal: "9000",
+      crystal: "8000",
+      deuterium: "7000"
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xresource-newest",
+      logIndex: "0x3",
+      topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+      data: abiWords(9500n, 8200n, 7100n, 1770000300n)
+    });
+
+    expect(indexer.walletSettlement(player).planet?.resources).toEqual({
+      metal: "9500",
+      crystal: "8200",
+      deuterium: "7100"
+    });
+  });
+
   test("a decreasing PlanetSettled after a reconcile that stamped a newer lastSettledAt still drops served resources (VEY-KANEO-491)", async () => {
     // Acceptance scenario from the field report: the canonical reconcile (rebuild) reads on-chain state and
     // writes the resource snapshot stamped with `reconciledAt = now` — a lastSettledAt NEWER than any real
