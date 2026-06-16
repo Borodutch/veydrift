@@ -2073,6 +2073,60 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("derives fleet slots from indexed active missions and Computer Technology", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x86",
+      transactionHash: "0xresearchdone",
+      logIndex: "0x0",
+      topics: [
+        researchCompletedTopic,
+        addressTopic(player),
+        topic(4n)
+      ],
+      data: abiWords(4n)
+    });
+    for (let missionId = 1n; missionId <= 5n; missionId += 1n) {
+      const baseLogIndex = Number(missionId * 10n);
+      const logs = [
+        {
+          blockNumber: "0x90",
+          transactionHash: `0x${missionId.toString(16).padStart(64, "0")}`,
+          logIndex: `0x${baseLogIndex.toString(16)}`,
+          removed: false,
+          topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(player), topic(0n)],
+          data: abiWords(7n, 100n + missionId, 1_800_000_000n + missionId, 1_800_000_300n + missionId),
+        },
+        {
+          blockNumber: "0x90",
+          transactionHash: `0x${missionId.toString(16).padStart(64, "0")}`,
+          logIndex: `0x${(baseLogIndex + 1).toString(16)}`,
+          removed: false,
+          topics: [fleetMissionCargoTopic, topic(missionId)],
+          data: abiWords(0n, 0n, 0n, 0n),
+        },
+        {
+          blockNumber: "0x90",
+          transactionHash: `0x${missionId.toString(16).padStart(64, "0")}`,
+          logIndex: `0x${(baseLogIndex + 2).toString(16)}`,
+          removed: false,
+          topics: [fleetMissionShipsTopic, topic(missionId)],
+          data: abiWords(...Array.from({ length: 14 }, (_, index) => index === 0 ? 1n : 0n)),
+        },
+      ];
+      for (const log of logs) {
+        indexer.applyLog(log);
+      }
+    }
+
+    expect(indexer.fleetSlots(player)).toEqual({ active: 5, limit: 5 });
+  });
+
   test("elapsed production queues do not inflate contract-mirror unit counts before completion events", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

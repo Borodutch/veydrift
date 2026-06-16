@@ -1501,7 +1501,7 @@ function indexedShipyardState(
     unavailableReason,
     resources: planet?.resources ?? null,
     resourcesAsOfNow: indexedCurrentResourcesForPlanet(indexer, planet),
-    fleetSlots: { active: 0, limit: 1 },
+    fleetSlots: indexer.fleetSlots(wallet),
     shipyardLevel,
     naniteLevel,
     technologyLevels: indexer.technologyLevels(wallet),

@@ -398,6 +398,7 @@ describe("mission creation", () => {
       cargoCapacity: 0,
       cargoSupported: false,
       cargoTotal: 0,
+      fleetSlots: { active: 0, limit: 1 },
       fuelCost: 0,
       originCoords: { galaxy: 2, system: 44, position: 7 },
       quantity: 1,
@@ -422,9 +423,9 @@ describe("mission creation", () => {
     } as const;
 
     // At the cap: blocked before submit, message shows the ratio and points at Computer Technology.
-    const blocked = missionDraftBlocker({ ...base, fleetSlots: { active: 1, limit: 1 } });
+    const blocked = missionDraftBlocker({ ...base, fleetSlots: { active: 5, limit: 5 } });
     expect(blocked).toBe(
-      "Fleet slots full (1/1) — research Computer Technology to raise the limit, or wait for a fleet to return."
+      "Fleet slots full (5/5) — research Computer Technology to raise the limit, or wait for a fleet to return."
     );
     expect(missionDraftBlocker({ ...base, fleetSlots: { active: 3, limit: 3 } })).toContain("Fleet slots full (3/3)");
 
@@ -434,8 +435,31 @@ describe("mission creation", () => {
     // Missiles do not consume fleet slots, so a full fleet must not block a missile launch.
     expect(missionDraftBlocker({ ...base, action: missileAction, fleetSlots: { active: 1, limit: 1 } })).toBeUndefined();
 
-    // Fail open when the backend did not provide slot counts; the on-chain revert stays the backstop.
-    expect(missionDraftBlocker(base)).toBeUndefined();
+    // Missing slot counts are stale for fleet launches; block before wallet submission rather than
+    // letting an expected FleetSlotLimitReached revert escape through the wallet flow.
+    expect(missionDraftBlocker(base)).toBe(
+      "Fleet slot state is still loading — wait for Computer Technology limits to sync before launching."
+    );
+    expect(missionDraftBlocker({ ...base, fleetSlots: { active: 0, limit: 0 } })).toContain("Fleet slot state is still loading");
+  });
+
+  test("blocks non-Galaxy station-defense launches at the same Computer-tech fleet-slot cap", () => {
+    const blocked = missionDraftBlocker({
+      action: defenseHoldAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      cargoTotal: 0,
+      fleetSlots: { active: 5, limit: 5 },
+      fuelCost: 0,
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 1,
+      resources: { metal: 0, crystal: 0, deuterium: 1_000 },
+      selectedShipCount: 1,
+      totalCargoCapacity: 50,
+    });
+
+    expect(blocked).toContain("Fleet slots full (5/5)");
+    expect(blocked).toContain("Computer Technology");
   });
 
   test("checks fuel for fleet missions and missile quantity for missile missions", () => {
@@ -444,6 +468,7 @@ describe("mission creation", () => {
       cargoCapacity: 0,
       cargoSupported: false,
       cargoTotal: 0,
+      fleetSlots: { active: 0, limit: 1 },
       fuelCost: 25,
       originCoords: { galaxy: 2, system: 44, position: 7 },
       quantity: 1,
@@ -472,6 +497,7 @@ describe("mission creation", () => {
       cargoCapacity: 0,
       cargoSupported: false,
       cargoTotal: 0,
+      fleetSlots: { active: 0, limit: 1 },
       originCoords: { galaxy: 2, system: 44, position: 7 },
       quantity: 1,
       totalCargoCapacity: 50_000,
@@ -508,6 +534,7 @@ describe("mission creation", () => {
       cargoCapacity: 0,
       cargoSupported: false,
       cargoTotal: 0,
+      fleetSlots: { active: 0, limit: 1 },
       fuelCost: 230,
       originCoords: { galaxy: 1, system: 294, position: 1 },
       quantity: 1,
@@ -523,6 +550,7 @@ describe("mission creation", () => {
       cargoCapacity: 100,
       cargoSupported: true,
       cargoTotal: 101,
+      fleetSlots: { active: 0, limit: 1 },
       fuelCost: 0,
       originCoords: { galaxy: 2, system: 44, position: 7 },
       quantity: 1,
@@ -538,6 +566,7 @@ describe("mission creation", () => {
       cargoCapacity: 0,
       cargoSupported: false,
       cargoTotal: 0,
+      fleetSlots: { active: 0, limit: 1 },
       fuelCost: 0,
       originCoords: { galaxy: 2, system: 44, position: 7 },
       quantity: 1,
@@ -580,6 +609,7 @@ describe("mission creation", () => {
       cargoCapacity: 0,
       cargoSupported: false,
       cargoTotal: 0,
+      fleetSlots: { active: 0, limit: 1 },
       fuelCost: 10,
       originCoords: { galaxy: 2, system: 44, position: 7 },
       quantity: 1,
