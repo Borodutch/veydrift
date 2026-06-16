@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { canonicalContractTables } from "./contractStateSchema";
-import type { Address, AllianceState, DebrisFieldEvent, DefenseState, InfrastructureState, MoonChanceReportEvent, PlayerQueues, ResearchState, ShipyardState, SettledPlanetEvent } from "./evm";
+import type { Address, AllianceState, CanonicalPlanetChainState, DebrisFieldEvent, DefenseState, InfrastructureState, MoonChanceReportEvent, PlayerQueues, ResearchState, ShipyardState, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { deriveBuildingRows, deriveDefenseRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
 
@@ -3970,6 +3970,63 @@ describe("SettlementIndexer", () => {
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(0);
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(5);
     expect(indexer.planet(planet.planetId)?.resources).toEqual({ metal: "777", crystal: "888", deuterium: "999" });
+  });
+
+  test("current-state seed skips event replay and high-level readers for raw canonical rows", async () => {
+    const stalePlanet = {
+      ...planet,
+      resources: {
+        metal: "1",
+        crystal: "1",
+        deuterium: "1"
+      }
+    };
+    const rawState: CanonicalPlanetChainState = {
+      planetId: planet.planetId,
+      resources: {
+        metal: "321",
+        crystal: "654",
+        deuterium: "987"
+      },
+      buildings: deriveBuildingRows((id) => (id === 0 ? 4 : 0)),
+      defenses: deriveDefenseRows((id) => (id === 2 ? 6 : 0)),
+      ships: deriveShipRows((id) => (id === 1 ? 8 : 0)),
+      queues: {
+        building: null,
+        defense: null,
+        ship: null
+      }
+    };
+    let rawReads = 0;
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return [stalePlanet]; },
+      async getCanonicalPlanetState(planetId) {
+        rawReads += 1;
+        expect(planetId).toBe(BigInt(planet.planetId));
+        return rawState;
+      },
+      async getBlockNumber() { return 0x123n; },
+      async listDebrisFieldEvents() { throw new Error("event backfill should not run"); },
+      async listMoonChanceReportEvents() { throw new Error("event backfill should not run"); },
+      async listSettledPlanetEvents() { throw new Error("settled event scan should not run"); },
+      async listContractLogs() { throw new Error("contract log replay should not run"); },
+      async getInfrastructureState() { throw new Error("high-level infrastructure reader should not run"); },
+      async getShipyardState() { throw new Error("high-level shipyard reader should not run"); },
+      async getDefenseState() { throw new Error("high-level defense reader should not run"); },
+      async getPlayerQueues() { throw new Error("high-level queue reader should not run"); }
+    }, 100n);
+
+    await expect(indexer.seedCurrentCanonicalState({ planetConcurrency: 25 })).resolves.toMatchObject({
+      indexedPlanets: 1,
+      lastReconciledBlock: "291",
+      lastReconciliationError: null
+    });
+
+    expect(rawReads).toBe(1);
+    expect(indexer.planet(planet.planetId)?.resources).toEqual(rawState.resources);
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(4);
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(8);
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(6);
   });
 
   test("explicit canonical sync is not aborted by the normal cold rebuild deadline", async () => {

@@ -5,6 +5,8 @@ import { SettlementIndexer } from "./indexer";
 type ReplayArgs = {
   canonicalSync: boolean;
   canonicalSyncRebuildDeadlineMs?: number;
+  currentStateSeed: boolean;
+  currentStateConcurrency?: number;
   fromBlock?: bigint;
   toBlock?: bigint | "latest";
 };
@@ -27,7 +29,9 @@ async function main(): Promise<void> {
   const before = indexer.snapshot();
   const fromBlock = args.fromBlock ?? replayFromBlock(before.latestIndexedBlock, loaded.config.indexFromBlock);
   const toBlock = args.toBlock ?? "latest";
-  const result = args.canonicalSync
+  const result = args.currentStateSeed
+    ? { replay: null, rebuild: await indexer.seedCurrentCanonicalState({ planetConcurrency: args.currentStateConcurrency ?? 25 }) }
+    : args.canonicalSync
     ? await indexer.syncCanonicalState(fromBlock, toBlock, {
       rebuildDeadlineMs: args.canonicalSyncRebuildDeadlineMs ?? 0
     })
@@ -38,12 +42,14 @@ async function main(): Promise<void> {
     replay: {
       fromBlock: fromBlock.toString(),
       toBlock: typeof toBlock === "bigint" ? toBlock.toString() : toBlock,
-      materializedRebuildFromStoredLogs: true,
+      materializedRebuildFromStoredLogs: !args.currentStateSeed,
       canonicalSync: args.canonicalSync,
-      canonicalSyncRebuildDeadlineMs: args.canonicalSync ? args.canonicalSyncRebuildDeadlineMs ?? null : null
+      canonicalSyncRebuildDeadlineMs: args.canonicalSync ? args.canonicalSyncRebuildDeadlineMs ?? null : null,
+      currentStateSeed: args.currentStateSeed,
+      currentStateConcurrency: args.currentStateSeed ? args.currentStateConcurrency ?? 25 : null
     },
     before,
-    ...(result.rebuild ? { afterReplay: result.replay } : {}),
+    ...(result.rebuild && result.replay ? { afterReplay: result.replay } : {}),
     after
   }, null, 2));
 }
@@ -60,12 +66,14 @@ function replayFromBlock(latestIndexedBlock: string | null, configuredFromBlock:
 }
 
 function parseArgs(args: string[]): ReplayArgs {
-  const parsed: ReplayArgs = { canonicalSync: false };
+  const parsed: ReplayArgs = { canonicalSync: false, currentStateSeed: false };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     const value = args[index + 1];
     if (arg === "--canonical-sync") {
       parsed.canonicalSync = true;
+    } else if (arg === "--current-state-seed") {
+      parsed.currentStateSeed = true;
     } else if (arg === "--from-block") {
       if (!value) throw new Error("--from-block requires a value");
       parsed.fromBlock = BigInt(value);
@@ -82,9 +90,20 @@ function parseArgs(args: string[]): ReplayArgs {
       }
       parsed.canonicalSyncRebuildDeadlineMs = deadlineMs;
       index += 1;
+    } else if (arg === "--current-state-concurrency") {
+      if (!value) throw new Error("--current-state-concurrency requires a value");
+      const concurrency = Number(value);
+      if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
+        throw new Error("--current-state-concurrency must be a positive integer");
+      }
+      parsed.currentStateConcurrency = concurrency;
+      index += 1;
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
+  }
+  if (parsed.currentStateSeed && parsed.canonicalSync) {
+    throw new Error("--current-state-seed and --canonical-sync are mutually exclusive");
   }
   return parsed;
 }
