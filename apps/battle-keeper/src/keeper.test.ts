@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { MissionType } from "./events";
+import { FleetMissionStatus, MissionType } from "./events";
 import { BattleKeeper, type KeeperLogger } from "./keeper";
 import { MissionNotResolvableError, type MissionLeg, type MissionResolver } from "./resolver";
 
@@ -94,6 +94,83 @@ describe("BattleKeeper pending tracking", () => {
     expect(keeper.snapshot().pendingCount).toBe(0);
   });
 
+  test("recordArrivalResolved treats Deploy as terminal even when returnAt is nonzero", () => {
+    const { keeper } = makeKeeper(async () => "0xhash");
+    keeper.recordLaunched(launch("4", MissionType.Deploy, 500, 900));
+    keeper.recordArrivalResolved({ missionId: "4", missionType: MissionType.Deploy, returnAt: 900 });
+
+    expect(keeper.snapshot().pendingCount).toBe(0);
+
+    // Terminal: a stale backfill launch with the original returnAt must never re-queue it.
+    keeper.recordLaunched(launch("4", MissionType.Deploy, 500, 900));
+    expect(keeper.snapshot().pendingCount).toBe(0);
+  });
+
+  test("recordArrivalResolved treats successful Colonize as terminal even when returnAt is nonzero", () => {
+    const { keeper } = makeKeeper(async () => "0xhash");
+    keeper.recordLaunched(launch("5", MissionType.Colonize, 500, 900));
+    keeper.recordArrivalResolved({ missionId: "5", missionType: MissionType.Colonize, returnAt: 900 });
+
+    expect(keeper.snapshot().pendingCount).toBe(0);
+
+    // Terminal: a stale backfill launch with the original returnAt must never re-queue it.
+    keeper.recordLaunched(launch("5", MissionType.Colonize, 500, 900));
+    expect(keeper.snapshot().pendingCount).toBe(0);
+  });
+
+  test("recordReturnExposed queues a blocked Colonize return after its resolved event", () => {
+    const { keeper } = makeKeeper(async () => "0xhash");
+    keeper.recordLaunched(launch("5", MissionType.Colonize, 500, 900));
+    keeper.recordArrivalResolved({ missionId: "5", missionType: MissionType.Colonize, returnAt: 900 });
+    expect(keeper.snapshot().pendingCount).toBe(0);
+
+    keeper.recordReturnExposed({
+      missionId: "5",
+      status: FleetMissionStatus.Returning,
+      returnAt: 900
+    });
+
+    const snap = keeper.snapshot();
+    expect(snap.awaitingArrivalCount).toBe(0);
+    expect(snap.awaitingReturnCount).toBe(1);
+    expect(snap.pendingMissionIds).toEqual(["5"]);
+  });
+
+  test("status reconciliation prunes a stale Deploy return tracked from old logic", () => {
+    const { keeper } = makeKeeper(async () => "0xhash");
+    keeper.recordLaunched(launch("4", MissionType.Deploy, 500, 900));
+    keeper.recordArrivalResolved({ missionId: "4", missionType: MissionType.Transport, returnAt: 900 });
+    expect(keeper.snapshot().awaitingReturnCount).toBe(1);
+
+    keeper.reconcileMissionStatus({
+      missionId: "4",
+      status: FleetMissionStatus.Resolved,
+      missionType: MissionType.Deploy,
+      arrivalAt: 500,
+      returnAt: 900
+    });
+
+    expect(keeper.snapshot().pendingCount).toBe(0);
+  });
+
+  test("status reconciliation keeps a real returning Attack return leg", () => {
+    const { keeper } = makeKeeper(async () => "0xhash");
+    keeper.recordLaunched(launch("9", MissionType.Attack, 500, 900));
+
+    keeper.reconcileMissionStatus({
+      missionId: "9",
+      status: FleetMissionStatus.Returning,
+      missionType: MissionType.Attack,
+      arrivalAt: 500,
+      returnAt: 900
+    });
+
+    const snap = keeper.snapshot();
+    expect(snap.awaitingArrivalCount).toBe(0);
+    expect(snap.awaitingReturnCount).toBe(1);
+    expect(snap.pendingMissionIds).toEqual(["9"]);
+  });
+
   test("recordReturned drops a mission from the return leg", () => {
     const { keeper } = makeKeeper(async () => "0xhash");
     keeper.recordLaunched(launch("3", MissionType.Transport, 500, 900));
@@ -175,7 +252,7 @@ describe("BattleKeeper resolution loop", () => {
 
   test("a Deploy resolves its arrival and is dropped (no return leg)", async () => {
     const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => 1_000 });
-    keeper.recordLaunched(launch("4", MissionType.Deploy, 900, 0));
+    keeper.recordLaunched(launch("4", MissionType.Deploy, 900, 2_000));
     await keeper.tick();
     expect(resolver.calls).toEqual(["4:arrival"]);
     expect(keeper.snapshot().pendingCount).toBe(0);

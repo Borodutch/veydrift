@@ -3,10 +3,9 @@ import { decodeEventLog, toEventSelector, type Abi } from "viem";
 /**
  * Fleet-mission slice of the VeydriftGame event surface (mirrors
  * packages/contracts/src/VeydriftGameStorage.sol). The keeper drives a two-leg state machine off
- * these three events: a mission is launched (arrival pending), its arrival is resolved (which either
- * makes it terminal or transitions it to a pending return leg), and finally its return is resolved
- * (terminal). Solidity encodes the `FleetMissionType` enum as `uint8`, so the indexed `missionType`
- * topic is a uint8.
+ * these events: a mission is launched (arrival pending), its arrival is resolved, a return leg may
+ * be explicitly exposed for missions that actually became Returning/Recalled, and finally its return
+ * is resolved (terminal). Solidity encodes enum topics as `uint8`.
  */
 export const battleEventsAbi = [
   {
@@ -41,6 +40,21 @@ export const battleEventsAbi = [
       { name: "owner", type: "address", indexed: true },
       { name: "planetId", type: "uint256", indexed: true }
     ]
+  },
+  {
+    type: "event",
+    name: "FleetMissionReturnExposed",
+    inputs: [
+      { name: "missionId", type: "uint256", indexed: true },
+      { name: "owner", type: "address", indexed: true },
+      { name: "status", type: "uint8", indexed: true },
+      { name: "originPlanetId", type: "uint256", indexed: false },
+      { name: "targetPlanetId", type: "uint256", indexed: false },
+      { name: "returnAt", type: "uint64", indexed: false },
+      { name: "metal", type: "uint128", indexed: false },
+      { name: "crystal", type: "uint128", indexed: false },
+      { name: "deuterium", type: "uint128", indexed: false }
+    ]
   }
 ] as const satisfies Abi;
 
@@ -67,6 +81,15 @@ export const missionTypeNames: Record<number, string> = Object.fromEntries(
   Object.entries(MissionType).map(([name, value]) => [value, name])
 );
 
+export const FleetMissionStatus = {
+  None: 0,
+  Outbound: 1,
+  Returning: 2,
+  Resolved: 3,
+  Returned: 4,
+  Recalled: 5
+} as const;
+
 /**
  * Mission types whose ARRIVAL leg the keeper resolves promptly. This is now every outbound mission
  * type — `resolveFleetMission` is permissionless for all of them, and the resolver's simulate-first
@@ -74,19 +97,39 @@ export const missionTypeNames: Record<number, string> = Object.fromEntries(
  */
 export const keeperResolvableMissionTypes = new Set<number>(Object.values(MissionType));
 
+/**
+ * Mission types that can legitimately infer a return leg from `FleetMissionResolved.returnAt`.
+ * Deploy and successful Colonize are terminal at arrival even though their resolution events can
+ * carry a nonzero stored timestamp. Blocked Colonize returns are queued by the authoritative
+ * `FleetMissionReturnExposed` event or by status reconciliation, not by `returnAt` alone.
+ */
+export const returnLegMissionTypes = new Set<number>(
+  Object.values(MissionType).filter(
+    (missionType) => missionType !== MissionType.Deploy && missionType !== MissionType.Colonize
+  )
+);
+
+export function hasReturnLegAfterArrival(missionType: number, returnAt: number): boolean {
+  return returnAt > 0 && returnLegMissionTypes.has(missionType);
+}
+
 export const eventTopics = {
   fleetMissionLaunched: toEventSelector(
     "FleetMissionLaunched(uint256,address,uint8,uint256,uint256,uint64,uint64,uint256)"
   ),
   fleetMissionResolved: toEventSelector("FleetMissionResolved(uint256,address,uint8,uint64)"),
-  fleetMissionReturned: toEventSelector("FleetMissionReturned(uint256,address,uint256)")
+  fleetMissionReturned: toEventSelector("FleetMissionReturned(uint256,address,uint256)"),
+  fleetMissionReturnExposed: toEventSelector(
+    "FleetMissionReturnExposed(uint256,address,uint8,uint256,uint256,uint64,uint128,uint128,uint128)"
+  )
 } as const;
 
 /** topic[0] values the keeper subscribes to (OR-filtered server-side over the game contract). */
 export const subscribedTopic0 = [
   eventTopics.fleetMissionLaunched,
   eventTopics.fleetMissionResolved,
-  eventTopics.fleetMissionReturned
+  eventTopics.fleetMissionReturned,
+  eventTopics.fleetMissionReturnExposed
 ] as const;
 
 export type RawLog = {
@@ -100,7 +143,7 @@ export type DecodedLaunched = {
   missionType: number;
   /** Unix seconds when the mission arrives and its arrival leg becomes resolvable. */
   arrivalAt: number;
-  /** Unix seconds the return leg becomes resolvable; 0 means the mission has no return leg. */
+  /** Stored return timestamp from launch; only return-leg mission types use it for a return leg. */
   returnAt: number;
 };
 
@@ -108,7 +151,7 @@ export type DecodedResolved = {
   kind: "resolved";
   missionId: string;
   missionType: number;
-  /** (Possibly updated) return time; 0 (or terminal status) means no return leg. */
+  /** Possibly updated return time; mission type determines whether this represents a return leg. */
   returnAt: number;
 };
 
@@ -117,7 +160,19 @@ export type DecodedReturned = {
   missionId: string;
 };
 
-export type DecodedBattleEvent = DecodedLaunched | DecodedResolved | DecodedReturned;
+export type DecodedReturnExposed = {
+  kind: "returnExposed";
+  missionId: string;
+  status: number;
+  /** Authoritative Unix seconds when the return leg becomes resolvable. */
+  returnAt: number;
+};
+
+export type DecodedBattleEvent =
+  | DecodedLaunched
+  | DecodedResolved
+  | DecodedReturned
+  | DecodedReturnExposed;
 
 /**
  * Decode a raw JSON-RPC log into the keeper's internal event shape. Returns `null` for logs that are
@@ -179,6 +234,26 @@ export function decodeBattleLog(log: RawLog): DecodedBattleEvent | null {
         return null;
       }
       return { kind: "returned", missionId: BigInt(missionTopic).toString() };
+    }
+
+    if (topic0 === eventTopics.fleetMissionReturnExposed) {
+      const decoded = decodeEventLog({
+        abi: battleEventsAbi,
+        eventName: "FleetMissionReturnExposed",
+        topics: log.topics as [signature: `0x${string}`, ...args: `0x${string}`[]],
+        data: log.data as `0x${string}`
+      });
+      const args = decoded.args as {
+        missionId: bigint;
+        status: number;
+        returnAt: bigint;
+      };
+      return {
+        kind: "returnExposed",
+        missionId: args.missionId.toString(),
+        status: Number(args.status),
+        returnAt: Number(args.returnAt)
+      };
     }
   } catch {
     return null;

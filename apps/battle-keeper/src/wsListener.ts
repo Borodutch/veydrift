@@ -232,6 +232,12 @@ export class WsBattleListener {
         missionType: decoded.missionType,
         returnAt: decoded.returnAt
       });
+    } else if (decoded.kind === "returnExposed") {
+      this.keeper.recordReturnExposed({
+        missionId: decoded.missionId,
+        status: decoded.status,
+        returnAt: decoded.returnAt
+      });
     } else {
       this.keeper.recordReturned(decoded.missionId);
     }
