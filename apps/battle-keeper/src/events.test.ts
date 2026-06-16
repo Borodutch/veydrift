@@ -6,7 +6,8 @@ import {
   decodeBattleLog,
   eventTopics,
   keeperResolvableMissionTypes,
-  MissionType
+  MissionType,
+  returnLegMissionTypes
 } from "./events";
 
 const owner = "0x1111111111111111111111111111111111111111" as const;
@@ -56,6 +57,30 @@ function returnedLog(missionId: bigint): { topics: string[]; data: string } {
     args: { missionId, owner, planetId: 200n }
   });
   return { topics: topics as string[], data: "0x" };
+}
+
+function returnExposedLog(args: {
+  missionId: bigint;
+  status: number;
+  returnAt: bigint;
+}): { topics: string[]; data: string } {
+  const topics = encodeEventTopics({
+    abi: battleEventsAbi,
+    eventName: "FleetMissionReturnExposed",
+    args: { missionId: args.missionId, owner, status: args.status }
+  });
+  const data = encodeAbiParameters(
+    [
+      { name: "originPlanetId", type: "uint256" },
+      { name: "targetPlanetId", type: "uint256" },
+      { name: "returnAt", type: "uint64" },
+      { name: "metal", type: "uint128" },
+      { name: "crystal", type: "uint128" },
+      { name: "deuterium", type: "uint128" }
+    ],
+    [100n, 200n, args.returnAt, 0n, 0n, 0n]
+  );
+  return { topics: topics as string[], data };
 }
 
 describe("event topic selectors", () => {
@@ -108,13 +133,18 @@ describe("decodeBattleLog", () => {
     });
   });
 
-  test("decodes a terminal FleetMissionLaunched (Deploy) with returnAt 0", () => {
-    const log = launchedLog({ missionId: 8n, missionType: MissionType.Deploy, arrivalAt: 1n });
+  test("decodes a terminal FleetMissionLaunched (Deploy) with a stored returnAt timestamp", () => {
+    const log = launchedLog({
+      missionId: 8n,
+      missionType: MissionType.Deploy,
+      arrivalAt: 1n,
+      returnAt: 10n
+    });
     const decoded = decodeBattleLog(log);
     expect(decoded?.kind).toBe("launched");
     if (decoded?.kind === "launched") {
       expect(decoded.missionType).toBe(MissionType.Deploy);
-      expect(decoded.returnAt).toBe(0);
+      expect(decoded.returnAt).toBe(10);
     }
   });
 
@@ -147,6 +177,16 @@ describe("decodeBattleLog", () => {
     expect(decoded).toEqual({ kind: "returned", missionId: "55" });
   });
 
+  test("decodes FleetMissionReturnExposed as an authoritative return leg", () => {
+    const decoded = decodeBattleLog(returnExposedLog({ missionId: 56n, status: 2, returnAt: 2_000n }));
+    expect(decoded).toEqual({
+      kind: "returnExposed",
+      missionId: "56",
+      status: 2,
+      returnAt: 2_000
+    });
+  });
+
   test("returns null for unrelated / malformed logs", () => {
     expect(decodeBattleLog({ topics: [], data: "0x" })).toBeNull();
     expect(
@@ -164,5 +204,14 @@ describe("keeperResolvableMissionTypes", () => {
       expect(keeperResolvableMissionTypes.has(value)).toBe(true);
     }
     expect(keeperResolvableMissionTypes.size).toBe(Object.keys(MissionType).length);
+  });
+});
+
+describe("returnLegMissionTypes", () => {
+  test("excludes mission types whose successful arrival is terminal even with a nonzero returnAt", () => {
+    expect(returnLegMissionTypes.has(MissionType.Deploy)).toBe(false);
+    expect(returnLegMissionTypes.has(MissionType.Colonize)).toBe(false);
+    expect(returnLegMissionTypes.has(MissionType.Transport)).toBe(true);
+    expect(returnLegMissionTypes.has(MissionType.Attack)).toBe(true);
   });
 });

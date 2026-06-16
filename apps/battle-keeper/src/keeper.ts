@@ -1,4 +1,9 @@
-import { keeperResolvableMissionTypes, missionTypeNames } from "./events";
+import {
+  FleetMissionStatus,
+  hasReturnLegAfterArrival,
+  keeperResolvableMissionTypes,
+  missionTypeNames
+} from "./events";
 import { MissionNotResolvableError, type MissionLeg, type MissionResolver } from "./resolver";
 
 export type KeeperLogger = {
@@ -19,7 +24,7 @@ export type LaunchedMission = {
   missionType: number;
   /** Unix seconds when the mission arrives. */
   arrivalAt: number;
-  /** Unix seconds the return leg becomes resolvable; 0 means the mission has no return leg. */
+  /** Stored return timestamp from launch; only return-leg mission types use it for a return leg. */
   returnAt: number;
 };
 
@@ -31,7 +36,15 @@ export type PendingMission = {
   leg: MissionLeg;
   /** Unix seconds when {@link leg} becomes resolvable (arrivalAt for "arrival", returnAt for "return"). */
   dueAt: number;
-  /** Known return time (from the launch event, refined by FleetMissionResolved). 0 => no return leg. */
+  /** Known return time (from the launch event, refined by FleetMissionResolved). */
+  returnAt: number;
+};
+
+export type MissionStatusSnapshot = {
+  missionId: string;
+  status: number;
+  missionType: number;
+  arrivalAt: number;
   returnAt: number;
 };
 
@@ -79,6 +92,7 @@ export class BattleKeeper {
   private readonly inFlight = new Set<string>();
   /** Missions that are fully done (return resolved, or arrival resolved with no return leg). */
   private readonly terminal = new Set<string>();
+  private readonly knownMissionTypes = new Map<string, number>();
   private readonly maxConcurrency: number;
   private readonly now: () => number;
   private readonly logger: KeeperLogger;
@@ -108,6 +122,7 @@ export class BattleKeeper {
     if (!keeperResolvableMissionTypes.has(mission.missionType)) {
       return;
     }
+    this.knownMissionTypes.set(mission.missionId, mission.missionType);
     if (this.terminal.has(mission.missionId) || this.pending.has(mission.missionId)) {
       return;
     }
@@ -127,15 +142,17 @@ export class BattleKeeper {
   }
 
   /** The arrival leg is done (observed FleetMissionResolved, or our own successful resolve). If the
-   * mission has a return leg (returnAt > 0) transition it to awaiting-return with the authoritative
-   * returnAt; otherwise it is terminal. Idempotent and safe even if we never saw the launch. */
+   * mission type has a return leg and returnAt > 0, transition it to awaiting-return with the
+   * authoritative returnAt; otherwise it is terminal. Idempotent and safe even if we never saw the
+   * launch. */
   recordArrivalResolved(event: { missionId: string; missionType: number; returnAt: number }): void {
     const { missionId, missionType, returnAt } = event;
+    this.knownMissionTypes.set(missionId, missionType);
     this.inFlight.delete(missionId);
     if (this.terminal.has(missionId)) {
       return;
     }
-    if (returnAt > 0) {
+    if (hasReturnLegAfterArrival(missionType, returnAt)) {
       const existing = this.pending.get(missionId);
       const wasArrival = !existing || existing.leg === "arrival";
       this.pending.set(missionId, {
@@ -157,6 +174,33 @@ export class BattleKeeper {
     }
   }
 
+  /** Authoritative signal that a resolved arrival actually became a return leg. This covers cases
+   * where `FleetMissionResolved.returnAt` is nonzero for both terminal and returning outcomes
+   * (notably Colonize); the contract emits this event only for Returning/Recalled missions. */
+  recordReturnExposed(event: { missionId: string; status: number; returnAt: number }): void {
+    const { missionId, status, returnAt } = event;
+    if (
+      status !== FleetMissionStatus.Returning &&
+      status !== FleetMissionStatus.Recalled
+    ) {
+      return;
+    }
+    if (returnAt <= 0) {
+      return;
+    }
+
+    const existing = this.pending.get(missionId);
+    this.terminal.delete(missionId);
+    this.pending.set(missionId, {
+      missionId,
+      missionType: existing?.missionType ?? this.knownMissionTypes.get(missionId) ?? -1,
+      leg: "return",
+      dueAt: returnAt,
+      returnAt
+    });
+    this.logger.info("[keeper] return exposed, awaiting return", { missionId, returnAt });
+  }
+
   /** The return leg is done (FleetMissionReturned). Drop the mission — it is terminal. */
   recordReturned(missionId: string): void {
     const wasTracked = this.pending.delete(missionId);
@@ -167,6 +211,64 @@ export class BattleKeeper {
         this.logger.info("[keeper] return resolved (terminal)", { missionId });
       }
     }
+  }
+
+  /** Reconcile one tracked mission against the authoritative on-chain status. This prunes stale
+   * terminal ids (Resolved/Returned/None), corrects an arrival that already became Returning/Recalled,
+   * and moves a wrongly-tracked return back to arrival if the chain still says Outbound. */
+  reconcileMissionStatus(status: MissionStatusSnapshot): void {
+    const current = this.pending.get(status.missionId);
+    if (!current || this.inFlight.has(status.missionId)) {
+      return;
+    }
+
+    if (status.status === FleetMissionStatus.Outbound) {
+      if (current.leg !== "arrival") {
+        this.pending.set(status.missionId, {
+          missionId: status.missionId,
+          missionType: status.missionType,
+          leg: "arrival",
+          dueAt: status.arrivalAt,
+          returnAt: status.returnAt
+        });
+        this.logger.warn("[keeper] corrected pending mission back to arrival from on-chain status", {
+          missionId: status.missionId,
+          arrivalAt: status.arrivalAt,
+          returnAt: status.returnAt
+        });
+      }
+      return;
+    }
+
+    if (
+      (status.status === FleetMissionStatus.Returning || status.status === FleetMissionStatus.Recalled)
+      && status.returnAt > 0
+    ) {
+      this.knownMissionTypes.set(status.missionId, status.missionType);
+      this.pending.set(status.missionId, {
+        missionId: status.missionId,
+        missionType: status.missionType,
+        leg: "return",
+        dueAt: status.returnAt,
+        returnAt: status.returnAt
+      });
+      return;
+    }
+
+    const wasTracked = this.pending.delete(status.missionId);
+    this.terminal.add(status.missionId);
+    if (wasTracked) {
+      this.logger.warn("[keeper] pruned stale pending mission from on-chain status", {
+        missionId: status.missionId,
+        status: status.status,
+        missionType: missionTypeNames[status.missionType] ?? status.missionType,
+        trackedLeg: current.leg
+      });
+    }
+  }
+
+  pendingMissions(): PendingMission[] {
+    return [...this.pending.values()];
   }
 
   /** Missions whose current leg is due and that are not currently being submitted. */

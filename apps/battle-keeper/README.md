@@ -28,8 +28,12 @@ awaiting-return  --completeFleetMissionReturn(0xc2472852)--> terminal
   - `FleetMissionLaunched` (carries `arrivalAt` **and** `returnAt`) → record **every** outbound
     mission type in the **awaiting-arrival** leg.
   - `FleetMissionResolved` (carries `missionType` + the possibly-updated `returnAt`) → the arrival
-    leg is done. If `returnAt > 0`, transition to **awaiting-return** with that time; otherwise the
-    mission is **terminal** (Deploy/Colonize/…).
+    leg is done. If the mission type can safely infer a return and `returnAt > 0`, transition to
+    **awaiting-return** with that time; otherwise the mission is **terminal**. Deploy and successful
+    Colonize are terminal at arrival even when the event carries a nonzero stored `returnAt`.
+  - `FleetMissionReturnExposed` → authoritative signal that a mission actually entered a return leg;
+    this is what queues blocked Colonize returns and any other return that cannot be inferred from
+    `FleetMissionResolved.returnAt` alone.
   - `FleetMissionReturned` → the return leg is done; the mission is **terminal**.
 - **Resolution loop** (every `RESOLVE_INTERVAL_MS`): for each pending mission whose current leg is due
   (`dueAt <= now`), submit the leg's call — `resolveFleetMission(missionId)` for arrival,
@@ -40,8 +44,11 @@ awaiting-return  --completeFleetMissionReturn(0xc2472852)--> terminal
   simulation and is **retried on the next tick** without burning a nonce or crashing.
 - **Safety sweep** (every `SWEEP_INTERVAL_MS`): backfills recent fleet-mission logs over `eth_getLogs`
   to recover **both legs** — a missed launch re-queues the arrival, a missed `FleetMissionResolved`
-  transitions to the return leg (or drops a terminal one), and a missed `FleetMissionReturned` drops
-  it — then re-attempts due legs.
+  drops terminal arrivals, a missed `FleetMissionReturnExposed` transitions to the return leg, and a
+  missed `FleetMissionReturned` drops it. After replaying logs, the sweep reads current
+  `fleetMission()` status for pending ids and prunes stale terminal entries
+  (`None`/`Resolved`/`Returned`) or corrects legs that no longer match on-chain state, then
+  re-attempts due legs.
 - **Idempotent**: a mission with an in-flight submission is never submitted again for that leg; a
   terminal mission is never re-queued. When we resolve a leg ourselves we advance the state machine
   immediately (the matching event is a backstop that refines the authoritative `returnAt`).
