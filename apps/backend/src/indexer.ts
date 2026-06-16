@@ -1829,6 +1829,8 @@ export class SettlementIndexer {
         ON indexed_event_logs (block_number);
       CREATE INDEX IF NOT EXISTS indexed_event_logs_transaction_idx
         ON indexed_event_logs (transaction_hash);
+      CREATE INDEX IF NOT EXISTS indexed_event_logs_transaction_lower_idx
+        ON indexed_event_logs (lower(transaction_hash));
       CREATE TABLE IF NOT EXISTS indexed_planet_queues (
         queue_key TEXT PRIMARY KEY,
         kind TEXT NOT NULL,
@@ -2233,12 +2235,6 @@ export class SettlementIndexer {
         this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
       } else if (isDefenseCountChangedLog(log)) {
         this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
-      } else if (isInterplanetaryMissileAttackLog(log)) {
-        this.applyInterplanetaryMissileAttackCompatibilityEvent(decodeInterplanetaryMissileAttackLog(log));
-      } else if (isFleetMissionLog(log)) {
-        this.applyFleetMissionCompatibilityEvent(log);
-      } else if (isBattleReportLog(log)) {
-        this.applyBattleCompatibilityEvent(log);
       } else if (isAllianceLog(log)) {
         this.applyAllianceEvent(decodeAllianceLog(log));
       }
@@ -2251,7 +2247,7 @@ export class SettlementIndexer {
         SELECT event_json
         FROM indexed_event_logs
         WHERE removed = 0
-        ORDER BY CAST(block_number AS INTEGER) ASC
+        ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
       `).all() as EventRow[];
       if (rows.length === 0) return;
 
