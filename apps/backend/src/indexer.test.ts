@@ -676,11 +676,11 @@ describe("SettlementIndexer", () => {
     }
   });
 
-  test("does not optimistically raise the storage cap above the contract until the upgrade finishes on-chain (VEY-KANEO-483)", () => {
-    // A crystal-storage upgrade whose build timer has elapsed by wall-clock must NOT raise the
-    // backend storage cap. The contract only bumps storageCaps(planetId) when finishBuildingUpgrade
-    // lands on-chain, so optimistically completing the storage building reported crystal cap 40,000
-    // vs the contract's 20,000 and let resourcesAsOfNow accrue past what the contract enforces.
+  test("projects elapsed building queues into as-of-now infrastructure rows before completion logs", () => {
+    // A crystal-storage upgrade whose build timer has elapsed by wall-clock raises the backend
+    // storage cap as-of-now. Current contract lazy settlement completes due construction inside
+    // _settleResources, so read models must match the same as-of-now state even before a
+    // BuildingCompleted log is indexed.
     // Both timestamps sit before the suite's mocked clock (2026-01-01), so the queued upgrade's
     // build timer has already elapsed by wall-clock and would be optimistically completed.
     const startTs = 1_767_000_000;
@@ -703,7 +703,7 @@ describe("SettlementIndexer", () => {
     });
 
     // Queue a crystal-storage upgrade to level 2 with a readyAt already in the past, but never emit
-    // its BuildingCompleted (no on-chain finishBuildingUpgrade yet).
+    // its BuildingCompleted.
     indexer.applyLog({
       blockNumber: "0x81",
       blockTimestamp: `0x${startTs.toString(16)}`,
@@ -714,21 +714,19 @@ describe("SettlementIndexer", () => {
     });
 
     const rows = indexer.infrastructureRows(planet.planetId);
-    // Storage level stays pinned to the contract level...
-    expect(rows.find((building) => building.id === 8)?.level).toBe(1);
-    // ...so the derived storage cap matches storageCaps(planetId) = 20,000, not the level-2 40,000.
+    // Storage level is projected from the elapsed queue...
+    expect(rows.find((building) => building.id === 8)?.level).toBe(2);
+    // ...so the derived storage cap matches the as-of-now level-2 40,000.
     const caps = deriveInfrastructureFields(
       { ...planet, lastSettledAt: startTs.toString() },
       rows,
       deriveShipRows(() => 0),
       {}
     ).storageCaps;
-    expect(caps?.crystal).toBe("20000");
+    expect(caps?.crystal).toBe("40000");
 
-    // A non-storage building (metal mine, id 0) under the identical elapsed-queue setup now stays
-    // pinned to the contract level too: the served level must equal the on-chain buildingLevel,
-    // which only advances on the BuildingCompleted finish event — never from an elapsed-but-
-    // unfinished queue entry's targetLevel (VEY-486: a +1 over-count across all building types).
+    // A non-storage building (metal mine, id 0) under the identical elapsed-queue setup is also
+    // projected from the elapsed targetLevel.
     const mineIndexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -750,9 +748,9 @@ describe("SettlementIndexer", () => {
       topics: [buildingStartedTopic, topic(7n), topic(0n)],
       data: abiWords(8n, BigInt(elapsedReadyAt), 0n, 0n, 0n)
     });
-    // Served level stays at the contract-authoritative 4 (NOT the optimistic queued target 8).
-    expect(mineIndexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(4);
-    // Only once the on-chain finish (BuildingCompleted) is indexed does the served level advance to 8.
+    // Served level advances as-of-now before a BuildingCompleted log arrives.
+    expect(mineIndexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(8);
+    // The later completion log is monotonic and does not double-advance the level.
     mineIndexer.applyLog({
       blockNumber: "0x82",
       transactionHash: "0xminedone",
@@ -1747,6 +1745,45 @@ describe("SettlementIndexer", () => {
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(4);
   });
 
+  test("projects elapsed returning missions as returned while future returns stay active", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    const pastReturnAt = 1767225500n;
+    const futureReturnAt = 1767225900n;
+    for (const [missionId, returnAt] of [[82n, pastReturnAt], [83n, futureReturnAt]] as const) {
+      const transactionHash = `0x${missionId.toString(16).padStart(64, "0")}`;
+      indexer.applyLog({
+        blockNumber: "0x90",
+        transactionHash,
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(player), topic(0n)],
+        data: abiWords(7n, 99n, 1767225000n, 1767225200n, 0n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x91",
+        transactionHash,
+        logIndex: "0x1",
+        topics: [fleetMissionReturnExposedTopic, topic(missionId), addressTopic(player), topic(2n)],
+        data: abiWords(7n, 99n, returnAt, 0n, 0n, 0n)
+      });
+    }
+
+    expect(indexer.allActiveFleetMissions().map((mission) => mission.missionId)).toEqual(["83"]);
+    expect(indexer.allCompletedFleetMissions().find((mission) => mission.missionId === "82")).toMatchObject({
+      status: "Returned",
+      asOfNow: expect.objectContaining({ returned: true })
+    });
+    expect(indexer.fleetMissionVisibility(player).returning.map((mission) => mission.missionId)).toEqual(["83"]);
+    expect(indexer.fleetMissionVisibility(player).completedMissions.find((mission) => mission.missionId === "82")).toMatchObject({
+      status: "Returned"
+    });
+  });
+
   // Canonical-mirror rework: the combat-triggered bounded per-planet reconcile was removed; combat
   // survivor/loss credits now come purely from PlanetShipCountChanged events. This test asserts that
   // event-only correctness (the bounded-reconcile confirmation step is gone) (VEY-KANEO-461).
@@ -2587,7 +2624,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.fleetSlots(player)).toEqual({ active: 5, limit: 5 });
   });
 
-  test("elapsed production queues do not inflate contract-mirror unit counts before completion events", () => {
+  test("projects elapsed production queues into served rows before completion events", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -2623,17 +2660,17 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 3)).toMatchObject({
       id: 3,
-      count: 0
+      count: 2
     });
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 3)).toMatchObject({
       id: 3,
-      count: 0
+      count: 2
     });
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)).toMatchObject({
       id: 1,
-      count: 0
+      count: 5
     });
-    expect(indexer.technologyLevels(player)).not.toHaveProperty("4");
+    expect(indexer.technologyLevels(player)).toMatchObject({ "4": 2 });
   });
 
   test("indexes moon creation and moon building queues", () => {

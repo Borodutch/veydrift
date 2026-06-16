@@ -925,25 +925,29 @@ export class SettlementIndexer {
   }
 
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
-    // Every building level is served strictly from the contract-authoritative mirror
-    // (contract_building_levels), which is raised ONLY by the on-chain completion event
-    // (BuildingCompleted -> applyQueueCompletionEffects). We must not optimistically fold an
-    // elapsed-but-unfinished build queue entry's targetLevel into the served level: a building
-    // upgrade only becomes live on chain once a settling tx (finishBuildingUpgrade / any
-    // _settleResources) actually runs, and `buildingLevel(planetId, building)` is a pure view of
-    // the stored level — a queue whose off-chain readyAt has merely elapsed does NOT change chain
-    // state. Folding targetLevel in here served level N+1 while chain was still at N, a systematic
-    // +1 over-count that also poisoned cost/affordability/ETA (VEY-486). Storage buildings were
-    // already pinned to the contract level for the same reason (VEY-KANEO-483); this generalizes
-    // that to every building type. While the build timer is still running it is surfaced as an
-    // active construction (planetQueue); the level itself advances only once the on-chain
-    // completion event is indexed.
-    return deriveBuildingRows((id) => this.indexedLevel("contract_building_levels", "building_id", planetId, id));
+    const completedBuildingLevels = new Map<number, number>();
+    for (const completed of this.queueSettlement(`building:${planetId}`).completed) {
+      if (typeof completed.itemId !== "number" || typeof completed.targetLevel !== "number") continue;
+      completedBuildingLevels.set(
+        completed.itemId,
+        Math.max(completedBuildingLevels.get(completed.itemId) ?? 0, completed.targetLevel)
+      );
+    }
+
+    // Lazy on-chain reconciliation: the active building queue already disappears as-of-now once
+    // readyAt has elapsed, so served building rows must apply the same elapsed entries. Otherwise
+    // derived energy, production, storage, tactical summaries, and build requirements are computed
+    // from a half-settled state: queue null, but level still pinned to the last indexed completion.
+    return deriveBuildingRows((id) => Math.max(
+      this.indexedLevel("contract_building_levels", "building_id", planetId, id),
+      completedBuildingLevels.get(id) ?? 0
+    ));
   }
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
+    const completedShipCounts = this.completedQueueQuantities(`ship:${planetId}`);
     return deriveShipRows(
-      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
+      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id) + (completedShipCounts.get(id) ?? 0),
       this.planet(planetId)?.temperature,
       durationLevels
     );
@@ -959,8 +963,9 @@ export class SettlementIndexer {
   // returned (minus combat losses) is already credited, with no departed-ships projection or reconcile
   // needed. Builds emit ShipCompleted, also applied. (VEY-KANEO-461)
   availableShipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
+    const completedShipCounts = this.completedQueueQuantities(`ship:${planetId}`);
     return deriveShipRows(
-      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
+      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id) + (completedShipCounts.get(id) ?? 0),
       this.planet(planetId)?.temperature,
       durationLevels
     );
@@ -976,7 +981,11 @@ export class SettlementIndexer {
   // already integrate authoritatively from the event stream.
 
   defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
-    return deriveDefenseRows((id) => this.indexedLevel("contract_defense_counts", "defense_id", planetId, id), durationLevels);
+    const completedDefenseCounts = this.completedQueueQuantities(`defense:${planetId}`);
+    return deriveDefenseRows(
+      (id) => this.indexedLevel("contract_defense_counts", "defense_id", planetId, id) + (completedDefenseCounts.get(id) ?? 0),
+      durationLevels
+    );
   }
 
   technologyLevels(wallet: `0x${string}`): Record<string, number> {
@@ -988,6 +997,11 @@ export class SettlementIndexer {
     `).all(wallet) as LevelRow[];
 
     const levels = Object.fromEntries(rows.map((row) => [String(row.id), row.value]));
+    for (const completed of this.queueSettlement(`research:${wallet.toLowerCase()}`).completed) {
+      if (typeof completed.itemId !== "number" || typeof completed.targetLevel !== "number") continue;
+      const key = String(completed.itemId);
+      levels[key] = Math.max(levels[key] ?? 0, completed.targetLevel);
+    }
     return levels;
   }
 
@@ -1013,12 +1027,18 @@ export class SettlementIndexer {
     return settleQueueAsOfNow(this.queueState(queueKeyValue), nowSeconds());
   }
 
+  private completedQueueQuantities(queueKeyValue: string): Map<number, number> {
+    const quantities = new Map<number, number>();
+    for (const completed of this.queueSettlement(queueKeyValue).completed) {
+      if (typeof completed.itemId !== "number" || typeof completed.quantity !== "number") continue;
+      quantities.set(completed.itemId, (quantities.get(completed.itemId) ?? 0) + completed.quantity);
+    }
+    return quantities;
+  }
+
   private moonBuildingLevelAsOfNow(planetId: string, buildingId: number): number {
-    // Mirror infrastructureRows (canonical-mirror + VEY-486): serve the moon-building level strictly
-    // from the contract-authoritative table (contract_moon_building_levels, seeded at startup from
-    // contract reads + raised only by the on-chain completion event), and never fold an
-    // elapsed-but-unfinished queue entry's targetLevel — that over-reported the level by +1 before the
-    // upgrade was live on chain.
+    // Moon buildings still serve the contract-authoritative table directly; the lazy infrastructure
+    // projection above only applies to planet building queues covered by the current contract path.
     return this.indexedLevel("contract_moon_building_levels", "moon_building_id", planetId, buildingId);
   }
 
@@ -4561,10 +4581,19 @@ export class SettlementIndexer {
         && Number(mission.arrivalAt) <= nowSeconds
     );
     const fulfilledRandomnessRequestIds = needsGate ? this.fulfilledRandomnessRequestIds() : null;
-    return missions.map((mission) => ({
-      ...mission,
-      needsResolution: fleetMissionNeedsResolution(mission, nowSeconds, fulfilledRandomnessRequestIds)
-    }));
+    return missions.map((mission) => {
+      const status = (
+        (mission.status === "Returning" || mission.status === "Recalled")
+        && Number(mission.returnAt) <= nowSeconds
+      )
+        ? "Returned"
+        : mission.status;
+      return {
+        ...mission,
+        status,
+        needsResolution: fleetMissionNeedsResolution({ ...mission, status }, nowSeconds, fulfilledRandomnessRequestIds)
+      };
+    });
   }
 
   private mergeCanonicalFleetMissions(eventMissions: FleetMissionSummary[]): FleetMissionSummary[] {

@@ -3091,22 +3091,20 @@ describe("Veydrift backend", () => {
         deuterium: "4800"
       },
       // readyAt is in the past, so the elapsed entry is no longer an active construction on public
-      // all-players state either (no active queue). But the served level stays pinned to the
-      // contract-authoritative level — it is NOT optimistically projected up. The on-chain level
-      // only advances on the BuildingCompleted finish event (VEY-486: building id 0 stays level 1).
+      // all-players state either, and the served building rows project the same as-of-now completion.
       queues: {
         building: null
       }
     });
     expect(occupiedPlanet.publicState.buildings).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, level: 1 })
+      expect.objectContaining({ id: 0, level: 2 })
     ]));
     expect(occupiedPlanet.publicState.fleet).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, count: 2 }),
+      expect.objectContaining({ id: 0, count: 3 }),
       expect.objectContaining({ id: 9, count: 5 })
     ]));
     expect(occupiedPlanet.publicState.defenses).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, count: 3 })
+      expect.objectContaining({ id: 0, count: 5 })
     ]));
     expect(occupiedPlanet.publicState.stationedDefenders).toEqual([
       expect.objectContaining({
@@ -3117,7 +3115,7 @@ describe("Veydrift backend", () => {
       })
     ]);
     expect(occupiedPlanet.publicState.research).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, level: 1 })
+      expect.objectContaining({ id: 0, level: 2 })
     ]));
     expect(system.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
     expect(chainReader.rebuildCalls).toBe(1);
@@ -4321,14 +4319,14 @@ describe("Veydrift backend", () => {
         expect.objectContaining({ id: 9, energyPerUnit: "22" })
       ])
     });
-    // Contract-mirror rows stay on indexed event state: the elapsed research queue no longer
-    // occupies the active slot, but the level does not advance before ResearchCompleted.
+    // The elapsed research queue no longer occupies the active slot, and served technology rows
+    // project the as-of-now completed target before ResearchCompleted.
     expect(research).toMatchObject({
       source: "contract-state-indexer",
       queue: null
     });
     expect(research.technologies).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: 4, level: 0 })])
+      expect.arrayContaining([expect.objectContaining({ id: 4, level: 2 })])
     );
     // Personal state endpoints expose accrued resourcesAsOfNow (VEY-KANEO-464). This
     // fixture has no mines (zero production), so the projection equals canonical
@@ -4462,13 +4460,11 @@ describe("Veydrift backend", () => {
       buildings: expect.arrayContaining([
         expect.objectContaining({
           id: 0,
-          level: 1
+          level: 2
         })
       ]),
-      // The served level stays pinned to the contract-authoritative level (building id 0 -> 1).
-      // An elapsed-but-unfinished build queue must NOT optimistically project the level up to 2:
-      // the on-chain buildingLevel only advances on the BuildingCompleted finish event (VEY-486).
-      // The elapsed entry is no longer an active construction either, so the queue is null.
+      // Lazy on-chain reconciliation projects the elapsed build to level 2 and removes it from
+      // the active queue before a BuildingCompleted log is indexed.
       queue: null
     });
   });
@@ -5011,8 +5007,8 @@ describe("Veydrift backend", () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
-    // Same fixture as the accrued-resources fallback test: a metal mine + solar plant whose
-    // production has been accruing for two hours, lifting stored metal from 5000 to 5064.
+    // Same fixture as the accrued-resources fallback test: indexed infrastructure includes an
+    // elapsed building queue, so production accrues from the as-of-now promoted mine level.
     indexer.applyEvent({
       ...planet,
       eventName: "PlanetStarted",
@@ -5046,10 +5042,10 @@ describe("Veydrift backend", () => {
     expect(highscoreResponse.status).toBe(200);
 
     const tacticalPlanet = highscoreBody.rankings.total[0].planets[0];
-    // The finder's raidable loot now reflects the accrued 5064 metal (~50% plunder => 2532),
+    // The finder's raidable loot now reflects the accrued 5128 metal (~50% plunder => 2564),
     // matching the accrued resources the public planet read exposes. Before the fix this used
     // the stale stored 5000 and under-reported LOOT at 2500.
-    expect(tacticalPlanet.tactical.raidableResources.metal).toBe("2532");
+    expect(tacticalPlanet.tactical.raidableResources.metal).toBe("2564");
     expect(Number(tacticalPlanet.tactical.raidableResources.metal)).toBeGreaterThan(2500);
   });
 
@@ -5062,7 +5058,8 @@ describe("Veydrift backend", () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
-    // Metal mine + solar plant settled two hours ago: stored metal 5000 accrues to 5064.
+    // Metal mine + solar plant settled two hours ago, with the indexed elapsed building queue
+    // projected into production for as-of-now public state.
     indexer.applyEvent({
       ...planet,
       eventName: "PlanetStarted",
@@ -5094,8 +5091,8 @@ describe("Veydrift backend", () => {
     const universeBody = await universeResponse.json();
     const publicPlanet = universeBody.planets.find((item: { position: number }) => item.position === 9);
     const publicResources = publicPlanet.publicState.resources;
-    // The public universe surface accrues production: stored 5000 -> accrued 5064.
-    expect(publicResources.metal).toBe("5064");
+    // The public universe surface accrues production from the promoted building rows.
+    expect(publicResources.metal).toBe("5128");
 
     const highscoreResponse = await handler(new Request("http://localhost/highscores?limit=10"));
     const highscoreBody = await highscoreResponse.json();
@@ -5103,7 +5100,7 @@ describe("Veydrift backend", () => {
 
     // Raidable loot derived from the public (accrued) resources, using the same shared derivation
     // the backend applies. The Finder must match this exactly — proving it reads the accrued base,
-    // not the stale stored snapshot (which would yield raidable metal 2500 instead of 2532).
+    // not the stale stored snapshot (which would yield raidable metal 2500 instead of 2564).
     const expectedRaidable = deriveInfrastructureFields(
       { ...planet, resources: publicResources },
       indexer.infrastructureRows("7"),
