@@ -980,6 +980,19 @@ export class SettlementIndexer {
     return levels;
   }
 
+  fleetSlots(wallet: `0x${string}`): ShipyardState["fleetSlots"] {
+    const walletLower = wallet.toLowerCase();
+    const active = this.indexedFleetMissionSummaries()
+      .filter((mission) => mission.owner.toLowerCase() === walletLower && isActiveFleetMissionStatus(mission.status))
+      .length;
+    const technologyLevels = this.technologyLevels(wallet);
+
+    return {
+      active,
+      limit: 1 + (technologyLevels["4"] ?? 0)
+    };
+  }
+
   technologyRows(wallet: `0x${string}`, labLevel?: number): ResearchState["technologies"] {
     const levels = this.technologyLevels(wallet);
     return deriveTechnologyRows((id) => levels[String(id)] ?? 0, labLevel);
