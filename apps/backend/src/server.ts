@@ -1206,17 +1206,17 @@ function indexedWalletSettlement(
 ): { settlement: ReturnType<SettlementIndexer["walletSettlement"]>; planet: SettledPlanetEvent | null } | null {
   const settlement = indexer.walletSettlement(wallet);
   if (!selectedPlanetId) {
-    const planet = accruedPlanetState(indexer, settlement.planet);
+    const planet = settlement.planet;
     return {
       settlement: {
         ...settlement,
-        planet
+        planet: indexedWalletSettlementPlanetState(indexer, planet)
       },
       planet
     };
   }
 
-  const planet = accruedPlanetState(indexer, indexer.planet(selectedPlanetId.toString()));
+  const planet = indexer.planet(selectedPlanetId.toString());
   if (!planet || planet.owner.toLowerCase() !== wallet.toLowerCase()) {
     return null;
   }
@@ -1225,9 +1225,20 @@ function indexedWalletSettlement(
     settlement: {
       ...settlement,
       homePlanetId: planet.planetId,
-      planet
+      planet: indexedWalletSettlementPlanetState(indexer, planet)
     },
     planet
+  };
+}
+
+function indexedWalletSettlementPlanetState(
+  indexer: SettlementIndexer,
+  planet: SettledPlanetEvent | null
+): SettledPlanetEvent | null {
+  if (!planet) return null;
+  return {
+    ...planet,
+    resourcesAsOfNow: indexedCurrentResourcesForPlanet(indexer, planet, { allowPendingResources: true }) ?? planet.resources
   };
 }
 
@@ -1247,7 +1258,7 @@ function indexedWalletPlanetState(indexer: SettlementIndexer, planet: ManagedPla
   const ships = indexer.shipRows(planet.planetId);
   const defenses = indexer.defenseRows(planet.planetId);
   const technologyLevels = indexer.technologyLevels(planet.owner);
-  const accrued = accruedPlanetState(indexer, planet);
+  const currentPlanet = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
 
   // The planet roster is a settled-snapshot surface: the external contract<->DB watchdog
   // (and any consumer keyed on lastSettledAt) treats `resources` as the value settled at
@@ -1258,8 +1269,8 @@ function indexedWalletPlanetState(indexer: SettlementIndexer, planet: ManagedPla
   // the accrued state because plunderable loot reflects the live balance, not the snapshot.
   return {
     ...planet,
-    resourcesAsOfNow: accrued.resources,
-    tactical: indexedPlanetTacticalSummary(accrued, buildings, ships, defenses, technologyLevels)
+    resourcesAsOfNow: currentPlanet.resources,
+    tactical: indexedPlanetTacticalSummary(currentPlanet, buildings, ships, defenses, technologyLevels)
   };
 }
 
@@ -1279,20 +1290,27 @@ function accruedPlanetState<T extends PlanetState | null>(
   };
 }
 
-// As-of-now accrued resources for a planet (VEY-KANEO-464): the canonical settled
-// `resources` projected forward to now at the planet's production rate, capped at
-// storage. Returns null when the planet (or its derivation) is unavailable. Mirrors
-// the accrual the public planet reads (`GET /planets/{id}`) already apply, so the
-// personal state endpoints expose the same live value alongside canonical resources.
-// Returns null while the planet's indexed resources are still warming, matching the
-// infrastructure endpoint — projecting forward off a zero placeholder baseline would
-// invent resources that were never produced.
-function accruedResourcesFor(
+// Single current-resource source of truth for personal wallet surfaces (VEY-KANEO-517):
+// canonical settled `resources` projected forward to now at the planet's production rate,
+// capped at storage. Every `/wallet/:wallet/...` resource surface should call this helper
+// instead of re-running `resourcesWithClaimableAccrual` locally, so endpoint values cannot
+// diverge or accidentally project an already-current balance a second time.
+function indexedCurrentResourcesForPlanet(
   indexer: SettlementIndexer,
-  planet: SettledPlanetEvent | null
+  planet: SettledPlanetEvent | null,
+  options: { allowPendingResources?: boolean } = {}
 ): Resources | null {
-  if (!planet || indexer.hasPendingPlanetResources(planet.planetId)) return null;
-  return accruedPlanetState(indexer, planet)?.resources ?? null;
+  return indexedCurrentPlanetState(indexer, planet, options)?.resources ?? null;
+}
+
+function indexedCurrentPlanetState<T extends PlanetState>(
+  indexer: SettlementIndexer,
+  planet: T | null,
+  options: { allowPendingResources?: boolean } = {}
+): T | null {
+  if (!planet) return null;
+  if (!options.allowPendingResources && indexer.hasPendingPlanetResources(planet.planetId)) return null;
+  return accruedPlanetState(indexer, planet);
 }
 
 function indexedPlayerQueues(
@@ -1415,8 +1433,9 @@ function indexedInfrastructureState(
   const ships = planet ? indexer.shipRows(planet.planetId) : [];
   const queue = planet ? indexer.planetQueue(planet.planetId, "building") : null;
   const technologyLevels = indexer.technologyLevels(wallet);
-  const derived = planet && !planetResourcesPending
-    ? deriveInfrastructureFields(planet, buildings, ships, technologyLevels)
+  const currentPlanet = indexedCurrentPlanetState(indexer, planet);
+  const derived = currentPlanet
+    ? deriveInfrastructureFields(currentPlanet, buildings, ships, technologyLevels)
     : {
       productionPerHour: null,
       energyBalance: null,
@@ -1435,9 +1454,7 @@ function indexedInfrastructureState(
       ? "Infrastructure indexed resources for this planet are still warming. Refresh shortly."
       : unavailableReason,
     resources: planet && !planetResourcesPending ? planet.resources : null,
-    resourcesAsOfNow: planet && !planetResourcesPending
-      ? resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt)
-      : null,
+    resourcesAsOfNow: currentPlanet?.resources ?? null,
     ...derived,
     technologyLevels,
     buildings,
@@ -1472,7 +1489,7 @@ function indexedShipyardState(
     productionAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,
-    resourcesAsOfNow: accruedResourcesFor(indexer, planet),
+    resourcesAsOfNow: indexedCurrentResourcesForPlanet(indexer, planet),
     fleetSlots: { active: 0, limit: 1 },
     shipyardLevel,
     naniteLevel,
@@ -1499,7 +1516,7 @@ function indexedDefenseState(
     productionAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,
-    resourcesAsOfNow: accruedResourcesFor(indexer, planet),
+    resourcesAsOfNow: indexedCurrentResourcesForPlanet(indexer, planet),
     shipyardLevel: buildings.find((building) => building.id === 5)?.level ?? 0,
     naniteLevel: buildings.find((building) => building.id === 11)?.level ?? 0,
     missileSiloLevel: buildings.find((building) => building.id === 14)?.level ?? 0,
@@ -1529,7 +1546,7 @@ function indexedResearchState(
     researchAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,
-    resourcesAsOfNow: accruedResourcesFor(indexer, planet),
+    resourcesAsOfNow: indexedCurrentResourcesForPlanet(indexer, planet),
     researchLabLevel: buildings.find((building) => building.id === 6)?.level ?? 0,
     researchNetworkLabLevels: [],
     technologyLevels: indexer.technologyLevels(wallet),

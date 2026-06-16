@@ -137,6 +137,7 @@ export type WalletSettlementResponse = {
     deuteriumMultiplierBps: number;
     lastSettledAt: string;
     resources: OnChainResources;
+    resourcesAsOfNow?: OnChainResources | null;
   } | null;
   source?: "contract-state-indexer" | string;
   stale?: boolean;
