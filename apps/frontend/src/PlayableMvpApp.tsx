@@ -2243,9 +2243,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const onChainResources = useMemo(() => {
     if (!onChainSettlement?.planet) return undefined;
-    const metal = safeResourceNumber(onChainSettlement.planet.resources.metal);
-    const crystal = safeResourceNumber(onChainSettlement.planet.resources.crystal);
-    const deuterium = safeResourceNumber(onChainSettlement.planet.resources.deuterium);
+    const settlementResources = onChainSettlement.planet.resourcesAsOfNow ?? onChainSettlement.planet.resources;
+    const metal = safeResourceNumber(settlementResources.metal);
+    const crystal = safeResourceNumber(settlementResources.crystal);
+    const deuterium = safeResourceNumber(settlementResources.deuterium);
     if (metal === undefined || crystal === undefined || deuterium === undefined) return undefined;
 
     return {

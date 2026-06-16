@@ -3369,7 +3369,7 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
   });
 
-  test("falls back to accrued indexed wallet resources for settlement, planets, and infrastructure when chain reader is unavailable", async () => {
+  test("falls back to indexed wallet resources without double-accruing when chain reader is unavailable", async () => {
     const chainReader = new MockChainReader();
     chainReader.getWalletSettlement = async () => {
       throw new Error("RPC HTTP 503");
@@ -3432,7 +3432,8 @@ describe("Veydrift backend", () => {
     expect(settlementResponse.status).toBe(200);
     expect(planetsResponse.status).toBe(200);
     expect(infrastructureResponse.status).toBe(200);
-    expect(settlementBody.planet.resources.metal).toBe("5064");
+    expect(settlementBody.planet.resources.metal).toBe("5000");
+    expect(settlementBody.planet.resourcesAsOfNow.metal).toBe("5064");
     // The planet roster is a settled-snapshot surface (VEY-KANEO-488): `resources` is the
     // canonical value at `lastSettledAt` (5000 stored, matching the chain at a matched settle
     // time so the contract<->DB watchdog reports no db>chain divergence), while the live
@@ -3441,8 +3442,84 @@ describe("Veydrift backend", () => {
     expect(planetsBody.planets[0].resourcesAsOfNow.metal).toBe("5064");
     expect(infrastructureBody.planetId).toBe("7");
     expect(infrastructureBody.planetLastSettledAt).toBe(settlementBody.planet.lastSettledAt);
-    expect(infrastructureBody.resources.metal).toBe("5064");
+    expect(infrastructureBody.resources.metal).toBe("5000");
+    expect(infrastructureBody.resourcesAsOfNow.metal).toBe("5064");
     // Raidable loot reflects ~50% of resources (RAID_PLUNDER_BPS), not the full 5064 (VEY-451).
+    expect(infrastructureBody.raidableResources.metal).toBe("2532");
+  });
+
+  test("personal indexed resource endpoints derive resourcesAsOfNow exactly once (VEY-KANEO-517)", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("personal resource endpoints must not read live infrastructure state");
+    };
+    chainReader.getShipyardState = async () => {
+      throw new Error("personal resource endpoints must not read live shipyard state");
+    };
+    chainReader.getDefenseState = async () => {
+      throw new Error("personal resource endpoints must not read live defense state");
+    };
+    chainReader.getResearchState = async () => {
+      throw new Error("personal resource endpoints must not read live research state");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm personal resource endpoints should not rebuild from chain");
+    };
+    // Fixed-clock previewResources-style fixture: the canonical settled metal snapshot is 5000,
+    // one current-resource projection is 5064, and re-projecting that value would produce 5128.
+    const canonicalMetal = "5000";
+    const previewResourcesMetal = "5064";
+    const doubleAccruedMetal = "5128";
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      lastSettledAt: (Math.floor(Date.now() / 1_000) - 7_200).toString()
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xmine",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xsolar",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(3n)],
+      data: abiWords(1n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const settlementBody = await (await handler(new Request(`http://localhost/wallet/${player}/settlement`))).json();
+    const planetsBody = await (await handler(new Request(`http://localhost/wallet/${player}/planets`))).json();
+    const infrastructureBody = await (await handler(new Request(`http://localhost/wallet/${player}/infrastructure`))).json();
+    const shipyardBody = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard`))).json();
+    const defensesBody = await (await handler(new Request(`http://localhost/wallet/${player}/defenses`))).json();
+    const researchBody = await (await handler(new Request(`http://localhost/wallet/${player}/research`))).json();
+    const overviewBody = await (await handler(new Request(`http://localhost/wallet/${player}/overview`))).json();
+
+    for (const body of [infrastructureBody, shipyardBody, defensesBody, researchBody]) {
+      expect(body.resources.metal).toBe(canonicalMetal);
+      expect(body.resourcesAsOfNow.metal).toBe(previewResourcesMetal);
+      expect(body.resourcesAsOfNow.metal).not.toBe(doubleAccruedMetal);
+    }
+
+    expect(settlementBody.planet.resources.metal).toBe(canonicalMetal);
+    expect(settlementBody.planet.resourcesAsOfNow.metal).toBe(previewResourcesMetal);
+    expect(planetsBody.planets[0].resources.metal).toBe(canonicalMetal);
+    expect(planetsBody.planets[0].resourcesAsOfNow.metal).toBe(previewResourcesMetal);
+    expect(overviewBody.settlement.planet.resources.metal).toBe(canonicalMetal);
+    expect(overviewBody.settlement.planet.resourcesAsOfNow.metal).toBe(previewResourcesMetal);
+    expect(overviewBody.planetsResponse.planets[0].resources.metal).toBe(canonicalMetal);
+    expect(overviewBody.planetsResponse.planets[0].resourcesAsOfNow.metal).toBe(previewResourcesMetal);
     expect(infrastructureBody.raidableResources.metal).toBe("2532");
   });
 
