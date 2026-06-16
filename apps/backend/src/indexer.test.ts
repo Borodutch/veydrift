@@ -5437,6 +5437,92 @@ describe("SettlementIndexer", () => {
     expect(third.entries).toEqual(indexer.highscoreEntriesForOwners(indexer.settledPlanetsByOwner()));
   });
 
+  test("projects elapsed queues into bulk highscore leaderboard scores", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    const elapsedReadyAt = 1_767_000_100n;
+
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xqueued-building",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n, elapsedReadyAt, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xqueued-ship",
+      logIndex: "0x0",
+      topics: [shipQueuedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n, elapsedReadyAt, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xqueued-defense",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(3n, elapsedReadyAt, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xqueued-research",
+      logIndex: "0x0",
+      topics: [researchQueuedTopic, addressTopic(player), topic(4n)],
+      data: abiWords(1n, elapsedReadyAt, 0n, 0n, 0n)
+    });
+
+    const leaderboardEntry = indexer.highscoreLeaderboard().entries[0]!;
+    const directWalletEntry = indexer.highscoreForWallet(player);
+
+    expect(indexer.playerQueues(player, planet.planetId)).toMatchObject({
+      building: null,
+      defense: null,
+      ship: null,
+      research: null
+    });
+    expect(leaderboardEntry.score).toEqual(directWalletEntry.score);
+    expect(leaderboardEntry.totalUserScore).toBe(directWalletEntry.totalUserScore);
+    expect(BigInt(leaderboardEntry.score.total) > 0n).toBe(true);
+  });
+
+  test("expires cached highscore leaderboard when a queue becomes due as of now", () => {
+    const originalNow = new Date("2026-01-01T00:00:00Z");
+    setSystemTime(originalNow);
+    try {
+      const indexer = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      }, 100n);
+      indexer.applyEvent(planet);
+      const readyAt = BigInt(Math.floor(originalNow.getTime() / 1_000) + 10);
+      indexer.applyLog({
+        blockNumber: "0x81",
+        transactionHash: "0xqueued-building",
+        logIndex: "0x0",
+        topics: [buildingStartedTopic, topic(7n), topic(11n)],
+        data: abiWords(1n, readyAt, 0n, 0n, 0n)
+      });
+
+      const before = indexer.highscoreLeaderboard();
+      expect(indexer.highscoreLeaderboard()).toBe(before);
+      expect(before.entries[0]?.score.economy).toBe("0");
+
+      setSystemTime(new Date(Number(readyAt + 1n) * 1_000));
+
+      const after = indexer.highscoreLeaderboard();
+      expect(after).not.toBe(before);
+      expect(after.entries[0]?.score).toEqual(indexer.highscoreForWallet(player).score);
+      expect(BigInt(after.entries[0]?.score.economy ?? "0") > 0n).toBe(true);
+    } finally {
+      setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    }
+  });
+
   test("memoizes attack launch timestamps for highscore protection scans until indexed state changes", () => {
     const attacker = "0x9999999999999999999999999999999999999999" as Address;
     const indexer = new SettlementIndexer({
