@@ -8,6 +8,7 @@ type ReplayArgs = {
   currentStateSeed: boolean;
   currentStateConcurrency?: number;
   fromBlock?: bigint;
+  legacyUnitMutationsOnly: boolean;
   toBlock?: bigint | "latest";
 };
 
@@ -29,7 +30,9 @@ async function main(): Promise<void> {
   const before = indexer.snapshot();
   const fromBlock = args.fromBlock ?? replayFromBlock(before.latestIndexedBlock, loaded.config.indexFromBlock);
   const toBlock = args.toBlock ?? "latest";
-  const result = args.currentStateSeed
+  const result = args.legacyUnitMutationsOnly
+    ? { replay: indexer.applyLegacyUnitMutationsFromEventLogs(), rebuild: null }
+    : args.currentStateSeed
     ? { replay: null, rebuild: await indexer.seedCurrentCanonicalState({ planetConcurrency: args.currentStateConcurrency ?? 25 }) }
     : args.canonicalSync
     ? await indexer.syncCanonicalState(fromBlock, toBlock, {
@@ -45,6 +48,7 @@ async function main(): Promise<void> {
       materializedRebuildFromStoredLogs: !args.currentStateSeed,
       canonicalSync: args.canonicalSync,
       canonicalSyncRebuildDeadlineMs: args.canonicalSync ? args.canonicalSyncRebuildDeadlineMs ?? null : null,
+      legacyUnitMutationsOnly: args.legacyUnitMutationsOnly,
       currentStateSeed: args.currentStateSeed,
       currentStateConcurrency: args.currentStateSeed ? args.currentStateConcurrency ?? 25 : null
     },
@@ -66,12 +70,14 @@ function replayFromBlock(latestIndexedBlock: string | null, configuredFromBlock:
 }
 
 function parseArgs(args: string[]): ReplayArgs {
-  const parsed: ReplayArgs = { canonicalSync: false, currentStateSeed: false };
+  const parsed: ReplayArgs = { canonicalSync: false, currentStateSeed: false, legacyUnitMutationsOnly: false };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     const value = args[index + 1];
     if (arg === "--canonical-sync") {
       parsed.canonicalSync = true;
+    } else if (arg === "--legacy-unit-mutations-only") {
+      parsed.legacyUnitMutationsOnly = true;
     } else if (arg === "--current-state-seed") {
       parsed.currentStateSeed = true;
     } else if (arg === "--from-block") {
@@ -104,6 +110,9 @@ function parseArgs(args: string[]): ReplayArgs {
   }
   if (parsed.currentStateSeed && parsed.canonicalSync) {
     throw new Error("--current-state-seed and --canonical-sync are mutually exclusive");
+  }
+  if (parsed.legacyUnitMutationsOnly && (parsed.currentStateSeed || parsed.canonicalSync)) {
+    throw new Error("--legacy-unit-mutations-only cannot be combined with --current-state-seed or --canonical-sync");
   }
   return parsed;
 }
