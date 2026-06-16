@@ -45,7 +45,7 @@ async function main(): Promise<void> {
     replay: {
       fromBlock: fromBlock.toString(),
       toBlock: typeof toBlock === "bigint" ? toBlock.toString() : toBlock,
-      materializedRebuildFromStoredLogs: !args.currentStateSeed,
+      materializedRebuildFromStoredLogs: !args.currentStateSeed && !args.legacyUnitMutationsOnly,
       canonicalSync: args.canonicalSync,
       canonicalSyncRebuildDeadlineMs: args.canonicalSync ? args.canonicalSyncRebuildDeadlineMs ?? null : null,
       legacyUnitMutationsOnly: args.legacyUnitMutationsOnly,
