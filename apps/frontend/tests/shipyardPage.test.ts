@@ -208,7 +208,6 @@ describe("Shipyard page display helpers", () => {
             {
               label: "At planet",
               value: "4",
-              hint: "Ships stationed at this planet now. Fleets in flight on missions are not counted here.",
             },
             { label: "Price", value: "Metal 6,000, Crystal 6,000", wide: true },
           ],
@@ -220,6 +219,9 @@ describe("Shipyard page display helpers", () => {
       quantity: 3,
       status: "ready",
     });
+    expect(JSON.stringify(items.find((item) => item.key === "smallCargo")?.detailSections)).not.toContain(
+      "Ships stationed at this planet now. Fleets in flight on missions are not counted here.",
+    );
     expect(items.find((item) => item.key === "smallCargo")).not.toHaveProperty("description");
     expect(items.find((item) => item.key === "battleship")).toMatchObject({
       status: "locked",
