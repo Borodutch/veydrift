@@ -3205,6 +3205,65 @@ describe("Veydrift backend", () => {
     expect(handler).toBeDefined();
   });
 
+  test("explicit startup current-state heal runs once inside the writer process", async () => {
+    const chainReader = new MockChainReader();
+    let currentStateSeedCalls = 0;
+    const seedableReader = chainReader as MockChainReader & Pick<ChainReader, "listCurrentPlanets" | "getCanonicalPlanetState">;
+    seedableReader.listCurrentPlanets = async () => [
+      {
+        ...planet,
+        eventName: "PlanetStarted",
+        transactionHash: "0xabc",
+        blockNumber: "123"
+      }
+    ];
+    seedableReader.getCanonicalPlanetState = async (planetId: bigint) => {
+      currentStateSeedCalls += 1;
+      return {
+        planetId: planetId.toString(),
+        resources: planet.resources,
+        buildings: [],
+        defenses: [],
+        ships: [],
+        queues: {
+          building: null,
+          defense: null,
+          ship: null
+        }
+      };
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    const config = {
+      ...configuredTestConfig,
+      currentStateHealRunId: "test-current-heal",
+      currentStateHealConcurrency: 25
+    } satisfies BackendConfig;
+
+    const handler = createRequestHandler({
+      config,
+      chainReader,
+      indexer
+    });
+
+    for (let i = 0; i < 50 && currentStateSeedCalls === 0; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(currentStateSeedCalls).toBe(1);
+    expect(indexer.snapshot()).toMatchObject({
+      lastCurrentStateHealRunId: "test-current-heal",
+      lastReconciliationError: null
+    });
+
+    createRequestHandler({
+      config,
+      chainReader,
+      indexer
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(currentStateSeedCalls).toBe(1);
+    expect(handler).toBeDefined();
+  });
+
   // Canonical-mirror rule 1/3: the request-time RPC routes POST /index/rebuild and
   // POST /index/verify/:planetId?heal=true were REMOVED — no HTTP request may trigger an RPC read or a
   // runtime canonical self-heal. They must now 404 and must NOT issue any chain read.

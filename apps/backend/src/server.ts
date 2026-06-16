@@ -173,6 +173,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       console.error("Veydrift explicit index reconciliation failed", error);
     });
   }
+  if (isWriter && loaded.config.currentStateHealRunId && indexer && loaded.problems.length === 0) {
+    // Explicit operator heal only. This runs inside the single writer process after chain polling starts,
+    // so event ingestion keeps moving while canonical state is healed planet-by-planet/section-by-section.
+    void indexer
+      .startCurrentStateHealOnce(loaded.config.currentStateHealRunId, {
+        planetConcurrency: loaded.config.currentStateHealConcurrency ?? 25
+      })
+      .catch((error) => {
+        console.error("Veydrift current-state heal failed", error);
+      });
+  }
   if (cacheReader) {
     chainSync?.addListener((event) => {
       if (event.kind === "chain-event") {
