@@ -3436,9 +3436,6 @@ export class SettlementIndexer {
   }
 
   private applyBattleCompatibilityEvent(log: IndexedRpcLog): void {
-    if (this.hasTransactionUnitCountChanged(log.transactionHash, "ship") || this.hasTransactionUnitCountChanged(log.transactionHash, "defense")) {
-      return;
-    }
     const missionId = battleLogMissionId(log);
     if (!missionId) return;
     const mutationKey = `legacy:battle:${missionId}`;
@@ -3450,13 +3447,10 @@ export class SettlementIndexer {
 
     const mutations = this.solvePlanetBattleLossMutations(report.targetPlanetId, report.defenderLosses);
     if (!mutations) return;
-    this.applyLegacyUnitMutationsOnce(mutationKey, mutations, log);
+    this.applyLegacyUnitMutationsOnce(mutationKey, this.filterLegacyMutationsWithoutExactCountEvent(mutations, log.transactionHash), log);
   }
 
   private applyGuardedBattleCompatibilityEvent(log: IndexedRpcLog, latestCompletionTotals: Map<string, number>): void {
-    if (this.hasTransactionUnitCountChanged(log.transactionHash, "ship") || this.hasTransactionUnitCountChanged(log.transactionHash, "defense")) {
-      return;
-    }
     const missionId = battleLogMissionId(log);
     if (!missionId) return;
     const mutationKey = `legacy:battle:${missionId}`;
@@ -3470,7 +3464,10 @@ export class SettlementIndexer {
     if (!mutations) return;
     this.applyLegacyUnitMutationsOnce(
       mutationKey,
-      this.filterLegacyMutationsAtCompletionTotal(mutations, latestCompletionTotals),
+      this.filterLegacyMutationsAtCompletionTotal(
+        this.filterLegacyMutationsWithoutExactCountEvent(mutations, log.transactionHash),
+        latestCompletionTotals
+      ),
       log
     );
   }
@@ -3886,6 +3883,15 @@ export class SettlementIndexer {
       if (latestCompletionTotal === undefined) return false;
       return this.currentLegacyUnitCount(mutation) === latestCompletionTotal;
     });
+  }
+
+  private filterLegacyMutationsWithoutExactCountEvent(
+    mutations: LegacyUnitMutation[],
+    transactionHash: string
+  ): LegacyUnitMutation[] {
+    return mutations.filter((mutation) =>
+      !this.hasTransactionUnitCountChanged(transactionHash, mutation.kind, mutation.planetId, mutation.itemId)
+    );
   }
 
   private currentLegacyUnitCount(mutation: LegacyUnitMutation): number {
