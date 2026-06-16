@@ -2251,7 +2251,11 @@ export class SettlementIndexer {
     `).all() as EventRow[];
 
     for (const log of sortedEventRows(rows)) {
-      if (isIndexedQueueStartedLog(log)) {
+      if (isSettledPlanetLog(log)) {
+        this.applyEvent(decodeSettledPlanetLog(log));
+      } else if (isPlanetSettledLog(log)) {
+        this.applyPlanetSettledEvent(decodePlanetSettledLog(log));
+      } else if (isIndexedQueueStartedLog(log)) {
         const event = decodeIndexedQueueStartedLog(log);
         if (!this.queueStartProvenCompleted(event)) {
           this.applyQueueStartedEvent(event, { settleResources: false });
@@ -3449,7 +3453,7 @@ export class SettlementIndexer {
     const report = decodeBattleReportLogs(battleLogs, missionId);
     if (!report || isZeroResources(report.defenderLosses)) return;
 
-    const mutations = this.solvePlanetBattleLossMutations(report.targetPlanetId, report.defenderLosses);
+    const mutations = this.solvePlanetBattleLossMutations(report);
     if (!mutations) return;
     this.applyLegacyUnitMutationsOnce(mutationKey, this.filterLegacyMutationsWithoutExactCountEvent(mutations, log.transactionHash), log);
   }
@@ -3466,8 +3470,10 @@ export class SettlementIndexer {
     const report = decodeBattleReportLogs(battleLogs, missionId);
     if (!report || isZeroResources(report.defenderLosses)) return 0;
 
-    const mutations = this.storedLegacyUnitMutations(mutationKey)
-      ?? this.solvePlanetBattleLossMutations(report.targetPlanetId, report.defenderLosses);
+    const mutations = mergeLegacyUnitMutations(
+      this.storedLegacyUnitMutations(mutationKey),
+      this.solvePlanetBattleLossMutations(report)
+    );
     if (!mutations) return 0;
     return this.applyLegacyUnitMutationsOnce(
       mutationKey,
@@ -3477,7 +3483,17 @@ export class SettlementIndexer {
     );
   }
 
-  private solvePlanetBattleLossMutations(planetId: string, losses: Resources): LegacyUnitMutation[] | null {
+  private solvePlanetBattleLossMutations(report: BattleReport): LegacyUnitMutation[] | null {
+    const candidates = this.planetBattleLossCandidates(report.targetPlanetId);
+    const roundSolved = this.solveRoundBattleLossMutations(candidates, report);
+    if (roundSolved) return roundSolved;
+
+    const solution = uniqueLossSolution(candidates, report.defenderLosses);
+    if (!solution) return null;
+    return battleLossPicksToMutations(solution);
+  }
+
+  private planetBattleLossCandidates(planetId: string): BattleLossCandidate[] {
     const candidates: BattleLossCandidate[] = [];
     for (const shipId of shipIds) {
       const count = this.indexedLevel("contract_ship_counts", "ship_id", planetId, shipId);
@@ -3494,14 +3510,50 @@ export class SettlementIndexer {
       candidates.push({ kind: "defense", planetId, itemId: defenseId, max: count, cost });
     }
 
-    const solution = uniqueLossSolution(candidates, losses);
-    if (!solution) return null;
-    return solution.map(({ candidate, destroyed }) => ({
-      kind: candidate.kind,
-      planetId,
-      itemId: candidate.itemId,
-      delta: candidate.kind === "defense" ? -(destroyed - Math.floor((destroyed * 7) / 10)) : -destroyed
-    })).filter((mutation) => mutation.delta !== 0);
+    return candidates;
+  }
+
+  private solveRoundBattleLossMutations(
+    initialCandidates: BattleLossCandidate[],
+    report: BattleReport
+  ): LegacyUnitMutation[] | null {
+    if (report.roundReports.length === 0) return null;
+    const remaining = initialCandidates.map((candidate) => ({ ...candidate }));
+    const mutations: LegacyUnitMutation[] = [];
+
+    for (const round of report.roundReports) {
+      const losses = { ...round.defenderLosses, deuterium: "0" };
+      if (isZeroResources(losses)) continue;
+      const solution = uniqueLossSolution(remaining, losses);
+      if (!solution) return null;
+      mutations.push(...battleLossPicksToMutations(solution));
+      for (const pick of solution) {
+        const candidate = remaining.find((entry) => (
+          entry.kind === pick.candidate.kind
+          && entry.planetId === pick.candidate.planetId
+          && entry.itemId === pick.candidate.itemId
+        ));
+        if (candidate) candidate.max = Math.max(0, candidate.max - pick.destroyed);
+      }
+    }
+
+    const finalDefenderUnits = Number(report.roundReports.at(-1)?.defenderUnits ?? "0");
+    if (!Number.isFinite(finalDefenderUnits)) return null;
+    const remainingUnits = remaining.reduce((total, candidate) => total + candidate.max, 0);
+    const staleUnits = remainingUnits - finalDefenderUnits;
+    if (staleUnits > 0) {
+      const residual = remaining.filter((candidate) => candidate.max > 0);
+      if (residual.length !== 1 || residual[0]!.max !== staleUnits) return null;
+      const candidate = residual[0]!;
+      mutations.push({
+        kind: candidate.kind,
+        planetId: candidate.planetId,
+        itemId: candidate.itemId,
+        delta: -staleUnits
+      });
+    }
+
+    return mutations.length > 0 ? mutations : null;
   }
 
   private applyQueueCompletedEvent(event: IndexedQueueCompletedEvent): void {
@@ -3514,12 +3566,15 @@ export class SettlementIndexer {
     // over the whole window since the last settle and over-reports resources by
     // up to ~3x (VEY-KANEO-429). Settle BEFORE deleting the queue (it carries
     // readyAt) and BEFORE applying the completed level.
-    if (event.queueKind === "building" && event.planetId) {
-      const queue = this.queueState(queueKey(event));
+    const queue = this.queueState(queueKey(event));
+    const matchesActiveQueue = queueMatchesCompletion(event, queue);
+    if (event.queueKind === "building" && event.planetId && matchesActiveQueue) {
       this.settlePlanetResourcesUntil(event.planetId, queue?.readyAt ?? undefined);
     }
-    this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(queueKey(event));
-    this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKey(event));
+    if (matchesActiveQueue) {
+      this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(queueKey(event));
+      this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(queueKey(event));
+    }
     this.applyQueueCompletionEffects(event);
     this.touch();
   }
@@ -4967,6 +5022,17 @@ function queueKey(event: Pick<IndexedQueueStartedEvent | IndexedQueueCompletedEv
   return `${event.queueKind}:${event.planetId ?? ""}`;
 }
 
+function queueMatchesCompletion(event: IndexedQueueCompletedEvent, queue: QueueState | null): boolean {
+  if (!queue?.active || queue.kind !== event.queueKind || queue.itemId !== event.itemId) return false;
+  if ((event.queueKind === "building" || event.queueKind === "moon-building" || event.queueKind === "research") && event.level !== undefined) {
+    return queue.targetLevel === event.level;
+  }
+  if ((event.queueKind === "defense" || event.queueKind === "ship") && event.quantity !== undefined) {
+    return queue.quantity === event.quantity;
+  }
+  return true;
+}
+
 function isPlanetQueueKind(value: string): value is "building" | "defense" | "ship" {
   return value === "building" || value === "defense" || value === "ship";
 }
@@ -5462,6 +5528,33 @@ function uniqueLossSolution(candidates: BattleLossCandidate[], losses: Resources
 
   search(0, target, []);
   return solutions.length === 1 ? solutions[0]! : null;
+}
+
+function battleLossPicksToMutations(solution: BattleLossPick[]): LegacyUnitMutation[] {
+  return solution.map(({ candidate, destroyed }) => ({
+    kind: candidate.kind,
+    planetId: candidate.planetId,
+    itemId: candidate.itemId,
+    delta: candidate.kind === "defense" ? -(destroyed - Math.floor((destroyed * 7) / 10)) : -destroyed
+  })).filter((mutation) => mutation.delta !== 0);
+}
+
+function mergeLegacyUnitMutations(
+  left: LegacyUnitMutation[] | null,
+  right: LegacyUnitMutation[] | null
+): LegacyUnitMutation[] | null {
+  const merged = new Map<string, LegacyUnitMutation>();
+  for (const mutation of [...(left ?? []), ...(right ?? [])]) {
+    const key = legacyUnitMutationKey(mutation);
+    const existing = merged.get(key);
+    if (existing) {
+      merged.set(key, { ...existing, delta: Math.min(existing.delta, mutation.delta) });
+    } else {
+      merged.set(key, mutation);
+    }
+  }
+  const mutations = [...merged.values()].filter((mutation) => mutation.delta !== 0);
+  return mutations.length > 0 ? mutations : null;
 }
 
 function numericResources(resources: Resources): { metal: number; crystal: number; deuterium: number } {
