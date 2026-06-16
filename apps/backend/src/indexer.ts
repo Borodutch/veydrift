@@ -1462,19 +1462,19 @@ export class SettlementIndexer {
       SELECT event_json
       FROM indexed_event_logs
       WHERE removed = 0
-      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
     `).all() as EventRow[];
-    const logs = rows.map((row) => parseEvent<IndexedRpcLog>(row.event_json));
-    const latestCompletionTotals = legacyCompletionTotals(logs);
+    const logs = sortedEventRows(rows);
+    const latestAbsoluteUnitTotals = latestAbsoluteUnitTotalsFromLogs(logs);
 
     for (const log of logs) {
       if (isInterplanetaryMissileAttackLog(log)) {
         this.applyGuardedInterplanetaryMissileAttackCompatibilityEvent(
           decodeInterplanetaryMissileAttackLog(log),
-          latestCompletionTotals
+          latestAbsoluteUnitTotals,
+          log
         );
       } else if (isBattleReportLog(log)) {
-        this.applyGuardedBattleCompatibilityEvent(log, latestCompletionTotals);
+        this.applyGuardedBattleCompatibilityEvent(log, latestAbsoluteUnitTotals);
       }
     }
     this.setMetadata("lastLegacyUnitMutationReplayAt", new Date().toISOString());
@@ -2244,11 +2244,9 @@ export class SettlementIndexer {
       SELECT event_json
       FROM indexed_event_logs
       WHERE removed = 0
-      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
     `).all() as EventRow[];
 
-    for (const row of rows) {
-      const log = parseEvent<IndexedRpcLog>(row.event_json);
+    for (const log of sortedEventRows(rows)) {
       if (isIndexedQueueStartedLog(log)) {
         const event = decodeIndexedQueueStartedLog(log);
         if (!this.queueStartProvenCompleted(event)) {
@@ -2272,13 +2270,11 @@ export class SettlementIndexer {
         SELECT event_json
         FROM indexed_event_logs
         WHERE removed = 0
-        ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
       `).all() as EventRow[];
       if (rows.length === 0) return;
 
       this.clearEventDerivedMaterializedState();
-      const logs = rows.map((row) => parseEvent<IndexedRpcLog>(row.event_json));
-      for (const log of sortRpcLogs(logs)) {
+      for (const log of sortedEventRows(rows)) {
         this.applyStoredLogSideEffects(log);
       }
       this.touch();
@@ -2360,11 +2356,9 @@ export class SettlementIndexer {
       SELECT event_json
       FROM indexed_event_logs
       WHERE removed = 0
-      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
     `).all() as EventRow[];
 
-    for (const row of rows) {
-      const log = parseEvent<IndexedRpcLog>(row.event_json);
+    for (const log of sortedEventRows(rows)) {
       if (isIndexedQueueStartedLog(log)) {
         const event = decodeIndexedQueueStartedLog(log);
         if (this.queueStartProvenCompleted(event) || canonicalState?.verifiedEmptyQueues.has(queueKey(event))) {
@@ -3408,7 +3402,8 @@ export class SettlementIndexer {
 
   private applyGuardedInterplanetaryMissileAttackCompatibilityEvent(
     event: InterplanetaryMissileAttackEvent,
-    latestCompletionTotals: Map<string, number>
+    latestAbsoluteUnitTotals: Map<string, LegacyAbsoluteUnitTotal>,
+    sourceLog: IndexedRpcLog
   ): void {
     const mutations: LegacyUnitMutation[] = [];
     if (!this.hasTransactionUnitCountChanged(event.transactionHash, "defense", event.originPlanetId, 9)) {
@@ -3430,8 +3425,9 @@ export class SettlementIndexer {
     }
     this.applyLegacyUnitMutationsOnce(
       `legacy:ipm:${event.transactionHash.toLowerCase()}`,
-      this.filterLegacyMutationsAtCompletionTotal(mutations, latestCompletionTotals),
-      event
+      this.filterLegacyMutationsForStoredReplay(mutations, sourceLog, latestAbsoluteUnitTotals),
+      event,
+      { allowExistingMarker: true }
     );
   }
 
@@ -3450,11 +3446,13 @@ export class SettlementIndexer {
     this.applyLegacyUnitMutationsOnce(mutationKey, this.filterLegacyMutationsWithoutExactCountEvent(mutations, log.transactionHash), log);
   }
 
-  private applyGuardedBattleCompatibilityEvent(log: IndexedRpcLog, latestCompletionTotals: Map<string, number>): void {
+  private applyGuardedBattleCompatibilityEvent(
+    log: IndexedRpcLog,
+    latestAbsoluteUnitTotals: Map<string, LegacyAbsoluteUnitTotal>
+  ): void {
     const missionId = battleLogMissionId(log);
     if (!missionId) return;
     const mutationKey = `legacy:battle:${missionId}`;
-    if (this.hasLegacyUnitMutation(mutationKey)) return;
     const battleLogs = this.indexedLogsForTransaction(log.transactionHash)
       .filter((candidate) => isBattleReportLog(candidate) && battleLogMissionId(candidate) === missionId);
     const report = decodeBattleReportLogs(battleLogs, missionId);
@@ -3464,11 +3462,9 @@ export class SettlementIndexer {
     if (!mutations) return;
     this.applyLegacyUnitMutationsOnce(
       mutationKey,
-      this.filterLegacyMutationsAtCompletionTotal(
-        this.filterLegacyMutationsWithoutExactCountEvent(mutations, log.transactionHash),
-        latestCompletionTotals
-      ),
-      log
+      this.filterLegacyMutationsForStoredReplay(mutations, log, latestAbsoluteUnitTotals),
+      log,
+      { allowExistingMarker: true }
     );
   }
 
@@ -3833,9 +3829,8 @@ export class SettlementIndexer {
       SELECT event_json
       FROM indexed_event_logs
       WHERE removed = 0 AND lower(transaction_hash) = lower(?)
-      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
     `).all(transactionHash) as EventRow[];
-    return rows.map((row) => parseEvent<IndexedRpcLog>(row.event_json));
+    return sortedEventRows(rows);
   }
 
   private hasTransactionUnitCountChanged(
@@ -3861,27 +3856,46 @@ export class SettlementIndexer {
     return Boolean(this.db.query("SELECT 1 FROM indexed_legacy_unit_mutations WHERE mutation_key = ?").get(mutationKey));
   }
 
-  private applyLegacyUnitMutationsOnce(mutationKey: string, mutations: LegacyUnitMutation[], source: unknown): void {
+  private applyLegacyUnitMutationsOnce(
+    mutationKey: string,
+    mutations: LegacyUnitMutation[],
+    source: unknown,
+    options: { allowExistingMarker?: boolean } = {}
+  ): void {
     const nonZeroMutations = mutations.filter((mutation) => mutation.delta !== 0);
     if (nonZeroMutations.length === 0) return;
-    const inserted = this.db.query(`
-      INSERT OR IGNORE INTO indexed_legacy_unit_mutations (mutation_key, event_json)
-      VALUES (?, ?)
-    `).run(mutationKey, JSON.stringify({ source, mutations: nonZeroMutations }));
-    if (inserted.changes === 0) return;
+    const payload = JSON.stringify({ source, mutations: nonZeroMutations });
+    if (options.allowExistingMarker) {
+      this.db.query(`
+        INSERT INTO indexed_legacy_unit_mutations (mutation_key, event_json)
+        VALUES (?, ?)
+        ON CONFLICT(mutation_key) DO UPDATE SET event_json = excluded.event_json
+      `).run(mutationKey, payload);
+    } else {
+      const inserted = this.db.query(`
+        INSERT OR IGNORE INTO indexed_legacy_unit_mutations (mutation_key, event_json)
+        VALUES (?, ?)
+      `).run(mutationKey, payload);
+      if (inserted.changes === 0) return;
+    }
     for (const mutation of nonZeroMutations) {
       this.adjustLegacyUnitCount(mutation);
     }
   }
 
-  private filterLegacyMutationsAtCompletionTotal(
+  private filterLegacyMutationsForStoredReplay(
     mutations: LegacyUnitMutation[],
-    latestCompletionTotals: Map<string, number>
+    sourceLog: IndexedRpcLog,
+    latestAbsoluteUnitTotals: Map<string, LegacyAbsoluteUnitTotal>
   ): LegacyUnitMutation[] {
     return mutations.filter((mutation) => {
-      const latestCompletionTotal = latestCompletionTotals.get(legacyUnitMutationKey(mutation));
-      if (latestCompletionTotal === undefined) return false;
-      return this.currentLegacyUnitCount(mutation) === latestCompletionTotal;
+      if (this.hasTransactionUnitCountChanged(sourceLog.transactionHash, mutation.kind, mutation.planetId, mutation.itemId)) {
+        return false;
+      }
+      const latestAbsolute = latestAbsoluteUnitTotals.get(legacyUnitMutationKey(mutation));
+      if (!latestAbsolute) return false;
+      if (compareRpcLogPosition(sourceLog, latestAbsolute) < 0) return false;
+      return this.currentLegacyUnitCount(mutation) === latestAbsolute.total;
     });
   }
 
@@ -4445,11 +4459,8 @@ export class SettlementIndexer {
       SELECT event_json
       FROM indexed_event_logs
       WHERE removed = 0
-      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
     `).all() as EventRow[];
-    const logs = rows
-      .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
-      .filter(isFleetMissionLog);
+    const logs = sortedEventRows(rows).filter(isFleetMissionLog);
     // VEY-KANEO-479: decode leaves `needsResolution` at its default; compute it here so an arrived
     // Attack only reads "Ready to resolve" once its battle randomness is fulfilled (gated on the
     // ingested RandomnessFulfilled logs). Harvest and the other types stay on the plain arrival check.
@@ -4554,11 +4565,9 @@ export class SettlementIndexer {
       SELECT event_json
       FROM indexed_event_logs
       WHERE removed = 0
-      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
     `).all() as EventRow[];
     const fulfilled = new Set<string>();
-    for (const row of rows) {
-      const log = parseEvent<IndexedRpcLog>(row.event_json);
+    for (const log of sortedEventRows(rows)) {
       if (isRandomnessFulfilledLog(log)) {
         fulfilled.add(decodeRandomnessFulfilledRequestId(log));
       }
@@ -4589,11 +4598,9 @@ export class SettlementIndexer {
       SELECT event_json
       FROM indexed_event_logs
       WHERE removed = 0
-      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
     `).all() as EventRow[];
     const byTarget = new Map<string, number[]>();
-    for (const row of rows) {
-      const log = parseEvent<IndexedRpcLog>(row.event_json);
+    for (const log of sortedEventRows(rows)) {
       const launch = decodeAttackMissionLaunch(log);
       if (!launch || launch.attacker.toLowerCase() !== normalizedAttacker) continue;
       const launchedAt = blockTimestampSeconds(log);
@@ -4616,11 +4623,8 @@ export class SettlementIndexer {
       SELECT event_json
       FROM indexed_event_logs
       WHERE removed = 0
-      ORDER BY CAST(block_number AS INTEGER) ASC, log_index ASC
     `).all() as EventRow[];
-    const logs = rows
-      .map((row) => parseEvent<IndexedRpcLog>(row.event_json))
-      .filter(isBattleReportLog);
+    const logs = sortedEventRows(rows).filter(isBattleReportLog);
     // Enrich each report with its ACS attack group participants + per-participant loot, joining the
     // decoded battle reports against the fleet-mission read model (which carries joinedAttackMissionIds
     // and each joiner's resulting return-leg cargo). Solo attacks come back with a single participant.
@@ -5015,12 +5019,23 @@ function parseEvent<T>(value: string): T {
   return JSON.parse(value) as T;
 }
 
+function sortedEventRows(rows: readonly EventRow[]): IndexedRpcLog[] {
+  return sortRpcLogs(rows.map((row) => parseEvent<IndexedRpcLog>(row.event_json))) as IndexedRpcLog[];
+}
+
 function sortRpcLogs(logs: readonly RpcLog[]): RpcLog[] {
   return [...logs].sort((left, right) => {
-    const blockDelta = compareBigIntish(left.blockNumber, right.blockNumber);
-    if (blockDelta !== 0) return blockDelta;
-    return compareBigIntish((left as IndexedRpcLog).logIndex ?? "0x0", (right as IndexedRpcLog).logIndex ?? "0x0");
+    return compareRpcLogPosition(left, right);
   });
+}
+
+function compareRpcLogPosition(
+  left: Pick<RpcLog, "blockNumber"> & { logIndex?: string },
+  right: Pick<RpcLog, "blockNumber"> & { logIndex?: string }
+): number {
+  const blockDelta = compareBigIntish(left.blockNumber, right.blockNumber);
+  if (blockDelta !== 0) return blockDelta;
+  return compareBigIntish(left.logIndex ?? "0x0", right.logIndex ?? "0x0");
 }
 
 function compareBigIntish(left: string, right: string): number {
@@ -5298,6 +5313,12 @@ type BattleLossCandidate = {
   cost: Resources;
 };
 
+type LegacyAbsoluteUnitTotal = {
+  blockNumber: string;
+  logIndex: string;
+  total: number;
+};
+
 type BattleLossPick = {
   candidate: BattleLossCandidate;
   destroyed: number;
@@ -5425,15 +5446,39 @@ function isZeroResources(resources: Resources): boolean {
   return Number(resources.metal) === 0 && Number(resources.crystal) === 0 && Number(resources.deuterium) === 0;
 }
 
-function legacyCompletionTotals(logs: IndexedRpcLog[]): Map<string, number> {
-  const totals = new Map<string, number>();
+function latestAbsoluteUnitTotalsFromLogs(logs: IndexedRpcLog[]): Map<string, LegacyAbsoluteUnitTotal> {
+  const totals = new Map<string, LegacyAbsoluteUnitTotal>();
   for (const log of logs) {
-    if (!isIndexedQueueCompletedLog(log)) continue;
-    const event = decodeIndexedQueueCompletedLog(log);
-    if (event.eventName === "ShipCompleted" && event.total !== undefined) {
-      totals.set(`ship:${event.planetId}:${event.itemId}`, event.total);
-    } else if (event.eventName === "DefenseCompleted" && event.total !== undefined) {
-      totals.set(`defense:${event.planetId}:${event.itemId}`, event.total);
+    if (isIndexedQueueCompletedLog(log)) {
+      const event = decodeIndexedQueueCompletedLog(log);
+      if (event.total === undefined) continue;
+      if (event.eventName === "ShipCompleted") {
+        totals.set(`ship:${event.planetId}:${event.itemId}`, {
+          blockNumber: log.blockNumber,
+          logIndex: log.logIndex ?? "0x0",
+          total: event.total
+        });
+      } else if (event.eventName === "DefenseCompleted") {
+        totals.set(`defense:${event.planetId}:${event.itemId}`, {
+          blockNumber: log.blockNumber,
+          logIndex: log.logIndex ?? "0x0",
+          total: event.total
+        });
+      }
+    } else if (isShipCountChangedLog(log)) {
+      const event = decodeShipCountChangedLog(log);
+      totals.set(`ship:${event.planetId}:${event.shipId}`, {
+        blockNumber: log.blockNumber,
+        logIndex: log.logIndex ?? "0x0",
+        total: event.total
+      });
+    } else if (isDefenseCountChangedLog(log)) {
+      const event = decodeDefenseCountChangedLog(log);
+      totals.set(`defense:${event.planetId}:${event.defenseId}`, {
+        blockNumber: log.blockNumber,
+        logIndex: log.logIndex ?? "0x0",
+        total: event.total
+      });
     }
   }
   return totals;
