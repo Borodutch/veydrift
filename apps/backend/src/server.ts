@@ -682,7 +682,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     if (request.method === "GET" && url.pathname.match(/^\/planets\/[0-9]+$/)) {
       const planetId = BigInt(url.pathname.split("/")[2] ?? "0");
         if (indexer && hasWarmPlanetIndex(indexer)) {
-        const planet = accruedPlanetState(indexer, indexer.planet(planetId.toString()));
+        const planet = indexedCurrentPlanetState(indexer, indexer.planet(planetId.toString()), { allowPendingResources: true });
         return Response.json(planet, {
           headers: corsHeaders
         });
@@ -1290,9 +1290,9 @@ function accruedPlanetState<T extends PlanetState | null>(
   };
 }
 
-// Single current-resource source of truth for personal wallet surfaces (VEY-KANEO-517):
+// Single current-resource source of truth for wallet, public, and intel resource surfaces (VEY-KANEO-517):
 // canonical settled `resources` projected forward to now at the planet's production rate,
-// capped at storage. Every `/wallet/:wallet/...` resource surface should call this helper
+// capped at storage. Every endpoint serving "current resources" should call this helper
 // instead of re-running `resourcesWithClaimableAccrual` locally, so endpoint values cannot
 // diverge or accidentally project an already-current balance a second time.
 function indexedCurrentResourcesForPlanet(
@@ -1713,7 +1713,7 @@ function targetCombatIntelForMission(
   const planet = indexer.planet(mission.targetPlanetId);
   if (!planet) return null;
 
-  const accrued = accruedPlanetState(indexer, planet);
+  const accrued = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
   const tactical = indexedPlanetTacticalSummary(
     accrued,
     indexer.infrastructureRows(planet.planetId),
@@ -1756,10 +1756,10 @@ function publicPlanetStateRef(
   const buildings = indexer.infrastructureRows(planet.planetId);
   const ships = indexer.shipRows(planet.planetId);
   const technologyLevels = indexer.technologyLevels(planet.owner);
-  const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
+  const currentPlanet = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
 
   return {
-    resources: resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt),
+    resources: currentPlanet.resources,
     buildings: buildings.map(({ id, level }) => ({ id, level })),
     fleet: ships.map(({ id, count }) => ({ id, count })),
     defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
@@ -2377,7 +2377,9 @@ function rankedHighscorePlanets(
     // tactical intel matches the resources the public planet read (`GET /planets/{id}`) shows.
     // Without this the snapshot's stored resources under-report LOOT versus the planet's live,
     // accrued public resources. (VEY-KANEO-454)
-    const accrued = indexer ? accruedPlanetState(indexer, planet) : planet;
+    const accrued = indexer
+      ? indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet
+      : planet;
     const tactical = indexedPlanetTacticalSummary(accrued, buildings, ships, defenses, technologyLevels);
 
     return {

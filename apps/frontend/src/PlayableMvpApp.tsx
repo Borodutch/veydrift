@@ -285,7 +285,9 @@ type RefreshFreshnessGate = { current: number };
 export type ResourceSnapshotFreshness = {
   planetId: string | null;
   lastSettledAt: string | null;
+  resourcesKey?: string | null;
 };
+type ChainResourceShape = { metal: string; crystal: string; deuterium: string };
 
 export type OnChainRefreshPlan = {
   applyQueues: boolean;
@@ -377,18 +379,22 @@ export function canApplyRefreshRequest(gate: RefreshFreshnessGate, requestId: nu
 export function resourceSnapshotFreshnessForSettlement(
   settlement: WalletSettlementResponse | undefined,
 ): ResourceSnapshotFreshness {
+  const resources = settlement?.planet?.resourcesAsOfNow ?? settlement?.planet?.resources;
   return {
     planetId: settlement?.planet?.planetId ?? settlement?.homePlanetId ?? null,
     lastSettledAt: settlement?.planet?.lastSettledAt ?? null,
+    resourcesKey: resourceSnapshotKey(resources),
   };
 }
 
 export function resourceSnapshotFreshnessForInfrastructure(
   infrastructure: ChainInfrastructureState | null,
 ): ResourceSnapshotFreshness {
+  const resources = infrastructure?.resourcesAsOfNow ?? infrastructure?.resources;
   return {
     planetId: infrastructure?.planetId ?? infrastructure?.homePlanetId ?? null,
     lastSettledAt: infrastructure?.planetLastSettledAt ?? null,
+    resourcesKey: resourceSnapshotKey(resources),
   };
 }
 
@@ -406,7 +412,10 @@ export function shouldApplyResourceSnapshot(
     return true;
   }
 
-  return nextSettledAt >= currentSettledAt;
+  if (nextSettledAt > currentSettledAt) return true;
+  if (nextSettledAt < currentSettledAt) return false;
+  if (next.resourcesKey && current.resourcesKey && next.resourcesKey !== current.resourcesKey) return true;
+  return true;
 }
 
 export function recordedResourceSnapshotFreshness(
@@ -418,6 +427,22 @@ export function recordedResourceSnapshotFreshness(
   }
 
   return next;
+}
+
+export function walletCurrentResourcesFor({
+  infrastructureResources,
+  infrastructureResourcesAsOfNow,
+  settlementResources,
+}: {
+  infrastructureResources?: ChainResourceShape | null | undefined;
+  infrastructureResourcesAsOfNow?: ChainResourceShape | null | undefined;
+  settlementResources?: ChainResourceShape | null | undefined;
+}): Resources | undefined {
+  return (
+    resourcesFromChain(settlementResources ?? null)
+    ?? resourcesFromChain(infrastructureResourcesAsOfNow ?? null)
+    ?? resourcesFromChain(infrastructureResources ?? null)
+  );
 }
 
 // Authoritative on-chain construction queues + fleet visibility are not resource
@@ -531,6 +556,13 @@ function resourceSnapshotSettledAt(snapshot: ResourceSnapshotFreshness): bigint 
   } catch {
     return undefined;
   }
+}
+
+function resourceSnapshotKey(
+  resources: ChainResourceShape | null | undefined,
+): string | null {
+  if (!resources) return null;
+  return `${resources.metal}:${resources.crystal}:${resources.deuterium}`;
 }
 
 export function galaxyMissionActionErrorLabel(label: string, error: unknown): string {
@@ -3276,15 +3308,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   // back to the raw settled `resources` snapshot — still a backend value and never
   // an over-report — so affordability stays safe.
   const backendSpendableResources = useMemo(() => {
-    return (
-      resourcesFromChain(infrastructureChainState?.resourcesAsOfNow ?? null)
-      ?? resourcesFromChain(infrastructureChainState?.resources ?? null)
-      ?? onChainResources
-    );
+    return walletCurrentResourcesFor({
+      settlementResources: onChainSettlement?.planet?.resourcesAsOfNow ?? onChainSettlement?.planet?.resources,
+      infrastructureResourcesAsOfNow: infrastructureChainState?.resourcesAsOfNow,
+      infrastructureResources: infrastructureChainState?.resources,
+    });
   }, [
+    onChainSettlement?.planet?.resourcesAsOfNow,
+    onChainSettlement?.planet?.resources,
     infrastructureChainState?.resourcesAsOfNow,
     infrastructureChainState?.resources,
-    onChainResources,
   ]);
   const liveOnChainResources = backendSpendableResources;
   const spendableResources = useMemo(() => {

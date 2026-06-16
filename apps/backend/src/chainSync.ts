@@ -225,7 +225,7 @@ export class ChainSyncService {
   ): { applied: number; lastHash: string | undefined } {
     let applied = 0;
     let lastHash: string | undefined;
-    for (const log of logs) {
+    for (const log of sortRpcLogs(logs)) {
       if (!isRpcLog(log)) continue;
       const block = BigInt(log.blockNumber);
       this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, block);
@@ -245,6 +245,7 @@ export class ChainSyncService {
       } catch (error) {
         this.lastError =
           error instanceof Error ? error.message : "Failed to index contract log.";
+        throw error;
       }
     }
     return { applied, lastHash };
@@ -310,4 +311,24 @@ function maxBlockString(current: string | null, next: bigint): string {
   if (current === null) return next.toString();
   const currentBlock = BigInt(current);
   return next > currentBlock ? next.toString() : current;
+}
+
+function sortRpcLogs(logs: readonly RpcLog[]): RpcLog[] {
+  return [...logs].sort((left, right) => {
+    const blockDelta = compareBigIntish(left.blockNumber, right.blockNumber);
+    if (blockDelta !== 0) return blockDelta;
+    return compareBigIntish(logIndexFor(left), logIndexFor(right));
+  });
+}
+
+function logIndexFor(log: RpcLog): string {
+  return (log as RpcLog & { logIndex?: string }).logIndex ?? "0x0";
+}
+
+function compareBigIntish(left: string, right: string): number {
+  const leftValue = BigInt(left);
+  const rightValue = BigInt(right);
+  if (leftValue < rightValue) return -1;
+  if (leftValue > rightValue) return 1;
+  return 0;
 }

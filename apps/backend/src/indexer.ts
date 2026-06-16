@@ -235,6 +235,7 @@ type ResourceColumns = {
 type PlanetResourceRow = ResourceColumns & {
   block_number: string;
   last_settled_at: string;
+  log_index: string;
   transaction_hash: string;
 };
 
@@ -1678,7 +1679,8 @@ export class SettlementIndexer {
         deuterium TEXT NOT NULL,
         last_settled_at TEXT NOT NULL,
         transaction_hash TEXT NOT NULL,
-        block_number TEXT NOT NULL
+        block_number TEXT NOT NULL,
+        log_index TEXT NOT NULL DEFAULT '0x0'
       );
       CREATE TABLE IF NOT EXISTS contract_building_levels (
         planet_id TEXT NOT NULL,
@@ -1880,6 +1882,7 @@ export class SettlementIndexer {
       );
     `);
     this.ensureColumn("contract_production_queues", "backlog_json", "TEXT");
+    this.ensureColumn("contract_planet_resources", "log_index", "TEXT NOT NULL DEFAULT '0x0'");
     this.backfillCanonicalTables();
   }
 
@@ -2284,7 +2287,7 @@ export class SettlementIndexer {
     for (const [planetId, resources] of state.resources) {
       // Reconcile reads the freshest on-chain balance, so it is authoritative even though it is stamped
       // with lastReconciledBlock rather than a real event block — force past the monotonic guard.
-      this.upsertPlanetResourceSnapshot(planetId, resources, reconciledAt, "0x", blockNumber, true);
+      this.upsertPlanetResourceSnapshot(planetId, resources, reconciledAt, "0x", blockNumber, "0x0", true);
     }
     for (const [planetId, buildings] of state.buildings) {
       for (const building of buildings) {
@@ -2547,7 +2550,7 @@ export class SettlementIndexer {
   private updatePlanetResources(event: PlanetSettledEvent): void {
     const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(event.planetId) as EventRow | null;
     if (!row) {
-      this.upsertPlanetResourceSnapshot(event.planetId, event.resources, event.lastSettledAt, event.transactionHash, event.blockNumber);
+      this.upsertPlanetResourceSnapshot(event.planetId, event.resources, event.lastSettledAt, event.transactionHash, event.blockNumber, event.logIndex);
       this.markStale(`planet_identity_pending:${event.planetId}`);
       return;
     }
@@ -2560,6 +2563,14 @@ export class SettlementIndexer {
       lastSettledAt: event.lastSettledAt,
       resources: event.resources
     });
+    this.upsertPlanetResourceSnapshot(
+      event.planetId,
+      event.resources,
+      event.lastSettledAt,
+      event.transactionHash,
+      event.blockNumber,
+      event.logIndex
+    );
   }
 
   private withKnownPlanetResources(event: SettledPlanetEvent): SettledPlanetEvent {
@@ -2598,7 +2609,7 @@ export class SettlementIndexer {
 
   private planetResourceSnapshot(planetId: string): PlanetResourceRow | null {
     return this.db.query(`
-      SELECT metal, crystal, deuterium, last_settled_at, transaction_hash, block_number
+      SELECT metal, crystal, deuterium, last_settled_at, transaction_hash, block_number, log_index
       FROM contract_planet_resources
       WHERE planet_id = ?
     `).get(planetId) as PlanetResourceRow | null;
@@ -2620,15 +2631,19 @@ export class SettlementIndexer {
     lastSettledAt: string,
     transactionHash: string,
     blockNumber: string,
+    logIndex = "0x0",
     force = false
   ): void {
     if (!force) {
       const existing = this.db
-        .query("SELECT block_number FROM contract_planet_resources WHERE planet_id = ?")
-        .get(planetId) as Pick<PlanetResourceRow, "block_number"> | null;
+        .query("SELECT block_number, log_index FROM contract_planet_resources WHERE planet_id = ?")
+        .get(planetId) as Pick<PlanetResourceRow, "block_number" | "log_index"> | null;
       if (existing) {
         try {
-          if (BigInt(blockNumber) < BigInt(existing.block_number)) return;
+          const incomingBlock = BigInt(blockNumber);
+          const existingBlock = BigInt(existing.block_number);
+          if (incomingBlock < existingBlock) return;
+          if (incomingBlock === existingBlock && BigInt(logIndex) < BigInt(existing.log_index)) return;
         } catch {
           // If either block label isn't a parseable integer (e.g. the "0" seed marker meeting a malformed
           // value), fall through and let the latest write win rather than silently dropping it.
@@ -2637,16 +2652,17 @@ export class SettlementIndexer {
     }
     this.db.query(`
       INSERT INTO contract_planet_resources (
-        planet_id, metal, crystal, deuterium, last_settled_at, transaction_hash, block_number
+        planet_id, metal, crystal, deuterium, last_settled_at, transaction_hash, block_number, log_index
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(planet_id) DO UPDATE SET
         metal = excluded.metal,
         crystal = excluded.crystal,
         deuterium = excluded.deuterium,
         last_settled_at = excluded.last_settled_at,
         transaction_hash = excluded.transaction_hash,
-        block_number = excluded.block_number
+        block_number = excluded.block_number,
+        log_index = excluded.log_index
     `).run(
       planetId,
       resources.metal,
@@ -2654,7 +2670,8 @@ export class SettlementIndexer {
       resources.deuterium,
       lastSettledAt,
       transactionHash,
-      blockNumber
+      blockNumber,
+      logIndex
     );
   }
 

@@ -826,6 +826,7 @@ export type PlanetSettledEvent = {
   eventName: "PlanetSettled";
   transactionHash: string;
   blockNumber: string;
+  logIndex: string;
   planetId: string;
   lastSettledAt: string;
   resources: Resources;
@@ -4597,6 +4598,7 @@ export function decodePlanetSettledLog(log: RpcLog): PlanetSettledEvent {
     eventName: "PlanetSettled",
     transactionHash: log.transactionHash,
     blockNumber: BigInt(log.blockNumber).toString(),
+    logIndex: (log as RpcLog & { logIndex?: string }).logIndex ?? "0x0",
     planetId: decodeUint(topicAt(log.topics, 1)).toString(),
     resources: decodeResources(words.slice(0, 3)),
     lastSettledAt: decodeUintWord(wordAt(words, 3)).toString()
