@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { canonicalContractTables } from "./contractStateSchema";
-import type { Address, AllianceState, CanonicalPlanetChainState, DebrisFieldEvent, DefenseState, InfrastructureState, MoonChanceReportEvent, PlayerQueues, ResearchState, ShipyardState, SettledPlanetEvent } from "./evm";
+import type { Address, AllianceState, CanonicalFleetMissionSnapshot, CanonicalPlanetChainState, DebrisFieldEvent, DefenseState, InfrastructureState, MoonChanceReportEvent, PlayerQueues, ResearchState, ShipyardState, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { deriveBuildingRows, deriveDefenseRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
 
@@ -4055,6 +4055,83 @@ describe("SettlementIndexer", () => {
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(8);
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(6);
     expect(indexer.shipRows("99").find((ship) => ship.id === 2)?.count).toBe(3);
+  });
+
+  test("newer fleet mission events win over seeded canonical mission rows", async () => {
+    const rawState: CanonicalPlanetChainState = {
+      planetId: planet.planetId,
+      resources: planet.resources,
+      buildings: deriveBuildingRows(() => 0),
+      defenses: deriveDefenseRows(() => 0),
+      ships: deriveShipRows(() => 0),
+      queues: {
+        building: null,
+        defense: null,
+        ship: null
+      }
+    };
+    const seededMission: CanonicalFleetMissionSnapshot = {
+      missionId: "70",
+      statusId: 1,
+      missionTypeId: 3,
+      status: "Outbound",
+      missionType: "Attack",
+      owner: player,
+      originPlanetId: planet.planetId,
+      targetPlanetId: "99",
+      departureAt: "1770000000",
+      arrivalAt: "1770001200",
+      returnAt: "1770002400",
+      fuelCost: "1",
+      cargo: { metal: "0", crystal: "0", deuterium: "0" },
+      randomnessRequestId: null
+    };
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return [planet]; },
+      async getCanonicalPlanetState() { return rawState; },
+      async getBlockNumber() { return 0x123n; },
+      async listCanonicalFleetMissions() { return [seededMission]; },
+      async listContractLogs() { return []; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch-70",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(70n), addressTopic(player), topic(3n)],
+      data: abiWords(BigInt(planet.planetId), 99n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch-70",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(70n)],
+      data: abiWords(0n, 0n, 0n, 1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch-70",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(70n)],
+      data: abiWords(1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    await indexer.seedCurrentCanonicalState({ planetConcurrency: 25 });
+    expect(indexer.allActiveFleetMissions().map((mission) => mission.missionId)).toEqual(["70"]);
+
+    indexer.applyLog({
+      blockNumber: "0x124",
+      transactionHash: "0xreturn-70",
+      logIndex: "0x0",
+      topics: [fleetMissionReturnedTopic, topic(70n), addressTopic(player), topic(BigInt(planet.planetId))],
+      data: "0x"
+    });
+
+    expect(indexer.allActiveFleetMissions().map((mission) => mission.missionId)).toEqual([]);
+    expect(indexer.allCompletedFleetMissions().map((mission) => mission.missionId)).toEqual(["70"]);
   });
 
   test("explicit canonical sync is not aborted by the normal cold rebuild deadline", async () => {
