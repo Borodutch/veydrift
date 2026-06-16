@@ -341,7 +341,6 @@ function shipDetailSections({
         {
           label: "At planet",
           value: owned === undefined ? "unavailable" : owned.toLocaleString("en-US"),
-          hint: "Ships stationed at this planet now. Fleets in flight on missions are not counted here.",
         },
         { label: "Price", value: cost ? formatProductionPrice(cost) : "-", wide: true },
         ...(durationSeconds === undefined
