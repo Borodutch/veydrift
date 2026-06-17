@@ -64,6 +64,14 @@ describe("overview planet hero image", () => {
     expect(planetHeroIndex).toBeLessThan(fleetsSummaryIndex);
   });
 
+  test("renders the planet art as a compact square image instead of a cropped banner", () => {
+    expect(overviewSource).toContain("grid-cols-[5.75rem_minmax(0,1fr)]");
+    expect(overviewSource).toContain("relative aspect-square");
+    expect(overviewSource).toContain("object-contain");
+    expect(overviewSource).toContain('alt="Planet hero"');
+    expect(overviewSource).not.toContain('sizes="hero"');
+  });
+
   test("never fabricates a planet hero image without real planet data", () => {
     // Disconnected / pre-load must not invent a planet image; the caller renders a
     // skeleton/connect-wallet state instead (VEY-KANEO-458).
@@ -101,7 +109,18 @@ describe("overview queue progress display", () => {
     expect(overviewSource).toContain('aria-label="Show planet effects"');
     expect(overviewSource).toContain('aria-controls="overview-planet-effects"');
     expect(overviewSource).toContain("<PlanetEffectsPanel");
-    expect(overviewSource).toContain("Temperature changes implemented production math");
+    expect(overviewSource).toContain("Fields are the planet development budget");
+    expect(overviewSource).toContain("Temperature changes deuterium production and Solar Satellite energy output");
+    expect(overviewSource).toContain('label="Terraformer"');
+    expect(overviewSource).toContain('label="Deuterium multiplier"');
+    expect(overviewSource).toContain('label="Solar Satellite"');
+    expect(overviewSource).not.toContain('label="Fields used"');
+    expect(overviewSource).not.toContain('label="Fields available"');
+    expect(overviewSource).not.toContain('label="Field pressure"');
+    expect(overviewSource).not.toContain('label="Deuterium output"');
+    expect(overviewSource).not.toContain('label="Deuterium capacity"');
+    expect(overviewSource).not.toContain('label="Mine power"');
+    expect(overviewSource).not.toContain("Temperature changes implemented production math");
     expect(overviewSource).toContain('aria-label="Close planet effects"');
   });
 
