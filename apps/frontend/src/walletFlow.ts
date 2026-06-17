@@ -817,6 +817,34 @@ export type HighscoreResponse = {
   rankings: Record<HighscoreCategory, HighscoreEntry[]>;
 };
 
+export type DebrisTargetResponse = {
+  planetId: string;
+  name: string | null;
+  owner: string;
+  coordinates: {
+    galaxy: number;
+    system: number;
+    position: number;
+  };
+  archetype: PlanetType;
+  debris: {
+    metal: string;
+    crystal: string;
+  };
+  updatedAtBlock: string;
+  transactionHash: string;
+};
+
+export type RaidFinderDebrisResponse = {
+  targets: DebrisTargetResponse[];
+  pagination?: {
+    page: number;
+    pageSize: number;
+  };
+  stale?: boolean;
+  source?: string;
+};
+
 export const BASE_SEPOLIA = {
   chainId: 84532,
   chainIdHex: "0x14a34",
@@ -2767,6 +2795,29 @@ export async function fetchHighscores(
 
   try {
     response = await fetch(`${apiUrl.replace(/\/+$/, "")}/highscores?${params.toString()}`, {
+      headers: {
+        accept: "application/json"
+      }
+    });
+  } catch (error) {
+    throw new Error(highscoreNetworkFailureMessage(error));
+  }
+
+  if (!response.ok) throw new Error(await highscoreHttpFailureMessage(response));
+  return response.json();
+}
+
+export async function fetchRaidFinderDebrisTargets(
+  apiUrl: string,
+  options: { limit?: number } = {},
+): Promise<RaidFinderDebrisResponse> {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  const query = params.toString();
+  let response: Response;
+
+  try {
+    response = await fetch(`${apiUrl.replace(/\/+$/, "")}/raid-finder/debris${query ? `?${query}` : ""}`, {
       headers: {
         accept: "application/json"
       }

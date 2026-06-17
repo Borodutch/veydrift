@@ -105,6 +105,9 @@ import { planetArchetypeForTemperature } from "./universe";
 import { nowSeconds, settleQueueAsOfNow, withMissionAsOfNow } from "./asOfNow";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
+export type IndexedDebrisTarget = IndexedDebrisFieldEvent & {
+  planet: Pick<SettledPlanetEvent, "name" | "owner" | "planetId" | "galaxy" | "system" | "position" | "temperature">;
+};
 export type IndexedMoonChanceReportEvent = MoonChanceReportEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
 
 export type IndexerSnapshot = {
@@ -531,6 +534,38 @@ export class SettlementIndexer {
       const planet = this.planet(field.planetId);
       if (!planet) return [];
       return [{ ...field, galaxy: planet.galaxy, system: planet.system, position: planet.position }];
+    });
+  }
+
+  debrisTargets(limit = 250): IndexedDebrisTarget[] {
+    const boundedLimit = Math.max(1, Math.min(500, Math.trunc(limit)));
+    const rows = this.db.query(`
+      SELECT debris.event_json, planet.event_json AS planet_json
+      FROM contract_debris_fields debris
+      INNER JOIN contract_planets planet ON planet.planet_id = debris.planet_id
+      WHERE CAST(debris.metal AS REAL) > 0 OR CAST(debris.crystal AS REAL) > 0
+      ORDER BY (CAST(debris.metal AS REAL) + CAST(debris.crystal AS REAL)) DESC, planet.galaxy ASC, planet.system_number ASC, planet.position ASC
+      LIMIT ?
+    `).all(boundedLimit) as Array<EventRow & { planet_json: string }>;
+
+    return rows.map((row) => {
+      const field = parseEvent<DebrisFieldEvent>(row.event_json);
+      const planet = parseEvent<SettledPlanetEvent>(row.planet_json);
+      return {
+        ...field,
+        galaxy: planet.galaxy,
+        system: planet.system,
+        position: planet.position,
+        planet: {
+          planetId: planet.planetId,
+          name: planet.name,
+          owner: planet.owner,
+          galaxy: planet.galaxy,
+          system: planet.system,
+          position: planet.position,
+          temperature: planet.temperature
+        }
+      };
     });
   }
 

@@ -3328,6 +3328,53 @@ describe("Veydrift backend", () => {
     expect(chainReader.rebuildCalls).toBe(1);
   });
 
+  test("serves Raid Finder debris targets from indexed debris fields", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    const richPlanet = {
+      ...planet,
+      planetId: "8",
+      name: "Rubble",
+      galaxy: 2,
+      system: 45,
+      position: 6,
+    };
+    indexer.applyEvent({ ...planet, eventName: "PlanetStarted", transactionHash: "0xabc", blockNumber: "123" });
+    indexer.applyEvent({ ...richPlanet, eventName: "PlanetStarted", transactionHash: "0xabd", blockNumber: "124" });
+    indexer.applyDebrisEvent({
+      eventName: "DebrisFieldUpdated",
+      transactionHash: "0xsmall",
+      blockNumber: "125",
+      planetId: planet.planetId,
+      resources: { metal: "1000", crystal: "500" },
+    });
+    indexer.applyDebrisEvent({
+      eventName: "DebrisFieldUpdated",
+      transactionHash: "0xrich",
+      blockNumber: "126",
+      planetId: richPlanet.planetId,
+      resources: { metal: "9000", crystal: "2000" },
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
+
+    const response = await handler(new Request("http://localhost/raid-finder/debris?limit=1"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.targets).toEqual([
+      expect.objectContaining({
+        planetId: "8",
+        name: "Rubble",
+        owner: player,
+        coordinates: { galaxy: 2, system: 45, position: 6 },
+        debris: { metal: "9000", crystal: "2000" },
+        updatedAtBlock: "126",
+        transactionHash: "0xrich",
+      }),
+    ]);
+    expect(body.source).toBe("contract-state-indexer");
+  });
+
   test("cold-starts without canonical rebuild, then serves pages without re-reading chain (VEY-KANEO-497)", async () => {
     const chainReader = new MockChainReader();
     const chainSync = {
