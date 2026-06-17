@@ -1184,6 +1184,30 @@ contract VeydriftGameTest is Test {
         assertTrue(game.activeBuildingConstruction(planetId).active);
     }
 
+    function testEffectiveStateProjectsMaturedTerraformerFieldsWithoutMutation() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        uint16 startingFields = game.planet(planetId).fields;
+
+        _seedTerraformerPrerequisites(planetId);
+        _setResources(planetId, 50_000_000, 50_000_000, 50_000_000);
+
+        vm.prank(player);
+        game.startBuildingUpgrade(planetId, Building.Terraformer);
+        vm.warp(uint256(game.activeBuildingConstruction(planetId).readyAt) + 1);
+
+        VeydriftGameStorage.EffectivePlanetState memory state =
+            effectiveStateLens.effectivePlanetState(
+                IVeydriftEffectiveStateGame(address(game)), planetId
+            );
+
+        assertEq(state.buildingLevels[uint8(Building.Terraformer)], 1);
+        assertEq(state.planet.fields, startingFields + 5);
+        assertEq(uint256(game.buildingLevel(planetId, Building.Terraformer)), 0);
+        assertEq(game.planet(planetId).fields, startingFields);
+        assertTrue(game.activeBuildingConstruction(planetId).active);
+    }
+
     function testEffectiveProductionAndStorageUseMaturedStateWithoutMutation() public {
         vm.prank(player);
         uint256 minePlanetId = game.startPlanet{value: 0.05 ether}();

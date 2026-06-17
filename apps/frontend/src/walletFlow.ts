@@ -995,6 +995,18 @@ export function isUserRejected(error: unknown): boolean {
 
 export const CONTRACT_REJECTED_NO_REASON_MESSAGE =
   "The game contract rejected this transaction, but the wallet did not provide a specific reason. Refresh game state and retry, or choose a different action if the state changed.";
+export const GAME_BACKEND_UNAVAILABLE_MESSAGE =
+  "The Veydrift backend is temporarily unreachable from this browser. It is likely restarting and should be back in a few minutes.";
+
+export function isGameBackendUnavailableMessage(message: string | undefined): boolean {
+  return typeof message === "string" && (
+    message === GAME_BACKEND_UNAVAILABLE_MESSAGE
+    || /veydrift backend is temporarily unavailable/i.test(message)
+    || /timed out reading .* from the game api/i.test(message)
+    || /game api may be temporarily unavailable/i.test(message)
+    || /game api is temporarily unavailable/i.test(message)
+  );
+}
 
 export function walletRequestErrorMessage(error: unknown): string {
   const message = errorMessage(error);
@@ -2882,19 +2894,19 @@ async function apiErrorMessage(response: Response, label: string): Promise<strin
     const error = typeof body.error === "string" ? body.error.trim() : "";
 
     if (response.status === 503 && error === "backend_not_configured") {
-      return `${label} API is temporarily unavailable. The app will retry instead of requiring a wallet reconnect.`;
+      return "The Veydrift backend is temporarily unavailable. The app will retry instead of requiring a wallet reconnect.";
     }
 
     if (response.status >= 500) {
       return error
-        ? `${label} API is temporarily unavailable (${response.status}: ${error}). The app will retry.`
-        : `${label} API is temporarily unavailable (${response.status}). The app will retry.`;
+        ? `The Veydrift backend is temporarily unavailable (${response.status}: ${error}). The app will retry.`
+        : `The Veydrift backend is temporarily unavailable (${response.status}). The app will retry.`;
     }
 
     return error ? `${fallback}: ${error}` : fallback;
   } catch {
     if (response.status >= 500) {
-      return `${label} API is temporarily unavailable (${response.status}). The app will retry.`;
+      return `The Veydrift backend is temporarily unavailable (${response.status}). The app will retry.`;
     }
 
     return fallback;
@@ -2913,7 +2925,7 @@ function isRevertedReceiptStatus(status: TransactionReceipt["status"]): boolean 
 function walletApiNetworkFailureMessage(label: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? "");
   if (/failed to fetch|load failed|network|err_http2/i.test(message)) {
-    return `${label} API could not be reached from this browser. Keeping the last known game state and retrying when the backend connection recovers.`;
+    return GAME_BACKEND_UNAVAILABLE_MESSAGE;
   }
 
   return message || `${label} API could not be reached.`;

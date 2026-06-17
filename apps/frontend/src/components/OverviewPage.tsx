@@ -829,8 +829,6 @@ export function overviewResearchActionNoticeFor(
   };
 }
 
-const MAX_FLEET_SUMMARY_LINES = 4;
-
 export type FleetSummaryLine = {
   key: string;
   text: string;
@@ -840,7 +838,6 @@ export type FleetSummaryLine = {
 export type FleetsSummaryData = {
   activeCount: number;
   lines: FleetSummaryLine[];
-  hiddenCount: number;
   underAttack: { count: number; soonestLabel: string } | null;
 };
 
@@ -916,8 +913,7 @@ export function summarizeFleets(fleetVisibility: FleetMissionVisibilityResponse,
     underAttack = { count: hostileIncoming.length, soonestLabel };
   }
 
-  const shown = lines.slice(0, MAX_FLEET_SUMMARY_LINES);
-  return { activeCount, lines: shown, hiddenCount: lines.length - shown.length, underAttack };
+  return { activeCount, lines, underAttack };
 }
 
 export function FleetsSummary({
@@ -974,17 +970,6 @@ export function FleetsSummary({
               {line.text}
             </li>
           ))}
-          {summary.hiddenCount > 0 ? (
-            <li>
-              <button
-                className="w-full rounded-md border border-white/10 bg-white/5 px-2.5 py-1.5 text-left text-[11px] font-medium text-slate-300 transition hover:border-cyan-300/40 hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-300/45"
-                onClick={onOpenMissionControl}
-                type="button"
-              >
-                {`+${summary.hiddenCount} more — open Mission Control`}
-              </button>
-            </li>
-          ) : null}
         </ul>
       )}
     </section>
