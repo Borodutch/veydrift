@@ -19,6 +19,7 @@ export const WORKER_ROLE_ENV = "VEYDRIFT_WORKER_ROLE";
 export const WORKER_INDEX_ENV = "VEYDRIFT_WORKER_INDEX";
 export const WORKER_COUNT_ENV = "VEYDRIFT_WORKER_COUNT";
 export const WRITER_INTERNAL_PORT_ENV = "VEYDRIFT_WRITER_INTERNAL_PORT";
+export const DEFAULT_MAX_WORKER_COUNT = 4;
 
 export type WorkerRole = "writer" | "reader";
 
@@ -37,8 +38,10 @@ export type WorkerAssignment =
 
 // Resolve how many worker processes to run. `VEYDRIFT_WORKER_COUNT` is an
 // explicit override (useful for tests, constrained containers, or pinning a
-// single-process deployment); otherwise we use the host CPU count. The result is
-// always at least 1 so the backend can boot on a single-core host.
+// single-process deployment). Without an override, keep the pool memory-bounded:
+// each worker opens the indexed SQLite read model and carries per-process caches,
+// so using every host CPU can multiply RAM during api-test divergence scans.
+// The result is always at least 1 so the backend can boot on a single-core host.
 export function resolveWorkerCount(
   env: Record<string, string | undefined>,
   hardwareConcurrency: number
@@ -52,7 +55,7 @@ export function resolveWorkerCount(
   }
 
   const cpus = Number.isFinite(hardwareConcurrency) ? Math.floor(hardwareConcurrency) : 1;
-  return Math.max(1, cpus);
+  return Math.max(1, Math.min(cpus, DEFAULT_MAX_WORKER_COUNT));
 }
 
 // The first worker is the single writer; every other worker is a reader.
