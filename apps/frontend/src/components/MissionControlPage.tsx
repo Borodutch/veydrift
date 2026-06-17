@@ -1168,7 +1168,7 @@ function MissionReportDetail({
     <section className="rounded-lg border border-cyan-300/20 bg-cyan-300/10 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200/80">Shareable battle report</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-200/80">Shareable mission report</p>
           <h3 className="mt-1 text-base font-semibold text-white">{report.title}</h3>
           <p className="mt-1 text-xs text-cyan-100/80">{report.routeSummary}</p>
         </div>
@@ -1216,7 +1216,7 @@ function MissionReportDetail({
         <ReportPanel title="Losses and debris">
           <ReportLine label="Fleet losses" value={report.losses} />
           <ReportLine label="Defense losses" value={report.losses} />
-          <ReportLine label="Debris field" value={report.debris} />
+          <ReportLine label={mission.missionType === "Harvest" ? "Debris collected" : "Debris field"} value={report.debris} />
         </ReportPanel>
         <ReportPanel title="Public proof">
           <ReportLine label="Transaction" value={mission.transactionHash || "Pending chain proof"} />
@@ -2166,6 +2166,12 @@ function formatCargo(cargo: FleetMissionSummary["cargo"]): string {
   return `${formatResource(cargo.metal)} M / ${formatResource(cargo.crystal)} C / ${formatResource(cargo.deuterium)} D`;
 }
 
+function harvestReturnCargoLabel(mission: FleetMissionSummary): string | null {
+  if (mission.missionType !== "Harvest") return null;
+  if (!mission.returnCargo) return "Unavailable for legacy harvest reports.";
+  return formatCargo(mission.returnCargo);
+}
+
 function formatShips(ships: Record<string, string>): string {
   const active = Object.entries(ships)
     .filter(([, value]) => Number(value) > 0)
@@ -2422,7 +2428,7 @@ export function missionReport(
         : "No group recorded.",
     attacker: commanderLabel(mission.owner, planetLookup.get(mission.originPlanetId)),
     battleTime: formatMissionTime(mission.arrivalAt, now),
-    debris: "Not reported by the visible mission feed yet.",
+    debris: harvestReturnCargoLabel(mission) ?? "Not reported by the visible mission feed yet.",
     defender: planetLookup.get(mission.targetPlanetId)?.owner
       ? commanderLabel(planetLookup.get(mission.targetPlanetId)!.owner, planetLookup.get(mission.targetPlanetId))
       : "External commander unavailable",
@@ -2443,7 +2449,7 @@ function missionReportText(
   const report = missionReport(mission, now, planetLookup);
   const joinedAttackMissionIds = mission.joinedAttackMissionIds ?? [];
   return [
-    `Veydrift battle report: ${report.title}`,
+    `Veydrift mission report: ${report.title}`,
     `Battle time: ${report.battleTime}`,
     `Status: ${missionDisplayStatusLabel(mission, now)}`,
     `Route: ${report.routeSummary}`,
@@ -2454,7 +2460,7 @@ function missionReportText(
     `Fuel burned: ${formatResource(mission.fuelCost)} deuterium`,
     `Outcome: ${report.outcome}`,
     `Losses: ${report.losses}`,
-    `Debris: ${report.debris}`,
+    mission.missionType === "Harvest" ? `Debris collected: ${report.debris}` : `Debris: ${report.debris}`,
     mission.attackGroupId ? `Group: ${mission.attackGroupId}` : null,
     joinedAttackMissionIds.length > 0 ? `Joined attacks: ${joinedAttackMissionIds.join(", ")}` : null,
     mission.transactionHash ? `Tx: ${mission.transactionHash}` : null,

@@ -265,6 +265,7 @@ export type FleetMissionSummary = {
   // raw defender count from `counterplayDefenderMissionIds`.
   stationedDefenders?: StationedDefenderSummary[];
   cargo: OnChainResources;
+  returnCargo?: OnChainResources | null;
   ships: Record<string, string>;
   transactionHash: string;
   blockNumber: string;
