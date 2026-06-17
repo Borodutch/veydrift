@@ -4850,49 +4850,91 @@ describe("SettlementIndexer", () => {
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)?.count).toBe(12);
   });
 
-  test("serves only future deduplicated defense backlog entries behind the active queue", () => {
-    const indexer = new SettlementIndexer({
-      async listDebrisFieldEvents() { return []; },
-      async listMoonChanceReportEvents() { return []; },
-      async listSettledPlanetEvents() { return []; }
-    }, 100n);
-    indexer.applyEvent({
+  test("serves only future deduplicated defense backlog entries behind the active queue", async () => {
+    const planetOne: SettledPlanetEvent = {
       ...planet,
       planetId: "1",
       owner: player,
       galaxy: 6,
       system: 9,
       position: 1
-    });
-    for (const [defenseId, count] of [[0n, 12n], [1n, 38n], [6n, 7n]] as const) {
-      indexer.applyLog({
-        blockNumber: "0x300",
-        transactionHash: `0xdefense-count-${defenseId}`,
-        logIndex: `0x${defenseId.toString(16)}`,
-        topics: [planetDefenseCountChangedTopic, topic(1n), topic(defenseId)],
-        data: abiWords(count)
-      });
-    }
+    };
+    const rawState: CanonicalPlanetChainState = {
+      planetId: "1",
+      resources: planetOne.resources,
+      buildings: deriveBuildingRows(() => 0),
+      defenses: deriveDefenseRows((id) => {
+        if (id === 0) return 12;
+        if (id === 1) return 38;
+        if (id === 6) return 7;
+        return 0;
+      }),
+      ships: deriveShipRows(() => 0),
+      queues: {
+        building: null,
+        defense: {
+          active: true,
+          kind: "defense",
+          itemId: 2,
+          quantity: 2,
+          readyAt: "1781725842",
+          cost: { metal: "4000", crystal: "12000", deuterium: "0" },
+          backlog: [
+            {
+              active: true,
+              kind: "defense",
+              itemId: 1,
+              quantity: 2,
+              readyAt: "1781726802",
+              cost: { metal: "1", crystal: "0", deuterium: "0" }
+            },
+            {
+              active: true,
+              kind: "defense",
+              itemId: 0,
+              quantity: 4,
+              readyAt: "1781728722",
+              cost: { metal: "1", crystal: "0", deuterium: "0" }
+            }
+          ]
+        },
+        ship: null
+      }
+    };
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return [planetOne]; },
+      async getCanonicalPlanetState(planetId) {
+        expect(planetId).toBe(1n);
+        return rawState;
+      },
+      async getBlockNumber() { return 0x301n; },
+      async listContractLogs() { return []; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { throw new Error("settled event scan should not run"); },
+      async getInfrastructureState() { throw new Error("high-level infrastructure reader should not run"); },
+      async getShipyardState() { throw new Error("high-level shipyard reader should not run"); },
+      async getDefenseState() { throw new Error("high-level defense reader should not run"); },
+      async getPlayerQueues() { throw new Error("high-level queue reader should not run"); }
+    }, 100n);
 
-    indexer.applyLog({
-      blockNumber: "0x301",
-      transactionHash: "0xactive-heavy-laser",
-      logIndex: "0x0",
-      topics: [defenseQueuedTopic, topic(1n), topic(2n)],
-      data: abiWords(2n, 1781725842n, 4000n, 12000n, 0n)
+    await expect(indexer.seedCurrentCanonicalState({ planetConcurrency: 25 })).resolves.toMatchObject({
+      indexedPlanets: 1,
+      lastReconciledBlock: "769",
+      lastReconciliationError: null
     });
-    for (const [index, defenseId, quantity, readyAt] of [
+
+    for (const [index, defenseId, quantity, readyAt, startedAt] of [
       [1n, 0n, 3n, 1781577132n],
       [2n, 1n, 3n, 1781671566n],
       [3n, 0n, 1n, 1781672046n],
       [4n, 0n, 1n, 1781672046n],
-      [5n, 1n, 2n, 1781726802n],
-      [6n, 0n, 4n, 1781728722n],
-      [7n, 1n, 2n, 1781726802n],
-      [8n, 0n, 4n, 1781728722n]
+      [5n, 1n, 2n, 1781726802n, 1781722014n],
+      [6n, 0n, 4n, 1781728722n, 1781722034n]
     ] as const) {
       indexer.applyLog({
         blockNumber: "0x302",
+        ...(startedAt ? { blockTimestamp: `0x${startedAt.toString(16)}` } : {}),
         transactionHash: `0xdefense-backlog-${index}`,
         logIndex: `0x${index.toString(16)}`,
         topics: [defenseQueuedTopic, topic(1n), topic(defenseId)],
@@ -4907,9 +4949,9 @@ describe("SettlementIndexer", () => {
       quantity: 2,
       readyAt: "1781725842"
     });
-    expect(defenseQueue?.backlog?.map(({ itemId, quantity, readyAt }) => ({ itemId, quantity, readyAt }))).toEqual([
-      { itemId: 1, quantity: 2, readyAt: "1781726802" },
-      { itemId: 0, quantity: 4, readyAt: "1781728722" }
+    expect(defenseQueue?.backlog?.map(({ itemId, quantity, readyAt, startedAt }) => ({ itemId, quantity, readyAt, startedAt }))).toEqual([
+      { itemId: 1, quantity: 2, readyAt: "1781726802", startedAt: "1781722014" },
+      { itemId: 0, quantity: 4, readyAt: "1781728722", startedAt: "1781722034" }
     ]);
     expect(indexer.defenseRows("1").filter((defense) => defense.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
       { id: 0, count: 12 },

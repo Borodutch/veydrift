@@ -3959,9 +3959,7 @@ export class SettlementIndexer {
     const activeQueue = this.productionQueueFromRow(row);
     const nextBacklog = this.sanitizedProductionBacklog(row.queue_kind, activeQueue, Array.isArray(backlog) ? backlog : []);
     const nextEntry = queueStateFromEvent(event);
-    if (!nextBacklog.some((entry) => queueStatesMatch(entry, nextEntry))) {
-      nextBacklog.push(nextEntry);
-    }
+    this.mergeProductionBacklogEntry(nextBacklog, nextEntry);
     const sanitizedBacklog = this.sanitizedProductionBacklog(row.queue_kind, activeQueue, nextBacklog);
     this.db.query(`
       UPDATE contract_production_queues
@@ -4151,10 +4149,21 @@ export class SettlementIndexer {
       if (entry.kind !== kind) continue;
       const entryReadyAt = queueReadyAt(entry);
       if (activeReadyAt !== null && entryReadyAt !== null && entryReadyAt <= activeReadyAt) continue;
-      if (sanitized.some((existing) => queueStatesMatch(existing, entry))) continue;
-      sanitized.push(entry);
+      this.mergeProductionBacklogEntry(sanitized, entry);
     }
     return sanitized;
+  }
+
+  private mergeProductionBacklogEntry(backlog: QueueState[], entry: QueueState): void {
+    const existingIndex = backlog.findIndex((existing) => queueStatesMatchIgnoringStartedAt(existing, entry));
+    if (existingIndex < 0) {
+      backlog.push(entry);
+      return;
+    }
+    const existing = backlog[existingIndex];
+    if (existing && !existing.startedAt && entry.startedAt) {
+      backlog[existingIndex] = entry;
+    }
   }
 
   private indexedLogsForTransaction(transactionHash: string): IndexedRpcLog[] {
@@ -5601,6 +5610,17 @@ function queueStatesMatch(left: QueueState, right: QueueState): boolean {
     && left.quantity === right.quantity
     && left.readyAt === right.readyAt
     && (left.startedAt ?? null) === (right.startedAt ?? null)
+    && left.cost.metal === right.cost.metal
+    && left.cost.crystal === right.cost.crystal
+    && left.cost.deuterium === right.cost.deuterium;
+}
+
+function queueStatesMatchIgnoringStartedAt(left: QueueState, right: QueueState): boolean {
+  return left.kind === right.kind
+    && left.itemId === right.itemId
+    && left.targetLevel === right.targetLevel
+    && left.quantity === right.quantity
+    && left.readyAt === right.readyAt
     && left.cost.metal === right.cost.metal
     && left.cost.crystal === right.cost.crystal
     && left.cost.deuterium === right.cost.deuterium;
