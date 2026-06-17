@@ -15,6 +15,7 @@ import {
   ShipQuantityRow,
   shouldShowDestinationIntel,
   shouldShowReturnTiming,
+  staleSelectedShipQuantityBlocker,
   stationedDefenderCompositionUnits,
   TargetIntelCard,
   targetResourceIntel,
@@ -632,6 +633,42 @@ describe("mission creation", () => {
 
     expect(blocked).toContain("Fleet slots full (5/5)");
     expect(blocked).toContain("Computer Technology");
+  });
+
+  test("blocks stale over-selected ship quantities before launch", () => {
+    const staleBlocker = staleSelectedShipQuantityBlocker(
+      attackAction,
+      { ...attackAction.ships, lightFighter: 5 },
+      { ships: [{ id: 1, count: 2 }] },
+    );
+
+    expect(staleBlocker).toBe(
+      "Selected ship quantities are stale: Light Fighter 5 selected / 2 available. Refresh mission state or reduce the quantities before launching."
+    );
+    expect(missionDraftBlocker({
+      action: attackAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      cargoTotal: 0,
+      fleetSlots: { active: 0, limit: 1 },
+      fuelCost: 0,
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 1,
+      resources: { metal: 0, crystal: 0, deuterium: 1_000 },
+      selectedShipCount: 5,
+      staleShipQuantityBlocker: staleBlocker,
+      totalCargoCapacity: 250,
+    })).toBe(staleBlocker);
+    expect(staleSelectedShipQuantityBlocker(
+      attackAction,
+      { ...attackAction.ships, lightFighter: 2 },
+      { ships: [{ id: 1, count: 2 }] },
+    )).toBeUndefined();
+    expect(staleSelectedShipQuantityBlocker(
+      missileAction,
+      { ...attackAction.ships, lightFighter: 5 },
+      { ships: [{ id: 1, count: 2 }] },
+    )).toBeUndefined();
   });
 
   test("checks fuel for fleet missions and missile quantity for missile missions", () => {

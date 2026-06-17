@@ -85,6 +85,10 @@ type ShipOption = {
   asset: string;
 };
 
+type MissionShipInventorySnapshot = {
+  ships: Array<{ id: number; count: number }>;
+};
+
 export type UnitItem = {
   key: string;
   label: string;
@@ -264,6 +268,10 @@ export function MissionCreationPage({
     () => targetResourceIntel(target, travelSeconds),
     [target, travelSeconds],
   );
+  const staleShipQuantityBlocker = useMemo(
+    () => staleSelectedShipQuantityBlocker(action, ships, shipyardState),
+    [action, ships, shipyardState],
+  );
   const maxLootForecast = useMemo(
     () => forecastRaidLoot(resourceIntel.projectedArrivalLootable, cargoCapacity, greedyLootEnabled ? null : lootRatio),
     [cargoCapacity, greedyLootEnabled, lootRatio, resourceIntel.projectedArrivalLootable],
@@ -315,6 +323,7 @@ export function MissionCreationPage({
     quantity,
     resources,
     selectedShipCount,
+    staleShipQuantityBlocker,
     totalCargoCapacity,
   });
 
@@ -603,6 +612,7 @@ export function missionDraftBlocker({
   quantity,
   resources,
   selectedShipCount,
+  staleShipQuantityBlocker,
   totalCargoCapacity,
 }: {
   // VEY-KANEO-440: true when an ACS Defend fleet is too slow to reach the defended planet before the
@@ -620,6 +630,7 @@ export function missionDraftBlocker({
   quantity: number;
   resources: MissionResourceSnapshot | undefined;
   selectedShipCount: number;
+  staleShipQuantityBlocker?: string | undefined;
   totalCargoCapacity: number;
 }): string | undefined {
   if (!originCoords) return "Active origin planet is unavailable.";
@@ -636,6 +647,7 @@ export function missionDraftBlocker({
     return `Fleet slots full (${fleetSlots.active}/${fleetSlots.limit}) — research Computer Technology to raise the limit, or wait for a fleet to return.`;
   }
   if (selectedShipCount <= 0) return "Choose at least one ship.";
+  if (staleShipQuantityBlocker) return staleShipQuantityBlocker;
   if (acsArrivalTooSlow) {
     return "Fleet cannot reach the planet before the attack — pick a faster speed or faster ships.";
   }
@@ -649,6 +661,27 @@ export function missionDraftBlocker({
     return `Loot ratio must total ${LOOT_RATIO_TOTAL_PERCENT}%.`;
   }
   return undefined;
+}
+
+export function staleSelectedShipQuantityBlocker(
+  action: EnabledGalaxyAction,
+  ships: MissionShips,
+  shipyardState: MissionShipInventorySnapshot | null,
+): string | undefined {
+  if (action.mode === "missile" || !shipyardState) return undefined;
+
+  const allowed = allowedShipKeysForAction(action);
+  const overSelected = missionShipOptions
+    .filter((ship) => allowed.has(ship.key))
+    .map((ship) => {
+      const selected = Math.max(0, Math.trunc(ships[ship.key] ?? 0));
+      const owned = shipyardState.ships.find((item) => item.id === ship.id)?.count ?? 0;
+      return selected > owned ? `${ship.label} ${selected.toLocaleString()} selected / ${owned.toLocaleString()} available` : null;
+    })
+    .filter((row): row is string => Boolean(row));
+
+  if (overSelected.length <= 0) return undefined;
+  return `Selected ship quantities are stale: ${overSelected.join(", ")}. Refresh mission state or reduce the quantities before launching.`;
 }
 
 export function missionTimingSummary(travelSeconds: number, nowMs: number = Date.now()): {

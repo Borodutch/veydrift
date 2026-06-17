@@ -4687,6 +4687,91 @@ describe("SettlementIndexer", () => {
     expect(indexer.shipRows("99").find((ship) => ship.id === 2)?.count).toBe(3);
   });
 
+  test("stored planet events do not overwrite canonical current-state identity", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    const canonicalPlanet: SettledPlanetEvent = {
+      ...planet,
+      transactionHash: "0x",
+      blockNumber: "0",
+      fields: 190,
+      temperature: -95,
+      metalMultiplierBps: 10000,
+      crystalMultiplierBps: 10000,
+      deuteriumMultiplierBps: 14700
+    };
+
+    indexer.applyEvent(canonicalPlanet);
+    indexer.applyEvent({
+      ...planet,
+      transactionHash: "0xolder-start-event",
+      blockNumber: "999",
+      fields: 211,
+      temperature: -8,
+      metalMultiplierBps: 12000,
+      crystalMultiplierBps: 12500,
+      deuteriumMultiplierBps: 10584
+    });
+
+    expect(indexer.planet(planet.planetId)).toMatchObject({
+      fields: 190,
+      temperature: -95,
+      metalMultiplierBps: 10000,
+      crystalMultiplierBps: 10000,
+      deuteriumMultiplierBps: 14700
+    });
+  });
+
+  test("explicit contract-log replay runs targeted canonical heals after rematerializing stored logs", async () => {
+    const canonicalState: CanonicalPlanetChainState = {
+      planetId: planet.planetId,
+      resources: planet.resources,
+      buildings: deriveBuildingRows(() => 0),
+      defenses: deriveDefenseRows((id) => (id === 1 ? 4 : 0)),
+      ships: deriveShipRows(() => 0),
+      queues: {
+        building: null,
+        defense: null,
+        ship: null
+      }
+    };
+    const indexer = new SettlementIndexer({
+      async getCanonicalPlanetState() {
+        return canonicalState;
+      },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      async listContractLogs() {
+        return [{
+          blockNumber: "0x95",
+          transactionHash: "0xreturned",
+          logIndex: "0x0",
+          topics: [fleetMissionReturnedTopic, topic(70n), addressTopic(player), topic(BigInt(planet.planetId))],
+          data: "0x"
+        }];
+      }
+    }, 100n);
+
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x93",
+      transactionHash: "0xstale-defense",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(BigInt(planet.planetId)), topic(1n)],
+      data: abiWords(5n)
+    });
+
+    expect(indexer.defenseRows(planet.planetId).find((row) => row.id === 1)?.count).toBe(5);
+
+    await indexer.replayContractLogs(0x94n, 0x95n);
+
+    expect(indexer.defenseRows(planet.planetId).find((row) => row.id === 1)?.count).toBe(4);
+  });
+
   test("current-state seed ignores older replayed defense backlog events behind canonical counts", async () => {
     const rawState: CanonicalPlanetChainState = {
       planetId: planet.planetId,
