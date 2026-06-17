@@ -24,7 +24,14 @@ import { BattleReportsPage } from "./components/BattleReportsPage";
 import { RankingsPage } from "./components/RankingsPage";
 import { RaidTargetFinderPage } from "./components/RaidTargetFinderPage";
 import { AllianceInspectPage, PlayerInspectPage } from "./components/InspectPages";
-import { buildInspectHash, parseInspectRoute, type InspectRoute } from "./inspectRoutes";
+import {
+  buildInspectHash,
+  hasUsefulPlanetDetailBackRoute,
+  parseInspectRoute,
+  planetDetailBackRouteForCurrentScreen,
+  type InspectRoute,
+  type PlanetDetailBackRoute,
+} from "./inspectRoutes";
 import { ShareDialog } from "./components/ShareDialog";
 import {
   buildingKeyForContractId,
@@ -1885,6 +1892,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [inspectedAllianceId, setInspectedAllianceId] = useState<string | null>(() => initialInspectPageState().allianceId);
   const [missionDetailId, setMissionDetailId] = useState<string | null>(() => initialInspectPageState().missionDetailId);
   const [missionReportId, setMissionReportId] = useState<string | null>(() => initialInspectPageState().missionReportId);
+  const [planetBackRoute, setPlanetBackRoute] = useState<PlanetDetailBackRoute | null>(null);
   const [selectedBuildingKey, setSelectedBuildingKey] = useState<BuildingKey>("metalMine");
   const [selectedResearchKey, setSelectedResearchKey] = useState<ResearchKey>("energy");
   const [selectedDefenseKey, setSelectedDefenseKey] = useState<DefenseKey>("rocketLauncher");
@@ -2179,6 +2187,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     return () => window.removeEventListener("hashchange", handleRouteChange);
 
     function applyInspectRoute(route: InspectRoute) {
+      setPlanetBackRoute(null);
       if (route.kind === "player") {
         setInspectedPlayerWallet(route.wallet);
         setInspectedAllianceId(null);
@@ -4903,6 +4912,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [account, gameContract, onChainSettlement?.homePlanetId, pendingJoinAttack, provider, runGalaxyTransaction]);
 
   const handleNavigate = useCallback((target: Page) => {
+    setPlanetBackRoute(null);
     setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
     setPendingAcsDefend(null);
@@ -4916,6 +4926,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, []);
 
   const handleOpenMissionReport = useCallback((missionId: string) => {
+    setPlanetBackRoute(null);
     setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
     setPendingAcsDefend(null);
@@ -4929,6 +4940,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, []);
 
   const handleOpenMissionReportList = useCallback(() => {
+    setPlanetBackRoute(null);
     setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
     setPendingAcsDefend(null);
@@ -4946,6 +4958,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, []);
 
   const handleSelectPlanet = useCallback((coords: Coordinates) => {
+    setPlanetBackRoute(planetDetailBackRouteForCurrentScreen({
+      inspectedAllianceId,
+      inspectedPlayerWallet,
+      missionDetailId,
+      missionReportId,
+      page,
+    }));
     setPendingGalaxyMission(null);
     setPendingJoinAttack(null);
     setPendingAcsDefend(null);
@@ -4957,7 +4976,18 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setMissionReportId(null);
     setPage("planet");
     writeInspectHash({ kind: "planet", coords });
-  }, []);
+  }, [inspectedAllianceId, inspectedPlayerWallet, missionDetailId, missionReportId, page]);
+
+  const handlePlanetDetailBack = useCallback(() => {
+    if (hasUsefulPlanetDetailBackRoute(planetBackRoute) && typeof window !== "undefined" && window.history.length > 1) {
+      setPlanetBackRoute(null);
+      window.history.back();
+      return;
+    }
+
+    setPlanetBackRoute(null);
+    handleNavigate("galaxy");
+  }, [handleNavigate, planetBackRoute]);
 
   // VEY-KANEO-440: the "Defend a planet" CTA (Mission Control + Defenses "Stationed defenses" panel)
   // opens the player's own home planet detail rather than the bare Galaxy grid. Every wallet has a home
@@ -5213,7 +5243,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           homePlanetId={activePlanetId ?? onChainSettlement?.homePlanetId}
           homePlanet={homePlanetIdentity}
           onAction={handleGalaxyAction}
-          onBack={() => setPage("galaxy")}
+          onBack={handlePlanetDetailBack}
           shipyardState={missionActionShipyardState}
         />
       );
