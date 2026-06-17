@@ -80,7 +80,7 @@ describe("navigation and planet selector UI source contracts", () => {
 
   test("keeps the planet rename action as a compact pencil icon", () => {
     expect(overviewSource).toContain('className="relative inline-grid h-5 w-5 translate-y-px place-items-center self-center');
-    expect(overviewSource).toContain('className="m-0 min-w-0 break-words text-base font-semibold text-white"');
+    expect(overviewSource).toContain('className="m-0 min-w-0 break-words text-base font-semibold leading-tight text-white"');
     expect(overviewSource).toContain("after:-inset-1.5");
     expect(overviewSource).toContain('<Pencil aria-hidden="true" size={11} strokeWidth={2} />');
     expect(overviewSource).toContain('title="Rename planet"');

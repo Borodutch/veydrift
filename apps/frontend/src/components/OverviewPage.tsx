@@ -277,81 +277,84 @@ export function OverviewPage({
         </div>
       ) : (
       <div className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
-        <div className={`relative ${renamePanelOpen ? "min-h-56" : "h-28 sm:h-32"}`}>
-          {(!heroImage || !heroImageLoaded) && (
-            <PlanetImageSkeleton className="absolute inset-0" />
-          )}
-          {heroImage ? (
-            <OptimizedImage
-              key={heroImage}
-              alt=""
-              className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-200 ${heroImageLoaded ? "opacity-100" : "opacity-0"}`}
-              imageRef={heroImageRef}
-              loading="eager"
-              onLoad={(event) => {
-                if (isImageReady(event.currentTarget)) setHeroImageLoaded(true);
-              }}
-              sizes="hero"
-              src={heroImage}
-            />
-          ) : null}
-          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(7,9,19,0.35),rgba(7,9,19,0.92))]" />
-          <div className={`relative flex ${renamePanelOpen ? "min-h-56" : "h-full"} flex-col justify-end p-3 sm:p-4`}>
-            <p className="text-[11px] font-medium text-slate-400">{planetSubhead}</p>
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="m-0 min-w-0 break-words text-base font-semibold text-white">
-                {livePlanetName ?? (
-                  <span
-                    aria-label="Loading planet name"
-                    className="inline-block h-4 w-32 animate-pulse rounded bg-white/10 align-middle"
-                  />
-                )}
-              </h2>
-              <div className="flex shrink-0 items-center gap-1.5">
-                {canShowRename && (
-                  <button
-                    aria-expanded={renamePanelOpen}
-                    aria-label="Rename planet"
-                    className="relative inline-grid h-5 w-5 translate-y-px place-items-center self-center rounded text-slate-200/80 transition after:absolute after:-inset-1.5 after:content-[''] hover:bg-cyan-200/10 hover:text-cyan-100 focus:outline-none focus:ring-1 focus:ring-cyan-300/70 disabled:cursor-not-allowed disabled:text-slate-500"
-                    disabled={renameBusy}
-                    onClick={() => {
-                      setRenamePanelOpen((open) => !open);
-                      setRenameDraft(planetName);
-                      setRenameValidation(undefined);
-                    }}
-                    title="Rename planet"
-                    type="button"
-                  >
-                    <Pencil aria-hidden="true" size={11} strokeWidth={2} />
-                  </button>
-                )}
-                {showAbandonAction && (
-                  <button
-                    aria-label="Abandon planet"
-                    className="inline-flex h-8 items-center gap-1 rounded border border-red-300/25 bg-red-300/10 px-2.5 text-xs font-semibold text-red-100 transition hover:bg-red-300/20 focus:outline-none focus:ring-2 focus:ring-red-300/50"
-                    onClick={() => onAbandonPlanet?.()}
-                    title="Abandon planet"
-                    type="button"
-                  >
-                    <Trash2 aria-hidden="true" size={13} strokeWidth={2} />
-                    Abandon
-                  </button>
-                )}
+        <div className="grid grid-cols-[5.75rem_minmax(0,1fr)] gap-3 p-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-4 sm:p-4">
+          <div className="relative aspect-square min-w-0 overflow-hidden rounded-md border border-white/10 bg-[#070b13]">
+            {(!heroImage || !heroImageLoaded) && (
+              <PlanetImageSkeleton className="absolute inset-0" />
+            )}
+            {heroImage ? (
+              <OptimizedImage
+                key={heroImage}
+                alt="Planet hero"
+                className={`absolute inset-0 h-full w-full object-contain transition-opacity duration-200 ${heroImageLoaded ? "opacity-100" : "opacity-0"}`}
+                imageRef={heroImageRef}
+                loading="eager"
+                onLoad={(event) => {
+                  if (isImageReady(event.currentTarget)) setHeroImageLoaded(true);
+                }}
+                sizes="(min-width: 640px) 8rem, 5.75rem"
+                src={heroImage}
+              />
+            ) : null}
+          </div>
+          <div className="grid min-w-0 content-start gap-2">
+            <div className="min-w-0">
+              <p className="text-[11px] font-medium leading-tight text-slate-400">{planetSubhead}</p>
+              <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">
+                <h2 className="m-0 min-w-0 break-words text-base font-semibold leading-tight text-white">
+                  {livePlanetName ?? (
+                    <span
+                      aria-label="Loading planet name"
+                      className="inline-block h-4 w-32 animate-pulse rounded bg-white/10 align-middle"
+                    />
+                  )}
+                </h2>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {canShowRename && (
+                    <button
+                      aria-expanded={renamePanelOpen}
+                      aria-label="Rename planet"
+                      className="relative inline-grid h-5 w-5 translate-y-px place-items-center self-center rounded text-slate-200/80 transition after:absolute after:-inset-1.5 after:content-[''] hover:bg-cyan-200/10 hover:text-cyan-100 focus:outline-none focus:ring-1 focus:ring-cyan-300/70 disabled:cursor-not-allowed disabled:text-slate-500"
+                      disabled={renameBusy}
+                      onClick={() => {
+                        setRenamePanelOpen((open) => !open);
+                        setRenameDraft(planetName);
+                        setRenameValidation(undefined);
+                      }}
+                      title="Rename planet"
+                      type="button"
+                    >
+                      <Pencil aria-hidden="true" size={11} strokeWidth={2} />
+                    </button>
+                  )}
+                  {showAbandonAction && (
+                    <button
+                      aria-label="Abandon planet"
+                      className="inline-flex h-8 items-center gap-1 rounded border border-red-300/25 bg-red-300/10 px-2.5 text-xs font-semibold text-red-100 transition hover:bg-red-300/20 focus:outline-none focus:ring-2 focus:ring-red-300/50"
+                      onClick={() => onAbandonPlanet?.()}
+                      title="Abandon planet"
+                      type="button"
+                    >
+                      <Trash2 aria-hidden="true" size={13} strokeWidth={2} />
+                      Abandon
+                    </button>
+                  )}
+                </div>
               </div>
+              {canShowRename && planetRenameAction.status !== "idle" && !renamePanelOpen && (
+                <p className={`mt-1 max-w-full truncate text-xs ${renameStatusTone}`}>
+                  {planetRenameAction.label}
+                </p>
+              )}
+              {planetManagementAction.status !== "idle" && (
+                <p className={`mt-1 max-w-full truncate text-xs ${managementStatusTone}`}>
+                  {planetManagementAction.label}
+                </p>
+              )}
             </div>
-            {canShowRename && planetRenameAction.status !== "idle" && !renamePanelOpen && (
-              <p className={`mt-1 max-w-full truncate text-xs ${renameStatusTone}`}>
-                {planetRenameAction.label}
-              </p>
-            )}
-            {planetManagementAction.status !== "idle" && (
-              <p className={`mt-1 max-w-full truncate text-xs ${managementStatusTone}`}>
-                {planetManagementAction.label}
-              </p>
-            )}
             {canShowRename && renamePanelOpen && (
               <form
-                className="mt-3 grid gap-2 rounded border border-white/10 bg-black/45 p-3 backdrop-blur"
+                className="grid gap-2 rounded border border-white/10 bg-black/25 p-3"
                 onSubmit={handleRenameSubmit}
               >
                 <label className="grid gap-1 text-xs font-medium text-slate-200">
@@ -397,37 +400,37 @@ export function OverviewPage({
                 </div>
               </form>
             )}
-          </div>
-        </div>
-
-        {/* Stats strip — compact, never overflows */}
-        <div className="grid gap-3 border-t border-white/10 p-3 sm:p-4">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Planet stats</p>
-            <button
-              aria-controls="overview-planet-effects"
-              aria-expanded={effectsPanelOpen}
-              aria-label="Show planet effects"
-              className="inline-grid h-8 w-8 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/50"
-              onClick={() => setEffectsPanelOpen((open) => !open)}
-              title="Planet effects"
-              type="button"
-            >
-              <Info aria-hidden="true" size={15} strokeWidth={2} />
-            </button>
-          </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <StatPip label="Fields" value={stats.fields} />
-            <StatPip label="Temperature" value={stats.temperature} />
-            <StatPip label="Diameter" value={stats.diameter} />
-            <StatPip label="Status" value={stats.status} />
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Planet stats</p>
+                <button
+                  aria-controls="overview-planet-effects"
+                  aria-expanded={effectsPanelOpen}
+                  aria-label="Show planet effects"
+                  className="inline-grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/50"
+                  onClick={() => setEffectsPanelOpen((open) => !open)}
+                  title="Planet effects"
+                  type="button"
+                >
+                  <Info aria-hidden="true" size={14} strokeWidth={2} />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <StatPip label="Fields" value={stats.fields} />
+                <StatPip label="Temperature" value={stats.temperature} />
+                <StatPip label="Diameter" value={stats.diameter} />
+                <StatPip label="Status" value={stats.status} />
+              </div>
+            </div>
           </div>
           {effectsPanelOpen ? (
-            <PlanetEffectsPanel
-              effects={planetEffects}
-              id="overview-planet-effects"
-              onClose={() => setEffectsPanelOpen(false)}
-            />
+            <div className="col-span-2">
+              <PlanetEffectsPanel
+                effects={planetEffects}
+                id="overview-planet-effects"
+                onClose={() => setEffectsPanelOpen(false)}
+              />
+            </div>
           ) : null}
         </div>
       </div>
@@ -881,8 +884,11 @@ function PlanetEffectsPanel({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-cyan-100">Planet effects</p>
+          <p className="mt-1 text-slate-300">
+            Fields are the planet development budget: each building level consumes one field, and Terraformer expands the limit.
+          </p>
           <p className="mt-1 text-slate-400">
-            Fields limit construction slots. Temperature changes implemented production math for deuterium and Solar Satellite energy.
+            Temperature changes deuterium production and Solar Satellite energy output, so colder and hotter planets favor different builds.
           </p>
         </div>
         <button
@@ -895,25 +901,9 @@ function PlanetEffectsPanel({
         </button>
       </div>
 
-      <dl className="grid gap-2 sm:grid-cols-2">
-        <EffectMetric label="Fields used" value={effects.fields} />
-        <EffectMetric
-          label="Fields available"
-          value={effects.availableFields === undefined ? "Unavailable" : effects.availableFields.toLocaleString()}
-        />
+      <dl className="grid gap-2 sm:grid-cols-3">
         <EffectMetric label="Terraformer" value={effects.terraformer} />
-        <EffectMetric label="Field pressure" value={effects.fieldPressurePercent === undefined ? "Unavailable" : `${Math.round(effects.fieldPressurePercent)}%`} />
-        <EffectMetric label="Temperature" value={effects.temperature} />
         <EffectMetric label="Deuterium multiplier" value={effects.deuteriumMultiplier} />
-        <EffectMetric
-          label="Deuterium output"
-          value={effects.liveDeuteriumPerHour === undefined ? "Unavailable" : `${effects.liveDeuteriumPerHour.toLocaleString()}/h`}
-        />
-        <EffectMetric
-          label="Deuterium capacity"
-          value={effects.deuteriumCapacityPerHour === undefined ? "Unavailable" : `${effects.deuteriumCapacityPerHour.toLocaleString()}/h before power`}
-        />
-        <EffectMetric label="Mine power" value={effects.minePower} />
         <EffectMetric
           label="Solar Satellite"
           nowrap
