@@ -9,7 +9,13 @@ import {
   isStartedShipProductionVisible,
   isStartedResearchStateVisible,
   isMissionLaunchStateVisible,
+  isPendingMissionLaunch,
+  mergePendingMissionLaunches,
   missionLaunchMissionsForTransaction,
+  pendingMissionLaunch,
+  pendingMissionLaunchId,
+  reconcilePendingMissionLaunches,
+  removePendingMissionLaunchForTransaction,
   waitForFinishedResearchState,
   waitForStartedBuildingState,
   waitForStartedResearchState,
@@ -64,6 +70,92 @@ describe("post-transaction refresh reconciliation", () => {
 
     expect(isMissionLaunchStateVisible(snapshot, txHash.toUpperCase())).toBe(true);
     expect(missionLaunchMissionsForTransaction(snapshot, txHash)).toEqual([launched]);
+  });
+
+  test("creates a pending indexing mission row keyed by transaction hash and draft context", () => {
+    const pending = pendingMissionLaunch({
+      txHash: "0xABCDEF1234567890",
+      owner: wallet,
+      originPlanetId: "7",
+      targetPlanetId: "9",
+      missionType: "Transport",
+      ships: { smallCargo: 2, lightFighter: 0 },
+      cargo: { metal: 100, crystal: "25" },
+      fuelCost: 7,
+      submittedAtMs: 1_770_000_000_000,
+      travelSeconds: 90,
+    });
+
+    expect(pending.missionId).toBe(pendingMissionLaunchId("0xabcdef1234567890"));
+    expect(isPendingMissionLaunch(pending)).toBe(true);
+    expect(pending).toMatchObject({
+      status: "Outbound",
+      missionType: "Transport",
+      owner: wallet,
+      originPlanetId: "7",
+      targetPlanetId: "9",
+      arrivalAt: "1770000090",
+      returnAt: "1770000180",
+      fuelCost: "7",
+      cargo: { metal: "100", crystal: "25", deuterium: "0" },
+      ships: { smallCargo: "2" },
+      transactionHash: "0xabcdef1234567890",
+      blockNumber: "",
+    });
+  });
+
+  test("merges pending mission rows ahead of stale backend active missions", () => {
+    const pending = pendingMissionLaunch({
+      txHash: "0xpending",
+      owner: wallet,
+      originPlanetId: "7",
+      targetPlanetId: "9",
+      missionType: "Attack",
+      ships: { lightFighter: 1 },
+    });
+    const stale = mission("50", { transactionHash: "0xold" });
+
+    expect(mergePendingMissionLaunches([stale], [pending]).map((entry) => entry.missionId)).toEqual([
+      pending.missionId,
+      "50",
+    ]);
+  });
+
+  test("reconciles pending mission rows once canonical tx-hash data appears", () => {
+    const txHash = "0xlaunch";
+    const pending = pendingMissionLaunch({
+      txHash,
+      owner: wallet,
+      originPlanetId: "7",
+      targetPlanetId: "9",
+      missionType: "Attack",
+      ships: { lightFighter: 1 },
+    });
+    const canonical = mission("51", { transactionHash: txHash });
+
+    expect(reconcilePendingMissionLaunches([pending], missionLaunchSnapshot({ allActiveMissions: [canonical] }))).toEqual([]);
+    expect(mergePendingMissionLaunches([canonical], [pending]).map((entry) => entry.missionId)).toEqual(["51"]);
+  });
+
+  test("removes timed-out or failed pending mission rows by transaction hash", () => {
+    const pending = pendingMissionLaunch({
+      txHash: "0xremove",
+      owner: wallet,
+      originPlanetId: "7",
+      targetPlanetId: "9",
+      missionType: "Harvest",
+      ships: { recycler: 1 },
+    });
+    const keep = pendingMissionLaunch({
+      txHash: "0xkeep",
+      owner: wallet,
+      originPlanetId: "7",
+      targetPlanetId: "10",
+      missionType: "Deploy",
+      ships: { smallCargo: 1 },
+    });
+
+    expect(removePendingMissionLaunchForTransaction([pending, keep], "0xREMOVE")).toEqual([keep]);
   });
 
   test("does not accept a stale finished-building snapshot with an active queue", () => {

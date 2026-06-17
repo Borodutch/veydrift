@@ -7,6 +7,7 @@ import { shipAssetByKey } from "../gameAssets";
 import type { ShipKey } from "../playableMvp";
 import type { Coordinates, PlanetType } from "../types";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
+import { isPendingMissionLaunch } from "../postTransactionRefresh";
 import {
   type BattleReport,
   type BattleReportParticipant,
@@ -833,11 +834,12 @@ function MissionRow({
   const target = missionEndpoint(mission, "target", planetLookup);
   const noFleetReturned = isNoFleetReturned(mission);
   const directionSubtext = direction && direction !== "Joinable attack" ? direction : undefined;
+  const pendingMission = isPendingMissionLaunch(mission);
   return (
     <MissionCard
       actions={
         <>
-          {actions.map((action) => action.kind === "counterplay" ? (
+          {!pendingMission && actions.map((action) => action.kind === "counterplay" ? (
             <ActionButton
               action={{ ...action, label: "Group defend" }}
               key={action.kind}
@@ -863,15 +865,21 @@ function MissionRow({
               }}
             />
           ))}
-          <button
-            className={rowActionButtonClass}
-            onClick={() => onOpenReport(mission.missionId)}
-            title="Open the full mission detail screen"
-            type="button"
-          >
-            <ExternalLink aria-hidden="true" size={13} />
-            Open
-          </button>
+          {pendingMission ? (
+            <span className="inline-flex h-8 items-center justify-center rounded border border-cyan-300/20 bg-cyan-300/10 px-2 text-xs font-medium text-cyan-100">
+              Indexing
+            </span>
+          ) : (
+            <button
+              className={rowActionButtonClass}
+              onClick={() => onOpenReport(mission.missionId)}
+              title="Open the full mission detail screen"
+              type="button"
+            >
+              <ExternalLink aria-hidden="true" size={13} />
+              Open
+            </button>
+          )}
         </>
       }
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
@@ -985,6 +993,9 @@ export function returnPhaseLosses(
 // refresh — which is the heart of this ticket. The auto-poll (#744) then folds in loot/battle reports
 // once the backend actually resolves the mission.
 export function missionStatusPill(mission: FleetMissionSummary, now: number): MissionStatusPill {
+  if (isPendingMissionLaunch(mission)) {
+    return { label: "Indexing", tone: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100" };
+  }
   // VEY-KANEO-468: completions settle lazily on-chain (the next mutating call; combat via the battle
   // keeper). A leg whose clock has passed but whose backend status has not advanced is mid-settlement,
   // so the pill reads "Resolving" until the chain reflects it — not a finished "Arrived"/"Returned".
@@ -1065,7 +1076,7 @@ function MissionCard({
     <article className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-slate-300 transition hover:border-white/20">
       <div className="flex flex-wrap items-center gap-2">
         <span className={`inline-flex rounded border px-2 py-1 text-[11px] font-semibold ${badgeTone}`}>{badgeLabel}</span>
-        {missionId ? <span className="font-semibold text-white">#{missionId}</span> : null}
+        {missionId ? <span className="font-semibold text-white">{missionIdLabel(missionId)}</span> : null}
         {statusPill ? (
           <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusPill.tone}`}>
             {statusPill.label}
@@ -1087,6 +1098,10 @@ function MissionCard({
       </div>
     </article>
   );
+}
+
+function missionIdLabel(missionId: string): string {
+  return missionId.startsWith("pending:") ? "Pending" : `#${missionId}`;
 }
 
 // Compact fleet column: small ship images with xN counts; hover shows the ship name + count.
@@ -2058,8 +2073,15 @@ function sortedUniqueActiveMissionRows(rows: ActiveMissionRow[]): ActiveMissionR
     const leftTime = nextMissionEventTimestamp(left.mission) ?? Number.MAX_SAFE_INTEGER;
     const rightTime = nextMissionEventTimestamp(right.mission) ?? Number.MAX_SAFE_INTEGER;
     if (leftTime !== rightTime) return leftTime - rightTime;
-    return Number(left.mission.missionId) - Number(right.mission.missionId);
+    return compareMissionIds(left.mission.missionId, right.mission.missionId);
   });
+}
+
+function compareMissionIds(left: string, right: string): number {
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) return leftNumber - rightNumber;
+  return left.localeCompare(right);
 }
 
 // Universe-wide active rows for the "All" tab. The player's own + alliance missions keep the exact

@@ -3,6 +3,7 @@ import type {
   ChainShipyardState,
   ChainResearchState,
   FleetMissionVisibilityResponse,
+  FleetMissionPlanetReference,
   FleetMissionSummary,
   ChainInfrastructureState,
   ChainAllianceState,
@@ -88,6 +89,23 @@ export type MissionLaunchSnapshot = {
   allActiveMissions: FleetMissionSummary[];
   fleetVisibility: FleetMissionVisibilityResponse;
 };
+
+export type PendingMissionLaunchInput = {
+  txHash: string;
+  owner: string;
+  originPlanetId: string;
+  targetPlanetId: string;
+  missionType: string;
+  ships: Record<string, number | string | undefined>;
+  cargo?: Partial<Record<"metal" | "crystal" | "deuterium", number | string | undefined>> | undefined;
+  fuelCost?: number | string | undefined;
+  originPlanet?: FleetMissionPlanetReference | null | undefined;
+  targetPlanet?: FleetMissionPlanetReference | null | undefined;
+  submittedAtMs?: number | undefined;
+  travelSeconds?: number | undefined;
+};
+
+export const PENDING_MISSION_LAUNCH_ID_PREFIX = "pending:";
 
 export type AllianceApplicationExpectation = {
   allianceId: string;
@@ -236,6 +254,79 @@ export function isMissionLaunchStateVisible(
   return missionLaunchMissionsForTransaction(snapshot, txHash).length > 0;
 }
 
+export function pendingMissionLaunchId(txHash: string): string {
+  return `${PENDING_MISSION_LAUNCH_ID_PREFIX}${normalizeTxHash(txHash).replace(/^0x/, "").slice(0, 12)}`;
+}
+
+export function isPendingMissionLaunch(mission: Pick<FleetMissionSummary, "missionId">): boolean {
+  return mission.missionId.startsWith(PENDING_MISSION_LAUNCH_ID_PREFIX);
+}
+
+export function pendingMissionLaunch(input: PendingMissionLaunchInput): FleetMissionSummary {
+  const submittedAtMs = input.submittedAtMs ?? Date.now();
+  const travelSeconds = Math.max(1, Math.ceil(Number(input.travelSeconds) || 60));
+  const arrivalSeconds = Math.floor(submittedAtMs / 1_000) + travelSeconds;
+  const returnSeconds = arrivalSeconds + travelSeconds;
+
+  return {
+    missionId: pendingMissionLaunchId(input.txHash),
+    status: "Outbound",
+    missionType: input.missionType,
+    owner: input.owner,
+    originPlanetId: input.originPlanetId,
+    targetPlanetId: input.targetPlanetId,
+    originPlanet: input.originPlanet ?? null,
+    targetPlanet: input.targetPlanet ?? null,
+    arrivalAt: String(arrivalSeconds),
+    returnAt: String(returnSeconds),
+    fuelCost: String(Math.max(0, Math.trunc(Number(input.fuelCost) || 0))),
+    recallCost: null,
+    attackGroupId: null,
+    joinedAttackMissionIds: [],
+    cargo: missionResources(input.cargo),
+    returnCargo: null,
+    ships: missionShips(input.ships),
+    transactionHash: normalizeTxHash(input.txHash),
+    blockNumber: "",
+  };
+}
+
+export function mergePendingMissionLaunches(
+  current: readonly FleetMissionSummary[] | undefined,
+  pending: readonly FleetMissionSummary[],
+): FleetMissionSummary[] {
+  const rows = current ?? [];
+  const canonicalTxHashes = canonicalMissionTransactionHashes(rows);
+  const seen = new Set<string>();
+  return [
+    ...pending.filter((mission) => !canonicalTxHashes.has(normalizeTxHash(mission.transactionHash))),
+    ...rows,
+  ].filter((mission) => {
+    if (seen.has(mission.missionId)) return false;
+    seen.add(mission.missionId);
+    return true;
+  });
+}
+
+export function reconcilePendingMissionLaunches(
+  pending: readonly FleetMissionSummary[],
+  snapshot: MissionLaunchSnapshot,
+): FleetMissionSummary[] {
+  const canonicalTxHashes = canonicalMissionTransactionHashes([
+    ...activeWalletMissions(snapshot.fleetVisibility),
+    ...snapshot.allActiveMissions,
+  ]);
+  return pending.filter((mission) => !canonicalTxHashes.has(normalizeTxHash(mission.transactionHash)));
+}
+
+export function removePendingMissionLaunchForTransaction(
+  pending: readonly FleetMissionSummary[],
+  txHash: string,
+): FleetMissionSummary[] {
+  const normalized = normalizeTxHash(txHash);
+  return pending.filter((mission) => normalizeTxHash(mission.transactionHash) !== normalized);
+}
+
 function activeWalletMissions(fleetVisibility: FleetMissionVisibilityResponse): FleetMissionSummary[] {
   return [
     ...fleetVisibility.incoming,
@@ -243,6 +334,37 @@ function activeWalletMissions(fleetVisibility: FleetMissionVisibilityResponse): 
     ...fleetVisibility.returning,
     ...fleetVisibility.joinableAttacks,
   ];
+}
+
+function canonicalMissionTransactionHashes(missions: readonly FleetMissionSummary[]): Set<string> {
+  const hashes = new Set<string>();
+  for (const mission of missions) {
+    if (isPendingMissionLaunch(mission) || !mission.transactionHash) continue;
+    hashes.add(normalizeTxHash(mission.transactionHash));
+  }
+  return hashes;
+}
+
+function normalizeTxHash(txHash: string): string {
+  return txHash.trim().toLowerCase();
+}
+
+function missionShips(ships: Record<string, number | string | undefined>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(ships)
+      .map(([key, value]) => [key, String(Math.max(0, Math.trunc(Number(value) || 0)))])
+      .filter(([, value]) => value !== "0")
+  );
+}
+
+function missionResources(
+  resources: Partial<Record<"metal" | "crystal" | "deuterium", number | string | undefined>> | undefined,
+): FleetMissionSummary["cargo"] {
+  return {
+    metal: String(Math.max(0, Math.trunc(Number(resources?.metal) || 0))),
+    crystal: String(Math.max(0, Math.trunc(Number(resources?.crystal) || 0))),
+    deuterium: String(Math.max(0, Math.trunc(Number(resources?.deuterium) || 0))),
+  };
 }
 
 function buildingQueueMatches(
