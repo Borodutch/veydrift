@@ -65,6 +65,8 @@ describe("overview planet hero image", () => {
   });
 
   test("renders the planet art as a compact square image instead of a cropped banner", () => {
+    expect(overviewSource).toContain("lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.82fr)]");
+    expect(overviewSource).toContain("const hasActiveFleets = Boolean");
     expect(overviewSource).toContain("grid-cols-[5.75rem_minmax(0,1fr)]");
     expect(overviewSource).toContain("relative aspect-square");
     expect(overviewSource).toContain("object-contain");
@@ -105,12 +107,18 @@ describe("overview planet hero image", () => {
 });
 
 describe("overview queue progress display", () => {
-  test("renders an accessible planet effects info control beside Overview stats", () => {
-    expect(overviewSource).toContain('aria-label="Show planet effects"');
+  test("renders compact planet stats and effects behind the info control", () => {
+    expect(overviewSource).toContain('aria-label="Show planet stats and effects"');
     expect(overviewSource).toContain('aria-controls="overview-planet-effects"');
     expect(overviewSource).toContain("<PlanetEffectsPanel");
+    expect(overviewSource).not.toContain(">Planet stats<");
+    expect(overviewSource).not.toContain("<StatPip");
+    expect(overviewSource).not.toContain('label="Status"');
     expect(overviewSource).toContain("Fields are the planet development budget");
     expect(overviewSource).toContain("Temperature changes deuterium production and Solar Satellite energy output");
+    expect(overviewSource).toContain('label="Fields"');
+    expect(overviewSource).toContain('label="Temperature"');
+    expect(overviewSource).toContain('label="Diameter"');
     expect(overviewSource).toContain('label="Terraformer"');
     expect(overviewSource).toContain('label="Deuterium multiplier"');
     expect(overviewSource).toContain('label="Solar Satellite"');

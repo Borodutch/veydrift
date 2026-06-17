@@ -183,6 +183,10 @@ export function OverviewPage({
     scopedBuildingNotice ?? pendingBuildingNotice,
     buildingNoticeKey,
   );
+  const hasActiveFleets = Boolean(
+    fleetVisibility
+    && (fleetVisibility.incoming.length > 0 || fleetVisibility.outgoing.length > 0 || fleetVisibility.returning.length > 0)
+  );
 
   // Only ever derive the planet name from real data: the loaded home planet's name, or a
   // coordinate-derived label once coordinates hydrate. Never fall back to a hardcoded fake planet
@@ -264,6 +268,7 @@ export function OverviewPage({
   };
   return (
     <div className="grid gap-3">
+      <div className={hasActiveFleets && isWalletConnected ? "grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.82fr)] lg:items-start" : "grid gap-3"}>
       {/* Planet hero — compact, no wasted space. When the wallet is disconnected we show a clear
           connect-wallet card instead of a fabricated home planet (VEY-KANEO-458). */}
       {!isWalletConnected ? (
@@ -310,6 +315,17 @@ export function OverviewPage({
                   )}
                 </h2>
                 <div className="flex shrink-0 items-center gap-1.5">
+                  <button
+                    aria-controls="overview-planet-effects"
+                    aria-expanded={effectsPanelOpen}
+                    aria-label="Show planet stats and effects"
+                    className="inline-grid h-6 w-6 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/50"
+                    onClick={() => setEffectsPanelOpen((open) => !open)}
+                    title="Planet stats and effects"
+                    type="button"
+                  >
+                    <Info aria-hidden="true" size={13} strokeWidth={2} />
+                  </button>
                   {canShowRename && (
                     <button
                       aria-expanded={renamePanelOpen}
@@ -400,28 +416,6 @@ export function OverviewPage({
                 </div>
               </form>
             )}
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500">Planet stats</p>
-                <button
-                  aria-controls="overview-planet-effects"
-                  aria-expanded={effectsPanelOpen}
-                  aria-label="Show planet effects"
-                  className="inline-grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/50"
-                  onClick={() => setEffectsPanelOpen((open) => !open)}
-                  title="Planet effects"
-                  type="button"
-                >
-                  <Info aria-hidden="true" size={14} strokeWidth={2} />
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <StatPip label="Fields" value={stats.fields} />
-                <StatPip label="Temperature" value={stats.temperature} />
-                <StatPip label="Diameter" value={stats.diameter} />
-                <StatPip label="Status" value={stats.status} />
-              </div>
-            </div>
           </div>
           {effectsPanelOpen ? (
             <div className="col-span-2">
@@ -429,12 +423,22 @@ export function OverviewPage({
                 effects={planetEffects}
                 id="overview-planet-effects"
                 onClose={() => setEffectsPanelOpen(false)}
+                stats={stats}
               />
             </div>
           ) : null}
         </div>
       </div>
       )}
+
+      {isWalletConnected && fleetVisibility && hasActiveFleets && (
+        <FleetsSummary
+          fleetVisibility={fleetVisibility}
+          now={now}
+          onOpenMissionControl={() => onNavigate("mission-control")}
+        />
+      )}
+      </div>
 
       {isWalletConnected && onChainStatus === "error" && (
         <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 p-3 text-xs leading-5 text-amber-100 sm:p-4">
@@ -443,7 +447,7 @@ export function OverviewPage({
         </div>
       )}
 
-      {isWalletConnected && fleetVisibility && (
+      {isWalletConnected && fleetVisibility && !hasActiveFleets && (
         <FleetsSummary
           fleetVisibility={fleetVisibility}
           now={now}
@@ -857,23 +861,16 @@ function planetKeyFromCoordinates(coordinates: { galaxy: number; system: number;
   return `${coordinates.galaxy}:${coordinates.system}:${coordinates.position}`;
 }
 
-function StatPip({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <dt className="text-[10px] font-medium uppercase tracking-wider text-slate-500">{label}</dt>
-      <dd className="mt-0.5 break-words text-xs font-semibold leading-tight text-white">{value}</dd>
-    </div>
-  );
-}
-
 function PlanetEffectsPanel({
   effects,
   id,
   onClose,
+  stats,
 }: {
   effects: OverviewPlanetEffectsDisplay;
   id: string;
   onClose: () => void;
+  stats: ReturnType<typeof displayPlanetStats>;
 }) {
   return (
     <section
@@ -902,6 +899,9 @@ function PlanetEffectsPanel({
       </div>
 
       <dl className="grid gap-2 sm:grid-cols-3">
+        <EffectMetric label="Fields" value={stats.fields} />
+        <EffectMetric label="Temperature" value={stats.temperature} />
+        <EffectMetric label="Diameter" value={stats.diameter} />
         <EffectMetric label="Terraformer" value={effects.terraformer} />
         <EffectMetric label="Deuterium multiplier" value={effects.deuteriumMultiplier} />
         <EffectMetric
