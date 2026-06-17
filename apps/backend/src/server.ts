@@ -410,7 +410,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) {
       try {
-        const includeArchive = url.searchParams.get("archive") !== "none";
+        const includeArchive = url.searchParams.get("archive") === "full" || url.searchParams.get("archive") === "true";
         return await indexedWalletStateResponse(url, indexer, "fleet visibility", (wallet, settlement, planet, detail, indexer) =>
           indexedFleetVisibility(wallet, settlement, planet, detail, indexer, { includeArchive }), {
           includeSelectedPlanet: false
@@ -1509,8 +1509,8 @@ function indexedMissionArchive(
   url: URL,
   indexer: SettlementIndexer
 ): FleetMissionArchiveResponse {
-  const visibility = indexer.fleetMissionVisibility(wallet);
-  const rows = chronologicalMissionArchiveRows(visibility.completedMissions, visibility.battleReports);
+  const archive = indexer.fleetMissionArchive(wallet);
+  const rows = chronologicalMissionArchiveRows(archive.completedMissions, archive.battleReports);
   const requested = missionArchivePagination(url);
   const totalEntries = rows.length;
   const totalPages = Math.max(1, Math.ceil(totalEntries / requested.pageSize));
@@ -1519,7 +1519,7 @@ function indexedMissionArchive(
 
   return {
     wallet,
-    homePlanetId: visibility.homePlanetId,
+    homePlanetId: archive.homePlanetId,
     rows: rows.slice(offset, offset + requested.pageSize),
     pagination: {
       page,
@@ -2196,10 +2196,11 @@ function highscorePagination(url: URL): { page: number; pageSize: number } {
   const limit = Number.parseInt(url.searchParams.get("limit") ?? "100", 10) || 100;
   const pageSize = Number.parseInt(url.searchParams.get("pageSize") ?? String(limit), 10) || limit;
   const page = Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1;
+  const maxPageSize = url.searchParams.has("category") ? 250 : 50;
 
   return {
     page: Math.max(page, 1),
-    pageSize: Math.min(Math.max(pageSize, 1), 250)
+    pageSize: Math.min(Math.max(pageSize, 1), maxPageSize)
   };
 }
 
