@@ -10,6 +10,7 @@ import type {
   ChainReader,
   DebrisFieldEvent,
   DefenseState,
+  FleetMissionSummary,
   InfrastructureState,
   ManagedPlanet,
   MoonState,
@@ -1303,6 +1304,82 @@ describe("Veydrift backend", () => {
       defenses: [{ id: 4, count: 3 }],
       stationedDefenders: []
     });
+  });
+
+  test("lightweight fleet visibility keeps active attack battle reports for Mission Control cards", async () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+    const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.applyEvent({ ...planet, eventName: "PlanetStarted", transactionHash: "0xhomeplanet", blockNumber: "100" });
+    indexer.applyEvent({ ...planet, eventName: "PlanetStarted", planetId: "9", owner: attacker, transactionHash: "0xtargetplanet", blockNumber: "101" });
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xactive-attack",
+      logIndex: "0x0",
+      removed: false,
+      topics: [fleetMissionLaunchedTopic, topic(1154n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 9n, 1_800_000_000n, 1_800_000_600n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xactive-attack",
+      logIndex: "0x1",
+      removed: false,
+      topics: [fleetMissionCargoTopic, topic(1154n)],
+      data: abiWords(0n, 0n, 0n, 1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xactive-attack",
+      logIndex: "0x2",
+      removed: false,
+      topics: [fleetMissionShipsTopic, topic(1154n)],
+      data: abiWords(...Array.from({ length: 14 }, (_, index) => index === 0 ? 1n : 0n))
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xreturning-attack",
+      logIndex: "0x0",
+      removed: false,
+      topics: [fleetMissionReturnExposedTopic, topic(1154n), addressTopic(player), topic(2n)],
+      data: abiWords(7n, 9n, 1_800_000_600n, 75n, 25n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92",
+      transactionHash: "0xbattleresolved-active",
+      logIndex: "0x0",
+      removed: false,
+      topics: [attackBattleResolvedTopic, topic(1154n), addressTopic(player), topic(9n)],
+      data: abiWords(1n, 2n, 12345n, 75n, 25n, 0n)
+    });
+
+    for (const log of completedFleetMissionLogs({ missionId: 2000n, owner: player, originPlanetId: 7n, targetPlanetId: 9n })) {
+      indexer.applyLog(log);
+    }
+    indexer.applyLog({
+      blockNumber: "0x93",
+      transactionHash: "0xbattleresolved-completed",
+      logIndex: "0x0",
+      removed: false,
+      topics: [attackBattleResolvedTopic, topic(2000n), addressTopic(player), topic(9n)],
+      data: abiWords(1n, 1n, 54321n, 5n, 0n, 0n)
+    });
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    })(new Request(`http://localhost/wallet/${player}/fleet-visibility?archive=none`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.returning.map((mission: FleetMissionSummary) => mission.missionId)).toContain("1154");
+    expect(body.completedMissions).toEqual([]);
+    expect(body.battleReports.map((report: BattleReport) => report.missionId)).toEqual(["1154"]);
+    expect(body.battleReports[0].loot).toEqual({ metal: "75", crystal: "25", deuterium: "0" });
   });
 
   test("mission detail exposes target combat intel before a battle report exists (VEY-KANEO-516)", async () => {

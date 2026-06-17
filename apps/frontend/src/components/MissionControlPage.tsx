@@ -2214,6 +2214,9 @@ function lootByMissionIdFromReports(reports: BattleReport[]): Map<string, Battle
   const lookup = new Map<string, BattleReport["loot"]>();
   for (const report of reports) {
     lookup.set(report.missionId, report.loot);
+    for (const participant of report.participants ?? []) {
+      lookup.set(participant.missionId, participant.loot);
+    }
   }
   return lookup;
 }
@@ -2236,7 +2239,11 @@ export type MissionLossSummary = {
 function lossesByMissionIdFromReports(reports: BattleReport[]): Map<string, MissionLossSummary> {
   const lookup = new Map<string, MissionLossSummary>();
   for (const report of reports) {
-    lookup.set(report.missionId, { outcome: report.outcome, attacker: report.attackerLosses, defender: report.defenderLosses, debris: report.debris });
+    const losses = { outcome: report.outcome, attacker: report.attackerLosses, defender: report.defenderLosses, debris: report.debris };
+    lookup.set(report.missionId, losses);
+    for (const participant of report.participants ?? []) {
+      lookup.set(participant.missionId, losses);
+    }
   }
   return lookup;
 }
