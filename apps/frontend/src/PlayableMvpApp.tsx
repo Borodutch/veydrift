@@ -329,11 +329,25 @@ function raidTargetFullResources(target: RaidTarget): { metal: string; crystal: 
   };
 }
 
-function combatTechLevelsFromTechnologyLevels(technologyLevels: Record<string, number> | undefined): CombatTechLevels {
+function combatTechLevelForKey(
+  key: "5" | "6" | "7",
+  primaryLevels: Record<string, number> | undefined,
+  fallbackLevels: Record<string, number> | undefined,
+): number {
+  return safeResourceNumber(primaryLevels?.[key]) ?? safeResourceNumber(fallbackLevels?.[key]) ?? 0;
+}
+
+export function attackerCombatTechLevelsForMission({
+  researchTechnologyLevels,
+  shipyardTechnologyLevels,
+}: {
+  researchTechnologyLevels?: Record<string, number> | undefined;
+  shipyardTechnologyLevels?: Record<string, number> | undefined;
+}): CombatTechLevels {
   return {
-    weapons: safeResourceNumber(technologyLevels?.["5"]) ?? 0,
-    shielding: safeResourceNumber(technologyLevels?.["6"]) ?? 0,
-    armor: safeResourceNumber(technologyLevels?.["7"]) ?? 0,
+    weapons: combatTechLevelForKey("5", researchTechnologyLevels, shipyardTechnologyLevels),
+    shielding: combatTechLevelForKey("6", researchTechnologyLevels, shipyardTechnologyLevels),
+    armor: combatTechLevelForKey("7", researchTechnologyLevels, shipyardTechnologyLevels),
   };
 }
 
@@ -3808,8 +3822,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   ]);
 
   const attackerCombatTechLevels = useMemo(
-    () => combatTechLevelsFromTechnologyLevels(effectiveResearchState?.technologyLevels),
-    [effectiveResearchState?.technologyLevels],
+    () => attackerCombatTechLevelsForMission({
+      researchTechnologyLevels: effectiveResearchState?.technologyLevels,
+      shipyardTechnologyLevels: shipyardState?.technologyLevels,
+    }),
+    [effectiveResearchState?.technologyLevels, shipyardState?.technologyLevels],
   );
   const shipQueue = settledState.queue?.kind === "ship" ? settledState.queue : undefined;
   const queueProgress = progress(buildingQueue, now);
