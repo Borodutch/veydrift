@@ -444,6 +444,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         (uint16 metalMultiplier, uint16 crystalMultiplier, uint16 deuteriumMultiplier) =
             VeydriftFormulas.planetMultipliers(temperature, fields);
         Resources memory startingResources = Resources({metal: 500, crystal: 500, deuterium: 0});
+        _increaseInternalResources(startingResources);
         _planets[colonyPlanetId] = Planet({
             owner: owner,
             galaxy: galaxy,

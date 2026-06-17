@@ -2750,6 +2750,8 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(originPlanetId).resources.crystal, 10_000);
         assertEq(game.planet(originPlanetId).resources.deuterium, 10_000 - expectedFuelCost);
         assertEq(game.planetCountOf(player), 1);
+        VeydriftGameStorage.Resources memory internalResourcesBeforeResolution =
+            game.totalInternalResources();
 
         vm.warp(arrivalAt);
         vm.prank(player);
@@ -2767,6 +2769,18 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(colonyPlanetId).resources.metal, 500);
         assertEq(game.planet(colonyPlanetId).resources.crystal, 500);
         assertEq(game.planet(colonyPlanetId).resources.deuterium, 0);
+        VeydriftGameStorage.Resources memory internalResourcesAfterResolution =
+            game.totalInternalResources();
+        assertEq(
+            internalResourcesAfterResolution.metal, internalResourcesBeforeResolution.metal + 500
+        );
+        assertEq(
+            internalResourcesAfterResolution.crystal,
+            internalResourcesBeforeResolution.crystal + 500
+        );
+        assertEq(
+            internalResourcesAfterResolution.deuterium, internalResourcesBeforeResolution.deuterium
+        );
     }
 
     function testColonizeFleetMissionRejectsCarriedCargo() public {
@@ -2993,6 +3007,8 @@ contract VeydriftGameTest is Test {
             _colonyShipManifest()
         );
         assertEq(game.planet(competitorColonyId).owner, competitor);
+        VeydriftGameStorage.Resources memory internalResourcesBeforeFailedResolve =
+            game.totalInternalResources();
 
         uint256 nextPlanetIdBeforeFailedResolve = game.nextPlanetId();
         vm.warp(arrivalAt);
@@ -3017,6 +3033,18 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(originPlanetId).resources.metal, metalBeforeReturn);
         assertEq(game.planet(originPlanetId).resources.crystal, crystalBeforeReturn);
         assertEq(game.activeFleetMissionCount(player), 0);
+        VeydriftGameStorage.Resources memory internalResourcesAfterFailedReturn =
+            game.totalInternalResources();
+        assertEq(
+            internalResourcesAfterFailedReturn.metal, internalResourcesBeforeFailedResolve.metal
+        );
+        assertEq(
+            internalResourcesAfterFailedReturn.crystal, internalResourcesBeforeFailedResolve.crystal
+        );
+        assertEq(
+            internalResourcesAfterFailedReturn.deuterium,
+            internalResourcesBeforeFailedResolve.deuterium
+        );
     }
 
     function testColonizationReturnsIfPlanetLimitIsReachedBeforeArrival() public {
