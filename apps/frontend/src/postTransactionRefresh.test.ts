@@ -8,6 +8,8 @@ import {
   isStartedDefenseProductionVisible,
   isStartedShipProductionVisible,
   isStartedResearchStateVisible,
+  isMissionLaunchStateVisible,
+  missionLaunchMissionsForTransaction,
   waitForFinishedResearchState,
   waitForStartedBuildingState,
   waitForStartedResearchState,
@@ -16,8 +18,10 @@ import {
   waitForHydratedWalletPlanet,
   waitForFinishedBuildingState,
   waitForAllianceApplicationCleared,
+  waitForMissionLaunchState,
   waitForRenamedWalletPlanet,
   type FinishedResearchSnapshot,
+  type MissionLaunchSnapshot,
   type StartedBuildingSnapshot,
   type StartedDefenseProductionSnapshot,
   type StartedShipProductionSnapshot,
@@ -25,11 +29,43 @@ import {
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingSnapshot,
 } from "./postTransactionRefresh";
-import type { ChainAllianceState } from "./walletFlow";
+import type { ChainAllianceState, FleetMissionSummary } from "./walletFlow";
 
 const wallet = "0x2222222222222222222222222222222222222222";
 
 describe("post-transaction refresh reconciliation", () => {
+  test("polls until a launched mission appears in mission state by transaction hash", async () => {
+    const txHash = "0xlaunch";
+    const launched = mission("51", { transactionHash: txHash });
+    const snapshots = [
+      missionLaunchSnapshot(),
+      missionLaunchSnapshot({ outgoing: [launched], allActiveMissions: [launched] }),
+    ];
+    const loads: MissionLaunchSnapshot[] = [];
+
+    const result = await waitForMissionLaunchState(
+      async () => {
+        const snapshot = snapshots.shift() ?? missionLaunchSnapshot({ outgoing: [launched], allActiveMissions: [launched] });
+        loads.push(snapshot);
+        return snapshot;
+      },
+      txHash,
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(loads).toHaveLength(2);
+    expect(missionLaunchMissionsForTransaction(result, txHash).map((entry) => entry.missionId)).toEqual(["51"]);
+  });
+
+  test("accepts a launch visible in the wallet list while the global active feed is still stale", () => {
+    const txHash = "0xlaunch";
+    const launched = mission("52", { transactionHash: txHash });
+    const snapshot = missionLaunchSnapshot({ outgoing: [launched], allActiveMissions: [] });
+
+    expect(isMissionLaunchStateVisible(snapshot, txHash.toUpperCase())).toBe(true);
+    expect(missionLaunchMissionsForTransaction(snapshot, txHash)).toEqual([launched]);
+  });
+
   test("does not accept a stale finished-building snapshot with an active queue", () => {
     expect(isFinishedBuildingStateVisible(staleSolarPlantSnapshot(), {
       itemId: 3,
@@ -1038,6 +1074,48 @@ function allianceStateWithApplication(overrides: Partial<ChainAllianceState> = {
         joinedAt: "1770000000",
       },
     ],
+    ...overrides,
+  };
+}
+
+function missionLaunchSnapshot(overrides: {
+  allActiveMissions?: FleetMissionSummary[];
+  incoming?: FleetMissionSummary[];
+  joinableAttacks?: FleetMissionSummary[];
+  outgoing?: FleetMissionSummary[];
+  returning?: FleetMissionSummary[];
+} = {}): MissionLaunchSnapshot {
+  return {
+    allActiveMissions: overrides.allActiveMissions ?? [],
+    fleetVisibility: {
+      ...emptyFleetVisibility(),
+      incoming: overrides.incoming ?? [],
+      outgoing: overrides.outgoing ?? [],
+      returning: overrides.returning ?? [],
+      joinableAttacks: overrides.joinableAttacks ?? [],
+    },
+  };
+}
+
+function mission(missionId: string, overrides: Partial<FleetMissionSummary> = {}): FleetMissionSummary {
+  return {
+    missionId,
+    status: "Outbound",
+    missionType: "Attack",
+    owner: wallet,
+    originPlanetId: "7",
+    targetPlanetId: "9",
+    arrivalAt: "1770000300",
+    returnAt: "1770000600",
+    fuelCost: "100",
+    recallCost: "50",
+    attackGroupId: null,
+    joinedAttackMissionIds: [],
+    cargo: { metal: "0", crystal: "0", deuterium: "0" },
+    returnCargo: null,
+    ships: { smallCargo: "1" },
+    transactionHash: "0xabc",
+    blockNumber: "123",
     ...overrides,
   };
 }

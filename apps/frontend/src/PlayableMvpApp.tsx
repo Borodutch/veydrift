@@ -92,6 +92,7 @@ import {
 } from "./gameStateCache";
 import {
   isTransientGameStateReadFailure,
+  missionLaunchMissionsForTransaction,
   waitForFinishedResearchState,
   waitForStartedResearchState,
   waitForStartedDefenseProductionState,
@@ -100,9 +101,11 @@ import {
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
   waitForAllianceApplicationCleared,
+  waitForMissionLaunchState,
   waitForRenamedWalletPlanet,
   type AllianceApplicationExpectation,
   type FinishedResearchExpectation,
+  type MissionLaunchSnapshot,
   type StartedBuildingExpectation,
   type StartedDefenseProductionExpectation,
   type StartedShipProductionExpectation,
@@ -1817,6 +1820,18 @@ function missionRowsFromArchive(
   return archive?.rows.flatMap((row) => (row.kind === "mission" ? [row.mission] : [])) ?? [];
 }
 
+export function mergeActiveMissionList(
+  current: readonly FleetMissionSummary[],
+  additions: readonly FleetMissionSummary[],
+): FleetMissionSummary[] {
+  const seen = new Set<string>();
+  return [...additions, ...current].filter((mission) => {
+    if (seen.has(mission.missionId)) return false;
+    seen.add(mission.missionId);
+    return true;
+  });
+}
+
 export function defenseCompletionPlanetIdFor({
   activePlanetId,
   defenseState,
@@ -3014,6 +3029,20 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       setAllActiveMissions([]);
     }
   }, [apiBaseUrl]);
+
+  const loadMissionLaunchSnapshot = useCallback(async (): Promise<MissionLaunchSnapshot> => {
+    if (!apiBaseUrl || !account) {
+      throw new Error("Wallet or game API is unavailable while syncing the launched mission.");
+    }
+    const [fleetVisibility, allActiveMissionsResult] = await Promise.all([
+      fetchFleetMissionVisibility(apiBaseUrl, account, { includeArchive: false }),
+      settlePromise(fetchGlobalActiveMissions(apiBaseUrl)),
+    ]);
+    return {
+      allActiveMissions: allActiveMissionsResult.status === "fulfilled" ? allActiveMissionsResult.value.missions : [],
+      fleetVisibility,
+    };
+  }, [account, apiBaseUrl]);
 
   const loadGlobalMissionArchive = useCallback(async (page: number) => {
     if (!apiBaseUrl) {
@@ -4260,7 +4289,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
   }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, refreshRiftState]);
 
-  const runGalaxyTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
+  const runGalaxyTransaction = useCallback(async (
+    label: string,
+    send: () => Promise<string>,
+    options: { syncMissionLaunch?: boolean } = {},
+  ) => {
     const planetSwitchRequestId = planetSwitchGate.current;
     setGalaxyAction({ status: "pending", label });
 
@@ -4276,6 +4309,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       // Force the post-action settlement read (see VEY-KANEO-484).
       void refreshOnChainState(undefined, { force: true });
       refreshInfrastructureState();
+      if (options.syncMissionLaunch) {
+        const missionSnapshot = await waitForMissionLaunchState(loadMissionLaunchSnapshot, txHash);
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        markFreshStateWrite(onChainRefreshGate);
+        const launchedMissions = missionLaunchMissionsForTransaction(missionSnapshot, txHash);
+        setFleetVisibility(missionSnapshot.fleetVisibility);
+        setAllActiveMissions(mergeActiveMissionList(missionSnapshot.allActiveMissions, launchedMissions));
+      }
       if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
       setGalaxyAction({ status: "success", label: `${label} confirmed.` });
     } catch (error) {
@@ -4286,7 +4327,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         label: galaxyMissionActionErrorLabel(label, error),
       });
     }
-  }, [confirmSubmittedTransaction, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState]);
+  }, [confirmSubmittedTransaction, loadMissionLaunchSnapshot, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState]);
 
   const runMoonTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
     const planetSwitchRequestId = planetSwitchGate.current;
@@ -5066,7 +5107,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         coords.system,
         coords.position,
         draft.speedPercent,
-      ));
+      ), { syncMissionLaunch: true });
       return;
     }
 
@@ -5112,7 +5153,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           speedPercent: draft.speedPercent,
           holdSeconds: draft.holdSeconds ?? 0,
         },
-      ));
+      ), { syncMissionLaunch: true });
       return;
     }
     if (action.kind === "attack" && draft.lootRatio) {
@@ -5132,7 +5173,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
             deuteriumBps: deuterium * 100,
           },
         },
-      ));
+      ), { syncMissionLaunch: true });
       return;
     }
     void runGalaxyTransaction(`${action.label} mission`, () => sendLaunchFleetMissionTransaction(
@@ -5155,7 +5196,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
             )
           : undefined,
       },
-    ));
+    ), { syncMissionLaunch: true });
   }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingGalaxyMission, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
 
   const handleStartMoonBuilding = useCallback((buildingId: number, label: string) => {
@@ -5279,7 +5320,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         ships: draft.ships,
         speedPercent: draft.speedPercent,
       },
-    ));
+    ), { syncMissionLaunch: true });
   }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingAcsDefend, provider, runGalaxyTransaction]);
 
   const handleShareMissionReport = useCallback((url: string) => {
@@ -5325,7 +5366,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         targetPlanetId: pending.targetPlanetId,
         ships: draft.ships,
       },
-    ));
+    ), { syncMissionLaunch: true });
   }, [account, gameContract, onChainSettlement?.homePlanetId, pendingJoinAttack, provider, runGalaxyTransaction]);
 
   const handleNavigate = useCallback((target: Page) => {

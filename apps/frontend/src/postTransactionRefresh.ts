@@ -3,6 +3,7 @@ import type {
   ChainShipyardState,
   ChainResearchState,
   FleetMissionVisibilityResponse,
+  FleetMissionSummary,
   ChainInfrastructureState,
   ChainAllianceState,
   ManagedPlanetResponse,
@@ -81,6 +82,11 @@ export type WalletPlanetSyncSnapshot = {
   planetsResponse: WalletPlanetsResponse;
   queues: PlayerQueuesResponse;
   settlement: WalletSettlementResponse;
+};
+
+export type MissionLaunchSnapshot = {
+  allActiveMissions: FleetMissionSummary[];
+  fleetVisibility: FleetMissionVisibilityResponse;
 };
 
 export type AllianceApplicationExpectation = {
@@ -204,6 +210,39 @@ export function isAllianceApplicationCleared(
     request.allianceId === expectation.allianceId
       && request.requester.toLowerCase() === expectation.requester.toLowerCase()
   );
+}
+
+export function missionLaunchMissionsForTransaction(
+  snapshot: MissionLaunchSnapshot,
+  txHash: string,
+): FleetMissionSummary[] {
+  const normalizedTxHash = txHash.toLowerCase();
+  const seen = new Set<string>();
+  return [
+    ...activeWalletMissions(snapshot.fleetVisibility),
+    ...snapshot.allActiveMissions,
+  ].filter((mission) => {
+    if (mission.transactionHash.toLowerCase() !== normalizedTxHash) return false;
+    if (seen.has(mission.missionId)) return false;
+    seen.add(mission.missionId);
+    return true;
+  });
+}
+
+export function isMissionLaunchStateVisible(
+  snapshot: MissionLaunchSnapshot,
+  txHash: string,
+): boolean {
+  return missionLaunchMissionsForTransaction(snapshot, txHash).length > 0;
+}
+
+function activeWalletMissions(fleetVisibility: FleetMissionVisibilityResponse): FleetMissionSummary[] {
+  return [
+    ...fleetVisibility.incoming,
+    ...fleetVisibility.outgoing,
+    ...fleetVisibility.returning,
+    ...fleetVisibility.joinableAttacks,
+  ];
 }
 
 function buildingQueueMatches(
@@ -453,6 +492,36 @@ export async function waitForAllianceApplicationCleared(
   throw new Error(allianceApplicationClearTimeoutMessage(latest, expectation, lastError));
 }
 
+export async function waitForMissionLaunchState(
+  load: () => Promise<MissionLaunchSnapshot>,
+  txHash: string,
+  options: WaitOptions = {},
+): Promise<MissionLaunchSnapshot> {
+  const attempts = options.attempts ?? 8;
+  const intervalMs = options.intervalMs ?? 1_500;
+  const delay = options.delay ?? defaultDelay;
+  let latest: MissionLaunchSnapshot | undefined;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      latest = await load();
+      lastError = undefined;
+      if (isMissionLaunchStateVisible(latest, txHash)) {
+        return latest;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < attempts - 1) {
+      await delay(intervalMs);
+    }
+  }
+
+  throw new Error(missionLaunchTimeoutMessage(txHash, lastError));
+}
+
 export async function waitForHydratedWalletPlanet(
   load: () => Promise<WalletPlanetSyncSnapshot>,
   preferredPlanetId?: string | undefined,
@@ -667,6 +736,13 @@ function allianceApplicationClearTimeoutMessage(
   }
 
   return "Alliance application transaction confirmed, but Alliance state is still syncing. Try refreshing Alliance state in a few seconds.";
+}
+
+function missionLaunchTimeoutMessage(txHash: string, lastError?: unknown): string {
+  const recovery = transientGameStateReadFailureMessage(lastError);
+  if (recovery) return recovery;
+
+  return `Mission transaction ${txHash} confirmed, but the launched mission is still syncing in the game API. Try refreshing mission state in a few seconds.`;
 }
 
 function walletPlanetHydrationTimeoutMessage(
