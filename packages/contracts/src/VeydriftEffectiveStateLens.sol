@@ -78,6 +78,9 @@ contract VeydriftEffectiveStateLens {
                     && construction.readyAt <= state.asOf
             ) {
                 state.buildingLevels[i] = construction.targetLevel;
+                if (building == Building.Terraformer) {
+                    state.planet.fields += 5;
+                }
             }
             unchecked {
                 ++i;

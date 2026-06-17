@@ -765,10 +765,10 @@ describe("Veydrift backend", () => {
       missionResolution: null,
       randomnessCommitter: null,
       rpc: null,
-      ok: true,
+      ok: false,
       service: "veydrift-backend"
     });
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(503);
   });
 
   test("requires websocket head and log subscriptions for ready chain sync health", async () => {
@@ -796,6 +796,50 @@ describe("Veydrift backend", () => {
       chainSyncConnected: true,
       subscribedToHeads: false,
       subscribedToLogs: true
+    });
+    expect(body.ok).toBe(false);
+    expect(response.status).toBe(503);
+  });
+
+  test("returns 200 only when the backend readiness gate is satisfied", async () => {
+    const chainSync = {
+      start() {},
+      snapshot() {
+        return {
+          connected: true,
+          subscribedToHeads: true,
+          subscribedToLogs: true
+        };
+      }
+    } as unknown as import("./chainSync").ChainSyncService;
+    const indexer = {
+      snapshot() {
+        return {
+          indexedState: "healthy",
+          safeToServeIndexedState: true
+        };
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      chainSync,
+      config: configuredTestConfig,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.readiness).toMatchObject({
+      ready: true,
+      configurationReady: true,
+      chainSyncConnected: true,
+      subscribedToHeads: true,
+      subscribedToLogs: true,
+      indexedState: "healthy",
+      safeToServeIndexedState: true
     });
   });
 
@@ -6003,7 +6047,14 @@ function fleetMissionLog({
 
 describe("worker role gating (VEY-KANEO-466)", () => {
   test("reader workers skip every background loop but still serve reads", async () => {
-    const indexer = new SettlementIndexer(new MockChainReader(), 100n);
+    const indexer = {
+      snapshot() {
+        return {
+          indexedState: "healthy",
+          safeToServeIndexedState: true
+        };
+      }
+    } as unknown as SettlementIndexer;
     const handler = createRequestHandler({
       chainReader: new MockChainReader(),
       config: configuredTestConfig,
