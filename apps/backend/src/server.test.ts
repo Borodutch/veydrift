@@ -3702,6 +3702,73 @@ describe("Veydrift backend", () => {
     expect(infrastructureBody.raidableResources.metal).toBe("2532");
   });
 
+  test("resourcesAsOfNow uses raw contract production while elapsed building queues are only effective UI state (VEY-KANEO-546)", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("resource projection must not call live infrastructure state");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm resource projection should not rebuild from chain");
+    };
+    const startTs = 1_770_004_080;
+    const readyAt = startTs + 60;
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      lastSettledAt: startTs.toString()
+    });
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xbase-mine",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xbase-solar",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(3n)],
+      data: abiWords(30n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      blockTimestamp: `0x${startTs.toString(16)}`,
+      transactionHash: "0xelapsed-mine-upgrade",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(0n)],
+      data: abiWords(10n, BigInt(readyAt), 0n, 0n, 0n)
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
+
+    const infrastructureBody = await (await handler(new Request(`http://localhost/wallet/${player}/infrastructure`))).json();
+    const rawRows = indexer.resourceProjectionRows(planet.planetId, player);
+    const rawRate = deriveInfrastructureFields(
+      { ...planet, lastSettledAt: startTs.toString() },
+      rawRows.buildings,
+      rawRows.ships,
+      rawRows.technologyLevels
+    ).productionPerHour;
+    const effectiveRate = deriveInfrastructureFields(
+      { ...planet, lastSettledAt: startTs.toString() },
+      indexer.infrastructureRows(planet.planetId),
+      indexer.shipRows(planet.planetId),
+      indexer.technologyLevels(player)
+    ).productionPerHour;
+    if (!rawRate || !effectiveRate) throw new Error("expected derivable production rates");
+    const elapsed = Math.floor(Date.now() / 1_000) - startTs;
+    const rawProjectedMetal = Number(planet.resources.metal) + Math.floor((Number(rawRate.metal) * elapsed) / 3_600);
+    const effectiveProjectedMetal = Number(planet.resources.metal) + Math.floor((Number(effectiveRate.metal) * elapsed) / 3_600);
+
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(10);
+    expect(rawRows.buildings.find((building) => building.id === 0)?.level).toBe(1);
+    expect(infrastructureBody.resourcesAsOfNow.metal).toBe(rawProjectedMetal.toString());
+    expect(Number(infrastructureBody.resourcesAsOfNow.metal)).toBeLessThan(effectiveProjectedMetal);
+  });
+
   test("returned loot resource credit updates every wallet current-resource feeder (VEY-KANEO-517)", async () => {
     const chainReader = new MockChainReader();
     chainReader.getInfrastructureState = async () => {
@@ -5131,7 +5198,8 @@ describe("Veydrift backend", () => {
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
     // Same fixture as the accrued-resources fallback test: indexed infrastructure includes an
-    // elapsed building queue, so production accrues from the as-of-now promoted mine level.
+    // elapsed building queue, but lens-backed public resource reads follow the contract
+    // previewResources semantics and accrue from raw stored building levels.
     indexer.applyEvent({
       ...planet,
       eventName: "PlanetStarted",
@@ -5165,10 +5233,10 @@ describe("Veydrift backend", () => {
     expect(highscoreResponse.status).toBe(200);
 
     const tacticalPlanet = highscoreBody.rankings.total[0].planets[0];
-    // The finder's raidable loot now reflects the accrued 5128 metal (~50% plunder => 2564),
-    // matching the accrued resources the public planet read exposes. Before the fix this used
-    // the stale stored 5000 and under-reported LOOT at 2500.
-    expect(tacticalPlanet.tactical.raidableResources.metal).toBe("2564");
+    // The finder's raidable loot reflects the raw-preview accrued 5064 metal (~50% plunder =>
+    // 2532), matching the accrued resources the public planet read exposes. Before VEY-454 this
+    // used the stale stored 5000 and under-reported LOOT at 2500.
+    expect(tacticalPlanet.tactical.raidableResources.metal).toBe("2532");
     expect(Number(tacticalPlanet.tactical.raidableResources.metal)).toBeGreaterThan(2500);
   });
 
@@ -5181,8 +5249,9 @@ describe("Veydrift backend", () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
-    // Metal mine + solar plant settled two hours ago, with the indexed elapsed building queue
-    // projected into production for as-of-now public state.
+    // Metal mine + solar plant settled two hours ago, with an indexed elapsed building queue.
+    // Lens-backed public state must accrue from raw stored levels so it stays aligned with the
+    // contract previewResources view; elapsed queues are only effective for UI row state.
     indexer.applyEvent({
       ...planet,
       eventName: "PlanetStarted",
@@ -5214,8 +5283,8 @@ describe("Veydrift backend", () => {
     const universeBody = await universeResponse.json();
     const publicPlanet = universeBody.planets.find((item: { position: number }) => item.position === 9);
     const publicResources = publicPlanet.publicState.resources;
-    // The public universe surface accrues production from the promoted building rows.
-    expect(publicResources.metal).toBe("5128");
+    // The public universe surface accrues production from the raw stored building rows.
+    expect(publicResources.metal).toBe("5064");
     expect(publicPlanet.publicState.productionPerHour).toEqual(expect.objectContaining({
       metal: expect.any(String),
       crystal: expect.any(String),
@@ -5232,8 +5301,8 @@ describe("Veydrift backend", () => {
     const tacticalPlanet = highscoreBody.rankings.total[0].planets[0];
 
     // Raidable loot derived from the public (accrued) resources, using the same shared derivation
-    // the backend applies. The Finder must match this exactly — proving it reads the accrued base,
-    // not the stale stored snapshot (which would yield raidable metal 2500 instead of 2564).
+    // the backend applies. The Finder must match this exactly, proving it reads the accrued base
+    // instead of the stale stored snapshot (which would yield raidable metal 2500).
     const expectedDerived = deriveInfrastructureFields(
       { ...planet, resources: publicResources },
       indexer.infrastructureRows("7"),
