@@ -1296,9 +1296,7 @@ function accruedPlanetState<T extends PlanetState | null>(
 ): T {
   if (!planet) return planet;
 
-  const buildings = indexer.infrastructureRows(planet.planetId);
-  const ships = indexer.shipRows(planet.planetId);
-  const technologyLevels = indexer.technologyLevels(planet.owner);
+  const { buildings, ships, technologyLevels } = indexer.resourceProjectionRows(planet.planetId, planet.owner);
   const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
   return {
     ...planet,
