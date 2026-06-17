@@ -3832,7 +3832,7 @@ export class SettlementIndexer {
     }
 
     const backlogJson = event.backlog?.length
-      ? JSON.stringify(event.backlog)
+      ? this.productionBacklogJson(event.queueKind, queueStateFromEvent(event), event.backlog)
       : this.existingBacklogJsonForSameItem(event);
 
     this.db.query(`
@@ -3935,25 +3935,27 @@ export class SettlementIndexer {
     }
 
     const row = this.db.query(`
-      SELECT item_id, backlog_json
+      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
       WHERE queue_key = ?
-    `).get(queueKey(event)) as Pick<QueueRow, "item_id" | "backlog_json"> | null;
+    `).get(queueKey(event)) as QueueRow | null;
     if (!row || row.item_id === event.itemId) {
       return false;
     }
 
     const backlog = row.backlog_json ? parseEvent<QueueState[]>(row.backlog_json) : [];
-    const nextBacklog = Array.isArray(backlog) ? backlog : [];
+    const activeQueue = this.productionQueueFromRow(row);
+    const nextBacklog = this.sanitizedProductionBacklog(row.queue_kind, activeQueue, Array.isArray(backlog) ? backlog : []);
     const nextEntry = queueStateFromEvent(event);
     if (!nextBacklog.some((entry) => queueStatesMatch(entry, nextEntry))) {
       nextBacklog.push(nextEntry);
     }
+    const sanitizedBacklog = this.sanitizedProductionBacklog(row.queue_kind, activeQueue, nextBacklog);
     this.db.query(`
       UPDATE contract_production_queues
       SET backlog_json = ?
       WHERE queue_key = ?
-    `).run(JSON.stringify(nextBacklog), queueKey(event));
+    `).run(JSON.stringify(sanitizedBacklog), queueKey(event));
     return true;
   }
 
@@ -3973,7 +3975,9 @@ export class SettlementIndexer {
     if (!existing.canonicalSnapshot) return false;
 
     try {
-      return BigInt(blockNumberToDecimal(event.blockNumber)) <= BigInt(blockNumberToDecimal(existing.blockNumber));
+      const eventBlock = BigInt(blockNumberToDecimal(event.blockNumber));
+      const snapshotBlock = BigInt(blockNumberToDecimal(existing.blockNumber));
+      return eventBlock <= snapshotBlock;
     } catch {
       return false;
     }
@@ -3985,12 +3989,14 @@ export class SettlementIndexer {
     }
 
     const row = this.db.query(`
-      SELECT item_id, backlog_json
+      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
       WHERE queue_key = ?
-    `).get(queueKey(event)) as Pick<QueueRow, "item_id" | "backlog_json"> | null;
+    `).get(queueKey(event)) as QueueRow | null;
 
-    return row?.item_id === event.itemId ? row.backlog_json : null;
+    if (!row || row.item_id !== event.itemId || !row.backlog_json) return null;
+    const backlog = parseEvent<QueueState[]>(row.backlog_json);
+    return this.productionBacklogJson(row.queue_kind, this.productionQueueFromRow(row), Array.isArray(backlog) ? backlog : []);
   }
 
   private subtractPlanetResources(
@@ -4084,6 +4090,18 @@ export class SettlementIndexer {
     `).get(queueKeyValue) as QueueRow | null;
     if (!row) return null;
 
+    const queue = this.productionQueueFromRow(row);
+    if (row.backlog_json) {
+      const backlog = parseEvent<QueueState[]>(row.backlog_json);
+      const sanitizedBacklog = this.sanitizedProductionBacklog(row.queue_kind, queue, Array.isArray(backlog) ? backlog : []);
+      if (sanitizedBacklog.length > 0) {
+        queue.backlog = sanitizedBacklog;
+      }
+    }
+    return queue;
+  }
+
+  private productionQueueFromRow(row: QueueRow): QueueState {
     const queue: QueueState = {
       active: true,
       kind: row.queue_kind,
@@ -4102,13 +4120,29 @@ export class SettlementIndexer {
     if (row.quantity !== null) {
       queue.quantity = row.quantity;
     }
-    if (row.backlog_json) {
-      const backlog = parseEvent<QueueState[]>(row.backlog_json);
-      if (Array.isArray(backlog) && backlog.length > 0) {
-        queue.backlog = backlog;
-      }
-    }
     return queue;
+  }
+
+  private productionBacklogJson(kind: string | null, activeQueue: QueueState, backlog: readonly QueueState[]): string | null {
+    const sanitizedBacklog = this.sanitizedProductionBacklog(kind, activeQueue, backlog);
+    return sanitizedBacklog.length > 0 ? JSON.stringify(sanitizedBacklog) : null;
+  }
+
+  private sanitizedProductionBacklog(kind: string | null, activeQueue: QueueState, backlog: readonly QueueState[]): QueueState[] {
+    if (kind !== "defense" && kind !== "ship") {
+      return [...backlog];
+    }
+
+    const activeReadyAt = queueReadyAt(activeQueue);
+    const sanitized: QueueState[] = [];
+    for (const entry of backlog) {
+      if (entry.kind !== kind) continue;
+      const entryReadyAt = queueReadyAt(entry);
+      if (activeReadyAt !== null && entryReadyAt !== null && entryReadyAt <= activeReadyAt) continue;
+      if (sanitized.some((existing) => queueStatesMatch(existing, entry))) continue;
+      sanitized.push(entry);
+    }
+    return sanitized;
   }
 
   private indexedLogsForTransaction(transactionHash: string): IndexedRpcLog[] {
@@ -5526,6 +5560,15 @@ function queueStatesMatch(left: QueueState, right: QueueState): boolean {
     && left.cost.metal === right.cost.metal
     && left.cost.crystal === right.cost.crystal
     && left.cost.deuterium === right.cost.deuterium;
+}
+
+function queueReadyAt(queue: QueueState): bigint | null {
+  if (queue.readyAt === null || queue.readyAt === undefined) return null;
+  try {
+    return BigInt(queue.readyAt);
+  } catch {
+    return null;
+  }
 }
 
 function subtractResource(left: string, right: string): string {
