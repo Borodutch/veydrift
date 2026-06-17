@@ -7,6 +7,7 @@ import {
   buildingFinishUnavailableReasonForDisplay,
   buildingCompletionAutoRefreshDelayMs,
   buildingFinishActionErrorLabel,
+  attackerCombatTechLevelsForMission,
   beginRefreshRequest,
   canLoadIndexedPageState,
   canApplyRefreshRequest,
@@ -106,6 +107,18 @@ describe("Playable MVP app display helpers", () => {
       },
       finishUnavailableReason: infrastructureBackendSyncPausedLabel,
     })).toBeUndefined();
+  });
+
+  test("uses shipyard combat techs for mission previews when research state is absent", () => {
+    expect(attackerCombatTechLevelsForMission({
+      researchTechnologyLevels: undefined,
+      shipyardTechnologyLevels: { "5": 4, "6": 0, "7": 5 },
+    })).toEqual({ weapons: 4, shielding: 0, armor: 5 });
+
+    expect(attackerCombatTechLevelsForMission({
+      researchTechnologyLevels: { "5": 3 },
+      shipyardTechnologyLevels: { "5": 4, "6": 2, "7": 5 },
+    })).toEqual({ weapons: 3, shielding: 2, armor: 5 });
   });
 
   test("gates page state refreshes until the current wallet snapshot is hydrated", () => {

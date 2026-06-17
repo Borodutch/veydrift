@@ -391,6 +391,44 @@ describe("mission creation", () => {
     });
   });
 
+  test("renders shipyard-sourced attacker combat techs and increased attack power", () => {
+    const selectedShips = { ...attackAction.ships, lightFighter: 1 };
+    const target = targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleet: [],
+        defenses: [{ id: 0, count: 1 }],
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    });
+
+    const baseForecast = publicTargetBattleForecast(selectedShips, target);
+    const shipyardOnlyForecast = publicTargetBattleForecast(selectedShips, target, {
+      weapons: 4,
+      shielding: 0,
+      armor: 5,
+    });
+    const intel = AttackIntelPanel({
+      battleForecast: shipyardOnlyForecast,
+      coords: { galaxy: 7, system: 41, position: 6 },
+      lootableAtArrival: { metal: 0, crystal: 0, deuterium: 0 },
+      maxLootForecast: { metal: 0, crystal: 0, deuterium: 0 },
+      target,
+      resourceIntel: targetResourceIntel(target, 0),
+      stationedDefenderUnits: [],
+      targetDefenseUnits: [],
+      targetFleetUnits: [],
+    });
+    const text = collectText(intel).join(" ");
+
+    expect(shipyardOnlyForecast.attackerPower).toBeGreaterThan(baseForecast.attackerPower);
+    expect(shipyardOnlyForecast.attackerTechLevels).toEqual({ weapons: 4, shielding: 0, armor: 5 });
+    expect(text).toMatch(/Attacker tech W\s+4 S\s+0 A\s+5/);
+    expect(text).toMatch(/Defender tech W\s+0 S\s+0 A\s+0/);
+  });
+
   test("includes public stationed defenders in attack intel and battle forecast", () => {
     const target = targetPlanet({
       publicState: {
