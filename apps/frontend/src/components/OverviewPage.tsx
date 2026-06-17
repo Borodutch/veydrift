@@ -281,36 +281,36 @@ export function OverviewPage({
           </p>
         </div>
       ) : (
-      <div className="overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
-        <div className="grid grid-cols-[5.75rem_minmax(0,1fr)] gap-3 p-3 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-4 sm:p-4">
-          <div className="relative aspect-square min-w-0 overflow-hidden rounded-md border border-white/10 bg-[#070b13]">
-            {(!heroImage || !heroImageLoaded) && (
-              <PlanetImageSkeleton className="absolute inset-0" />
-            )}
-            {heroImage ? (
-              <OptimizedImage
-                key={heroImage}
-                alt="Planet hero"
-                className={`absolute inset-0 h-full w-full object-contain transition-opacity duration-200 ${heroImageLoaded ? "opacity-100" : "opacity-0"}`}
-                imageRef={heroImageRef}
-                loading="eager"
-                onLoad={(event) => {
-                  if (isImageReady(event.currentTarget)) setHeroImageLoaded(true);
-                }}
-                sizes="(min-width: 640px) 8rem, 5.75rem"
-                src={heroImage}
-              />
-            ) : null}
-          </div>
-          <div className="grid min-w-0 content-start gap-2">
+      <div className="relative min-h-[8.75rem] overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
+        {(!heroImage || !heroImageLoaded) && (
+          <PlanetImageSkeleton className="absolute inset-y-0 right-0 w-[70%]" />
+        )}
+        {heroImage ? (
+          <OptimizedImage
+            key={heroImage}
+            alt="Planet hero background"
+            className={`absolute inset-y-0 right-0 h-full w-[78%] object-contain object-right transition-opacity duration-200 sm:w-[68%] ${heroImageLoaded ? "opacity-70" : "opacity-0"}`}
+            imageRef={heroImageRef}
+            loading="eager"
+            onLoad={(event) => {
+              if (isImageReady(event.currentTarget)) setHeroImageLoaded(true);
+            }}
+            sizes="(min-width: 1024px) 40rem, 100vw"
+            src={heroImage}
+          />
+        ) : null}
+        <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-r from-[#101624] via-[#101624]/90 to-[#101624]/40" />
+        <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-t from-[#101624] via-[#101624]/20 to-transparent" />
+        <div className="relative grid min-h-[8.75rem] content-end gap-3 p-3 sm:min-h-[9.5rem] sm:p-4">
+          <div className="grid max-w-[36rem] min-w-0 gap-2">
             <div className="min-w-0">
-              <p className="text-[11px] font-medium leading-tight text-slate-400">{planetSubhead}</p>
-              <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-2">
-                <h2 className="m-0 min-w-0 break-words text-base font-semibold leading-tight text-white">
+              <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.14em] text-slate-300/90">{planetSubhead}</p>
+              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
+                <h2 className="m-0 min-w-0 break-words text-2xl font-semibold leading-none text-white drop-shadow sm:text-3xl">
                   {livePlanetName ?? (
                     <span
                       aria-label="Loading planet name"
-                      className="inline-block h-4 w-32 animate-pulse rounded bg-white/10 align-middle"
+                      className="inline-block h-7 w-40 animate-pulse rounded bg-white/10 align-middle sm:h-8"
                     />
                   )}
                 </h2>
@@ -418,7 +418,7 @@ export function OverviewPage({
             )}
           </div>
           {effectsPanelOpen ? (
-            <div className="col-span-2">
+            <div>
               <PlanetEffectsPanel
                 effects={planetEffects}
                 id="overview-planet-effects"
