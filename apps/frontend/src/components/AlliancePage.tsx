@@ -8,6 +8,7 @@ import { fetchWalletPlanets, shortAddress } from "../walletFlow";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { VeydriftLoader } from "./VeydriftLoader";
 import { AllianceSkeleton } from "./LoadingSkeletons";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 export const allianceRosterPageSize = 10;
 export const allianceDirectoryPageSize = 10;
@@ -175,7 +176,9 @@ export function AlliancePage({
         titleSize="xl"
       />
 
-      {error ? <Notice tone="error">{error}</Notice> : null}
+      {error ? (
+        isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <Notice tone="error">{error}</Notice>
+      ) : null}
       {allianceState?.allianceAvailable === false ? (
         <Notice>{allianceState.unavailableReason ?? "Alliance contract is not configured."}</Notice>
       ) : null}
@@ -1368,7 +1371,9 @@ function PlayerProfilePanel({ profile, onClose }: { profile: PlayerProfileState;
           <p className="mt-1 break-all text-xs text-slate-500">{wallet}</p>
         </div>
         {profile.status === "loading" ? <VeydriftLoader label="Loading player profile" variant="inline" /> : null}
-        {profile.status === "error" ? <Notice tone="error">{profile.label}</Notice> : null}
+        {profile.status === "error" ? (
+          isGameUnavailableMessage(profile.label) ? <GameUnavailableNotice /> : <Notice tone="error">{profile.label}</Notice>
+        ) : null}
         {profile.status === "loaded" ? (
           <>
             <div className="grid grid-cols-2 gap-2">
