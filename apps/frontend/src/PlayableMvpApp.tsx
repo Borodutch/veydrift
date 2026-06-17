@@ -5826,9 +5826,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         buildingActionPendingLabel={infrastructureActionPendingLabel}
         onNavigate={(target) => handleNavigate(target)}
         onRenamePlanet={handleRenamePlanet}
-        onUpdatePlayerDisplayName={handleUpdatePlayerDisplayName}
-        playerProfile={playerProfile}
-        playerProfileAction={playerProfileAction}
         homePlanet={homePlanetIdentity}
         buildingQueue={buildingQueue}
         planet={planet}
@@ -5840,7 +5837,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         shipProgress={shipProgress}
         state={state}
         canRenamePlanet={Boolean(provider && account && gameContract && activePlanetId)}
-        canEditPlayerProfile={Boolean(provider && account && apiBaseUrl)}
         planetRenameAction={planetRenameAction}
         canAbandonPlanet={selectedManagedPlanet
           ? shouldShowAbandonPlanetButton(selectedManagedPlanet, Boolean(provider && account && gameContract), planetManagementAction)
@@ -5860,9 +5856,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         <NavBar
           account={account}
           active={page}
+          canEditPlayerProfile={Boolean(provider && account && apiBaseUrl)}
           coordinates={homeCoordinateLabel}
           onNavigate={handleNavigate}
+          onUpdatePlayerDisplayName={handleUpdatePlayerDisplayName}
           planetPicker={mobilePlanetPicker}
+          playerProfile={playerProfile}
+          playerProfileAction={playerProfileAction}
         />
 
         <main className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">
