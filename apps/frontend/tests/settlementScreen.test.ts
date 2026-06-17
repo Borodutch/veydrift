@@ -3,6 +3,7 @@ import {
   indexedSettlementState,
   noWalletDetectedMessage,
   POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE,
+  settlementErrorStateMessage,
   settlementLaunchBlocker,
   shouldAttemptFarcasterNetworkSetup,
   shouldAutoConnectFarcasterWallet,
@@ -43,6 +44,36 @@ describe("settlement screen mode", () => {
     expect(preSettlementMode(connected, pending)).toBe("pending");
     expect(preSettlementMode(connected, { kind: "error", message: "RPC unavailable" })).toBe("error");
     expect(preSettlementMode({ kind: "disconnected" }, { kind: "error", message: "Wallet read timed out" })).toBe("error");
+  });
+
+  test("labels backend-unreachable settlement startup failures as server outages", () => {
+    const state = settlementErrorStateMessage({
+      kind: "error",
+      message: "The Veydrift backend is temporarily unreachable from this browser. It is likely restarting and should be back in a few minutes.",
+    });
+
+    expect(state.title).toBe("Game server unavailable");
+    expect(state.body).toContain("backend is likely restarting");
+    expect(state.body).not.toMatch(/wallet/i);
+    expect(state.body).not.toContain("Settlement API");
+    expect(state.body).not.toContain("last known game state");
+  });
+
+  test("keeps true wallet settlement failures wallet-specific", () => {
+    expect(settlementErrorStateMessage({
+      kind: "error",
+      message: "Timed out reading accounts from the wallet. Unlock or reconnect your wallet, then retry.",
+    })).toEqual({
+      body: "Timed out reading accounts from the wallet. Unlock or reconnect your wallet, then retry.",
+      title: "Wallet error",
+    });
+    expect(settlementErrorStateMessage({
+      kind: "rejected",
+      message: "Wallet connection was rejected.",
+    })).toEqual({
+      body: "Wallet connection was rejected.",
+      title: "Request rejected",
+    });
   });
 
   test("maps indexed API settlement state to playable state without wallet eth_call reads", () => {
