@@ -4818,7 +4818,11 @@ export class SettlementIndexer {
   }
 
   private indexedFleetMissionSummaries(): FleetMissionSummary[] {
-    const asOfSeconds = Math.floor(Date.now() / 1_000);
+    // Fleet mission summaries are derived by decoding historical mission logs. Cache them in a short
+    // bucket instead of the exact current second so hot read paths don't rescan the full event log table
+    // every second on every API worker. Route-level response caches use similar TTLs; the UI already
+    // refreshes live countdowns client-side between backend snapshots.
+    const asOfSeconds = Math.floor(Date.now() / 10_000) * 10;
     if (
       this.missionReadModelCache
       && this.missionReadModelCache.generation === this.stateGeneration
