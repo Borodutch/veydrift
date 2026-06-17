@@ -963,6 +963,29 @@ export class SettlementIndexer {
     );
   }
 
+  resourceProjectionRows(planetId: string, owner: `0x${string}`): {
+    buildings: InfrastructureState["buildings"];
+    ships: ShipyardState["ships"];
+    technologyLevels: Record<string, number>;
+  } {
+    return {
+      buildings: this.contractInfrastructureRows(planetId),
+      ships: this.contractShipRows(planetId),
+      technologyLevels: this.contractTechnologyLevels(owner)
+    };
+  }
+
+  private contractInfrastructureRows(planetId: string): InfrastructureState["buildings"] {
+    return deriveBuildingRows((id) => this.indexedLevel("contract_building_levels", "building_id", planetId, id));
+  }
+
+  private contractShipRows(planetId: string): ShipyardState["ships"] {
+    return deriveShipRows(
+      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
+      this.planet(planetId)?.temperature
+    );
+  }
+
   // Ships physically present at the planet and therefore launchable right now — the value the contract
   // returns from `shipCount(planetId, ship)`. Post the VeydriftGame events upgrade this is identical to
   // `shipRows`: the contract emits PlanetShipCountChanged on EVERY ship-count mutation (the single sink
@@ -1013,6 +1036,17 @@ export class SettlementIndexer {
       levels[key] = Math.max(levels[key] ?? 0, completed.targetLevel);
     }
     return levels;
+  }
+
+  private contractTechnologyLevels(wallet: `0x${string}`): Record<string, number> {
+    const rows = this.db.query(`
+      SELECT technology_id AS id, level AS value
+      FROM contract_technology_levels
+      WHERE owner = lower(?)
+      ORDER BY technology_id ASC
+    `).all(wallet) as LevelRow[];
+
+    return Object.fromEntries(rows.map((row) => [String(row.id), row.value]));
   }
 
   fleetSlots(wallet: `0x${string}`): ShipyardState["fleetSlots"] {
@@ -2944,6 +2978,10 @@ export class SettlementIndexer {
         this.upsertIndexedLevel("indexed_moon_building_levels", "building_id", "level", planetId, building.id, building.level);
         this.upsertIndexedLevel("contract_moon_building_levels", "moon_building_id", "level", planetId, building.id, building.level);
       }
+    }
+    for (const key of state.verifiedEmptyQueues) {
+      this.db.query("DELETE FROM indexed_planet_queues WHERE queue_key = ?").run(key);
+      this.db.query("DELETE FROM contract_production_queues WHERE queue_key = ?").run(key);
     }
     for (const [key, queue] of state.planetQueues) {
       const [kind, planetId] = key.split(":");
