@@ -330,6 +330,7 @@ abstract contract VeydriftGameStorage {
     error InsufficientShips(Ship ship, uint32 available, uint32 required);
     error SamePlanet();
     error SelfAttack();
+    error CargoNotAllowed();
     error CargoCapacityExceeded(uint256 capacity, uint256 cargo);
     error FleetInactive();
     error FleetNotOwner();
