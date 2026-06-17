@@ -15,7 +15,7 @@ import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
 import { MissionDetailPage } from "./components/MissionDetailPage";
 import { MissionControlPage } from "./components/MissionControlPage";
-import { MissionCreationPage, type MissionCargoDraft, type MissionLaunchDraft } from "./components/MissionCreationPage";
+import { MissionCreationPage, type CombatTechLevels, type MissionCargoDraft, type MissionLaunchDraft } from "./components/MissionCreationPage";
 import { BattleReportsPage } from "./components/BattleReportsPage";
 import { RankingsPage } from "./components/RankingsPage";
 import { RaidTargetFinderPage } from "./components/RaidTargetFinderPage";
@@ -307,14 +307,34 @@ function raidTargetFullResources(target: RaidTarget): { metal: string; crystal: 
   };
 }
 
+function combatTechLevelsFromTechnologyLevels(technologyLevels: Record<string, number> | undefined): CombatTechLevels {
+  return {
+    weapons: safeResourceNumber(technologyLevels?.["5"]) ?? 0,
+    shielding: safeResourceNumber(technologyLevels?.["6"]) ?? 0,
+    armor: safeResourceNumber(technologyLevels?.["7"]) ?? 0,
+  };
+}
+
+function raidTargetResearchRowsForMission(target: RaidTarget): Array<{ id: number; level: number }> | null {
+  const levels = target.combatTechLevels;
+  if (!levels) return null;
+  return [
+    { id: 5, level: safeResourceNumber(levels.weapons) ?? 0 },
+    { id: 6, level: safeResourceNumber(levels.shielding) ?? 0 },
+    { id: 7, level: safeResourceNumber(levels.armor) ?? 0 },
+  ];
+}
+
 export function raidTargetPlanetForMission(target: RaidTarget): Planet {
   const resources = raidTargetFullResources(target);
+  const research = raidTargetResearchRowsForMission(target);
   const hasPublicIntel = Boolean(
     resources
       || target.shipUnits.length > 0
       || target.defenseUnits.length > 0
       || target.combatPower > 0
       || target.loot > 0
+      || research
   );
 
   return {
@@ -343,7 +363,7 @@ export function raidTargetPlanetForMission(target: RaidTarget): Planet {
           fleet: target.shipUnits.map((unit) => ({ id: unit.id, count: unit.count })),
           defenses: target.defenseUnits.map((unit) => ({ id: unit.id, count: unit.count })),
           stationedDefenders: null,
-          research: null,
+          research,
           queues: null,
         }
       : null,
@@ -3393,6 +3413,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     () => researchStateWithFallbackQueue(researchState, onChainQueues?.research),
     [onChainQueues?.research, researchState],
   );
+  const attackerCombatTechLevels = useMemo(
+    () => combatTechLevelsFromTechnologyLevels(effectiveResearchState?.technologyLevels),
+    [effectiveResearchState?.technologyLevels],
+  );
   const shipQueue = settledState.queue?.kind === "ship" ? settledState.queue : undefined;
   const queueProgress = progress(buildingQueue, now);
   const researchProgress = progress(settledState.researchQueue, now);
@@ -4998,6 +5022,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         <MissionCreationPage
           action={pendingGalaxyMission.action}
           actionPending={galaxyAction.status === "pending"}
+          attackerCombatTechLevels={attackerCombatTechLevels}
           coords={pendingGalaxyMission.coords}
           defenseHoldContext={pendingGalaxyMission.action.kind === "defenseHold"
             ? { depotLevel: allianceDepotLevelFromPlanet(pendingGalaxyMission.target) }
@@ -5020,6 +5045,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         <MissionCreationPage
           action={{ enabled: true, kind: "attack", label: "Join attack", mode: "mission", mission: "attack", ships: emptyMissionShips() }}
           actionPending={galaxyAction.status === "pending"}
+          attackerCombatTechLevels={attackerCombatTechLevels}
           coords={pendingJoinAttack.coords}
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
           joinAttackMode
@@ -5041,6 +5067,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           acsDefendMode
           action={{ enabled: true, kind: "acsDefend", label: "Group defend", mode: "mission", mission: "acsDefend", ships: emptyMissionShips() }}
           actionPending={galaxyAction.status === "pending"}
+          attackerCombatTechLevels={attackerCombatTechLevels}
           coords={pendingAcsDefend.coords}
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
           onBack={() => setPendingAcsDefend(null)}

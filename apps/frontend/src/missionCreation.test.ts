@@ -233,6 +233,40 @@ describe("mission creation", () => {
     }))).toMatchObject({ kind: "defeat", label: "Probable defeat" });
   });
 
+  test("applies combat tech levels to public battle forecast power and outcome", () => {
+    const selectedShips = { ...attackAction.ships, lightFighter: 1 };
+    const target = targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleet: [],
+        defenses: [{ id: 0, count: 1 }],
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    });
+
+    const baseForecast = publicTargetBattleForecast(selectedShips, target);
+    const techForecast = publicTargetBattleForecast(selectedShips, target, {
+      weapons: 10,
+      shielding: 10,
+      armor: 10,
+    });
+
+    expect(baseForecast).toMatchObject({
+      kind: "defeat",
+      attackerTechLevels: { weapons: 0, shielding: 0, armor: 0 },
+      defenderTechKnown: true,
+      defenderTechLevels: { weapons: 0, shielding: 0, armor: 0 },
+    });
+    expect(techForecast.attackerPower).toBeGreaterThan(baseForecast.attackerPower);
+    expect(techForecast).toMatchObject({
+      kind: "win",
+      label: "Probable win",
+      attackerTechLevels: { weapons: 10, shielding: 10, armor: 10 },
+    });
+  });
+
   test("includes public stationed defenders in attack intel and battle forecast", () => {
     const target = targetPlanet({
       publicState: {
@@ -296,6 +330,8 @@ describe("mission creation", () => {
     expect(text).toContain("[7:41:6]");
     expect(text).toContain("Probable outcome");
     expect(text).toContain("Probable win");
+    expect(text).toContain("Attacker tech");
+    expect(text).toContain("Defender tech unknown");
     expect(text).toContain("Max loot at arrival");
     expect(text).toContain("Destination intel");
     expect(text).toContain("Destination Fleet");

@@ -2025,6 +2025,11 @@ type RankedHighscorePlanet = {
       power: string;
       units: RankedTacticalUnitBreakdown[];
     };
+    combatTechLevels: {
+      weapons: number;
+      shielding: number;
+      armor: number;
+    };
     combatPower: string;
   };
 };
@@ -2463,6 +2468,11 @@ export function indexedPlanetTacticalSummary(
     combatShips: {
       ...combatShipSummary,
       units: tacticalUnitBreakdown(ships.filter((ship) => isCombatShipId(ship.id))),
+    },
+    combatTechLevels: {
+      weapons: Math.max(0, Math.trunc(technologyLevels["5"] ?? 0)),
+      shielding: Math.max(0, Math.trunc(technologyLevels["6"] ?? 0)),
+      armor: Math.max(0, Math.trunc(technologyLevels["7"] ?? 0))
     },
     combatPower: (BigInt(combatShipSummary.power) + BigInt(defenseSummary.power)).toString()
   };

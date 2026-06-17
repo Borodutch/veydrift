@@ -53,6 +53,12 @@ export type RaidTargetUnitBreakdown = {
   power: number;
 };
 
+export type RaidTargetCombatTechLevels = {
+  weapons: number;
+  shielding: number;
+  armor: number;
+};
+
 export type RaidTarget = {
   planetId: string;
   name: string | null;
@@ -71,6 +77,7 @@ export type RaidTarget = {
   grossLoot: number;
   raidableResources: OnChainResources | null;
   combatPower: number;
+  combatTechLevels: RaidTargetCombatTechLevels | null;
   shipPower: number;
   shipCount: number;
   shipUnits: RaidTargetUnitBreakdown[];
@@ -345,6 +352,13 @@ export function buildRaidTargets({
         grossLoot: safeNumber(tactical?.grossResourceTotal),
         raidableResources: tactical?.raidableResources ?? null,
         combatPower: safeNumber(tactical?.combatPower),
+        combatTechLevels: tactical?.combatTechLevels
+          ? {
+              weapons: safeNumber(tactical.combatTechLevels.weapons),
+              shielding: safeNumber(tactical.combatTechLevels.shielding),
+              armor: safeNumber(tactical.combatTechLevels.armor),
+            }
+          : null,
         shipPower: safeNumber(tactical?.ships.power),
         shipCount: tactical?.ships.count ?? 0,
         shipUnits: unitBreakdown(tactical?.ships.units),
