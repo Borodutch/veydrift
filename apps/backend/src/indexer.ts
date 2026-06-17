@@ -348,6 +348,13 @@ export class SettlementIndexer {
     }
     | null = null;
   private attackLaunchSecondsCache = new Map<string, { generation: number; launchesByTarget: Map<string, number[]> }>();
+  private projectedAttackReturnCargoCache:
+    | {
+      generation: number;
+      asOfSeconds: number;
+      cargoByPlanetId: Map<string, Resources>;
+    }
+    | null = null;
   private canonicalQueueSnapshotBlock: string | null = null;
 
   constructor(
@@ -511,6 +518,35 @@ export class SettlementIndexer {
     if (!row) return false;
     return isZeroResourcePlaceholder(parseEvent<SettledPlanetEvent>(row.event_json))
       && !this.planetResourceSnapshot(planetId);
+  }
+
+  projectedAttackReturnCargoForPlanet(planetId: string, asOfSeconds = nowSeconds()): Resources {
+    const cached = this.projectedAttackReturnCargoCache;
+    if (cached && cached.generation === this.stateGeneration && cached.asOfSeconds === asOfSeconds) {
+      return cached.cargoByPlanetId.get(planetId) ?? zeroResources();
+    }
+
+    const cargoByPlanetId = new Map<string, Resources>();
+    for (const mission of this.rawIndexedFleetMissionSummaries()) {
+      if (
+        (mission.missionType !== "Attack" && mission.missionType !== "AcsAttack")
+          || mission.status !== "Returning"
+          || Number(mission.returnAt) > asOfSeconds
+          || mission.returnCargo === null
+      ) {
+        continue;
+      }
+      cargoByPlanetId.set(
+        mission.originPlanetId,
+        addResources(cargoByPlanetId.get(mission.originPlanetId) ?? zeroResources(), mission.returnCargo)
+      );
+    }
+    this.projectedAttackReturnCargoCache = {
+      generation: this.stateGeneration,
+      asOfSeconds,
+      cargoByPlanetId
+    };
+    return cargoByPlanetId.get(planetId) ?? zeroResources();
   }
 
   playerProfile(wallet: string): PlayerProfile {
@@ -4691,17 +4727,7 @@ export class SettlementIndexer {
   }
 
   private indexedFleetMissionSummaries(): FleetMissionSummary[] {
-    const rows = this.db.query(`
-      SELECT event_json
-      FROM indexed_event_logs
-      WHERE removed = 0
-    `).all() as EventRow[];
-    const logs = sortedEventRows(rows).filter(isFleetMissionLog);
-    // VEY-KANEO-479: decode leaves `needsResolution` at its default; compute it here so an arrived
-    // Attack only reads "Ready to resolve" once its battle randomness is fulfilled (gated on the
-    // ingested RandomnessFulfilled logs). Harvest and the other types stay on the plain arrival check.
-    const eventMissions = decodeCompleteFleetMissionLogs(logs);
-    const missions = this.mergeCanonicalFleetMissions(eventMissions);
+    const missions = this.rawIndexedFleetMissionSummaries();
     const nowSeconds = Math.floor(Date.now() / 1_000);
     // Only an arrived Attack awaiting its randomness needs the fulfillment scan; skip it (and the
     // extra full-table read it does) whenever nothing is actually gated, which is the common case.
@@ -4725,6 +4751,17 @@ export class SettlementIndexer {
         needsResolution: fleetMissionNeedsResolution({ ...mission, status }, nowSeconds, fulfilledRandomnessRequestIds)
       };
     });
+  }
+
+  private rawIndexedFleetMissionSummaries(): FleetMissionSummary[] {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+    `).all() as EventRow[];
+    const logs = sortedEventRows(rows).filter(isFleetMissionLog);
+    const eventMissions = decodeCompleteFleetMissionLogs(logs);
+    return this.mergeCanonicalFleetMissions(eventMissions);
   }
 
   private mergeCanonicalFleetMissions(eventMissions: FleetMissionSummary[]): FleetMissionSummary[] {
@@ -5392,6 +5429,18 @@ function subtractResources(left: QueueState["cost"], right: QueueState["cost"]):
     crystal: subtractResource(left.crystal, right.crystal),
     deuterium: subtractResource(left.deuterium, right.deuterium)
   };
+}
+
+function addResources(left: Resources, right: Resources): Resources {
+  return {
+    metal: addResource(left.metal, right.metal),
+    crystal: addResource(left.crystal, right.crystal),
+    deuterium: addResource(left.deuterium, right.deuterium)
+  };
+}
+
+function addResource(left: string, right: string): string {
+  return (BigInt(left) + BigInt(right)).toString();
 }
 
 function resourcesWithClaimableAccrual(

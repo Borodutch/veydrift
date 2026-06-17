@@ -1295,9 +1295,11 @@ function accruedPlanetState<T extends PlanetState | null>(
   const ships = indexer.shipRows(planet.planetId);
   const technologyLevels = indexer.technologyLevels(planet.owner);
   const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
+  const productionResources = resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt);
+  const pendingAttackReturnCargo = indexer.projectedAttackReturnCargoForPlanet(planet.planetId);
   return {
     ...planet,
-    resources: resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt)
+    resources: addResources(productionResources, pendingAttackReturnCargo)
   };
 }
 
@@ -1837,6 +1839,18 @@ function resourceWithClaimableAccrual(
   const produced = Math.floor((rate * elapsedSeconds) / 3_600);
   const remainingCapacity = Math.max(0, cap - currentValue);
   return Math.floor(currentValue + Math.min(produced, remainingCapacity)).toString();
+}
+
+function addResources(left: Resources, right: Resources): Resources {
+  return {
+    metal: addResource(left.metal, right.metal),
+    crystal: addResource(left.crystal, right.crystal),
+    deuterium: addResource(left.deuterium, right.deuterium)
+  };
+}
+
+function addResource(left: string, right: string): string {
+  return (BigInt(left) + BigInt(right)).toString();
 }
 
 async function allianceIntelForOccupiedPlanets(

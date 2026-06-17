@@ -69,6 +69,7 @@ const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c82
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
@@ -3711,6 +3712,95 @@ describe("Veydrift backend", () => {
     expect(overviewBody.planetsResponse.planets[0].resourcesAsOfNow).toEqual(credited);
   });
 
+  test("matured attack return cargo projects into current resources before the credit event (VEY-KANEO-531)", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("attack-loot projection must not read live infrastructure state");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm attack-loot projection should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      lastSettledAt: Math.floor(Date.now() / 1_000).toString(),
+      resources: { metal: "2022", crystal: "1005", deuterium: "1259" }
+    });
+    for (const log of maturedAttackReturningWithLootLogs({
+      missionId: 531n,
+      owner: player,
+      originPlanetId: 7n,
+      targetPlanetId: 8n,
+      loot: { metal: 2978n, crystal: 1819n, deuterium: 100n }
+    })) {
+      indexer.applyLog(log);
+    }
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const settlementBody = await (await handler(new Request(`http://localhost/wallet/${player}/settlement`))).json();
+    const planetsBody = await (await handler(new Request(`http://localhost/wallet/${player}/planets`))).json();
+    const infrastructureBody = await (await handler(new Request(`http://localhost/wallet/${player}/infrastructure`))).json();
+    const overviewBody = await (await handler(new Request(`http://localhost/wallet/${player}/overview`))).json();
+
+    const projected = { metal: "5000", crystal: "2824", deuterium: "1359" };
+    expect(settlementBody.planet.resources).toEqual({ metal: "2022", crystal: "1005", deuterium: "1259" });
+    expect(settlementBody.planet.resourcesAsOfNow).toEqual(projected);
+    expect(planetsBody.planets[0].resources).toEqual({ metal: "2022", crystal: "1005", deuterium: "1259" });
+    expect(planetsBody.planets[0].resourcesAsOfNow).toEqual(projected);
+    expect(infrastructureBody.resources).toEqual({ metal: "2022", crystal: "1005", deuterium: "1259" });
+    expect(infrastructureBody.resourcesAsOfNow).toEqual(projected);
+    expect(overviewBody.settlement.planet.resourcesAsOfNow).toEqual(projected);
+    expect(overviewBody.planetsResponse.planets[0].resourcesAsOfNow).toEqual(projected);
+  });
+
+  test("attack return cargo projection stops after FleetMissionReturned is indexed (VEY-KANEO-531)", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm attack-loot projection should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      lastSettledAt: Math.floor(Date.now() / 1_000).toString(),
+      resources: { metal: "2022", crystal: "1005", deuterium: "1259" }
+    });
+    for (const log of maturedAttackReturningWithLootLogs({
+      missionId: 532n,
+      owner: player,
+      originPlanetId: 7n,
+      targetPlanetId: 8n,
+      loot: { metal: 2978n, crystal: 1819n, deuterium: 100n }
+    })) {
+      indexer.applyLog(log);
+    }
+    indexer.applyLog({
+      blockNumber: "0x95",
+      transactionHash: "0xreturned-mission",
+      logIndex: "0x4",
+      topics: [fleetMissionReturnedTopic, topic(532n), addressTopic(player), topic(7n)],
+      data: "0x"
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const settlementBody = await (await handler(new Request(`http://localhost/wallet/${player}/settlement`))).json();
+
+    expect(settlementBody.planet.resourcesAsOfNow).toEqual({ metal: "2022", crystal: "1005", deuterium: "1259" });
+  });
+
   test("planet roster serves the settled resource snapshot at lastSettledAt, with the accrued balance in resourcesAsOfNow (VEY-KANEO-488)", async () => {
     // The external contract<->DB watchdog compares the roster's `resources` against the chain's
     // stored `planet().resources` whenever `lastSettledAt` matches on both sides. Projecting
@@ -5912,6 +6002,45 @@ function activeFleetMissionLogs(args: {
   targetPlanetId: bigint;
 }): IndexedRpcLog[] {
   return completedFleetMissionLogs(args).slice(0, 3);
+}
+
+function maturedAttackReturningWithLootLogs({
+  missionId,
+  owner,
+  originPlanetId,
+  targetPlanetId,
+  loot
+}: {
+  missionId: bigint;
+  owner: Address;
+  originPlanetId: bigint;
+  targetPlanetId: bigint;
+  loot: { metal: bigint; crystal: bigint; deuterium: bigint };
+}): IndexedRpcLog[] {
+  const arrivalAt = BigInt(Math.floor(Date.now() / 1_000) - 900);
+  const returnAt = BigInt(Math.floor(Date.now() / 1_000) - 60);
+  return [
+    fleetMissionLog({
+      topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(3n)],
+      data: abiWords(originPlanetId, targetPlanetId, arrivalAt, returnAt, 1n),
+      logIndex: Number(missionId * 10n),
+    }),
+    fleetMissionLog({
+      topics: [fleetMissionCargoTopic, topic(missionId)],
+      data: abiWords(0n, 0n, 0n, 1n),
+      logIndex: Number(missionId * 10n + 1n),
+    }),
+    fleetMissionLog({
+      topics: [fleetMissionShipsTopic, topic(missionId)],
+      data: abiWords(...Array.from({ length: 14 }, (_, index) => index === 1 ? 1n : 0n)),
+      logIndex: Number(missionId * 10n + 2n),
+    }),
+    fleetMissionLog({
+      topics: [fleetMissionReturnExposedTopic, topic(missionId), addressTopic(owner), topic(2n)],
+      data: abiWords(originPlanetId, targetPlanetId, returnAt, loot.metal, loot.crystal, loot.deuterium),
+      logIndex: Number(missionId * 10n + 3n),
+    }),
+  ];
 }
 
 // VEY-KANEO-489: a FleetMissionLaunched(Attack) log carrying the block timestamp the contract anchors
