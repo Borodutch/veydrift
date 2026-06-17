@@ -69,7 +69,7 @@ type GraphQLPayload = {
 };
 
 type HealthPayload = {
-  ok: true;
+  ok: boolean;
   service: "veydrift-backend";
   configured: boolean;
 };
@@ -205,13 +205,14 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     if (request.method === "GET" && url.pathname === "/health") {
       const chainSyncSnapshot = chainSync?.snapshot() ?? null;
       const indexerSnapshot = indexer?.snapshot() ?? null;
+      const readiness = backendReadiness(loaded.problems, chainSyncSnapshot, indexerSnapshot);
       return Response.json(
         {
-          ok: true,
+          ok: readiness.ready,
           service: "veydrift-backend",
           configured: loaded.problems.length === 0,
           chain: safeConfigSummary(loaded.config),
-          readiness: backendReadiness(loaded.problems, chainSyncSnapshot, indexerSnapshot),
+          readiness,
           chainSync: chainSyncSnapshot,
           missionResolution: null,
           randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
@@ -219,7 +220,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           rpc: chainReader?.rpcMetrics?.() ?? null
         } satisfies HealthPayload & Record<string, unknown>,
         {
-          headers: corsHeaders
+          headers: corsHeaders,
+          status: readiness.ready ? 200 : 503
         }
       );
     }

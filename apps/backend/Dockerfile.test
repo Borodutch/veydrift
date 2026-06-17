@@ -17,7 +17,7 @@ ENV PORT=4000
 # Readiness gate for start-first (zero-downtime) redeploys: the orchestrator must
 # not route traffic to this container until GET /health answers 200, otherwise the
 # old container is stopped while Bun is still binding the port and the redeploy
-# drops requests. /health returns 200 as soon as the HTTP server is serving.
+# drops requests. /health returns 200 only after the backend can serve public reads.
 HEALTHCHECK --interval=5s --timeout=3s --start-period=30s --retries=3 \
   CMD ["bun", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT ?? '4000') + '/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
 
