@@ -33,6 +33,8 @@ const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d2
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
+const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
+const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
@@ -1477,6 +1479,76 @@ describe("fleet mission cargo vs loot", () => {
       })
     ]);
     expect(report?.loot).toEqual({ metal: "50", crystal: "0", deuterium: "0" });
+  });
+
+  test("captures harvested debris as return cargo from the harvest return-exposed event", () => {
+    const owner = "0x0000000000000000000000000000000000000abc" as Address;
+    const missionId = 538n;
+    const returnAt = 1_700_000_600n;
+    const logs: RpcLog[] = [
+      makeLog({
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(4n)],
+        data: dataWords([word(41n), word(179n), word(1_700_000_300n), word(returnAt)])
+      }),
+      makeLog({
+        topics: [fleetMissionCargoTopic, topic(missionId)],
+        data: dataWords([word(0n), word(0n), word(0n), word(36n)])
+      }),
+      makeLog({
+        topics: [fleetMissionShipsTopic, topic(missionId)],
+        data: dataWords(Array.from({ length: 14 }, (_, index) => word(index === 2 ? 1n : 0n)))
+      }),
+      makeLog({
+        topics: [fleetMissionReturnExposedTopic, topic(missionId), addressTopic(owner), topic(2n)],
+        data: dataWords([word(41n), word(179n), word(returnAt), word(3300n), word(2700n), word(0n)])
+      }),
+      makeLog({
+        topics: [fleetMissionResolvedTopic, topic(missionId), addressTopic(owner), topic(4n)],
+        data: dataWords([word(returnAt)])
+      }),
+      makeLog({
+        topics: [fleetMissionReturnedTopic, topic(missionId), addressTopic(owner), topic(41n)],
+        data: "0x"
+      })
+    ];
+
+    const returningMission = decodeFleetMissionLogs(logs.slice(0, -1)).get(missionId.toString());
+    expect(returningMission?.status).toBe("Returning");
+    expect(returningMission?.returnCargo).toEqual({ metal: "3300", crystal: "2700", deuterium: "0" });
+
+    const mission = decodeFleetMissionLogs(logs).get(missionId.toString());
+    expect(mission?.missionType).toBe("Harvest");
+    expect(mission?.status).toBe("Returned");
+    expect(mission?.cargo).toEqual({ metal: "0", crystal: "0", deuterium: "0" });
+    expect(mission?.returnCargo).toEqual({ metal: "3300", crystal: "2700", deuterium: "0" });
+  });
+
+  test("documents that legacy returned harvest missions without return-exposed logs cannot infer collected debris", () => {
+    const owner = "0x0000000000000000000000000000000000000abc" as Address;
+    const missionId = 539n;
+    const logs: RpcLog[] = [
+      makeLog({
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(4n)],
+        data: dataWords([word(41n), word(34n), word(1_700_000_300n), word(1_700_000_600n)])
+      }),
+      makeLog({
+        topics: [fleetMissionCargoTopic, topic(missionId)],
+        data: dataWords([word(0n), word(0n), word(0n), word(687n)])
+      }),
+      makeLog({
+        topics: [fleetMissionResolvedTopic, topic(missionId), addressTopic(owner), topic(4n)],
+        data: dataWords([word(1_700_000_600n)])
+      }),
+      makeLog({
+        topics: [fleetMissionReturnedTopic, topic(missionId), addressTopic(owner), topic(41n)],
+        data: "0x"
+      })
+    ];
+
+    const mission = decodeFleetMissionLogs(logs).get(missionId.toString());
+    expect(mission?.missionType).toBe("Harvest");
+    expect(mission?.status).toBe("Returned");
+    expect(mission?.returnCargo).toBeNull();
   });
 });
 
