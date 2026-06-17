@@ -5,6 +5,7 @@ import {
   buildingCompletionReadyToFinishFlag,
   buildingUpgradeActionErrorLabel,
   buildingFinishUnavailableReasonForDisplay,
+  buildingCompletionAutoRefreshDelayMs,
   buildingFinishActionErrorLabel,
   beginRefreshRequest,
   canLoadIndexedPageState,
@@ -19,6 +20,7 @@ import {
   hasInfrastructureDisplayState,
   infrastructureBackendSyncPausedLabel,
   infrastructureBackendSyncPausedReasonFor,
+  infrastructureStateForRefreshApplication,
   infrastructureStateForCompletionRevalidation,
   infrastructureActionNoticeFor,
   infrastructureDisplayActionNoticeFor,
@@ -505,6 +507,61 @@ describe("Playable MVP app display helpers", () => {
     } as never);
 
     expect(shouldApplyResourceSnapshot(current, returnedLoot)).toBe(true);
+  });
+
+  test("preserves fresher infrastructure resources while applying completed building state", () => {
+    const current = {
+      ...infrastructureState({
+        queue: readyBuildingQueue(),
+        resources: { metal: "900", crystal: "700", deuterium: "30" },
+      }),
+      planetLastSettledAt: "200",
+      resourcesAsOfNow: { metal: "940", crystal: "730", deuterium: "30" },
+      buildings: [
+        { id: 0, level: 1, cost: { metal: "120", crystal: "30", deuterium: "0" } },
+      ],
+    };
+    const completed = {
+      ...infrastructureState({
+        queue: null,
+        resources: { metal: "500", crystal: "500", deuterium: "0" },
+      }),
+      planetLastSettledAt: "100",
+      resourcesAsOfNow: { metal: "520", crystal: "510", deuterium: "0" },
+      buildings: [
+        { id: 0, level: 2, cost: { metal: "240", crystal: "60", deuterium: "0" } },
+      ],
+    };
+
+    const applied = infrastructureStateForRefreshApplication({
+      applyResourceState: false,
+      current,
+      next: completed,
+    });
+
+    expect(applied.queue).toBeNull();
+    expect(applied.buildings.find((building) => building.id === 0)?.level).toBe(2);
+    expect(applied.resources).toEqual({ metal: "900", crystal: "700", deuterium: "30" });
+    expect(applied.resourcesAsOfNow).toEqual({ metal: "940", crystal: "730", deuterium: "30" });
+    expect(applied.planetLastSettledAt).toBe("200");
+  });
+
+  test("schedules building completion auto-refresh at the ready boundary", () => {
+    expect(buildingCompletionAutoRefreshDelayMs({
+      ...readyBuildingQueue(),
+      readyAt: "1700000000",
+    }, 1_699_999_999_000)).toBe(2_500);
+
+    expect(buildingCompletionAutoRefreshDelayMs({
+      ...readyBuildingQueue(),
+      readyAt: "1700000000",
+    }, 1_700_000_002_000)).toBe(0);
+
+    expect(buildingCompletionAutoRefreshDelayMs(null, 1_700_000_000_000)).toBeUndefined();
+    expect(buildingCompletionAutoRefreshDelayMs({
+      ...readyBuildingQueue(),
+      readyAt: "not-a-date",
+    }, 1_700_000_000_000)).toBeUndefined();
   });
 
   test("mission origin resources track the canonical spendable balance, not the lagging backend snapshot", () => {
