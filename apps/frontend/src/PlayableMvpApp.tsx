@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import type { Coordinates, Planet } from "./types";
+import type { Coordinates, Planet, PlanetType } from "./types";
 import { GalaxyView, type GalaxyActionState } from "./components/GalaxyView";
 import { PlanetDetail } from "./components/PlanetDetail";
 import { TopBar } from "./components/TopBar";
@@ -14,7 +14,11 @@ import type { RequirementTarget } from "./components/RequirementFlairs";
 import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage } from "./components/MissionControlPage";
+import {
+  MissionControlPage,
+  missionPlanetCoordinateKey,
+  missionSystemKeysMissingUniverseArchetypes,
+} from "./components/MissionControlPage";
 import { MissionCreationPage, type CombatTechLevels, type MissionCargoDraft, type MissionLaunchDraft } from "./components/MissionCreationPage";
 import { BattleReportsPage } from "./components/BattleReportsPage";
 import { RankingsPage } from "./components/RankingsPage";
@@ -1630,6 +1634,35 @@ export function canLoadIndexedPageState({
   return expectedKey === undefined || hydratedWalletSnapshotKey === expectedKey;
 }
 
+function missionArchetypeLookupMissions({
+  allActiveMissions,
+  fleetVisibility,
+  globalMissionArchive,
+  missionArchive,
+}: {
+  allActiveMissions: FleetMissionSummary[] | undefined;
+  fleetVisibility: FleetMissionVisibilityResponse | undefined;
+  globalMissionArchive: GlobalMissionArchiveResponse | undefined;
+  missionArchive: FleetMissionArchiveResponse | undefined;
+}): FleetMissionSummary[] {
+  return [
+    ...(fleetVisibility?.incoming ?? []),
+    ...(fleetVisibility?.outgoing ?? []),
+    ...(fleetVisibility?.returning ?? []),
+    ...(fleetVisibility?.joinableAttacks ?? []),
+    ...(fleetVisibility?.completedMissions ?? []),
+    ...(allActiveMissions ?? []),
+    ...missionRowsFromArchive(missionArchive),
+    ...missionRowsFromArchive(globalMissionArchive),
+  ];
+}
+
+function missionRowsFromArchive(
+  archive: FleetMissionArchiveResponse | GlobalMissionArchiveResponse | undefined,
+): FleetMissionSummary[] {
+  return archive?.rows.flatMap((row) => (row.kind === "mission" ? [row.mission] : [])) ?? [];
+}
+
 export function defenseCompletionPlanetIdFor({
   activePlanetId,
   defenseState,
@@ -1889,6 +1922,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [globalMissionArchivePage, setGlobalMissionArchivePage] = useState(1);
   const [globalMissionArchiveLoading, setGlobalMissionArchiveLoading] = useState(false);
   const [globalMissionArchiveError, setGlobalMissionArchiveError] = useState<string | undefined>();
+  const [missionPlanetArchetypesByCoordinate, setMissionPlanetArchetypesByCoordinate] = useState<Map<string, PlanetType>>(
+    () => new Map()
+  );
   const [publicBattleReports, setPublicBattleReports] = useState<BattleReport[]>([]);
   const [publicBattleReportsLoading, setPublicBattleReportsLoading] = useState(false);
   const [publicBattleReportsError, setPublicBattleReportsError] = useState<string | undefined>();
@@ -2060,6 +2096,24 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const apiBaseUrl = useMemo(() => {
     return runtimeConfig.status === "ready" ? runtimeConfig.config.apiUrl : undefined;
   }, [runtimeConfig]);
+  const missionUniverseLookupMissions = useMemo(() => missionArchetypeLookupMissions({
+    allActiveMissions,
+    fleetVisibility,
+    globalMissionArchive,
+    missionArchive,
+  }), [
+    allActiveMissions,
+    fleetVisibility,
+    globalMissionArchive,
+    missionArchive,
+  ]);
+  const missionUniverseSystemKeys = useMemo(() =>
+    missionSystemKeysMissingUniverseArchetypes(missionUniverseLookupMissions, missionPlanetArchetypesByCoordinate),
+  [
+    missionPlanetArchetypesByCoordinate,
+    missionUniverseLookupMissions,
+  ]);
+  const missionUniverseSystemKey = missionUniverseSystemKeys.join("|");
   const pageStateHydrationReady = canLoadIndexedPageState({
     account,
     apiBaseUrl,
@@ -2073,6 +2127,50 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     ownerDisplayName: playerProfile?.displayName,
     settlementPlanet,
   });
+
+  useEffect(() => {
+    if (!apiBaseUrl || missionUniverseSystemKeys.length === 0) return;
+
+    const abortController = new AbortController();
+    const apiRoot = apiBaseUrl.replace(/\/+$/, "");
+    Promise.all(
+      missionUniverseSystemKeys.map(async (systemKey) => {
+        const [galaxy, system] = systemKey.split(":").map((part) => Number(part));
+        if (!Number.isInteger(galaxy) || !Number.isInteger(system)) return [];
+        const response = await fetch(`${apiRoot}/universe/galaxies/${galaxy}/systems/${system}`, {
+          headers: { accept: "application/json" },
+          signal: abortController.signal,
+        });
+        if (!response.ok) throw new Error(`Universe request failed with ${response.status}`);
+        const payload = await response.json();
+        return planetsFromSystemResponse(payload).map((planet) => [
+          missionPlanetCoordinateKey(planet),
+          planet.type,
+        ] as const);
+      })
+    )
+      .then((entriesBySystem) => {
+        if (abortController.signal.aborted) return;
+        setMissionPlanetArchetypesByCoordinate((current) => {
+          let changed = false;
+          const next = new Map(current);
+          for (const [coordinateKey, archetype] of entriesBySystem.flat()) {
+            if (next.get(coordinateKey) === archetype) continue;
+            next.set(coordinateKey, archetype);
+            changed = true;
+          }
+          return changed ? next : current;
+        });
+      })
+      .catch((error) => {
+        if (!abortController.signal.aborted) console.error(error);
+      });
+
+    return () => abortController.abort();
+  }, [
+    apiBaseUrl,
+    missionUniverseSystemKey,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -5197,6 +5295,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onGlobalMissionArchivePageChange={(page) => void loadGlobalMissionArchive(page)}
           onMissionArchivePageChange={(page) => void loadMissionArchive(page)}
           onRefresh={refreshMissionControl}
+          planetArchetypesByCoordinate={missionPlanetArchetypesByCoordinate}
           reportMissionId={missionReportId ?? undefined}
           reportUrlForMission={missionReportUrlForMission}
           walletPlanets={walletPlanets}

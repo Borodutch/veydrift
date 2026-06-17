@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage, StationedDefenseSection, allActiveMissionRows, buildMissionControlViewQuery, missionReport, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
+import { MissionControlPage, StationedDefenseSection, allActiveMissionRows, buildMissionControlViewQuery, missionPlanetCoordinateKey, missionReport, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
@@ -1203,6 +1203,40 @@ describe("Mission Control battle reports", () => {
     const sources = planetImages.map((node) => node.props?.src);
     expect(sources).toContain(planetImageForType("temperate-ocean"));
     expect(sources).toContain(planetImageForType("frozen-ice"));
+  });
+
+  test("uses canonical universe art for mission targets when the mission feed lacks an archetype", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const defender = "0x2222222222222222222222222222222222222222";
+    const targetCoords = { galaxy: 5, system: 314, position: 14 };
+    const canonicalTargetType = "frozen-ice";
+    expect(planetTypeFromCoordinates(targetCoords.galaxy, targetCoords.system, targetCoords.position)).toBe("metal-planetoid");
+
+    const outbound: FleetMissionSummary = {
+      ...mission("82", "Attack", "Outbound", owner, "7", "9", now + 30_000),
+      originPlanet: planetReference("7", owner, "New Zion", "6:9:1", "temperate-ocean"),
+      targetPlanet: {
+        planetId: "9",
+        owner: defender,
+        ownerDisplayName: "Zane",
+        name: "Cryo Gate",
+        ...targetCoords,
+        coordinates: missionPlanetCoordinateKey(targetCoords),
+      },
+    };
+    const tree = MissionControlPage({
+      ...missionControlProps(now, { outgoing: [outbound] }),
+      planetArchetypesByCoordinate: new Map([[missionPlanetCoordinateKey(targetCoords), canonicalTargetType]]),
+    });
+
+    const planetImages = findElements(tree, "img").filter((node) => node.props?.["data-planet-art"] !== undefined);
+    const arts = planetImages.map((node) => node.props?.["data-planet-art"]);
+    expect(arts).toContain("temperate-ocean");
+    expect(arts).toContain(canonicalTargetType);
+    const sources = planetImages.map((node) => node.props?.src);
+    expect(sources).toContain(planetImageForType(canonicalTargetType));
+    expect(sources).not.toContain(planetImageForType("metal-planetoid"));
   });
 
   test("returning mission points the route arrow back toward home and fills on the return leg (VEY-403)", () => {

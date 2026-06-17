@@ -1,11 +1,11 @@
 import { ChevronLeft, ChevronRight, Clipboard, ExternalLink, List } from "lucide-preact";
 
-import { planetTypeFromCoordinates, planetTypeFromTemperature } from "../data/mockUniverse";
+import { planetTypeFromTemperature } from "../data/mockUniverse";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
 import { acsHoldingFuelRatePerHour, allianceDepotSustainSeconds } from "../fleetMissionRules";
 import { shipAssetByKey } from "../gameAssets";
 import type { ShipKey } from "../playableMvp";
-import type { PlanetType } from "../types";
+import type { Coordinates, PlanetType } from "../types";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import {
   type BattleReport,
@@ -81,6 +81,7 @@ interface MissionControlPageProps {
   onRefresh: () => void;
   reportMissionId?: string | undefined;
   reportUrlForMission?: ((missionId: string) => string) | undefined;
+  planetArchetypesByCoordinate?: ReadonlyMap<string, PlanetType> | undefined;
   walletPlanets?: ManagedPlanetResponse[] | undefined;
 }
 
@@ -106,6 +107,7 @@ export function MissionControlPage({
   onMissionArchivePageChange,
   onRecall,
   onRefresh,
+  planetArchetypesByCoordinate = EMPTY_PLANET_ARCHETYPE_LOOKUP,
   reportMissionId,
   reportUrlForMission,
   walletPlanets = [],
@@ -166,7 +168,7 @@ export function MissionControlPage({
     ...battleReportsFromArchiveRows(rawGlobalPastRows),
   ]);
   const selectedReport = reportMissionId ? lookupMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
-  const planetLookup = planetLookupFromMissionData(lookupMissions, walletPlanets);
+  const planetLookup = planetLookupFromMissionData(lookupMissions, walletPlanets, planetArchetypesByCoordinate);
   const walletAddress = fleetVisibility?.wallet ?? missionArchive?.wallet;
   const walletPlanetIds = walletPlanetIdSet(walletPlanets, planetLookup, walletAddress);
   const activeCount = activeMissionRows.length;
@@ -269,6 +271,7 @@ export function MissionControlPage({
 }
 
 const EMPTY_PLANET_LOOKUP: ReadonlyMap<string, MissionPlanetIdentity> = new Map();
+const EMPTY_PLANET_ARCHETYPE_LOOKUP: ReadonlyMap<string, PlanetType> = new Map();
 
 // VEY-KANEO-440 stationed-defense display. ACS Defend stations a fleet at a planet to defend it
 // against a specific incoming attack (the only stationing today's contract supports), so this panel
@@ -2248,17 +2251,45 @@ function lossesByMissionIdFromReports(reports: BattleReport[]): Map<string, Miss
   return lookup;
 }
 
+export function missionPlanetCoordinateKey(coords: Coordinates): string {
+  return `${coords.galaxy}:${coords.system}:${coords.position}`;
+}
+
+export function missionSystemKeysMissingUniverseArchetypes(
+  missions: readonly FleetMissionSummary[],
+  planetArchetypesByCoordinate: ReadonlyMap<string, PlanetType> = EMPTY_PLANET_ARCHETYPE_LOOKUP,
+): string[] {
+  const systemKeys = new Set<string>();
+  for (const mission of missions) {
+    addMissionReferenceSystemKey(systemKeys, mission.originPlanet, planetArchetypesByCoordinate);
+    addMissionReferenceSystemKey(systemKeys, mission.targetPlanet, planetArchetypesByCoordinate);
+  }
+  return Array.from(systemKeys).sort();
+}
+
+function addMissionReferenceSystemKey(
+  systemKeys: Set<string>,
+  ref: FleetMissionPlanetReference | null | undefined,
+  planetArchetypesByCoordinate: ReadonlyMap<string, PlanetType>,
+): void {
+  if (!ref || ref.archetype) return;
+  const coords = { galaxy: ref.galaxy, position: ref.position, system: ref.system };
+  if (planetArchetypesByCoordinate.has(missionPlanetCoordinateKey(coords))) return;
+  systemKeys.add(`${ref.galaxy}:${ref.system}`);
+}
+
 function planetLookupFromMissionData(
   missions: FleetMissionSummary[],
-  walletPlanets: ManagedPlanetResponse[]
+  walletPlanets: ManagedPlanetResponse[],
+  planetArchetypesByCoordinate: ReadonlyMap<string, PlanetType>,
 ): Map<string, MissionPlanetIdentity> {
   const lookup = new Map<string, MissionPlanetIdentity>();
   for (const planet of walletPlanets) {
     lookup.set(planet.planetId, identityFromManagedPlanet(planet));
   }
   for (const mission of missions) {
-    if (mission.originPlanet) lookup.set(mission.originPlanet.planetId, identityFromMissionPlanet(mission.originPlanet));
-    if (mission.targetPlanet) lookup.set(mission.targetPlanet.planetId, identityFromMissionPlanet(mission.targetPlanet));
+    if (mission.originPlanet) lookup.set(mission.originPlanet.planetId, identityFromMissionPlanet(mission.originPlanet, planetArchetypesByCoordinate));
+    if (mission.targetPlanet) lookup.set(mission.targetPlanet.planetId, identityFromMissionPlanet(mission.targetPlanet, planetArchetypesByCoordinate));
   }
   return lookup;
 }
@@ -2273,9 +2304,13 @@ function identityFromManagedPlanet(planet: ManagedPlanetResponse): MissionPlanet
   };
 }
 
-function identityFromMissionPlanet(planet: FleetMissionPlanetReference): MissionPlanetIdentity {
+function identityFromMissionPlanet(
+  planet: FleetMissionPlanetReference,
+  planetArchetypesByCoordinate: ReadonlyMap<string, PlanetType>,
+): MissionPlanetIdentity {
+  const coords = { galaxy: planet.galaxy, position: planet.position, system: planet.system };
   return {
-    archetype: planet.archetype ?? planetTypeFromCoordinates(planet.galaxy, planet.system, planet.position),
+    archetype: planet.archetype ?? planetArchetypesByCoordinate.get(missionPlanetCoordinateKey(coords)) ?? null,
     coordinates: planet.coordinates,
     displayName: planet.name?.trim() || `Planet [${planet.coordinates}]`,
     owner: planet.owner,
