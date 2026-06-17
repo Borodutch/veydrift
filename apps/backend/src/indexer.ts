@@ -371,6 +371,10 @@ export class SettlementIndexer {
     | {
       source: FleetMissionSummary[];
       summaries: FleetMissionSummary[];
+      byId: Map<string, FleetMissionSummary>;
+      active: FleetMissionSummary[];
+      completed: FleetMissionSummary[];
+      activeByTarget: Map<string, FleetMissionSummary[]>;
     }
     | null = null;
   private attackLaunchSecondsCache = new Map<string, { missionGeneration: number; launchesByTarget: Map<string, number[]> }>();
@@ -916,9 +920,7 @@ export class SettlementIndexer {
   }
 
   fleetMission(missionId: string): FleetMissionSummary | null {
-    const mission = this.indexedFleetMissionSummaries()
-      .find((summary) => summary.missionId === missionId);
-    return mission ? this.withFleetMissionPlanetReferences(mission) : null;
+    return this.indexedFleetMissionReferenceIndex().byId.get(missionId) ?? null;
   }
 
   stationedDefendersForPlanet(planetId: string, asOfSeconds = Math.floor(Date.now() / 1_000)): StationedDefenderSummary[] {
@@ -969,16 +971,16 @@ export class SettlementIndexer {
 
   // Every active mission across the universe (all players), for the Mission Control "All" active tab.
   allActiveFleetMissions(): FleetMissionSummary[] {
-    return this.indexedFleetMissionSummariesWithPlanetReferences()
-      .filter((mission) => mission.status === "Outbound" || mission.status === "Returning" || mission.status === "Recalled")
-      .sort(compareFleetMissionsActiveSoonestFirst);
+    return this.indexedFleetMissionReferenceIndex().active;
   }
 
   // Every completed mission across the universe (all players), newest-first, for the past "All" tab.
   allCompletedFleetMissions(): FleetMissionSummary[] {
-    return this.indexedFleetMissionSummariesWithPlanetReferences()
-      .filter((mission) => mission.status === "Resolved" || mission.status === "Returned")
-      .sort(compareFleetMissionsNewestFirst);
+    return this.indexedFleetMissionReferenceIndex().completed;
+  }
+
+  activeFleetMissionsForTarget(planetId: string): FleetMissionSummary[] {
+    return this.indexedFleetMissionReferenceIndex().activeByTarget.get(planetId) ?? [];
   }
 
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
@@ -4975,14 +4977,41 @@ export class SettlementIndexer {
   }
 
   private indexedFleetMissionSummariesWithPlanetReferences(): FleetMissionSummary[] {
+    return this.indexedFleetMissionReferenceIndex().summaries;
+  }
+
+  private indexedFleetMissionReferenceIndex(): {
+    source: FleetMissionSummary[];
+    summaries: FleetMissionSummary[];
+    byId: Map<string, FleetMissionSummary>;
+    active: FleetMissionSummary[];
+    completed: FleetMissionSummary[];
+    activeByTarget: Map<string, FleetMissionSummary[]>;
+  } {
     const source = this.indexedFleetMissionSummaries();
     const cached = this.missionReferenceCache;
     if (cached && cached.source === source) {
-      return cached.summaries;
+      return cached;
     }
+
     const summaries = source.map((mission) => this.withFleetMissionPlanetReferences(mission));
-    this.missionReferenceCache = { source, summaries };
-    return summaries;
+    const byId = new Map(summaries.map((mission) => [mission.missionId, mission]));
+    const active = summaries
+      .filter((mission) => mission.status === "Outbound" || mission.status === "Returning" || mission.status === "Recalled")
+      .sort(compareFleetMissionsActiveSoonestFirst);
+    const completed = summaries
+      .filter((mission) => mission.status === "Resolved" || mission.status === "Returned")
+      .sort(compareFleetMissionsNewestFirst);
+    const activeByTarget = new Map<string, FleetMissionSummary[]>();
+    for (const mission of active) {
+      const targetMissions = activeByTarget.get(mission.targetPlanetId);
+      if (targetMissions) targetMissions.push(mission);
+      else activeByTarget.set(mission.targetPlanetId, [mission]);
+    }
+
+    const next = { source, summaries, byId, active, completed, activeByTarget };
+    this.missionReferenceCache = next;
+    return next;
   }
 
   private decodedMissionLogs(): {
@@ -5032,6 +5061,7 @@ export class SettlementIndexer {
   private prewarmMissionReadModel(): void {
     if (this.count("indexed_mission_event_logs") === 0) return;
     this.indexedFleetMissionSummaries();
+    this.indexedFleetMissionReferenceIndex();
     this.indexedBattleReports();
   }
 
