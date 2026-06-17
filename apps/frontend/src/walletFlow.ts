@@ -174,12 +174,15 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
     exists: boolean;
   } | null;
   tactical?: {
+    currentResources?: OnChainResources;
     raidableResources: OnChainResources;
     raidableResourceTotal: string;
     // Full production-accrued public resources; LOOT (`raidableResourceTotal`) is the
     // ~50% on-chain plunder of this. Surfaced so the Raid Finder can show the plunder
     // math instead of looking like it under-reports. (VEY-KANEO-454)
     grossResourceTotal?: string;
+    productionPerHour?: OnChainResources | null;
+    storageCaps?: OnChainResources | null;
     ships: {
       count: number;
       power: string;
@@ -749,12 +752,15 @@ export type HighscorePlanet = {
   };
   archetype: PlanetType;
   tactical?: {
+    currentResources?: OnChainResources;
     raidableResources: OnChainResources;
     raidableResourceTotal: string;
     // Full production-accrued public resources; LOOT (`raidableResourceTotal`) is the
     // ~50% on-chain plunder of this. Surfaced so the Raid Finder can show the plunder
     // math instead of looking like it under-reports. (VEY-KANEO-454)
     grossResourceTotal?: string;
+    productionPerHour?: OnChainResources | null;
+    storageCaps?: OnChainResources | null;
     ships: {
       count: number;
       power: string;

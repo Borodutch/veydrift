@@ -1386,11 +1386,21 @@ function projectedResourceSnapshot(
   current: MissionResourceSnapshot,
   travelSeconds: number,
 ): { resources: MissionResourceSnapshot; detail: string } {
-  const buildings = publicBuildingLevels(target);
-  if (!buildings || travelSeconds <= 0) {
+  if (travelSeconds <= 0) {
     return {
       resources: current,
-      detail: "Arrival projection falls back to the current resource snapshot until production data is available.",
+      detail: "Arrival projection matches current resources because selected travel time is zero.",
+    };
+  }
+
+  const publicProduction = publicProductionProjection(target, current, travelSeconds);
+  if (publicProduction) return publicProduction;
+
+  const buildings = publicBuildingLevels(target);
+  if (!buildings) {
+    return {
+      resources: current,
+      detail: "Arrival projection falls back to current resources until public production data is available.",
     };
   }
 
@@ -1398,20 +1408,56 @@ function projectedResourceSnapshot(
   const solarSatelliteCount = target?.publicState?.fleet?.find((row) => row.id === 9)?.count ?? 0;
   const productionProfile = {
     ...(target?.temperature.max != null ? { maxTemperature: target.temperature.max } : {}),
-    metalMultiplierBps: 10_000,
-    crystalMultiplierBps: 10_000,
-    deuteriumMultiplierBps: 10_000,
+    metalMultiplierBps: target?.metalMultiplierBps ?? 10_000,
+    crystalMultiplierBps: target?.crystalMultiplierBps ?? 10_000,
+    deuteriumMultiplierBps: target?.deuteriumMultiplierBps ?? 10_000,
   };
   const production = productionPerHour(buildings, productionProfile, energyTechnologyLevel, solarSatelliteCount);
   const caps = storageCaps(buildings);
+  const projected = projectResourcesForTravel(current, production, caps, travelSeconds);
+  return {
+    resources: projected,
+    detail: "Arrival projection uses public building/resource preview math and assumes no spending, transport, or combat changes before arrival.",
+  };
+}
+
+function publicProductionProjection(
+  target: Planet | undefined,
+  current: MissionResourceSnapshot,
+  travelSeconds: number,
+): { resources: MissionResourceSnapshot; detail: string } | null {
+  const production = resourceSnapshotFromPublicState(target?.publicState?.productionPerHour);
+  const caps = resourceSnapshotFromPublicState(target?.publicState?.storageCaps);
+  if (!production || !caps) return null;
+
+  return {
+    resources: projectResourcesForTravel(current, production, caps, travelSeconds),
+    detail: "Arrival projection uses public production rate and storage caps, assuming no spending, transport, or combat changes before arrival.",
+  };
+}
+
+function projectResourcesForTravel(
+  current: MissionResourceSnapshot,
+  production: MissionResourceSnapshot,
+  caps: MissionResourceSnapshot,
+  travelSeconds: number,
+): MissionResourceSnapshot {
   const hours = Math.max(0, travelSeconds) / SECONDS_PER_HOUR;
   return {
-    resources: {
-      metal: Math.min(caps.metal, current.metal + Math.floor(production.metal * hours)),
-      crystal: Math.min(caps.crystal, current.crystal + Math.floor(production.crystal * hours)),
-      deuterium: Math.min(caps.deuterium, current.deuterium + Math.floor(production.deuterium * hours)),
-    },
-    detail: "Arrival projection uses public building/resource preview math and assumes no new production, spending, transport, or combat changes before arrival.",
+    metal: Math.min(caps.metal, current.metal + Math.floor(production.metal * hours)),
+    crystal: Math.min(caps.crystal, current.crystal + Math.floor(production.crystal * hours)),
+    deuterium: Math.min(caps.deuterium, current.deuterium + Math.floor(production.deuterium * hours)),
+  };
+}
+
+function resourceSnapshotFromPublicState(
+  resources: { metal: string; crystal: string; deuterium: string } | null | undefined,
+): MissionResourceSnapshot | null {
+  if (!resources) return null;
+  return {
+    metal: safeResourceNumber(resources.metal),
+    crystal: safeResourceNumber(resources.crystal),
+    deuterium: safeResourceNumber(resources.deuterium),
   };
 }
 
