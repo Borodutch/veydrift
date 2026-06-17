@@ -359,6 +359,7 @@ describe("sortRaidTargets", () => {
       grossLoot: 0,
       raidableResources: null,
       combatPower: 0,
+      combatTechLevels: null,
       shipPower: 0,
       shipCount: 0,
       defensePower: 0,

@@ -481,6 +481,7 @@ describe("Playable MVP app display helpers", () => {
       shipUnits: [{ id: 4, count: 3, power: 900 }],
       defenseUnits: [{ id: 0, count: 12, power: 1200 }],
       combatPower: 2100,
+      combatTechLevels: { weapons: 3, shielding: 2, armor: 1 },
     }));
 
     expect(target.id).toBe("50");
@@ -493,6 +494,11 @@ describe("Playable MVP app display helpers", () => {
     expect(target.resources).toMatchObject({ metal: 2400, crystal: 900, deuterium: 250 });
     expect(target.publicState?.fleet).toEqual([{ id: 4, count: 3 }]);
     expect(target.publicState?.defenses).toEqual([{ id: 0, count: 12 }]);
+    expect(target.publicState?.research).toEqual([
+      { id: 5, level: 3 },
+      { id: 6, level: 2 },
+      { id: 7, level: 1 },
+    ]);
   });
 
   test("blocks research completion transactions until the active queue is ready", () => {
@@ -2402,6 +2408,7 @@ function raidTarget(overrides: Partial<RaidTarget> = {}): RaidTarget {
     grossLoot: 0,
     raidableResources: null,
     combatPower: 0,
+    combatTechLevels: null,
     shipPower: 0,
     shipCount: 0,
     shipUnits: [],

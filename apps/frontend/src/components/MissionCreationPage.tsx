@@ -32,6 +32,12 @@ import { formatDuration } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { PageHeader } from "./PageHeader";
 
+export type CombatTechLevels = {
+  weapons: number;
+  shielding: number;
+  armor: number;
+};
+
 export type MissionCargoDraft = {
   metal?: string | undefined;
   crystal?: string | undefined;
@@ -61,6 +67,7 @@ const GREEDY_LOOT_RATIO: MissionLootRatioDraft = { metal: 100, crystal: 0, deute
 const RAID_PLUNDER_BPS = 5_000;
 const BPS = 10_000;
 const RESOURCE_KEYS = ["metal", "crystal", "deuterium"] as const;
+const ZERO_COMBAT_TECH_LEVELS: CombatTechLevels = { weapons: 0, shielding: 0, armor: 0 };
 
 type EnabledGalaxyAction = Extract<GalaxyAction, { enabled: true }>;
 export type ResourceKey = (typeof RESOURCE_KEYS)[number];
@@ -86,20 +93,26 @@ export type UnitItem = {
 };
 
 export type BattleForecastState =
-  | {
+  | ({
       kind: "uncertain";
       label: "Uncertain";
       detail: string;
       attackerPower: number;
       defenderPower: number | null;
-    }
-  | {
+      attackerTechLevels?: CombatTechLevels;
+      defenderTechLevels?: CombatTechLevels;
+      defenderTechKnown?: boolean;
+    })
+  | ({
       kind: "win" | "defeat" | "draw";
       label: "Probable win" | "Probable defeat" | "Probable draw";
       detail: string;
       attackerPower: number;
       defenderPower: number;
-    };
+      attackerTechLevels?: CombatTechLevels;
+      defenderTechLevels?: CombatTechLevels;
+      defenderTechKnown?: boolean;
+    });
 
 export type TargetResourceIntel = {
   current: MissionResourceSnapshot | null;
@@ -161,6 +174,7 @@ export function MissionCreationPage({
   coords,
   defenseHoldContext,
   defenseHoldMode = false,
+  attackerCombatTechLevels = ZERO_COMBAT_TECH_LEVELS,
   driveLevels = {},
   joinAttackMode = false,
   nowMs = Date.now(),
@@ -184,6 +198,7 @@ export function MissionCreationPage({
   // and a travel + holding-fuel + Alliance Depot preview, stationing the fleet at the target planet.
   defenseHoldContext?: DefenseHoldComposeContext | undefined;
   defenseHoldMode?: boolean | undefined;
+  attackerCombatTechLevels?: CombatTechLevels | undefined;
   driveLevels?: FleetDriveLevels | undefined;
   // VEY-KANEO-431: render the picker for a join-attack — ship selection only,
   // with no loot ratio or speed controls (the join inherits the lead attack's
@@ -233,8 +248,8 @@ export function MissionCreationPage({
     [stationedDefenders],
   );
   const battleForecast = useMemo(
-    () => publicTargetBattleForecast(ships, target),
-    [ships, target],
+    () => publicTargetBattleForecast(ships, target, attackerCombatTechLevels),
+    [attackerCombatTechLevels, ships, target],
   );
   const resourceIntel = useMemo(
     () => targetResourceIntel(target, travelSeconds),
@@ -782,8 +797,20 @@ export function targetResourceIntel(target: Planet | undefined, travelSeconds: n
   };
 }
 
-export function publicTargetBattleForecast(ships: MissionShips, target: Planet | undefined): BattleForecastState {
-  const attackerPower = missionShipsCombatPower(ships);
+export function publicTargetBattleForecast(
+  ships: MissionShips,
+  target: Planet | undefined,
+  attackerTechLevels: CombatTechLevels = ZERO_COMBAT_TECH_LEVELS,
+): BattleForecastState {
+  const normalizedAttackerTechLevels = normalizeCombatTechLevels(attackerTechLevels);
+  const defenderTechLevels = targetCombatTechLevels(target);
+  const defenderTechKnown = Boolean(target?.publicState?.research);
+  const forecastTech = {
+    attackerTechLevels: normalizedAttackerTechLevels,
+    defenderTechLevels,
+    defenderTechKnown,
+  };
+  const attackerPower = missionShipsCombatPower(ships, normalizedAttackerTechLevels);
   if (fleetMissionShipCount(ships) <= 0) {
     return {
       kind: "uncertain",
@@ -791,6 +818,7 @@ export function publicTargetBattleForecast(ships: MissionShips, target: Planet |
       detail: "Select ships to preview the attack against public destination intel.",
       attackerPower,
       defenderPower: null,
+      ...forecastTech,
     };
   }
   if (!target?.publicState) {
@@ -800,12 +828,13 @@ export function publicTargetBattleForecast(ships: MissionShips, target: Planet |
       detail: "Destination fleet and defense data is unavailable, so exact defender strength is unknown.",
       attackerPower,
       defenderPower: null,
+      ...forecastTech,
     };
   }
 
-  const stationedPower = stationedDefendersCombatPower(target.publicState.stationedDefenders);
-  const defenderPower = compositionCombatPower(target.publicState.fleet, "ship")
-    + compositionCombatPower(target.publicState.defenses, "defense")
+  const stationedPower = stationedDefendersCombatPower(target.publicState.stationedDefenders, defenderTechLevels);
+  const defenderPower = compositionCombatPower(target.publicState.fleet, "ship", defenderTechLevels)
+    + compositionCombatPower(target.publicState.defenses, "defense", defenderTechLevels)
     + stationedPower;
   if (defenderPower <= 0) {
     return {
@@ -814,6 +843,7 @@ export function publicTargetBattleForecast(ships: MissionShips, target: Planet |
       detail: "No public stationed fleet or battlefield defenses are visible. Hidden state is not assumed.",
       attackerPower,
       defenderPower,
+      ...forecastTech,
     };
   }
   if (attackerPower >= defenderPower * 1.15) {
@@ -825,6 +855,7 @@ export function publicTargetBattleForecast(ships: MissionShips, target: Planet |
         : "Your selected fleet materially exceeds visible public defender power. Combat randomness and unindexed changes can still alter the result.",
       attackerPower,
       defenderPower,
+      ...forecastTech,
     };
   }
   if (attackerPower <= defenderPower * 0.85) {
@@ -836,6 +867,7 @@ export function publicTargetBattleForecast(ships: MissionShips, target: Planet |
         : "Visible public defender power materially exceeds your selected fleet. Add ships or reconsider the target.",
       attackerPower,
       defenderPower,
+      ...forecastTech,
     };
   }
   return {
@@ -846,6 +878,7 @@ export function publicTargetBattleForecast(ships: MissionShips, target: Planet |
       : "Public attacker and defender power are close enough that the battle outcome is uncertain.",
     attackerPower,
     defenderPower,
+    ...forecastTech,
   };
 }
 
@@ -1049,10 +1082,56 @@ function AttackOutcomeContent({
         </div>
       </div>
       <p className="text-xs text-slate-500">{battleForecast.detail}</p>
+      <CombatTechSummary
+        attackerLevels={battleForecast.attackerTechLevels ?? ZERO_COMBAT_TECH_LEVELS}
+        defenderKnown={battleForecast.defenderTechKnown ?? false}
+        defenderLevels={battleForecast.defenderTechLevels ?? ZERO_COMBAT_TECH_LEVELS}
+      />
       <div className="grid gap-2 sm:grid-cols-2">
         <ResourceSummary title="Max loot at arrival" resources={maxLootForecast} />
         <ResourceSummary title="Lootable at arrival" resources={lootableAtArrival} />
       </div>
+    </div>
+  );
+}
+
+function CombatTechSummary({
+  attackerLevels,
+  defenderKnown,
+  defenderLevels,
+}: {
+  attackerLevels: CombatTechLevels;
+  defenderKnown: boolean;
+  defenderLevels: CombatTechLevels;
+}) {
+  return (
+    <div className="grid gap-1 rounded border border-white/10 bg-black/15 px-2 py-1.5 text-[11px] text-slate-400 sm:grid-cols-2">
+      <CombatTechLine label="Attacker tech" levels={attackerLevels} />
+      <CombatTechLine
+        label={defenderKnown ? "Defender tech" : "Defender tech unknown"}
+        levels={defenderLevels}
+        suffix={defenderKnown ? undefined : "base shown"}
+      />
+    </div>
+  );
+}
+
+function CombatTechLine({
+  label,
+  levels,
+  suffix,
+}: {
+  label: string;
+  levels: CombatTechLevels;
+  suffix?: string | undefined;
+}) {
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+      <span className="font-medium text-slate-300">{label}</span>
+      <span className="tabular-nums">W {levels.weapons}</span>
+      <span className="tabular-nums">S {levels.shielding}</span>
+      <span className="tabular-nums">A {levels.armor}</span>
+      {suffix ? <span className="text-slate-500">{suffix}</span> : null}
     </div>
   );
 }
@@ -1339,10 +1418,30 @@ function publicBuildingLevels(target: Planet | undefined): Record<BuildingKey, n
   return buildings;
 }
 
-function publicResearchLevel(target: Planet | undefined, key: "energy"): number {
+function publicResearchLevel(target: Planet | undefined, key: "energy" | keyof CombatTechLevels): number {
   const id = researchCatalog.find((entry) => entry.key === key)?.id;
   if (id == null) return 0;
   return target?.publicState?.research?.find((row) => row.id === id)?.level ?? 0;
+}
+
+function targetCombatTechLevels(target: Planet | undefined): CombatTechLevels {
+  return {
+    weapons: publicResearchLevel(target, "weapons"),
+    shielding: publicResearchLevel(target, "shielding"),
+    armor: publicResearchLevel(target, "armor"),
+  };
+}
+
+function normalizeCombatTechLevels(levels: CombatTechLevels | undefined): CombatTechLevels {
+  return {
+    weapons: normalizeCombatTechLevel(levels?.weapons),
+    shielding: normalizeCombatTechLevel(levels?.shielding),
+    armor: normalizeCombatTechLevel(levels?.armor),
+  };
+}
+
+function normalizeCombatTechLevel(level: number | undefined): number {
+  return Number.isFinite(level) ? Math.max(0, Math.trunc(level ?? 0)) : 0;
 }
 
 function plunderableResources(resources: MissionResourceSnapshot): MissionResourceSnapshot {
@@ -1353,48 +1452,54 @@ function plunderableResources(resources: MissionResourceSnapshot): MissionResour
   };
 }
 
-function missionShipsCombatPower(ships: MissionShips): number {
+function missionShipsCombatPower(ships: MissionShips, techLevels: CombatTechLevels): number {
   return missionShipOptions.reduce((total, option) => {
     const count = Math.max(0, Math.trunc(ships[option.key] ?? 0));
     const ship = shipCatalog.find((entry) => entry.key === option.key);
-    return total + count * (ship ? combatStatsPower(shipCombatStats(ship).rows) : 0);
+    return total + count * (ship ? combatStatsPower(shipCombatStats(ship).rows, techLevels) : 0);
   }, 0);
 }
 
 function compositionCombatPower(
   rows: Array<{ id: number; count: number }> | undefined | null,
   kind: "ship" | "defense",
+  techLevels: CombatTechLevels,
 ): number {
   return (rows ?? []).reduce((total, row) => {
     const count = Math.max(0, Math.trunc(row.count));
     if (kind === "ship") {
       const ship = shipCatalog.find((entry) => entry.id === row.id);
-      return total + count * (ship ? combatStatsPower(shipCombatStats(ship).rows) : 0);
+      return total + count * (ship ? combatStatsPower(shipCombatStats(ship).rows, techLevels) : 0);
     }
     const defense = defenseCatalog.find((entry) => entry.id === row.id);
-    return total + count * (defense ? combatStatsPower(defenseCombatStats(defense).rows) : 0);
+    return total + count * (defense ? combatStatsPower(defenseCombatStats(defense).rows, techLevels) : 0);
   }, 0);
 }
 
 function stationedDefendersCombatPower(
   defenders: PublicStationedDefender[] | null | undefined,
+  techLevels: CombatTechLevels,
 ): number {
   return (defenders ?? []).reduce((total, defender) => {
     return total + shipCatalog.reduce((shipTotal, ship) => {
       const count = safeResourceNumber(defender.ships[ship.key]);
-      return shipTotal + count * combatStatsPower(shipCombatStats(ship).rows);
+      return shipTotal + count * combatStatsPower(shipCombatStats(ship).rows, techLevels);
     }, 0);
   }, 0);
 }
 
-function combatStatsPower(rows: Array<{ label: string; value: number | string }>): number {
+function combatStatsPower(rows: Array<{ label: string; value: number | string }>, techLevels: CombatTechLevels): number {
   return rows.reduce((total, row) => {
     if (typeof row.value !== "number") return total;
-    if (row.label === "Attack") return total + row.value;
-    if (row.label === "Shield") return total + row.value;
-    if (row.label === "Hull") return total + row.value / 10;
+    if (row.label === "Attack") return total + combatScaled(row.value, techLevels.weapons);
+    if (row.label === "Shield") return total + combatScaled(row.value, techLevels.shielding);
+    if (row.label === "Hull") return total + combatScaled(row.value, techLevels.armor) / 10;
     return total;
   }, 0);
+}
+
+function combatScaled(value: number, technologyLevel: number): number {
+  return Math.floor((value * (BPS + normalizeCombatTechLevel(technologyLevel) * 1_000)) / BPS);
 }
 
 function commanderLabel(target: Planet | undefined): string {

@@ -770,6 +770,11 @@ export type HighscorePlanet = {
       power: string;
       units?: TacticalUnitBreakdown[];
     };
+    combatTechLevels?: {
+      weapons: number;
+      shielding: number;
+      armor: number;
+    };
     combatPower: string;
   };
 };
