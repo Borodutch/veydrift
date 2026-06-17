@@ -293,6 +293,7 @@ const buildingWalletConfirmationLabel = (label: string) =>
     ? "Building completion: confirm the game-state update in your wallet; token balance changes are not expected."
     : `${label}: unlock your wallet if needed, then confirm in your wallet.`;
 const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
+const BUILDING_COMPLETION_AUTO_REFRESH_BUFFER_MS = 1_500;
 // VEY-KANEO-433: after an active mission's ETA passes, wait a short beat before the tightened Mission
 // Control refresh so the backend indexer has settled the arrival/resolution before we re-read it.
 const MISSION_RESOLUTION_REFRESH_BUFFER_MS = 1_500;
@@ -499,6 +500,46 @@ export function recordedResourceSnapshotFreshness(
   }
 
   return next;
+}
+
+export function infrastructureStateForRefreshApplication({
+  applyResourceState,
+  current,
+  next,
+}: {
+  applyResourceState: boolean;
+  current: ChainInfrastructureState | null;
+  next: ChainInfrastructureState;
+}): ChainInfrastructureState {
+  if (applyResourceState || !current) return next;
+
+  const currentPlanetId = current.planetId ?? current.homePlanetId ?? null;
+  const nextPlanetId = next.planetId ?? next.homePlanetId ?? null;
+  if (currentPlanetId && nextPlanetId && currentPlanetId !== nextPlanetId) return next;
+
+  const settledAt = current.planetLastSettledAt ?? next.planetLastSettledAt;
+  const preserved = {
+    ...next,
+    resources: current.resources,
+    ...(settledAt === undefined ? {} : { planetLastSettledAt: settledAt }),
+  };
+
+  if (current.resourcesAsOfNow !== undefined) {
+    return { ...preserved, resourcesAsOfNow: current.resourcesAsOfNow };
+  }
+
+  const { resourcesAsOfNow: _droppedStaleResourcesAsOfNow, ...withoutStaleAsOfNow } = preserved;
+  return withoutStaleAsOfNow;
+}
+
+export function buildingCompletionAutoRefreshDelayMs(
+  queue: QueueStateResponse | null | undefined,
+  now = Date.now(),
+): number | undefined {
+  if (!queue?.active) return undefined;
+  const readyAt = timestampToMs(queue.readyAt);
+  if (readyAt === undefined) return undefined;
+  return Math.max(0, readyAt + BUILDING_COMPLETION_AUTO_REFRESH_BUFFER_MS - now);
 }
 
 export function walletCurrentResourcesFor({
@@ -2624,14 +2665,20 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       ]);
       if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) return;
       if (infrastructureResult.status === "fulfilled") {
-        const nextFreshness = resourceSnapshotFreshnessForInfrastructure(infrastructureResult.value);
-        if (shouldApplyResourceSnapshot(latestInfrastructureResourceSnapshot.current, nextFreshness)) {
+        const nextInfrastructure = infrastructureResult.value;
+        const nextFreshness = resourceSnapshotFreshnessForInfrastructure(nextInfrastructure);
+        const applyResourceState = shouldApplyResourceSnapshot(latestInfrastructureResourceSnapshot.current, nextFreshness);
+        if (applyResourceState) {
           latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
             latestInfrastructureResourceSnapshot.current,
             nextFreshness,
           );
-          setInfrastructureChainState(infrastructureResult.value);
         }
+        setInfrastructureChainState((current) => infrastructureStateForRefreshApplication({
+          applyResourceState,
+          current,
+          next: nextInfrastructure,
+        }));
       } else {
         console.error(infrastructureResult.reason);
         setInfrastructureError(infrastructureResult.reason instanceof Error ? infrastructureResult.reason.message : "Infrastructure state could not be loaded.");
@@ -2664,13 +2711,18 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       const nextInfrastructure = await fetchInfrastructureState(apiBaseUrl, account, activePlanetId);
       if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) return nextInfrastructure;
       const nextFreshness = resourceSnapshotFreshnessForInfrastructure(nextInfrastructure);
-      if (shouldApplyResourceSnapshot(latestInfrastructureResourceSnapshot.current, nextFreshness)) {
+      const applyResourceState = shouldApplyResourceSnapshot(latestInfrastructureResourceSnapshot.current, nextFreshness);
+      if (applyResourceState) {
         latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
           latestInfrastructureResourceSnapshot.current,
           nextFreshness,
         );
-        setInfrastructureChainState(nextInfrastructure);
       }
+      setInfrastructureChainState((current) => infrastructureStateForRefreshApplication({
+        applyResourceState,
+        current,
+        next: nextInfrastructure,
+      }));
       return nextInfrastructure;
     } catch (error) {
       console.error(error);
@@ -3573,6 +3625,28 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],
   );
+  useEffect(() => {
+    const delayMs = buildingCompletionAutoRefreshDelayMs(activeBuildingQueue);
+    if (delayMs === undefined) return;
+
+    const expectation: FinishedBuildingExpectation = {
+      itemId: activeBuildingQueue?.itemId,
+      targetLevel: activeBuildingQueue?.targetLevel,
+    };
+    const timeout = window.setTimeout(() => {
+      void refreshFinishedBuildingState(expectation).catch((error) => {
+        console.error(error);
+      });
+    }, delayMs);
+
+    return () => window.clearTimeout(timeout);
+  }, [
+    activeBuildingQueue?.active,
+    activeBuildingQueue?.itemId,
+    activeBuildingQueue?.readyAt,
+    activeBuildingQueue?.targetLevel,
+    refreshFinishedBuildingState,
+  ]);
   const overviewOnChainQueues = useMemo<PlayerQueuesResponse | undefined>(() => {
     if (!onChainQueues) return undefined;
     return onChainQueues.building === activeBuildingQueue
