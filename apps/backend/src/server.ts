@@ -1063,8 +1063,10 @@ type CachedJsonResponse = {
 function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (request.method !== "GET") return 0;
   if (url.pathname === "/chain/events") return 0;
-  if (url.pathname === "/health" || url.pathname === "/debug/indexer") return 2_000;
-  if (url.pathname === "/highscores" || url.pathname === "/missions") return 60_000;
+  if (url.pathname === "/health") return 10_000;
+  if (url.pathname === "/debug/indexer") return 2_000;
+  if (url.pathname === "/highscores") return 300_000;
+  if (url.pathname === "/missions") return 60_000;
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return 60_000;
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return 30_000;
   if (url.pathname === "/universe/systems") return 30_000;
@@ -1130,6 +1132,8 @@ function prewarmHotResponseCache(
 
 function hotResponseCachePaths(indexer: SettlementIndexer): string[] {
   const paths = new Set<string>([
+    "/health",
+    "/runtime-config",
     "/highscores?page=1&pageSize=250",
     "/missions?status=active",
     "/missions?status=completed&page=1&pageSize=25"

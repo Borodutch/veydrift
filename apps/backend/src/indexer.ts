@@ -378,6 +378,16 @@ export class SettlementIndexer {
     }
     | null = null;
   private attackLaunchSecondsCache = new Map<string, { missionGeneration: number; launchesByTarget: Map<string, number[]> }>();
+  private snapshotCache:
+    | {
+      expiresAtMs: number;
+      generation: number;
+      rebuildPromise: Promise<IndexerSnapshot> | null;
+      planetRebuildPromise: Promise<IndexerSnapshot> | null;
+      currentStateHealPromise: Promise<IndexerSnapshot> | null;
+      snapshot: IndexerSnapshot;
+    }
+    | null = null;
   private canonicalQueueSnapshotBlock: string | null = null;
 
   constructor(
@@ -422,6 +432,19 @@ export class SettlementIndexer {
   private readonly rebuildDeadlineMs: number;
 
   snapshot(): IndexerSnapshot {
+    const nowMs = Date.now();
+    const cached = this.snapshotCache;
+    if (
+      cached
+      && cached.generation === this.stateGeneration
+      && cached.rebuildPromise === this.rebuildPromise
+      && cached.planetRebuildPromise === this.planetRebuildPromise
+      && cached.currentStateHealPromise === this.currentStateHealPromise
+      && cached.expiresAtMs > nowMs
+    ) {
+      return cached.snapshot;
+    }
+
     const currentStateHealInProgress = this.currentStateHealPromise !== null;
     const reconciliationInProgress = this.rebuildPromise !== null || this.planetRebuildPromise !== null || currentStateHealInProgress;
     const indexedPlanets = this.count("indexed_planets");
@@ -448,7 +471,7 @@ export class SettlementIndexer {
       lastReconciliationError,
       reconciliationInProgress
     });
-    return {
+    const snapshot: IndexerSnapshot = {
       allianceReconciledAt,
       allianceStaleReason,
       indexedDebrisFields: this.count("indexed_debris_fields"),
@@ -475,6 +498,15 @@ export class SettlementIndexer {
       safeToServeIndexedState,
       staleReason
     };
+    this.snapshotCache = {
+      currentStateHealPromise: this.currentStateHealPromise,
+      expiresAtMs: nowMs + 1_000,
+      generation: this.stateGeneration,
+      planetRebuildPromise: this.planetRebuildPromise,
+      rebuildPromise: this.rebuildPromise,
+      snapshot
+    };
+    return snapshot;
   }
 
   settledPlanetsInSystem(galaxy: number, system: number): SettledPlanetEvent[] {
@@ -4707,6 +4739,7 @@ export class SettlementIndexer {
 
   private touch(): void {
     this.stateGeneration += 1;
+    this.snapshotCache = null;
     this.setMetadata("lastRebuiltAt", new Date().toISOString());
   }
 
@@ -4861,6 +4894,7 @@ export class SettlementIndexer {
     this.setMetadata("lastReconciledBlock", latestBlock ?? this.fromBlock.toString());
     this.db.query("DELETE FROM indexer_metadata WHERE key = 'lastReconciliationError'").run();
     this.db.query("DELETE FROM indexer_metadata WHERE key = 'pendingReconciliationReason'").run();
+    this.snapshotCache = null;
     if (latestBlock) {
       this.recordLatestBlock(latestBlock);
     }
@@ -4875,6 +4909,7 @@ export class SettlementIndexer {
   }
 
   private setMetadata(key: string, value: string): void {
+    this.snapshotCache = null;
     this.db.query(`
       INSERT INTO indexer_metadata (key, value)
       VALUES (?, ?)
