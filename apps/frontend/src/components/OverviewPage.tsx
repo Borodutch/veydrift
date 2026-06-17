@@ -268,7 +268,7 @@ export function OverviewPage({
   };
   return (
     <div className="grid gap-3">
-      <div className={hasActiveFleets && isWalletConnected ? "grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.82fr)] lg:items-start" : "grid gap-3"}>
+      <div className={hasActiveFleets && isWalletConnected ? "grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.82fr)] lg:items-stretch" : "grid gap-3"}>
       {/* Planet hero — compact, no wasted space. When the wallet is disconnected we show a clear
           connect-wallet card instead of a fabricated home planet (VEY-KANEO-458). */}
       {!isWalletConnected ? (
@@ -283,13 +283,13 @@ export function OverviewPage({
       ) : (
       <div className="relative min-h-[8.75rem] overflow-hidden rounded-lg border border-white/10 bg-[#101624]">
         {(!heroImage || !heroImageLoaded) && (
-          <PlanetImageSkeleton className="absolute inset-y-0 right-0 w-[70%]" />
+          <PlanetImageSkeleton className="absolute inset-0" />
         )}
         {heroImage ? (
           <OptimizedImage
             key={heroImage}
             alt="Planet hero background"
-            className={`absolute inset-y-0 right-0 h-full w-[78%] object-contain object-right transition-opacity duration-200 sm:w-[68%] ${heroImageLoaded ? "opacity-70" : "opacity-0"}`}
+            className={`absolute inset-0 h-full w-full object-cover object-center transition-opacity duration-200 ${heroImageLoaded ? "opacity-75" : "opacity-0"}`}
             imageRef={heroImageRef}
             loading="eager"
             onLoad={(event) => {
@@ -808,7 +808,7 @@ export function FleetsSummary({
 }) {
   const summary = summarizeFleets(fleetVisibility, now);
   return (
-    <section aria-label="Fleets" className="min-w-0 rounded-lg border border-white/10 bg-white/[0.04] p-3 sm:p-4">
+    <section aria-label="Fleets" className="flex h-full min-w-0 flex-col rounded-lg border border-white/10 bg-white/[0.04] p-3 sm:p-4">
       <div className="flex items-center justify-between gap-2">
         <h2 className="inline-flex h-5 min-w-0 items-center text-xs font-semibold uppercase leading-none tracking-[0.14em] text-slate-400">Fleets</h2>
         <button

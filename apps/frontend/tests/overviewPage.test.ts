@@ -69,9 +69,11 @@ describe("overview planet hero image", () => {
     expect(overviewSource).toContain("const hasActiveFleets = Boolean");
     expect(overviewSource).toContain("relative min-h-[8.75rem]");
     expect(overviewSource).toContain('alt="Planet hero background"');
-    expect(overviewSource).toContain("object-contain object-right");
+    expect(overviewSource).toContain("object-cover object-center");
     expect(overviewSource).toContain("bg-gradient-to-r from-[#101624]");
     expect(overviewSource).toContain("text-2xl font-semibold leading-none text-white drop-shadow sm:text-3xl");
+    expect(overviewSource).toContain("lg:items-stretch");
+    expect(overviewSource).toContain('className="flex h-full min-w-0 flex-col rounded-lg border border-white/10 bg-white/[0.04] p-3 sm:p-4"');
     expect(overviewSource).not.toContain("grid-cols-[5.75rem_minmax(0,1fr)]");
     expect(overviewSource).not.toContain("relative aspect-square");
     expect(overviewSource).not.toContain('sizes="hero"');
