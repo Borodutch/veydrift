@@ -305,9 +305,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         ) {
             mission.status = FleetMissionStatus.Returning;
         } else {
-            _createColony(
-                mission.owner, mission.originPlanetId, galaxy, system, position, mission.cargo
-            );
+            _createColony(mission.owner, mission.originPlanetId, galaxy, system, position);
             mission.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
             mission.status = FleetMissionStatus.Resolved;
             mission.returnAt = _currentTimestamp();
@@ -373,20 +371,14 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
                 fuelConsumption, travelDistance, speedPercent
             )
         );
-        uint256 committedCapacity =
-            uint256(cargo.metal) + uint256(cargo.crystal) + uint256(cargo.deuterium) + fuelCost;
+        uint256 cargoTotal =
+            uint256(cargo.metal) + uint256(cargo.crystal) + uint256(cargo.deuterium);
+        if (cargoTotal != 0) revert CargoNotAllowed();
+        uint256 committedCapacity = fuelCost;
         if (committedCapacity > capacity) {
             revert CargoCapacityExceeded(capacity, committedCapacity);
         }
-        _spend(
-            originPlanetId,
-            Resources({
-                metal: cargo.metal,
-                crystal: cargo.crystal,
-                deuterium: _toUint128(uint256(cargo.deuterium) + fuelCost)
-            })
-        );
-        _increaseInternalResources(cargo);
+        _spend(originPlanetId, Resources({metal: 0, crystal: 0, deuterium: fuelCost}));
         _debitPlanetShips(originPlanetId, Ship.ColonyShip, 1);
 
         uint64 departureAt = _currentTimestamp();
@@ -434,8 +426,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         uint256 originPlanetId,
         uint16 galaxy,
         uint16 system,
-        uint8 position,
-        Resources memory cargo
+        uint8 position
     ) private returns (uint256 colonyPlanetId) {
         bytes32 coordinates = _coordinateKey(galaxy, system, position);
         if (occupiedCoordinates[coordinates]) revert CoordinatesOccupied();
@@ -452,6 +443,8 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         );
         (uint16 metalMultiplier, uint16 crystalMultiplier, uint16 deuteriumMultiplier) =
             VeydriftFormulas.planetMultipliers(temperature, fields);
+        Resources memory startingResources = Resources({metal: 500, crystal: 500, deuterium: 0});
+        _increaseInternalResources(startingResources);
         _planets[colonyPlanetId] = Planet({
             owner: owner,
             galaxy: galaxy,
@@ -463,7 +456,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
             crystalMultiplierBps: crystalMultiplier,
             deuteriumMultiplierBps: deuteriumMultiplier,
             lastSettledAt: _currentTimestamp(),
-            resources: cargo
+            resources: startingResources
         });
         emit ColonyCreated(
             owner, originPlanetId, colonyPlanetId, galaxy, system, position, fields, temperature
