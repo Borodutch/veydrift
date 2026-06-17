@@ -46,6 +46,54 @@ const attackAction: Extract<GalaxyAction, { enabled: true }> = {
   },
 };
 
+const deployAction: Extract<GalaxyAction, { enabled: true }> = {
+  enabled: true,
+  kind: "deploy",
+  label: "Deploy",
+  mode: "mission",
+  mission: "deploy",
+  ships: {
+    smallCargo: 1,
+    lightFighter: 0,
+    recycler: 0,
+    colonyShip: 0,
+    largeCargo: 0,
+    heavyFighter: 0,
+    cruiser: 0,
+    battleship: 0,
+    bomber: 0,
+    destroyer: 0,
+    deathstar: 0,
+    battlecruiser: 0,
+    reaper: 0,
+    pathfinder: 0,
+  },
+};
+
+const harvestAction: Extract<GalaxyAction, { enabled: true }> = {
+  enabled: true,
+  kind: "harvest",
+  label: "Harvest",
+  mode: "mission",
+  mission: "harvest",
+  ships: {
+    smallCargo: 0,
+    lightFighter: 0,
+    recycler: 1,
+    colonyShip: 0,
+    largeCargo: 0,
+    heavyFighter: 0,
+    cruiser: 0,
+    battleship: 0,
+    bomber: 0,
+    destroyer: 0,
+    deathstar: 0,
+    battlecruiser: 0,
+    reaper: 0,
+    pathfinder: 0,
+  },
+};
+
 const missileAction: Extract<GalaxyAction, { enabled: true }> = {
   enabled: true,
   kind: "missileAttack",
@@ -202,16 +250,13 @@ describe("mission creation", () => {
     });
   });
 
-  test("builds target resource intel from public resources and projects lootable arrival state", () => {
+  test("builds target resource intel from backend production and projects lootable arrival state", () => {
     const intel = targetResourceIntel(targetPlanet({
       publicState: {
         resources: { metal: "1000", crystal: "500", deuterium: "200" },
-        buildings: [
-          { id: 0, level: 2 },
-          { id: 1, level: 1 },
-          { id: 2, level: 1 },
-          { id: 3, level: 10 },
-        ],
+        productionPerHour: { metal: "120", crystal: "60", deuterium: "24" },
+        storageCaps: { metal: "2000", crystal: "1000", deuterium: "300" },
+        buildings: null,
         fleet: [],
         defenses: [],
         research: [{ id: 0, level: 1 }],
@@ -221,9 +266,62 @@ describe("mission creation", () => {
 
     expect(intel.current).toEqual({ metal: 1_000, crystal: 500, deuterium: 200 });
     expect(intel.currentLootable).toEqual({ metal: 500, crystal: 250, deuterium: 100 });
-    expect(intel.projectedArrival?.metal).toBeGreaterThan(1_000);
-    expect(intel.projectedArrivalLootable?.metal).toBeGreaterThan(500);
-    expect(intel.projectionDetail).toContain("assumes no new production");
+    expect(intel.projectedArrival).toEqual({ metal: 1_120, crystal: 560, deuterium: 224 });
+    expect(intel.projectedArrivalLootable).toEqual({ metal: 560, crystal: 280, deuterium: 112 });
+    expect(intel.projectionDetail).toContain("public production rate");
+  });
+
+  test("projects public building production with energy shortage reflected", () => {
+    const intel = targetResourceIntel(targetPlanet({
+      publicState: {
+        resources: { metal: "1000", crystal: "500", deuterium: "200" },
+        productionPerHour: null,
+        storageCaps: null,
+        buildings: [
+          { id: 0, level: 2 },
+          { id: 3, level: 1 },
+        ],
+        fleet: [],
+        defenses: [],
+        research: [],
+        queues: null,
+      },
+    }), 3_600);
+
+    expect(intel.current).toEqual({ metal: 1_000, crystal: 500, deuterium: 200 });
+    expect(intel.projectedArrival).toEqual({ metal: 1_065, crystal: 500, deuterium: 200 });
+    expect(intel.projectedArrivalLootable).toEqual({ metal: 532, crystal: 250, deuterium: 100 });
+    expect(intel.projectionDetail).toContain("public building/resource preview math");
+  });
+
+  test("keeps arrival resources unchanged for zero travel or no production data", () => {
+    const target = targetPlanet({
+      publicState: {
+        resources: { metal: "1000", crystal: "500", deuterium: "200" },
+        productionPerHour: { metal: "120", crystal: "60", deuterium: "24" },
+        storageCaps: { metal: "2000", crystal: "1000", deuterium: "300" },
+        buildings: null,
+        fleet: [],
+        defenses: [],
+        research: [],
+        queues: null,
+      },
+    });
+
+    expect(targetResourceIntel(target, 0).projectedArrival).toEqual({ metal: 1_000, crystal: 500, deuterium: 200 });
+
+    const noProduction = targetResourceIntel(targetPlanet({
+      publicState: {
+        resources: { metal: "1000", crystal: "500", deuterium: "200" },
+        buildings: null,
+        fleet: [],
+        defenses: [],
+        research: [],
+        queues: null,
+      },
+    }), 3_600);
+    expect(noProduction.projectedArrival).toEqual({ metal: 1_000, crystal: 500, deuterium: 200 });
+    expect(noProduction.projectedArrivalLootable).toEqual({ metal: 500, crystal: 250, deuterium: 100 });
   });
 
   test("forecasts public battle outcome without inventing hidden target state", () => {
@@ -400,13 +498,16 @@ describe("mission creation", () => {
     expect(text).toContain("Resources now");
   });
 
-  test("hides destination intel and return timing only for colonize mission screens", () => {
+  test("hides destination intel for colonize and deploy mission screens", () => {
     expect(shouldShowDestinationIntel(colonizeAction)).toBe(false);
     expect(shouldShowReturnTiming(colonizeAction, false)).toBe(false);
+    expect(shouldShowDestinationIntel(deployAction)).toBe(false);
+    expect(shouldShowReturnTiming(deployAction, false)).toBe(true);
 
     expect(shouldShowDestinationIntel(attackAction)).toBe(true);
     expect(shouldShowReturnTiming(attackAction, false)).toBe(true);
     expect(shouldShowReturnTiming(attackAction, true)).toBe(false);
+    expect(shouldShowDestinationIntel(harvestAction)).toBe(true);
     expect(shouldShowDestinationIntel(defenseHoldAction)).toBe(true);
   });
 
@@ -741,6 +842,9 @@ function targetPlanet(overrides: Partial<Planet> = {}): Planet {
     diameter: 12_800,
     fields: 163,
     hasMoon: false,
+    metalMultiplierBps: 10_000,
+    crystalMultiplierBps: 10_000,
+    deuteriumMultiplierBps: 10_000,
     ...overrides,
   };
 }

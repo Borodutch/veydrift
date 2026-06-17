@@ -5172,6 +5172,16 @@ describe("Veydrift backend", () => {
     const publicResources = publicPlanet.publicState.resources;
     // The public universe surface accrues production from the promoted building rows.
     expect(publicResources.metal).toBe("5128");
+    expect(publicPlanet.publicState.productionPerHour).toEqual(expect.objectContaining({
+      metal: expect.any(String),
+      crystal: expect.any(String),
+      deuterium: expect.any(String)
+    }));
+    expect(publicPlanet.publicState.storageCaps).toEqual(expect.objectContaining({
+      metal: expect.any(String),
+      crystal: expect.any(String),
+      deuterium: expect.any(String)
+    }));
 
     const highscoreResponse = await handler(new Request("http://localhost/highscores?limit=10"));
     const highscoreBody = await highscoreResponse.json();
@@ -5180,13 +5190,17 @@ describe("Veydrift backend", () => {
     // Raidable loot derived from the public (accrued) resources, using the same shared derivation
     // the backend applies. The Finder must match this exactly — proving it reads the accrued base,
     // not the stale stored snapshot (which would yield raidable metal 2500 instead of 2564).
-    const expectedRaidable = deriveInfrastructureFields(
+    const expectedDerived = deriveInfrastructureFields(
       { ...planet, resources: publicResources },
       indexer.infrastructureRows("7"),
       indexer.shipRows("7"),
       indexer.technologyLevels(player)
-    ).raidableResources!;
+    );
+    const expectedRaidable = expectedDerived.raidableResources!;
     expect(expectedRaidable).not.toBeNull();
+    expect(tacticalPlanet.tactical.currentResources).toEqual(publicResources);
+    expect(tacticalPlanet.tactical.productionPerHour).toEqual(expectedDerived.productionPerHour);
+    expect(tacticalPlanet.tactical.storageCaps).toEqual(expectedDerived.storageCaps);
     expect(tacticalPlanet.tactical.raidableResources).toEqual(expectedRaidable);
     expect(tacticalPlanet.tactical.raidableResourceTotal).toBe(
       (BigInt(expectedRaidable.metal) + BigInt(expectedRaidable.crystal) + BigInt(expectedRaidable.deuterium)).toString()
