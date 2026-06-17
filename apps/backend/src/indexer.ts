@@ -884,6 +884,32 @@ export class SettlementIndexer {
     };
   }
 
+  fleetMissionArchive(wallet: `0x${string}`): Pick<FleetMissionVisibility, "battleReports" | "completedMissions" | "homePlanetId" | "wallet"> {
+    const settlement = this.walletSettlement(wallet);
+    const walletLower = wallet.toLowerCase();
+    const ownedPlanetIds = new Set(
+      this.settledPlanets()
+        .filter((planet) => planet.owner.toLowerCase() === walletLower)
+        .map((planet) => planet.planetId)
+    );
+    const completedMissions = this.indexedFleetMissionSummaries()
+      .filter((mission) => isVisibleCompletedMission(mission, walletLower, ownedPlanetIds))
+      .map((mission) => this.withFleetMissionPlanetReferences(mission))
+      .sort(compareFleetMissionsNewestFirst);
+    const battleReports = this.indexedBattleReports().filter((report) =>
+      report.attacker.toLowerCase() === walletLower
+        || ownedPlanetIds.has(report.targetPlanetId)
+        || report.participants.some((participant) => participant.address.toLowerCase() === walletLower)
+    );
+
+    return {
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      completedMissions,
+      battleReports
+    };
+  }
+
   fleetMission(missionId: string): FleetMissionSummary | null {
     const mission = this.indexedFleetMissionSummaries()
       .find((summary) => summary.missionId === missionId);
