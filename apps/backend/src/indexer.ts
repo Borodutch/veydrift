@@ -1546,10 +1546,17 @@ export class SettlementIndexer {
       throw new Error("contract log replay is unavailable: chain reader cannot list raw contract logs");
     }
     const logs = await this.chainReader.listContractLogs(fromBlock, toBlock);
+    const targetedHealPlanetIds = new Set<string>();
     for (const log of sortRpcLogs(logs)) {
       this.applyLog(log);
+      for (const planetId of canonicalHealPlanetIdsForLog(log)) {
+        targetedHealPlanetIds.add(planetId);
+      }
     }
     this.rebuildMaterializedStateFromEventLogs();
+    if (targetedHealPlanetIds.size > 0) {
+      await this.healCanonicalPlanets([...targetedHealPlanetIds]);
+    }
     this.setMetadata("lastEventReplayAt", new Date().toISOString());
     if (typeof toBlock === "bigint") {
       this.recordLatestBlock(toBlock.toString());
@@ -3109,7 +3116,7 @@ export class SettlementIndexer {
   }
 
   private upsertPlanet(event: SettledPlanetEvent): void {
-    const planetEvent = this.withKnownPlanetResources(event);
+    const planetEvent = this.withExistingPlanetIdentity(this.withKnownPlanetResources(event));
     const placeholderResources = isZeroResourcePlaceholder(planetEvent);
     this.db.query(`
       INSERT INTO indexed_planets (planet_id, owner, galaxy, system, position, event_json)
@@ -3199,6 +3206,28 @@ export class SettlementIndexer {
       planetEvent.blockNumber
     );
     this.clearPlanetResourcePendingIfResolved();
+  }
+
+  private withExistingPlanetIdentity(event: SettledPlanetEvent): SettledPlanetEvent {
+    if (isCanonicalCurrentPlanetSnapshot(event)) return event;
+
+    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(event.planetId) as EventRow | null;
+    if (!row) return event;
+
+    const existing = parseEvent<SettledPlanetEvent>(row.event_json);
+    return {
+      ...event,
+      owner: existing.owner,
+      name: event.name ?? existing.name,
+      galaxy: existing.galaxy,
+      system: existing.system,
+      position: existing.position,
+      fields: existing.fields,
+      temperature: existing.temperature,
+      metalMultiplierBps: existing.metalMultiplierBps,
+      crystalMultiplierBps: existing.crystalMultiplierBps,
+      deuteriumMultiplierBps: existing.deuteriumMultiplierBps
+    };
   }
 
   private updatePlanetResources(event: PlanetSettledEvent): void {
@@ -5363,6 +5392,10 @@ function isZeroResourcePlaceholder(event: SettledPlanetEvent): boolean {
     && event.resources.metal === "0"
     && event.resources.crystal === "0"
     && event.resources.deuterium === "0";
+}
+
+function isCanonicalCurrentPlanetSnapshot(event: SettledPlanetEvent): boolean {
+  return event.transactionHash === "0x" && event.blockNumber === "0";
 }
 
 function pendingPlanetResourcesReason(planetId: string): string {
