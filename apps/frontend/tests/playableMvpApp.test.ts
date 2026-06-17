@@ -43,6 +43,7 @@ import {
   researchStartTransactionLabel,
   raidTargetPlanetForMission,
   missionOriginResources,
+  nextProductionQueueCompletionEventMs,
   shouldApplyResourceSnapshot,
   shipyardStateForMissionActions,
   shipCompletionPlanetIdFor,
@@ -863,6 +864,30 @@ describe("Playable MVP app display helpers", () => {
     const emptyPollQueues = playerQueues({ research: null });
 
     expect(preserveActiveResearchQueue(currentQueues, emptyPollQueues).research).toEqual(activeResearch);
+  });
+
+  test("clears preserved research queues when a due completion poll returns no active queue", () => {
+    const activeResearch = activeResearchQueue({ targetLevel: 2 });
+    const currentQueues = playerQueues({ research: activeResearch });
+    const emptyPollQueues = playerQueues({ research: null });
+
+    expect(preserveActiveResearchQueue(currentQueues, emptyPollQueues, {
+      now: 1_700_006_000_000,
+    }).research).toBeNull();
+  });
+
+  test("schedules the soonest future production queue completion only", () => {
+    expect(nextProductionQueueCompletionEventMs([
+      buildingQueue({ kind: "building", readyAt: "1700000020" }),
+      buildingQueue({ kind: "defense", readyAt: "1700000010" }),
+      buildingQueue({ kind: "ship", readyAt: "1699999990" }),
+      null,
+    ], 1_700_000_000_000)).toBe(1_700_000_010_000);
+
+    expect(nextProductionQueueCompletionEventMs([
+      buildingQueue({ kind: "building", readyAt: "1699999990" }),
+      buildingQueue({ kind: "research", readyAt: "not-a-timestamp" }),
+    ], 1_700_000_000_000)).toBeUndefined();
   });
 
   test("preserves active research state during transient empty research refreshes", () => {
@@ -1999,7 +2024,7 @@ describe("Playable MVP app display helpers", () => {
 
     try {
       await expect(loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined))
-        .rejects.toThrow("Overview snapshot API is temporarily unavailable");
+        .rejects.toThrow("The Veydrift backend is temporarily unavailable (503: indexed_read_not_ready). The app will retry.");
       expect(requestedPaths).toEqual([`/wallet/${wallet}/overview`]);
     } finally {
       globalThis.fetch = originalFetch;
