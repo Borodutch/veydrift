@@ -122,6 +122,14 @@ export type TargetResourceIntel = {
   projectionDetail: string;
 };
 
+export function shouldShowDestinationIntel(action: EnabledGalaxyAction): boolean {
+  return action.kind !== "colonize";
+}
+
+export function shouldShowReturnTiming(action: EnabledGalaxyAction, hasHoldingBreakdown: boolean): boolean {
+  return action.kind !== "colonize" && !hasHoldingBreakdown;
+}
+
 // VEY-KANEO-493: the mission ship picker intentionally omits Pathfinder. It is an
 // expedition-only vessel and expeditions are not implemented, so it can never be built
 // or owned and listing it here would only surface dead, confusing copy. This mirrors the
@@ -231,6 +239,7 @@ export function MissionCreationPage({
   const selectedShipCount = action.mode === "missile" ? 0 : fleetMissionShipCount(ships);
   const availableShips = useMemo(() => missionShipOptionsForAction(action, shipyardState), [action, shipyardState]);
   const cargoSupported = action.mode === "mission" && (action.kind === "transport" || action.kind === "deploy");
+  const destinationIntelVisible = shouldShowDestinationIntel(action);
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
   const lootRatioSupported = !joinAttackMode && !acsDefendMode && action.mode === "mission" && action.kind === "attack";
   const lootRatioActive = lootRatioSupported && !greedyLootEnabled;
@@ -365,12 +374,14 @@ export function MissionCreationPage({
           ) : (
             <>
               <TargetIntelCard coords={coords} target={target} />
-              <DestinationIntelPanel
-                resourceIntel={resourceIntel}
-                stationedDefenderUnits={stationedDefenderUnits}
-                targetDefenseUnits={targetDefenseUnits}
-                targetFleetUnits={targetFleetUnits}
-              />
+              {destinationIntelVisible ? (
+                <DestinationIntelPanel
+                  resourceIntel={resourceIntel}
+                  stationedDefenderUnits={stationedDefenderUnits}
+                  targetDefenseUnits={targetDefenseUnits}
+                  targetFleetUnits={targetFleetUnits}
+                />
+              ) : null}
             </>
           )}
 
@@ -546,9 +557,9 @@ export function MissionCreationPage({
           {timingSummary ? (
             <>
               <SummaryRow label={holdingBreakdown ? "Reach planet" : "Arrival"} subvalue={timingSummary.arrivalClock} value={timingSummary.arrivalDuration} />
-              {holdingBreakdown ? null : (
+              {shouldShowReturnTiming(action, Boolean(holdingBreakdown)) ? (
                 <SummaryRow label="Return" subvalue={timingSummary.returnClock} value={timingSummary.returnDuration} />
-              )}
+              ) : null}
             </>
           ) : null}
           {blockedReason ? (

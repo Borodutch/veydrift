@@ -13,6 +13,8 @@ import {
   publicTargetBattleForecast,
   rebalanceLootRatio,
   ShipQuantityRow,
+  shouldShowDestinationIntel,
+  shouldShowReturnTiming,
   stationedDefenderCompositionUnits,
   TargetIntelCard,
   targetResourceIntel,
@@ -64,6 +66,29 @@ const defenseHoldAction: Extract<GalaxyAction, { enabled: true }> = {
     lightFighter: 1,
     recycler: 0,
     colonyShip: 0,
+    largeCargo: 0,
+    heavyFighter: 0,
+    cruiser: 0,
+    battleship: 0,
+    bomber: 0,
+    destroyer: 0,
+    deathstar: 0,
+    battlecruiser: 0,
+    reaper: 0,
+    pathfinder: 0,
+  },
+};
+
+const colonizeAction: Extract<GalaxyAction, { enabled: true }> = {
+  enabled: true,
+  kind: "colonize",
+  label: "Colonize",
+  mode: "colonize",
+  ships: {
+    smallCargo: 0,
+    lightFighter: 0,
+    recycler: 0,
+    colonyShip: 1,
     largeCargo: 0,
     heavyFighter: 0,
     cruiser: 0,
@@ -373,6 +398,16 @@ describe("mission creation", () => {
     expect(text).toContain("Probable outcome");
     expect(text).toContain("Destination intel");
     expect(text).toContain("Resources now");
+  });
+
+  test("hides destination intel and return timing only for colonize mission screens", () => {
+    expect(shouldShowDestinationIntel(colonizeAction)).toBe(false);
+    expect(shouldShowReturnTiming(colonizeAction, false)).toBe(false);
+
+    expect(shouldShowDestinationIntel(attackAction)).toBe(true);
+    expect(shouldShowReturnTiming(attackAction, false)).toBe(true);
+    expect(shouldShowReturnTiming(attackAction, true)).toBe(false);
+    expect(shouldShowDestinationIntel(defenseHoldAction)).toBe(true);
   });
 
   test("renders Greedy off as manual loot fields and Greedy on as concise copy only", () => {
