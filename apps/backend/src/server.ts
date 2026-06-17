@@ -1061,11 +1061,14 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (request.method !== "GET") return 0;
   if (url.pathname === "/chain/events") return 0;
   if (url.pathname === "/health" || url.pathname === "/debug/indexer") return 2_000;
-  if (url.pathname === "/highscores" || url.pathname === "/missions") return 15_000;
-  if (url.pathname.match(/^\/mission\/[^/]+$/)) return 30_000;
+  if (url.pathname === "/highscores" || url.pathname === "/missions") return 60_000;
+  if (url.pathname.match(/^\/mission\/[^/]+$/)) return 60_000;
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return 30_000;
   if (url.pathname === "/universe/systems") return 30_000;
-  if (url.pathname.match(/^\/wallet\/[^/]+\/(?:overview|settlement|planets|queues|fleet-visibility|missions|infrastructure|moon|shipyard|defenses|research|rift|highscore)$/)) {
+  if (url.pathname.match(/^\/wallet\/[^/]+\/(?:overview|fleet-visibility|missions)$/)) {
+    return 60_000;
+  }
+  if (url.pathname.match(/^\/wallet\/[^/]+\/(?:settlement|planets|queues|infrastructure|moon|shipyard|defenses|research|rift|highscore)$/)) {
     return 10_000;
   }
   return 0;

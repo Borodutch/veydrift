@@ -401,6 +401,7 @@ export class SettlementIndexer {
     this.randomnessEngineConfigured = options.randomnessEngineConfigured ?? false;
     this.rebuildDeadlineMs = options.rebuildDeadlineMs && options.rebuildDeadlineMs > 0 ? options.rebuildDeadlineMs : 0;
     this.migrate(options.runStartupBackfill ?? true);
+    this.prewarmMissionReadModel();
   }
 
   // VEY-KANEO-471: see SettlementIndexerOptions. Read once in fleetMissionVisibility.
@@ -4985,6 +4986,12 @@ export class SettlementIndexer {
     };
     this.decodedMissionLogCache = next;
     return next;
+  }
+
+  private prewarmMissionReadModel(): void {
+    if (this.count("indexed_mission_event_logs") === 0) return;
+    this.indexedFleetMissionSummaries();
+    this.indexedBattleReports();
   }
 
   private mergeCanonicalFleetMissions(eventMissions: FleetMissionSummary[]): FleetMissionSummary[] {
