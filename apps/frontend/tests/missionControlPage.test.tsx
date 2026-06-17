@@ -756,6 +756,82 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Loot 1,200 M / 300 C / 0 D");
   });
 
+  test("shows a joined attack participant's grabbed loot on the returning mission card", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [mission({
+          missionId: "78",
+          missionType: "AcsAttack",
+          status: "Returning",
+          attackGroupId: "77",
+          cargo: { metal: "0", crystal: "0", deuterium: "0" },
+        })],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [{
+          ...battleReport("77"),
+          attackGroupId: "77",
+          participants: [
+            {
+              missionId: "77",
+              address: "0x2222222222222222222222222222222222222222",
+              isMainAttacker: true,
+              ships: { smallCargo: "1" },
+              loot: { metal: "1200", crystal: "300", deuterium: "0" },
+            },
+            {
+              missionId: "78",
+              address: wallet,
+              isMainAttacker: false,
+              ships: { smallCargo: "1" },
+              loot: { metal: "30", crystal: "5", deuterium: "0" },
+            },
+          ],
+        }],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Cargo Empty");
+    expect(text).toContain("Loot 30 M / 5 C / 0 D");
+    expect(text).not.toContain("Loot 1,200 M / 300 C / 0 D");
+  });
+
+  test("shows an intentional zero-loot state for a resolved returning attack", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [mission({
+          missionId: "60",
+          missionType: "Attack",
+          status: "Returning",
+          cargo: { metal: "0", crystal: "0", deuterium: "0" },
+        })],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [{
+          ...battleReport("60"),
+          loot: { metal: "0", crystal: "0", deuterium: "0" },
+        }],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Cargo Empty");
+    expect(text).toContain("Loot Empty");
+  });
+
   test("withholds loot from a mission card until the fleet leaves its outbound leg", () => {
     const loot = { metal: "1200", crystal: "300", deuterium: "0" };
     const lootByMissionId = new Map([["55", loot]]);
