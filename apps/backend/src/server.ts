@@ -1886,7 +1886,7 @@ function targetCombatIntelForMission(
 
   return {
     planetId: planet.planetId,
-    activeMissions: indexer.allActiveFleetMissions().filter((entry) => entry.targetPlanetId === planet.planetId),
+    activeMissions: indexer.activeFleetMissionsForTarget(planet.planetId),
     combatPower: tactical.combatPower,
     combatShips: tactical.combatShips,
     defenses: tactical.defenses,
