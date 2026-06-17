@@ -19,6 +19,60 @@ contract VeydriftAntiRaidPrimitivesTest is Test {
         assertEq(VeydriftAntiRaidPrimitives.recallFuelRefund(100), 0);
     }
 
+    function testOgameFuelCostKeepsSingleShipFuel() public pure {
+        uint256 numerator = VeydriftAntiRaidPrimitives.ogameFuelNumerator(
+            10, 1, 1_025, 5_000, 5_000, VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT
+        );
+
+        assertEq(VeydriftAntiRaidPrimitives.ogameFuelCostFromNumerator(numerator, true), 2);
+    }
+
+    function testOgameFuelCostChargesMixedFleetsPerShipSpeed() public pure {
+        uint256 smallCargoAndLightFighter = VeydriftAntiRaidPrimitives.ogameFuelNumerator(
+            10, 1, 1_025, 5_000, 5_000, VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT
+        )
+        + VeydriftAntiRaidPrimitives.ogameFuelNumerator(
+            20, 1, 1_025, 12_500, 5_000, VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT
+        );
+        assertEq(
+            VeydriftAntiRaidPrimitives.ogameFuelCostFromNumerator(smallCargoAndLightFighter, true),
+            4
+        );
+
+        uint256 deathstarAndLightFighters = VeydriftAntiRaidPrimitives.ogameFuelNumerator(
+            1, 1, 20_000, 100, 100, VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT
+        )
+        + VeydriftAntiRaidPrimitives.ogameFuelNumerator(
+            20, 100, 20_000, 12_500, 100, VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT
+        );
+        assertEq(
+            VeydriftAntiRaidPrimitives.ogameFuelCostFromNumerator(deathstarAndLightFighters, true),
+            1_360
+        );
+
+        uint256 recyclerAndBattleships = VeydriftAntiRaidPrimitives.ogameFuelNumerator(
+            300, 1, 20_000, 2_000, 2_000, VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT
+        )
+        + VeydriftAntiRaidPrimitives.ogameFuelNumerator(
+            500, 100, 20_000, 10_000, 2_000, VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT
+        );
+        assertEq(
+            VeydriftAntiRaidPrimitives.ogameFuelCostFromNumerator(recyclerAndBattleships, true),
+            60_527
+        );
+
+        uint256 deathstarAndBattleships = VeydriftAntiRaidPrimitives.ogameFuelNumerator(
+            1, 1, 20_000, 100, 100, VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT
+        )
+        + VeydriftAntiRaidPrimitives.ogameFuelNumerator(
+            500, 100, 20_000, 10_000, 100, VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT
+        );
+        assertEq(
+            VeydriftAntiRaidPrimitives.ogameFuelCostFromNumerator(deathstarAndBattleships, true),
+            34_575
+        );
+    }
+
     function testRaidLootCapsAndProtectedStorage() public pure {
         uint256 protectedAmount = VeydriftAntiRaidPrimitives.protectedStorageAmount(10_000);
         assertEq(protectedAmount, 0);

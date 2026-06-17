@@ -366,9 +366,12 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
             _technologyLevels[msg.sender][Technology.ImpulseDrive],
             _technologyLevels[msg.sender][Technology.HyperspaceDrive]
         );
+        uint256 fuelNumerator = VeydriftAntiRaidPrimitives.ogameFuelNumerator(
+            fuelConsumption, 1, travelDistance, speed, speed, speedPercent
+        );
         uint128 fuelCost = _toUint128(
-            VeydriftAntiRaidPrimitives.missionFuelCost(
-                fuelConsumption, travelDistance, speedPercent
+            VeydriftAntiRaidPrimitives.ogameFuelCostFromNumerator(
+                fuelNumerator, fuelConsumption != 0
             )
         );
         uint256 cargoTotal =
