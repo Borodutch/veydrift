@@ -1,9 +1,14 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
-import { ArrowLeftRight, Crosshair, Factory, FlaskConical, Menu, Moon, Orbit, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
+import { ArrowLeftRight, Check, Crosshair, Factory, FlaskConical, Menu, Moon, Orbit, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
 
-import { shortAddress } from "../walletFlow";
+import {
+  playerDisplayLabel,
+  shortAddress,
+  validatePlayerDisplayName,
+  type PlayerProfile,
+} from "../walletFlow";
 
 export type Page =
   | "overview"
@@ -28,8 +33,18 @@ interface NavBarProps {
   coordinates?: string | undefined;
   account?: string | undefined;
   onNavigate: (page: Page) => void;
+  onUpdatePlayerDisplayName?: ((name: string) => void) | undefined;
+  playerProfile?: PlayerProfile | undefined;
+  playerProfileAction?: PlayerProfileActionState | undefined;
+  canEditPlayerProfile?: boolean | undefined;
   planetPicker?: ComponentChildren;
 }
+
+type PlayerProfileActionState =
+  | { status: "idle" }
+  | { status: "pending"; label: string }
+  | { status: "success"; label: string }
+  | { status: "error"; label: string };
 
 const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: LucideIcon }> = [
   { key: "overview", label: "Overview", mobileLabel: "Overview", icon: Radar },
@@ -46,8 +61,29 @@ const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: Lucide
   { key: "raid-target-finder", label: "Raid Finder", mobileLabel: "Raids", icon: Crosshair },
 ];
 
-export function NavBar({ active, account, coordinates, onNavigate, planetPicker }: NavBarProps) {
+export function NavBar({
+  active,
+  account,
+  coordinates,
+  onNavigate,
+  onUpdatePlayerDisplayName,
+  playerProfile,
+  playerProfileAction = { status: "idle" },
+  canEditPlayerProfile = false,
+  planetPicker,
+}: NavBarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [playerDraft, setPlayerDraft] = useState(playerProfile?.displayName ?? "");
+  const [playerPanelOpen, setPlayerPanelOpen] = useState(false);
+  const [playerValidation, setPlayerValidation] = useState<string | undefined>(undefined);
+  const playerLabel = playerDisplayLabel(playerProfile, account);
+  const playerProfileBusy = playerProfileAction.status === "pending";
+  const playerStatusTone = playerProfileAction.status === "error"
+    ? "text-amber-200"
+    : playerProfileAction.status === "success"
+      ? "text-emerald-200"
+      : "text-slate-300";
+  const playerStatusLabel = playerProfileAction.status === "idle" ? undefined : playerProfileAction.label;
 
   useEffect(() => {
     if (!mobileMenuOpen) return;
@@ -64,6 +100,132 @@ export function NavBar({ active, account, coordinates, onNavigate, planetPicker 
     onNavigate(page);
     setMobileMenuOpen(false);
   };
+
+  useEffect(() => {
+    if (!playerPanelOpen) {
+      setPlayerDraft(playerProfile?.displayName ?? "");
+      setPlayerValidation(undefined);
+    }
+  }, [playerPanelOpen, playerProfile?.displayName]);
+
+  useEffect(() => {
+    if (playerProfileAction.status === "success") {
+      setPlayerPanelOpen(false);
+    }
+  }, [playerProfileAction.status]);
+
+  const handlePlayerSubmit = (event: Event) => {
+    event.preventDefault();
+    const nextName = playerDraft.trim().replace(/ {2,}/g, " ");
+    const validation = validatePlayerDisplayName(nextName);
+    if (validation) {
+      setPlayerValidation(validation);
+      return;
+    }
+    setPlayerValidation(undefined);
+    onUpdatePlayerDisplayName?.(nextName);
+  };
+
+  const accountSummary = (className: string) => (
+    <aside className={className} aria-label="Sidebar account summary">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[10px] font-semibold uppercase text-slate-500">
+            Commander
+          </p>
+          <p className="mt-1 break-words text-xs font-semibold leading-4 text-slate-100">
+            {playerLabel}
+          </p>
+          {playerProfile?.displayName ? (
+            <p className="mt-0.5 truncate text-[10px] text-slate-500">{playerProfile.fallbackName}</p>
+          ) : null}
+          {playerStatusLabel && !playerPanelOpen ? (
+            <p className={`mt-1 break-words text-[10px] leading-4 ${playerStatusTone}`}>{playerStatusLabel}</p>
+          ) : null}
+        </div>
+        {onUpdatePlayerDisplayName ? (
+          <button
+            aria-expanded={playerPanelOpen}
+            aria-label="Edit player display name"
+            className="inline-grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+            disabled={playerProfileBusy}
+            onClick={() => {
+              setPlayerPanelOpen((open) => !open);
+              setPlayerDraft(playerProfile?.displayName ?? "");
+              setPlayerValidation(undefined);
+            }}
+            title="Edit player display name"
+            type="button"
+          >
+            <Pencil aria-hidden="true" size={12} strokeWidth={2} />
+          </button>
+        ) : null}
+      </div>
+      {onUpdatePlayerDisplayName && playerPanelOpen ? (
+        <form className="mt-2 grid gap-2 rounded border border-white/10 bg-black/30 p-2" onSubmit={handlePlayerSubmit}>
+          <label className="grid gap-1 text-[11px] font-medium text-slate-200">
+            Display name
+            <input
+              className="h-8 rounded border border-white/10 bg-[#080d18]/95 px-2 text-xs text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+              disabled={playerProfileBusy}
+              maxLength={32}
+              onInput={(event) => {
+                setPlayerDraft(event.currentTarget.value);
+                setPlayerValidation(undefined);
+              }}
+              placeholder="Enter display name"
+              value={playerDraft}
+            />
+          </label>
+          <p className="text-[10px] leading-4 text-slate-300">
+            Free wallet signature; no transaction or gas.
+          </p>
+          {(playerValidation || playerStatusLabel) && (
+            <p className={`break-words text-[10px] leading-4 ${playerValidation ? "text-amber-200" : playerStatusTone}`}>
+              {playerValidation ?? playerStatusLabel}
+            </p>
+          )}
+          <div className="flex justify-end gap-1.5">
+            <button
+              aria-label="Cancel player display name edit"
+              className="inline-grid h-7 w-7 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+              disabled={playerProfileBusy}
+              onClick={() => setPlayerPanelOpen(false)}
+              title="Cancel"
+              type="button"
+            >
+              <X aria-hidden="true" size={13} strokeWidth={2} />
+            </button>
+            <button
+              aria-label="Save player display name"
+              className="inline-grid h-7 w-7 place-items-center rounded border border-cyan-300/40 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+              disabled={!canEditPlayerProfile || playerProfileBusy}
+              title={playerProfileBusy ? "Signing" : "Save name"}
+              type="submit"
+            >
+              <Check aria-hidden="true" size={13} strokeWidth={2} />
+            </button>
+          </div>
+        </form>
+      ) : null}
+      <div className="mt-2 flex items-center justify-between gap-2 border-t border-white/10 pt-2">
+        <span className="text-[10px] font-semibold uppercase text-slate-500">
+          Home
+        </span>
+        <span className="truncate font-mono text-xs text-slate-100">
+          {coordinates ?? "--:--:--"}
+        </span>
+      </div>
+      <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-white/10 pt-1.5">
+        <span className="text-[10px] font-semibold uppercase text-slate-500">
+          Wallet
+        </span>
+        <span className="truncate font-mono text-xs text-slate-300">
+          {account ? shortAddress(account) : "Disconnected"}
+        </span>
+      </div>
+    </aside>
+  );
 
   return (
     <>
@@ -88,24 +250,7 @@ export function NavBar({ active, account, coordinates, onNavigate, planetPicker 
             ))}
           </div>
 
-          <div className="sticky bottom-3 shrink-0 rounded-md border border-white/10 bg-[#07101d]/95 p-2 shadow-2xl shadow-black/30 backdrop-blur" aria-label="Sidebar account summary">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[10px] font-semibold uppercase text-slate-500">
-                Home
-              </span>
-              <span className="truncate font-mono text-xs text-slate-100">
-                {coordinates ?? "--:--:--"}
-              </span>
-            </div>
-            <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-white/10 pt-1.5">
-              <span className="text-[10px] font-semibold uppercase text-slate-500">
-                Wallet
-              </span>
-              <span className="truncate font-mono text-xs text-slate-300">
-                {account ? shortAddress(account) : "Disconnected"}
-              </span>
-            </div>
-          </div>
+          {accountSummary("sticky bottom-3 shrink-0 rounded-md border border-white/10 bg-[#07101d]/95 p-2 shadow-2xl shadow-black/30 backdrop-blur")}
         </div>
       </nav>
 
@@ -135,6 +280,7 @@ export function NavBar({ active, account, coordinates, onNavigate, planetPicker 
             className="grid gap-3 border-t border-white/10 bg-[#08101d]/98 p-3 shadow-2xl shadow-black/30"
             id="mobile-navigation-menu"
           >
+            {accountSummary("rounded border border-white/10 bg-white/[0.03] p-2")}
             {planetPicker ? (
               <div
                 className="rounded border border-white/10 bg-white/[0.03] p-2"
