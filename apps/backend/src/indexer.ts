@@ -138,6 +138,9 @@ export type IndexerSnapshot = {
 export type SettlementIndexerOptions = {
   database?: Database;
   databasePath?: string;
+  // Multi-process API workers share one SQLite DB. The writer is the only process that should run
+  // startup materialized-state repair/backfill; readers only need the schema and current rows.
+  runStartupBackfill?: boolean;
   // VEY-KANEO-471: when true, fleetMissionVisibility appends one synthetic incoming attack with a
   // populated `stationedDefenders` payload so QA can verify the Stationed defenses panel without a
   // real ≥2-wallet on-chain ACS Defend scenario. Sourced from config.qaSyntheticStationedDefenders,
@@ -380,7 +383,7 @@ export class SettlementIndexer {
     this.qaSyntheticStationedDefenders = options.qaSyntheticStationedDefenders ?? false;
     this.randomnessEngineConfigured = options.randomnessEngineConfigured ?? false;
     this.rebuildDeadlineMs = options.rebuildDeadlineMs && options.rebuildDeadlineMs > 0 ? options.rebuildDeadlineMs : 0;
-    this.migrate();
+    this.migrate(options.runStartupBackfill ?? true);
   }
 
   // VEY-KANEO-471: see SettlementIndexerOptions. Read once in fleetMissionVisibility.
@@ -1902,7 +1905,7 @@ export class SettlementIndexer {
     return this.snapshot();
   }
 
-  private migrate(): void {
+  private migrate(runStartupBackfill: boolean): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS indexer_metadata (
         key TEXT PRIMARY KEY,
@@ -2254,7 +2257,9 @@ export class SettlementIndexer {
     `);
     this.ensureColumn("contract_production_queues", "backlog_json", "TEXT");
     this.ensureColumn("contract_planet_resources", "log_index", "TEXT NOT NULL DEFAULT '0x0'");
-    this.backfillCanonicalTables();
+    if (runStartupBackfill) {
+      this.backfillCanonicalTables();
+    }
   }
 
   private ensureColumn(table: string, column: string, definition: string): void {
