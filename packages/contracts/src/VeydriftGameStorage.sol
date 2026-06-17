@@ -115,6 +115,22 @@ abstract contract VeydriftGameStorage {
         Resources cost;
     }
 
+    struct EffectivePlanetState {
+        uint64 asOf;
+        Planet planet;
+        uint16[16] buildingLevels;
+        uint32[16] shipCounts;
+        uint32[10] defenseCounts;
+        uint16[15] technologyLevels;
+        Resources storageCaps;
+        uint256 metalPerHour;
+        uint256 crystalPerHour;
+        uint256 deuteriumPerHour;
+        uint256 producedEnergy;
+        uint256 requiredEnergy;
+        uint256 energyScaleBps;
+    }
+
     struct Fleet {
         bool active;
         bool returning;
