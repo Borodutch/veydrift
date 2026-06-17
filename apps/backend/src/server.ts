@@ -1595,7 +1595,7 @@ function indexedMissionArchive(
 }
 
 function globalMissionArchive(url: URL, indexer: SettlementIndexer): GlobalMissionArchiveResponse {
-  const rows = chronologicalMissionArchiveRows(indexer.allCompletedFleetMissions(), indexer.battleReports());
+  const rows = globalMissionArchiveRows(indexer);
   const requested = missionArchivePagination(url);
   const totalEntries = rows.length;
   const totalPages = Math.max(1, Math.ceil(totalEntries / requested.pageSize));
@@ -1613,6 +1613,20 @@ function globalMissionArchive(url: URL, indexer: SettlementIndexer): GlobalMissi
       hasNextPage: page < totalPages
     }
   };
+}
+
+const globalMissionArchiveRowsCache = new WeakMap<SettlementIndexer, { expiresAt: number; rows: FleetMissionArchiveEntry[] }>();
+
+function globalMissionArchiveRows(indexer: SettlementIndexer): FleetMissionArchiveEntry[] {
+  const cached = globalMissionArchiveRowsCache.get(indexer);
+  if (cached && cached.expiresAt > Date.now()) return cached.rows;
+
+  const rows = chronologicalMissionArchiveRows(indexer.allCompletedFleetMissions(), indexer.battleReports());
+  globalMissionArchiveRowsCache.set(indexer, {
+    expiresAt: Date.now() + 60_000,
+    rows
+  });
+  return rows;
 }
 
 function missionArchivePagination(url: URL): { page: number; pageSize: number } {
