@@ -924,7 +924,7 @@ export class SettlementIndexer {
   }
 
   stationedDefendersForPlanet(planetId: string, asOfSeconds = Math.floor(Date.now() / 1_000)): StationedDefenderSummary[] {
-    return this.indexedFleetMissionSummaries()
+    return (this.indexedFleetMissionReferenceIndex().activeByTarget.get(planetId) ?? [])
       .filter((mission) => this.isActiveDefenseHoldForPlanet(mission, planetId, asOfSeconds))
       .map((mission) => this.stationedDefenderSummary(mission, this.defenseHoldWindowEnd(mission)))
       .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
@@ -938,13 +938,12 @@ export class SettlementIndexer {
     const attackArrival = Number(attack?.arrivalAt);
     if (!Number.isFinite(attackArrival)) return [];
 
-    const summaries = this.indexedFleetMissionSummaries();
-    const summariesById = new Map(summaries.map((mission) => [mission.missionId, mission]));
+    const missionIndex = this.indexedFleetMissionReferenceIndex();
     const defenders = new Map<string, StationedDefenderSummary>();
 
     if (attack) {
       for (const missionId of attack.counterplayDefenderMissionIds ?? []) {
-        const defender = summariesById.get(missionId);
+        const defender = missionIndex.byId.get(missionId);
         if (!defender || !this.isBattleTimeCounterplay(defender, attack, attackArrival)) continue;
         defenders.set(defender.missionId, this.stationedDefenderSummary(defender, this.counterplayHoldUntil(defender)));
       }
@@ -952,7 +951,7 @@ export class SettlementIndexer {
 
     const targetPlanetId = report?.targetPlanetId ?? attack?.targetPlanetId;
     if (targetPlanetId) {
-      for (const defender of summaries) {
+      for (const defender of missionIndex.activeByTarget.get(targetPlanetId) ?? []) {
         if (!this.isBattleTimeDefenseHoldForPlanet(defender, targetPlanetId, attackArrival)) continue;
         defenders.set(defender.missionId, this.stationedDefenderSummary(defender, this.defenseHoldWindowEnd(defender)));
       }
