@@ -214,6 +214,11 @@ import {
   transactionSyncingLabel,
 } from "./transactionActionGate";
 import { timestampToMs } from "./timestampFormat";
+import {
+  scheduleActionNoticeAutoDismiss,
+  type ActionStateSetter,
+  type AutoDismissableActionState,
+} from "./actionNoticeAutoDismiss";
 
 export function researchStartTransactionLabel(
   technologyId: number,
@@ -292,6 +297,9 @@ const BUILDING_COMPLETION_AUTO_REFRESH_BUFFER_MS = 1_500;
 // VEY-KANEO-433: after an active mission's ETA passes, wait a short beat before the tightened Mission
 // Control refresh so the backend indexer has settled the arrival/resolution before we re-read it.
 const MISSION_RESOLUTION_REFRESH_BUFFER_MS = 1_500;
+// VEY-KANEO-539: production queues need the same tightened post-ETA read so visible construction
+// state reconciles at completion time instead of waiting for the next broad poll or a manual reload.
+const PRODUCTION_QUEUE_COMPLETION_REFRESH_BUFFER_MS = 1_500;
 
 type RefreshFreshnessGate = { current: number };
 export type ResourceSnapshotFreshness = {
@@ -617,6 +625,20 @@ export function nextMissionResolutionEventMs(
     if (mission.status === "Returning" || mission.status === "Recalled") {
       consider(mission.returnAt);
     }
+  }
+  return soonest;
+}
+
+export function nextProductionQueueCompletionEventMs(
+  queues: ReadonlyArray<QueueStateResponse | null | undefined>,
+  now: number,
+): number | undefined {
+  let soonest: number | undefined;
+  for (const queue of queues) {
+    if (!queue?.active) continue;
+    const readyAt = timestampToMs(queue.readyAt);
+    if (readyAt === undefined || readyAt <= now) continue;
+    soonest = soonest === undefined ? readyAt : Math.min(soonest, readyAt);
   }
   return soonest;
 }
@@ -1203,7 +1225,7 @@ type ShipyardActionState =
   | { status: "idle" }
   | { status: "pending"; label: string }
   | { status: "success"; label: string }
-  | { status: "error"; label: string };
+  | { status: "error"; label: string; autoDismiss?: boolean | undefined };
 
 type DefenseActionState = ShipyardActionState;
 type AllianceActionState = ShipyardActionState;
@@ -1212,6 +1234,17 @@ export type PlanetActionState = ShipyardActionState;
 type PlanetManagementActionState = PlanetActionState;
 type MissionActionState = ShipyardActionState;
 type MoonActionState = ShipyardActionState;
+
+function rejectedActionAutoDismiss(error: unknown): { autoDismiss?: true } {
+  return isUserRejected(error) ? { autoDismiss: true } : {};
+}
+
+function useActionNoticeAutoDismiss<State extends AutoDismissableActionState>(
+  action: State,
+  setAction: ActionStateSetter<State>,
+) {
+  useEffect(() => scheduleActionNoticeAutoDismiss({ action, setAction }), [action, setAction]);
+}
 
 export function displayHomeCoordinates(
   homePlanet: Coordinates | undefined,
@@ -1808,8 +1841,14 @@ function isActiveResearchQueue(queue: QueueStateResponse | null | undefined): qu
 export function preserveActiveResearchQueue(
   currentQueues: PlayerQueuesResponse | undefined,
   nextQueues: PlayerQueuesResponse,
+  options: { now?: number } = {},
 ): PlayerQueuesResponse {
   if (isActiveResearchQueue(nextQueues.research) || !isActiveResearchQueue(currentQueues?.research)) {
+    return nextQueues;
+  }
+
+  const readyAt = timestampToMs(currentQueues.research.readyAt);
+  if (options.now !== undefined && readyAt !== undefined && readyAt <= options.now) {
     return nextQueues;
   }
 
@@ -2104,6 +2143,19 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>(
     () => hydratedGameState?.homePlanetIdentity
   );
+
+  useActionNoticeAutoDismiss(defenseAction, setDefenseAction);
+  useActionNoticeAutoDismiss(allianceAction, setAllianceAction);
+  useActionNoticeAutoDismiss(shipyardAction, setShipyardAction);
+  useActionNoticeAutoDismiss(galaxyAction, setGalaxyAction);
+  useActionNoticeAutoDismiss(researchAction, setResearchAction);
+  useActionNoticeAutoDismiss(riftAction, setRiftAction);
+  useActionNoticeAutoDismiss(buildingAction, setBuildingAction);
+  useActionNoticeAutoDismiss(planetManagementAction, setPlanetManagementAction);
+  useActionNoticeAutoDismiss(planetRenameAction, setPlanetRenameAction);
+  useActionNoticeAutoDismiss(playerProfileAction, setPlayerProfileAction);
+  useActionNoticeAutoDismiss(missionAction, setMissionAction);
+  useActionNoticeAutoDismiss(moonAction, setMoonAction);
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     const routeCoords = initialSelectedCoords();
     if (routeCoords) {
@@ -2853,7 +2905,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       // This is what lets the Overview Buildings card clear a completed build
       // queue on the periodic poll without waiting for a manual page reload.
       if (plan.applyQueues) {
-        setOnChainQueues((current) => preserveActiveResearchQueue(current, queues));
+        setOnChainQueues((current) => preserveActiveResearchQueue(current, queues, { now: Date.now() }));
         setFleetVisibility(fleetVisibility);
         setOnChainError(undefined);
         setOnChainStatus("ready");
@@ -3651,6 +3703,54 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     () => researchStateWithFallbackQueue(researchState, onChainQueues?.research),
     [onChainQueues?.research, researchState],
   );
+
+  useEffect(() => {
+    if (!apiBaseUrl || !account || !pageStateHydrationReady) {
+      return;
+    }
+
+    const nextEventMs = nextProductionQueueCompletionEventMs([
+      activeBuildingQueue,
+      activeDefenseProductionQueue,
+      activeShipyardProductionQueue,
+      effectiveResearchState?.queue,
+    ], Date.now());
+    if (nextEventMs === undefined) {
+      return;
+    }
+
+    const delay = Math.max(0, nextEventMs - Date.now()) + PRODUCTION_QUEUE_COMPLETION_REFRESH_BUFFER_MS;
+    const timer = window.setTimeout(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+
+      const refreshes: Array<Promise<unknown> | unknown> = [
+        refreshOnChainState(undefined, { force: true }),
+        refreshInfrastructureState(),
+      ];
+      if (activeDefenseProductionQueue?.active) refreshes.push(refreshDefenseState());
+      if (activeShipyardProductionQueue?.active) refreshes.push(refreshShipyardState());
+      if (effectiveResearchState?.queue?.active) refreshes.push(refreshResearchState());
+      void Promise.allSettled(refreshes);
+    }, delay);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    account,
+    activeBuildingQueue,
+    activeDefenseProductionQueue,
+    activeShipyardProductionQueue,
+    apiBaseUrl,
+    effectiveResearchState?.queue,
+    pageStateHydrationReady,
+    refreshDefenseState,
+    refreshInfrastructureState,
+    refreshOnChainState,
+    refreshResearchState,
+    refreshShipyardState,
+  ]);
+
   const attackerCombatTechLevels = useMemo(
     () => combatTechLevelsFromTechnologyLevels(effectiveResearchState?.technologyLevels),
     [effectiveResearchState?.technologyLevels],
@@ -3867,6 +3967,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           status: "error",
           buildingKey: key,
           label: backendStateReady ? spendTransactionErrorMessage(error) : buildingUpgradeActionErrorLabel(error),
+          ...rejectedActionAutoDismiss(error),
         });
       }
     });
