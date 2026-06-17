@@ -27,6 +27,7 @@ import {
   getChainId,
   getCurrentAccounts,
   isBaseSepoliaChain,
+  isGameBackendUnavailableMessage,
   isTransientWalletBootstrapError,
   isUserRejected,
   miniAppUnsupportedChainMessage,
@@ -50,6 +51,8 @@ const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
 const RUNTIME_CONFIG_RETRY_MS = 5_000;
 export const POST_SETTLEMENT_INDEXING_LABEL = "Settlement confirmed. Indexing starting resources before opening planetary overview.";
 export const POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE = "Settlement is confirmed, but the game API is still indexing starter resources. Retry once backend sync catches up.";
+const GAME_BACKEND_UNAVAILABLE_BODY =
+  "The Veydrift backend is likely restarting or temporarily unreachable. It should be back in a few minutes.";
 const FARCASTER_WALLET_PROVIDER_PROBE_ATTEMPTS = 8;
 const FARCASTER_WALLET_PROVIDER_PROBE_INTERVAL_MS = 250;
 
@@ -98,6 +101,30 @@ export function shouldRetryFarcasterWalletProviderProbe(input: {
 
 export function shouldRetryRejectedRequestWithSettlement(wallet: WalletState): boolean {
   return wallet.kind === "connected";
+}
+
+export function settlementErrorStateMessage(planet: Extract<PlanetState, { kind: "error" | "rejected" }>): {
+  body: string;
+  title: string;
+} {
+  if (planet.kind === "rejected") {
+    return {
+      body: planet.message,
+      title: "Request rejected",
+    };
+  }
+
+  if (isGameBackendUnavailableMessage(planet.message)) {
+    return {
+      body: GAME_BACKEND_UNAVAILABLE_BODY,
+      title: "Game server unavailable",
+    };
+  }
+
+  return {
+    body: planet.message,
+    title: "Wallet error",
+  };
 }
 
 export async function walletConnectionAccounts(
@@ -977,10 +1004,11 @@ function FlowBody({
   }
 
   if (mode === "error" && (planet.kind === "rejected" || planet.kind === "error")) {
+    const errorState = settlementErrorStateMessage(planet);
     return (
       <StateMessage
-        title={planet.kind === "rejected" ? "Request rejected" : "Wallet error"}
-        body={planet.message}
+        title={errorState.title}
+        body={errorState.body}
         action={<PrimaryButton onClick={planet.kind === "rejected" && shouldRetryRejectedRequestWithSettlement(wallet) ? onSettle : onConnect}>Retry</PrimaryButton>}
         tone="warning"
       />

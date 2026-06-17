@@ -2174,9 +2174,16 @@ describe("walletFlow", () => {
       throw new TypeError("Failed to fetch");
     }) as unknown as typeof fetch;
     try {
-      await expect(fetchInfrastructureState("https://api.example.test", account, "7")).rejects.toThrow(
-        "Keeping the last known game state"
-      );
+      let error: unknown;
+      try {
+        await fetchInfrastructureState("https://api.example.test", account, "7");
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toBeInstanceOf(Error);
+      const message = (error as Error).message;
+      expect(message).toContain("The Veydrift backend is temporarily unreachable from this browser");
+      expect(message).not.toMatch(/Wallet|Settlement API|last known game state/i);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -2190,7 +2197,7 @@ describe("walletFlow", () => {
     )) as unknown as typeof fetch;
     try {
       await expect(fetchInfrastructureState("https://api.example.test", account, "7")).rejects.toThrow(
-        "API is temporarily unavailable. The app will retry"
+        "The Veydrift backend is temporarily unavailable. The app will retry"
       );
     } finally {
       globalThis.fetch = originalFetch;
