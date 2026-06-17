@@ -478,7 +478,7 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("My missions (1)");
     expect(text).toContain("All (2)");
     // The other player's mission appears on the universe-wide All tab...
-    expect(text).toContain("# 90");
+    expect(text).toContain("#90");
     // ...but observer rows never expose the Resolve lifecycle action even when the mission is due,
     // and neither of these missions is a due mission the player can resolve.
     expect(text).not.toContain("Resolve");
