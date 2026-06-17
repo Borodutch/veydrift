@@ -599,7 +599,7 @@ export function shouldRefreshAllianceStateForPage(page: Page): boolean {
 }
 
 export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
-  return page === "galaxy" || page === "planet";
+  return page === "galaxy" || page === "planet" || page === "mission-control" || page === "raid-target-finder";
 }
 
 // VEY-KANEO-433: Mission Control auto-polls its own data (active missions, the past-mission archives,

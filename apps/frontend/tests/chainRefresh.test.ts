@@ -92,9 +92,11 @@ describe("playable chain refresh", () => {
     expect(shouldRefreshAllianceStateForPage("overview")).toBe(false);
   });
 
-  test("refreshes mission action state for Galaxy and planet detail surfaces", () => {
+  test("refreshes mission action state for all fleet-action surfaces", () => {
     expect(shouldRefreshMissionActionStateForPage("galaxy")).toBe(true);
     expect(shouldRefreshMissionActionStateForPage("planet")).toBe(true);
+    expect(shouldRefreshMissionActionStateForPage("mission-control")).toBe(true);
+    expect(shouldRefreshMissionActionStateForPage("raid-target-finder")).toBe(true);
     expect(shouldRefreshMissionActionStateForPage("shipyard")).toBe(false);
     expect(shouldRefreshMissionActionStateForPage("overview")).toBe(false);
   });
