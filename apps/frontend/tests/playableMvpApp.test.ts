@@ -32,6 +32,8 @@ import {
   overviewResearchCompletionUnavailableReasonFor,
   preserveActiveResearchQueue,
   preserveActiveResearchState,
+  planetHasIncomingAttack,
+  planetScopedFleetVisibility,
   resourceSnapshotFreshnessForInfrastructure,
   resourceSnapshotFreshnessForSettlement,
   refreshedInfrastructureUnavailableReasonFor,
@@ -207,6 +209,45 @@ describe("Playable MVP app display helpers", () => {
 
     expect(canApplyRefreshRequest(gate, oldPlanetRequest)).toBe(false);
     expect(canApplyRefreshRequest(gate, newPlanetRequest)).toBe(true);
+  });
+
+  test("scopes Overview fleet rows to the selected planet", () => {
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const visibility = {
+      ...emptyFleetVisibilityFixture(wallet, "7"),
+      incoming: [
+        fleetMission({ missionId: "in-selected", missionType: "Attack", targetPlanetId: "8" }),
+        fleetMission({ missionId: "in-other", missionType: "Attack", targetPlanetId: "7" }),
+      ],
+      outgoing: [
+        fleetMission({ missionId: "out-selected", originPlanetId: "8", targetPlanetId: "9" }),
+        fleetMission({ missionId: "out-other", originPlanetId: "7", targetPlanetId: "9" }),
+      ],
+      returning: [
+        fleetMission({ missionId: "ret-selected", originPlanetId: "8", targetPlanetId: "9", status: "Returning" }),
+        fleetMission({ missionId: "ret-other", originPlanetId: "7", targetPlanetId: "9", status: "Returning" }),
+      ],
+    };
+
+    const scoped = planetScopedFleetVisibility(visibility, "8");
+
+    expect(scoped?.incoming.map((mission) => mission.missionId)).toEqual(["in-selected"]);
+    expect(scoped?.outgoing.map((mission) => mission.missionId)).toEqual(["out-selected"]);
+    expect(scoped?.returning.map((mission) => mission.missionId)).toEqual(["ret-selected"]);
+  });
+
+  test("detects incoming attacks per planet for selector warning badges", () => {
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const visibility = {
+      ...emptyFleetVisibilityFixture(wallet, "7"),
+      incoming: [
+        fleetMission({ missionId: "attack", missionType: "Attack", targetPlanetId: "8" }),
+        fleetMission({ missionId: "transport", missionType: "Transport", targetPlanetId: "7" }),
+      ],
+    };
+
+    expect(planetHasIncomingAttack(visibility, "8")).toBe(true);
+    expect(planetHasIncomingAttack(visibility, "7")).toBe(false);
   });
 
   test("keys galaxy home sync by coordinates instead of background snapshot identity", () => {
