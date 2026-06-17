@@ -237,6 +237,9 @@ function planetFromApi(planet: ApiPlanet): Planet | null {
     diameter: Math.max(5_000, fields * 72),
     fields,
     hasMoon: false,
+    metalMultiplierBps,
+    crystalMultiplierBps,
+    deuteriumMultiplierBps,
   };
 }
 

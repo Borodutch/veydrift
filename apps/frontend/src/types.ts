@@ -19,6 +19,9 @@ export interface Planet {
   fields: number;
   hasMoon: boolean;
   moonName?: string;
+  metalMultiplierBps?: number;
+  crystalMultiplierBps?: number;
+  deuteriumMultiplierBps?: number;
 }
 
 export interface PublicPlanetState {
@@ -32,6 +35,16 @@ export interface PublicPlanetState {
   defenses?: Array<{ id: number; count: number }> | null;
   stationedDefenders?: PublicStationedDefender[] | null;
   research?: Array<{ id: number; level: number }> | null;
+  productionPerHour?: {
+    metal: string;
+    crystal: string;
+    deuterium: string;
+  } | null;
+  storageCaps?: {
+    metal: string;
+    crystal: string;
+    deuterium: string;
+  } | null;
   queues?: {
     building?: PublicQueueState | null;
     defense?: PublicQueueState | null;

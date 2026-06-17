@@ -190,7 +190,10 @@ describe("buildRaidTargets", () => {
         tactical: {
           raidableResources: { metal: "1000", crystal: "500", deuterium: "100" },
           raidableResourceTotal: "1600",
+          currentResources: { metal: "2200", crystal: "900", deuterium: "300" },
           grossResourceTotal: "3200",
+          productionPerHour: { metal: "120", crystal: "60", deuterium: "24" },
+          storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
           ships: { count: 2, power: "6500", units: [{ id: 1, count: 1, power: "4000" }, { id: 9, count: 1, power: "2500" }] },
           defenses: { count: 1, power: "2000", units: [{ id: 0, count: 1, power: "2000" }] },
           combatShips: { count: 1, power: "4000", units: [{ id: 1, count: 1, power: "4000" }] },
@@ -202,6 +205,9 @@ describe("buildRaidTargets", () => {
     expect(target.loot).toBe(1600);
     // LOOT is the ~50% plunder of the planet's full accrued public resources (VEY-KANEO-454).
     expect(target.grossLoot).toBe(3200);
+    expect(target.currentResources).toEqual({ metal: "2200", crystal: "900", deuterium: "300" });
+    expect(target.productionPerHour).toEqual({ metal: "120", crystal: "60", deuterium: "24" });
+    expect(target.storageCaps).toEqual({ metal: "10000", crystal: "10000", deuterium: "10000" });
     expect(target.combatPower).toBe(6000);
     expect(target.shipPower).toBe(6500);
     expect(target.defensePower).toBe(2000);
@@ -357,7 +363,10 @@ describe("sortRaidTargets", () => {
       distance: 0,
       loot: 0,
       grossLoot: 0,
+      currentResources: null,
       raidableResources: null,
+      productionPerHour: null,
+      storageCaps: null,
       combatPower: 0,
       combatTechLevels: null,
       shipPower: 0,

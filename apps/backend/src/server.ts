@@ -1774,6 +1774,8 @@ function publicPlanetStateRef(
   defenses: Array<{ id: number; count: number }>;
   stationedDefenders: StationedDefenderSummary[];
   research: Array<{ id: number; level: number }>;
+  productionPerHour: Resources | null;
+  storageCaps: Resources | null;
   queues: {
     building: PlayerQueues["building"];
     defense: PlayerQueues["defense"];
@@ -1786,6 +1788,9 @@ function publicPlanetStateRef(
   const ships = indexer.shipRows(planet.planetId);
   const technologyLevels = indexer.technologyLevels(planet.owner);
   const currentPlanet = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
+  const derived = buildings.length > 0
+    ? deriveInfrastructureFields(currentPlanet, buildings, ships, technologyLevels)
+    : null;
 
   return {
     resources: currentPlanet.resources,
@@ -1794,6 +1799,8 @@ function publicPlanetStateRef(
     defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
     stationedDefenders: indexer.stationedDefendersForPlanet(planet.planetId),
     research: indexer.technologyRows(planet.owner).map(({ id, level }) => ({ id, level })),
+    productionPerHour: derived?.productionPerHour ?? null,
+    storageCaps: derived?.storageCaps ?? null,
     queues: {
       building: indexer.planetQueue(planet.planetId, "building"),
       defense: indexer.planetQueue(planet.planetId, "defense"),
@@ -2002,6 +2009,7 @@ type RankedHighscorePlanet = {
   };
   archetype: ReturnType<typeof planetArchetypeForTemperature>;
   tactical: {
+    currentResources: Resources;
     raidableResources: Resources;
     raidableResourceTotal: string;
     // Full production-accrued public resources (metal + crystal + deuterium) the planet
@@ -2010,6 +2018,8 @@ type RankedHighscorePlanet = {
     // gross total lets the UI show why LOOT reads lower than the planet's full stockpile and
     // stops it from being misread as missing accrual. (VEY-KANEO-454)
     grossResourceTotal: string;
+    productionPerHour: Resources | null;
+    storageCaps: Resources | null;
     ships: {
       count: number;
       power: string;
@@ -2438,9 +2448,10 @@ export function indexedPlanetTacticalSummary(
   technologyLevels: Record<string, number>
 ): RankedHighscorePlanet["tactical"] {
   const fallbackResources = planet.resources ?? { metal: "0", crystal: "0", deuterium: "0" };
-  const raidableResources = buildings.length > 0
-    ? deriveInfrastructureFields(planet, buildings, ships, technologyLevels).raidableResources ?? fallbackResources
-    : fallbackResources;
+  const derived = buildings.length > 0
+    ? deriveInfrastructureFields(planet, buildings, ships, technologyLevels)
+    : null;
+  const raidableResources = derived?.raidableResources ?? fallbackResources;
   const shipSummary = tacticalUnitSummary(ships);
   const defenseSummary = tacticalUnitSummary(defenses);
   // COMBAT is a fighting-strength figure, not an inventory value: non-combat ships
@@ -2451,12 +2462,15 @@ export function indexedPlanetTacticalSummary(
   const combatShipSummary = tacticalUnitSummary(ships.filter((ship) => isCombatShipId(ship.id)));
 
   return {
+    currentResources: fallbackResources,
     raidableResources,
     raidableResourceTotal: resourceTotal(raidableResources).toString(),
     // `planet` here is already production-accrued (see `accruedPlanetState` at the Finder/
     // Rankings call sites), so its resources match the public universe surface. This is the
     // full stockpile LOOT is plundered from at the ~50% on-chain rate. (VEY-KANEO-454)
     grossResourceTotal: resourceTotal(fallbackResources).toString(),
+    productionPerHour: derived?.productionPerHour ?? null,
+    storageCaps: derived?.storageCaps ?? null,
     ships: {
       ...shipSummary,
       units: tacticalUnitBreakdown(ships),
