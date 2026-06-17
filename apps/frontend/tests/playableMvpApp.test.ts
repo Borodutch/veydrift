@@ -6,7 +6,9 @@ import {
   buildingUpgradeActionErrorLabel,
   buildingFinishUnavailableReasonForDisplay,
   buildingFinishActionErrorLabel,
+  beginRefreshRequest,
   canLoadIndexedPageState,
+  canApplyRefreshRequest,
   canonicalInfrastructureBuildingCompletionQueue,
   completedBuildingFinishSyncReasonFor,
   defenseCompletionPlanetIdFor,
@@ -23,6 +25,7 @@ import {
   infrastructureLoadErrorFor,
   infrastructureUnavailableReasonFor,
   loadWalletPlanetSyncSnapshot,
+  markFreshStateWrite,
   overviewBuildingReadyToFinishFlag,
   overviewResearchCompletionUnavailableReasonFor,
   preserveActiveResearchQueue,
@@ -45,6 +48,8 @@ import {
   shipCompletionPlanetIdFor,
   topBarEnergyFor,
   walletCurrentResourcesFor,
+  walletQueuesForManagedPlanet,
+  walletSettlementForManagedPlanet,
   walletSpendableResourcesFor,
   walletSnapshotHydrationKey,
 } from "../src/PlayableMvpApp";
@@ -118,6 +123,87 @@ describe("Playable MVP app display helpers", () => {
       apiBaseUrl,
       hydratedWalletSnapshotKey: undefined,
     })).toBe(true);
+  });
+
+  test("scopes Overview and TopBar snapshots to the newly selected planet immediately", () => {
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const firstPlanet = indexedPlanet(wallet);
+    const selectedPlanet = {
+      ...indexedPlanet(wallet),
+      planetId: "8",
+      name: "Colony Gate",
+      galaxy: 6,
+      system: 9,
+      position: 13,
+      coordinates: "6:9:13",
+      isHomePlanet: false,
+      resources: {
+        metal: "900",
+        crystal: "800",
+        deuterium: "700",
+      },
+      resourcesAsOfNow: {
+        metal: "990",
+        crystal: "880",
+        deuterium: "770",
+      },
+    };
+
+    const settlement = walletSettlementForManagedPlanet({
+      wallet,
+      hasFirstPlanet: true,
+      homePlanetId: firstPlanet.planetId,
+      planet: firstPlanet,
+    }, selectedPlanet);
+
+    expect(settlement?.homePlanetId).toBe("8");
+    expect(settlement?.planet?.planetId).toBe("8");
+    expect(settlement?.planet?.galaxy).toBe(6);
+    expect(walletCurrentResourcesFor({
+      settlementResources: settlement?.planet?.resourcesAsOfNow ?? settlement?.planet?.resources,
+    })).toEqual({
+      metal: 990,
+      crystal: 880,
+      deuterium: 770,
+    });
+  });
+
+  test("scopes production queues to the newly selected planet without carrying old queues", () => {
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const selectedPlanet = {
+      ...indexedPlanet(wallet),
+      planetId: "8",
+      queues: {
+        building: buildingQueue({ itemId: 2, kind: "building", targetLevel: 4 }),
+        defense: buildingQueue({ itemId: 1, kind: "defense", quantity: 3 }),
+        ship: null,
+      },
+    };
+
+    const queues = walletQueuesForManagedPlanet(playerQueues({
+      homePlanetId: "7",
+      defense: buildingQueue({ itemId: 0, kind: "defense", quantity: 1 }),
+      research: activeResearchQueue({ itemId: 3 }),
+      ship: buildingQueue({ itemId: 0, kind: "ship", quantity: 2 }),
+    }), selectedPlanet);
+
+    expect(queues?.homePlanetId).toBe("8");
+    expect(queues?.building?.itemId).toBe(2);
+    expect(queues?.defense?.itemId).toBe(1);
+    expect(queues?.defense?.quantity).toBe(3);
+    expect(queues?.ship).toBeNull();
+    expect(queues?.research?.itemId).toBe(3);
+  });
+
+  test("invalidates stale in-flight planet reads after an explicit planet switch", () => {
+    const gate = { current: 0 };
+    const oldPlanetRequest = beginRefreshRequest(gate);
+
+    markFreshStateWrite(gate);
+    const newPlanetRequest = beginRefreshRequest(gate);
+
+    expect(canApplyRefreshRequest(gate, oldPlanetRequest)).toBe(false);
+    expect(canApplyRefreshRequest(gate, newPlanetRequest)).toBe(true);
   });
 
   test("keys galaxy home sync by coordinates instead of background snapshot identity", () => {
