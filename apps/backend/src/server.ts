@@ -952,7 +952,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     );
   };
 
-  return async (request: Request): Promise<Response> => {
+  const serveWithResponseCache = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const cacheTtlMs = enableResponseCache ? cacheableJsonRequestTtlMs(request, url) : 0;
     if (cacheTtlMs > 0) {
@@ -998,6 +998,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     return handleRequest(request);
   };
+
+  prewarmHotResponseCache(serveWithResponseCache, indexer, enableResponseCache);
+  return serveWithResponseCache;
 }
 
 /**
@@ -1087,13 +1090,72 @@ function jsonContentType(value: string | null): boolean {
 }
 
 function pruneResponseCache(cache: Map<string, CachedJsonResponse>): void {
-  if (cache.size <= 512) return;
+  if (cache.size <= 4_096) return;
   const now = Date.now();
   for (const [key, value] of cache) {
-    if (value.expiresAt <= now || cache.size > 512) {
+    if (value.expiresAt <= now || cache.size > 4_096) {
       cache.delete(key);
     }
   }
+}
+
+function prewarmHotResponseCache(
+  serve: (request: Request) => Promise<Response>,
+  indexer: SettlementIndexer | undefined,
+  enabled: boolean
+): void {
+  if (!enabled || !indexer) return;
+
+  const timer = setTimeout(() => {
+    void (async () => {
+      for (const path of hotResponseCachePaths(indexer)) {
+        try {
+          const response = await serve(new Request(`http://localhost${path}`));
+          await response.arrayBuffer();
+        } catch {
+          // Best-effort only. A cold/stale index should not make worker startup fail.
+        }
+      }
+    })();
+  }, 0);
+  timer.unref?.();
+}
+
+function hotResponseCachePaths(indexer: SettlementIndexer): string[] {
+  const paths = new Set<string>([
+    "/highscores?page=1&pageSize=250",
+    "/missions?status=active",
+    "/missions?status=completed&page=1&pageSize=25"
+  ]);
+
+  for (const mission of [
+    ...indexer.allActiveFleetMissions().slice(0, 50),
+    ...indexer.allCompletedFleetMissions().slice(0, 50)
+  ]) {
+    paths.add(`/mission/${encodeURIComponent(mission.missionId)}`);
+  }
+
+  for (const [wallet, planets] of indexer.settledPlanetsByOwner()) {
+    const encodedWallet = encodeURIComponent(wallet);
+    paths.add(`/wallet/${encodedWallet}/fleet-visibility`);
+    paths.add(`/wallet/${encodedWallet}/missions?status=completed&page=1&pageSize=25`);
+    paths.add(`/wallet/${encodedWallet}/settlement`);
+    paths.add(`/wallet/${encodedWallet}/planets`);
+    paths.add(`/wallet/${encodedWallet}/highscore`);
+
+    for (const planet of planets) {
+      const planetId = encodeURIComponent(planet.planetId);
+      paths.add(`/wallet/${encodedWallet}/overview?planetId=${planetId}`);
+      paths.add(`/wallet/${encodedWallet}/queues?planetId=${planetId}`);
+      paths.add(`/wallet/${encodedWallet}/infrastructure?planetId=${planetId}`);
+      paths.add(`/wallet/${encodedWallet}/moon?planetId=${planetId}`);
+      paths.add(`/wallet/${encodedWallet}/shipyard?planetId=${planetId}`);
+      paths.add(`/wallet/${encodedWallet}/defenses?planetId=${planetId}`);
+      paths.add(`/wallet/${encodedWallet}/research?planetId=${planetId}`);
+    }
+  }
+
+  return [...paths];
 }
 
 function hasWarmPlanetIndex(indexer: SettlementIndexer | undefined): indexer is SettlementIndexer {
