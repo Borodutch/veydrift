@@ -33,6 +33,7 @@ import {
 } from "./missionRoute";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { MissionControlSkeleton } from "./LoadingSkeletons";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 type MissionControlActionState =
   | { status: "idle" }
@@ -1586,7 +1587,11 @@ function PastMissionTable({
       data-past-page-size={String(currentPagination.pageSize)}
       data-past-page-total={String(displayTotalEntries)}
     >
-      {error ? <div className="px-3 pt-3"><Notice tone="danger">{error}</Notice></div> : null}
+      {error ? (
+        <div className="px-3 pt-3">
+          {isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <Notice tone="danger">{error}</Notice>}
+        </div>
+      ) : null}
       {rows.length === 0 ? (
         <p className="px-3 py-4 text-xs text-slate-500">{loading ? "Loading completed missions…" : emptyLabel}</p>
       ) : (

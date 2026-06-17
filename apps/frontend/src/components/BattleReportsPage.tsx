@@ -2,6 +2,7 @@ import { ArrowLeft, Copy, ExternalLink, Swords } from "lucide-preact";
 import { useState } from "preact/hooks";
 
 import type { BattleReport } from "../walletFlow";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 import { PageHeader, RefreshButton } from "./PageHeader";
 
 interface BattleReportsPageProps {
@@ -59,9 +60,13 @@ export function BattleReportsPage({
           Loading battle reports...
         </div>
       ) : error ? (
-        <div className="rounded-lg border border-red-300/25 bg-red-400/10 p-4 text-sm text-red-100">
-          {error}
-        </div>
+        isGameUnavailableMessage(error) ? (
+          <GameUnavailableNotice />
+        ) : (
+          <div className="rounded-lg border border-red-300/25 bg-red-400/10 p-4 text-sm text-red-100">
+            {error}
+          </div>
+        )
       ) : reports.length === 0 ? (
         <div className="rounded-lg border border-white/10 bg-[#101624] p-4 text-sm text-slate-400">
           No resolved attack reports are available yet.

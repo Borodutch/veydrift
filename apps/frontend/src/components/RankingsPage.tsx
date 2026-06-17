@@ -10,6 +10,7 @@ import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RankingsRowsSkeleton } from "./LoadingSkeletons";
 import { AfkFlair } from "./AfkFlair";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 type RankingsPageProps = {
   // Universe-wide active fleet missions (the unfiltered `/missions?status=active` feed). Shown as
@@ -133,9 +134,13 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
       />
 
       {error ? (
-        <div className="rounded border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
-          {error}
-        </div>
+        isGameUnavailableMessage(error) ? (
+          <GameUnavailableNotice />
+        ) : (
+          <div className="rounded border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
+            {error}
+          </div>
+        )
       ) : null}
 
       <div className="flex flex-wrap gap-2 rounded-md border border-white/10 bg-white/[0.02] p-2">

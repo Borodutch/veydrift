@@ -16,6 +16,7 @@ import {
   shortAddress,
 } from "./missionRoute";
 import { PageHeader, RefreshButton } from "./PageHeader";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 type MissionActionContext = "incoming" | "observer" | "outgoing" | "returning";
 
@@ -109,7 +110,7 @@ export function MissionDetailPage({
       {loading ? (
         <Notice>Loading mission...</Notice>
       ) : error ? (
-        <Notice tone="danger">{error}</Notice>
+        isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <Notice tone="danger">{error}</Notice>
       ) : mission ? (
         <>
           <MissionActions

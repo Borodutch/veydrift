@@ -28,6 +28,7 @@ import { PageHeader, RefreshButton } from "./PageHeader";
 import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RaidTargetsSkeleton } from "./LoadingSkeletons";
 import { AfkFlair } from "./AfkFlair";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 export type RaidTargetAttackAction = {
   label: string;
@@ -187,9 +188,13 @@ export function RaidTargetFinderPage({
       <IncomingThreatsBanner now={now} threats={threats} />
 
       {error ? (
-        <div className="rounded border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
-          {error}
-        </div>
+        isGameUnavailableMessage(error) ? (
+          <GameUnavailableNotice />
+        ) : (
+          <div className="rounded border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
+            {error}
+          </div>
+        )
       ) : null}
 
       <RaidTargetFilterControls

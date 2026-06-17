@@ -32,6 +32,7 @@ import {
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton } from "./PageHeader";
 import { InspectPanelSkeleton } from "./LoadingSkeletons";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 type PlayerInspectState =
   | { status: "loading" }
@@ -112,7 +113,9 @@ export function PlayerInspectPage({
       onBack={onBack}
     >
       {state.status === "loading" ? <InspectPanelSkeleton label="Loading player" /> : null}
-      {state.status === "error" ? <Notice tone="error">{state.label}</Notice> : null}
+      {state.status === "error" ? (
+        isGameUnavailableMessage(state.label) ? <GameUnavailableNotice /> : <Notice tone="error">{state.label}</Notice>
+      ) : null}
       {state.status === "loaded" ? (
         <div className="grid gap-4">
           <div className="flex flex-wrap gap-2 rounded border border-white/10 bg-black/20 px-3 py-2">
