@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import {
+  hasUsefulPlanetDetailBackRoute,
+  planetDetailBackRouteForCurrentScreen,
+} from "../src/inspectRoutes";
 
 const playableSource = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 const navSource = await Bun.file(new URL("../src/components/NavBar.tsx", import.meta.url)).text();
@@ -80,8 +84,61 @@ describe("navigation and planet selector UI source contracts", () => {
 
   test("keeps planet detail to one system navigation action", () => {
     expect(planetDetailSource).toContain("onClick={onBack}");
+    expect(playableSource).toContain("onBack={handlePlanetDetailBack}");
+    expect(playableSource).not.toContain('onBack={() => setPage("galaxy")}');
     expect(planetDetailSource).not.toContain("View System");
     expect(planetDetailSource).not.toContain("onNavigateSystem");
+  });
+
+  test("tracks the useful source route for planet detail back navigation", () => {
+    expect(planetDetailBackRouteForCurrentScreen({
+      inspectedAllianceId: null,
+      inspectedPlayerWallet: null,
+      missionDetailId: null,
+      missionReportId: null,
+      page: "mission-control",
+    })).toEqual({ kind: "page", page: "mission-control" });
+    expect(planetDetailBackRouteForCurrentScreen({
+      inspectedAllianceId: null,
+      inspectedPlayerWallet: null,
+      missionDetailId: null,
+      missionReportId: null,
+      page: "rankings",
+    })).toEqual({ kind: "page", page: "rankings" });
+    expect(planetDetailBackRouteForCurrentScreen({
+      inspectedAllianceId: null,
+      inspectedPlayerWallet: null,
+      missionDetailId: null,
+      missionReportId: null,
+      page: "raid-target-finder",
+    })).toEqual({ kind: "page", page: "raid-target-finder" });
+    expect(planetDetailBackRouteForCurrentScreen({
+      inspectedAllianceId: null,
+      inspectedPlayerWallet: null,
+      missionDetailId: null,
+      missionReportId: null,
+      page: "galaxy",
+    })).toEqual({ kind: "page", page: "galaxy" });
+    expect(planetDetailBackRouteForCurrentScreen({
+      inspectedAllianceId: null,
+      inspectedPlayerWallet: null,
+      missionDetailId: "42",
+      missionReportId: null,
+      page: "mission-control",
+    })).toEqual({ kind: "mission", missionId: "42" });
+  });
+
+  test("keeps direct or coordinate-only planet detail links on the Galaxy fallback path", () => {
+    expect(hasUsefulPlanetDetailBackRoute(null)).toBe(false);
+    expect(hasUsefulPlanetDetailBackRoute({ kind: "planet", coords: { galaxy: 4, system: 8, position: 15 } })).toBe(false);
+    expect(hasUsefulPlanetDetailBackRoute({ kind: "page", page: "planet" })).toBe(false);
+    expect(planetDetailBackRouteForCurrentScreen({
+      inspectedAllianceId: null,
+      inspectedPlayerWallet: null,
+      missionDetailId: null,
+      missionReportId: null,
+      page: "planet",
+    })).toEqual({ kind: "page", page: "galaxy" });
   });
 
   test("keeps mission speed selection inside mission creation only", () => {

@@ -9,6 +9,8 @@ export type InspectRoute =
   | { kind: "alliance"; allianceId: string }
   | { kind: "mission-report"; missionId: string };
 
+export type PlanetDetailBackRoute = Exclude<InspectRoute, { kind: "planet" }>;
+
 const pageNames = new Set<Page>([
   "overview",
   "infrastructure",
@@ -89,4 +91,36 @@ export function buildInspectHash(route: InspectRoute): string {
   if (route.kind === "mission") return `#/mission/${encodeURIComponent(route.missionId)}`;
   if (route.kind === "mission-report") return `#/mission-control/report/${encodeURIComponent(route.missionId)}`;
   return route.page === "overview" ? "#/" : `#/${route.page}`;
+}
+
+export function planetDetailBackRouteForCurrentScreen({
+  inspectedAllianceId,
+  inspectedPlayerWallet,
+  missionDetailId,
+  missionReportId,
+  page,
+}: {
+  inspectedAllianceId: string | null;
+  inspectedPlayerWallet: string | null;
+  missionDetailId: string | null;
+  missionReportId: string | null;
+  page: Page;
+}): PlanetDetailBackRoute {
+  if (missionReportId) {
+    return { kind: "mission-report", missionId: missionReportId };
+  }
+  if (missionDetailId) {
+    return { kind: "mission", missionId: missionDetailId };
+  }
+  if (page === "player-inspect" && inspectedPlayerWallet) {
+    return { kind: "player", wallet: inspectedPlayerWallet };
+  }
+  if (page === "alliance-inspect" && inspectedAllianceId) {
+    return { kind: "alliance", allianceId: inspectedAllianceId };
+  }
+  return { kind: "page", page: page === "planet" ? "galaxy" : page };
+}
+
+export function hasUsefulPlanetDetailBackRoute(route: InspectRoute | null | undefined): route is PlanetDetailBackRoute {
+  return Boolean(route && route.kind !== "planet" && !(route.kind === "page" && route.page === "planet"));
 }
