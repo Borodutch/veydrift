@@ -2669,7 +2669,7 @@ contract VeydriftGameTest is Test {
         uint64 returnAt;
         (status,, returnAt,) = _fleetMission(missionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        assertEq(game.planet(colonyPlanetId).resources.metal, 100);
+        assertEq(game.planet(colonyPlanetId).resources.metal, 600);
         assertEq(game.shipCount(colonyPlanetId, Ship.SmallCargo), 0);
 
         vm.warp(returnAt);
@@ -3181,7 +3181,7 @@ contract VeydriftGameTest is Test {
             currentTestTime = saveArrivalAt;
         }
         game.resolveFleetMission(saveMissionId);
-        assertEq(game.planet(safeColonyId).resources.metal, 4_000);
+        assertEq(game.planet(safeColonyId).resources.metal, 4_500);
         assertEq(game.shipCount(safeColonyId, Ship.SmallCargo), 0);
 
         if (currentTestTime < saveReturnAt) vm.warp(saveReturnAt);
