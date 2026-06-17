@@ -339,6 +339,7 @@ export class SettlementIndexer {
   // whole-universe derivations against it and recompute only when integrated events actually
   // changed state — never per request (VEY-KANEO-467).
   private stateGeneration = 0;
+  private missionGeneration = 0;
   // Memoized full highscore leaderboard (every owner's score + their planets). The leaderboard is a
   // function of indexed state plus request-time lazy-completion projection. It is valid until the next
   // touch() or until the next active queue readyAt can change projected levels/counts.
@@ -352,13 +353,21 @@ export class SettlementIndexer {
     | null = null;
   private missionReadModelCache:
     | {
-      generation: number;
+      missionGeneration: number;
       asOfSeconds: number;
       summaries: FleetMissionSummary[];
       battleReports: BattleReport[] | null;
     }
     | null = null;
-  private attackLaunchSecondsCache = new Map<string, { generation: number; launchesByTarget: Map<string, number[]> }>();
+  private decodedMissionLogCache:
+    | {
+      missionGeneration: number;
+      eventMissions: FleetMissionSummary[];
+      fulfilledRandomnessRequestIds: ReadonlySet<string>;
+      battleReports: BattleReport[];
+    }
+    | null = null;
+  private attackLaunchSecondsCache = new Map<string, { missionGeneration: number; launchesByTarget: Map<string, number[]> }>();
   private canonicalQueueSnapshotBlock: string | null = null;
 
   constructor(
@@ -2985,6 +2994,7 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_production_queues").run();
     this.db.query("DELETE FROM contract_moon_building_queues").run();
     this.db.query("DELETE FROM contract_fleet_missions").run();
+    this.touchMissionReadModel();
     this.db.query("DELETE FROM contract_alliances").run();
     this.db.query("DELETE FROM contract_alliance_members").run();
     this.db.query("DELETE FROM contract_alliance_invites").run();
@@ -3057,6 +3067,9 @@ export class SettlementIndexer {
     for (const mission of state.fleetMissions.values()) {
       this.upsertCanonicalFleetMission(mission);
     }
+    if (state.fleetMissions.size > 0) {
+      this.touchMissionReadModel();
+    }
   }
 
   private async replaceCanonicalFleetMissions(missions: CanonicalFleetMissionSnapshot[]): Promise<void> {
@@ -3072,6 +3085,7 @@ export class SettlementIndexer {
         this.upsertCanonicalFleetMission(mission);
       }
       this.setMetadata("lastFleetMissionsReconciledAt", new Date().toISOString());
+      this.touchMissionReadModel();
       this.touch();
     });
   }
@@ -4665,6 +4679,13 @@ export class SettlementIndexer {
     this.setMetadata("lastRebuiltAt", new Date().toISOString());
   }
 
+  private touchMissionReadModel(): void {
+    this.missionGeneration += 1;
+    this.missionReadModelCache = null;
+    this.decodedMissionLogCache = null;
+    this.attackLaunchSecondsCache.clear();
+  }
+
   private recordLog(eventId: string, log: IndexedRpcLog): boolean {
     const result = this.db.query(`
       INSERT INTO indexed_event_logs (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
@@ -4693,6 +4714,7 @@ export class SettlementIndexer {
       INSERT OR REPLACE INTO indexed_mission_event_logs (event_id, event_kind, block_number, event_json)
       VALUES (?, ?, ?, ?)
     `).run(eventId, eventKind, blockNumberToDecimal(log.blockNumber), JSON.stringify(log));
+    this.touchMissionReadModel();
   }
 
   private recordLogIfMissing(log: IndexedRpcLog): void {
@@ -4879,24 +4901,17 @@ export class SettlementIndexer {
     const asOfSeconds = Math.floor(Date.now() / 10_000) * 10;
     if (
       this.missionReadModelCache
-      && this.missionReadModelCache.generation === this.stateGeneration
+      && this.missionReadModelCache.missionGeneration === this.missionGeneration
       && this.missionReadModelCache.asOfSeconds === asOfSeconds
     ) {
       return this.missionReadModelCache.summaries;
     }
 
-    const rows = this.db.query(`
-      SELECT event_json
-      FROM indexed_mission_event_logs
-      WHERE event_kind = 'fleet'
-      ORDER BY CAST(block_number AS INTEGER) ASC
-    `).all() as EventRow[];
-    const logs = sortedEventRows(rows);
+    const decoded = this.decodedMissionLogs();
     // VEY-KANEO-479: decode leaves `needsResolution` at its default; compute it here so an arrived
     // Attack only reads "Ready to resolve" once its battle randomness is fulfilled (gated on the
     // ingested RandomnessFulfilled logs). Harvest and the other types stay on the plain arrival check.
-    const eventMissions = decodeCompleteFleetMissionLogs(logs);
-    const missions = this.mergeCanonicalFleetMissions(eventMissions);
+    const missions = this.mergeCanonicalFleetMissions(decoded.eventMissions);
     // Only an arrived Attack awaiting its randomness needs the fulfillment scan; skip it (and the
     // extra full-table read it does) whenever nothing is actually gated, which is the common case.
     const needsGate = this.randomnessEngineConfigured && missions.some(
@@ -4905,7 +4920,7 @@ export class SettlementIndexer {
         && mission.status === "Outbound"
         && Number(mission.arrivalAt) <= asOfSeconds
     );
-    const fulfilledRandomnessRequestIds = needsGate ? this.fulfilledRandomnessRequestIds() : null;
+    const fulfilledRandomnessRequestIds = needsGate ? decoded.fulfilledRandomnessRequestIds : null;
     const summaries = missions.map((mission) => {
       const status = (
         (mission.status === "Returning" || mission.status === "Recalled")
@@ -4920,12 +4935,56 @@ export class SettlementIndexer {
       };
     });
     this.missionReadModelCache = {
-      generation: this.stateGeneration,
+      missionGeneration: this.missionGeneration,
       asOfSeconds,
       summaries,
       battleReports: null
     };
     return summaries;
+  }
+
+  private decodedMissionLogs(): {
+    eventMissions: FleetMissionSummary[];
+    fulfilledRandomnessRequestIds: ReadonlySet<string>;
+    battleReports: BattleReport[];
+  } {
+    const cached = this.decodedMissionLogCache;
+    if (cached && cached.missionGeneration === this.missionGeneration) {
+      return cached;
+    }
+
+    const fleetRows = this.db.query(`
+      SELECT event_json
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'fleet'
+      ORDER BY CAST(block_number AS INTEGER) ASC
+    `).all() as EventRow[];
+    const randomnessRows = this.db.query(`
+      SELECT event_json
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'randomness'
+      ORDER BY CAST(block_number AS INTEGER) ASC
+    `).all() as EventRow[];
+    const battleRows = this.db.query(`
+      SELECT event_json
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'battle'
+      ORDER BY CAST(block_number AS INTEGER) ASC
+    `).all() as EventRow[];
+
+    const fulfilledRandomnessRequestIds = new Set<string>();
+    for (const log of sortedEventRows(randomnessRows)) {
+      fulfilledRandomnessRequestIds.add(decodeRandomnessFulfilledRequestId(log));
+    }
+
+    const next = {
+      missionGeneration: this.missionGeneration,
+      eventMissions: decodeCompleteFleetMissionLogs(sortedEventRows(fleetRows)),
+      fulfilledRandomnessRequestIds,
+      battleReports: decodeBattleReports(sortedEventRows(battleRows))
+    };
+    this.decodedMissionLogCache = next;
+    return next;
   }
 
   private mergeCanonicalFleetMissions(eventMissions: FleetMissionSummary[]): FleetMissionSummary[] {
@@ -5007,17 +5066,7 @@ export class SettlementIndexer {
   // VEY-KANEO-479: request ids the RandomnessEngine has fulfilled, read from the ingested
   // RandomnessFulfilled logs.
   private fulfilledRandomnessRequestIds(): ReadonlySet<string> {
-    const rows = this.db.query(`
-      SELECT event_json
-      FROM indexed_mission_event_logs
-      WHERE event_kind = 'randomness'
-      ORDER BY CAST(block_number AS INTEGER) ASC
-    `).all() as EventRow[];
-    const fulfilled = new Set<string>();
-    for (const log of sortedEventRows(rows)) {
-      fulfilled.add(decodeRandomnessFulfilledRequestId(log));
-    }
-    return fulfilled;
+    return this.decodedMissionLogs().fulfilledRandomnessRequestIds;
   }
 
   // VEY-KANEO-489: replay every Attack `attacker` has launched, grouped by target planet, as ascending
@@ -5035,7 +5084,7 @@ export class SettlementIndexer {
   attackLaunchSecondsByTarget(attacker: `0x${string}`): Map<string, number[]> {
     const normalizedAttacker = attacker.toLowerCase();
     const cached = this.attackLaunchSecondsCache.get(normalizedAttacker);
-    if (cached && cached.generation === this.stateGeneration) {
+    if (cached && cached.missionGeneration === this.missionGeneration) {
       return cached.launchesByTarget;
     }
 
@@ -5058,7 +5107,7 @@ export class SettlementIndexer {
       else byTarget.set(launch.targetPlanetId, [seconds]);
     }
     this.attackLaunchSecondsCache.set(normalizedAttacker, {
-      generation: this.stateGeneration,
+      missionGeneration: this.missionGeneration,
       launchesByTarget: byTarget
     });
     return byTarget;
@@ -5069,25 +5118,18 @@ export class SettlementIndexer {
     const cached = this.missionReadModelCache;
     if (
       cached
-      && cached.generation === this.stateGeneration
+      && cached.missionGeneration === this.missionGeneration
       && cached.summaries === summaries
       && cached.battleReports
     ) {
       return cached.battleReports;
     }
 
-    const rows = this.db.query(`
-      SELECT event_json
-      FROM indexed_mission_event_logs
-      WHERE event_kind = 'battle'
-      ORDER BY CAST(block_number AS INTEGER) ASC
-    `).all() as EventRow[];
-    const logs = sortedEventRows(rows);
     // Enrich each report with its ACS attack group participants + per-participant loot, joining the
     // decoded battle reports against the fleet-mission read model (which carries joinedAttackMissionIds
     // and each joiner's resulting return-leg cargo). Solo attacks come back with a single participant.
-    const reports = attachAttackGroupParticipants(decodeBattleReports(logs), summaries);
-    if (cached && cached.generation === this.stateGeneration && cached.summaries === summaries) {
+    const reports = attachAttackGroupParticipants(this.decodedMissionLogs().battleReports, summaries);
+    if (cached && cached.missionGeneration === this.missionGeneration && cached.summaries === summaries) {
       cached.battleReports = reports;
     }
     return reports;
