@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { RaidTargetFilterControls, RaidTargetRow, combatLabel, defenseLabel } from "../src/components/RaidTargetFinderPage";
-import { DEFAULT_RAID_TARGET_FILTERS, type RaidTarget } from "../src/raidTargetFinder";
+import { DebrisTargetRow, RaidTargetFilterControls, RaidTargetRow, combatLabel, defenseLabel } from "../src/components/RaidTargetFinderPage";
+import { DEFAULT_RAID_TARGET_FILTERS, type DebrisFinderTarget, type RaidTarget } from "../src/raidTargetFinder";
 
 describe("RaidTargetFinderPage", () => {
   test("renders the Hide active fleet filter control", () => {
@@ -77,6 +77,34 @@ describe("RaidTargetFinderPage", () => {
     expect(visibleText(cells[5])).toContain("Attack");
     expect(visibleText(cells[5])).toContain("Inspect");
   });
+
+  test("debris row exposes harvest blockers and keeps Inspect", () => {
+    const selected: string[] = [];
+    const row = DebrisTargetRow({
+      action: { label: "Harvest", disabledReason: "Requires a recycler on your active planet." },
+      now: 1_770_000_000_000,
+      onHarvest: (target) => selected.push(target.planetId),
+      onSelectPlanet: () => undefined,
+      target: debrisTarget(),
+    });
+    const harvest = buttonWithText(row, "Harvest");
+    const inspect = buttonWithText(row, "Inspect");
+
+    expect(harvest).toBeTruthy();
+    expect(harvest?.props?.disabled).toBe(true);
+    expect(harvest?.props?.title).toBe("Requires a recycler on your active planet.");
+    expect(inspect).toBeTruthy();
+
+    const enabled = DebrisTargetRow({
+      action: { label: "Harvest" },
+      now: 1_770_000_000_000,
+      onHarvest: (target) => selected.push(target.planetId),
+      target: debrisTarget({ planetId: "10" }),
+    });
+    const enabledHarvest = buttonWithText(enabled, "Harvest");
+    enabledHarvest?.props?.onClick?.();
+    expect(selected).toEqual(["10"]);
+  });
 });
 
 function raidTarget(overrides: Partial<RaidTarget> = {}): RaidTarget {
@@ -102,6 +130,26 @@ function raidTarget(overrides: Partial<RaidTarget> = {}): RaidTarget {
     defenseUnits: [],
     protection: { isProtected: false, isSameAlliance: false, blockedReason: "none", blockedReasonLabel: null, defenderInactive: false },
     inbound: { count: 0, nextArrivalAtMs: null },
+    ...overrides,
+  };
+}
+
+function debrisTarget(overrides: Partial<DebrisFinderTarget> = {}): DebrisFinderTarget {
+  return {
+    planetId: "9",
+    name: "Scrap Yard",
+    coordinates: { galaxy: 1, system: 2, position: 3 },
+    archetype: "temperate-ocean",
+    owner: "0xabc",
+    metal: 40_000,
+    crystal: 10_000,
+    total: 50_000,
+    distance: 100,
+    etaSeconds: 300,
+    fuelCost: 25,
+    recyclersNeeded: 3,
+    recyclerCapacity: 60_000,
+    harvestDisabledReason: null,
     ...overrides,
   };
 }

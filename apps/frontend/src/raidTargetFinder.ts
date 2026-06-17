@@ -12,9 +12,17 @@
 // tested in isolation; the page component (RaidTargetFinderPage) wires it to
 // fetched data and React-style state.
 
-import { fleetMissionDistance } from "./fleetMissionRules";
+import {
+  fleetMissionDistance,
+  fleetMissionFuelCost,
+  fleetMissionTravelSeconds,
+  type FleetDriveLevels,
+} from "./fleetMissionRules";
 import type { Coordinates, PlanetType } from "./types";
+import { emptyMissionShips } from "./galaxyActions";
 import type {
+  ChainShipyardState,
+  DebrisTargetResponse,
   FleetMissionSummary,
   FleetMissionVisibilityResponse,
   HighscoreEntry,
@@ -93,6 +101,7 @@ export type RaidTarget = {
 };
 
 export type RaidTargetSortKey = "distance" | "loot" | "combat" | "defense";
+export type DebrisTargetSortKey = "distance" | "total" | "metal" | "crystal" | "eta" | "fuel";
 export type RaidTargetSortDirection = "asc" | "desc";
 
 export type RaidTargetSort = {
@@ -108,6 +117,36 @@ export type RaidTargetFilters = {
   minLoot: number;
   maxDistance: number | null;
 };
+
+export type DebrisFinderTarget = {
+  planetId: string;
+  name: string | null;
+  coordinates: Coordinates;
+  archetype: PlanetType;
+  owner: string;
+  metal: number;
+  crystal: number;
+  total: number;
+  distance: number | null;
+  etaSeconds: number | null;
+  fuelCost: number | null;
+  recyclersNeeded: number;
+  recyclerCapacity: number;
+  harvestDisabledReason: string | null;
+};
+
+export type DebrisTargetSort = {
+  key: DebrisTargetSortKey;
+  direction: RaidTargetSortDirection;
+};
+
+export const DEFAULT_DEBRIS_TARGET_SORT: DebrisTargetSort = {
+  key: "total",
+  direction: "desc",
+};
+
+const RECYCLER_SHIP_ID = 2;
+const RECYCLER_CAPACITY = 20_000;
 
 export const DEFAULT_RAID_TARGET_SORT: RaidTargetSort = {
   key: "loot",
@@ -130,6 +169,10 @@ function safeNumber(value: string | number | null | undefined): number {
   if (value === null || value === undefined) return 0;
   const parsed = typeof value === "number" ? value : Number.parseFloat(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function positiveInt(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
 }
 
 function persistedNumber(value: unknown, fallback: number): number {
@@ -466,6 +509,106 @@ export function prepareRaidTargets({
 }): RaidTarget[] {
   const targets = buildRaidTargets({ entries, origin, currentWallet, fleetVisibility });
   return sortRaidTargets(filterRaidTargets(targets, filters, { hasActiveFleetActivity }), sort);
+}
+
+export function recyclerCount(shipyardState: ChainShipyardState | null | undefined): number {
+  return shipyardState?.ships.find((ship) => ship.id === RECYCLER_SHIP_ID)?.count ?? 0;
+}
+
+export function buildDebrisTargets({
+  targets,
+  origin,
+  shipyardState,
+  driveLevels,
+}: {
+  targets: DebrisTargetResponse[];
+  origin?: Coordinates | null | undefined;
+  shipyardState?: ChainShipyardState | null | undefined;
+  driveLevels?: FleetDriveLevels | undefined;
+}): DebrisFinderTarget[] {
+  const availableRecyclers = recyclerCount(shipyardState);
+  const fleetSlots = shipyardState?.fleetSlots;
+  const deuterium = safeNumber(shipyardState?.resources?.deuterium);
+
+  return targets.flatMap((target) => {
+    const metal = positiveInt(safeNumber(target.debris.metal));
+    const crystal = positiveInt(safeNumber(target.debris.crystal));
+    const total = metal + crystal;
+    if (total <= 0) return [];
+
+    const distance = origin ? fleetMissionDistance(origin, target.coordinates) : null;
+    const recyclersNeeded = Math.ceil(total / RECYCLER_CAPACITY);
+    const recyclerQuantity = Math.max(1, Math.min(availableRecyclers, recyclersNeeded));
+    const ships = { ...emptyMissionShips(), recycler: recyclerQuantity };
+    const etaSeconds = distance === null || recyclerQuantity <= 0
+      ? null
+      : fleetMissionTravelSeconds(distance, ships, driveLevels);
+    const fuelCost = distance === null || recyclerQuantity <= 0
+      ? null
+      : fleetMissionFuelCost(ships, distance, driveLevels);
+    const harvestDisabledReason =
+      !shipyardState
+        ? "Shipyard state is still loading."
+        : availableRecyclers <= 0
+          ? "Requires a recycler on your active planet."
+          : !fleetSlots || fleetSlots.limit <= 0
+            ? "Fleet slot state is still loading."
+            : fleetSlots.active >= fleetSlots.limit
+              ? `Fleet slots full (${fleetSlots.active}/${fleetSlots.limit}).`
+              : fuelCost !== null && deuterium < fuelCost
+                ? `Need ${fuelCost.toLocaleString()} deuterium for fuel.`
+                : null;
+
+    return [{
+      planetId: target.planetId,
+      name: target.name,
+      coordinates: target.coordinates,
+      archetype: target.archetype,
+      owner: target.owner,
+      metal,
+      crystal,
+      total,
+      distance,
+      etaSeconds,
+      fuelCost,
+      recyclersNeeded,
+      recyclerCapacity: availableRecyclers * RECYCLER_CAPACITY,
+      harvestDisabledReason,
+    }];
+  });
+}
+
+function debrisSortValue(target: DebrisFinderTarget, key: DebrisTargetSortKey): number {
+  switch (key) {
+    case "distance":
+      return target.distance ?? Number.POSITIVE_INFINITY;
+    case "total":
+      return target.total;
+    case "metal":
+      return target.metal;
+    case "crystal":
+      return target.crystal;
+    case "eta":
+      return target.etaSeconds ?? Number.POSITIVE_INFINITY;
+    case "fuel":
+      return target.fuelCost ?? Number.POSITIVE_INFINITY;
+  }
+}
+
+export function sortDebrisTargets(
+  targets: DebrisFinderTarget[],
+  sort: DebrisTargetSort,
+): DebrisFinderTarget[] {
+  const directionFactor = sort.direction === "asc" ? 1 : -1;
+  return [...targets].sort((left, right) => {
+    const leftValue = debrisSortValue(left, sort.key);
+    const rightValue = debrisSortValue(right, sort.key);
+    if (leftValue === Number.POSITIVE_INFINITY && rightValue !== Number.POSITIVE_INFINITY) return 1;
+    if (rightValue === Number.POSITIVE_INFINITY && leftValue !== Number.POSITIVE_INFINITY) return -1;
+    if (leftValue !== rightValue) return (leftValue - rightValue) * directionFactor;
+    if (left.total !== right.total) return right.total - left.total;
+    return compareCoordinates(left.coordinates, right.coordinates);
+  });
 }
 
 export type RaidTargetTotals = {

@@ -37,6 +37,7 @@ import { highscoreCategories, highscoreFormula, type HighscoreEntry, type ScoreB
 import {
   SettlementIndexer,
   type IndexedDebrisFieldEvent,
+  type IndexedDebrisTarget,
   type IndexedMoonChanceReportEvent,
   type IndexedRpcLog,
   type IndexerSnapshot
@@ -258,6 +259,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       return Response.json(getRuntimeConfig(), {
         headers: corsHeaders
       });
+    }
+
+    if (request.method === "GET" && url.pathname === "/raid-finder/debris") {
+      return indexedDebrisTargetsResponse(indexer, url);
     }
 
     if (request.method === "GET" && url.pathname === "/debug/config") {
@@ -2085,6 +2090,23 @@ function debrisFieldRef(field: IndexedDebrisFieldEvent | undefined): { metal: st
   return field ? field.resources : null;
 }
 
+function indexedDebrisTargetRef(target: IndexedDebrisTarget) {
+  return {
+    planetId: target.planet.planetId,
+    name: target.planet.name,
+    owner: target.planet.owner,
+    coordinates: {
+      galaxy: target.galaxy,
+      system: target.system,
+      position: target.position
+    },
+    archetype: planetArchetypeForTemperature(target.planet.temperature),
+    debris: target.resources,
+    updatedAtBlock: target.blockNumber,
+    transactionHash: target.transactionHash
+  };
+}
+
 function moonChanceReportRef(report: IndexedMoonChanceReportEvent | undefined): (MoonChanceReportEvent & { status: string }) | null {
   if (!report) return null;
   return {
@@ -2832,6 +2854,28 @@ function indexedSettlementFundingResponse(
   }, indexer.snapshot());
 }
 
+function indexedDebrisTargetsResponse(indexer: SettlementIndexer | undefined, url: URL): Response {
+  if (!hasWarmPlanetIndex(indexer)) {
+    return indexedReadNotReadyResponse("raid finder debris", indexer);
+  }
+
+  const limit = positiveIntegerQuery(url, "limit", 250, 500);
+  const snapshot = indexer.snapshot();
+  return indexedJsonResponse(
+    {
+      targets: indexer.debrisTargets(limit).map(indexedDebrisTargetRef),
+      pagination: {
+        page: 1,
+        pageSize: limit
+      },
+      detail: indexedWarmDetail("Raid Finder debris targets"),
+      stale: !snapshot.safeToServeIndexedState,
+      source: indexedSource
+    },
+    snapshot
+  );
+}
+
 function indexedAllianceResponse(wallet: `0x${string}`, indexer: SettlementIndexer | undefined): Response {
   if (!hasWarmAllianceIndex(indexer)) {
     return indexedReadNotReadyResponse("alliance", indexer, { wallet });
@@ -3088,6 +3132,15 @@ function positiveBigIntQuery(url: URL, name: string): bigint {
     throw new Error(`${name} must be a positive integer.`);
   }
   return parsed;
+}
+
+function positiveIntegerQuery(url: URL, name: string, fallback: number, max: number): number {
+  const value = url.searchParams.get(name);
+  if (value === null) return fallback;
+  if (!/^\d+$/.test(value)) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
 }
 
 function handleUniverseSystemRequest(url: URL): Response {

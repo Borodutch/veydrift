@@ -125,7 +125,7 @@ import {
   type MissionShips,
 } from "./galaxyActions";
 import type { RaidTargetAttackAction } from "./components/RaidTargetFinderPage";
-import type { RaidTarget } from "./raidTargetFinder";
+import type { DebrisFinderTarget, RaidTarget } from "./raidTargetFinder";
 import {
   type FleetDriveLevels,
   fleetMissionAvailableCargoCapacity,
@@ -423,6 +423,41 @@ export function raidTargetPlanetForMission(target: RaidTarget): Planet {
           energy: 0,
         }
       : { metal: 0, crystal: 0, deuterium: 0, energy: 0 },
+    temperature: { min: 0, max: 0 },
+    diameter: 0,
+    fields: 0,
+    hasMoon: false,
+    metalMultiplierBps: 10_000,
+    crystalMultiplierBps: 10_000,
+    deuteriumMultiplierBps: 10_000,
+  };
+}
+
+export function debrisTargetPlanetForMission(target: DebrisFinderTarget): Planet {
+  return {
+    id: target.planetId,
+    name: target.name?.trim() || `Planet ${target.planetId}`,
+    type: target.archetype,
+    image: planetImageForType(target.archetype),
+    position: target.coordinates.position,
+    galaxy: target.coordinates.galaxy,
+    system: target.coordinates.system,
+    owner: target.owner,
+    ownerId: target.owner,
+    alliance: null,
+    occupiedBy: {
+      planetId: target.planetId,
+      owner: target.owner,
+      ownerDisplayName: null,
+      alliance: null,
+    },
+    debrisField: {
+      metal: target.metal,
+      crystal: target.crystal,
+    },
+    moonChance: null,
+    publicState: null,
+    resources: { metal: 0, crystal: 0, deuterium: 0, energy: 0 },
     temperature: { min: 0, max: 0 },
     diameter: 0,
     fields: 0,
@@ -5220,6 +5255,37 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     handleGalaxyAction(raidFinderAttackAction(target), raidTargetPlanetForMission(target), target.coordinates);
   }, [handleGalaxyAction, raidFinderAttackAction]);
 
+  const raidFinderHarvestAction = useCallback((target: DebrisFinderTarget): GalaxyAction => {
+    const planet = debrisTargetPlanetForMission(target);
+    return galaxyActionsForSlot({
+      account,
+      defenseState,
+      homePlanetId: onChainSettlement?.homePlanetId,
+      isOrigin: activePlanetId === target.planetId,
+      planet,
+      shipyardState,
+    }).find((action) => action.kind === "harvest") ?? {
+      enabled: false,
+      kind: "harvest",
+      label: "Harvest",
+      mode: "mission",
+      mission: "harvest",
+      reason: "Harvest is unavailable for this debris field.",
+    };
+  }, [account, activePlanetId, defenseState, onChainSettlement?.homePlanetId, shipyardState]);
+
+  const raidFinderHarvestActionState = useCallback((target: DebrisFinderTarget): RaidTargetAttackAction => {
+    if (target.harvestDisabledReason) return { label: "Harvest", disabledReason: target.harvestDisabledReason };
+    const action = raidFinderHarvestAction(target);
+    return action.enabled
+      ? { label: action.label }
+      : { label: action.label, disabledReason: action.reason };
+  }, [raidFinderHarvestAction]);
+
+  const handleRaidFinderHarvest = useCallback((target: DebrisFinderTarget) => {
+    handleGalaxyAction(raidFinderHarvestAction(target), debrisTargetPlanetForMission(target), target.coordinates);
+  }, [handleGalaxyAction, raidFinderHarvestAction]);
+
   const handleConfirmGalaxyMission = useCallback((draft: MissionLaunchDraft) => {
     const pending = pendingGalaxyMission;
     if (!pending) return;
@@ -6179,12 +6245,15 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           currentAllianceId={allianceState?.membership.allianceId}
           currentWallet={account}
           fleetVisibility={displayFleetVisibility}
+          harvestActionForDebrisTarget={raidFinderHarvestActionState}
           now={now}
           onAttackTarget={handleRaidFinderAttack}
+          onHarvestDebrisTarget={handleRaidFinderHarvest}
           onSelectAlliance={handleSelectAlliance}
           onSelectPlanet={handleSelectPlanet}
           onSelectPlayer={handleSelectPlayer}
           originCoordinates={activePlanetCoords}
+          shipyardState={shipyardState}
         />
       );
     }

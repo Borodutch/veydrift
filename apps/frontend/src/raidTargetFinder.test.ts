@@ -3,6 +3,7 @@ import {
   DEFAULT_RAID_TARGET_FILTERS,
   DEFAULT_RAID_TARGET_SORT,
   buildRaidTargets,
+  buildDebrisTargets,
   filterRaidTargets,
   hasActiveAlliance,
   inboundFleetsByTarget,
@@ -11,10 +12,14 @@ import {
   normalizeRaidTargetSort,
   prepareRaidTargets,
   raidTargetTotals,
+  sortDebrisTargets,
   sortRaidTargets,
+  type DebrisFinderTarget,
   type RaidTarget,
 } from "./raidTargetFinder";
 import type {
+  ChainShipyardState,
+  DebrisTargetResponse,
   FleetMissionSummary,
   FleetMissionVisibilityResponse,
   HighscoreEntry,
@@ -433,6 +438,108 @@ describe("prepareRaidTargets", () => {
       sort: DEFAULT_RAID_TARGET_SORT,
     });
     expect(result.map((target) => target.planetId)).toEqual(["rich", "poor"]);
+  });
+});
+
+function debrisTarget(overrides: Partial<DebrisTargetResponse> = {}): DebrisTargetResponse {
+  return {
+    planetId: "7",
+    name: "Scrap Yard",
+    owner: "0xabc",
+    coordinates: { galaxy: 1, system: 2, position: 3 },
+    archetype: "temperate-ocean",
+    debris: { metal: "40000", crystal: "10000" },
+    updatedAtBlock: "123",
+    transactionHash: "0xdeb",
+    ...overrides,
+  };
+}
+
+function shipyard(overrides: Partial<ChainShipyardState> = {}): ChainShipyardState {
+  return {
+    wallet: "0xme",
+    homePlanetId: "1",
+    resources: { metal: "0", crystal: "0", deuterium: "1000000" },
+    fleetSlots: { active: 0, limit: 2 },
+    shipyardLevel: 2,
+    naniteLevel: 0,
+    technologyLevels: {},
+    ships: [{ id: 2, count: 3, cost: { metal: "10000", crystal: "6000", deuterium: "2000" } }],
+    queue: null,
+    ...overrides,
+  };
+}
+
+describe("debris target finder", () => {
+  test("builds debris-only rows with distance, recycler need, ETA, fuel, and zero-debris filtering", () => {
+    const rows = buildDebrisTargets({
+      targets: [
+        debrisTarget({ planetId: "rich", debris: { metal: "40000", crystal: "10000" } }),
+        debrisTarget({ planetId: "empty", debris: { metal: "0", crystal: "0" } }),
+      ],
+      origin: ORIGIN,
+      shipyardState: shipyard(),
+    });
+
+    expect(rows.map((row) => row.planetId)).toEqual(["rich"]);
+    expect(rows[0]).toMatchObject({
+      metal: 40000,
+      crystal: 10000,
+      total: 50000,
+      recyclersNeeded: 3,
+      recyclerCapacity: 60000,
+      harvestDisabledReason: null,
+    });
+    expect(rows[0]!.distance).toBeGreaterThan(0);
+    expect(rows[0]!.etaSeconds).toBeGreaterThan(0);
+    expect(rows[0]!.fuelCost).toBeGreaterThan(0);
+  });
+
+  test("surfaces recycler, fleet-slot, and fuel blockers for debris harvest rows", () => {
+    expect(buildDebrisTargets({
+      targets: [debrisTarget()],
+      origin: ORIGIN,
+      shipyardState: shipyard({ ships: [] }),
+    })[0]!.harvestDisabledReason).toBe("Requires a recycler on your active planet.");
+
+    expect(buildDebrisTargets({
+      targets: [debrisTarget()],
+      origin: ORIGIN,
+      shipyardState: shipyard({ fleetSlots: { active: 1, limit: 1 } }),
+    })[0]!.harvestDisabledReason).toBe("Fleet slots full (1/1).");
+
+    expect(buildDebrisTargets({
+      targets: [debrisTarget()],
+      origin: ORIGIN,
+      shipyardState: shipyard({ resources: { metal: "0", crystal: "0", deuterium: "0" } }),
+    })[0]!.harvestDisabledReason).toContain("deuterium");
+  });
+
+  test("sorts debris targets by total by default and keeps unknown distance last", () => {
+    const base: DebrisFinderTarget = {
+      planetId: "base",
+      name: null,
+      coordinates: { galaxy: 1, system: 1, position: 1 },
+      archetype: "temperate-ocean",
+      owner: "0xa",
+      metal: 0,
+      crystal: 0,
+      total: 0,
+      distance: 0,
+      etaSeconds: 0,
+      fuelCost: 0,
+      recyclersNeeded: 0,
+      recyclerCapacity: 0,
+      harvestDisabledReason: null,
+    };
+    expect(sortDebrisTargets([
+      { ...base, planetId: "low", total: 10 },
+      { ...base, planetId: "high", total: 100 },
+    ], { key: "total", direction: "desc" }).map((row) => row.planetId)).toEqual(["high", "low"]);
+    expect(sortDebrisTargets([
+      { ...base, planetId: "unknown", distance: null },
+      { ...base, planetId: "near", distance: 10 },
+    ], { key: "distance", direction: "asc" }).map((row) => row.planetId)).toEqual(["near", "unknown"]);
   });
 });
 

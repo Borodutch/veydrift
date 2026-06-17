@@ -1,21 +1,28 @@
 import { useEffect, useMemo, useState } from "preact/hooks";
-import { AlertTriangle, ArrowDown, ArrowUp, Crosshair, ShieldAlert, Swords } from "lucide-preact";
+import { AlertTriangle, ArrowDown, ArrowUp, Crosshair, Recycle, ShieldAlert, Swords } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import { formatDurationUntil } from "../durationFormat";
 import { activeMissionsByPlanetId, planetMissionSubtext } from "../planetMissionSubtext";
 import type { Coordinates } from "../types";
-import { fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreEntry } from "../walletFlow";
+import { fetchHighscores, fetchRaidFinderDebrisTargets, shortAddress, type ChainShipyardState, type DebrisTargetResponse, type FleetMissionSummary, type HighscoreEntry } from "../walletFlow";
 import type { FleetMissionVisibilityResponse } from "../walletFlow";
 import {
+  DEFAULT_DEBRIS_TARGET_SORT,
   DEFAULT_RAID_TARGET_FILTERS,
   buildRaidTargets,
+  buildDebrisTargets,
   filterRaidTargets,
   hasActiveAlliance,
   incomingThreats,
   persistRaidTargetSettings,
   raidTargetTotals,
   readPersistedRaidTargetSettings,
+  recyclerCount,
+  sortDebrisTargets,
   sortRaidTargets,
+  type DebrisFinderTarget,
+  type DebrisTargetSort,
+  type DebrisTargetSortKey,
   type RaidTarget,
   type RaidTargetFilters,
   type RaidTargetSort,
@@ -45,12 +52,15 @@ type RaidTargetFinderPageProps = {
   currentWallet?: string | undefined;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   attackActionForTarget?: ((target: RaidTarget) => RaidTargetAttackAction | null | undefined) | undefined;
+  harvestActionForDebrisTarget?: ((target: DebrisFinderTarget) => RaidTargetAttackAction | null | undefined) | undefined;
   now?: number | undefined;
   onAttackTarget?: ((target: RaidTarget) => void) | undefined;
+  onHarvestDebrisTarget?: ((target: DebrisFinderTarget) => void) | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   originCoordinates?: Coordinates | null | undefined;
+  shipyardState?: ChainShipyardState | null | undefined;
 };
 
 // The finder pulls the top slice of the public highscore feed; this already
@@ -64,6 +74,15 @@ const sortColumns: Array<{ key: RaidTargetSortKey; label: string; hint: string }
   { key: "combat", label: "Combat", hint: "Combined ship + defense power to overcome" },
   { key: "defense", label: "Defense", hint: "Stationary defense power" },
 ];
+const debrisSortColumns: Array<{ key: DebrisTargetSortKey; label: string; hint: string }> = [
+  { key: "distance", label: "Dist", hint: "Flight distance from your active planet" },
+  { key: "total", label: "Total", hint: "Metal + crystal debris" },
+  { key: "metal", label: "Metal", hint: "Metal debris" },
+  { key: "crystal", label: "Crystal", hint: "Crystal debris" },
+  { key: "eta", label: "ETA", hint: "Estimated one-way recycler flight time" },
+  { key: "fuel", label: "Fuel", hint: "Estimated deuterium fuel at full speed" },
+];
+type RaidFinderMode = "raids" | "debris";
 
 export function RaidTargetFinderPage({
   activeMissions,
@@ -72,20 +91,27 @@ export function RaidTargetFinderPage({
   currentWallet,
   fleetVisibility,
   attackActionForTarget,
+  harvestActionForDebrisTarget,
   now = Date.now(),
   onAttackTarget,
+  onHarvestDebrisTarget,
   onSelectAlliance,
   onSelectPlanet,
   onSelectPlayer,
   originCoordinates,
+  shipyardState,
 }: RaidTargetFinderPageProps) {
   const [entries, setEntries] = useState<HighscoreEntry[]>([]);
+  const [debrisEntries, setDebrisEntries] = useState<DebrisTargetResponse[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [debrisError, setDebrisError] = useState<string | undefined>();
   const [hasLoaded, setHasLoaded] = useState(false);
+  const [mode, setMode] = useState<RaidFinderMode>("raids");
   const [persistedSettings] = useState(() => readPersistedRaidTargetSettings());
   const [filters, setFilters] = useState<RaidTargetFilters>(() => persistedSettings.filters);
   const [sort, setSort] = useState<RaidTargetSort>(() => persistedSettings.sort);
+  const [debrisSort, setDebrisSort] = useState<DebrisTargetSort>(DEFAULT_DEBRIS_TARGET_SORT);
   const showAllianceFilter = hasActiveAlliance(currentAllianceId);
   const effectiveFilters = useMemo(
     () => showAllianceFilter ? filters : { ...filters, hideSameAlliance: false },
@@ -105,12 +131,16 @@ export function RaidTargetFinderPage({
 
     setLoading(true);
     setError(undefined);
-    fetchHighscores(apiBaseUrl, {
+    setDebrisError(undefined);
+    const highscoresRequest = fetchHighscores(apiBaseUrl, {
       category: "total",
       ...(currentWallet ? { currentWallet } : {}),
       page: 1,
       pageSize: raidTargetFinderPageSize,
-    })
+    });
+    const debrisRequest = fetchRaidFinderDebrisTargets(apiBaseUrl, { limit: raidTargetFinderPageSize });
+
+    highscoresRequest
       .then((response) => {
         setEntries(response.rankings.total ?? []);
         setHasLoaded(true);
@@ -118,8 +148,15 @@ export function RaidTargetFinderPage({
       .catch((nextError) => {
         console.error(nextError);
         setError(nextError instanceof Error ? nextError.message : "Raid targets could not be loaded.");
-      })
-      .finally(() => setLoading(false));
+      });
+    debrisRequest
+      .then((response) => setDebrisEntries(response.targets ?? []))
+      .catch((nextError) => {
+        console.error(nextError);
+        setDebrisEntries([]);
+        setDebrisError(nextError instanceof Error ? nextError.message : "Debris targets could not be loaded.");
+      });
+    void Promise.allSettled([highscoresRequest, debrisRequest]).finally(() => setLoading(false));
   };
 
   useEffect(() => {
@@ -154,6 +191,17 @@ export function RaidTargetFinderPage({
   );
   const totals = useMemo(() => raidTargetTotals(allTargets, visibleTargets), [allTargets, visibleTargets]);
   const threats = useMemo(() => incomingThreats(fleetVisibility), [fleetVisibility]);
+  const debrisTargets = useMemo(
+    () => sortDebrisTargets(buildDebrisTargets({
+      targets: debrisEntries,
+      origin: originCoordinates,
+      shipyardState,
+      driveLevels: shipyardState?.technologyLevels,
+    }), debrisSort),
+    [debrisEntries, debrisSort, originCoordinates, shipyardState],
+  );
+  const availableRecyclers = recyclerCount(shipyardState);
+  const totalRecyclerCapacity = availableRecyclers * 20_000;
   const subtextByPlanetId = useMemo(() => {
     const map = new Map<string, ReturnType<typeof planetMissionSubtext>>();
     for (const target of visibleTargets) {
@@ -170,6 +218,14 @@ export function RaidTargetFinderPage({
         : { key, direction: key === "distance" ? "asc" : "desc" },
     );
   };
+  const toggleDebrisSort = (key: DebrisTargetSortKey) => {
+    setDebrisSort((current) =>
+      current.key === key
+        ? { key, direction: current.direction === "asc" ? "desc" : "asc" }
+        : { key, direction: key === "distance" || key === "eta" || key === "fuel" ? "asc" : "desc" },
+    );
+  };
+  const displayedError = mode === "debris" && debrisError ? debrisError : error;
 
   return (
     <section className="space-y-4">
@@ -187,28 +243,42 @@ export function RaidTargetFinderPage({
 
       <IncomingThreatsBanner now={now} threats={threats} />
 
-      {error ? (
-        isGameUnavailableMessage(error) ? (
+      <div className="flex flex-wrap items-center gap-2">
+        <ModeButton active={mode === "raids"} label="Raid targets" onClick={() => setMode("raids")} />
+        <ModeButton active={mode === "debris"} label="Debris" onClick={() => setMode("debris")} />
+        {mode === "debris" ? (
+          <span className="ml-auto text-xs text-slate-400">
+            <span className="font-mono text-cyan-100">{availableRecyclers.toLocaleString("en-US")}</span> recyclers
+            <span className="text-slate-600"> / </span>
+            <span className="font-mono">{compactNumber(totalRecyclerCapacity)}</span> capacity
+          </span>
+        ) : null}
+      </div>
+
+      {displayedError ? (
+        isGameUnavailableMessage(displayedError) ? (
           <GameUnavailableNotice />
         ) : (
           <div className="rounded border border-amber-300/20 bg-amber-300/10 p-3 text-sm text-amber-100">
-            {error}
+            {displayedError}
           </div>
         )
       ) : null}
 
-      <RaidTargetFilterControls
-        filters={filters}
-        onChange={setFilters}
-        showAllianceFilter={showAllianceFilter}
-        totals={totals}
-      />
+      {mode === "raids" ? (
+        <RaidTargetFilterControls
+          filters={filters}
+          onChange={setFilters}
+          showAllianceFilter={showAllianceFilter}
+          totals={totals}
+        />
+      ) : null}
 
       <div className="min-w-0 max-w-full overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
-        <RaidTargetTableHeader onSort={toggleSort} sort={sort} />
+        {mode === "raids" ? <RaidTargetTableHeader onSort={toggleSort} sort={sort} /> : <DebrisTargetTableHeader onSort={toggleDebrisSort} sort={debrisSort} />}
         {loading && !hasLoaded ? (
           <RaidTargetsSkeleton />
-        ) : visibleTargets.length === 0 ? (
+        ) : mode === "raids" && visibleTargets.length === 0 ? (
           <div className="px-3 py-8 text-center text-sm text-slate-500">
             {hasLoaded
               ? totals.total === 0
@@ -216,7 +286,11 @@ export function RaidTargetFinderPage({
                 : "No targets match the current filters."
               : "No raid targets loaded yet."}
           </div>
-        ) : (
+        ) : mode === "debris" && debrisTargets.length === 0 ? (
+          <div className="px-3 py-8 text-center text-sm text-slate-500">
+            {hasLoaded ? "No debris fields indexed yet." : "No debris targets loaded yet."}
+          </div>
+        ) : mode === "raids" ? (
           visibleTargets.map((target) => (
             <RaidTargetRow
               attackAction={attackActionForTarget?.(target) ?? null}
@@ -232,9 +306,46 @@ export function RaidTargetFinderPage({
               target={target}
             />
           ))
+        ) : (
+          debrisTargets.map((target) => (
+            <DebrisTargetRow
+              action={harvestActionForDebrisTarget?.(target) ?? { label: "Harvest", disabledReason: target.harvestDisabledReason ?? undefined }}
+              key={target.planetId}
+              now={now}
+              onHarvest={onHarvestDebrisTarget}
+              onSelectPlanet={onSelectPlanet}
+              onSelectPlayer={onSelectPlayer}
+              target={target}
+            />
+          ))
         )}
       </div>
     </section>
+  );
+}
+
+function ModeButton({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      aria-pressed={active}
+      className={`h-9 rounded border px-3 text-xs font-semibold transition ${
+        active
+          ? "border-signal/60 bg-signal/10 text-signal"
+          : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10"
+      }`}
+      onClick={onClick}
+      type="button"
+    >
+      {label}
+    </button>
   );
 }
 
@@ -453,6 +564,141 @@ function RaidTargetTableHeader({
   );
 }
 
+function DebrisTargetTableHeader({
+  onSort,
+  sort,
+}: {
+  onSort: (key: DebrisTargetSortKey) => void;
+  sort: DebrisTargetSort;
+}) {
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[minmax(0,1fr)_64px_88px_88px_88px_72px_72px_auto] sm:px-3">
+      <span>Debris field</span>
+      {debrisSortColumns.map((column) => (
+        <button
+          aria-label={`Sort by ${column.label}`}
+          className={`hidden items-center justify-end gap-1 text-right uppercase tracking-[0.12em] transition hover:text-cyan-100 sm:flex ${
+            sort.key === column.key ? "text-cyan-100" : "text-slate-500"
+          }`}
+          key={column.key}
+          onClick={() => onSort(column.key)}
+          title={column.hint}
+          type="button"
+        >
+          {column.label}
+          {sort.key === column.key ? (
+            sort.direction === "asc" ? (
+              <ArrowUp aria-hidden="true" size={11} />
+            ) : (
+              <ArrowDown aria-hidden="true" size={11} />
+            )
+          ) : null}
+        </button>
+      ))}
+      <span className="text-right">Action</span>
+    </div>
+  );
+}
+
+export function DebrisTargetRow({
+  action,
+  now,
+  onHarvest,
+  onSelectPlanet,
+  onSelectPlayer,
+  target,
+}: {
+  action?: RaidTargetAttackAction | null | undefined;
+  now: number;
+  onHarvest?: ((target: DebrisFinderTarget) => void) | undefined;
+  onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
+  onSelectPlayer?: ((wallet: string) => void) | undefined;
+  target: DebrisFinderTarget;
+}) {
+  const commanderLabel = shortAddress(target.owner);
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b border-white/5 px-2 py-2.5 text-sm last:border-b-0 sm:grid-cols-[minmax(0,1fr)_64px_88px_88px_88px_72px_72px_auto] sm:px-3">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span className="relative h-7 w-7 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30">
+          <OptimizedImage
+            alt=""
+            className="h-full w-full object-cover"
+            loading="lazy"
+            sizes="icon"
+            src={planetImageForType(target.archetype)}
+          />
+        </span>
+        <div className="min-w-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <button
+              className="min-w-0 truncate font-mono text-slate-100 hover:text-cyan-100 disabled:cursor-default disabled:hover:text-slate-100"
+              disabled={!onSelectPlanet}
+              onClick={() => onSelectPlanet?.(target.coordinates)}
+              title={`Open ${coordinateLabel(target.coordinates)}`}
+              type="button"
+            >
+              {target.name?.trim() || coordinateLabel(target.coordinates)}
+            </button>
+            <span className="shrink-0 font-mono text-[10px] text-slate-500">{coordinateLabel(target.coordinates)}</span>
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-300/40 bg-amber-400/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none text-amber-100"
+              title={`${target.metal.toLocaleString("en-US")} metal / ${target.crystal.toLocaleString("en-US")} crystal`}
+            >
+              <Recycle aria-hidden="true" size={10} /> Debris
+            </span>
+          </div>
+          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500">
+            <button
+              className="min-w-0 truncate text-left font-mono hover:text-cyan-100 disabled:cursor-default disabled:hover:text-slate-500"
+              disabled={!onSelectPlayer}
+              onClick={() => onSelectPlayer?.(target.owner)}
+              title={`Open player ${commanderLabel}`}
+              type="button"
+            >
+              {commanderLabel}
+            </button>
+            <span className="font-mono text-[10px] text-slate-500">
+              {target.recyclersNeeded.toLocaleString("en-US")} recycler{target.recyclersNeeded === 1 ? "" : "s"} needed
+            </span>
+            <span className="flex flex-wrap gap-x-2 font-mono text-[10px] sm:hidden">
+              <span><span className="text-slate-600">Dist </span>{distanceLabel(target.distance)}</span>
+              <span className="text-amber-100"><span className="text-slate-600">Total </span>{compactNumber(target.total)}</span>
+              <span><span className="text-slate-600">ETA </span>{etaLabel(target.etaSeconds, now)}</span>
+            </span>
+          </div>
+        </div>
+      </div>
+      <span className="hidden text-right font-mono text-slate-400 sm:block" title="Distance from your active planet">{distanceLabel(target.distance)}</span>
+      <span className="hidden text-right font-mono text-amber-100 sm:block" title="Total debris">{compactNumber(target.total)}</span>
+      <span className="hidden text-right font-mono text-slate-300 sm:block" title="Metal debris">{compactNumber(target.metal)}</span>
+      <span className="hidden text-right font-mono text-cyan-100 sm:block" title="Crystal debris">{compactNumber(target.crystal)}</span>
+      <span className="hidden text-right font-mono text-slate-400 sm:block" title="Estimated recycler ETA">{etaLabel(target.etaSeconds, now)}</span>
+      <span className="hidden text-right font-mono text-slate-400 sm:block" title="Estimated fuel">{target.fuelCost === null ? "--" : compactNumber(target.fuelCost)}</span>
+      <div className="flex shrink-0 flex-col items-end gap-1 self-start">
+        {action ? (
+          <button
+            className="inline-flex h-7 shrink-0 items-center gap-1 rounded border border-amber-300/25 px-2 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/10 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
+            disabled={Boolean(action.disabledReason) || !onHarvest}
+            onClick={() => onHarvest?.(target)}
+            title={action.disabledReason ?? "Harvest this debris field"}
+            type="button"
+          >
+            <Recycle aria-hidden="true" size={12} /> {action.label}
+          </button>
+        ) : null}
+        <button
+          className="inline-flex h-7 shrink-0 items-center gap-1 rounded border border-signal/25 px-2 text-xs font-medium text-signal transition hover:bg-signal/10 disabled:cursor-default disabled:opacity-50"
+          disabled={!onSelectPlanet}
+          onClick={() => onSelectPlanet?.(target.coordinates)}
+          type="button"
+        >
+          <Crosshair aria-hidden="true" size={12} /> Inspect
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function RaidTargetRow({
   attackAction,
   missionSubtext,
@@ -646,6 +892,11 @@ function compactNumber(value: number): string {
 
 function trimCompact(value: number): string {
   return value >= 10 ? value.toFixed(0) : value.toFixed(1).replace(/\.0$/, "");
+}
+
+function etaLabel(seconds: number | null, now: number): string {
+  if (seconds === null) return "--";
+  return formatDurationUntil(now + seconds * 1_000, now);
 }
 
 function fullNumber(value: string | null | undefined): string {
