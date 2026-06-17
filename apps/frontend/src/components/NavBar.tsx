@@ -114,6 +114,17 @@ export function NavBar({
     }
   }, [playerProfileAction.status]);
 
+  useEffect(() => {
+    if (!playerPanelOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !playerProfileBusy) setPlayerPanelOpen(false);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [playerPanelOpen, playerProfileBusy]);
+
   const handlePlayerSubmit = (event: Event) => {
     event.preventDefault();
     const nextName = playerDraft.trim().replace(/ {2,}/g, " ");
@@ -145,12 +156,15 @@ export function NavBar({
         </div>
         {onUpdatePlayerDisplayName ? (
           <button
+            aria-controls="commander-name-editor"
             aria-expanded={playerPanelOpen}
+            aria-haspopup="dialog"
             aria-label="Edit player display name"
             className="inline-grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
             disabled={playerProfileBusy}
             onClick={() => {
-              setPlayerPanelOpen((open) => !open);
+              setMobileMenuOpen(false);
+              setPlayerPanelOpen(true);
               setPlayerDraft(playerProfile?.displayName ?? "");
               setPlayerValidation(undefined);
             }}
@@ -161,53 +175,6 @@ export function NavBar({
           </button>
         ) : null}
       </div>
-      {onUpdatePlayerDisplayName && playerPanelOpen ? (
-        <form className="mt-2 grid gap-2 rounded border border-white/10 bg-black/30 p-2" onSubmit={handlePlayerSubmit}>
-          <label className="grid gap-1 text-[11px] font-medium text-slate-200">
-            Display name
-            <input
-              className="h-8 rounded border border-white/10 bg-[#080d18]/95 px-2 text-xs text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
-              disabled={playerProfileBusy}
-              maxLength={32}
-              onInput={(event) => {
-                setPlayerDraft(event.currentTarget.value);
-                setPlayerValidation(undefined);
-              }}
-              placeholder="Enter display name"
-              value={playerDraft}
-            />
-          </label>
-          <p className="text-[10px] leading-4 text-slate-300">
-            Free wallet signature; no transaction or gas.
-          </p>
-          {(playerValidation || playerStatusLabel) && (
-            <p className={`break-words text-[10px] leading-4 ${playerValidation ? "text-amber-200" : playerStatusTone}`}>
-              {playerValidation ?? playerStatusLabel}
-            </p>
-          )}
-          <div className="flex justify-end gap-1.5">
-            <button
-              aria-label="Cancel player display name edit"
-              className="inline-grid h-7 w-7 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-              disabled={playerProfileBusy}
-              onClick={() => setPlayerPanelOpen(false)}
-              title="Cancel"
-              type="button"
-            >
-              <X aria-hidden="true" size={13} strokeWidth={2} />
-            </button>
-            <button
-              aria-label="Save player display name"
-              className="inline-grid h-7 w-7 place-items-center rounded border border-cyan-300/40 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-              disabled={!canEditPlayerProfile || playerProfileBusy}
-              title={playerProfileBusy ? "Signing" : "Save name"}
-              type="submit"
-            >
-              <Check aria-hidden="true" size={13} strokeWidth={2} />
-            </button>
-          </div>
-        </form>
-      ) : null}
       <div className="mt-2 flex items-center justify-between gap-2 border-t border-white/10 pt-2">
         <span className="text-[10px] font-semibold uppercase text-slate-500">
           Home
@@ -226,6 +193,88 @@ export function NavBar({
       </div>
     </aside>
   );
+
+  const playerEditorDialog = onUpdatePlayerDisplayName && playerPanelOpen ? (
+    <div
+      className="fixed inset-0 z-50 grid place-items-end bg-black/60 p-3 backdrop-blur-sm sm:place-items-center sm:p-4"
+      onClick={(event) => {
+        if (event.target === event.currentTarget && !playerProfileBusy) setPlayerPanelOpen(false);
+      }}
+    >
+      <form
+        aria-labelledby="commander-name-editor-title"
+        aria-modal="true"
+        className="grid max-h-[calc(100dvh-1.5rem)] w-full max-w-sm gap-3 overflow-y-auto rounded-lg border border-white/10 bg-[#08101d] p-3 shadow-2xl shadow-black/45"
+        id="commander-name-editor"
+        onSubmit={handlePlayerSubmit}
+        role="dialog"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase text-slate-500">
+              Commander
+            </p>
+            <h2 className="mt-1 break-words text-sm font-semibold leading-5 text-white" id="commander-name-editor-title">
+              Edit display name
+            </h2>
+          </div>
+          <button
+            aria-label="Cancel player display name edit"
+            className="inline-grid h-8 w-8 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+            disabled={playerProfileBusy}
+            onClick={() => setPlayerPanelOpen(false)}
+            title="Cancel"
+            type="button"
+          >
+            <X aria-hidden="true" size={14} strokeWidth={2} />
+          </button>
+        </div>
+        <label className="grid gap-1 text-xs font-medium text-slate-200">
+          Display name
+          <input
+            className="h-9 rounded border border-white/10 bg-[#050b14]/95 px-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+            disabled={playerProfileBusy}
+            maxLength={32}
+            onInput={(event) => {
+              setPlayerDraft(event.currentTarget.value);
+              setPlayerValidation(undefined);
+            }}
+            placeholder="Enter display name"
+            value={playerDraft}
+          />
+        </label>
+        <p className="text-[11px] leading-4 text-slate-300">
+          Free wallet signature; no transaction or gas.
+        </p>
+        {(playerValidation || playerStatusLabel) && (
+          <p className={`break-words text-[11px] leading-4 ${playerValidation ? "text-amber-200" : playerStatusTone}`}>
+            {playerValidation ?? playerStatusLabel}
+          </p>
+        )}
+        <div className="flex justify-end gap-2">
+          <button
+            aria-label="Cancel player display name edit"
+            className="inline-grid h-8 w-8 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
+            disabled={playerProfileBusy}
+            onClick={() => setPlayerPanelOpen(false)}
+            title="Cancel"
+            type="button"
+          >
+            <X aria-hidden="true" size={14} strokeWidth={2} />
+          </button>
+          <button
+            aria-label="Save player display name"
+            className="inline-grid h-8 w-8 place-items-center rounded border border-cyan-300/40 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
+            disabled={!canEditPlayerProfile || playerProfileBusy}
+            title={playerProfileBusy ? "Signing" : "Save name"}
+            type="submit"
+          >
+            <Check aria-hidden="true" size={14} strokeWidth={2} />
+          </button>
+        </div>
+      </form>
+    </div>
+  ) : null;
 
   return (
     <>
@@ -309,6 +358,7 @@ export function NavBar({
           </div>
         )}
       </div>
+      {playerEditorDialog}
     </>
   );
 }
