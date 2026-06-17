@@ -61,6 +61,11 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(navSource).toContain("min-h-0 flex-1 space-y-1 overflow-y-auto");
     expect(navSource).toContain('aria-label="Sidebar account summary"');
     expect(navSource).toContain("sticky bottom-3 shrink-0");
+    expect(navSource).toContain("Commander");
+    expect(navSource).toContain("playerDisplayLabel(playerProfile, account)");
+    expect(navSource).toContain('aria-label="Edit player display name"');
+    expect(playableSource).toContain("playerProfile={playerProfile}");
+    expect(playableSource).toContain("onUpdatePlayerDisplayName={handleUpdatePlayerDisplayName}");
     expect(topBarSource).toContain("max-w-[96rem]");
     expect(navSource).not.toContain("Home Planet");
     expect(navSource).not.toContain("tracking-[0.16em]");

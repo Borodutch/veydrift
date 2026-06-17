@@ -24,12 +24,9 @@ import { formatPlanetType } from "../data/mockUniverse";
 import type { Planet } from "../types";
 import {
   decodeColonizationTargetId,
-  playerDisplayLabel,
-  validatePlayerDisplayName,
   type FleetMissionPlanetReference,
   type FleetMissionVisibilityResponse,
   type PlanetSummary,
-  type PlayerProfile,
   type PlayerQueuesResponse,
   type QueueStateResponse,
   type WalletSettlementResponse
@@ -83,7 +80,6 @@ interface OverviewPageProps {
   researchAction?: OverviewResearchActionState | undefined;
   onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard" | "mission-control") => void;
   onRenamePlanet?: ((name: string) => void) | undefined;
-  onUpdatePlayerDisplayName?: ((name: string) => void) | undefined;
   onChainError?: string | undefined;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
   onChainSettlement?: WalletSettlementResponse | undefined;
@@ -91,9 +87,6 @@ interface OverviewPageProps {
   onChainStatus: ChainLoadStatus;
   planetRenameAction?: PlanetRenameActionState | undefined;
   canRenamePlanet?: boolean | undefined;
-  playerProfile?: PlayerProfile | undefined;
-  playerProfileAction?: PlanetRenameActionState | undefined;
-  canEditPlayerProfile?: boolean | undefined;
   planetManagementAction?: PlanetManagementActionState | undefined;
   canAbandonPlanet?: boolean | undefined;
   onAbandonPlanet?: (() => void) | undefined;
@@ -117,7 +110,6 @@ export function OverviewPage({
   researchAction = { status: "idle" },
   onNavigate,
   onRenamePlanet,
-  onUpdatePlayerDisplayName,
   onChainError,
   fleetVisibility,
   onChainSettlement,
@@ -125,9 +117,6 @@ export function OverviewPage({
   onChainStatus,
   planetRenameAction = { status: "idle" },
   canRenamePlanet = false,
-  playerProfile,
-  playerProfileAction = { status: "idle" },
-  canEditPlayerProfile = false,
   planetManagementAction = { status: "idle" },
   canAbandonPlanet = false,
   onAbandonPlanet,
@@ -205,10 +194,6 @@ export function OverviewPage({
   const [renameDraft, setRenameDraft] = useState(planetName);
   const [renamePanelOpen, setRenamePanelOpen] = useState(false);
   const [renameValidation, setRenameValidation] = useState<string | undefined>(undefined);
-  const playerLabel = playerDisplayLabel(playerProfile, onChainSettlement?.wallet);
-  const [playerDraft, setPlayerDraft] = useState(playerProfile?.displayName ?? "");
-  const [playerPanelOpen, setPlayerPanelOpen] = useState(false);
-  const [playerValidation, setPlayerValidation] = useState<string | undefined>(undefined);
   const [effectsPanelOpen, setEffectsPanelOpen] = useState(false);
   const planetSubhead = homePlanet
     ? `${formatPlanetType(homePlanet.type)} · ${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
@@ -253,19 +238,6 @@ export function OverviewPage({
     }
   }, [planetRenameAction.status]);
 
-  useEffect(() => {
-    if (!playerPanelOpen) {
-      setPlayerDraft(playerProfile?.displayName ?? "");
-      setPlayerValidation(undefined);
-    }
-  }, [playerPanelOpen, playerProfile?.displayName]);
-
-  useEffect(() => {
-    if (playerProfileAction.status === "success") {
-      setPlayerPanelOpen(false);
-    }
-  }, [playerProfileAction.status]);
-
   const canShowRename = Boolean(isWalletConnected && onRenamePlanet);
   const renameBusy = planetRenameAction.status === "pending";
   const renameStatusTone = planetRenameAction.status === "error"
@@ -279,13 +251,6 @@ export function OverviewPage({
     : planetManagementAction.status === "success"
       ? "text-emerald-200"
       : "text-slate-300";
-  const playerProfileBusy = playerProfileAction.status === "pending";
-  const playerStatusTone = playerProfileAction.status === "error"
-    ? "text-amber-200"
-    : playerProfileAction.status === "success"
-      ? "text-emerald-200"
-      : "text-slate-300";
-  const playerStatusLabel = playerProfileAction.status === "idle" ? undefined : playerProfileAction.label;
   const showAbandonAction = Boolean(canAbandonPlanet && onAbandonPlanet);
   const handleRenameSubmit = (event: Event) => {
     event.preventDefault();
@@ -297,99 +262,8 @@ export function OverviewPage({
     setRenameValidation(undefined);
     onRenamePlanet?.(name);
   };
-  const handlePlayerSubmit = (event: Event) => {
-    event.preventDefault();
-    const nextName = playerDraft.trim().replace(/ {2,}/g, " ");
-    const validation = validatePlayerDisplayName(nextName);
-    if (validation) {
-      setPlayerValidation(validation);
-      return;
-    }
-    setPlayerValidation(undefined);
-    onUpdatePlayerDisplayName?.(nextName);
-  };
-
   return (
     <div className="grid gap-3">
-      {isWalletConnected && (
-        <div className="rounded-lg border border-white/10 bg-[#101624] p-3 sm:p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">Commander</p>
-              <p className="mt-1 break-words text-base font-semibold text-white">{playerLabel}</p>
-              {playerProfile?.displayName ? (
-                <p className="mt-1 text-xs text-slate-500">{playerProfile.fallbackName}</p>
-              ) : null}
-              {playerStatusLabel && !playerPanelOpen ? (
-                <p className={`mt-1 text-xs ${playerStatusTone}`}>{playerStatusLabel}</p>
-              ) : null}
-            </div>
-            {onUpdatePlayerDisplayName ? (
-              <button
-                aria-expanded={playerPanelOpen}
-                aria-label="Edit player display name"
-                className="inline-flex h-8 items-center gap-1 rounded border border-white/10 bg-white/5 px-2.5 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-                disabled={playerProfileBusy}
-                onClick={() => {
-                  setPlayerPanelOpen((open) => !open);
-                  setPlayerDraft(playerProfile?.displayName ?? "");
-                  setPlayerValidation(undefined);
-                }}
-                type="button"
-              >
-                <Pencil aria-hidden="true" size={12} strokeWidth={2} />
-                Edit
-              </button>
-            ) : null}
-          </div>
-          {onUpdatePlayerDisplayName && playerPanelOpen ? (
-            <form className="mt-3 grid gap-2 rounded border border-white/10 bg-black/30 p-3" onSubmit={handlePlayerSubmit}>
-              <label className="grid gap-1 text-xs font-medium text-slate-200">
-                Display name
-                <input
-                  className="h-9 rounded border border-white/10 bg-[#080d18]/95 px-3 text-sm text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
-                  disabled={playerProfileBusy}
-                  maxLength={32}
-                  onInput={(event) => {
-                    setPlayerDraft(event.currentTarget.value);
-                    setPlayerValidation(undefined);
-                  }}
-                  placeholder="Enter display name"
-                  value={playerDraft}
-                />
-              </label>
-              <p className="text-[11px] leading-4 text-slate-300">
-                Your wallet signs a free ownership proof; no transaction or gas is required.
-              </p>
-              {(playerValidation || playerStatusLabel) && (
-                <p className={`text-xs ${playerValidation ? "text-amber-200" : playerStatusTone}`}>
-                  {playerValidation ?? playerStatusLabel}
-                </p>
-              )}
-              <div className="flex flex-wrap justify-end gap-2">
-                <button
-                  className="inline-flex h-8 items-center gap-1 rounded border border-white/10 bg-white/5 px-2.5 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
-                  disabled={playerProfileBusy}
-                  onClick={() => setPlayerPanelOpen(false)}
-                  type="button"
-                >
-                  <X aria-hidden="true" size={13} strokeWidth={2} />
-                  Cancel
-                </button>
-                <button
-                  className="inline-flex h-8 items-center gap-1 rounded border border-cyan-300/40 bg-cyan-300/10 px-2.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-                  disabled={!canEditPlayerProfile || playerProfileBusy}
-                  type="submit"
-                >
-                  <Check aria-hidden="true" size={13} strokeWidth={2} />
-                  {playerProfileBusy ? "Signing" : "Save name"}
-                </button>
-              </div>
-            </form>
-          ) : null}
-        </div>
-      )}
-
       {/* Planet hero — compact, no wasted space. When the wallet is disconnected we show a clear
           connect-wallet card instead of a fabricated home planet (VEY-KANEO-458). */}
       {!isWalletConnected ? (
