@@ -64,13 +64,16 @@ describe("overview planet hero image", () => {
     expect(planetHeroIndex).toBeLessThan(fleetsSummaryIndex);
   });
 
-  test("renders the planet art as a compact square image instead of a cropped banner", () => {
+  test("renders the planet art as a compact banner background with primary planet identity", () => {
     expect(overviewSource).toContain("lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.82fr)]");
     expect(overviewSource).toContain("const hasActiveFleets = Boolean");
-    expect(overviewSource).toContain("grid-cols-[5.75rem_minmax(0,1fr)]");
-    expect(overviewSource).toContain("relative aspect-square");
-    expect(overviewSource).toContain("object-contain");
-    expect(overviewSource).toContain('alt="Planet hero"');
+    expect(overviewSource).toContain("relative min-h-[8.75rem]");
+    expect(overviewSource).toContain('alt="Planet hero background"');
+    expect(overviewSource).toContain("object-contain object-right");
+    expect(overviewSource).toContain("bg-gradient-to-r from-[#101624]");
+    expect(overviewSource).toContain("text-2xl font-semibold leading-none text-white drop-shadow sm:text-3xl");
+    expect(overviewSource).not.toContain("grid-cols-[5.75rem_minmax(0,1fr)]");
+    expect(overviewSource).not.toContain("relative aspect-square");
     expect(overviewSource).not.toContain('sizes="hero"');
   });
 
