@@ -194,8 +194,32 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     });
   }
+  if (isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
+    const checkpointWal = () => {
+      try {
+        const result = indexer.checkpointWal("PASSIVE");
+        const sample = result[0];
+        if (sample && sample.log > 16_384 && sample.busy === 0) {
+          indexer.checkpointWal("TRUNCATE");
+        }
+      } catch (error) {
+        console.warn("Veydrift SQLite WAL checkpoint failed", reasonText(error));
+      }
+    };
+    checkpointWal();
+    const walMaintenance = setInterval(checkpointWal, 60_000);
+    walMaintenance.unref?.();
+  }
 
-  return async (request: Request): Promise<Response> => {
+  const responseCache = new Map<string, CachedJsonResponse>();
+  const enableResponseCache =
+    !dependencies.chainReader
+    && !dependencies.chainSync
+    && !dependencies.config
+    && !dependencies.indexer
+    && !dependencies.randomnessCommitter;
+
+  const handleRequest = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
 
     if (request.method === "OPTIONS") {
@@ -923,6 +947,36 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     );
   };
+
+  return async (request: Request): Promise<Response> => {
+    const url = new URL(request.url);
+    const cacheTtlMs = enableResponseCache ? cacheableJsonRequestTtlMs(request, url) : 0;
+    if (cacheTtlMs > 0) {
+      const cacheKey = `${request.method} ${url.pathname}${url.search}`;
+      const cached = responseCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        return cachedJsonResponse(cached);
+      }
+
+      const response = await handleRequest(request);
+      if (response.status === 200 && jsonContentType(response.headers.get("content-type"))) {
+        const body = await response.clone().arrayBuffer();
+        const headers: Array<[string, string]> = [];
+        response.headers.forEach((value, key) => headers.push([key, value]));
+        responseCache.set(cacheKey, {
+          body,
+          expiresAt: Date.now() + cacheTtlMs,
+          headers,
+          status: response.status,
+          statusText: response.statusText
+        });
+        pruneResponseCache(responseCache);
+      }
+      return response;
+    }
+
+    return handleRequest(request);
+  };
 }
 
 /**
@@ -972,6 +1026,50 @@ export function shouldRecoverFailedReconciliation(
   return Boolean(snapshot.lastReconciledAt)
     && Boolean(snapshot.lastReconciliationError)
     && !snapshot.reconciliationInProgress;
+}
+
+type CachedJsonResponse = {
+  body: ArrayBuffer;
+  expiresAt: number;
+  headers: Array<[string, string]>;
+  status: number;
+  statusText: string;
+};
+
+function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
+  if (request.method !== "GET") return 0;
+  if (url.pathname === "/chain/events") return 0;
+  if (url.pathname === "/health" || url.pathname === "/debug/indexer") return 1_000;
+  if (url.pathname === "/highscores" || url.pathname === "/missions") return 5_000;
+  if (url.pathname.match(/^\/mission\/[^/]+$/)) return 10_000;
+  if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return 5_000;
+  if (url.pathname === "/universe/systems") return 5_000;
+  if (url.pathname.match(/^\/wallet\/[^/]+\/(?:overview|settlement|planets|queues|fleet-visibility|missions|infrastructure|moon|shipyard|defenses|research|rift|highscore)$/)) {
+    return 2_000;
+  }
+  return 0;
+}
+
+function cachedJsonResponse(cached: CachedJsonResponse): Response {
+  return new Response(cached.body.slice(0), {
+    headers: cached.headers,
+    status: cached.status,
+    statusText: cached.statusText
+  });
+}
+
+function jsonContentType(value: string | null): boolean {
+  return Boolean(value && value.toLowerCase().includes("application/json"));
+}
+
+function pruneResponseCache(cache: Map<string, CachedJsonResponse>): void {
+  if (cache.size <= 512) return;
+  const now = Date.now();
+  for (const [key, value] of cache) {
+    if (value.expiresAt <= now || cache.size > 512) {
+      cache.delete(key);
+    }
+  }
 }
 
 function hasWarmPlanetIndex(indexer: SettlementIndexer | undefined): indexer is SettlementIndexer {
