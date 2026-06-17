@@ -1,8 +1,9 @@
 // Worker-pool topology for the multi-threaded Bun backend (VEY-KANEO-466).
 //
-// The backend runs as N = CPU worker processes that all bind the same port with
-// SO_REUSEPORT (Bun.serve `reusePort`), so the kernel load-balances connections
-// across workers and a slow request on one worker never blocks the others.
+// The backend runs as N = CPU worker processes. Reader workers bind the public
+// port with SO_REUSEPORT (Bun.serve `reusePort`), so the kernel load-balances
+// user-facing requests across readers. The writer binds only a private loopback
+// listener so chain-sync ingestion cannot stall public reads.
 //
 // Exactly one worker (index 0) is the "writer": it owns the chain indexer
 // ingestion, the cold-start rebuild, the bounded per-planet reconciles, mission
@@ -27,6 +28,7 @@ export type WorkerRole = "writer" | "reader";
 // single writer so all DB writes — and the writer's in-memory indexer bookkeeping (e.g. the bounded
 // fleet-mission reconcile queue drained after applyLog) — happen on exactly one process.
 const READ_ONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+const WRITER_ONLY_READ_PATHS = new Set(["/chain/events"]);
 
 // Request headers that must not be copied verbatim when re-issuing a forwarded request: the body is
 // re-encoded by fetch (content-length) and the connection is to the writer's loopback listener (host).
@@ -107,11 +109,11 @@ export function createForwardingFetch(
   fetchImpl: typeof fetch = fetch
 ): (request: Request) => Promise<Response> {
   return async (request: Request): Promise<Response> => {
-    if (READ_ONLY_METHODS.has(request.method)) {
+    const url = new URL(request.url);
+    if (READ_ONLY_METHODS.has(request.method) && !WRITER_ONLY_READ_PATHS.has(url.pathname)) {
       return localHandler(request);
     }
 
-    const url = new URL(request.url);
     const target = `${writerOrigin}${url.pathname}${url.search}`;
     const headers = new Headers(request.headers);
     for (const name of STRIPPED_FORWARD_REQUEST_HEADERS) {
