@@ -952,7 +952,7 @@ export class SettlementIndexer {
   }
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
-    const completedShipCounts = this.completedQueueQuantities(`ship:${planetId}`);
+    const completedShipCounts = this.completedActiveQueueQuantities(`ship:${planetId}`);
     return deriveShipRows(
       (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id) + (completedShipCounts.get(id) ?? 0),
       this.planet(planetId)?.temperature,
@@ -970,7 +970,7 @@ export class SettlementIndexer {
   // returned (minus combat losses) is already credited, with no departed-ships projection or reconcile
   // needed. Builds emit ShipCompleted, also applied. (VEY-KANEO-461)
   availableShipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
-    const completedShipCounts = this.completedQueueQuantities(`ship:${planetId}`);
+    const completedShipCounts = this.completedActiveQueueQuantities(`ship:${planetId}`);
     return deriveShipRows(
       (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id) + (completedShipCounts.get(id) ?? 0),
       this.planet(planetId)?.temperature,
@@ -988,7 +988,7 @@ export class SettlementIndexer {
   // already integrate authoritatively from the event stream.
 
   defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
-    const completedDefenseCounts = this.completedQueueQuantities(`defense:${planetId}`);
+    const completedDefenseCounts = this.completedActiveQueueQuantities(`defense:${planetId}`);
     return deriveDefenseRows(
       (id) => this.indexedLevel("contract_defense_counts", "defense_id", planetId, id) + (completedDefenseCounts.get(id) ?? 0),
       durationLevels
@@ -1043,6 +1043,26 @@ export class SettlementIndexer {
     return quantities;
   }
 
+  private activeQueueSettlement(queueKeyValue: string, nowSec = nowSeconds()) {
+    const queue = this.queueState(queueKeyValue);
+    if (!queue) return settleQueueAsOfNow(queue, nowSec);
+    // VEY-KANEO-525: existing production DBs can contain duplicated historical ship/defense backlog_json
+    // entries. Unit-count surfaces may project the elapsed active head, but backlog entries are not
+    // canonical completed state and must not inflate public rows, tactical summaries, or highscores.
+    const activeOnly: QueueState = { ...queue };
+    delete activeOnly.backlog;
+    return settleQueueAsOfNow(activeOnly, nowSec);
+  }
+
+  private completedActiveQueueQuantities(queueKeyValue: string, nowSec = nowSeconds()): Map<number, number> {
+    const quantities = new Map<number, number>();
+    for (const completed of this.activeQueueSettlement(queueKeyValue, nowSec).completed) {
+      if (typeof completed.itemId !== "number" || typeof completed.quantity !== "number") continue;
+      quantities.set(completed.itemId, (quantities.get(completed.itemId) ?? 0) + completed.quantity);
+    }
+    return quantities;
+  }
+
   private projectedQueueLevelRows(rows: readonly LevelRow[] | undefined, queueKeyValue: string, nowSec: number): LevelRow[] {
     const levels = new Map((rows ?? []).map((row) => [row.id, row.value]));
     for (const completed of this.queueSettlement(queueKeyValue, nowSec).completed) {
@@ -1054,7 +1074,7 @@ export class SettlementIndexer {
 
   private projectedQueueQuantityRows(rows: readonly LevelRow[] | undefined, queueKeyValue: string, nowSec: number): LevelRow[] {
     const quantities = new Map((rows ?? []).map((row) => [row.id, row.value]));
-    for (const completed of this.queueSettlement(queueKeyValue, nowSec).completed) {
+    for (const completed of this.activeQueueSettlement(queueKeyValue, nowSec).completed) {
       if (typeof completed.itemId !== "number" || typeof completed.quantity !== "number") continue;
       quantities.set(completed.itemId, (quantities.get(completed.itemId) ?? 0) + completed.quantity);
     }
