@@ -365,7 +365,8 @@ EasyPanel starts the new container before stopping the old one. Without a health
 gate the proxy cuts traffic to the new container the instant the process starts —
 before Bun has bound the port — so a redeploy drops requests for a second or two.
 Configure EasyPanel's **Health Check** on `veydrift/backend-test` so the new
-container only receives traffic once `GET /health` answers `200`:
+container only receives traffic once `GET /health` answers `200` and
+`{ "ok": true }`:
 
 ```text
 Health check path: /health
@@ -376,13 +377,15 @@ Retries: 3
 Start period: 30s
 ```
 
-`GET /health` returns `200` (`{ "ok": true }`) as soon as the HTTP server is
-serving, regardless of chain-sync/indexer warmup, so the gate clears within a
-second of the new container binding the port and keeps the cutover effectively
-downtime-free. This is intentional: the SQLite index DB is opened synchronously
-during request-handler construction (before Bun binds the port), so persisted
-indexed reads are serveable the instant `/health` first answers, while the heavy
-event replay continues through the chain-sync poller and never blocks readiness.
+`GET /health` returns `503` with `{ "ok": false }` until configuration is valid,
+the chain-sync poller has completed a healthy head/log pass, and the SQLite
+index snapshot is safe to serve. It returns `200` with `{ "ok": true }` only
+after those public-read prerequisites are ready, so EasyPanel/Swarm start-first
+deploys keep the old container in rotation until the replacement can serve real
+requests. This is intentionally still fast: the SQLite index DB is opened
+synchronously during request-handler construction (before Bun binds the port),
+and the poller kicks an immediate first pass. Heavy event replay and explicit
+operator DB alignment continue in the background and must not block readiness.
 Operator-run DB alignment is explicit (`bun run index:sync -- --from-block <block>`) rather than
 a backend startup self-heal; it replays missing RPC logs, rebuilds materialized tables from the
 stored event ledger, and runs the explicit canonical repair read without the startup rebuild deadline
@@ -392,6 +395,19 @@ readiness gate is embedded as a Docker `HEALTHCHECK` in
 `apps/backend/Dockerfile.test`, so the Dockerfile rollback build path carries it
 automatically; Nixpacks builds cannot embed a `HEALTHCHECK`, so the EasyPanel
 Health Check above is required for the primary Nixpacks deploy.
+
+Before and after any backend deploy configuration change, run the continuous
+probe from a terminal outside the container and keep the JSON output as
+handoff evidence:
+
+```sh
+node scripts/veydrift-redeploy-readiness-probe.mjs \
+  --api-url https://api-test.veydrift.com \
+  --duration-seconds 180
+```
+
+During a normal redeploy, the summary should show no multi-minute 5xx or network
+error window; target perceived downtime is under one second.
 
 If the backend Nixpacks deploy needs to be rolled back, keep the same
 environment variables and switch only

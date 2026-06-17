@@ -214,6 +214,11 @@ import {
   transactionSyncingLabel,
 } from "./transactionActionGate";
 import { timestampToMs } from "./timestampFormat";
+import {
+  scheduleActionNoticeAutoDismiss,
+  type ActionStateSetter,
+  type AutoDismissableActionState,
+} from "./actionNoticeAutoDismiss";
 
 export function researchStartTransactionLabel(
   technologyId: number,
@@ -1162,7 +1167,7 @@ type ShipyardActionState =
   | { status: "idle" }
   | { status: "pending"; label: string }
   | { status: "success"; label: string }
-  | { status: "error"; label: string };
+  | { status: "error"; label: string; autoDismiss?: boolean | undefined };
 
 type DefenseActionState = ShipyardActionState;
 type AllianceActionState = ShipyardActionState;
@@ -1171,6 +1176,17 @@ export type PlanetActionState = ShipyardActionState;
 type PlanetManagementActionState = PlanetActionState;
 type MissionActionState = ShipyardActionState;
 type MoonActionState = ShipyardActionState;
+
+function rejectedActionAutoDismiss(error: unknown): { autoDismiss?: true } {
+  return isUserRejected(error) ? { autoDismiss: true } : {};
+}
+
+function useActionNoticeAutoDismiss<State extends AutoDismissableActionState>(
+  action: State,
+  setAction: ActionStateSetter<State>,
+) {
+  useEffect(() => scheduleActionNoticeAutoDismiss({ action, setAction }), [action, setAction]);
+}
 
 export function displayHomeCoordinates(
   homePlanet: Coordinates | undefined,
@@ -2063,6 +2079,19 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>(
     () => hydratedGameState?.homePlanetIdentity
   );
+
+  useActionNoticeAutoDismiss(defenseAction, setDefenseAction);
+  useActionNoticeAutoDismiss(allianceAction, setAllianceAction);
+  useActionNoticeAutoDismiss(shipyardAction, setShipyardAction);
+  useActionNoticeAutoDismiss(galaxyAction, setGalaxyAction);
+  useActionNoticeAutoDismiss(researchAction, setResearchAction);
+  useActionNoticeAutoDismiss(riftAction, setRiftAction);
+  useActionNoticeAutoDismiss(buildingAction, setBuildingAction);
+  useActionNoticeAutoDismiss(planetManagementAction, setPlanetManagementAction);
+  useActionNoticeAutoDismiss(planetRenameAction, setPlanetRenameAction);
+  useActionNoticeAutoDismiss(playerProfileAction, setPlayerProfileAction);
+  useActionNoticeAutoDismiss(missionAction, setMissionAction);
+  useActionNoticeAutoDismiss(moonAction, setMoonAction);
   const [galaxyNav, setGalaxyNav] = useState<{ galaxy: number; system: number }>(() => {
     const routeCoords = initialSelectedCoords();
     if (routeCoords) {
@@ -3793,6 +3822,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           status: "error",
           buildingKey: key,
           label: backendStateReady ? spendTransactionErrorMessage(error) : buildingUpgradeActionErrorLabel(error),
+          ...rejectedActionAutoDismiss(error),
         });
       }
     });

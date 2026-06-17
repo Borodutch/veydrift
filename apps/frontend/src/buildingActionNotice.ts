@@ -4,7 +4,7 @@ export type BuildingActionState =
   | { status: "idle" }
   | { status: "pending"; label: string; buildingKey?: BuildingKey | undefined }
   | { status: "success"; label: string; buildingKey?: BuildingKey | undefined }
-  | { status: "error"; label: string; buildingKey?: BuildingKey | undefined };
+  | { status: "error"; label: string; buildingKey?: BuildingKey | undefined; autoDismiss?: boolean | undefined };
 
 export type InfrastructureActionNotice = {
   buildingKey?: BuildingKey | undefined;
