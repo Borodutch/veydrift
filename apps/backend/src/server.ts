@@ -212,6 +212,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   }
 
   const responseCache = new Map<string, CachedJsonResponse>();
+  const inflightResponseCache = new Map<string, Promise<CachedJsonResponse | null>>();
   const enableResponseCache =
     !dependencies.chainReader
     && !dependencies.chainSync
@@ -958,20 +959,37 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         return cachedJsonResponse(cached);
       }
 
+      const inflight = inflightResponseCache.get(cacheKey);
+      if (inflight) {
+        const coalesced = await inflight;
+        if (coalesced) return cachedJsonResponse(coalesced);
+      }
+
+      let resolveInflight: (cached: CachedJsonResponse | null) => void;
+      inflightResponseCache.set(cacheKey, new Promise((resolve) => {
+        resolveInflight = resolve;
+      }));
+
       const response = await handleRequest(request);
       if (response.status === 200 && jsonContentType(response.headers.get("content-type"))) {
         const body = await response.clone().arrayBuffer();
         const headers: Array<[string, string]> = [];
         response.headers.forEach((value, key) => headers.push([key, value]));
-        responseCache.set(cacheKey, {
+        const cachedResponse = {
           body,
           expiresAt: Date.now() + cacheTtlMs,
           headers,
           status: response.status,
           statusText: response.statusText
-        });
+        };
+        responseCache.set(cacheKey, cachedResponse);
         pruneResponseCache(responseCache);
+        resolveInflight!(cachedResponse);
+        inflightResponseCache.delete(cacheKey);
+        return cachedJsonResponse(cachedResponse);
       }
+      resolveInflight!(null);
+      inflightResponseCache.delete(cacheKey);
       return response;
     }
 
@@ -1039,13 +1057,13 @@ type CachedJsonResponse = {
 function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (request.method !== "GET") return 0;
   if (url.pathname === "/chain/events") return 0;
-  if (url.pathname === "/health" || url.pathname === "/debug/indexer") return 1_000;
-  if (url.pathname === "/highscores" || url.pathname === "/missions") return 5_000;
-  if (url.pathname.match(/^\/mission\/[^/]+$/)) return 10_000;
-  if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return 5_000;
-  if (url.pathname === "/universe/systems") return 5_000;
+  if (url.pathname === "/health" || url.pathname === "/debug/indexer") return 2_000;
+  if (url.pathname === "/highscores" || url.pathname === "/missions") return 15_000;
+  if (url.pathname.match(/^\/mission\/[^/]+$/)) return 30_000;
+  if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return 30_000;
+  if (url.pathname === "/universe/systems") return 30_000;
   if (url.pathname.match(/^\/wallet\/[^/]+\/(?:overview|settlement|planets|queues|fleet-visibility|missions|infrastructure|moon|shipyard|defenses|research|rift|highscore)$/)) {
-    return 2_000;
+    return 10_000;
   }
   return 0;
 }
