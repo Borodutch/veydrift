@@ -1101,6 +1101,26 @@ describe("Playable MVP app display helpers", () => {
     })).toBe(true);
   });
 
+  test("uses effective infrastructure resources for next building actions after completed queues apply", () => {
+    const completedEffectiveState = infrastructureState({
+      buildings: [
+        { id: 1, level: 6, cost: { metal: "1000", crystal: "500", deuterium: "0" } },
+      ],
+      queue: null,
+      resources: { metal: "10", crystal: "10", deuterium: "0" },
+      resourcesAsOfNow: { metal: "5000", crystal: "4000", deuterium: "1000" },
+    });
+
+    expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
+      buildingKey: "metalMine",
+      gameContract: "0xgame",
+      homePlanetId: "7",
+      infrastructureChainState: completedEffectiveState,
+      isWalletConnected: true,
+      runtimeConfigStatus: "ready",
+    })).toBeUndefined();
+  });
+
   test("blocks stale building completion transactions when backend infrastructure has no active queue", () => {
     expect(buildingCompletionUnavailableReasonFor({
       canTransact: true,
@@ -2438,14 +2458,16 @@ function fleetMission(overrides: Partial<FleetMissionSummary> = {}): FleetMissio
 }
 
 function infrastructureState({
+  buildings,
   degraded,
   energyBalance,
   indexer,
   queue,
   resources,
+  resourcesAsOfNow,
   source,
   stale,
-}: Partial<Pick<ChainInfrastructureState, "degraded" | "energyBalance" | "indexer" | "queue" | "resources" | "source" | "stale">> = {}): ChainInfrastructureState {
+}: Partial<Pick<ChainInfrastructureState, "buildings" | "degraded" | "energyBalance" | "indexer" | "queue" | "resources" | "resourcesAsOfNow" | "source" | "stale">> = {}): ChainInfrastructureState {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
     homePlanetId: "7",
@@ -2455,10 +2477,11 @@ function infrastructureState({
     stale,
     infrastructureAvailable: true,
     resources: resources ?? { metal: "500", crystal: "500", deuterium: "0" },
+    resourcesAsOfNow,
     productionPerHour: { metal: "60", crystal: "30", deuterium: "0" },
     energyBalance,
     storageCaps: { metal: "10000", crystal: "10000", deuterium: "10000" },
-    buildings: [],
+    buildings: buildings ?? [],
     queue: queue ?? null,
   };
 }

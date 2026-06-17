@@ -1507,7 +1507,10 @@ export function refreshedInfrastructureUpgradeUnavailableReasonFor({
   if (!infrastructureChainState) return "Infrastructure state unavailable.";
 
   const refreshedState = infrastructurePlayableState(infrastructureChainState);
-  const refreshedResources = resourcesFromChain(infrastructureChainState.resources);
+  const refreshedResources = walletCurrentResourcesFor({
+    infrastructureResourcesAsOfNow: infrastructureChainState.resourcesAsOfNow,
+    infrastructureResources: infrastructureChainState.resources,
+  }) ?? onChainResources;
   const status = buildingUpgradeStatus(
     {
       ...refreshedState,
