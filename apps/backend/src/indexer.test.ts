@@ -175,6 +175,45 @@ describe("SettlementIndexer", () => {
     }
   });
 
+  test("can skip startup materialized backfill for reader workers", async () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+
+    const first = new SettlementIndexer(reader, 100n, { database });
+    await first.rebuild();
+    expect(first.walletSettlement(player)).toMatchObject({
+      hasFirstPlanet: true,
+      homePlanetId: planet.planetId
+    });
+
+    database.query("DELETE FROM contract_players").run();
+    database.query("DELETE FROM contract_planets").run();
+    database.query("DELETE FROM contract_planet_resources").run();
+
+    const readerRestart = new SettlementIndexer(reader, 100n, {
+      database,
+      runStartupBackfill: false
+    });
+    expect(readerRestart.snapshot().indexedPlanets).toBe(1);
+    expect(readerRestart.walletSettlement(player)).toMatchObject({
+      hasFirstPlanet: false,
+      homePlanetId: null
+    });
+
+    const writerRestart = new SettlementIndexer(reader, 100n, {
+      database,
+      runStartupBackfill: true
+    });
+    expect(writerRestart.walletSettlement(player)).toMatchObject({
+      hasFirstPlanet: true,
+      homePlanetId: planet.planetId
+    });
+  });
+
   test("surfaces a real error when the cold rebuild stalls past its deadline (VEY-KANEO-485)", async () => {
     // The incident: a wiped indexer DB pointed at the only (range-capped, self-hosted) RPC could not
     // finish the deploy->head backfill, so the index sat in reconciliation_in_progress with

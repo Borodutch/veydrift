@@ -151,7 +151,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       randomnessEngineConfigured: Boolean(loaded.config.randomnessEngineAddress),
       // VEY-KANEO-485: bound the cold wipe->reindex chain reads so a stall surfaces a real error and the
       // boot-time recovery retries, instead of an indefinite silent reconciliation_in_progress.
-      ...(loaded.config.rebuildDeadlineMs ? { rebuildDeadlineMs: loaded.config.rebuildDeadlineMs } : {})
+      ...(loaded.config.rebuildDeadlineMs ? { rebuildDeadlineMs: loaded.config.rebuildDeadlineMs } : {}),
+      // The shared SQLite materialized-state repair is a startup write pass. In the worker pool it must
+      // run once in the writer, not once per reader, or deploy boot can turn into an event-replay stampede.
+      runStartupBackfill: isWriter
     }) : undefined);
   const logBackfiller = deriveLogBackfiller(indexerChainReader);
   const chainSync =
