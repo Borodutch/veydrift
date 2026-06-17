@@ -429,6 +429,33 @@ export function resourceSnapshotFreshnessForInfrastructure(
   };
 }
 
+export function walletSettlementForManagedPlanet(
+  current: WalletSettlementResponse | undefined,
+  planet: ManagedPlanetResponse | undefined,
+): WalletSettlementResponse | undefined {
+  if (!current || !planet) return current;
+  return {
+    ...current,
+    hasFirstPlanet: true,
+    homePlanetId: planet.planetId,
+    planet,
+  };
+}
+
+export function walletQueuesForManagedPlanet(
+  current: PlayerQueuesResponse | undefined,
+  planet: ManagedPlanetResponse | undefined,
+): PlayerQueuesResponse | undefined {
+  if (!current || !planet) return current;
+  return {
+    ...current,
+    homePlanetId: planet.planetId,
+    building: planet.queues.building,
+    defense: planet.queues.defense,
+    ship: planet.queues.ship,
+  };
+}
+
 export function shouldApplyResourceSnapshot(
   current: ResourceSnapshotFreshness,
   next: ResourceSnapshotFreshness,
@@ -2021,6 +2048,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const transactionActionGate = useRef(createTransactionActionGate()).current;
   const onChainRefreshGate = useRef(0);
   const infrastructureRefreshGate = useRef(0);
+  const defenseRefreshGate = useRef(0);
+  const shipyardRefreshGate = useRef(0);
+  const researchRefreshGate = useRef(0);
+  const riftRefreshGate = useRef(0);
   const latestOnChainResourceSnapshot = useRef<ResourceSnapshotFreshness>({ planetId: null, lastSettledAt: null });
   const latestInfrastructureResourceSnapshot = useRef<ResourceSnapshotFreshness>({ planetId: null, lastSettledAt: null });
   const [homePlanetIdentity, setHomePlanetIdentity] = useState<Planet | undefined>(
@@ -2596,8 +2627,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [account, activePlanetId, apiBaseUrl]);
 
   const refreshDefenseState = useCallback(() => {
+    const requestId = beginRefreshRequest(defenseRefreshGate);
     if (!apiBaseUrl || !account) {
       setDefenseState(null);
+      setDefenseLoading(false);
       return;
     }
 
@@ -2605,13 +2638,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setDefenseError(undefined);
     fetchDefenseState(apiBaseUrl, account, activePlanetId)
       .then((next) => {
+        if (!canApplyRefreshRequest(defenseRefreshGate, requestId)) return;
         setDefenseState(next);
       })
       .catch((error) => {
         console.error(error);
+        if (!canApplyRefreshRequest(defenseRefreshGate, requestId)) return;
         setDefenseError(error instanceof Error ? error.message : "Defense state could not be loaded.");
       })
       .finally(() => {
+        if (!canApplyRefreshRequest(defenseRefreshGate, requestId)) return;
         setDefenseLoading(false);
       });
   }, [account, activePlanetId, apiBaseUrl]);
@@ -2640,8 +2676,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [account, apiBaseUrl]);
 
   const refreshShipyardState = useCallback(() => {
+    const requestId = beginRefreshRequest(shipyardRefreshGate);
     if (!apiBaseUrl || !account) {
       setShipyardState(null);
+      setShipyardLoading(false);
       return;
     }
 
@@ -2649,20 +2687,25 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setShipyardError(undefined);
     fetchShipyardState(apiBaseUrl, account, activePlanetId)
       .then((next) => {
+        if (!canApplyRefreshRequest(shipyardRefreshGate, requestId)) return;
         setShipyardState(next);
       })
       .catch((error) => {
         console.error(error);
+        if (!canApplyRefreshRequest(shipyardRefreshGate, requestId)) return;
         setShipyardError(error instanceof Error ? error.message : "Shipyard state could not be loaded.");
       })
       .finally(() => {
+        if (!canApplyRefreshRequest(shipyardRefreshGate, requestId)) return;
         setShipyardLoading(false);
       });
   }, [account, activePlanetId, apiBaseUrl]);
 
   const refreshResearchState = useCallback(() => {
+    const requestId = beginRefreshRequest(researchRefreshGate);
     if (!apiBaseUrl || !account) {
       setResearchState(null);
+      setResearchLoading(false);
       return;
     }
 
@@ -2670,6 +2713,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setResearchError(undefined);
     fetchResearchState(apiBaseUrl, account, activePlanetId)
       .then((next) => {
+        if (!canApplyRefreshRequest(researchRefreshGate, requestId)) return;
         setResearchState((current) => {
           const preserved = preserveActiveResearchState(current, next);
           return researchStateWithFallbackQueue(preserved, onChainQueues?.research) ?? preserved;
@@ -2677,16 +2721,20 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       })
       .catch((error) => {
         console.error(error);
+        if (!canApplyRefreshRequest(researchRefreshGate, requestId)) return;
         setResearchError(error instanceof Error ? error.message : "Research state could not be loaded.");
       })
       .finally(() => {
+        if (!canApplyRefreshRequest(researchRefreshGate, requestId)) return;
         setResearchLoading(false);
       });
   }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research]);
 
   const refreshRiftState = useCallback(() => {
+    const requestId = beginRefreshRequest(riftRefreshGate);
     if (!apiBaseUrl || !account) {
       setRiftState(null);
+      setRiftLoading(false);
       return;
     }
 
@@ -2694,13 +2742,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setRiftError(undefined);
     fetchRiftState(apiBaseUrl, account, activePlanetId)
       .then((next) => {
+        if (!canApplyRefreshRequest(riftRefreshGate, requestId)) return;
         setRiftState(next);
       })
       .catch((error) => {
         console.error(error);
+        if (!canApplyRefreshRequest(riftRefreshGate, requestId)) return;
         setRiftError(error instanceof Error ? error.message : "Rift state could not be loaded.");
       })
       .finally(() => {
+        if (!canApplyRefreshRequest(riftRefreshGate, requestId)) return;
         setRiftLoading(false);
       });
   }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research]);
@@ -4495,10 +4546,72 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [account, gameContract, provider, riftState?.resources, runRiftTransaction]);
 
   const handleSelectManagedPlanet = useCallback((planetId: string) => {
+    if (planetId === activePlanetId) return;
+    const nextPlanet = walletPlanets.find((planet) => planet.planetId === planetId);
+    markFreshStateWrite(onChainRefreshGate);
+    markFreshStateWrite(infrastructureRefreshGate);
+    markFreshStateWrite(defenseRefreshGate);
+    markFreshStateWrite(shipyardRefreshGate);
+    markFreshStateWrite(researchRefreshGate);
+    markFreshStateWrite(riftRefreshGate);
+    latestOnChainResourceSnapshot.current = { planetId, lastSettledAt: null };
+    latestInfrastructureResourceSnapshot.current = { planetId, lastSettledAt: null };
     setSelectedPlanetId(planetId);
+    applyOnChainSettlementSnapshot(walletSettlementForManagedPlanet(onChainSettlement, nextPlanet));
+    setOnChainQueues(walletQueuesForManagedPlanet(onChainQueues, nextPlanet));
+    setOnChainError(undefined);
+    setOnChainStatus(nextPlanet ? "ready" : "loading");
+    setInfrastructureChainState(null);
+    setInfrastructureError(undefined);
+    setInfrastructureLoading(Boolean(apiBaseUrl && account));
+    setMoonState(null);
+    setMoonError(undefined);
+    setMoonLoading(Boolean(apiBaseUrl && account));
+    setDefenseState(null);
+    setDefenseError(undefined);
+    setDefenseLoading(Boolean(apiBaseUrl && account));
+    setShipyardState(null);
+    setShipyardError(undefined);
+    setShipyardLoading(Boolean(apiBaseUrl && account));
+    setResearchState(null);
+    setResearchError(undefined);
+    setResearchLoading(Boolean(apiBaseUrl && account));
+    setRiftState(null);
+    setRiftError(undefined);
+    setRiftLoading(Boolean(apiBaseUrl && account));
+    setBuildingAction({ status: "idle" });
+    setDefenseAction({ status: "idle" });
+    setShipyardAction({ status: "idle" });
+    setResearchAction({ status: "idle" });
+    setRiftAction({ status: "idle" });
+    setMoonAction({ status: "idle" });
+    setGalaxyAction({ status: "idle" });
+    setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
+    setPendingAcsDefend(null);
+    setCompletedBuildingFinishExpectation(undefined);
+    setFailedBuildingFinishExpectation(undefined);
     setPlanetManagementAction({ status: "idle" });
     setPlanetRenameAction({ status: "idle" });
-  }, []);
+    if (nextPlanet) {
+      setHomePlanetIdentity(namedSettlementPlanet(
+        planetFromSettlementPlanet(nextPlanet),
+        nextPlanet.name,
+        playerProfile?.displayName,
+      ));
+    } else {
+      setHomePlanetIdentity(undefined);
+    }
+  }, [
+    account,
+    activePlanetId,
+    apiBaseUrl,
+    applyOnChainSettlementSnapshot,
+    onChainQueues,
+    onChainSettlement,
+    playerProfile?.displayName,
+    walletPlanets,
+  ]);
 
   const handleRenamePlanet = useCallback((name: string) => {
     if (!provider || !account || !gameContract || !activePlanetId) {
