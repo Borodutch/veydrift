@@ -306,6 +306,7 @@ export type OnChainRefreshPlan = {
 };
 
 function raidTargetFullResources(target: RaidTarget): { metal: string; crystal: string; deuterium: string } | null {
+  if (target.currentResources) return target.currentResources;
   const raidableResources = target.raidableResources;
   if (!raidableResources) return null;
   const metal = safeResourceNumber(raidableResources.metal) ?? 0;
@@ -375,6 +376,8 @@ export function raidTargetPlanetForMission(target: RaidTarget): Planet {
           defenses: target.defenseUnits.map((unit) => ({ id: unit.id, count: unit.count })),
           stationedDefenders: null,
           research,
+          productionPerHour: target.productionPerHour,
+          storageCaps: target.storageCaps,
           queues: null,
         }
       : null,
@@ -390,6 +393,9 @@ export function raidTargetPlanetForMission(target: RaidTarget): Planet {
     diameter: 0,
     fields: 0,
     hasMoon: false,
+    metalMultiplierBps: 10_000,
+    crystalMultiplierBps: 10_000,
+    deuteriumMultiplierBps: 10_000,
   };
 }
 
