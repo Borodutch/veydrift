@@ -4726,6 +4726,115 @@ describe("SettlementIndexer", () => {
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)?.count).toBe(12);
   });
 
+  test("unit rows and highscores ignore duplicated historical ship and defense backlog artifacts", () => {
+    const shalex = "0x4065de123cf18e9c4ab7da18db21518285ea164e" as Address;
+    const noseals = "0x01bf1238aadc0f32d7881b90dc3c57247dff9ba9" as Address;
+    const shipPlanet: SettledPlanetEvent = {
+      ...planet,
+      planetId: "24",
+      owner: shalex,
+      galaxy: 2,
+      system: 80,
+      position: 4
+    };
+    const defensePlanet: SettledPlanetEvent = {
+      ...planet,
+      planetId: "146",
+      owner: noseals,
+      galaxy: 2,
+      system: 106,
+      position: 6
+    };
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(shipPlanet);
+    indexer.applyEvent(defensePlanet);
+
+    for (const [shipId, count] of [[0n, 5n], [1n, 3n], [5n, 2n], [9n, 4n]] as const) {
+      indexer.applyLog({
+        blockNumber: "0x200",
+        transactionHash: `0xship-count-${shipId}`,
+        logIndex: `0x${shipId.toString(16)}`,
+        topics: [planetShipCountChangedTopic, topic(24n), topic(shipId)],
+        data: abiWords(count)
+      });
+    }
+    indexer.applyLog({
+      blockNumber: "0x201",
+      transactionHash: "0xship-active",
+      logIndex: "0x0",
+      topics: [shipQueuedTopic, topic(24n), topic(3n)],
+      data: abiWords(1n, 1767225500n, 100n, 100n, 0n)
+    });
+    for (const [index, shipId, quantity] of [
+      [1n, 0n, 241n],
+      [2n, 1n, 48n],
+      [3n, 5n, 98n],
+      [4n, 9n, 195n],
+      [5n, 0n, 241n]
+    ] as const) {
+      indexer.applyLog({
+        blockNumber: "0x202",
+        transactionHash: `0xship-backlog-${index}`,
+        logIndex: `0x${index.toString(16)}`,
+        topics: [shipQueuedTopic, topic(24n), topic(shipId)],
+        data: abiWords(quantity, 1767225400n + index, 1n, 0n, 0n)
+      });
+    }
+
+    indexer.applyLog({
+      blockNumber: "0x210",
+      transactionHash: "0xdefense-count",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(146n), topic(0n)],
+      data: abiWords(17n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x211",
+      transactionHash: "0xdefense-active",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(146n), topic(1n)],
+      data: abiWords(10n, 1767225500n, 100n, 100n, 0n)
+    });
+    for (const [index, quantity] of [[1n, 926n], [2n, 926n]] as const) {
+      indexer.applyLog({
+        blockNumber: "0x212",
+        transactionHash: `0xdefense-backlog-${index}`,
+        logIndex: `0x${index.toString(16)}`,
+        topics: [defenseQueuedTopic, topic(146n), topic(0n)],
+        data: abiWords(quantity, 1767225400n + index, 1n, 0n, 0n)
+      });
+    }
+
+    expect(indexer.shipRows("24").filter((ship) => ship.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
+      { id: 0, count: 5 },
+      { id: 1, count: 3 },
+      { id: 3, count: 1 },
+      { id: 5, count: 2 },
+      { id: 9, count: 4 }
+    ]);
+    expect(indexer.defenseRows("146").filter((defense) => defense.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
+      { id: 0, count: 17 },
+      { id: 1, count: 10 }
+    ]);
+
+    const shalexScore = indexer.highscoreForWallet(shalex);
+    expect(shalexScore.score.fleetCount).toBe("15");
+    expect(shalexScore.score.fleet).toBe("102");
+    const nosealsScore = indexer.highscoreForWallet(noseals);
+    expect(nosealsScore.score.defense).toBe("54");
+
+    const leaderboard = indexer.highscoreLeaderboard().entries;
+    expect(leaderboard.find((entry) => entry.wallet === shalex)?.score).toMatchObject({
+      fleet: "102",
+      fleetCount: "15"
+    });
+    expect(leaderboard.find((entry) => entry.wallet === noseals)?.score.defense).toBe("54");
+  });
+
   test("newer fleet mission events win over seeded canonical mission rows", async () => {
     const rawState: CanonicalPlanetChainState = {
       planetId: planet.planetId,
