@@ -183,10 +183,7 @@ export function OverviewPage({
     scopedBuildingNotice ?? pendingBuildingNotice,
     buildingNoticeKey,
   );
-  const hasActiveFleets = Boolean(
-    fleetVisibility
-    && (fleetVisibility.incoming.length > 0 || fleetVisibility.outgoing.length > 0 || fleetVisibility.returning.length > 0)
-  );
+  const shouldShowFleetsSummary = Boolean(isWalletConnected && fleetVisibility);
 
   // Only ever derive the planet name from real data: the loaded home planet's name, or a
   // coordinate-derived label once coordinates hydrate. Never fall back to a hardcoded fake planet
@@ -268,7 +265,7 @@ export function OverviewPage({
   };
   return (
     <div className="grid gap-3">
-      <div className={hasActiveFleets && isWalletConnected ? "grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.82fr)] lg:items-stretch" : "grid gap-3"}>
+      <div className={shouldShowFleetsSummary ? "grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.82fr)] lg:items-stretch" : "grid gap-3"}>
       {/* Planet hero — compact, no wasted space. When the wallet is disconnected we show a clear
           connect-wallet card instead of a fabricated home planet (VEY-KANEO-458). */}
       {!isWalletConnected ? (
@@ -289,7 +286,7 @@ export function OverviewPage({
           <OptimizedImage
             key={heroImage}
             alt="Planet hero background"
-            className={`absolute inset-0 h-full w-full object-cover object-center transition-opacity duration-200 ${heroImageLoaded ? "opacity-75" : "opacity-0"}`}
+            className={`absolute inset-0 h-full w-full object-cover object-center transition-opacity duration-200 ${heroImageLoaded ? "opacity-95" : "opacity-0"}`}
             imageRef={heroImageRef}
             loading="eager"
             onLoad={(event) => {
@@ -299,12 +296,12 @@ export function OverviewPage({
             src={heroImage}
           />
         ) : null}
-        <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-r from-[#101624] via-[#101624]/90 to-[#101624]/40" />
-        <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-t from-[#101624] via-[#101624]/20 to-transparent" />
+        <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-r from-[#101624]/80 via-[#101624]/45 to-[#101624]/10" />
+        <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-t from-[#101624]/70 via-[#101624]/10 to-transparent" />
         <div className="relative grid min-h-[8.75rem] content-end gap-3 p-3 sm:min-h-[9.5rem] sm:p-4">
           <div className="grid max-w-[36rem] min-w-0 gap-2">
             <div className="min-w-0">
-              <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.14em] text-slate-300/90">{planetSubhead}</p>
+              <p className="text-[11px] font-semibold uppercase leading-tight tracking-[0.14em] text-slate-200/95 drop-shadow">{planetSubhead}</p>
               <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2">
                 <h2 className="m-0 min-w-0 break-words text-2xl font-semibold leading-none text-white drop-shadow sm:text-3xl">
                   {livePlanetName ?? (
@@ -431,13 +428,13 @@ export function OverviewPage({
       </div>
       )}
 
-      {isWalletConnected && fleetVisibility && hasActiveFleets && (
+      {shouldShowFleetsSummary && fleetVisibility ? (
         <FleetsSummary
           fleetVisibility={fleetVisibility}
           now={now}
           onOpenMissionControl={() => onNavigate("mission-control")}
         />
-      )}
+      ) : null}
       </div>
 
       {isWalletConnected && onChainStatus === "error" && (
@@ -445,14 +442,6 @@ export function OverviewPage({
           Planet data is unavailable right now. Overview stats and resources are hidden until the game API responds with live values.
           {onChainError ? <span className="block truncate text-amber-200/70">{onChainError}</span> : null}
         </div>
-      )}
-
-      {isWalletConnected && fleetVisibility && !hasActiveFleets && (
-        <FleetsSummary
-          fleetVisibility={fleetVisibility}
-          now={now}
-          onOpenMissionControl={() => onNavigate("mission-control")}
-        />
       )}
 
       {/* Contract production queues */}
