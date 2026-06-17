@@ -10,6 +10,7 @@ import { formatUserTimestamp } from "../timestampFormat";
 import { PageHeader, RefreshButton } from "./PageHeader";
 import { InlineSyncIndicator } from "./VeydriftLoader";
 import { MoonSkeleton } from "./LoadingSkeletons";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 interface MoonPageProps {
   action?: { status: "idle" | "pending" | "success" | "error"; label?: string } | undefined;
@@ -50,7 +51,7 @@ export function MoonPage({
           {loading ? (
             <InlineSyncIndicator label="Refreshing moon state" />
           ) : error ? (
-            <MoonStatusPanel title="Moon state refresh failed" body={error} tone="warning" />
+            isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <MoonStatusPanel title="Moon state refresh failed" body={error} tone="warning" />
           ) : null}
           <MoonSystemsPanel
             action={action}
@@ -70,7 +71,7 @@ export function MoonPage({
           tone="warning"
         />
       ) : error ? (
-        <MoonStatusPanel title="Moon state unavailable" body={error} tone="warning" />
+        isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <MoonStatusPanel title="Moon state unavailable" body={error} tone="warning" />
       ) : (
         <NoMoonGuidance reason={unavailableReason} />
       )}

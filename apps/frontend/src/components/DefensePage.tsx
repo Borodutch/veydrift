@@ -16,6 +16,7 @@ import {
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import type { RequirementTarget } from "./RequirementFlairs";
 import { CatalogSkeleton } from "./LoadingSkeletons";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 type DefenseActionState =
   | { status: "idle" }
@@ -154,8 +155,9 @@ export function StatusPanel({
   }
 
   if (error) {
+    if (isGameUnavailableMessage(error)) return <GameUnavailableNotice />;
     if (defenseState) return <Notice tone="neutral">Refreshing defense state: {error}</Notice>;
-    return <Notice tone="danger">Defense state could not be loaded from the backend. Refresh or try again after deployment sync.</Notice>;
+    return <Notice tone="danger">Defense state could not be loaded. Refresh or try again in a moment.</Notice>;
   }
 
   if (defenseState?.productionAvailable === false) {

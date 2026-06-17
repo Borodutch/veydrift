@@ -2182,8 +2182,8 @@ describe("walletFlow", () => {
       }
       expect(error).toBeInstanceOf(Error);
       const message = (error as Error).message;
-      expect(message).toContain("The Veydrift backend is temporarily unreachable from this browser");
-      expect(message).not.toMatch(/Wallet|Settlement API|last known game state/i);
+      expect(message).toBe("Veydrift is temporarily unavailable or restarting. Refresh or try again in a few minutes.");
+      expect(message).not.toMatch(/Wallet|Settlement API|last known game state|CORS|deployment|browser/i);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -2197,7 +2197,7 @@ describe("walletFlow", () => {
     )) as unknown as typeof fetch;
     try {
       await expect(fetchInfrastructureState("https://api.example.test", account, "7")).rejects.toThrow(
-        "The Veydrift backend is temporarily unavailable. The app will retry"
+        "Veydrift is temporarily unavailable or restarting. Refresh or try again in a few minutes."
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -2343,7 +2343,7 @@ describe("walletFlow", () => {
 
     try {
       await expect(fetchHighscores("https://api.example.test")).rejects.toThrow(
-        "Rankings are temporarily unavailable because the deployed game API does not support highscores yet. Retry after the backend redeploys."
+        "Veydrift is temporarily unavailable or restarting. Refresh or try again in a few minutes."
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -2391,7 +2391,7 @@ describe("walletFlow", () => {
 
     try {
       await expect(fetchHighscores("https://api.example.test")).rejects.toThrow(
-        "Rankings are temporarily unavailable because the game API could not read current chain data. Retry in a moment."
+        "Veydrift is temporarily unavailable or restarting. Refresh or try again in a few minutes."
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -2423,7 +2423,7 @@ describe("walletFlow", () => {
     }
   });
 
-  test("explains highscore network and CORS failures instead of exposing Failed to fetch", async () => {
+  test("explains highscore network and CORS failures with shared player-facing outage copy", async () => {
     const originalFetch = globalThis.fetch;
 
     globalThis.fetch = (async () => {
@@ -2431,9 +2431,16 @@ describe("walletFlow", () => {
     }) as unknown as typeof fetch;
 
     try {
-      await expect(fetchHighscores("https://api.example.test")).rejects.toThrow(
-        "Rankings are temporarily unavailable because the game API could not be reached from this browser. Check the API deployment or CORS settings, then retry."
-      );
+      let error: unknown;
+      try {
+        await fetchHighscores("https://api.example.test");
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toBeInstanceOf(Error);
+      const message = (error as Error).message;
+      expect(message).toBe("Veydrift is temporarily unavailable or restarting. Refresh or try again in a few minutes.");
+      expect(message).not.toMatch(/CORS|API deployment|browser|Failed to fetch/i);
     } finally {
       globalThis.fetch = originalFetch;
     }

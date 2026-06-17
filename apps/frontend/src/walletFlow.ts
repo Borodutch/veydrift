@@ -1,4 +1,5 @@
 import { sdk } from "@farcaster/miniapp-sdk";
+import { GAME_UNAVAILABLE_MESSAGE } from "./gameUnavailable";
 import type { PlanetType } from "./types";
 
 export type Eip1193Provider = {
@@ -995,12 +996,13 @@ export function isUserRejected(error: unknown): boolean {
 export const CONTRACT_REJECTED_NO_REASON_MESSAGE =
   "The game contract rejected this transaction, but the wallet did not provide a specific reason. Refresh game state and retry, or choose a different action if the state changed.";
 export const GAME_BACKEND_UNAVAILABLE_MESSAGE =
-  "The Veydrift backend is temporarily unreachable from this browser. It is likely restarting and should be back in a few minutes.";
+  GAME_UNAVAILABLE_MESSAGE;
 
 export function isGameBackendUnavailableMessage(message: string | undefined): boolean {
   return typeof message === "string" && (
     message === GAME_BACKEND_UNAVAILABLE_MESSAGE
     || /veydrift backend is temporarily unavailable/i.test(message)
+    || /veydrift backend is temporarily unreachable/i.test(message)
     || /timed out reading .* from the game api/i.test(message)
     || /game api may be temporarily unavailable/i.test(message)
     || /game api is temporarily unavailable/i.test(message)
@@ -2781,15 +2783,15 @@ async function highscoreHttpFailureMessage(response: Response): Promise<string> 
   const errorCode = typeof errorBody?.error === "string" ? errorBody.error : undefined;
 
   if (response.status === 503 && errorCode === "highscores_not_supported") {
-    return "Rankings are temporarily unavailable because the deployed game API does not support highscores yet. Retry after the backend redeploys.";
+    return GAME_UNAVAILABLE_MESSAGE;
   }
 
   if (response.status === 503 && errorCode === "backend_not_configured") {
-    return "Rankings are temporarily unavailable because the game API is not fully configured. Retry after the backend configuration is restored.";
+    return GAME_UNAVAILABLE_MESSAGE;
   }
 
   if (response.status === 503 && errorCode === "highscores_unavailable") {
-    return "Rankings are temporarily unavailable because the game API could not read current chain data. Retry in a moment.";
+    return GAME_UNAVAILABLE_MESSAGE;
   }
 
   if (response.status === 503 && errorCode === "highscores_index_not_ready") {
@@ -2797,7 +2799,7 @@ async function highscoreHttpFailureMessage(response: Response): Promise<string> 
   }
 
   if (response.status >= 500) {
-    return `Rankings are temporarily unavailable because the game API returned ${response.status}. Retry in a moment.`;
+    return GAME_UNAVAILABLE_MESSAGE;
   }
 
   return `Rankings could not be loaded because the game API returned ${response.status}.`;
@@ -2816,7 +2818,7 @@ function highscoreNetworkFailureMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
 
   if (/failed to fetch|load failed|network/i.test(message)) {
-    return "Rankings are temporarily unavailable because the game API could not be reached from this browser. Check the API deployment or CORS settings, then retry.";
+    return GAME_UNAVAILABLE_MESSAGE;
   }
 
   return message || "Rankings could not be loaded.";
@@ -2893,19 +2895,17 @@ async function apiErrorMessage(response: Response, label: string): Promise<strin
     const error = typeof body.error === "string" ? body.error.trim() : "";
 
     if (response.status === 503 && error === "backend_not_configured") {
-      return "The Veydrift backend is temporarily unavailable. The app will retry instead of requiring a wallet reconnect.";
+      return GAME_UNAVAILABLE_MESSAGE;
     }
 
     if (response.status >= 500) {
-      return error
-        ? `The Veydrift backend is temporarily unavailable (${response.status}: ${error}). The app will retry.`
-        : `The Veydrift backend is temporarily unavailable (${response.status}). The app will retry.`;
+      return GAME_UNAVAILABLE_MESSAGE;
     }
 
     return error ? `${fallback}: ${error}` : fallback;
   } catch {
     if (response.status >= 500) {
-      return `The Veydrift backend is temporarily unavailable (${response.status}). The app will retry.`;
+      return GAME_UNAVAILABLE_MESSAGE;
     }
 
     return fallback;

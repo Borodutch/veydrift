@@ -2024,7 +2024,7 @@ describe("Playable MVP app display helpers", () => {
 
     try {
       await expect(loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined))
-        .rejects.toThrow("The Veydrift backend is temporarily unavailable (503: indexed_read_not_ready). The app will retry.");
+        .rejects.toThrow("Veydrift is temporarily unavailable or restarting. Refresh or try again in a few minutes.");
       expect(requestedPaths).toEqual([`/wallet/${wallet}/overview`]);
     } finally {
       globalThis.fetch = originalFetch;

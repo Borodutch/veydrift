@@ -5,6 +5,7 @@ import type { ChainRiftState, PendingWithdrawal, RiftResourceKey, RiftResourceSt
 import { PageHeader, RefreshButton } from "./PageHeader";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { RiftSkeleton } from "./LoadingSkeletons";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 type RiftActionState =
   | { status: "idle" }
@@ -77,11 +78,15 @@ export function RiftPage({
       {initialLoading ? (
         <RiftSkeleton />
       ) : locked ? (
-        <LockedRiftState
-          onOpenRequirement={onOpenRequirement}
-          riftState={riftState}
-          unavailableReason={unavailableReason}
-        />
+        isGameUnavailableMessage(unavailableReason) ? (
+          <GameUnavailableNotice />
+        ) : (
+          <LockedRiftState
+            onOpenRequirement={onOpenRequirement}
+            riftState={riftState}
+            unavailableReason={unavailableReason}
+          />
+        )
       ) : (
         <>
           <div className="grid gap-3 md:grid-cols-3">

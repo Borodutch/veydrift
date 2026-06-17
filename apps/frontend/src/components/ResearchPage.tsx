@@ -34,6 +34,7 @@ import {
 import { RefreshButton, refreshButtonState } from "./PageHeader";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { CatalogSkeleton } from "./LoadingSkeletons";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const researchGroups = ["Basic", "Drive", "Advanced", "Combat"];
@@ -238,6 +239,10 @@ export function ResearchLoadErrorPanel({
     return <CatalogSkeleton label="Loading research" />;
   }
 
+  if (isGameUnavailableMessage(reason)) {
+    return <GameUnavailableNotice />;
+  }
+
   return (
     <div className="rounded-lg border border-rose-300/20 bg-rose-300/5 px-4 py-4 text-sm text-rose-100">
       <p className="font-semibold">
@@ -284,11 +289,13 @@ export function ResearchStatusPanel({
 
   const refreshError = researchRefreshErrorLabel({ error, researchState });
   if (refreshError) {
-    return <Notice tone="neutral">{refreshError}</Notice>;
+    return isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <Notice tone="neutral">{refreshError}</Notice>;
   }
 
   if (error) {
-    return <Notice tone="danger">Research state could not be loaded from the backend. Actions are disabled until chain state is available.</Notice>;
+    return isGameUnavailableMessage(error)
+      ? <GameUnavailableNotice />
+      : <Notice tone="danger">Research state could not be loaded. Actions are disabled until game state is available.</Notice>;
   }
 
   if (!researchState) {

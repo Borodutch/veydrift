@@ -19,6 +19,7 @@ import {
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import type { RequirementTarget } from "./RequirementFlairs";
 import { CatalogSkeleton } from "./LoadingSkeletons";
+import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 
 type ShipyardActionState =
   | { status: "idle" }
@@ -162,11 +163,11 @@ export function StatusPanel({
 
   const refreshError = shipyardRefreshErrorLabel({ error, shipyardState });
   if (refreshError) {
-    return <Notice tone="neutral">{refreshError}</Notice>;
+    return isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <Notice tone="neutral">{refreshError}</Notice>;
   }
 
   if (error) {
-    return <Notice tone="danger">{error}</Notice>;
+    return isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <Notice tone="danger">{error}</Notice>;
   }
 
   if (shipyardState?.productionAvailable === false) {
