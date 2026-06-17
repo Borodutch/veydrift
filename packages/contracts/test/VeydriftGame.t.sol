@@ -1242,7 +1242,7 @@ contract VeydriftGameTest is Test {
             _colonizationTargetId(2, 44, 9),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
-            VeydriftGameStorage.Resources({metal: 300, crystal: 200, deuterium: 100}),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             100,
             0
         );
@@ -2718,7 +2718,7 @@ contract VeydriftGameTest is Test {
             _colonizationTargetId(2, 44, 9),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
-            VeydriftGameStorage.Resources({metal: 300, crystal: 200, deuterium: 100}),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             100,
             0
         );
@@ -2746,9 +2746,9 @@ contract VeydriftGameTest is Test {
         assertEq(arrivalAt - departureAt, expectedTravelSeconds);
         assertEq(returnAt - arrivalAt, expectedTravelSeconds);
         assertEq(game.shipCount(originPlanetId, Ship.ColonyShip), 0);
-        assertEq(game.planet(originPlanetId).resources.metal, 9_700);
-        assertEq(game.planet(originPlanetId).resources.crystal, 9_800);
-        assertEq(game.planet(originPlanetId).resources.deuterium, 9_900 - expectedFuelCost);
+        assertEq(game.planet(originPlanetId).resources.metal, 10_000);
+        assertEq(game.planet(originPlanetId).resources.crystal, 10_000);
+        assertEq(game.planet(originPlanetId).resources.deuterium, 10_000 - expectedFuelCost);
         assertEq(game.planetCountOf(player), 1);
 
         vm.warp(arrivalAt);
@@ -2764,9 +2764,31 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(colonyPlanetId).galaxy, 2);
         assertEq(game.planet(colonyPlanetId).system, 44);
         assertEq(game.planet(colonyPlanetId).position, 9);
-        assertEq(game.planet(colonyPlanetId).resources.metal, 300);
-        assertEq(game.planet(colonyPlanetId).resources.crystal, 200);
-        assertEq(game.planet(colonyPlanetId).resources.deuterium, 100);
+        assertEq(game.planet(colonyPlanetId).resources.metal, 500);
+        assertEq(game.planet(colonyPlanetId).resources.crystal, 500);
+        assertEq(game.planet(colonyPlanetId).resources.deuterium, 0);
+    }
+
+    function testColonizeFleetMissionRejectsCarriedCargo() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 2, 44, 8);
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.CargoNotAllowed.selector);
+        game.launchFleetMission(
+            originPlanetId,
+            _colonizationTargetId(2, 44, 9),
+            VeydriftGameStorage.FleetMissionType.Colonize,
+            _colonyShipManifest(),
+            VeydriftGameStorage.Resources({metal: 1, crystal: 0, deuterium: 0}),
+            100,
+            0
+        );
     }
 
     function testColonizeFleetMissionSettlesReadyColonyShipQueueBeforeValidation() public {
@@ -2830,7 +2852,7 @@ contract VeydriftGameTest is Test {
             _colonizationTargetId(2, 44, 9),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
-            VeydriftGameStorage.Resources({metal: 300, crystal: 200, deuterium: 100}),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             100,
             0
         );
@@ -2862,7 +2884,7 @@ contract VeydriftGameTest is Test {
             _colonizationTargetId(2, 44, 9),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
-            VeydriftGameStorage.Resources({metal: 300, crystal: 200, deuterium: 100}),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             100,
             0
         );
@@ -2902,7 +2924,7 @@ contract VeydriftGameTest is Test {
             _colonizationTargetId(2, 44, 9),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
-            VeydriftGameStorage.Resources({metal: 300, crystal: 200, deuterium: 100}),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             100,
             0
         );
@@ -2955,7 +2977,7 @@ contract VeydriftGameTest is Test {
             _colonizationTargetId(9, 400, 9),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
-            VeydriftGameStorage.Resources({metal: 300, crystal: 200, deuterium: 100}),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             10,
             0
         );
@@ -2992,8 +3014,8 @@ contract VeydriftGameTest is Test {
         (status,,,) = _fleetMission(missionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
         assertEq(game.shipCount(originPlanetId, Ship.ColonyShip), 1);
-        assertEq(game.planet(originPlanetId).resources.metal, metalBeforeReturn + 300);
-        assertEq(game.planet(originPlanetId).resources.crystal, crystalBeforeReturn + 200);
+        assertEq(game.planet(originPlanetId).resources.metal, metalBeforeReturn);
+        assertEq(game.planet(originPlanetId).resources.crystal, crystalBeforeReturn);
         assertEq(game.activeFleetMissionCount(player), 0);
     }
 
@@ -3011,7 +3033,7 @@ contract VeydriftGameTest is Test {
             _colonizationTargetId(9, 399, 8),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
-            VeydriftGameStorage.Resources({metal: 400, crystal: 0, deuterium: 0}),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             10,
             0
         );
@@ -3048,7 +3070,7 @@ contract VeydriftGameTest is Test {
         (status,,,) = _fleetMission(missionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
         assertEq(game.shipCount(originPlanetId, Ship.ColonyShip), 1);
-        assertEq(game.planet(originPlanetId).resources.metal, metalBeforeReturn + 400);
+        assertEq(game.planet(originPlanetId).resources.metal, metalBeforeReturn);
         assertEq(game.activeFleetMissionCount(player), 0);
     }
 
