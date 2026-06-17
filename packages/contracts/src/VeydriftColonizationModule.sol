@@ -193,6 +193,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         external
         returns (uint256)
     {
+        _settleResources(originPlanetId);
         _validateColonyCreation(originPlanetId);
         (uint16 galaxy, uint16 system, uint8 position) = _nextColonyCoordinates(msg.sender, salt);
         return _launchColonyMission(
@@ -209,6 +210,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         external
         returns (uint256)
     {
+        _settleResources(originPlanetId);
         _validateColonyCreation(originPlanetId);
         return _launchColonyMission(
             originPlanetId,
@@ -278,6 +280,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         // settling first. Mirrors the prologue every other mutating colonization path already runs.
         _settleDueColonizeArrivals(msg.sender);
         _settleDueCombatArrivals(msg.sender);
+        _settleResources(originPlanetId);
         _validateColonyCreation(originPlanetId);
         if (ships.colonyShip != 1 || _missionShipTotal(ships) != 1) revert InvalidQuantity();
 

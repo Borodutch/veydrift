@@ -2669,6 +2669,40 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(colonyPlanetId).resources.deuterium, 100);
     }
 
+    function testColonizeFleetMissionSettlesReadyColonyShipQueueBeforeValidation() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 2, 44, 8);
+        _setBuildingLevel(originPlanetId, Building.Shipyard, 4);
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+
+        vm.prank(player);
+        game.startShipProduction(originPlanetId, Ship.ColonyShip, 1);
+        VeydriftGameStorage.ShipQueue memory queue = game.shipQueue(originPlanetId);
+        vm.warp(queue.readyAt);
+
+        assertEq(game.shipCount(originPlanetId, Ship.ColonyShip), 0);
+        assertTrue(game.shipQueue(originPlanetId).active);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            _colonizationTargetId(2, 44, 9),
+            VeydriftGameStorage.FleetMissionType.Colonize,
+            _colonyShipManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            0
+        );
+
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertFalse(game.shipQueue(originPlanetId).active);
+        assertEq(game.shipCount(originPlanetId, Ship.ColonyShip), 0);
+    }
+
     /// @notice VEY-KANEO-490: a Colonize fleet-mission launch must route its colony-ship debit through
     ///         the `PlanetShipCountChanged` sink, exactly like attack/transport launches do. The indexer
     ///         derives the at-planet roster (`contract_ship_counts`) purely from this event, so a launch
