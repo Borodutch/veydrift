@@ -3076,7 +3076,7 @@ describe("SettlementIndexer", () => {
       transactionHash: "0xqueue-light-fighter-backlog",
       logIndex: "0x0",
       topics: [shipQueuedTopic, topic(7n), topic(1n)],
-      data: abiWords(3n, 1770001600n, 9000n, 3000n, 0n)
+      data: abiWords(3n, 1770002600n, 9000n, 3000n, 0n)
     });
     indexer.applyLog({
       blockNumber: "0xa2",
@@ -3097,7 +3097,7 @@ describe("SettlementIndexer", () => {
           kind: "ship",
           itemId: 1,
           quantity: 3,
-          readyAt: "1770001600",
+          readyAt: "1770002600",
           cost: { metal: "9000", crystal: "3000", deuterium: "0" }
         }
       ]
@@ -4848,6 +4848,74 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(9);
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)?.count).toBe(12);
+  });
+
+  test("serves only future deduplicated defense backlog entries behind the active queue", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent({
+      ...planet,
+      planetId: "1",
+      owner: player,
+      galaxy: 6,
+      system: 9,
+      position: 1
+    });
+    for (const [defenseId, count] of [[0n, 12n], [1n, 38n], [6n, 7n]] as const) {
+      indexer.applyLog({
+        blockNumber: "0x300",
+        transactionHash: `0xdefense-count-${defenseId}`,
+        logIndex: `0x${defenseId.toString(16)}`,
+        topics: [planetDefenseCountChangedTopic, topic(1n), topic(defenseId)],
+        data: abiWords(count)
+      });
+    }
+
+    indexer.applyLog({
+      blockNumber: "0x301",
+      transactionHash: "0xactive-heavy-laser",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(1n), topic(2n)],
+      data: abiWords(2n, 1781725842n, 4000n, 12000n, 0n)
+    });
+    for (const [index, defenseId, quantity, readyAt] of [
+      [1n, 0n, 3n, 1781577132n],
+      [2n, 1n, 3n, 1781671566n],
+      [3n, 0n, 1n, 1781672046n],
+      [4n, 0n, 1n, 1781672046n],
+      [5n, 1n, 2n, 1781726802n],
+      [6n, 0n, 4n, 1781728722n],
+      [7n, 1n, 2n, 1781726802n],
+      [8n, 0n, 4n, 1781728722n]
+    ] as const) {
+      indexer.applyLog({
+        blockNumber: "0x302",
+        transactionHash: `0xdefense-backlog-${index}`,
+        logIndex: `0x${index.toString(16)}`,
+        topics: [defenseQueuedTopic, topic(1n), topic(defenseId)],
+        data: abiWords(quantity, readyAt, 1n, 0n, 0n)
+      });
+    }
+
+    const defenseQueue = indexer.playerQueues(player, "1").defense;
+    expect(defenseQueue).toMatchObject({
+      kind: "defense",
+      itemId: 2,
+      quantity: 2,
+      readyAt: "1781725842"
+    });
+    expect(defenseQueue?.backlog?.map(({ itemId, quantity, readyAt }) => ({ itemId, quantity, readyAt }))).toEqual([
+      { itemId: 1, quantity: 2, readyAt: "1781726802" },
+      { itemId: 0, quantity: 4, readyAt: "1781728722" }
+    ]);
+    expect(indexer.defenseRows("1").filter((defense) => defense.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
+      { id: 0, count: 12 },
+      { id: 1, count: 38 },
+      { id: 6, count: 7 }
+    ]);
   });
 
   test("unit rows and highscores ignore duplicated historical ship and defense backlog artifacts", () => {
