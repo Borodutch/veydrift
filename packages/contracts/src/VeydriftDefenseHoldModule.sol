@@ -8,6 +8,7 @@ import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftDefenseHoldStorage} from "./libraries/VeydriftDefenseHoldStorage.sol";
+import {VeydriftFleetFuel} from "./libraries/VeydriftFleetFuel.sol";
 import {Building, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftDefenseHoldAllianceSystem {
@@ -65,17 +66,14 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             revert FleetSlotLimitReached(fleetSlots);
         }
 
-        (uint256 capacity, uint256 fleetFuelConsumption, uint256 slowestSpeed) =
-            _missionMovement(msg.sender, ships);
+        (uint256 capacity, uint256 slowestSpeed) = _missionMovement(msg.sender, ships);
         if (capacity == 0) revert InvalidQuantity();
         _requireMissionShips(originPlanetId, ships);
 
         _settleResources(originPlanetId);
         uint256 travelDistance = _planetDistance(originPlanetId, targetPlanetId);
         uint128 fuelCost = _toUint128(
-            VeydriftAntiRaidPrimitives.missionFuelCost(
-                fleetFuelConsumption, travelDistance, speedPercent
-            )
+            _ogameMissionFuelCost(msg.sender, ships, travelDistance, speedPercent, slowestSpeed)
         );
         uint64 departureAt = _currentTimestamp();
         uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(
@@ -243,7 +241,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
     function _missionMovement(address player, MissionShips calldata ships)
         private
         view
-        returns (uint256 capacity, uint256 fuelConsumption, uint256 slowestSpeed)
+        returns (uint256 capacity, uint256 slowestSpeed)
     {
         uint16 combustionDrive = _technologyLevels[player][Technology.CombustionDrive];
         uint16 impulseDrive = _technologyLevels[player][Technology.ImpulseDrive];
@@ -253,12 +251,11 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             Ship ship = Ship(i);
             uint32 quantity = _missionShipQuantity(ships, ship);
             if (quantity != 0) {
-                (uint256 cargoCapacity, uint256 fuel, uint256 speed) = VeydriftCatalog.shipMovementStats(
+                (uint256 cargoCapacity,, uint256 speed) = VeydriftCatalog.shipMovementStats(
                     ship, combustionDrive, impulseDrive, hyperspaceDrive
                 );
                 unchecked {
                     capacity += uint256(quantity) * cargoCapacity;
-                    fuelConsumption += uint256(quantity) * fuel;
                 }
                 if (speed < slowestSpeed) slowestSpeed = speed;
             }
@@ -267,6 +264,25 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             }
         }
         if (slowestSpeed == type(uint256).max) slowestSpeed = 0;
+    }
+
+    function _ogameMissionFuelCost(
+        address player,
+        MissionShips calldata ships,
+        uint256 distance,
+        uint16 speedPercent,
+        uint256 slowestSpeed
+    ) private view returns (uint256) {
+        MissionShips memory missionShips = ships;
+        return VeydriftFleetFuel.ogameMissionFuelCost(
+            missionShips,
+            _technologyLevels[player][Technology.CombustionDrive],
+            _technologyLevels[player][Technology.ImpulseDrive],
+            _technologyLevels[player][Technology.HyperspaceDrive],
+            distance,
+            speedPercent,
+            slowestSpeed
+        );
     }
 
     function _missionShipQuantity(MissionShips calldata ships, Ship ship)

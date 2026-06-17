@@ -8,6 +8,7 @@ library VeydriftAntiRaidPrimitives {
     uint16 public constant BPS = 10_000;
     uint16 public constant FULL_MISSION_SPEED_PERCENT = 100;
     uint16 public constant MIN_MISSION_SPEED_PERCENT = 10;
+    uint256 public constant FUEL_SPEED_SCALE = 1e9;
 
     uint8 public constant BASE_FLEET_SLOTS = 1;
     uint8 public constant FLEET_SLOTS_PER_COMPUTER_LEVEL = 1;
@@ -87,6 +88,46 @@ library VeydriftAntiRaidPrimitives {
             + ((fleetFuelConsumption * distance * speedMultiplier * speedMultiplier)
                 + denominator
                 / 2) / denominator;
+    }
+
+    function ogameFuelNumerator(
+        uint256 shipFuelConsumption,
+        uint256 quantity,
+        uint256 distance,
+        uint256 shipSpeed,
+        uint256 slowestShipSpeed,
+        uint16 speedPercent
+    ) public pure returns (uint256) {
+        if (
+            shipFuelConsumption == 0 || quantity == 0 || distance == 0 || shipSpeed == 0
+                || slowestShipSpeed == 0
+        ) {
+            return 0;
+        }
+        uint16 normalizedSpeed = _requireMissionSpeed(speedPercent);
+        uint256 speedRatioScaled =
+            _sqrt((slowestShipSpeed * FUEL_SPEED_SCALE * FUEL_SPEED_SCALE) / shipSpeed);
+        uint256 effectiveSpeedScaled = uint256(normalizedSpeed) * speedRatioScaled;
+        uint256 speedMultiplierScaled =
+            uint256(FULL_MISSION_SPEED_PERCENT) * FUEL_SPEED_SCALE + effectiveSpeedScaled;
+        return
+            shipFuelConsumption * quantity * distance * speedMultiplierScaled
+                * speedMultiplierScaled;
+    }
+
+    function ogameFuelDenominator() public pure returns (uint256) {
+        return 35_000 * uint256(FULL_MISSION_SPEED_PERCENT) * FULL_MISSION_SPEED_PERCENT
+            * FUEL_SPEED_SCALE * FUEL_SPEED_SCALE;
+    }
+
+    function ogameFuelCostFromNumerator(uint256 numerator, bool hasFuel)
+        public
+        pure
+        returns (uint256)
+    {
+        if (!hasFuel) return 0;
+        uint256 denominator = ogameFuelDenominator();
+        return 1 + (numerator + denominator / 2) / denominator;
     }
 
     function isValidMissionSpeed(uint16 speedPercent) internal pure returns (bool) {
