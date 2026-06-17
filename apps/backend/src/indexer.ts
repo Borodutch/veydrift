@@ -367,6 +367,12 @@ export class SettlementIndexer {
       battleReports: BattleReport[];
     }
     | null = null;
+  private missionReferenceCache:
+    | {
+      source: FleetMissionSummary[];
+      summaries: FleetMissionSummary[];
+    }
+    | null = null;
   private attackLaunchSecondsCache = new Map<string, { missionGeneration: number; launchesByTarget: Map<string, number[]> }>();
   private canonicalQueueSnapshotBlock: string | null = null;
 
@@ -825,7 +831,7 @@ export class SettlementIndexer {
         .filter((planet) => planet.owner.toLowerCase() === walletLower)
         .map((planet) => planet.planetId)
     );
-    const summaries = this.indexedFleetMissionSummaries().map((mission) => this.withFleetMissionPlanetReferences(mission));
+    const summaries = this.indexedFleetMissionSummariesWithPlanetReferences();
     const battleReports = this.indexedBattleReports();
     // VEY-KANEO-456: index every mission by id so an incoming attack can resolve the allied AcsDefend
     // fleets stationed against it (linked by `counterplayDefenderMissionIds`) into per-defender detail
@@ -892,9 +898,8 @@ export class SettlementIndexer {
         .filter((planet) => planet.owner.toLowerCase() === walletLower)
         .map((planet) => planet.planetId)
     );
-    const completedMissions = this.indexedFleetMissionSummaries()
+    const completedMissions = this.indexedFleetMissionSummariesWithPlanetReferences()
       .filter((mission) => isVisibleCompletedMission(mission, walletLower, ownedPlanetIds))
-      .map((mission) => this.withFleetMissionPlanetReferences(mission))
       .sort(compareFleetMissionsNewestFirst);
     const battleReports = this.indexedBattleReports().filter((report) =>
       report.attacker.toLowerCase() === walletLower
@@ -964,17 +969,15 @@ export class SettlementIndexer {
 
   // Every active mission across the universe (all players), for the Mission Control "All" active tab.
   allActiveFleetMissions(): FleetMissionSummary[] {
-    return this.indexedFleetMissionSummaries()
+    return this.indexedFleetMissionSummariesWithPlanetReferences()
       .filter((mission) => mission.status === "Outbound" || mission.status === "Returning" || mission.status === "Recalled")
-      .map((mission) => this.withFleetMissionPlanetReferences(mission))
       .sort(compareFleetMissionsActiveSoonestFirst);
   }
 
   // Every completed mission across the universe (all players), newest-first, for the past "All" tab.
   allCompletedFleetMissions(): FleetMissionSummary[] {
-    return this.indexedFleetMissionSummaries()
+    return this.indexedFleetMissionSummariesWithPlanetReferences()
       .filter((mission) => mission.status === "Resolved" || mission.status === "Returned")
-      .map((mission) => this.withFleetMissionPlanetReferences(mission))
       .sort(compareFleetMissionsNewestFirst);
   }
 
@@ -4710,6 +4713,7 @@ export class SettlementIndexer {
     this.missionGeneration += 1;
     this.missionReadModelCache = null;
     this.decodedMissionLogCache = null;
+    this.missionReferenceCache = null;
     this.attackLaunchSecondsCache.clear();
   }
 
@@ -4967,6 +4971,17 @@ export class SettlementIndexer {
       summaries,
       battleReports: null
     };
+    return summaries;
+  }
+
+  private indexedFleetMissionSummariesWithPlanetReferences(): FleetMissionSummary[] {
+    const source = this.indexedFleetMissionSummaries();
+    const cached = this.missionReferenceCache;
+    if (cached && cached.source === source) {
+      return cached.summaries;
+    }
+    const summaries = source.map((mission) => this.withFleetMissionPlanetReferences(mission));
+    this.missionReferenceCache = { source, summaries };
     return summaries;
   }
 
