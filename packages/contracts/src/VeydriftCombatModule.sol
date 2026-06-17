@@ -394,6 +394,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         if (mission.missionType == FleetMissionType.Harvest) {
             _harvestDebris(mission);
             mission.status = FleetMissionStatus.Returning;
+            _emitFleetMissionReturnExposed(missionId, mission, FleetMissionStatus.Returning);
+            emit FleetMissionResolved(missionId, msg.sender, mission.missionType, mission.returnAt);
             return;
         }
 
@@ -1374,16 +1376,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                     joined.returnAt = uint64(
                         block.timestamp + (uint256(joined.returnAt) - uint256(attack.arrivalAt))
                     );
-                    emit FleetMissionReturnExposed(
-                        joinedMissionId,
-                        joined.owner,
-                        FleetMissionStatus.Returning,
-                        joined.originPlanetId,
-                        joined.targetPlanetId,
-                        joined.returnAt,
-                        joined.cargo.metal,
-                        joined.cargo.crystal,
-                        joined.cargo.deuterium
+                    _emitFleetMissionReturnExposed(
+                        joinedMissionId, joined, FleetMissionStatus.Returning
                     );
                 }
                 emit FleetMissionResolved(
@@ -1421,16 +1415,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                         block.timestamp
                             + (uint256(counterplay.returnAt) - uint256(hostile.arrivalAt))
                     );
-                    emit FleetMissionReturnExposed(
-                        counterplayMissionId,
-                        counterplay.owner,
-                        FleetMissionStatus.Returning,
-                        counterplay.originPlanetId,
-                        counterplay.targetPlanetId,
-                        counterplay.returnAt,
-                        counterplay.cargo.metal,
-                        counterplay.cargo.crystal,
-                        counterplay.cargo.deuterium
+                    _emitFleetMissionReturnExposed(
+                        counterplayMissionId, counterplay, FleetMissionStatus.Returning
                     );
                 }
                 emit FleetMissionResolved(
@@ -1483,6 +1469,24 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
     function _emitDebrisFieldUpdated(uint256 planetId) private {
         DebrisField storage field = _debrisFields[planetId];
         emit DebrisFieldUpdated(planetId, field.metal, field.crystal);
+    }
+
+    function _emitFleetMissionReturnExposed(
+        uint256 missionId,
+        FleetMission storage mission,
+        FleetMissionStatus status
+    ) private {
+        emit FleetMissionReturnExposed(
+            missionId,
+            mission.owner,
+            status,
+            mission.originPlanetId,
+            mission.targetPlanetId,
+            mission.returnAt,
+            mission.cargo.metal,
+            mission.cargo.crystal,
+            mission.cargo.deuterium
+        );
     }
 
     function _requestMoonChanceFromBattle(

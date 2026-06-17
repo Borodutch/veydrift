@@ -282,6 +282,9 @@ function MissionFacts({
         <Panel title="Fleet And Cargo">
           <Row label="Ships" value={<UnitIcons units={shipUnits(mission.ships)} />} />
           <Row label="Cargo" value={formatResources(mission.cargo)} />
+          {mission.missionType === "Harvest" ? (
+            <Row label="Debris collected" value={mission.returnCargo ? formatResources(mission.returnCargo) : "Unavailable for legacy harvest reports."} />
+          ) : null}
           <Row label="Fuel cost" value={`${formatResource(mission.fuelCost)} deuterium`} />
           {showsRecallCost(mission, context) ? (
             <Row label="Recall cost" value={recallCostLabel(mission, now)} />

@@ -1585,6 +1585,7 @@ function mission(
     attackGroupId: null,
     joinedAttackMissionIds: [],
     cargo: { metal: "1200", crystal: "300", deuterium: "0" },
+    returnCargo: null,
     ships: { smallCargo: "3" },
     transactionHash: "0xabc",
     blockNumber: "123",
@@ -1633,5 +1634,47 @@ describe("Ready to resolve is gated on randomness for combat missions (VEY-KANEO
   test("a non-combat arrival still reads 'Ready to resolve' from the clock alone", () => {
     const transport = { ...mission("93", "Transport", "Outbound", undefined, "7", "9", arrivedMs), needsResolution: false };
     expect(missionReport(transport, now, planetLookup).outcome).toBe("Ready to resolve.");
+  });
+});
+
+describe("Harvest mission reports (VEY-KANEO-538)", () => {
+  const planetLookup = new Map();
+  const now = Date.parse("2026-06-05T12:03:00.000Z");
+
+  test("reports harvested debris from return cargo instead of battle loot copy", () => {
+    const harvest = {
+      ...mission("1284", "Harvest", "Returned", undefined, "41", "179"),
+      cargo: { metal: "0", crystal: "0", deuterium: "0" },
+      returnCargo: { metal: "3300", crystal: "2700", deuterium: "0" },
+      ships: { recycler: "1" },
+    };
+
+    const report = missionReport(harvest, now, planetLookup);
+    expect(report.debris).toBe("3,300 M / 2,700 C / 0 D");
+    expect(report.debris).not.toContain("Not reported");
+  });
+
+  test("keeps legacy harvests honest when the return-cargo event is missing", () => {
+    const harvest = {
+      ...mission("1293", "Harvest", "Returned", undefined, "41", "34"),
+      returnCargo: null,
+    };
+
+    expect(missionReport(harvest, now, planetLookup).debris).toBe("Unavailable for legacy harvest reports.");
+  });
+
+  test("mission detail shows collected debris separately from carried cargo", () => {
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: {
+        ...mission("1284", "Harvest", "Returned", undefined, "41", "179"),
+        cargo: { metal: "0", crystal: "0", deuterium: "0" },
+        returnCargo: { metal: "3300", crystal: "2700", deuterium: "0" },
+        ships: { recycler: "1" },
+      },
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).toContain("Debris collected");
+    expect(text).toContain("3,300 metal / 2,700 crystal / 0 deuterium");
   });
 });
