@@ -161,6 +161,27 @@ describe("createForwardingFetch", () => {
     await expect(response.json()).resolves.toEqual({ ok: true });
   });
 
+  test("forwards the SSE chain event stream to the writer", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (input: string | URL) => {
+      calls.push(String(input));
+      return new Response("event: sync-status\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      });
+    }) as unknown as typeof fetch;
+
+    const local = async () => new Response("reader-has-no-chain-sync", { status: 503 });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    const response = await handler(new Request("http://localhost/chain/events?client=ui"));
+
+    expect(calls).toEqual(["http://127.0.0.1:4001/chain/events?client=ui"]);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+    await expect(response.text()).resolves.toBe("event: sync-status\n\n");
+  });
+
   test("returns 502 writer_unavailable when forwarding fails", async () => {
     const fetchImpl = (async () => {
       throw new Error("ECONNREFUSED");

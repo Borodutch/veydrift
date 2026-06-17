@@ -19,16 +19,29 @@ installCrashDiagnostics();
 const port = Number.parseInt(process.env.PORT ?? "4000", 10);
 const idleTimeout = Number.parseInt(process.env.VEYDRIFT_HTTP_IDLE_TIMEOUT_SECONDS ?? "30", 10);
 
-// Bind this process to the shared port with SO_REUSEPORT so the kernel load-balances connections
-// across all workers — a slow request handled by one worker never blocks the others (VEY-KANEO-466).
-// The writer worker (index 0) also runs chain-sync ingestion + the on-chain committers; reader workers
-// serve from the shared WAL database and skip those background loops (see server.ts role gating).
+// Reader workers bind the shared public port with SO_REUSEPORT so the kernel load-balances user-facing
+// reads across them. The writer worker (index 0) runs chain-sync ingestion + the on-chain committers
+// and stays off the public socket so applyLog/poll work cannot stall normal API reads.
 //
-// `writerInternalPort` is set only when running as a pool (more than one worker). The writer also binds
-// a private loopback listener on that port; readers forward every mutating request there so the writer
-// remains the sole mutator of the SQLite index and the only holder of the in-memory indexer state.
+// `writerInternalPort` is set only when running as a pool (more than one worker). Readers forward every
+// mutating request and the SSE stream there so the writer remains the sole mutator of the SQLite index
+// and the only holder of the live chain-sync stream.
 function serveWorker(role: WorkerRole, index: number, writerInternalPort?: number): void {
   const handler = createRequestHandler({ role });
+
+  if (role === "writer" && writerInternalPort !== undefined) {
+    Bun.serve({
+      idleTimeout,
+      port: writerInternalPort,
+      hostname: "127.0.0.1",
+      fetch: handler
+    });
+    console.log(
+      `Veydrift backend worker ${index} (writer) listening privately on http://127.0.0.1:${writerInternalPort}; ` +
+        `public reads served by reader workers`
+    );
+    return;
+  }
 
   if (role === "reader" && writerInternalPort !== undefined) {
     Bun.serve({
@@ -50,21 +63,6 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
     reusePort: true,
     fetch: handler
   });
-
-  if (role === "writer" && writerInternalPort !== undefined) {
-    // Writer-only private listener (no reusePort, loopback) that readers forward mutating requests to.
-    Bun.serve({
-      idleTimeout,
-      port: writerInternalPort,
-      hostname: "127.0.0.1",
-      fetch: handler
-    });
-    console.log(
-      `Veydrift backend worker ${index} (writer) listening on http://localhost:${port} [reusePort]; ` +
-        `private write listener on http://127.0.0.1:${writerInternalPort}`
-    );
-    return;
-  }
 
   console.log(`Veydrift backend worker ${index} (${role}) listening on http://localhost:${port} [reusePort]`);
 }
