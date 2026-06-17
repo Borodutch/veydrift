@@ -239,6 +239,12 @@ contract VeydriftGameTest is Test {
     event FleetMissionRecalled(
         uint256 indexed missionId, address indexed owner, uint64 returnAt, uint128 recallCost
     );
+    event FleetMissionResolved(
+        uint256 indexed missionId,
+        address indexed resolver,
+        VeydriftGameStorage.FleetMissionType indexed missionType,
+        uint64 returnAt
+    );
     event FleetMissionReturnExposed(
         uint256 indexed missionId,
         address indexed owner,
@@ -6084,8 +6090,27 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             0
         );
-        (, uint64 harvestArrivalAt,,) = _fleetMission(harvestMissionId);
+        (, uint64 harvestArrivalAt, uint64 harvestReturnAt,) = _fleetMission(harvestMissionId);
         vm.warp(harvestArrivalAt);
+        vm.expectEmit(true, true, true, true, address(game));
+        emit FleetMissionReturnExposed(
+            harvestMissionId,
+            player,
+            VeydriftGameStorage.FleetMissionStatus.Returning,
+            originPlanetId,
+            targetPlanetId,
+            harvestReturnAt,
+            10_000,
+            10_000,
+            0
+        );
+        vm.expectEmit(true, true, true, true, address(game));
+        emit FleetMissionResolved(
+            harvestMissionId,
+            address(this),
+            VeydriftGameStorage.FleetMissionType.Harvest,
+            harvestReturnAt
+        );
         game.resolveFleetMission(harvestMissionId);
 
         (,,, VeydriftGameStorage.Resources memory harvestedCargo) = _fleetMission(harvestMissionId);

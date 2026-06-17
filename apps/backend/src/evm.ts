@@ -4001,7 +4001,9 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       mission.recallCost = decodeUintWord(wordAt(words, 1)).toString();
     } else if (topic === fleetMissionResolvedTopic) {
       mission.returnAt = decodeUintWord(wordAt(splitWords(log.data), 0)).toString();
-      mission.status = "Resolved";
+      if (mission.status !== "Returning" && mission.status !== "Recalled") {
+        mission.status = "Resolved";
+      }
     } else if (topic === fleetMissionReturnExposedTopic) {
       const words = splitWords(log.data);
       mission.owner = decodeAddressWord(topicAt(log.topics, 2));
