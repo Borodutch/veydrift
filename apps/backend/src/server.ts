@@ -1106,6 +1106,13 @@ function prewarmHotResponseCache(
 ): void {
   if (!enabled || !indexer) return;
 
+  try {
+    indexer.allActiveFleetMissions();
+    globalMissionArchiveRows(indexer);
+  } catch {
+    // Best-effort only. A cold/stale index should not make worker startup fail.
+  }
+
   const timer = setTimeout(() => {
     void (async () => {
       for (const path of hotResponseCachePaths(indexer)) {
