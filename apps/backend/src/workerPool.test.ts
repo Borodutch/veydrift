@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   createForwardingFetch,
+  DEFAULT_MAX_WORKER_COUNT,
   resolveWorkerAssignment,
   resolveWorkerCount,
   resolveWriterInternalPort,
@@ -12,8 +13,9 @@ import {
 } from "./workerPool";
 
 describe("resolveWorkerCount", () => {
-  test("uses the host CPU count when no override is set", () => {
-    expect(resolveWorkerCount({}, 8)).toBe(8);
+  test("uses the host CPU count up to the default memory-bounded cap when no override is set", () => {
+    expect(resolveWorkerCount({}, 2)).toBe(2);
+    expect(resolveWorkerCount({}, 8)).toBe(DEFAULT_MAX_WORKER_COUNT);
   });
 
   test("floors fractional CPU counts and never returns less than 1", () => {
@@ -22,17 +24,18 @@ describe("resolveWorkerCount", () => {
     expect(resolveWorkerCount({}, Number.NaN)).toBe(1);
   });
 
-  test("honors a positive integer override", () => {
+  test("honors a positive integer override even above the default cap", () => {
     expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "3" }, 16)).toBe(3);
     expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "1" }, 16)).toBe(1);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "12" }, 16)).toBe(12);
   });
 
-  test("ignores blank or invalid overrides and falls back to CPU count", () => {
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "" }, 6)).toBe(6);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "   " }, 6)).toBe(6);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "0" }, 6)).toBe(6);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "-2" }, 6)).toBe(6);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "abc" }, 6)).toBe(6);
+  test("ignores blank or invalid overrides and falls back to the capped default", () => {
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "" }, 6)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "   " }, 8)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "0" }, 8)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "-2" }, 8)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "abc" }, 8)).toBe(DEFAULT_MAX_WORKER_COUNT);
   });
 });
 
@@ -46,7 +49,7 @@ describe("roleForIndex", () => {
 
 describe("resolveWorkerAssignment", () => {
   test("a process without a role env is the supervisor sized to the pool", () => {
-    expect(resolveWorkerAssignment({}, 4)).toEqual({ kind: "supervisor", workerCount: 4 });
+    expect(resolveWorkerAssignment({}, 8)).toEqual({ kind: "supervisor", workerCount: DEFAULT_MAX_WORKER_COUNT });
     expect(resolveWorkerAssignment({ [WORKER_COUNT_ENV]: "2" }, 16)).toEqual({
       kind: "supervisor",
       workerCount: 2

@@ -1794,6 +1794,48 @@ describe("Veydrift backend", () => {
     expect(body).toMatchObject({ error: "indexed_read_not_ready", source: "contract-state-indexer" });
   });
 
+  test("logs healthy indexed misses as missing rows, not global readiness failures", async () => {
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const missingWallet = "0x9999999999999999999999999999999999999999" as Address;
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args);
+    };
+
+    try {
+      const response = await createRequestHandler({
+        config: configuredTestConfig,
+        chainReader: new MockChainReader(),
+        indexer
+      })(new Request(`http://localhost/wallet/${missingWallet}/shipyard`));
+      const body = await response.json();
+
+      expect(response.status).toBe(503);
+      expect(body).toMatchObject({
+        error: "indexed_read_not_ready",
+        reason: "missing_indexed_row",
+        lookup: { wallet: missingWallet },
+        source: "contract-state-indexer"
+      });
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.[0]).toBe("Frontend indexed read missing indexed row");
+    expect(warnings[0]?.[1]).toMatchObject({
+      surface: "shipyard",
+      reason: "missing_indexed_row",
+      lookup: { wallet: missingWallet },
+      indexer: {
+        indexedState: "healthy",
+        safeToServeIndexedState: true
+      }
+    });
+  });
+
   test("does not expose transient shipyard RPC errors on frontend read requests", async () => {
     const response = await createRequestHandler({
       config: configuredTestConfig,

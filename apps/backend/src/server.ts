@@ -360,7 +360,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         assertAddress(wallet);
         const indexed = indexedWalletOverviewWarmResponse(indexer, wallet, selectedPlanetId(url));
         if (indexed) return indexed;
-        return indexedReadNotReadyResponse("overview snapshot", indexer);
+        return indexedReadNotReadyResponse("overview snapshot", indexer, indexedReadLookup(url, wallet));
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -372,7 +372,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         assertAddress(wallet);
         const indexed = indexedWalletSettlementWarmResponse(indexer, wallet);
         if (indexed) return indexed;
-        return indexedReadNotReadyResponse("wallet settlement", indexer);
+        return indexedReadNotReadyResponse("wallet settlement", indexer, indexedReadLookup(url, wallet));
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -382,7 +382,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        return indexedSettlementFundingResponse(indexer, loaded.config);
+        return indexedSettlementFundingResponse(indexer, loaded.config, wallet);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -394,7 +394,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         assertAddress(wallet);
         const indexed = indexedWalletPlanetsWarmResponse(indexer, wallet);
         if (indexed) return indexed;
-        return indexedReadNotReadyResponse("wallet planets", indexer);
+        return indexedReadNotReadyResponse("wallet planets", indexer, indexedReadLookup(url, wallet));
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -433,7 +433,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname === "/missions") {
       try {
-        if (!indexer) return indexedReadNotReadyResponse("missions", indexer);
+        if (!indexer) return indexedReadNotReadyResponse("missions", indexer, { status: url.searchParams.get("status") ?? "active" });
         const snapshot = indexer.snapshot();
         const status = url.searchParams.get("status") ?? "active";
         if (status === "active") {
@@ -458,7 +458,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const missionId = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         parseMissionId(missionId);
-        if (!indexer) return indexedReadNotReadyResponse("mission", indexer);
+        if (!indexer) return indexedReadNotReadyResponse("mission", indexer, { missionId });
         const snapshot = indexer.snapshot();
         const mission = indexer.fleetMission(missionId);
         if (!mission) {
@@ -505,7 +505,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const missionId = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         parseMissionId(missionId);
-        if (!indexer) return indexedReadNotReadyResponse("battle report", indexer);
+        if (!indexer) return indexedReadNotReadyResponse("battle report", indexer, { missionId });
         const snapshot = indexer.snapshot();
         const report = indexer.battleReport(missionId);
         if (report) {
@@ -633,7 +633,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             }
           );
         }
-        return indexedReadNotReadyResponse("wallet highscore", indexer);
+        return indexedReadNotReadyResponse("wallet highscore", indexer, { wallet });
       } catch (error) {
         return highscoreFailureResponse(error);
       }
@@ -656,7 +656,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           planetsByOwner = leaderboard.planetsByOwner;
           entries = leaderboard.entries;
         } else {
-          return indexedReadNotReadyResponse("highscores", indexer);
+          return indexedReadNotReadyResponse("highscores", indexer, {
+            page: url.searchParams.get("page"),
+            pageSize: url.searchParams.get("pageSize")
+          });
         }
 
         const totalEntries = entries.length;
@@ -728,7 +731,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           headers: corsHeaders
         });
       }
-      return indexedReadNotReadyResponse("planet detail", indexer);
+      return indexedReadNotReadyResponse("planet detail", indexer, { planetId: planetId.toString() });
     }
 
     if (request.method === "GET" && url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) {
@@ -1218,13 +1221,21 @@ async function indexedWalletStateResponse<T extends object>(
   const wallet = walletAddressFromPath(url);
   const planetId = options.includeSelectedPlanet === false ? undefined : selectedPlanetId(url);
   const indexed = await indexedWarmResponse(indexer, wallet, planetId, surface, build);
-  return indexed ?? indexedReadNotReadyResponse(surface, indexer);
+  return indexed ?? indexedReadNotReadyResponse(surface, indexer, indexedReadLookup(url, wallet));
 }
 
 function walletAddressFromPath(url: URL): `0x${string}` {
   const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
   assertAddress(wallet);
   return wallet;
+}
+
+function indexedReadLookup(url: URL, wallet: `0x${string}`): IndexedReadLookupContext {
+  const planetId = selectedPlanetId(url);
+  return {
+    wallet,
+    ...(planetId !== undefined ? { selectedPlanetId: planetId.toString() } : {})
+  };
 }
 
 async function indexedWarmResponse<T extends object>(
@@ -2655,19 +2666,38 @@ function rankedHighscoreHomePlanet(
   return planets.find((candidate) => candidate.planetId === entry.homePlanetId) ?? null;
 }
 
-function indexedReadNotReadyResponse(surface: string, indexer: SettlementIndexer | undefined): Response {
+type IndexedReadLookupContext = Record<string, string | number | boolean | null | undefined>;
+
+function indexedReadNotReadyResponse(
+  surface: string,
+  indexer: SettlementIndexer | undefined,
+  lookup: IndexedReadLookupContext = {}
+): Response {
   const snapshot = indexer?.snapshot() ?? null;
-  console.warn("Frontend indexed read is not ready", {
-    surface,
-    indexer: snapshot,
-    source: indexedSource
-  });
+  const reason = snapshot?.safeToServeIndexedState === true
+    && (surface !== "alliance" || snapshot.safeToServeAllianceState === true)
+    ? "missing_indexed_row"
+    : "index_not_ready";
+  console.warn(
+    reason === "missing_indexed_row"
+      ? "Frontend indexed read missing indexed row"
+      : "Frontend indexed read is not ready",
+    {
+      surface,
+      reason,
+      lookup,
+      indexer: snapshot,
+      source: indexedSource
+    }
+  );
 
   return Response.json(
     {
       error: "indexed_read_not_ready",
       detail: `${surface} is not available from indexed contract state yet. Refresh shortly.`,
       indexer: snapshot,
+      reason,
+      lookup,
       retryable: true,
       source: indexedSource
     },
@@ -2680,14 +2710,15 @@ function indexedReadNotReadyResponse(surface: string, indexer: SettlementIndexer
 
 function indexedSettlementFundingResponse(
   indexer: SettlementIndexer | undefined,
-  config: BackendConfig
+  config: BackendConfig,
+  wallet?: `0x${string}`
 ): Response {
   // VEY-KANEO-497: frontend API reads must not trigger backend RPC, including the
   // first-planet funding helper. The wallet-specific native ETH balance is left
   // to the wallet/chain at transaction submission time; the start price is served
   // only when operators provide static metadata that matches the deployment.
   if (!hasWarmPlanetIndex(indexer)) {
-    return indexedReadNotReadyResponse("settlement funding", indexer);
+    return indexedReadNotReadyResponse("settlement funding", indexer, { wallet });
   }
 
   const resourceTokensConfigured = Boolean(
@@ -2712,7 +2743,7 @@ function indexedSettlementFundingResponse(
 
 function indexedAllianceResponse(wallet: `0x${string}`, indexer: SettlementIndexer | undefined): Response {
   if (!hasWarmAllianceIndex(indexer)) {
-    return indexedReadNotReadyResponse("alliance", indexer);
+    return indexedReadNotReadyResponse("alliance", indexer, { wallet });
   }
 
   const snapshot = indexer.snapshot();
@@ -2735,7 +2766,7 @@ function indexedAttackProtectionResponse(
   targetPlanetId: bigint
 ): Response {
   if (!hasWarmPlanetIndex(indexer)) {
-    return indexedReadNotReadyResponse("attack protection", indexer);
+    return indexedReadNotReadyResponse("attack protection", indexer, { wallet, targetPlanetId: targetPlanetId.toString() });
   }
 
   const target = indexer.planet(targetPlanetId.toString());
