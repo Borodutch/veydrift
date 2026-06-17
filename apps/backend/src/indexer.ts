@@ -300,6 +300,7 @@ type AllianceJoinRequestRow = {
 
 type QueueUpsertEvent = IndexedQueueStartedEvent & {
   backlog?: QueueState[];
+  canonicalSnapshot?: boolean;
 };
 
 export type IndexedRpcLog = RpcLog & {
@@ -347,6 +348,7 @@ export class SettlementIndexer {
     }
     | null = null;
   private attackLaunchSecondsCache = new Map<string, { generation: number; launchesByTarget: Map<string, number[]> }>();
+  private canonicalQueueSnapshotBlock: string | null = null;
 
   constructor(
     private readonly chainReader: Pick<
@@ -1617,10 +1619,11 @@ export class SettlementIndexer {
     const before = this.snapshot();
     const overlapFromBlock = nextBlockOrBase(before.latestIndexedBlock, this.fromBlock);
     const planetEvents = await this.chainReader.listCurrentPlanets();
-    await this.healCurrentCanonicalPlanets(
+    const latestBlock = this.chainReader.getBlockNumber ? (await this.chainReader.getBlockNumber()).toString() : null;
+    await this.withCanonicalQueueSnapshotBlock(latestBlock, () => this.healCurrentCanonicalPlanets(
       planetEvents,
       options.planetConcurrency ?? CANONICAL_READ_PLANET_CHUNK
-    );
+    ));
     const allianceDirectory = this.chainReader.listAllianceDirectoryState
       ? await this.chainReader.listAllianceDirectoryState()
       : [];
@@ -1643,7 +1646,6 @@ export class SettlementIndexer {
       await this.replaceCanonicalFleetMissions(fleetMissions);
     }
 
-    const latestBlock = this.chainReader.getBlockNumber ? (await this.chainReader.getBlockNumber()).toString() : null;
     if (latestBlock !== null) {
       await this.replayCurrentHealOverlapLogs(overlapFromBlock, BigInt(latestBlock));
     }
@@ -1831,7 +1833,10 @@ export class SettlementIndexer {
       for (const event of planetEvents) {
         this.upsertPlanet(event);
       }
-      this.applyCanonicalState(canonicalState);
+      const latestBlock = latestEventBlock([...settledPlanetEvents, ...debrisEvents, ...moonChanceEvents, ...allianceLogs]);
+      this.withCanonicalQueueSnapshotBlock(maxBlockLabel(this.metadata("latestIndexedBlock"), latestBlock), () => {
+        this.applyCanonicalState(canonicalState);
+      });
       this.replayEventDerivedQueueStateFromEventLogs(canonicalState);
       for (const event of debrisEvents) {
         this.upsertDebris(event);
@@ -1851,7 +1856,6 @@ export class SettlementIndexer {
       this.applyAllianceJoinRequestSnapshot(allianceJoinRequests);
       this.applyAllianceInviteSnapshot(allianceInvites);
       this.applyAllianceDiplomacySnapshot(allianceDiplomacy);
-      const latestBlock = latestEventBlock([...settledPlanetEvents, ...debrisEvents, ...moonChanceEvents, ...allianceLogs]);
       this.recordSuccessfulAllianceReconciliation();
       this.touch();
       this.recordSuccessfulReconciliation(latestBlock);
@@ -3045,7 +3049,6 @@ export class SettlementIndexer {
     this.upsertQueue({
       eventName: kind === "building" ? "BuildingStarted" : kind === "defense" ? "DefenseQueued" : kind === "ship" ? "ShipQueued" : "ResearchQueued",
       transactionHash: "0x",
-      blockNumber: this.metadata("lastReconciledBlock") ?? "0",
       queueKind: kind,
       ...(planetId ? { planetId } : {}),
       ...(owner ? { owner } : {}),
@@ -3055,8 +3058,29 @@ export class SettlementIndexer {
       readyAt: queue.readyAt ?? "0",
       ...(queue.startedAt ? { startedAt: queue.startedAt } : {}),
       cost: queue.cost,
-      ...(queue.backlog?.length ? { backlog: queue.backlog } : {})
+      ...(queue.backlog?.length ? { backlog: queue.backlog } : {}),
+      canonicalSnapshot: true,
+      blockNumber: this.canonicalQueueSnapshotBlock ?? this.metadata("lastReconciledBlock") ?? this.metadata("latestIndexedBlock") ?? "0"
     });
+  }
+
+  private withCanonicalQueueSnapshotBlock<T>(blockNumber: string | null, write: () => T): T {
+    const previous = this.canonicalQueueSnapshotBlock;
+    this.canonicalQueueSnapshotBlock = blockNumber ? blockNumberToDecimal(blockNumber) : null;
+    try {
+      const result = write();
+      const maybePromise = result as Promise<T> | undefined;
+      if (maybePromise && typeof maybePromise.finally === "function") {
+        return maybePromise.finally(() => {
+          this.canonicalQueueSnapshotBlock = previous;
+        }) as T;
+      }
+      this.canonicalQueueSnapshotBlock = previous;
+      return result;
+    } catch (error) {
+      this.canonicalQueueSnapshotBlock = previous;
+      throw error;
+    }
   }
 
   private upsertPlanet(event: SettledPlanetEvent): void {
@@ -3384,6 +3408,9 @@ export class SettlementIndexer {
     // double-reduced while the build is queued (VEY-318).
     const startedAt = event.startedAt ?? options.settledAt;
     const startedEvent = startedAt ? { ...event, startedAt } : event;
+    if (this.shouldIgnoreStaleCanonicalProductionQueueEvent(startedEvent)) {
+      return;
+    }
     this.upsertQueue(startedEvent);
     if (options.settleResources !== false) {
       if (event.planetId) {
@@ -3704,6 +3731,10 @@ export class SettlementIndexer {
   }
 
   private upsertQueue(event: QueueUpsertEvent): void {
+    if (!event.canonicalSnapshot && this.shouldIgnoreStaleCanonicalProductionQueueEvent(event)) {
+      return;
+    }
+
     if (this.appendProductionBacklogQueue(event)) {
       return;
     }
@@ -3822,13 +3853,38 @@ export class SettlementIndexer {
 
     const backlog = row.backlog_json ? parseEvent<QueueState[]>(row.backlog_json) : [];
     const nextBacklog = Array.isArray(backlog) ? backlog : [];
-    nextBacklog.push(queueStateFromEvent(event));
+    const nextEntry = queueStateFromEvent(event);
+    if (!nextBacklog.some((entry) => queueStatesMatch(entry, nextEntry))) {
+      nextBacklog.push(nextEntry);
+    }
     this.db.query(`
       UPDATE contract_production_queues
       SET backlog_json = ?
       WHERE queue_key = ?
     `).run(JSON.stringify(nextBacklog), queueKey(event));
     return true;
+  }
+
+  private shouldIgnoreStaleCanonicalProductionQueueEvent(event: QueueUpsertEvent): boolean {
+    if ((event.queueKind !== "defense" && event.queueKind !== "ship") || !event.planetId) {
+      return false;
+    }
+
+    const row = this.db.query(`
+      SELECT event_json
+      FROM contract_production_queues
+      WHERE queue_key = ?
+    `).get(queueKey(event)) as Pick<EventRow, "event_json"> | null;
+    if (!row) return false;
+
+    const existing = parseEvent<QueueUpsertEvent>(row.event_json);
+    if (!existing.canonicalSnapshot) return false;
+
+    try {
+      return BigInt(blockNumberToDecimal(event.blockNumber)) <= BigInt(blockNumberToDecimal(existing.blockNumber));
+    } catch {
+      return false;
+    }
   }
 
   private existingBacklogJsonForSameItem(event: QueueUpsertEvent): string | null {
@@ -5364,6 +5420,18 @@ function queueStateFromEvent(event: QueueUpsertEvent): QueueState {
   return queue;
 }
 
+function queueStatesMatch(left: QueueState, right: QueueState): boolean {
+  return left.kind === right.kind
+    && left.itemId === right.itemId
+    && left.targetLevel === right.targetLevel
+    && left.quantity === right.quantity
+    && left.readyAt === right.readyAt
+    && (left.startedAt ?? null) === (right.startedAt ?? null)
+    && left.cost.metal === right.cost.metal
+    && left.cost.crystal === right.cost.crystal
+    && left.cost.deuterium === right.cost.deuterium;
+}
+
 function subtractResource(left: string, right: string): string {
   const result = BigInt(left) - BigInt(right);
   return result > 0n ? result.toString() : "0";
@@ -5461,6 +5529,18 @@ function blockNumberToDecimal(blockNumber: string): string {
     return decodeIntegerString(blockNumber).toString();
   } catch {
     return blockNumber;
+  }
+}
+
+function maxBlockLabel(left: string | null, right: string | null): string | null {
+  if (left === null) return right;
+  if (right === null) return left;
+  try {
+    return BigInt(blockNumberToDecimal(left)) >= BigInt(blockNumberToDecimal(right))
+      ? blockNumberToDecimal(left)
+      : blockNumberToDecimal(right);
+  } catch {
+    return right;
   }
 }
 
