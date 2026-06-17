@@ -9,6 +9,10 @@ import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionMod
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
+import {
+    IVeydriftEffectiveStateGame,
+    VeydriftEffectiveStateLens
+} from "../src/VeydriftEffectiveStateLens.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
@@ -155,6 +159,7 @@ contract VeydriftGameTest is Test {
     address internal player = address(0xB0B);
     address internal fulfiller = address(0xF111);
     VeydriftGame internal game;
+    VeydriftEffectiveStateLens internal effectiveStateLens;
     VeydriftAllianceSystem internal allianceSystem;
     RandomnessEngine internal randomness;
     VeydriftMoonSystem internal moons;
@@ -258,6 +263,7 @@ contract VeydriftGameTest is Test {
 
     function setUp() public {
         game = _newGame(admin);
+        effectiveStateLens = new VeydriftEffectiveStateLens();
         allianceSystem = new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
         randomness = new RandomnessEngine(admin, fulfiller);
         vm.prank(admin);
@@ -1118,6 +1124,100 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         game.settlePlanet(originPlanetId);
         assertEq(game.planet(originPlanetId).lastSettledAt, arrival1);
+    }
+
+    function testEffectiveStateProjectsMaturedQueuesWithoutMutation() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.MetalMine, 5);
+        _setBuildingLevel(planetId, Building.SolarPlant, 20);
+        _setBuildingLevel(planetId, Building.Shipyard, 4);
+        _setBuildingLevel(planetId, Building.ResearchLab, 2);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setTechnologyLevel(player, Technology.Energy, 2);
+        _setResources(planetId, 50_000_000, 50_000_000, 50_000_000);
+
+        vm.startPrank(player);
+        game.startShipProduction(planetId, Ship.SmallCargo, 2);
+        game.startDefenseProduction(planetId, Defense.RocketLauncher, 3);
+        game.startResearch(planetId, Technology.Laser);
+        game.startBuildingUpgrade(planetId, Building.MetalMine);
+        vm.stopPrank();
+
+        uint64 maxReady = game.shipQueue(planetId).readyAt;
+        if (game.defenseQueue(planetId).readyAt > maxReady) {
+            maxReady = game.defenseQueue(planetId).readyAt;
+        }
+        if (game.researchQueue(player).readyAt > maxReady) {
+            maxReady = game.researchQueue(player).readyAt;
+        }
+        if (game.activeBuildingConstruction(planetId).readyAt > maxReady) {
+            maxReady = game.activeBuildingConstruction(planetId).readyAt;
+        }
+        vm.warp(uint256(maxReady) + 1);
+
+        VeydriftGameStorage.EffectivePlanetState memory state =
+            effectiveStateLens.effectivePlanetState(
+                IVeydriftEffectiveStateGame(address(game)), planetId
+            );
+        assertEq(state.asOf, uint64(block.timestamp));
+        assertEq(state.planet.owner, player);
+        assertEq(state.shipCounts[uint8(Ship.SmallCargo)], 2);
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 0);
+        assertEq(state.defenseCounts[uint8(Defense.RocketLauncher)], 3);
+        assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 0);
+        assertEq(state.technologyLevels[uint8(Technology.Laser)], 1);
+        assertEq(uint256(game.technologyLevel(player, Technology.Laser)), 0);
+        assertEq(state.buildingLevels[uint8(Building.MetalMine)], 6);
+        assertEq(uint256(game.buildingLevel(planetId, Building.MetalMine)), 5);
+
+        // Effective reads do not materialize storage.
+        assertTrue(game.shipQueue(planetId).active);
+        assertTrue(game.defenseQueue(planetId).active);
+        assertTrue(game.researchQueue(player).active);
+        assertTrue(game.activeBuildingConstruction(planetId).active);
+    }
+
+    function testEffectiveProductionAndStorageUseMaturedStateWithoutMutation() public {
+        vm.prank(player);
+        uint256 minePlanetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(minePlanetId, Building.MetalMine, 5);
+        _setBuildingLevel(minePlanetId, Building.SolarPlant, 20);
+        _setResources(minePlanetId, 50_000_000, 50_000_000, 50_000_000);
+
+        vm.prank(player);
+        game.startBuildingUpgrade(minePlanetId, Building.MetalMine);
+        vm.warp(uint256(game.activeBuildingConstruction(minePlanetId).readyAt) + 1);
+
+        (uint256 rawMetalPerHour,,) = game.productionPerHour(minePlanetId);
+        VeydriftGameStorage.EffectivePlanetState memory mineState =
+            effectiveStateLens.effectivePlanetState(
+                IVeydriftEffectiveStateGame(address(game)), minePlanetId
+            );
+        assertGt(mineState.metalPerHour, rawMetalPerHour);
+
+        (uint256 rawProducedEnergy,,) = game.energyBalance(minePlanetId);
+        assertEq(mineState.producedEnergy, rawProducedEnergy);
+        assertEq(uint256(game.buildingLevel(minePlanetId, Building.MetalMine)), 5);
+
+        address storagePlayer = address(0x5A7);
+        vm.deal(storagePlayer, 1 ether);
+        vm.prank(storagePlayer);
+        uint256 storagePlanetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(storagePlanetId, Building.MetalStorage, 1);
+        _setResources(storagePlanetId, 50_000_000, 50_000_000, 50_000_000);
+
+        vm.prank(storagePlayer);
+        game.startBuildingUpgrade(storagePlanetId, Building.MetalStorage);
+        vm.warp(uint256(game.activeBuildingConstruction(storagePlanetId).readyAt) + 1);
+
+        (uint128 rawMetalCap,,) = game.storageCaps(storagePlanetId);
+        VeydriftGameStorage.EffectivePlanetState memory state =
+            effectiveStateLens.effectivePlanetState(
+                IVeydriftEffectiveStateGame(address(game)), storagePlanetId
+            );
+        assertGt(state.storageCaps.metal, rawMetalCap);
+        assertEq(uint256(game.buildingLevel(storagePlanetId, Building.MetalStorage)), 1);
     }
 
     /// @notice Direct regression for the reported VEY-417 freeze. A Colonize mission is tracked

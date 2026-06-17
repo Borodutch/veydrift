@@ -46,6 +46,54 @@ const attackAction: Extract<GalaxyAction, { enabled: true }> = {
   },
 };
 
+const deployAction: Extract<GalaxyAction, { enabled: true }> = {
+  enabled: true,
+  kind: "deploy",
+  label: "Deploy",
+  mode: "mission",
+  mission: "deploy",
+  ships: {
+    smallCargo: 1,
+    lightFighter: 0,
+    recycler: 0,
+    colonyShip: 0,
+    largeCargo: 0,
+    heavyFighter: 0,
+    cruiser: 0,
+    battleship: 0,
+    bomber: 0,
+    destroyer: 0,
+    deathstar: 0,
+    battlecruiser: 0,
+    reaper: 0,
+    pathfinder: 0,
+  },
+};
+
+const harvestAction: Extract<GalaxyAction, { enabled: true }> = {
+  enabled: true,
+  kind: "harvest",
+  label: "Harvest",
+  mode: "mission",
+  mission: "harvest",
+  ships: {
+    smallCargo: 0,
+    lightFighter: 0,
+    recycler: 1,
+    colonyShip: 0,
+    largeCargo: 0,
+    heavyFighter: 0,
+    cruiser: 0,
+    battleship: 0,
+    bomber: 0,
+    destroyer: 0,
+    deathstar: 0,
+    battlecruiser: 0,
+    reaper: 0,
+    pathfinder: 0,
+  },
+};
+
 const missileAction: Extract<GalaxyAction, { enabled: true }> = {
   enabled: true,
   kind: "missileAttack",
@@ -450,13 +498,16 @@ describe("mission creation", () => {
     expect(text).toContain("Resources now");
   });
 
-  test("hides destination intel and return timing only for colonize mission screens", () => {
+  test("hides destination intel for colonize and deploy mission screens", () => {
     expect(shouldShowDestinationIntel(colonizeAction)).toBe(false);
     expect(shouldShowReturnTiming(colonizeAction, false)).toBe(false);
+    expect(shouldShowDestinationIntel(deployAction)).toBe(false);
+    expect(shouldShowReturnTiming(deployAction, false)).toBe(true);
 
     expect(shouldShowDestinationIntel(attackAction)).toBe(true);
     expect(shouldShowReturnTiming(attackAction, false)).toBe(true);
     expect(shouldShowReturnTiming(attackAction, true)).toBe(false);
+    expect(shouldShowDestinationIntel(harvestAction)).toBe(true);
     expect(shouldShowDestinationIntel(defenseHoldAction)).toBe(true);
   });
 
