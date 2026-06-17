@@ -140,12 +140,12 @@ export function createForwardingFetch(
     }
 
     // Re-emit the writer's response (status, headers including CORS, body) to the original client.
-    // content-length / content-encoding are dropped so the runtime recomputes them for the re-sent body.
+    // Keep the body as a stream so long-lived SSE reads (/chain/events) flush immediately instead of
+    // waiting for the writer response to finish.
     const responseHeaders = new Headers(upstream.headers);
     responseHeaders.delete("content-length");
     responseHeaders.delete("content-encoding");
-    const responseBody = await upstream.arrayBuffer();
-    return new Response(responseBody.byteLength > 0 ? responseBody : null, {
+    return new Response(upstream.body, {
       status: upstream.status,
       statusText: upstream.statusText,
       headers: responseHeaders
