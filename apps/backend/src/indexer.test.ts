@@ -2977,6 +2977,46 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("deduplicates identical defense queue backlog events", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    indexer.applyLog({
+      blockNumber: "0xa0",
+      transactionHash: "0xqueue-light-laser",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n, 1770001000n, 100n, 50n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0xa1",
+      transactionHash: "0xqueue-rocket-backlog",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(3n, 1770001600n, 200n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0xa2",
+      transactionHash: "0xqueue-rocket-backlog-replayed",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(3n, 1770001600n, 200n, 0n, 0n)
+    });
+
+    expect(indexer.playerQueues(player, planet.planetId).defense?.backlog).toEqual([
+      expect.objectContaining({
+        kind: "defense",
+        itemId: 0,
+        quantity: 3,
+        readyAt: "1770001600"
+      })
+    ]);
+  });
+
   test("appends different ship queue events to the indexed backlog", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
@@ -4606,6 +4646,84 @@ describe("SettlementIndexer", () => {
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(8);
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(6);
     expect(indexer.shipRows("99").find((ship) => ship.id === 2)?.count).toBe(3);
+  });
+
+  test("current-state seed ignores older replayed defense backlog events behind canonical counts", async () => {
+    const rawState: CanonicalPlanetChainState = {
+      planetId: planet.planetId,
+      resources: planet.resources,
+      buildings: deriveBuildingRows(() => 0),
+      defenses: deriveDefenseRows((id) => {
+        if (id === 0) return 9;
+        if (id === 1) return 12;
+        return 0;
+      }),
+      ships: deriveShipRows(() => 0),
+      queues: {
+        building: null,
+        defense: {
+          active: true,
+          kind: "defense",
+          itemId: 2,
+          quantity: 2,
+          readyAt: "1767225500",
+          cost: { metal: "12000", crystal: "4000", deuterium: "0" }
+        },
+        ship: null
+      }
+    };
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return [planet]; },
+      async getCanonicalPlanetState(planetId) {
+        expect(planetId).toBe(BigInt(planet.planetId));
+        return rawState;
+      },
+      async getBlockNumber() { return 0x123n; },
+      async listContractLogs() {
+        return [
+          {
+            blockNumber: "0x121",
+            transactionHash: "0xold-rocket-backlog",
+            logIndex: "0x0",
+            topics: [defenseQueuedTopic, topic(7n), topic(0n)],
+            data: abiWords(668n, 1767225400n, 1n, 0n, 0n)
+          },
+          {
+            blockNumber: "0x122",
+            transactionHash: "0xold-light-laser-backlog",
+            logIndex: "0x0",
+            topics: [defenseQueuedTopic, topic(7n), topic(1n)],
+            data: abiWords(2880n, 1767225450n, 1n, 0n, 0n)
+          }
+        ];
+      },
+      async listDebrisFieldEvents() { throw new Error("event backfill should not run"); },
+      async listMoonChanceReportEvents() { throw new Error("event backfill should not run"); },
+      async listSettledPlanetEvents() { throw new Error("settled event scan should not run"); },
+      async getInfrastructureState() { throw new Error("high-level infrastructure reader should not run"); },
+      async getShipyardState() { throw new Error("high-level shipyard reader should not run"); },
+      async getDefenseState() { throw new Error("high-level defense reader should not run"); },
+      async getPlayerQueues() { throw new Error("high-level queue reader should not run"); }
+    }, 100n);
+
+    await expect(indexer.seedCurrentCanonicalState({ planetConcurrency: 25 })).resolves.toMatchObject({
+      indexedPlanets: 1,
+      lastReconciledBlock: "291",
+      lastReconciliationError: null
+    });
+
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(9);
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)?.count).toBe(12);
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(2);
+    expect(indexer.playerQueues(player, planet.planetId).defense).toBeNull();
+
+    await expect(indexer.seedCurrentCanonicalState({ planetConcurrency: 25 })).resolves.toMatchObject({
+      indexedPlanets: 1,
+      lastReconciledBlock: "291",
+      lastReconciliationError: null
+    });
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(9);
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)?.count).toBe(12);
   });
 
   test("newer fleet mission events win over seeded canonical mission rows", async () => {
