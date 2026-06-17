@@ -2014,6 +2014,14 @@ export class SettlementIndexer {
         ON indexed_event_logs (transaction_hash);
       CREATE INDEX IF NOT EXISTS indexed_event_logs_transaction_lower_idx
         ON indexed_event_logs (lower(transaction_hash));
+      CREATE TABLE IF NOT EXISTS indexed_mission_event_logs (
+        event_id TEXT PRIMARY KEY,
+        event_kind TEXT NOT NULL,
+        block_number TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS indexed_mission_event_logs_kind_block_idx
+        ON indexed_mission_event_logs (event_kind, block_number);
       CREATE TABLE IF NOT EXISTS indexed_planet_queues (
         queue_key TEXT PRIMARY KEY,
         kind TEXT NOT NULL,
@@ -2310,6 +2318,7 @@ export class SettlementIndexer {
     `);
     this.ensureColumn("contract_production_queues", "backlog_json", "TEXT");
     this.ensureColumn("contract_planet_resources", "log_index", "TEXT NOT NULL DEFAULT '0x0'");
+    this.backfillMissionEventLogs();
     if (runStartupBackfill) {
       this.backfillCanonicalTables();
     }
@@ -2398,6 +2407,38 @@ export class SettlementIndexer {
 
     this.replayMaterializedStateFromEventLogs();
     this.applyLegacyUnitMutationsFromEventLogs();
+  }
+
+  private backfillMissionEventLogs(): void {
+    const existing = this.count("indexed_mission_event_logs");
+    if (existing > 0) return;
+
+    const rows = this.db.query(`
+      SELECT event_id, event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+    `).all() as Array<EventRow & { event_id: string }>;
+    if (rows.length === 0) return;
+
+    const insert = this.db.query(`
+      INSERT OR IGNORE INTO indexed_mission_event_logs (event_id, event_kind, block_number, event_json)
+      VALUES (?, ?, ?, ?)
+    `);
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const log = parseEvent<IndexedRpcLog>(row.event_json);
+        const eventKind = this.missionEventKind(log);
+        if (!eventKind) continue;
+        insert.run(row.event_id, eventKind, blockNumberToDecimal(log.blockNumber), row.event_json);
+      }
+    })();
+  }
+
+  private missionEventKind(log: IndexedRpcLog): "fleet" | "battle" | "randomness" | null {
+    if (isFleetMissionLog(log)) return "fleet";
+    if (isBattleReportLog(log)) return "battle";
+    if (isRandomnessFulfilledLog(log)) return "randomness";
+    return null;
   }
 
   private replayMaterializedStateFromEventLogs(): void {
@@ -4638,7 +4679,20 @@ export class SettlementIndexer {
       JSON.stringify(log),
       new Date().toISOString()
     );
+    if (result.changes > 0) {
+      this.recordMissionEventLog(eventId, log);
+    }
     return result.changes > 0;
+  }
+
+  private recordMissionEventLog(eventId: string, log: IndexedRpcLog): void {
+    if (log.removed) return;
+    const eventKind = this.missionEventKind(log);
+    if (!eventKind) return;
+    this.db.query(`
+      INSERT OR REPLACE INTO indexed_mission_event_logs (event_id, event_kind, block_number, event_json)
+      VALUES (?, ?, ?, ?)
+    `).run(eventId, eventKind, blockNumberToDecimal(log.blockNumber), JSON.stringify(log));
   }
 
   private recordLogIfMissing(log: IndexedRpcLog): void {
@@ -4833,10 +4887,11 @@ export class SettlementIndexer {
 
     const rows = this.db.query(`
       SELECT event_json
-      FROM indexed_event_logs
-      WHERE removed = 0
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'fleet'
+      ORDER BY CAST(block_number AS INTEGER) ASC
     `).all() as EventRow[];
-    const logs = sortedEventRows(rows).filter(isFleetMissionLog);
+    const logs = sortedEventRows(rows);
     // VEY-KANEO-479: decode leaves `needsResolution` at its default; compute it here so an arrived
     // Attack only reads "Ready to resolve" once its battle randomness is fulfilled (gated on the
     // ingested RandomnessFulfilled logs). Harvest and the other types stay on the plain arrival check.
@@ -4954,14 +5009,13 @@ export class SettlementIndexer {
   private fulfilledRandomnessRequestIds(): ReadonlySet<string> {
     const rows = this.db.query(`
       SELECT event_json
-      FROM indexed_event_logs
-      WHERE removed = 0
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'randomness'
+      ORDER BY CAST(block_number AS INTEGER) ASC
     `).all() as EventRow[];
     const fulfilled = new Set<string>();
     for (const log of sortedEventRows(rows)) {
-      if (isRandomnessFulfilledLog(log)) {
-        fulfilled.add(decodeRandomnessFulfilledRequestId(log));
-      }
+      fulfilled.add(decodeRandomnessFulfilledRequestId(log));
     }
     return fulfilled;
   }
@@ -4987,8 +5041,9 @@ export class SettlementIndexer {
 
     const rows = this.db.query(`
       SELECT event_json
-      FROM indexed_event_logs
-      WHERE removed = 0
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'fleet'
+      ORDER BY CAST(block_number AS INTEGER) ASC
     `).all() as EventRow[];
     const byTarget = new Map<string, number[]>();
     for (const log of sortedEventRows(rows)) {
@@ -5023,10 +5078,11 @@ export class SettlementIndexer {
 
     const rows = this.db.query(`
       SELECT event_json
-      FROM indexed_event_logs
-      WHERE removed = 0
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'battle'
+      ORDER BY CAST(block_number AS INTEGER) ASC
     `).all() as EventRow[];
-    const logs = sortedEventRows(rows).filter(isBattleReportLog);
+    const logs = sortedEventRows(rows);
     // Enrich each report with its ACS attack group participants + per-participant loot, joining the
     // decoded battle reports against the fleet-mission read model (which carries joinedAttackMissionIds
     // and each joiner's resulting return-leg cargo). Solo attacks come back with a single participant.
@@ -5229,6 +5285,7 @@ export class SettlementIndexer {
   private count(table:
     | "indexed_debris_fields"
     | "indexed_event_logs"
+    | "indexed_mission_event_logs"
     | "indexed_moon_chance_reports"
     | "indexed_moons"
     | "indexed_planets"
