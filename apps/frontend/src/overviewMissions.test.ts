@@ -103,7 +103,7 @@ describe("Overview fleets summary", () => {
     expect(text).toContain("soonest in 3m");
   });
 
-  test("caps the visible list and offers a Mission Control overflow link", () => {
+  test("shows all active fleet rows without a Mission Control overflow truncation", () => {
     const now = Date.parse("2026-06-07T22:00:00.000Z");
     const outgoing: FleetMissionSummary[] = Array.from({ length: 6 }, (_unused, index) =>
       mission({
@@ -119,15 +119,18 @@ describe("Overview fleets summary", () => {
     );
     const summary = summarizeFleets(visibility({ outgoing }), now);
     expect(summary.activeCount).toBe(6);
-    expect(summary.lines.length).toBe(4);
-    expect(summary.hiddenCount).toBe(2);
+    expect(summary.lines.length).toBe(6);
 
     const text = collectText(FleetsSummary({
       fleetVisibility: visibility({ outgoing }),
       now,
       onOpenMissionControl: () => undefined,
     })).join(" ");
-    expect(text).toContain("+2 more — open Mission Control");
+    expect(text).toContain("Transport → T0 [1:1:0] · arrives in 1m");
+    expect(text).toContain("Transport → T5 [1:1:5] · arrives in 6m");
+    expect(text).toContain("Open Mission Control");
+    expect(text).not.toContain("+2 more");
+    expect(text).not.toContain("open Mission Control");
   });
 
   test("does not render the redundant active-count header pill", () => {
