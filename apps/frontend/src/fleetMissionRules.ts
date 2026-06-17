@@ -175,13 +175,21 @@ export function fleetMissionFuelCost(
   const normalizedDistance = Math.max(0, Math.trunc(distance));
   const normalizedDrives = normalizeDriveLevels(drives);
   const speed = normalizeMissionSpeedPercent(speedPercent);
-  const speedMultiplier = speed + FULL_SPEED_PERCENT;
+  const slowestSpeed = fleetMissionSlowestSpeed(ships, normalizedDrives);
+  if (slowestSpeed <= 0) return 0;
   const consumption = missionShipKeys.reduce((total, key) => {
     const quantity = Math.max(0, Math.trunc(ships?.[key] ?? 0));
-    return total + quantity * shipFuelConsumption(key, normalizedDrives);
+    if (quantity === 0) return total;
+    const shipFuel = shipFuelConsumption(key, normalizedDrives);
+    if (shipFuel === 0) return total;
+    const shipSpeed = shipStats[key].speed(normalizedDrives);
+    if (shipSpeed <= 0) return total;
+    const effectiveSpeed = speed * Math.sqrt(slowestSpeed / shipSpeed);
+    const speedMultiplier = 1 + effectiveSpeed / FULL_SPEED_PERCENT;
+    return total + quantity * shipFuel * normalizedDistance * speedMultiplier * speedMultiplier;
   }, 0);
-  const denominator = 35_000 * FULL_SPEED_PERCENT * FULL_SPEED_PERCENT;
-  return 1 + Math.floor(((consumption * normalizedDistance * speedMultiplier * speedMultiplier) + Math.floor(denominator / 2)) / denominator);
+  if (consumption <= 0) return 0;
+  return 1 + Math.floor((consumption / 35_000) + 0.5);
 }
 
 export function fleetMissionCargoCapacity(ships: Partial<MissionShips> | undefined): number {

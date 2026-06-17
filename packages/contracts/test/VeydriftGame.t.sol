@@ -4050,8 +4050,8 @@ contract VeydriftGameTest is Test {
 
         uint256 distance = _planetDistanceForTest(originPlanetId, targetPlanetId);
         uint256 expectedTravelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(distance, 5_000);
-        uint128 expectedFuelCost =
-            uint128(VeydriftAntiRaidPrimitives.missionFuelCost(130, distance));
+        uint128 expectedFuelCost = uint128(_expectedOgameFuelCost(ships, distance, 100, 5_000));
+        assertLt(expectedFuelCost, VeydriftAntiRaidPrimitives.missionFuelCost(130, distance));
         VeydriftGameStorage.Resources memory cargo =
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 11});
 
@@ -7218,6 +7218,55 @@ contract VeydriftGameTest is Test {
             ? uint256(origin.position - destination.position)
             : uint256(destination.position - origin.position);
         if (positionDistance != 0) return 1_000 + positionDistance * 5;
+        return 0;
+    }
+
+    function _expectedOgameFuelCost(
+        VeydriftGameStorage.MissionShips memory ships,
+        uint256 distance,
+        uint16 speedPercent,
+        uint256 slowestSpeed
+    ) internal pure returns (uint256) {
+        uint256 numerator;
+        bool hasFuel;
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
+            Ship ship = Ship(i);
+            uint32 quantity = _missionShipQuantity(ships, ship);
+            if (quantity != 0) {
+                (, uint256 fuel, uint256 speed) = VeydriftCatalog.shipMovementStats(ship, 0, 0, 0);
+                if (fuel != 0) {
+                    hasFuel = true;
+                    numerator += VeydriftAntiRaidPrimitives.ogameFuelNumerator(
+                        fuel, quantity, distance, speed, slowestSpeed, speedPercent
+                    );
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        return VeydriftAntiRaidPrimitives.ogameFuelCostFromNumerator(numerator, hasFuel);
+    }
+
+    function _missionShipQuantity(VeydriftGameStorage.MissionShips memory ships, Ship ship)
+        internal
+        pure
+        returns (uint32)
+    {
+        if (ship == Ship.SmallCargo) return ships.smallCargo;
+        if (ship == Ship.LightFighter) return ships.lightFighter;
+        if (ship == Ship.Recycler) return ships.recycler;
+        if (ship == Ship.ColonyShip) return ships.colonyShip;
+        if (ship == Ship.LargeCargo) return ships.largeCargo;
+        if (ship == Ship.HeavyFighter) return ships.heavyFighter;
+        if (ship == Ship.Cruiser) return ships.cruiser;
+        if (ship == Ship.Battleship) return ships.battleship;
+        if (ship == Ship.Bomber) return ships.bomber;
+        if (ship == Ship.Destroyer) return ships.destroyer;
+        if (ship == Ship.Deathstar) return ships.deathstar;
+        if (ship == Ship.Battlecruiser) return ships.battlecruiser;
+        if (ship == Ship.Reaper) return ships.reaper;
+        if (ship == Ship.Pathfinder) return ships.pathfinder;
         return 0;
     }
 
