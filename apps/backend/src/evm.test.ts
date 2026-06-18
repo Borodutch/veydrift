@@ -83,12 +83,16 @@ describe("HTTP JSON-RPC transport", () => {
 
       await expect(Promise.all([first, second])).resolves.toEqual(["0x1234", "0x1234"]);
       expect(fetchCalls).toBe(1);
-      expect(transport.snapshot()).toEqual({
+      expect(transport.snapshot()).toMatchObject({
+        activeRpcUrl: "https://rpc.example",
         batchRequests: 0,
         callsByMethod: {
           eth_call: 2
         },
+        failoverCount: 0,
         httpRequests: 1,
+        lastFailoverReason: null,
+        rpcUrls: ["https://rpc.example"],
         timeouts: 0
       });
     } finally {
@@ -119,12 +123,16 @@ describe("HTTP JSON-RPC transport", () => {
 
       await expect(transport.requestBatch<string>([request, request])).resolves.toEqual(["0xabcd", "0xabcd"]);
       expect(batchSize).toBe(1);
-      expect(transport.snapshot()).toEqual({
+      expect(transport.snapshot()).toMatchObject({
+        activeRpcUrl: "https://rpc.example",
         batchRequests: 1,
         callsByMethod: {
           eth_call: 2
         },
+        failoverCount: 0,
         httpRequests: 1,
+        lastFailoverReason: null,
+        rpcUrls: ["https://rpc.example"],
         timeouts: 0
       });
     } finally {
@@ -151,6 +159,43 @@ describe("HTTP JSON-RPC transport", () => {
       await expect(transport.request<string>("eth_call", [{ to: "0x0000000000000000000000000000000000000001", data: "0x181c1bc4" }, "latest"]))
         .resolves.toBe("0x1234");
       expect(attempts).toBe(2);
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
+  test("fails over to a fallback RPC after retryable primary failures", async () => {
+    const previousFetch = globalThis.fetch;
+    const seenUrls: string[] = [];
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      seenUrls.push(url);
+      if (url === "https://primary.example/rpc") {
+        return new Response("overloaded", { status: 503 });
+      }
+      return Response.json({ jsonrpc: "2.0", id: 1, result: "0x1234" });
+    }) as unknown as typeof fetch;
+
+    try {
+      const transport = new HttpJsonRpcTransport(
+        ["https://primary.example/rpc", "https://fallback.example/rpc"],
+        { cacheTtlMs: 0, minRequestIntervalMs: 0 }
+      );
+
+      await expect(transport.request<string>("eth_blockNumber", [])).resolves.toBe("0x1234");
+      expect(seenUrls).toEqual([
+        "https://primary.example/rpc",
+        "https://primary.example/rpc",
+        "https://primary.example/rpc",
+        "https://fallback.example/rpc"
+      ]);
+      expect(transport.snapshot()).toMatchObject({
+        activeRpcUrl: "https://fallback.example/rpc",
+        failoverCount: 1,
+        lastFailoverReason: "http_503",
+        rpcUrls: ["https://primary.example/rpc", "https://fallback.example/rpc"]
+      });
     } finally {
       globalThis.fetch = previousFetch;
     }

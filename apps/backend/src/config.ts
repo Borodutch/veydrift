@@ -38,6 +38,7 @@ export type BackendConfig = {
   randomnessCommitmentStorePath: string;
   resourceTokenAddresses: ResourceTokenAddresses;
   rpcUrl?: string;
+  rpcFallbackUrls?: string[];
   rpcSource: "alchemy-key" | "alchemy-url" | "custom-url" | "missing";
   // Optional static metadata for frontend settlement launch funding. HTTP request
   // paths must not read this from RPC; operators should update this when the
@@ -82,6 +83,8 @@ export type SafeConfigSummary = {
     metal: boolean;
   };
   rpcSource: BackendConfig["rpcSource"];
+  rpcFallbackConfigured: boolean;
+  rpcFallbackCount: number;
   wsRpcSource: BackendConfig["wsRpcSource"];
   hasWsRpcUrl: boolean;
   resourceTokenAddressesConfigured: boolean;
@@ -151,7 +154,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     parsePositiveInteger(env.VEYDRIFT_CURRENT_STATE_HEAL_CONCURRENCY, "VEYDRIFT_CURRENT_STATE_HEAL_CONCURRENCY", problems)
       ?? defaultCurrentStateHealConcurrency;
   const currentStateHealRunId = normalizeRunId(env.VEYDRIFT_CURRENT_STATE_HEAL_RUN_ID);
-  const { rpcUrl, rpcSource } = resolveRpcUrl(env);
+  const { rpcUrl, rpcFallbackUrls, rpcSource } = resolveRpcUrl(env);
   const { wsRpcUrl, wsRpcSource } = resolveWsRpcUrl(env);
   const gameContractAddress = parseAddress(
     env.VEYDRIFT_GAME_CONTRACT_ADDRESS ?? env.VEYDRIFT_CONTRACT_ADDRESS,
@@ -246,6 +249,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       resourceTokenAddresses,
       rpcSource,
       ...(rpcUrl ? { rpcUrl } : {}),
+      ...(rpcFallbackUrls?.length ? { rpcFallbackUrls } : {}),
       ...(settlementStartPriceWei !== undefined ? { settlementStartPriceWei: settlementStartPriceWei.toString() } : {}),
       ...(settlementContractAddress ? { settlementContractAddress } : {}),
       wsRpcSource,
@@ -276,6 +280,8 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
       metal: Boolean(config.resourceTokenAddresses.metal)
     },
     rpcSource: config.rpcSource,
+    rpcFallbackConfigured: Boolean(config.rpcFallbackUrls?.length),
+    rpcFallbackCount: config.rpcFallbackUrls?.length ?? 0,
     wsRpcSource: config.wsRpcSource,
     hasWsRpcUrl: Boolean(config.wsRpcUrl),
     resourceTokenAddressesConfigured: Boolean(
@@ -411,27 +417,57 @@ function parsePrivateKey(
   return normalized as `0x${string}`;
 }
 
-function resolveRpcUrl(env: Record<string, string | undefined>): Pick<BackendConfig, "rpcUrl" | "rpcSource"> {
+function resolveRpcUrl(env: Record<string, string | undefined>): Pick<BackendConfig, "rpcUrl" | "rpcFallbackUrls" | "rpcSource"> {
+  const fallbackUrls = splitUrlList(
+    env.VEYDRIFT_RPC_FALLBACK_URLS
+      ?? env.BASE_SEPOLIA_RPC_FALLBACK_URLS
+      ?? env.ALCHEMY_BASE_SEPOLIA_RPC_FALLBACK_URLS
+  );
+  const withFallbacks = (
+    rpcUrl: string,
+    rpcSource: BackendConfig["rpcSource"]
+  ): Pick<BackendConfig, "rpcUrl" | "rpcFallbackUrls" | "rpcSource"> => ({
+    rpcUrl,
+    rpcSource,
+    ...(fallbackUrls.length ? { rpcFallbackUrls: uniqueUrls(fallbackUrls, rpcUrl) } : {})
+  });
+
   if (env.VEYDRIFT_RPC_URL) {
-    return { rpcUrl: env.VEYDRIFT_RPC_URL, rpcSource: "custom-url" };
+    return withFallbacks(env.VEYDRIFT_RPC_URL, "custom-url");
   }
 
   if (env.BASE_SEPOLIA_RPC_URL) {
-    return { rpcUrl: env.BASE_SEPOLIA_RPC_URL, rpcSource: "custom-url" };
+    return withFallbacks(env.BASE_SEPOLIA_RPC_URL, "custom-url");
   }
 
   if (env.ALCHEMY_BASE_SEPOLIA_RPC_URL) {
-    return { rpcUrl: env.ALCHEMY_BASE_SEPOLIA_RPC_URL, rpcSource: "alchemy-url" };
+    return withFallbacks(env.ALCHEMY_BASE_SEPOLIA_RPC_URL, "alchemy-url");
   }
 
   if (env.ALCHEMY_BASE_SEPOLIA_API_KEY) {
-    return {
-      rpcUrl: `https://base-sepolia.g.alchemy.com/v2/${env.ALCHEMY_BASE_SEPOLIA_API_KEY}`,
-      rpcSource: "alchemy-key"
-    };
+    return withFallbacks(`https://base-sepolia.g.alchemy.com/v2/${env.ALCHEMY_BASE_SEPOLIA_API_KEY}`, "alchemy-key");
   }
 
   return { rpcSource: "missing" };
+}
+
+function splitUrlList(value: string | undefined): string[] {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((url) => url.trim())
+    .filter((url) => url.length > 0);
+}
+
+function uniqueUrls(urls: string[], primaryUrl: string): string[] {
+  const seen = new Set([primaryUrl]);
+  const unique: string[] = [];
+  for (const url of urls) {
+    if (seen.has(url)) continue;
+    seen.add(url);
+    unique.push(url);
+  }
+  return unique;
 }
 
 export function resolveWsRpcUrl(

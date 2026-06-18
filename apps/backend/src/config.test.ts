@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { loadBackendConfig, resolveWsRpcUrl } from "./config";
+import { loadBackendConfig, resolveWsRpcUrl, safeConfigSummary } from "./config";
 
 describe("backend config", () => {
   test("derives Base Sepolia Alchemy websocket URL from the API key", () => {
@@ -58,6 +58,22 @@ describe("backend config", () => {
       wsRpcUrl: "wss://base-sepolia.g.alchemy.com/v2/secret-key"
     });
     expect(result.config.indexDbPath).toBe(".data/contract-state.sqlite");
+  });
+
+  test("parses static RPC fallbacks and exposes them in the safe summary", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RPC_URL: "https://primary.example/rpc",
+      VEYDRIFT_RPC_FALLBACK_URLS: "https://primary.example/rpc, https://fallback.example/rpc"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config.rpcUrl).toBe("https://primary.example/rpc");
+    expect(result.config.rpcFallbackUrls).toEqual(["https://fallback.example/rpc"]);
+    expect(safeConfigSummary(result.config)).toMatchObject({
+      rpcFallbackConfigured: true,
+      rpcFallbackCount: 1
+    });
   });
 
   test("accepts an explicit contract state index database path", () => {

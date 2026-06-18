@@ -1,5 +1,6 @@
 import type { BattleKeeper, KeeperSnapshot } from "./keeper";
 import type { SweepSnapshot } from "./sweep";
+import type { RpcTransportSnapshot } from "./transport";
 import type { WsBattleListener, WsListenerSnapshot } from "./wsListener";
 
 export type KeeperBuildInfo = {
@@ -8,6 +9,7 @@ export type KeeperBuildInfo = {
 
 export type KeeperHealthOptions = {
   build?: KeeperBuildInfo;
+  rpc?: { snapshot: () => RpcTransportSnapshot };
   sweep?: { snapshot: () => SweepSnapshot };
   staleDueSeconds?: number;
 };
@@ -22,6 +24,7 @@ export type KeeperHealth = {
   healthWarnings: string[];
   build: KeeperBuildInfo;
   keeper: KeeperSnapshot;
+  rpc: RpcTransportSnapshot | null;
   sweep: SweepSnapshot | null;
   ws: WsListenerSnapshot;
   uptimeSeconds: number;
@@ -49,6 +52,7 @@ export function buildHealth(
   options: KeeperHealthOptions = {}
 ): KeeperHealth {
   const keeperSnapshot = keeper.snapshot();
+  const rpcSnapshot = options.rpc?.snapshot() ?? null;
   const wsSnapshot = ws.snapshot();
   const sweepSnapshot = options.sweep?.snapshot() ?? null;
   const healthWarnings: string[] = [];
@@ -79,6 +83,7 @@ export function buildHealth(
     healthWarnings,
     build: options.build ?? buildInfoFromEnv(),
     keeper: keeperSnapshot,
+    rpc: rpcSnapshot,
     sweep: sweepSnapshot,
     ws: wsSnapshot,
     uptimeSeconds: Math.floor((nowMs - startedAtMs) / 1_000)

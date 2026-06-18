@@ -1173,6 +1173,15 @@ export class SettlementIndexer {
     return this.indexedFleetMissionReferenceIndex().activeByTarget.get(planetId) ?? [];
   }
 
+  dueUnresolvedFleetMissionsForPlanet(planetId: string, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
+    return this.indexedFleetMissionReferenceIndex().active.filter((mission) =>
+      mission.status === "Outbound"
+        && (mission.missionType === "Attack" || mission.missionType === "Harvest")
+        && Number(mission.arrivalAt) <= asOfSeconds
+        && (mission.originPlanetId === planetId || mission.targetPlanetId === planetId)
+    ).sort((left, right) => Number(left.arrivalAt) - Number(right.arrivalAt));
+  }
+
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
     const completedBuildingLevels = new Map<number, number>();
     for (const completed of this.queueSettlement(`building:${planetId}`).completed) {
@@ -1775,6 +1784,14 @@ export class SettlementIndexer {
 
   markStale(reason: string): IndexerSnapshot {
     this.setMetadata("pendingReconciliationReason", reason);
+    return this.snapshot();
+  }
+
+  clearPendingReconciliationReason(reason: string): IndexerSnapshot {
+    if (this.metadata("pendingReconciliationReason") === reason) {
+      this.snapshotCache = null;
+      this.db.query("DELETE FROM indexer_metadata WHERE key = 'pendingReconciliationReason'").run();
+    }
     return this.snapshot();
   }
 

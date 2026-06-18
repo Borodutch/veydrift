@@ -64,6 +64,7 @@ class MockBackfiller {
   head: bigint;
   headError: Error | null = null;
   logsError: Error | null = null;
+  failoverReasons: string[] = [];
   ranges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   headCalls = 0;
   logsFor: (from: bigint, to: bigint | "latest") => TestLog[];
@@ -83,6 +84,11 @@ class MockBackfiller {
     this.ranges.push({ from, to });
     if (this.logsError) throw this.logsError;
     return this.logsFor(from, to);
+  }
+
+  failoverRpc(reason: string): boolean {
+    this.failoverReasons.push(reason);
+    return true;
   }
 }
 
@@ -376,6 +382,43 @@ describe("ChainSyncService (polling)", () => {
     backfiller.headError = null;
     await service.poll();
     expect(service.snapshot().connected).toBe(true); // recovers on next good poll
+    service.stop();
+  });
+
+  test("marks indexed state unsafe when the RPC head is pinned across sustained polls", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll(); // healthy anchor
+    expect(service.snapshot().connected).toBe(true);
+
+    for (let i = 0; i < 29; i += 1) await service.poll();
+    expect(service.snapshot().connected).toBe(true);
+
+    await service.poll();
+    expect(service.snapshot()).toMatchObject({
+      connected: false,
+      headStallPollCount: 30,
+      lastError: "RPC head stalled at block 384; failed over to fallback RPC",
+      latestHeadBlock: "384"
+    });
+    expect(backfiller.failoverReasons).toEqual(["rpc_head_stalled:384"]);
+    expect(indexer.snapshot()).toMatchObject({
+      pendingReconciliationReason: "rpc_head_stalled:384",
+      safeToServeIndexedState: false,
+      staleReason: "rpc_head_stalled:384"
+    });
+
+    backfiller.head = 0x181n;
+    await service.poll();
+    expect(service.snapshot()).toMatchObject({
+      connected: true,
+      headStallPollCount: 0,
+      lastError: null,
+      latestHeadBlock: "385"
+    });
+    expect(indexer.snapshot().pendingReconciliationReason).toBeNull();
     service.stop();
   });
 
