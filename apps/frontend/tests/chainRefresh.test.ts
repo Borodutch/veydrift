@@ -121,6 +121,30 @@ describe("playable chain refresh", () => {
     expect(source).not.toContain("sendFinishBuildingUpgradeTransaction");
     expect(source).not.toContain("sendCollectResourcesTransaction");
   });
+
+  test("gates mutating transaction families until receipt and backend sync work settle", async () => {
+    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+
+    for (const snippet of [
+      "runGatedTransaction(`building:start:",
+      "runGatedTransaction(`alliance:",
+      "runGatedTransaction(`rift:",
+      "runGatedTransaction(`galaxy:",
+      "runGatedTransaction(`moon:",
+      "runGatedTransaction(\"planet:rename\"",
+      "runGatedTransaction(\"planet:abandon\"",
+      "runGatedTransaction(\"player-profile:update\"",
+      "runGatedTransaction(`mission:",
+    ]) {
+      expect(source).toContain(snippet);
+    }
+
+    expect(source).toContain("const canSubmitGameTransaction = Boolean(provider && account && gameContract) && !transactionActionPending");
+    expect(source).toContain("await Promise.allSettled([\n            refreshShipyardState(),");
+    expect(source).toContain("await Promise.allSettled([\n          refreshRiftState(),");
+    expect(source).toContain("await refreshOnChainState(undefined, { force: true });");
+    expect(source).not.toContain("void refreshOnChainState(undefined, { force: true });");
+  });
 });
 
 function settlementSnapshot(

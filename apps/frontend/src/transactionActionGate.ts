@@ -1,21 +1,21 @@
 export type TransactionActionGate = {
-  isRunning: (key: string) => boolean;
+  isRunning: (key?: string) => boolean;
   run: <T>(key: string, action: () => Promise<T>) => Promise<T | undefined>;
 };
 
 export function createTransactionActionGate(): TransactionActionGate {
-  const inFlight = new Set<string>();
+  let inFlightKey: string | undefined;
 
   return {
-    isRunning: (key) => inFlight.has(key),
+    isRunning: (key) => key ? inFlightKey === key : inFlightKey !== undefined,
     run: async (key, action) => {
-      if (inFlight.has(key)) return undefined;
+      if (inFlightKey) return undefined;
 
-      inFlight.add(key);
+      inFlightKey = key;
       try {
         return await action();
       } finally {
-        inFlight.delete(key);
+        inFlightKey = undefined;
       }
     },
   };

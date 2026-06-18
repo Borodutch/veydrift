@@ -69,6 +69,33 @@ describe("transaction action gate", () => {
     settlement.resolve();
     await expect(first).resolves.toBe("0xsettled");
   });
+
+  test("prevents different mutating actions while any transaction path is in flight", async () => {
+    const gate = createTransactionActionGate();
+    const building = deferred<void>();
+    let calls = 0;
+
+    const first = gate.run("building:start:metalMine", async () => {
+      calls += 1;
+      await building.promise;
+      return "0xbuilding";
+    });
+    const second = gate.run("fleet:recall:17", async () => {
+      calls += 1;
+      return "0xfleet";
+    });
+
+    expect(gate.isRunning()).toBe(true);
+    expect(gate.isRunning("building:start:metalMine")).toBe(true);
+    expect(gate.isRunning("fleet:recall:17")).toBe(false);
+    await expect(second).resolves.toBeUndefined();
+    expect(calls).toBe(1);
+
+    building.resolve();
+    await expect(first).resolves.toBe("0xbuilding");
+    expect(gate.isRunning()).toBe(false);
+    await expect(gate.run("fleet:recall:17", async () => "0xfleet")).resolves.toBe("0xfleet");
+  });
 });
 
 function deferred<T>() {
