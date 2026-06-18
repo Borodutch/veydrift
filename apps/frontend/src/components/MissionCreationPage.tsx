@@ -316,6 +316,9 @@ export function MissionCreationPage({
     cargoSupported,
     cargoTotal,
     fleetSlots: shipyardState?.fleetSlots,
+    fleetSlotsUnavailableReason: shipyardState?.fleetLaunchAvailable === false
+      ? shipyardState.fleetLaunchUnavailableReason ?? shipyardState.unavailableReason ?? "Fleet slot state is still syncing."
+      : undefined,
     fuelCost: effectiveFuelCost,
     lootRatioActive,
     lootRatioTotal,
@@ -605,6 +608,7 @@ export function missionDraftBlocker({
   cargoSupported,
   cargoTotal,
   fleetSlots,
+  fleetSlotsUnavailableReason,
   fuelCost,
   lootRatioActive = false,
   lootRatioTotal = 0,
@@ -623,6 +627,7 @@ export function missionDraftBlocker({
   cargoSupported: boolean;
   cargoTotal: number;
   fleetSlots?: { active: number; limit: number } | undefined;
+  fleetSlotsUnavailableReason?: string | undefined;
   fuelCost: number;
   lootRatioActive?: boolean | undefined;
   lootRatioTotal?: number | undefined;
@@ -640,6 +645,7 @@ export function missionDraftBlocker({
   // contract's Computer Technology-derived limit (FleetSlotLimitReached). Block before submit when the
   // cap is reached, and also block while slot state is missing so stale UI cannot open a reverting
   // wallet transaction.
+  if (fleetSlotsUnavailableReason) return fleetSlotsUnavailableReason;
   if (!fleetSlots || fleetSlots.limit <= 0) {
     return "Fleet slot state is still loading — wait for Computer Technology limits to sync before launching.";
   }

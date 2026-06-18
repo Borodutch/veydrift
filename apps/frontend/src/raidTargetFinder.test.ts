@@ -518,6 +518,15 @@ describe("debris target finder", () => {
     expect(buildDebrisTargets({
       targets: [debrisTarget()],
       origin: ORIGIN,
+      shipyardState: shipyard({
+        fleetLaunchAvailable: false,
+        fleetLaunchUnavailableReason: "Fleet slot state is waiting for mission settlement.",
+      }),
+    })[0]!.harvestDisabledReason).toBe("Fleet slot state is waiting for mission settlement.");
+
+    expect(buildDebrisTargets({
+      targets: [debrisTarget()],
+      origin: ORIGIN,
       shipyardState: shipyard({ resources: { metal: "0", crystal: "0", deuterium: "0" } }),
     })[0]!.harvestDisabledReason).toContain("deuterium");
   });

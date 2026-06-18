@@ -1182,6 +1182,17 @@ export class SettlementIndexer {
     ).sort((left, right) => Number(left.arrivalAt) - Number(right.arrivalAt));
   }
 
+  pendingFleetSlotSettlementMissionsForWallet(wallet: `0x${string}`, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
+    const walletLower = wallet.toLowerCase();
+    return this.indexedFleetSlotCountMissions()
+      .filter((mission) =>
+        mission.owner.toLowerCase() === walletLower
+        && isActiveFleetMissionStatus(mission.status)
+        && fleetSlotSettlementDue(mission, asOfSeconds)
+      )
+      .sort((left, right) => fleetSlotSettlementDueAt(left) - fleetSlotSettlementDueAt(right));
+  }
+
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
     const completedBuildingLevels = new Map<number, number>();
     for (const completed of this.queueSettlement(`building:${planetId}`).completed) {
@@ -5894,6 +5905,19 @@ function fleetMissionStatusId(label: string): number | null {
 
 function isActiveFleetMissionStatus(status: string): boolean {
   return status === "Outbound" || status === "Returning" || status === "Recalled";
+}
+
+function fleetSlotSettlementDue(mission: FleetMissionSummary, asOfSeconds: number): boolean {
+  return fleetSlotSettlementDueAt(mission) <= asOfSeconds;
+}
+
+function fleetSlotSettlementDueAt(mission: FleetMissionSummary): number {
+  if (mission.status === "Returning" || mission.status === "Recalled") return Number(mission.returnAt);
+  if (mission.status === "Outbound") {
+    if (mission.missionType === "DefenseHold") return Number(mission.returnAt);
+    return Number(mission.arrivalAt);
+  }
+  return Number.POSITIVE_INFINITY;
 }
 
 function projectedFleetRecallCost(fuelCost: string): string {

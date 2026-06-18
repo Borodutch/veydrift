@@ -339,6 +339,9 @@ function baseActionBlocker(
   if (shipyardState.productionAvailable === false) {
     return shipyardState.unavailableReason ?? "Fleet actions are unavailable on this deployment.";
   }
+  if (shipyardState.fleetLaunchAvailable === false) {
+    return shipyardState.fleetLaunchUnavailableReason ?? shipyardState.unavailableReason ?? "Fleet slot state is still syncing.";
+  }
   return undefined;
 }
 

@@ -652,6 +652,11 @@ describe("mission creation", () => {
       "Fleet slot state is still loading — wait for Computer Technology limits to sync before launching."
     );
     expect(missionDraftBlocker({ ...base, fleetSlots: { active: 0, limit: 0 } })).toContain("Fleet slot state is still loading");
+    expect(missionDraftBlocker({
+      ...base,
+      fleetSlots: { active: 0, limit: 5 },
+      fleetSlotsUnavailableReason: "Fleet slot state is waiting for mission settlement.",
+    })).toBe("Fleet slot state is waiting for mission settlement.");
   });
 
   test("blocks non-Galaxy station-defense launches at the same Computer-tech fleet-slot cap", () => {

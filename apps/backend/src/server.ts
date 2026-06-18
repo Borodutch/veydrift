@@ -1946,6 +1946,11 @@ function indexedShipyardState(
 ): ShipyardState {
   const shipyardLevel = planet ? indexer.infrastructureRows(planet.planetId).find((building) => building.id === 5)?.level ?? 0 : 0;
   const naniteLevel = planet ? indexer.infrastructureRows(planet.planetId).find((building) => building.id === 11)?.level ?? 0 : 0;
+  const pendingSlotSettlements = indexer.pendingFleetSlotSettlementMissionsForWallet(wallet);
+  const slotSettlementBlocker = pendingSlotSettlements[0];
+  const fleetLaunchUnavailableReason = slotSettlementBlocker
+    ? `Fleet slot state is waiting for mission settlement (mission ${slotSettlementBlocker.missionId}). Refresh after the backend or keeper settles due fleet missions before launching another fleet.`
+    : undefined;
 
   return {
     wallet,
@@ -1956,6 +1961,13 @@ function indexedShipyardState(
     resources: planet?.resources ?? null,
     resourcesAsOfNow: indexedCurrentResourcesForPlanet(indexer, planet),
     fleetSlots: indexer.fleetSlots(wallet),
+    ...(fleetLaunchUnavailableReason
+      ? {
+        fleetLaunchAvailable: false,
+        fleetLaunchUnavailableReason,
+        stale: true
+      }
+      : { fleetLaunchAvailable: true }),
     shipyardLevel,
     naniteLevel,
     technologyLevels: indexer.technologyLevels(wallet),

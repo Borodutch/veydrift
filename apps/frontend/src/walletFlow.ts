@@ -479,6 +479,9 @@ export type ChainShipyardState = {
     active: number;
     limit: number;
   };
+  fleetLaunchAvailable?: boolean;
+  fleetLaunchUnavailableReason?: string;
+  stale?: boolean;
   shipyardLevel: number;
   naniteLevel: number;
   technologyLevels: Record<string, number>;
