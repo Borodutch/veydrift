@@ -11,6 +11,7 @@ const galaxySource = await Bun.file(new URL("../src/components/GalaxyView.tsx", 
 const missionCreationSource = await Bun.file(new URL("../src/components/MissionCreationPage.tsx", import.meta.url)).text();
 const planetDetailSource = await Bun.file(new URL("../src/components/PlanetDetail.tsx", import.meta.url)).text();
 const topBarSource = await Bun.file(new URL("../src/components/TopBar.tsx", import.meta.url)).text();
+const stylesSource = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
 
 describe("navigation and planet selector UI source contracts", () => {
   test("uses a mobile hamburger menu instead of always-visible mobile tabs", () => {
@@ -75,6 +76,26 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(topBarSource).toContain("max-w-[96rem]");
     expect(navSource).not.toContain("Home Planet");
     expect(navSource).not.toContain("tracking-[0.16em]");
+  });
+
+  test("makes Commander card value fields copy full values with local fade-up feedback", () => {
+    expect(navSource).toContain("CopyableCommanderValue");
+    expect(navSource).toContain('copyKey="commander"');
+    expect(navSource).toContain('copyKey="commander-fallback"');
+    expect(navSource).toContain('copyKey="home"');
+    expect(navSource).toContain('copyKey="wallet"');
+    expect(navSource).toContain("data-copy-value={copyValue}");
+    expect(navSource).toContain("aria-label={`Copy ${label}`}");
+    expect(navSource).toContain("clipboard.writeText(value)");
+    expect(navSource).toContain("catch(() =>");
+    expect(navSource).toContain("playerProfile?.displayName?.trim()");
+    expect(navSource).toContain("|| account");
+    expect(navSource).toContain("copyValue={account}");
+    expect(navSource).toContain("copyValue={coordinates}");
+    expect(navSource).toContain("veydrift-copy-value-fade-up");
+    expect(stylesSource).toContain("@keyframes veydrift-copy-value-fade-up");
+    expect(stylesSource).toContain("transform: translateY(-0.45rem)");
+    expect(stylesSource).toContain("animation: veydrift-copy-value-fade-up 720ms ease-out both");
   });
 
   test("moves rename and abandon actions into the overview hero", () => {

@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
 import { ArrowLeftRight, Check, Crosshair, Factory, FlaskConical, Menu, Moon, Orbit, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
 
@@ -80,7 +80,13 @@ export function NavBar({
   const [playerDescriptionDraft, setPlayerDescriptionDraft] = useState(playerProfile?.description ?? "");
   const [playerPanelOpen, setPlayerPanelOpen] = useState(false);
   const [playerValidation, setPlayerValidation] = useState<string | undefined>(undefined);
+  const [copiedField, setCopiedField] = useState<{ key: string; nonce: number } | undefined>(undefined);
+  const copiedResetTimer = useRef<number | undefined>(undefined);
   const playerLabel = playerDisplayLabel(playerProfile, account);
+  const playerCopyValue = playerProfile?.displayName?.trim()
+    || account
+    || playerProfile?.fallbackName?.trim()
+    || undefined;
   const playerProfileBusy = playerProfileAction.status === "pending";
   const playerStatusTone = playerProfileAction.status === "error"
     ? "text-amber-200"
@@ -99,6 +105,12 @@ export function NavBar({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [mobileMenuOpen]);
+
+  useEffect(() => () => {
+    if (copiedResetTimer.current !== undefined) {
+      window.clearTimeout(copiedResetTimer.current);
+    }
+  }, []);
 
   const handleMobileNavigate = (page: Page) => {
     onNavigate(page);
@@ -151,6 +163,22 @@ export function NavBar({
   const descriptionLength = Array.from(playerDescriptionDraft.replace(/\r\n?/g, "\n").trim()).length;
   const descriptionRemaining = Math.max(0, playerDescriptionMaxLength - descriptionLength);
   const descriptionCountTone = descriptionLength > playerDescriptionMaxLength ? "text-amber-200" : "text-slate-500";
+  const handleCopyCommanderValue = (key: string, value: string) => {
+    const clipboard = globalThis.navigator?.clipboard;
+    if (!clipboard?.writeText) return;
+
+    clipboard.writeText(value).then(() => {
+      setCopiedField((current) => ({ key, nonce: (current?.nonce ?? 0) + 1 }));
+      if (copiedResetTimer.current !== undefined) {
+        window.clearTimeout(copiedResetTimer.current);
+      }
+      copiedResetTimer.current = window.setTimeout(() => {
+        setCopiedField((current) => current?.key === key ? undefined : current);
+      }, 900);
+    }).catch(() => {
+      // Clipboard access can be blocked outside a direct user gesture or by browser policy.
+    });
+  };
 
   const accountSummary = (className: string) => (
     <aside className={className} aria-label="Sidebar account summary">
@@ -159,11 +187,25 @@ export function NavBar({
           <p className="text-[10px] font-semibold uppercase text-slate-500">
             Commander
           </p>
-          <p className="mt-1 break-words text-xs font-semibold leading-4 text-slate-100">
-            {playerLabel}
-          </p>
+          <CopyableCommanderValue
+            className="mt-1 w-full justify-start break-words text-left text-xs font-semibold leading-4 text-slate-100"
+            copyKey="commander"
+            copyValue={playerCopyValue}
+            copiedField={copiedField}
+            label="commander"
+            onCopy={handleCopyCommanderValue}
+            value={playerLabel}
+          />
           {playerProfile?.displayName ? (
-            <p className="mt-0.5 truncate text-[10px] text-slate-500">{playerProfile.fallbackName}</p>
+            <CopyableCommanderValue
+              className="mt-0.5 w-full justify-start truncate text-left text-[10px] text-slate-500"
+              copyKey="commander-fallback"
+              copyValue={account ?? playerProfile.fallbackName}
+              copiedField={copiedField}
+              label="commander wallet"
+              onCopy={handleCopyCommanderValue}
+              value={playerProfile.fallbackName}
+            />
           ) : null}
           {playerStatusLabel && !playerPanelOpen ? (
             <p className={`mt-1 break-words text-[10px] leading-4 ${playerStatusTone}`}>{playerStatusLabel}</p>
@@ -195,17 +237,29 @@ export function NavBar({
         <span className="text-[10px] font-semibold uppercase text-slate-500">
           Home
         </span>
-        <span className="truncate font-mono text-xs text-slate-100">
-          {coordinates ?? "--:--:--"}
-        </span>
+        <CopyableCommanderValue
+          className="max-w-[7.25rem] justify-end truncate text-right font-mono text-xs text-slate-100"
+          copyKey="home"
+          copyValue={coordinates}
+          copiedField={copiedField}
+          label="home coordinates"
+          onCopy={handleCopyCommanderValue}
+          value={coordinates ?? "--:--:--"}
+        />
       </div>
       <div className="mt-1.5 flex items-center justify-between gap-2 border-t border-white/10 pt-1.5">
         <span className="text-[10px] font-semibold uppercase text-slate-500">
           Wallet
         </span>
-        <span className="truncate font-mono text-xs text-slate-300">
-          {account ? shortAddress(account) : "Disconnected"}
-        </span>
+        <CopyableCommanderValue
+          className="max-w-[7.25rem] justify-end truncate text-right font-mono text-xs text-slate-300"
+          copyKey="wallet"
+          copyValue={account}
+          copiedField={copiedField}
+          label="wallet"
+          onCopy={handleCopyCommanderValue}
+          value={account ? shortAddress(account) : "Disconnected"}
+        />
       </div>
     </aside>
   );
@@ -393,6 +447,56 @@ export function NavBar({
       </div>
       {playerEditorDialog}
     </>
+  );
+}
+
+function CopyableCommanderValue({
+  className,
+  copiedField,
+  copyKey,
+  copyValue,
+  label,
+  onCopy,
+  value,
+}: {
+  className: string;
+  copiedField: { key: string; nonce: number } | undefined;
+  copyKey: string;
+  copyValue?: string | undefined;
+  label: string;
+  onCopy: (key: string, value: string) => void;
+  value: string;
+}) {
+  const isCopied = copiedField?.key === copyKey;
+  const valueClassName = className.includes("truncate")
+    ? "inline-block max-w-full min-w-0 truncate"
+    : "inline-block max-w-full min-w-0";
+  const content = (
+    <span className="relative inline-block max-w-full min-w-0 align-bottom">
+      <span
+        className={isCopied ? `${valueClassName} veydrift-copy-value-fade-up` : valueClassName}
+        key={isCopied ? `${copyKey}-${copiedField.nonce}` : copyKey}
+      >
+        {value}
+      </span>
+    </span>
+  );
+
+  if (!copyValue) {
+    return <span className={`inline-flex min-w-0 ${className}`}>{content}</span>;
+  }
+
+  return (
+    <button
+      aria-label={`Copy ${label}`}
+      className={`group inline-flex min-w-0 cursor-copy rounded-sm transition hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/55 ${className}`}
+      data-copy-value={copyValue}
+      onClick={() => onCopy(copyKey, copyValue)}
+      title={`Copy ${label}`}
+      type="button"
+    >
+      {content}
+    </button>
   );
 }
 
