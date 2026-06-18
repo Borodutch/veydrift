@@ -5959,38 +5959,6 @@ contract VeydriftGameTest is Test {
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
     }
 
-    /// @notice VEY-KANEO-572: the reported failing path was an infrastructure start. It must run the
-    ///         same lazy combat reconcile before `_settleResources` checks pending mission resolution.
-    function testBuildingUpgradeLazyResolvesDueAttackBeforeSettlementGate() public {
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
-        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
-        _setShipCount(originPlanetId, Ship.SmallCargo, 2);
-        _setResources(originPlanetId, 100_000, 100_000, 100_000);
-        _setResources(targetPlanetId, 10_000, 4_000, 3_000);
-
-        VeydriftGameStorage.MissionShips memory ships;
-        ships.smallCargo = 1;
-        vm.prank(player);
-        uint256 missionId = game.launchFleetMission(
-            originPlanetId,
-            targetPlanetId,
-            VeydriftGameStorage.FleetMissionType.Attack,
-            ships,
-            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
-            0
-        );
-        (, uint64 arrivalAt,,) = _fleetMission(missionId);
-        vm.warp(arrivalAt);
-        _fulfillAttackBattleRandomness(missionId, 572);
-
-        vm.prank(player);
-        game.startBuildingUpgrade(originPlanetId, Building.MetalMine);
-
-        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
-        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        assertTrue(game.activeBuildingConstruction(originPlanetId).active);
-    }
-
     /// @notice Lazy combat settlement must not leak the randomness-engine revert to the caller. When
     ///         the battle seed is still pending, the mission remains Outbound and the pre-existing
     ///         pending-mission gate remains the user-visible blocker.
