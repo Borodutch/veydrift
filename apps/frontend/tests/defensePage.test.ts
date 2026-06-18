@@ -188,18 +188,84 @@ describe("Defense page display helpers", () => {
       countLabel: "Deployed",
       countValue: 12,
       detailNote: "Attack 80 · Shield 20 · Hull 200",
+      labelTone: "normal",
       status: "ready",
+      statusLabel: undefined,
     });
     expect(items.find((item) => item.key === "rocketLauncher")).not.toHaveProperty("durationSeconds");
     expect(items.find((item) => item.key === "rocketLauncher")).not.toHaveProperty("description");
     expect(items.find((item) => item.key === "rocketLauncher")?.notes).toBeUndefined();
     expect(items.find((item) => item.key === "lightLaser")).toMatchObject({
       countValue: 3,
+      labelTone: "normal",
       quantity: 4,
       status: "ready",
+      statusLabel: undefined,
     });
     expect(items.find((item) => item.key === "gaussCannon")).toMatchObject({
+      labelTone: "muted",
       status: "locked",
+      statusLabel: undefined,
+    });
+  });
+
+  test("fades non-buildable defense titles without generic ready/locked labels (VEY-KANEO-576)", () => {
+    const items = defenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      defenseState: defenseState({
+        shipyardLevel: 2,
+        technologyLevels: {
+          "0": 1,
+          "1": 3,
+        },
+        defenses: [
+          {
+            id: 0,
+            count: 0,
+            cost: {
+              metal: "2000",
+              crystal: "0",
+              deuterium: "0",
+            },
+          },
+          {
+            id: 1,
+            count: 0,
+            cost: {
+              metal: "1500",
+              crystal: "500",
+              deuterium: "0",
+            },
+          },
+        ],
+      }),
+      productionAvailable: true,
+      quantities: { rocketLauncher: 2 },
+      queue: undefined,
+      resources: {
+        metal: 3_500,
+        crystal: 1_000,
+        deuterium: 1_000,
+      },
+    });
+
+    expect(items.find((item) => item.key === "rocketLauncher")).toMatchObject({
+      blockedReason: "Requires 500 more Metal",
+      labelTone: "muted",
+      status: "ready",
+      statusLabel: undefined,
+    });
+    expect(items.find((item) => item.key === "lightLaser")).toMatchObject({
+      blockedReason: undefined,
+      labelTone: "normal",
+      status: "ready",
+      statusLabel: undefined,
+    });
+    expect(items.find((item) => item.key === "heavyLaser")).toMatchObject({
+      labelTone: "muted",
+      status: "locked",
+      statusLabel: undefined,
     });
   });
 
@@ -483,6 +549,7 @@ describe("Defense page display helpers", () => {
     expect(items.find((item) => item.key === "rocketLauncher")).toMatchObject({
       blockedReason: "Requires 500 more Metal",
       disabled: true,
+      labelTone: "muted",
     });
   });
 

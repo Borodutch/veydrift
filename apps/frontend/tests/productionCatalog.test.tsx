@@ -97,6 +97,30 @@ describe("ProductionCatalog selected panel", () => {
     expect(visibleText(catalog)).not.toContain("Logistics");
   });
 
+  test("mutes catalog item titles and omits empty status labels", () => {
+    const catalog = ProductionCatalog({
+      actionPending: false,
+      canTransact: true,
+      emptyLabel: "Select an item.",
+      items: [catalogItem({
+        labelTone: "muted",
+        status: "locked",
+        statusLabel: undefined,
+      })],
+      onBuild: () => undefined,
+      onQuantity: () => undefined,
+      onSelect: () => undefined,
+      selectedKey: "rocketLauncher",
+    });
+    const title = elementNodes(catalog)
+      .find((node) => node.type === "p" && visibleText(node) === "Rocket Launcher");
+
+    expect(title?.props.className).toContain("text-slate-500");
+    expect(visibleText(catalog)).toContain("Rocket Launcher");
+    expect(visibleText(catalog)).not.toContain("Ready");
+    expect(visibleText(catalog)).not.toContain("Locked");
+  });
+
   test("uses the caller clock for active production queue progress", () => {
     const catalog = ProductionCatalog({
       actionPending: false,
