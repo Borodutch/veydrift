@@ -5,7 +5,14 @@ import type {
   ChainResearchState,
   ChainRiftState,
   ChainShipyardState,
+  FleetMissionArchiveResponse,
+  FleetMissionSummary,
+  FleetMissionVisibilityResponse,
+  GlobalMissionArchiveResponse,
+  PlayerQueuesResponse,
+  WalletSettlementResponse,
 } from "./walletFlow";
+import type { PlanetType } from "./types";
 
 export type PlanetSectionState = {
   infrastructureChainState: ChainInfrastructureState | null;
@@ -14,11 +21,42 @@ export type PlanetSectionState = {
   shipyardState: ChainShipyardState | null;
   researchState: ChainResearchState | null;
   riftState: ChainRiftState | null;
+  settlementState?: WalletSettlementResponse | undefined;
+  queuesState?: PlayerQueuesResponse | undefined;
+  fleetVisibilityState?: FleetMissionVisibilityResponse | undefined;
+  missionArchiveState?: FleetMissionArchiveResponse | undefined;
+  allActiveMissionsState?: FleetMissionSummary[] | undefined;
+  globalMissionArchiveState?: GlobalMissionArchiveResponse | undefined;
+  missionArchetypesByCoordinate?: Map<string, PlanetType> | undefined;
+  galaxySystemDataByKey?: Record<string, unknown> | undefined;
+  sectionStatus: Partial<Record<PlanetSectionDataKey, PlanetSectionRefreshStatus>>;
 };
 
 export type PlanetSectionStore = Record<string, PlanetSectionState>;
 
 export type PlanetSectionValueUpdater<T> = T | ((current: T) => T);
+
+export type PlanetSectionDataKey =
+  | "infrastructureChainState"
+  | "moonState"
+  | "defenseState"
+  | "shipyardState"
+  | "researchState"
+  | "riftState"
+  | "settlementState"
+  | "queuesState"
+  | "fleetVisibilityState"
+  | "missionArchiveState"
+  | "allActiveMissionsState"
+  | "globalMissionArchiveState"
+  | "missionArchetypesByCoordinate"
+  | "galaxySystemDataByKey";
+
+export type PlanetSectionRefreshStatus = {
+  loading: boolean;
+  error?: string | undefined;
+  lastSuccessfulRefreshAt?: number | undefined;
+};
 
 export const emptyPlanetSectionState: PlanetSectionState = {
   infrastructureChainState: null,
@@ -27,6 +65,7 @@ export const emptyPlanetSectionState: PlanetSectionState = {
   shipyardState: null,
   researchState: null,
   riftState: null,
+  sectionStatus: {},
 };
 
 export function planetSectionForPlanet(
@@ -71,17 +110,87 @@ export function setPlanetSectionValue<K extends keyof PlanetSectionState>(
   };
 }
 
+export function setPlanetSectionStatus(
+  store: PlanetSectionStore,
+  planetId: string | null | undefined,
+  key: PlanetSectionDataKey,
+  status: Partial<PlanetSectionRefreshStatus>,
+): PlanetSectionStore {
+  if (!planetId) return store;
+
+  const current = planetSectionForPlanet(store, planetId);
+  const currentStatus = current.sectionStatus[key] ?? { loading: false };
+  const nextStatus = { ...currentStatus, ...status };
+  if (
+    currentStatus.loading === nextStatus.loading
+    && currentStatus.error === nextStatus.error
+    && currentStatus.lastSuccessfulRefreshAt === nextStatus.lastSuccessfulRefreshAt
+    && store[planetId]
+  ) {
+    return store;
+  }
+
+  return {
+    ...store,
+    [planetId]: {
+      ...current,
+      sectionStatus: {
+        ...current.sectionStatus,
+        [key]: nextStatus,
+      },
+    },
+  };
+}
+
+export function setPlanetSectionData<K extends PlanetSectionDataKey>(
+  store: PlanetSectionStore,
+  planetId: string | null | undefined,
+  key: K,
+  value: PlanetSectionState[K],
+  status?: Partial<PlanetSectionRefreshStatus>,
+): PlanetSectionStore {
+  const next = setPlanetSectionValue(store, planetId, key, value);
+  if (!status) return next;
+  return setPlanetSectionStatus(next, planetId, key, status);
+}
+
 export function hasPlanetSectionData(
   section: PlanetSectionState,
-  key?: keyof PlanetSectionState,
+  key?: PlanetSectionDataKey,
 ): boolean {
-  if (key) return section[key] !== null;
-  return Object.values(section).some((value) => value !== null);
+  if (key) return hasDataValue(section[key]);
+  return planetSectionDataKeys.some((dataKey) => hasDataValue(section[dataKey]));
 }
 
 function normalizePlanetSectionState(section: Partial<PlanetSectionState>): PlanetSectionState {
   return {
     ...emptyPlanetSectionState,
     ...section,
+    sectionStatus: section.sectionStatus ?? {},
   };
+}
+
+const planetSectionDataKeys: PlanetSectionDataKey[] = [
+  "infrastructureChainState",
+  "moonState",
+  "defenseState",
+  "shipyardState",
+  "researchState",
+  "riftState",
+  "settlementState",
+  "queuesState",
+  "fleetVisibilityState",
+  "missionArchiveState",
+  "allActiveMissionsState",
+  "globalMissionArchiveState",
+  "missionArchetypesByCoordinate",
+  "galaxySystemDataByKey",
+];
+
+function hasDataValue(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (value instanceof Map) return value.size > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
 }
