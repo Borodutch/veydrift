@@ -762,6 +762,18 @@ export type HighscoreEntry = {
   score: Record<HighscoreCategory, string>;
 };
 
+export type AttackProtectionStatus = {
+  wallet: string;
+  targetPlanetId: string;
+  allowed: boolean;
+  blockedReason: "none" | "bashing_limit" | "score_protection" | "same_alliance";
+  blockedReasonLabel: string | null;
+  relation?: "peer" | "stronger" | "weaker";
+  defenderHonorStatus?: "neutral" | "honorable" | "bandit";
+  plunderBps?: number;
+  defenderInactive?: boolean;
+};
+
 export type HighscorePlanet = {
   planetId: string;
   name: string | null;
@@ -2724,6 +2736,21 @@ type FleetMissionVisibilityOptions = WalletReadOptions & {
 
 export async function fetchWalletQueues(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<PlayerQueuesResponse> {
   return fetchWalletJson<PlayerQueuesResponse>(apiUrl, wallet, withWalletReadOptions("queues", planetId, options), "Queues");
+}
+
+export async function fetchAttackProtectionStatus(
+  apiUrl: string,
+  wallet: string,
+  targetPlanetId: string
+): Promise<AttackProtectionStatus> {
+  const params = new URLSearchParams();
+  params.set("targetPlanetId", targetPlanetId);
+  return fetchWalletJson<AttackProtectionStatus>(
+    apiUrl,
+    wallet,
+    `attack-protection?${params.toString()}`,
+    "Attack protection"
+  );
 }
 
 export async function fetchWalletOverviewSnapshot(

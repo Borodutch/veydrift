@@ -7,6 +7,7 @@ import {
   buildingFinishUnavailableReasonForDisplay,
   buildingCompletionAutoRefreshDelayMs,
   buildingFinishActionErrorLabel,
+  attackProtectionSubmitBlocker,
   attackerCombatTechLevelsForMission,
   beginRefreshRequest,
   canLoadIndexedPageState,
@@ -418,6 +419,26 @@ describe("Playable MVP app display helpers", () => {
       code: -32603,
       message: "Internal JSON-RPC error.",
     })).toBe("Attack mission could not verify game contract state before launch. The game API or RPC is temporarily unavailable; refresh mission state and retry.");
+  });
+
+  test("blocks stale attack submissions after target protection refresh", () => {
+    expect(attackProtectionSubmitBlocker({
+      allowed: false,
+      blockedReason: "score_protection",
+      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+    })).toBe("Attack blocked: target is protected by newbie or score-ratio protection.");
+
+    expect(attackProtectionSubmitBlocker({
+      allowed: false,
+      blockedReason: "same_alliance",
+      blockedReasonLabel: null,
+    })).toBe("Attack blocked: target belongs to your alliance.");
+
+    expect(attackProtectionSubmitBlocker({
+      allowed: true,
+      blockedReason: "none",
+      blockedReasonLabel: null,
+    })).toBeUndefined();
   });
 
   test("keeps pending infrastructure copy out of unavailable and button labels", () => {

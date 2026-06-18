@@ -144,6 +144,7 @@ import {
   fetchMission,
   fetchBattleReports,
   fetchAllianceState,
+  fetchAttackProtectionStatus,
   fetchPlayerProfile,
   mergePlayerProfile,
   walletRequestErrorMessage,
@@ -195,6 +196,7 @@ import {
   type ChainResearchState,
   type ChainRiftState,
   type ChainShipyardState,
+  type AttackProtectionStatus,
   type BattleReport,
   type Eip1193Provider,
   type FleetMissionVisibilityResponse,
@@ -848,6 +850,15 @@ export function galaxyMissionActionErrorLabel(label: string, error: unknown): st
   }
 
   return message || `${label} failed.`;
+}
+
+export function attackProtectionSubmitBlocker(status: Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel"> | null | undefined): string | undefined {
+  if (!status || status.allowed || status.blockedReason === "none") return undefined;
+  if (status.blockedReasonLabel) return status.blockedReasonLabel;
+  if (status.blockedReason === "bashing_limit") return "Attack blocked by bashing limit.";
+  if (status.blockedReason === "score_protection") return "Attack blocked: target is protected by newbie or score-ratio protection.";
+  if (status.blockedReason === "same_alliance") return "Attack blocked: target belongs to your alliance.";
+  return "Attack blocked.";
 }
 
 function errorLabelMessage(error: unknown): string {
@@ -4528,6 +4539,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     label: string,
     send: () => Promise<string>,
     options: {
+      validateAttackProtection?: { targetPlanetId: string } | undefined;
       pendingMissionLaunch?: ((txHash: string) => FleetMissionSummary);
       syncMissionLaunch?: boolean;
       validateShipInventory?: { originPlanetId: string; ships: MissionShips } | undefined;
@@ -4553,6 +4565,18 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           });
           if (shipBlocker) {
             throw new Error(shipBlocker);
+          }
+        }
+        if (options.validateAttackProtection) {
+          setGalaxyAction({ status: "pending", label: `${label}: refreshing target protection.` });
+          if (!apiBaseUrl || !account) {
+            throw new Error("Wallet or game API is unavailable while refreshing target protection.");
+          }
+          const status = await fetchAttackProtectionStatus(apiBaseUrl, account, options.validateAttackProtection.targetPlanetId);
+          if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+          const protectionBlocker = attackProtectionSubmitBlocker(status);
+          if (protectionBlocker) {
+            throw new Error(protectionBlocker);
           }
         }
         txHash = await send();
@@ -5438,6 +5462,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       targetPlanet,
       targetPlanetId,
       targetCoords,
+      validateAttackProtection,
       validateShipInventory,
     }: {
       cargo?: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
@@ -5445,8 +5470,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       targetPlanet?: Planet | undefined;
       targetPlanetId: string;
       targetCoords: Coordinates;
+      validateAttackProtection?: { targetPlanetId: string } | undefined;
       validateShipInventory?: { originPlanetId: string; ships: MissionShips } | undefined;
     }) => ({
+      validateAttackProtection,
       pendingMissionLaunch: (txHash: string) => pendingMissionLaunchForDraft(txHash, {
         account,
         originPlanet: selectedManagedPlanet,
@@ -5558,6 +5585,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         targetPlanet: target,
         targetPlanetId,
         targetCoords: coords,
+        validateAttackProtection: { targetPlanetId },
         validateShipInventory: { originPlanetId, ships: draft.ships },
       }));
       return;
@@ -5589,6 +5617,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       targetPlanet: target,
       targetPlanetId,
       targetCoords: coords,
+      validateAttackProtection: action.kind === "attack" ? { targetPlanetId } : undefined,
       validateShipInventory: { originPlanetId, ships: draft.ships },
     }));
   }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingGalaxyMission, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
