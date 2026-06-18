@@ -97,6 +97,11 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(navSource).toContain("copyValue={account}");
     expect(navSource).toContain("copyValue={coordinates}");
     expect(navSource).toContain("veydrift-copy-value-fade-up");
+    expect(navSource).toContain('aria-hidden="true"');
+    expect(navSource).toContain("absolute inset-x-0 top-0 veydrift-copy-value-fade-up");
+    expect(navSource).toContain("<span className={valueClassName}>{value}</span>");
+    expect(navSource).toContain("focus-visible:ring-2 focus-visible:ring-cyan-300/55");
+    expect(navSource).not.toContain("focus:ring-2 focus:ring-cyan-300/55");
     expect(stylesSource).toContain("@keyframes veydrift-copy-value-fade-up");
     expect(stylesSource).toContain("transform: translateY(-0.45rem)");
     expect(stylesSource).toContain("animation: veydrift-copy-value-fade-up 720ms ease-out both");

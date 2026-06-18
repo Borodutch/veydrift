@@ -473,12 +473,16 @@ function CopyableCommanderValue({
     : "inline-block max-w-full min-w-0";
   const content = (
     <span className="relative inline-block max-w-full min-w-0 align-bottom">
-      <span
-        className={isCopied ? `${valueClassName} veydrift-copy-value-fade-up` : valueClassName}
-        key={isCopied ? `${copyKey}-${copiedField.nonce}` : copyKey}
-      >
-        {value}
-      </span>
+      <span className={valueClassName}>{value}</span>
+      {isCopied ? (
+        <span
+          aria-hidden="true"
+          className={`${valueClassName} pointer-events-none absolute inset-x-0 top-0 veydrift-copy-value-fade-up`}
+          key={`${copyKey}-${copiedField.nonce}`}
+        >
+          {value}
+        </span>
+      ) : null}
     </span>
   );
 
@@ -489,7 +493,7 @@ function CopyableCommanderValue({
   return (
     <button
       aria-label={`Copy ${label}`}
-      className={`group inline-flex min-w-0 cursor-copy rounded-sm transition hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/55 ${className}`}
+      className={`group inline-flex min-w-0 cursor-copy rounded-sm transition hover:text-cyan-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/55 ${className}`}
       data-copy-value={copyValue}
       onClick={() => onCopy(copyKey, copyValue)}
       title={`Copy ${label}`}
