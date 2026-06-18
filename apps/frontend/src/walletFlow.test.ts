@@ -74,6 +74,8 @@ import {
   sendStartShipProductionTransaction,
   settlementTransactionData,
   isOnChainRevertError,
+  playerProfileMessage,
+  updatePlayerProfile,
   walletRequestErrorMessage,
   type Eip1193Provider
 } from "./walletFlow";
@@ -519,16 +521,19 @@ describe("walletFlow", () => {
     expect(mergePlayerProfile({
       wallet: account,
       displayName: "Nova Prime",
+      description: "Diplomacy open.",
       fallbackName: "0x1111...1111",
       updatedAt: "2026-06-02T00:00:00.000Z"
     }, {
       wallet: account.toUpperCase(),
       displayName: null,
+      description: null,
       fallbackName: "0x1111...1111",
       updatedAt: null
     })).toEqual({
       wallet: account.toUpperCase(),
       displayName: "Nova Prime",
+      description: "Diplomacy open.",
       fallbackName: "0x1111...1111",
       updatedAt: "2026-06-02T00:00:00.000Z"
     });
@@ -538,11 +543,13 @@ describe("walletFlow", () => {
     expect(mergePlayerProfile(undefined, {
       wallet: account,
       displayName: null,
+      description: null,
       fallbackName: "0x1111...1111",
       updatedAt: null
     })).toEqual({
       wallet: account,
       displayName: null,
+      description: null,
       fallbackName: "0x1111...1111",
       updatedAt: null
     });
@@ -2212,6 +2219,7 @@ describe("walletFlow", () => {
     const profile = {
       wallet: account.toLowerCase(),
       displayName: "borodutch",
+      description: "Commander bio",
       fallbackName: "0x1111...1111",
       updatedAt: "2026-06-02T13:00:00.000Z",
     };
@@ -2231,6 +2239,49 @@ describe("walletFlow", () => {
 
     try {
       await expect(fetchPlayerProfile("https://api.example.test///", account)).resolves.toEqual(profile);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("saves a signed player profile through the backend", async () => {
+    const originalFetch = globalThis.fetch;
+    const description = "Open diplomacy: https://veydrift.com/nova";
+    const provider = mockProvider(async ({ method, params }) => {
+      expect(method).toBe("personal_sign");
+      expect(params).toEqual([playerProfileMessage(account, "borodutch", description), account]);
+      return "0xsignature";
+    });
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      expect(String(input)).toBe(`https://api.example.test/wallet/${account}/profile`);
+      expect(init?.method).toBe("POST");
+      expect(init?.headers).toEqual({
+        accept: "application/json",
+        "content-type": "application/json"
+      });
+      expect(JSON.parse(String(init?.body))).toEqual({
+        description,
+        displayName: "borodutch",
+        signature: "0xsignature"
+      });
+      return new Response(JSON.stringify({
+        wallet: account.toLowerCase(),
+        displayName: "borodutch",
+        description,
+        fallbackName: "0x1111...1111",
+        updatedAt: "2026-06-02T13:00:00.000Z",
+      }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(updatePlayerProfile("https://api.example.test///", provider, account, "borodutch", description)).resolves.toMatchObject({
+        description,
+        displayName: "borodutch"
+      });
     } finally {
       globalThis.fetch = originalFetch;
     }

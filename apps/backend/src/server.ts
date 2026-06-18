@@ -44,8 +44,10 @@ import {
 } from "./indexer";
 import { RandomnessCommitterService } from "./randomnessCommitter";
 import {
+  validatePlayerDescription,
   validatePlayerDisplayName,
   verifyPlayerDisplayNameSignature,
+  verifyPlayerProfileSignature,
   type PlayerProfile
 } from "./playerProfiles";
 import { deriveInfrastructureFields, isCombatShipId } from "./readModels";
@@ -316,6 +318,51 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         assertAddress(wallet);
         if (!indexer) return playerProfilesUnavailableResponse();
         return Response.json(indexer.playerProfile(wallet), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname.match(/^\/wallet\/[^/]+\/profile$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        if (!indexer) return playerProfilesUnavailableResponse();
+        const body = await readJsonBody(request);
+        const displayNameValidation = validatePlayerDisplayName(body?.displayName);
+        if (!displayNameValidation.ok) {
+          return Response.json({ error: "invalid_display_name", message: displayNameValidation.error }, {
+            headers: corsHeaders,
+            status: 400
+          });
+        }
+        const descriptionValidation = validatePlayerDescription(body?.description);
+        if (!descriptionValidation.ok) {
+          return Response.json({ error: "invalid_description", message: descriptionValidation.error }, {
+            headers: corsHeaders,
+            status: 400
+          });
+        }
+
+        const verified = await verifyPlayerProfileSignature({
+          description: descriptionValidation.description,
+          displayName: displayNameValidation.displayName,
+          signature: body?.signature,
+          wallet
+        });
+        if (!verified) {
+          return Response.json({
+            error: "invalid_signature",
+            message: "Sign the Veydrift profile message with the connected wallet."
+          }, {
+            headers: corsHeaders,
+            status: 401
+          });
+        }
+
+        return Response.json(indexer.upsertPlayerProfile(wallet, displayNameValidation.displayName, descriptionValidation.description), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -1155,6 +1202,7 @@ function fallbackPlayerProfile(wallet: `0x${string}`): PlayerProfile {
   return {
     wallet: normalizedWallet,
     displayName: null,
+    description: null,
     fallbackName: `${normalizedWallet.slice(0, 6)}...${normalizedWallet.slice(-4)}`,
     updatedAt: null
   };

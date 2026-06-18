@@ -110,6 +110,7 @@ export type PlanetSummary = {
 export type PlayerProfile = {
   wallet: string;
   displayName: string | null;
+  description: string | null;
   fallbackName: string;
   updatedAt: string | null;
 };
@@ -1459,6 +1460,7 @@ export function shortAddress(address: string): string {
 }
 
 export const playerDisplayNameMaxLength = 32;
+export const playerDescriptionMaxLength = 500;
 
 export function playerDisplayNameMessage(wallet: string, displayName: string): string {
   return [
@@ -1466,6 +1468,16 @@ export function playerDisplayNameMessage(wallet: string, displayName: string): s
     `Wallet: ${wallet.toLowerCase()}`,
     `Display name: ${displayName}`,
     "Only sign this message if you want this public name shown in Veydrift."
+  ].join("\n");
+}
+
+export function playerProfileMessage(wallet: string, displayName: string, description: string | null): string {
+  return [
+    "Veydrift player profile",
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Display name: ${displayName}`,
+    `Description: ${description ?? ""}`,
+    "Only sign this message if you want this public profile shown in Veydrift."
   ].join("\n");
 }
 
@@ -1477,6 +1489,23 @@ export function validatePlayerDisplayName(value: string): string | undefined {
   }
   if (/[\p{Cc}\p{Cf}]/u.test(displayName)) {
     return "Display names cannot include control or formatting characters.";
+  }
+  return undefined;
+}
+
+export function normalizePlayerDescription(value: string): string | null {
+  const description = value.replace(/\r\n?/g, "\n").trim();
+  return description || null;
+}
+
+export function validatePlayerDescription(value: string): string | undefined {
+  const description = normalizePlayerDescription(value);
+  if (!description) return undefined;
+  if (Array.from(description).length > playerDescriptionMaxLength) {
+    return `Descriptions can be at most ${playerDescriptionMaxLength} characters.`;
+  }
+  if (/[\p{Cc}\p{Cf}]/u.test(description.replace(/\n/g, ""))) {
+    return "Descriptions cannot include control or formatting characters.";
   }
   return undefined;
 }
@@ -1497,6 +1526,7 @@ export function mergePlayerProfile(
   return {
     ...next,
     displayName: current.displayName,
+    description: next.description ?? current.description ?? null,
     updatedAt: current.updatedAt ?? next.updatedAt,
   };
 }
@@ -2766,6 +2796,33 @@ export async function updatePlayerDisplayName(
   });
   const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(account)}/profile/display-name`, {
     body: JSON.stringify({ displayName, signature }),
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json"
+    },
+    method: "POST"
+  });
+
+  if (!response.ok) {
+    throw new Error(await apiErrorMessage(response, "Player profile"));
+  }
+  return response.json() as Promise<PlayerProfile>;
+}
+
+export async function updatePlayerProfile(
+  apiUrl: string,
+  provider: Eip1193Provider,
+  account: string,
+  displayName: string,
+  description: string | null
+): Promise<PlayerProfile> {
+  const message = playerProfileMessage(account, displayName, description);
+  const signature = await provider.request<string>({
+    method: "personal_sign",
+    params: [message, account]
+  });
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(account)}/profile`, {
+    body: JSON.stringify({ description, displayName, signature }),
     headers: {
       accept: "application/json",
       "content-type": "application/json"

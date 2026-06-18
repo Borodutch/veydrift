@@ -63,14 +63,15 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(navSource).toContain("sticky bottom-3 shrink-0");
     expect(navSource).toContain("Commander");
     expect(navSource).toContain("playerDisplayLabel(playerProfile, account)");
-    expect(navSource).toContain('aria-label="Edit player display name"');
+    expect(navSource).toContain('aria-label="Edit player profile"');
     expect(navSource).toContain('aria-haspopup="dialog"');
     expect(navSource).toContain('id="commander-name-editor"');
     expect(navSource).toContain('role="dialog"');
+    expect(navSource).toContain("playerDescriptionMaxLength");
     expect(navSource).toContain("fixed inset-0 z-50");
     expect(navSource).not.toContain('className="mt-2 grid gap-2 rounded border border-white/10 bg-black/30 p-2"');
     expect(playableSource).toContain("playerProfile={playerProfile}");
-    expect(playableSource).toContain("onUpdatePlayerDisplayName={handleUpdatePlayerDisplayName}");
+    expect(playableSource).toContain("onUpdatePlayerProfile={handleUpdatePlayerProfile}");
     expect(topBarSource).toContain("max-w-[96rem]");
     expect(navSource).not.toContain("Home Planet");
     expect(navSource).not.toContain("tracking-[0.16em]");

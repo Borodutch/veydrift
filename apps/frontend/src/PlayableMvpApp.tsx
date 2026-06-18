@@ -186,7 +186,7 @@ import {
   sendCreateAllianceTransaction,
   isOnChainRevertError,
   isUserRejected,
-  updatePlayerDisplayName,
+  updatePlayerProfile,
   type ChainDefenseState,
   type ChainAllianceState,
   type ChainInfrastructureState,
@@ -5213,14 +5213,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       });
   }, [account, activePlanetId, confirmSubmittedTransaction, gameContract, provider, refreshOnChainState]);
 
-  const handleUpdatePlayerDisplayName = useCallback((displayName: string) => {
+  const handleUpdatePlayerProfile = useCallback((displayName: string, description: string | null) => {
     if (!provider || !account || !apiBaseUrl) {
       setPlayerProfileAction({ status: "error", label: "Wallet or game API is unavailable." });
       return;
     }
 
     setPlayerProfileAction({ status: "pending", label: "Waiting for wallet signature" });
-    void updatePlayerDisplayName(apiBaseUrl, provider, account, displayName)
+    void updatePlayerProfile(apiBaseUrl, provider, account, displayName, description)
       .then(async (profile) => {
         setPlayerProfile((current) => mergePlayerProfile(current, profile));
         markFreshStateWrite(onChainRefreshGate);
@@ -5233,14 +5233,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         } catch (error) {
           console.error(error);
         }
-        setPlayerProfileAction({ status: "success", label: "Display name saved." });
+        setPlayerProfileAction({ status: "success", label: "Profile saved." });
         if (shouldRefreshAllianceStateForPage(page)) refreshAllianceState();
       })
       .catch((error) => {
         console.error(error);
         setPlayerProfileAction({
           status: "error",
-          label: error instanceof Error ? error.message : "Display name update failed.",
+          label: error instanceof Error ? error.message : "Profile update failed.",
         });
       });
   }, [account, apiBaseUrl, page, provider, refreshAllianceState]);
@@ -6381,7 +6381,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           canEditPlayerProfile={Boolean(provider && account && apiBaseUrl)}
           coordinates={homeCoordinateLabel}
           onNavigate={handleNavigate}
-          onUpdatePlayerDisplayName={handleUpdatePlayerDisplayName}
+          onUpdatePlayerProfile={handleUpdatePlayerProfile}
           planetPicker={mobilePlanetPicker}
           playerProfile={playerProfile}
           playerProfileAction={playerProfileAction}

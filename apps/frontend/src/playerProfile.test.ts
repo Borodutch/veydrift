@@ -1,8 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import { playerPlanetTacticalSignals, playerProfileHomePlanetLabel } from "./components/InspectPages";
+import {
+  isSafeProfileDescriptionUrl,
+  playerPlanetTacticalSignals,
+  playerProfileHomePlanetLabel,
+  profileDescriptionParts
+} from "./components/InspectPages";
 import { publicCommanderRows } from "./components/PlanetDetail";
 import type { Planet } from "./types";
-import { playerDisplayLabel, validatePlayerDisplayName, type HighscoreEntry, type ManagedPlanetResponse, type WalletPlanetsResponse } from "./walletFlow";
+import {
+  playerDescriptionMaxLength,
+  playerDisplayLabel,
+  validatePlayerDescription,
+  validatePlayerDisplayName,
+  type HighscoreEntry,
+  type ManagedPlanetResponse,
+  type WalletPlanetsResponse
+} from "./walletFlow";
 
 const wallet = "0x1111111111111111111111111111111111111111";
 
@@ -14,10 +27,18 @@ describe("player profile display helpers", () => {
     expect(validatePlayerDisplayName("Nova\nPrime")).toBe("Display names cannot include control or formatting characters.");
   });
 
+  test("validates profile descriptions with stable user-facing errors", () => {
+    expect(validatePlayerDescription("Line one\nhttps://veydrift.com")).toBeUndefined();
+    expect(validatePlayerDescription("")).toBeUndefined();
+    expect(validatePlayerDescription("A".repeat(playerDescriptionMaxLength + 1))).toBe("Descriptions can be at most 500 characters.");
+    expect(validatePlayerDescription("Nova\u0000Prime")).toBe("Descriptions cannot include control or formatting characters.");
+  });
+
   test("prefers saved display name and falls back to stable wallet label", () => {
     expect(playerDisplayLabel({
       wallet,
       displayName: "Nova Prime",
+      description: "Public bio",
       fallbackName: "0x1111...1111",
       updatedAt: "2026-06-02T00:00:00.000Z"
     }, wallet)).toBe("Nova Prime");
@@ -25,11 +46,38 @@ describe("player profile display helpers", () => {
     expect(playerDisplayLabel({
       wallet,
       displayName: null,
+      description: null,
       fallbackName: "0x1111...1111",
       updatedAt: null
     }, wallet)).toBe("0x1111...1111");
 
     expect(playerDisplayLabel(undefined, wallet)).toBe("0x1111...1111");
+  });
+
+  test("turns only safe plain URLs into profile links", () => {
+    expect(profileDescriptionParts("Raid board https://veydrift.com/raid, ping javascript:alert(1)")).toEqual([
+      { text: "Raid board " },
+      { href: "https://veydrift.com/raid", text: "https://veydrift.com/raid" },
+      { text: "," },
+      { text: " ping javascript:alert(1)" }
+    ]);
+    expect(isSafeProfileDescriptionUrl("https://veydrift.com")).toBe(true);
+    expect(isSafeProfileDescriptionUrl("http://example.com/path")).toBe(true);
+    expect(isSafeProfileDescriptionUrl("javascript:alert(1)")).toBe(false);
+    expect(isSafeProfileDescriptionUrl("data:text/html,hi")).toBe(false);
+  });
+
+  test("keeps commander descriptions profile-only in source rendering paths", async () => {
+    const inspectPagesSource = await Bun.file(new URL("./components/InspectPages.tsx", import.meta.url)).text();
+    const galaxySource = await Bun.file(new URL("./components/GalaxyView.tsx", import.meta.url)).text();
+    const rankingsSource = await Bun.file(new URL("./components/RankingsPage.tsx", import.meta.url)).text();
+    const overviewSource = await Bun.file(new URL("../tests/overviewPage.test.ts", import.meta.url)).text();
+
+    expect(inspectPagesSource).toContain('<Panel title="Profile">');
+    expect(inspectPagesSource).toContain("profileDescriptionParts(description)");
+    expect(galaxySource).not.toContain("description");
+    expect(rankingsSource).not.toContain("description");
+    expect(overviewSource).not.toContain("description");
   });
 
   test("uses display names on public planet profile rows when present", () => {

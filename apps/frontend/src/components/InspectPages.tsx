@@ -7,12 +7,14 @@ import type { Coordinates } from "../types";
 import { formatUserTimestamp } from "../timestampFormat";
 import {
   fetchHighscores,
+  fetchPlayerProfile,
   fetchWalletPlanets,
   shortAddress,
   type ChainAllianceState,
   type HighscoreEntry,
   type ManagedPlanetResponse,
   type OnChainResources,
+  type PlayerProfile,
   type WalletPlanetsResponse,
 } from "../walletFlow";
 import {
@@ -36,7 +38,7 @@ import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailab
 
 type PlayerInspectState =
   | { status: "loading" }
-  | { status: "loaded"; planets: WalletPlanetsResponse | null; highscore: HighscoreEntry | null }
+  | { status: "loaded"; planets: WalletPlanetsResponse | null; highscore: HighscoreEntry | null; profile: PlayerProfile | null }
   | { status: "error"; label: string };
 
 type RosterMember = ChainAllianceState["members"][number];
@@ -71,17 +73,19 @@ export function PlayerInspectPage({
     Promise.allSettled([
       fetchWalletPlanets(apiBaseUrl, wallet),
       fetchHighscores(apiBaseUrl),
-    ]).then(([planetsResult, highscoresResult]) => {
+      fetchPlayerProfile(apiBaseUrl, wallet),
+    ]).then(([planetsResult, highscoresResult, profileResult]) => {
       if (disposed) return;
       const planets = planetsResult.status === "fulfilled" ? planetsResult.value : null;
       const highscore = highscoresResult.status === "fulfilled"
         ? highscoresResult.value.rankings.total.find((entry) => entry.wallet.toLowerCase() === wallet.toLowerCase()) ?? null
         : null;
-      if (!planets && !highscore) {
+      const profile = profileResult.status === "fulfilled" ? profileResult.value : planets?.player ?? null;
+      if (!planets && !highscore && !profile) {
         setState({ status: "error", label: "Public player profile could not be loaded." });
         return;
       }
-      setState({ status: "loaded", planets, highscore });
+      setState({ status: "loaded", planets, highscore, profile });
     });
 
     return () => {
@@ -90,10 +94,12 @@ export function PlayerInspectPage({
   }, [apiBaseUrl, wallet]);
 
   const displayName = state.status === "loaded"
-    ? state.highscore?.displayName?.trim() || state.planets?.player?.displayName?.trim() || shortAddress(wallet)
+    ? state.highscore?.displayName?.trim() || state.profile?.displayName?.trim() || state.planets?.player?.displayName?.trim() || shortAddress(wallet)
     : shortAddress(wallet);
   const isCurrentWallet = currentWallet?.toLowerCase() === wallet.toLowerCase();
   const alliance = state.status === "loaded" ? state.highscore?.alliance ?? null : null;
+  const publicProfile = state.status === "loaded" ? state.profile ?? state.planets?.player ?? null : null;
+  const profileDescription = publicProfile?.description?.trim() || null;
   const scoreItems = state.status === "loaded" ? playerInspectScoreItems(state.highscore) : [];
   const homePlanetLabel = state.status === "loaded" ? playerProfileHomePlanetLabel(state.planets, state.highscore) : undefined;
 
@@ -123,6 +129,12 @@ export function PlayerInspectPage({
             <CompactStat label="Planets" value={String(state.planets?.planets.length ?? state.highscore?.planetCount ?? 0)} />
             {homePlanetLabel ? <CompactStat label="Home planet" value={homePlanetLabel} /> : null}
           </div>
+
+          {profileDescription ? (
+            <Panel title="Profile">
+              <PlayerProfileDescription profile={publicProfile} />
+            </Panel>
+          ) : null}
 
           <Panel title="Planets">
             {state.planets?.planets.length ? (
@@ -160,6 +172,75 @@ export function PlayerInspectPage({
       ) : null}
     </InspectShell>
   );
+}
+
+function PlayerProfileDescription({ profile }: { profile: Pick<PlayerProfile, "description"> | null }) {
+  const description = profile?.description?.trim();
+  if (!description) return null;
+
+  return (
+    <p className="whitespace-pre-wrap break-words text-sm leading-6 text-slate-300">
+      {profileDescriptionParts(description).map((part, index) => part.href ? (
+        <a
+          className="break-all text-cyan-200 underline decoration-cyan-300/40 underline-offset-2 hover:text-cyan-100"
+          href={part.href}
+          key={`${part.href}-${index}`}
+          rel="noreferrer noopener"
+          target="_blank"
+        >
+          {part.text}
+        </a>
+      ) : (
+        <span key={`${part.text}-${index}`}>{part.text}</span>
+      ))}
+    </p>
+  );
+}
+
+export type ProfileDescriptionPart = {
+  text: string;
+  href?: string;
+};
+
+const profileUrlPattern = /https?:\/\/[^\s<>"']+/gi;
+const trailingUrlPunctuation = /[),.;:!?]+$/;
+
+export function profileDescriptionParts(description: string): ProfileDescriptionPart[] {
+  const parts: ProfileDescriptionPart[] = [];
+  let cursor = 0;
+
+  for (const match of description.matchAll(profileUrlPattern)) {
+    const rawUrl = match[0];
+    const index = match.index ?? 0;
+    if (index > cursor) {
+      parts.push({ text: description.slice(cursor, index) });
+    }
+
+    const trimmedUrl = rawUrl.replace(trailingUrlPunctuation, "");
+    const trailing = rawUrl.slice(trimmedUrl.length);
+    if (isSafeProfileDescriptionUrl(trimmedUrl)) {
+      parts.push({ href: trimmedUrl, text: trimmedUrl });
+    } else {
+      parts.push({ text: trimmedUrl });
+    }
+    if (trailing) parts.push({ text: trailing });
+    cursor = index + rawUrl.length;
+  }
+
+  if (cursor < description.length) {
+    parts.push({ text: description.slice(cursor) });
+  }
+
+  return parts.length ? parts : [{ text: description }];
+}
+
+export function isSafeProfileDescriptionUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function PlayerPlanetRow({
