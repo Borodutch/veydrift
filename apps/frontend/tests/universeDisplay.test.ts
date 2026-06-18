@@ -21,6 +21,7 @@ import {
   formatMissionPreview,
   formatGalaxyOccupancySource,
   formatGalaxyOccupancySummary,
+  galaxySystemRequestUrl,
   galaxyMissionFuelCost,
   galaxyMissionTravelSeconds,
   planetsForFailedGalaxyLoad,
@@ -125,6 +126,15 @@ describe("tester universe display data", () => {
         planetId: "7",
       },
     });
+  });
+
+  test("keys galaxy system requests only by API base and coordinates", () => {
+    expect(galaxySystemRequestUrl("https://api.test/", 2, 44)).toBe(
+      "https://api.test/universe/galaxies/2/systems/44"
+    );
+    expect(galaxySystemRequestUrl("https://api.test", 2, 44)).toBe(
+      "https://api.test/universe/galaxies/2/systems/44"
+    );
   });
 
   test("public planet detail preserves public state rows and queue labels", () => {

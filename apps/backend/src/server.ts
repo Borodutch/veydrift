@@ -49,7 +49,7 @@ import {
   type PlayerProfile
 } from "./playerProfiles";
 import { deriveInfrastructureFields, isCombatShipId } from "./readModels";
-import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata } from "./universe";
+import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
 import type { WorkerRole } from "./workerPool";
 
 const jsonHeaders = {
@@ -214,6 +214,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
   const responseCache = new Map<string, CachedJsonResponse>();
   const inflightResponseCache = new Map<string, Promise<CachedJsonResponse | null>>();
+  const galaxySystemCache = new Map<string, GalaxySystemCacheEntry>();
   const enableResponseCache =
     !dependencies.chainReader
     && !dependencies.chainSync
@@ -743,62 +744,25 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const parts = url.pathname.split("/");
       const galaxy = Number.parseInt(parts[3] ?? "", 10);
       const system = Number.parseInt(parts[5] ?? "", 10);
-      let baseSnapshot;
+      let payload;
       try {
-        baseSnapshot = systemSnapshot(
-          loaded.config.chainId,
-          universeContractAddress(loaded.config),
-          galaxy,
-          system
+        payload = await cachedGalaxySystemPayload(
+          galaxySystemCache,
+          {
+            chainId: loaded.config.chainId,
+            settlementContractAddress: universeContractAddress(loaded.config),
+            galaxy,
+            system,
+            indexer
+          }
         );
       } catch (error) {
         return errorResponse(error, 400);
       }
-      const occupied = new Map(
-        (indexer?.settledPlanetsInSystem(galaxy, system) ?? []).map((planet) => [
-          planet.position,
-          planet
-        ])
-      );
-      const debris = new Map(
-        (indexer?.debrisFieldsInSystem(galaxy, system) ?? []).map((field) => [
-          field.position,
-          field
-        ])
-      );
-      const moonChance = new Map(
-        (indexer?.moonChanceReportsInSystem(galaxy, system) ?? []).map((report) => [
-          report.position,
-          report
-        ])
-      );
-      const allianceIntel = await allianceIntelForOccupiedPlanets(
-        Array.from(occupied.values()),
-        indexer
-      );
 
-      return Response.json(
-        {
-          ...baseSnapshot,
-          planets: includeOccupiedPlanets(
-            baseSnapshot.planets,
-            occupied,
-            loaded.config.chainId,
-            universeContractAddress(loaded.config),
-            galaxy,
-            system
-          ).map((planet) => ({
-            ...planet,
-            occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer, allianceIntel),
-            publicState: publicPlanetStateRef(occupied.get(planet.position), indexer),
-            debrisField: debrisFieldRef(debris.get(planet.position)),
-            moonChance: moonChanceReportRef(moonChance.get(planet.position))
-          }))
-        },
-        {
-          headers: corsHeaders
-        }
-      );
+      return Response.json(payload, {
+        headers: corsHeaders
+      });
     }
 
     if (request.method === "GET" && url.pathname === "/universe/systems") {
@@ -816,52 +780,16 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             radius,
             systems: await Promise.all(Array.from({ length: to - from + 1 }, async (_, index) => {
               const system = from + index;
-              const occupied = new Map(
-                (indexer?.settledPlanetsInSystem(galaxy, system) ?? []).map((planet) => [
-                  planet.position,
-                  planet
-                ])
-              );
-              const debris = new Map(
-                (indexer?.debrisFieldsInSystem(galaxy, system) ?? []).map((field) => [
-                  field.position,
-                  field
-                ])
-              );
-              const moonChance = new Map(
-                (indexer?.moonChanceReportsInSystem(galaxy, system) ?? []).map((report) => [
-                  report.position,
-                  report
-                ])
-              );
-              const allianceIntel = await allianceIntelForOccupiedPlanets(
-                Array.from(occupied.values()),
-                indexer
-              );
-              const snapshot = systemSnapshot(
-                loaded.config.chainId,
-                universeContractAddress(loaded.config),
-                galaxy,
-                system
-              );
-
-              return {
-                ...snapshot,
-                planets: includeOccupiedPlanets(
-                  snapshot.planets,
-                  occupied,
-                  loaded.config.chainId,
-                  universeContractAddress(loaded.config),
+              return cachedGalaxySystemPayload(
+                galaxySystemCache,
+                {
+                  chainId: loaded.config.chainId,
+                  settlementContractAddress: universeContractAddress(loaded.config),
                   galaxy,
-                  system
-                ).map((planet) => ({
-                  ...planet,
-                  occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer, allianceIntel),
-                  publicState: publicPlanetStateRef(occupied.get(planet.position), indexer),
-                  debrisField: debrisFieldRef(debris.get(planet.position)),
-                  moonChance: moonChanceReportRef(moonChance.get(planet.position))
-                }))
-              };
+                  system,
+                  indexer
+                }
+              );
             }))
           },
           {
@@ -1143,12 +1071,16 @@ function hotResponseCachePaths(indexer: SettlementIndexer): string[] {
     "/missions?status=active",
     "/missions?status=completed&page=1&pageSize=25"
   ]);
+  const galaxySystemPaths = new Set<string>();
 
   for (const mission of [
     ...indexer.allActiveFleetMissions().slice(0, 50),
     ...indexer.allCompletedFleetMissions().slice(0, 50)
   ]) {
     paths.add(`/mission/${encodeURIComponent(mission.missionId)}`);
+    if (mission.targetPlanet) {
+      galaxySystemPaths.add(`/universe/galaxies/${mission.targetPlanet.galaxy}/systems/${mission.targetPlanet.system}`);
+    }
   }
 
   for (const [wallet, planets] of indexer.settledPlanetsByOwner()) {
@@ -1160,6 +1092,7 @@ function hotResponseCachePaths(indexer: SettlementIndexer): string[] {
     paths.add(`/wallet/${encodedWallet}/highscore`);
 
     for (const planet of planets) {
+      galaxySystemPaths.add(`/universe/galaxies/${planet.galaxy}/systems/${planet.system}`);
       const planetId = encodeURIComponent(planet.planetId);
       paths.add(`/wallet/${encodedWallet}/overview?planetId=${planetId}`);
       paths.add(`/wallet/${encodedWallet}/queues?planetId=${planetId}`);
@@ -1169,6 +1102,10 @@ function hotResponseCachePaths(indexer: SettlementIndexer): string[] {
       paths.add(`/wallet/${encodedWallet}/defenses?planetId=${planetId}`);
       paths.add(`/wallet/${encodedWallet}/research?planetId=${planetId}`);
     }
+  }
+
+  for (const path of [...galaxySystemPaths].slice(0, 500)) {
+    paths.add(path);
   }
 
   return [...paths];
@@ -1907,6 +1844,127 @@ function isWebhookLog(value: Record<string, unknown>): value is IndexedRpcLog {
     && (value.blockTimestamp === undefined || typeof value.blockTimestamp === "string")
     && (value.logIndex === undefined || typeof value.logIndex === "string")
     && (value.removed === undefined || typeof value.removed === "boolean");
+}
+
+type GalaxySystemPayload = Omit<SystemSnapshot, "planets"> & {
+  planets: Array<PlanetMetadata & {
+    occupiedBy: ReturnType<typeof occupiedPlanetRef>;
+    publicState: ReturnType<typeof publicPlanetStateRef>;
+    debrisField: ReturnType<typeof debrisFieldRef>;
+    moonChance: ReturnType<typeof moonChanceReportRef>;
+  }>;
+};
+
+type GalaxySystemCacheEntry = {
+  indexerVersion: number;
+  projectionBucket: number;
+  payload: GalaxySystemPayload;
+};
+
+async function cachedGalaxySystemPayload(
+  cache: Map<string, GalaxySystemCacheEntry>,
+  input: {
+    chainId: number;
+    settlementContractAddress: string;
+    galaxy: number;
+    system: number;
+    indexer: SettlementIndexer | undefined;
+  }
+): Promise<GalaxySystemPayload> {
+  const indexerVersion = input.indexer?.stateVersion() ?? 0;
+  const projectionBucket = input.indexer ? Math.floor(Date.now() / 5_000) : 0;
+  const cacheKey = [
+    input.chainId,
+    input.settlementContractAddress.toLowerCase(),
+    input.galaxy,
+    input.system
+  ].join(":");
+  const cached = cache.get(cacheKey);
+  if (
+    cached
+    && cached.indexerVersion === indexerVersion
+    && cached.projectionBucket === projectionBucket
+  ) {
+    return cached.payload;
+  }
+
+  const payload = await galaxySystemPayload(input);
+  cache.set(cacheKey, {
+    indexerVersion,
+    projectionBucket,
+    payload
+  });
+  pruneGalaxySystemCache(cache);
+  return payload;
+}
+
+async function galaxySystemPayload({
+  chainId,
+  settlementContractAddress,
+  galaxy,
+  system,
+  indexer
+}: {
+  chainId: number;
+  settlementContractAddress: string;
+  galaxy: number;
+  system: number;
+  indexer: SettlementIndexer | undefined;
+}): Promise<GalaxySystemPayload> {
+  const baseSnapshot = systemSnapshot(
+    chainId,
+    settlementContractAddress,
+    galaxy,
+    system
+  );
+  const occupied = new Map(
+    (indexer?.settledPlanetsInSystem(galaxy, system) ?? []).map((planet) => [
+      planet.position,
+      planet
+    ])
+  );
+  const debris = new Map(
+    (indexer?.debrisFieldsInSystem(galaxy, system) ?? []).map((field) => [
+      field.position,
+      field
+    ])
+  );
+  const moonChance = new Map(
+    (indexer?.moonChanceReportsInSystem(galaxy, system) ?? []).map((report) => [
+      report.position,
+      report
+    ])
+  );
+  const allianceIntel = await allianceIntelForOccupiedPlanets(
+    Array.from(occupied.values()),
+    indexer
+  );
+
+  return {
+    ...baseSnapshot,
+    planets: includeOccupiedPlanets(
+      baseSnapshot.planets,
+      occupied,
+      chainId,
+      settlementContractAddress,
+      galaxy,
+      system
+    ).map((planet) => ({
+      ...planet,
+      occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer, allianceIntel),
+      publicState: publicPlanetStateRef(occupied.get(planet.position), indexer),
+      debrisField: debrisFieldRef(debris.get(planet.position)),
+      moonChance: moonChanceReportRef(moonChance.get(planet.position))
+    }))
+  };
+}
+
+function pruneGalaxySystemCache(cache: Map<string, GalaxySystemCacheEntry>): void {
+  while (cache.size > 2_048) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) return;
+    cache.delete(oldestKey);
+  }
 }
 
 function includeOccupiedPlanets(

@@ -1,5 +1,5 @@
 import { Fragment } from "preact";
-import { useState, useEffect, useRef } from "preact/hooks";
+import { useState, useEffect, useMemo, useRef } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
 import {
   DEFAULT_MISSION_SPEED_PERCENT,
@@ -144,7 +144,7 @@ export function GalaxyView({
   onSelectPlanet,
   onNavigate,
 }: Props) {
-  const [planets, setPlanets] = useState<Planet[]>([]);
+  const [systemPlanets, setSystemPlanets] = useState<Planet[]>([]);
   const [attackProtection, setAttackProtection] = useState<Record<string, AttackProtectionStatus>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | undefined>();
@@ -159,6 +159,14 @@ export function GalaxyView({
   const homePlanetOverride = homePlanet?.galaxy === galaxy && homePlanet.system === system
     ? homePlanet
     : undefined;
+  const planets = useMemo(
+    () => withHomePlanet(systemPlanets, homePlanetOverride),
+    [homePlanetOverride, systemPlanets]
+  );
+  const galaxySystemUrl = useMemo(
+    () => galaxySystemRequestUrl(apiBaseUrl, galaxy, system),
+    [apiBaseUrl, galaxy, system]
+  );
 
   useEffect(() => {
     loadedSystemKeyRef.current = loadedSystemKey;
@@ -171,7 +179,7 @@ export function GalaxyView({
     setLoadError(undefined);
     setSource("loading");
 
-    fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}`, {
+    fetch(galaxySystemUrl, {
       headers: { accept: "application/json" },
       signal: abortController.signal,
     })
@@ -180,7 +188,7 @@ export function GalaxyView({
         return response.json();
       })
       .then((payload) => {
-        setPlanets(withHomePlanet(planetsFromSystemResponse(payload), homePlanetOverride));
+        setSystemPlanets(planetsFromSystemResponse(payload));
         setLoadedSystemKey(currentSystemKey);
         setSource("api");
       })
@@ -188,7 +196,7 @@ export function GalaxyView({
         if (!abortController.signal.aborted) {
           console.error(error);
           if (!canPreserveCurrentSystem) {
-            setPlanets(planetsForFailedGalaxyLoad());
+            setSystemPlanets(planetsForFailedGalaxyLoad());
             setLoadedSystemKey(undefined);
           }
           setLoadError(systemLoadErrorLabel(error));
@@ -200,7 +208,7 @@ export function GalaxyView({
       });
 
     return () => abortController.abort();
-  }, [apiBaseUrl, currentSystemKey, galaxy, homeCoordsInSystem?.position, homePlanetOverride?.fields, homePlanetOverride?.image, reloadNonce, system]);
+  }, [currentSystemKey, galaxySystemUrl, reloadNonce]);
 
   useEffect(() => {
     const occupiedTargets = planets
@@ -504,6 +512,10 @@ function clampInteger(value: number, min: number, max: number): number {
 
 function galaxySystemKey(galaxy: number, system: number): string {
   return `${galaxy}:${system}`;
+}
+
+export function galaxySystemRequestUrl(apiBaseUrl: string, galaxy: number, system: number): string {
+  return `${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}`;
 }
 
 export function formatGalaxyOccupancySummary(occupiedCount: number): string {

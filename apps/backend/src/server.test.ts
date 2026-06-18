@@ -1711,6 +1711,50 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("memoizes galaxy system payloads until indexed state changes", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new class extends SettlementIndexer {
+      systemReads = 0;
+
+      override settledPlanetsInSystem(galaxy: number, system: number): SettledPlanetEvent[] {
+        this.systemReads += 1;
+        return super.settledPlanetsInSystem(galaxy, system);
+      }
+    }(chainReader, configuredTestConfig.indexFromBlock);
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const firstResponse = await handler(new Request("http://localhost/universe/galaxies/2/systems/44"));
+    const secondResponse = await handler(new Request("http://localhost/universe/galaxies/2/systems/44"));
+    const firstBody = await firstResponse.json();
+    const secondBody = await secondResponse.json();
+
+    expect(firstResponse.status).toBe(200);
+    expect(secondResponse.status).toBe(200);
+    expect(indexer.systemReads).toBe(1);
+    expect(secondBody).toEqual(firstBody);
+
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123"
+    });
+
+    const changedResponse = await handler(new Request("http://localhost/universe/galaxies/2/systems/44"));
+    const changedBody = await changedResponse.json();
+    const occupied = changedBody.planets.find((item: { position: number }) => item.position === 9);
+
+    expect(indexer.systemReads).toBe(2);
+    expect(occupied.occupiedBy).toMatchObject({
+      owner: player,
+      planetId: "7"
+    });
+  });
+
   test("serves contract-aligned unoccupied planet preview traits", async () => {
     const response = await createRequestHandler({
       config: configuredTestConfig,
