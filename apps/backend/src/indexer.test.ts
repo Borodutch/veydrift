@@ -4632,6 +4632,120 @@ describe("SettlementIndexer", () => {
     }
   });
 
+  test("canonical mission event_json supplies terminal return fields when decoded mission logs are launch-era", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    const chainReader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+    try {
+      const writer = new SettlementIndexer(chainReader, 100n, { databasePath });
+      writer.applyEvent(planet);
+      writer.applyLog({
+        blockNumber: "0x70",
+        transactionHash: "0xlaunch1776",
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(1776n), addressTopic(player), topic(3n)],
+        data: abiWords(BigInt(planet.planetId), 8n, 1770001200n, 1770002400n, 1503n)
+      });
+      writer.applyLog({
+        blockNumber: "0x70",
+        transactionHash: "0xlaunch1776",
+        logIndex: "0x1",
+        topics: [fleetMissionCargoTopic, topic(1776n)],
+        data: abiWords(0n, 0n, 0n, 24n)
+      });
+      writer.applyLog({
+        blockNumber: "0x70",
+        transactionHash: "0xlaunch1776",
+        logIndex: "0x2",
+        topics: [fleetMissionShipsTopic, topic(1776n)],
+        data: abiWords(1n, ...Array.from({ length: 13 }, () => 0n))
+      });
+      writer.applyLog({
+        blockNumber: "0x80",
+        transactionHash: "0xresolve1776",
+        logIndex: "0x0",
+        topics: [attackBattleResolvedTopic, topic(1776n), addressTopic(player), topic(8n)],
+        data: abiWords(1n, 2n, 12345n, 3098n, 1448n, 454n)
+      });
+      writer.applyLog({
+        blockNumber: "0x80",
+        transactionHash: "0xresolve1776",
+        logIndex: "0x1",
+        topics: [combatLossesTopic, topic(1776n)],
+        data: abiWords(0n, 0n, 0n, 0n, 0n, 0n)
+      });
+
+      const db = new Database(databasePath);
+      const returnedMission = {
+        missionId: "1776",
+        cargo: { metal: "0", crystal: "0", deuterium: "0" },
+        returnCargo: { metal: "3098", crystal: "1448", deuterium: "454" },
+        ships: {
+          smallCargo: "1",
+          lightFighter: "0",
+          recycler: "0",
+          colonyShip: "0",
+          largeCargo: "0",
+          heavyFighter: "0",
+          cruiser: "0",
+          battleship: "0",
+          bomber: "0",
+          destroyer: "0",
+          deathstar: "0",
+          battlecruiser: "0",
+          reaper: "0",
+          pathfinder: "0"
+        },
+        fuelCost: "24",
+        recallCost: null,
+        attackGroupId: null,
+        joinedAttackMissionIds: [],
+        defendsMissionId: null,
+        counterplayDefenderMissionIds: [],
+        needsResolution: false,
+        transactionHash: "0xreturn1776",
+        blockNumber: "43026481",
+        launchBlockNumber: "43024663",
+        owner: player,
+        missionType: "Attack",
+        status: "Returned",
+        originPlanetId: planet.planetId,
+        targetPlanetId: "8",
+        arrivalAt: "1770001200",
+        returnAt: "1770002400",
+        randomnessRequestId: "1503"
+      };
+      db.query(`
+        UPDATE contract_fleet_missions
+        SET status_id = 4,
+          event_json = ?
+        WHERE mission_id = ?
+      `).run(JSON.stringify({ source: "indexed_mission_event_logs", mission: returnedMission }), "1776");
+      db.close();
+
+      const reader = new SettlementIndexer(chainReader, 100n, { databasePath, runStartupBackfill: false });
+      expect(reader.fleetMission("1776")).toMatchObject({
+        missionId: "1776",
+        status: "Returned",
+        returnCargo: { metal: "3098", crystal: "1448", deuterium: "454" },
+        transactionHash: "0xreturn1776",
+        blockNumber: "43026481",
+        launchBlockNumber: "43024663",
+        randomnessRequestId: "1503"
+      });
+      expect(reader.battleReport("1776")).toMatchObject({
+        missionId: "1776",
+        loot: { metal: "3098", crystal: "1448", deuterium: "454" }
+      });
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("explicit rebuild uses canonical fleet mission status to repair active mission counts", async () => {
     const indexer = new SettlementIndexer({
       async listCurrentPlanets() { return [planet]; },
