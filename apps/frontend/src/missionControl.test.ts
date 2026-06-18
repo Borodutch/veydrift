@@ -540,7 +540,7 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("1-25 of 26");
   });
 
-  test("excludes Alliance joinable attacks from the \"Needs orders now\" count", () => {
+  test("omits the obsolete needs-orders flair for joinable attacks", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     // A joinable alliance attack that has already arrived (would be "due" on its own), but the
     // player has no own missions needing action. Joining is opt-in, never an obligation.
@@ -553,10 +553,10 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Needs orders now");
   });
 
-  test("counts only the player's own due missions in \"Needs orders now\"", () => {
+  test("omits the obsolete needs-orders flair for the player's own due missions", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     // One own outbound mission already arrived (due), plus two due joinable alliance attacks that
-    // must not inflate the count.
+    // previously fed the removed header flair.
     const text = collectText(MissionControlPage(missionControlProps(now, {
       outgoing: [mission("32", "Attack", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 60_000)],
       joinableAttacks: [
@@ -565,7 +565,8 @@ describe("Mission Control battle reports", () => {
       ],
     }))).join(" ").replace(/\s+/g, " ");
 
-    expect(text).toContain("Needs orders now 1");
+    expect(text).not.toContain("Needs orders now");
+    expect(text).toContain("Resolving");
   });
 
   test("renders shareable mission detail stages, actions, and battle report structure", () => {

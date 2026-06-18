@@ -514,7 +514,7 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("ACS");
   });
 
-  test("surfaces due missions as urgent playable orders", () => {
+  test("renders due missions without the obsolete needs-orders flair", () => {
     const page = missionControlPage({
       fleetVisibility: {
         wallet: "0x1111111111111111111111111111111111111111",
@@ -530,10 +530,9 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Needs orders now");
-    // Due count now surfaces only via the "Needs orders now" badge (the summary stat card is gone).
     expect(text).not.toContain("Due resolvers");
-    expect(text).toContain("Needs orders now 1");
+    expect(text).not.toContain("Needs orders now");
+    expect(text).toContain("Resolving");
     // VEY-KANEO-468: a due mission settles automatically on-chain, so no manual "Resolve" order renders.
     expect(text).not.toContain("Resolve");
   });
