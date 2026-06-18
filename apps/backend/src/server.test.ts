@@ -1731,6 +1731,49 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("battle report snapshots update when historical unit-count logs arrive after the report cache is warm", async () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+    const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    for (const log of completedFleetMissionLogs({ missionId: 1241n, owner: attacker, originPlanetId: 7n, targetPlanetId: 92n })) {
+      indexer.applyLog(log);
+    }
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xbattle-1241",
+      logIndex: "0x0",
+      removed: false,
+      topics: [attackBattleResolvedTopic, topic(1241n), addressTopic(attacker), topic(92n)],
+      data: abiWords(2n, 4n, 12345n, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xbattle-1241",
+      logIndex: "0x1",
+      removed: false,
+      topics: [combatRoundResolvedTopic, topic(1241n), topic(1n)],
+      data: abiWords(16n, 37n, 17_000n, 7_000n, 0n, 0n)
+    });
+
+    expect(indexer.battleReport("1241")?.defenderSnapshot).toBeNull();
+
+    indexer.applyLog({
+      blockNumber: "0x66",
+      transactionHash: "0xlate-historical-defense-before-battle",
+      logIndex: "0x0",
+      removed: false,
+      topics: [planetDefenseCountChangedTopic, topic(92n), topic(0n)],
+      data: abiWords(37n)
+    });
+
+    expect(indexer.battleReport("1241")?.defenderSnapshot).toEqual({
+      fleet: [],
+      defenses: [{ id: 0, count: 37 }]
+    });
+  });
+
   test("battle report endpoint distinguishes returned recalled attacks from missing indexed reports", async () => {
     const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
