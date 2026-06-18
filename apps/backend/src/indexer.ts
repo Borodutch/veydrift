@@ -1299,7 +1299,7 @@ export class SettlementIndexer {
 
   fleetSlots(wallet: `0x${string}`): ShipyardState["fleetSlots"] {
     const walletLower = wallet.toLowerCase();
-    const active = this.indexedFleetMissionSummaries()
+    const active = this.indexedFleetSlotCountMissions()
       .filter((mission) => mission.owner.toLowerCase() === walletLower && isActiveFleetMissionStatus(mission.status))
       .length;
     const technologyLevels = this.technologyLevels(wallet);
@@ -5279,6 +5279,13 @@ export class SettlementIndexer {
 
   private indexedFleetMissionSummariesWithPlanetReferences(): FleetMissionSummary[] {
     return this.indexedFleetMissionReferenceIndex().summaries;
+  }
+
+  private indexedFleetSlotCountMissions(): FleetMissionSummary[] {
+    // Fleet slots must mirror the contract's activeFleetMissionCount. Mission views can project
+    // elapsed Returning/Recalled legs as Returned for UX, but the contract does not free that slot
+    // until a settlement transaction emits the terminal event.
+    return this.mergeCanonicalFleetMissions(this.decodedMissionLogs().eventMissions);
   }
 
   private indexedFleetMissionReferenceIndex(): {
