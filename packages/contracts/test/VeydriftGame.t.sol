@@ -4443,6 +4443,20 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(targetPlanetId).resources.deuterium, 9_000);
     }
 
+    function testAttackLootRatioRejectsScoreProtectedTargetAtLaunch() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(originPlanetId, Ship.Deathstar, 2_000);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+
+        (VeydriftGameStorage.AttackBlockReason reason,,) =
+            _attackProtectionStatus(player, targetPlanetId);
+        assertEq(uint8(reason), uint8(VeydriftGameStorage.AttackBlockReason.ScoreProtection));
+
+        vm.expectRevert(VeydriftGameStorage.AttackScoreProtection.selector);
+        _launchAttackWithLootRatio(originPlanetId, targetPlanetId, 5_000, 3_000, 2_000, 813);
+    }
+
     // The cap-bound cascade (a resource share saturates its plunder cap and the remainder rolls into
     // the next resource) is asserted directly against the deployed VeydriftRaidStorage library at the
     // game's flat plunder rate (BASE_RAID_LOOT_BPS = 5_000). Exercising the library in isolation keeps
