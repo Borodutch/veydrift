@@ -1821,6 +1821,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.fleetMissionVisibility(player).completedMissions.find((mission) => mission.missionId === "82")).toMatchObject({
       status: "Returned"
     });
+    expect(indexer.fleetSlots(player)).toEqual({ active: 2, limit: 1 });
   });
 
   // Canonical-mirror rework: the combat-triggered bounded per-planet reconcile was removed; combat
