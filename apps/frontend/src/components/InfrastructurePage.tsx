@@ -15,6 +15,7 @@ import {
   buildingEnergyDetail,
   buildingLevelInfoColumns,
   buildingLevelInfoRows,
+  type BuildingUpgradeStatus,
   buildingUpgradeStatus,
   formatCost,
   formatDuration,
@@ -171,6 +172,14 @@ export function InfrastructurePage({
           const isSelected = building.key === selectedBuilding.key;
           const missingRequirement = unmetBuildingRequirement(settledState, building.key);
           const starterPrerequisite = missingFrontendOnlyBuildingRequirementFor(settledState, building.key, { starterPlanet });
+          const upgradeStatus = buildingUpgradeStatus(settledState, building.key, {
+            chainCost: chainCosts?.[building.key],
+            chainDurationSeconds: chainDurations?.[building.key],
+            now,
+            productionRates,
+            spendableResources,
+            starterPlanet,
+          });
 
           return (
             <InspectCatalogTile
@@ -180,6 +189,7 @@ export function InfrastructurePage({
               isSelected={isSelected}
               key={building.key}
               label={building.label}
+              labelTone={infrastructureCatalogTitleTone(upgradeStatus)}
               statusText={starterPrerequisite ? `Requires ${starterPrerequisite}` : missingRequirement ? "Locked" : infrastructureCatalogStatusText(settledState, building.key, planetProductionProfile, productionRates)}
               statusTone={starterPrerequisite || missingRequirement ? "warning" : "accent"}
               onClick={() => handleSelectBuilding(building.key)}
@@ -222,6 +232,14 @@ export function shouldShowInfrastructureInitialLoadError({
 
 export function infrastructureRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
   return refreshButtonState(loading);
+}
+
+export function infrastructureCatalogTitleTone(
+  status: Pick<BuildingUpgradeStatus, "disabled" | "reason">,
+): "normal" | "muted" {
+  return status.disabled && status.reason.startsWith("Requires ")
+    ? "muted"
+    : "normal";
 }
 
 export function InfrastructureLoadErrorPanel({ reason }: { reason: string }) {

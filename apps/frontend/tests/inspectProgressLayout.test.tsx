@@ -31,6 +31,26 @@ describe("shared inspect/progress layout primitives", () => {
     expect(text).toContain("Locked");
   });
 
+  test("can mute only the catalog tile title while preserving the rest of the tile", () => {
+    const tile = InspectCatalogTile({
+      asset: "/assets/game/style-pass/generated/research/energy-technology-mid.webp",
+      currentText: "Level 0",
+      isDimmed: false,
+      isSelected: false,
+      label: "Energy Technology",
+      labelTone: "muted",
+      onClick: () => undefined,
+      statusText: "Locked",
+      statusTone: "warning",
+    });
+    const title = elementNodes(tile)
+      .find((node) => node.type === "span" && visibleText(node) === "Energy Technology");
+
+    expect(title?.props.className).toContain("text-slate-500");
+    expect(visibleText(tile)).toContain("Level 0");
+    expect(visibleText(tile)).toContain("Locked");
+  });
+
   test("renders single-item progress with consistent timer and progress math", () => {
     const panel = SingleItemQueueProgress({
       isPrimaryItem: true,
@@ -103,4 +123,17 @@ function textParts(node: ComponentChildren): string[] {
 
   const vnode = node as VNode;
   return textParts(vnode.props?.children);
+}
+
+function elementNodes(node: ComponentChildren): VNode[] {
+  if (node === null || node === undefined || typeof node === "boolean" || typeof node === "string" || typeof node === "number") {
+    return [];
+  }
+
+  if (Array.isArray(node)) {
+    return node.flatMap(elementNodes);
+  }
+
+  const vnode = node as VNode;
+  return [vnode, ...elementNodes(vnode.props?.children)];
 }
