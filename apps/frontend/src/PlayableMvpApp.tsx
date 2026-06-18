@@ -795,10 +795,19 @@ export function missionShipInventoryBlocker({
   shipyardState,
   ships,
 }: {
-  shipyardState: Pick<ChainShipyardState, "ships"> | null | undefined;
+  shipyardState: Pick<ChainShipyardState, "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "fleetSlots" | "ships" | "unavailableReason"> | null | undefined;
   ships: Partial<MissionShips>;
 }): string | undefined {
   if (!shipyardState) return "Shipyard state is still loading.";
+  if (shipyardState.fleetLaunchAvailable === false) {
+    return shipyardState.fleetLaunchUnavailableReason ?? shipyardState.unavailableReason ?? "Fleet slot state is still syncing.";
+  }
+  if (!shipyardState.fleetSlots || shipyardState.fleetSlots.limit <= 0) {
+    return "Fleet slot state is still loading — wait for Computer Technology limits to sync before launching.";
+  }
+  if (shipyardState.fleetSlots.active >= shipyardState.fleetSlots.limit) {
+    return `Fleet slots full (${shipyardState.fleetSlots.active}/${shipyardState.fleetSlots.limit}) — research Computer Technology to raise the limit, or wait for a fleet to return.`;
+  }
 
   const overSelected = missionShipInventoryRows
     .map((ship) => {

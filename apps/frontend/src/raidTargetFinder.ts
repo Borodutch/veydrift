@@ -553,6 +553,8 @@ export function buildDebrisTargets({
     const harvestDisabledReason =
       !shipyardState
         ? "Shipyard state is still loading."
+        : shipyardState.fleetLaunchAvailable === false
+          ? shipyardState.fleetLaunchUnavailableReason ?? shipyardState.unavailableReason ?? "Fleet slot state is still syncing."
         : availableRecyclers <= 0
           ? "Requires a recycler on your active planet."
           : !fleetSlots || fleetSlots.limit <= 0

@@ -345,8 +345,19 @@ describe("Playable MVP app display helpers", () => {
   });
 
   test("blocks backend-refetched mission manifests that exceed available ship inventory", () => {
+    expect(missionShipInventoryBlocker({
+      shipyardState: {
+        fleetLaunchAvailable: false,
+        fleetLaunchUnavailableReason: "Fleet slot state is waiting for mission settlement.",
+        fleetSlots: { active: 0, limit: 5 },
+        ships: [{ id: 0, count: 3 }],
+      },
+      ships: { smallCargo: 1 },
+    })).toBe("Fleet slot state is waiting for mission settlement.");
+
     const blocker = missionShipInventoryBlocker({
       shipyardState: {
+        fleetSlots: { active: 0, limit: 5 },
         ships: [
           { id: 0, count: 3 },
           { id: 1, count: 4 },
