@@ -80,6 +80,7 @@ export function InspectCatalogTile({
   currentText,
   isDimmed,
   isSelected,
+  labelTone = "normal",
   label,
   onClick,
   statusText,
@@ -89,12 +90,14 @@ export function InspectCatalogTile({
   currentText: string;
   isDimmed: boolean;
   isSelected: boolean;
+  labelTone?: "normal" | "muted" | undefined;
   label: string;
   onClick: () => void;
   statusText: string;
   statusTone?: "accent" | "warning" | undefined;
 }) {
   const accentClass = statusTone === "warning" ? "text-amber-300" : "text-signal";
+  const labelClass = labelTone === "muted" ? "text-slate-500" : "text-white";
 
   return (
     <button
@@ -117,7 +120,7 @@ export function InspectCatalogTile({
         />
       </span>
       <span className="mt-2 block min-w-0">
-        <span className="block truncate text-sm font-semibold text-white">{label}</span>
+        <span className={`block truncate text-sm font-semibold ${labelClass}`}>{label}</span>
         <span className="mt-0.5 flex items-center justify-between gap-2 text-xs">
           <span className={isDimmed ? "text-slate-500" : "text-slate-300"}>
             {currentText}

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { buildingEnergyDetail, buildingLevelInfoRows } from "../src/buildingDetails";
+import { buildingEnergyDetail, buildingLevelInfoRows, buildingUpgradeStatus } from "../src/buildingDetails";
 import {
   ActiveBuildingQueueDetail,
   BuildingLevelInfoButton,
@@ -13,6 +13,7 @@ import {
   detailEffectRows,
   infrastructureUpgradeButtonLabel,
   infrastructureRefreshButtonState,
+  infrastructureCatalogTitleTone,
   infrastructureCatalogStatusText,
   shouldShowInfrastructureInitialLoadError,
 } from "../src/components/InfrastructurePage";
@@ -48,6 +49,90 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("Infrastructure refresh failed");
     expect(text).toContain("Showing the last loaded building data");
     expect(text).toContain("Infrastructure request failed with 503");
+  });
+
+  test("keeps ready Infrastructure catalog titles at normal emphasis", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        solarPlant: 1,
+      },
+      resources: { metal: 500, crystal: 500, deuterium: 500 },
+    };
+
+    expect(infrastructureCatalogTitleTone({
+      disabled: false,
+      reason: "Ready for Level 1",
+    })).toBe("normal");
+    expect(infrastructureCatalogTitleTone({
+      disabled: false,
+      reason: "Ready to build Rift Stabilizer",
+    })).toBe("normal");
+    expect(infrastructureCatalogTitleTone(
+      // Same status helper the Infrastructure detail action uses for affordability.
+      buildingUpgradeStatus(state, "metalMine", { starterPlanet: true }),
+    )).toBe("normal");
+  });
+
+  test("mutes Infrastructure catalog titles when resources are insufficient", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        solarPlant: 1,
+      },
+      resources: { metal: 35, crystal: 500, deuterium: 500 },
+    };
+
+    const status = buildingUpgradeStatus(state, "metalMine", { starterPlanet: true });
+
+    expect(status.reason).toBe("Requires 25 more Metal");
+    expect(infrastructureCatalogTitleTone(status)).toBe("muted");
+  });
+
+  test("mutes Infrastructure catalog titles when requirements are unmet", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+
+    const status = buildingUpgradeStatus(state, "shipyard");
+
+    expect(status.reason).toBe("Requires Robotics Factory 2");
+    expect(infrastructureCatalogTitleTone(status)).toBe("muted");
+  });
+
+  test("mutes starter-locked building titles but not unrelated active-queue states", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      resources: { metal: 10_000, crystal: 10_000, deuterium: 10_000 },
+    };
+    const activeQueueState = {
+      ...state,
+      buildings: {
+        ...state.buildings,
+        solarPlant: 1,
+      },
+      queue: {
+        kind: "building" as const,
+        key: "solarPlant" as const,
+        label: "Solar Plant",
+        readyAt: 1_700_000_060_000,
+        startedAt: 1_700_000_000_000,
+        targetLevel: 2,
+      },
+    };
+
+    expect(infrastructureCatalogTitleTone(
+      buildingUpgradeStatus(state, "crystalMine", { starterPlanet: true }),
+    )).toBe("muted");
+    expect(infrastructureCatalogTitleTone(
+      buildingUpgradeStatus(activeQueueState, "metalMine", {
+        now: 1_700_000_030_000,
+        starterPlanet: true,
+      }),
+    )).toBe("normal");
   });
 
   test("keeps initial infrastructure load failures in the full load-error state", () => {
