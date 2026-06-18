@@ -1244,6 +1244,8 @@ const researchStartLiveStateRequiredLabel =
   "Can't verify the current research queue right now. Refresh research state and retry before starting research.";
 const researchStartActiveQueueLabel =
   "Another research is already active. Finish or refresh the active research before starting a new one.";
+const researchBackendSyncPausedLabel =
+  "Research state is still syncing. Refresh research state and retry before starting research.";
 
 function activeResearchQueue(
   queue: ChainResearchState["queue"] | PlayerQueuesResponse["research"] | undefined,
@@ -1290,6 +1292,10 @@ export function researchStartUnavailableReasonFor({
     return researchState.unavailableReason ?? "Research unavailable on this contract.";
   }
 
+  if (isResearchBackendSyncPaused(researchState)) {
+    return researchBackendSyncPausedLabel;
+  }
+
   if (!researchState.homePlanetId) {
     return "No VeydriftGame home planet is available for research.";
   }
@@ -1307,6 +1313,16 @@ export function researchStartUnavailableReasonFor({
   }
 
   return undefined;
+}
+
+function isResearchBackendSyncPaused(researchState: ChainResearchState): boolean {
+  if (researchState.degraded === true || researchState.stale === true) return true;
+
+  const indexer = researchState.indexer;
+  if (!indexer) return false;
+  return indexer.safeToServeIndexedState === false
+    || indexer.indexedState === "reconciling"
+    || indexer.indexedState === "stale";
 }
 
 export function selectedResearchStartBlocker(

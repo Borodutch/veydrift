@@ -973,6 +973,32 @@ describe("Playable MVP app display helpers", () => {
     )).toBeUndefined();
   });
 
+  test("blocks Shielding Technology level 1 wallet submission while indexed research state is stale", async () => {
+    const staleResearch = researchState({
+      technologyLevels: { "0": 3, "6": 0 },
+      technologies: [
+        { id: 0, level: 3, cost: { metal: "0", crystal: "6400", deuterium: "3200" } },
+        { id: 6, level: 0, cost: { metal: "200", crystal: "600", deuterium: "0" } },
+      ],
+      researchLabLevel: 6,
+      stale: true,
+    });
+
+    const result = await researchStartUnavailableReasonAfterLiveRevalidation({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      apiBaseUrl: "https://api.test",
+      fallback: researchState(),
+      selectedResearchKey: "shielding",
+      selectedTechnologyId: 6,
+      loadResearchState: (() => Promise.resolve(staleResearch)) as never,
+      loadWalletQueues: (() => Promise.resolve(walletQueues({ research: null }))) as never,
+    });
+
+    expect(result.unavailableReason)
+      .toBe("Research state is still syncing. Refresh research state and retry before starting research.");
+  });
+
   test("allows Overview-ready research completion to reach backend revalidation before wallet submission", () => {
     const readyOverviewQueue = {
       active: true,
@@ -2676,13 +2702,17 @@ function shipyardState({
 
 function researchState({
   queue,
+  indexer,
+  stale,
   researchLabLevel,
   technologyLevels,
   technologies,
-}: Partial<Pick<ChainResearchState, "queue" | "researchLabLevel" | "technologies" | "technologyLevels">> = {}): ChainResearchState {
+}: Partial<Pick<ChainResearchState, "indexer" | "queue" | "researchLabLevel" | "stale" | "technologies" | "technologyLevels">> = {}): ChainResearchState {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
     homePlanetId: "7",
+    indexer,
+    stale,
     researchAvailable: true,
     resources: { metal: "5000", crystal: "5000", deuterium: "5000" },
     researchLabLevel: researchLabLevel ?? 1,
