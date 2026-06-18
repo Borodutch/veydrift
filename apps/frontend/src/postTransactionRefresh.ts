@@ -8,6 +8,7 @@ import type {
   ChainInfrastructureState,
   ChainAllianceState,
   ManagedPlanetResponse,
+  OnChainResources,
   PlayerQueuesResponse,
   QueueStateResponse,
   WalletSettlementResponse,
@@ -122,6 +123,10 @@ type WaitOptions = {
   delay?: (ms: number) => Promise<void>;
 };
 
+type MissionLaunchWaitOptions = WaitOptions & {
+  expectedMission?: FleetMissionSummary | undefined;
+};
+
 export function isFinishedBuildingStateVisible(
   snapshot: Pick<FinishedBuildingSnapshot, "infrastructure" | "queues">,
   expectation: FinishedBuildingExpectation,
@@ -233,14 +238,28 @@ export function isAllianceApplicationCleared(
 export function missionLaunchMissionsForTransaction(
   snapshot: MissionLaunchSnapshot,
   txHash: string,
+  expectedMission?: FleetMissionSummary | undefined,
 ): FleetMissionSummary[] {
-  const normalizedTxHash = txHash.toLowerCase();
-  const seen = new Set<string>();
-  return [
+  return missionLaunchMissionsFromList([
     ...activeWalletMissions(snapshot.fleetVisibility),
     ...snapshot.allActiveMissions,
-  ].filter((mission) => {
-    if (mission.transactionHash.toLowerCase() !== normalizedTxHash) return false;
+  ], txHash, expectedMission);
+}
+
+function missionLaunchMissionsFromList(
+  missions: readonly FleetMissionSummary[],
+  txHash: string,
+  expectedMission?: FleetMissionSummary | undefined,
+): FleetMissionSummary[] {
+  const normalizedTxHash = normalizeTxHash(txHash);
+  const seen = new Set<string>();
+  return missions.filter((mission) => {
+    const missionTxHash = normalizeTxHash(mission.transactionHash);
+    const matchesTransaction = missionTxHash === normalizedTxHash;
+    const matchesExpectedLaunch = expectedMission
+      ? missionMatchesExpectedLaunch(mission, expectedMission)
+      : false;
+    if (!matchesTransaction && !matchesExpectedLaunch) return false;
     if (seen.has(mission.missionId)) return false;
     seen.add(mission.missionId);
     return true;
@@ -250,8 +269,9 @@ export function missionLaunchMissionsForTransaction(
 export function isMissionLaunchStateVisible(
   snapshot: MissionLaunchSnapshot,
   txHash: string,
+  expectedMission?: FleetMissionSummary | undefined,
 ): boolean {
-  return missionLaunchMissionsForTransaction(snapshot, txHash).length > 0;
+  return missionLaunchMissionsForTransaction(snapshot, txHash, expectedMission).length > 0;
 }
 
 export function pendingMissionLaunchId(txHash: string): string {
@@ -299,7 +319,10 @@ export function mergePendingMissionLaunches(
   const canonicalTxHashes = canonicalMissionTransactionHashes(rows);
   const seen = new Set<string>();
   return [
-    ...pending.filter((mission) => !canonicalTxHashes.has(normalizeTxHash(mission.transactionHash))),
+    ...pending.filter((mission) =>
+      !canonicalTxHashes.has(normalizeTxHash(mission.transactionHash))
+        && missionLaunchMissionsFromList(rows, mission.transactionHash, mission).length === 0
+    ),
     ...rows,
   ].filter((mission) => {
     if (seen.has(mission.missionId)) return false;
@@ -312,11 +335,15 @@ export function reconcilePendingMissionLaunches(
   pending: readonly FleetMissionSummary[],
   snapshot: MissionLaunchSnapshot,
 ): FleetMissionSummary[] {
-  const canonicalTxHashes = canonicalMissionTransactionHashes([
+  const missions = [
     ...activeWalletMissions(snapshot.fleetVisibility),
     ...snapshot.allActiveMissions,
-  ]);
-  return pending.filter((mission) => !canonicalTxHashes.has(normalizeTxHash(mission.transactionHash)));
+  ];
+  const canonicalTxHashes = canonicalMissionTransactionHashes(missions);
+  return pending.filter((mission) =>
+    !canonicalTxHashes.has(normalizeTxHash(mission.transactionHash))
+      && missionLaunchMissionsFromList(missions, mission.transactionHash, mission).length === 0
+  );
 }
 
 export function removePendingMissionLaunchForTransaction(
@@ -340,13 +367,75 @@ function canonicalMissionTransactionHashes(missions: readonly FleetMissionSummar
   const hashes = new Set<string>();
   for (const mission of missions) {
     if (isPendingMissionLaunch(mission) || !mission.transactionHash) continue;
-    hashes.add(normalizeTxHash(mission.transactionHash));
+    const normalized = normalizeTxHash(mission.transactionHash);
+    if (isPlaceholderTransactionHash(normalized)) continue;
+    hashes.add(normalized);
   }
   return hashes;
 }
 
 function normalizeTxHash(txHash: string): string {
   return txHash.trim().toLowerCase();
+}
+
+function isPlaceholderTransactionHash(txHash: string): boolean {
+  return txHash === "" || txHash === "0x";
+}
+
+function missionMatchesExpectedLaunch(
+  mission: FleetMissionSummary,
+  expected: FleetMissionSummary,
+): boolean {
+  if (isPendingMissionLaunch(mission)) return false;
+  if (mission.owner.toLowerCase() !== expected.owner.toLowerCase()) return false;
+  if (mission.originPlanetId !== expected.originPlanetId) return false;
+  if (mission.targetPlanetId !== expected.targetPlanetId) return false;
+  if (mission.missionType.toLowerCase() !== expected.missionType.toLowerCase()) return false;
+  if (!missionResourcesEqual(mission.cargo, expected.cargo)) return false;
+  if (!missionShipsEqual(mission.ships, expected.ships)) return false;
+
+  return timestampsWithinMissionLaunchWindow(mission.arrivalAt, expected.arrivalAt)
+    || timestampsWithinMissionLaunchWindow(mission.returnAt, expected.returnAt);
+}
+
+function timestampsWithinMissionLaunchWindow(actual: string, expected: string): boolean {
+  const actualSeconds = Number(actual);
+  const expectedSeconds = Number(expected);
+  if (!Number.isFinite(actualSeconds) || !Number.isFinite(expectedSeconds)) return false;
+  return Math.abs(actualSeconds - expectedSeconds) <= 10 * 60;
+}
+
+function missionResourcesEqual(actual: OnChainResources, expected: OnChainResources): boolean {
+  return numericString(actual.metal) === numericString(expected.metal)
+    && numericString(actual.crystal) === numericString(expected.crystal)
+    && numericString(actual.deuterium) === numericString(expected.deuterium);
+}
+
+function missionShipsEqual(actual: Record<string, string>, expected: Record<string, string>): boolean {
+  const actualEntries = normalizedPositiveEntries(actual);
+  const expectedEntries = normalizedPositiveEntries(expected);
+  if (actualEntries.length !== expectedEntries.length) return false;
+  return actualEntries.every(([key, value], index) => {
+    const [expectedKey, expectedValue] = expectedEntries[index] ?? [];
+    return key === expectedKey && value === expectedValue;
+  });
+}
+
+function normalizedPositiveEntries(values: Record<string, string>): Array<[string, string]> {
+  return Object.entries(values)
+    .map(([key, value]) => [key, numericString(value)] as [string, string])
+    .filter(([, value]) => value !== "0")
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+function numericString(value: string): string {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return "0";
+  try {
+    return BigInt(trimmed).toString();
+  } catch {
+    return "0";
+  }
 }
 
 function missionShips(ships: Record<string, number | string | undefined>): Record<string, string> {
@@ -617,7 +706,7 @@ export async function waitForAllianceApplicationCleared(
 export async function waitForMissionLaunchState(
   load: () => Promise<MissionLaunchSnapshot>,
   txHash: string,
-  options: WaitOptions = {},
+  options: MissionLaunchWaitOptions = {},
 ): Promise<MissionLaunchSnapshot> {
   const attempts = options.attempts ?? 8;
   const intervalMs = options.intervalMs ?? 1_500;
@@ -629,7 +718,7 @@ export async function waitForMissionLaunchState(
     try {
       latest = await load();
       lastError = undefined;
-      if (isMissionLaunchStateVisible(latest, txHash)) {
+      if (isMissionLaunchStateVisible(latest, txHash, options.expectedMission)) {
         return latest;
       }
     } catch (error) {
