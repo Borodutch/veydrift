@@ -54,6 +54,10 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).not.toContain("ring-inset");
   });
 
+  test("renders planet selector thumbnails as circles", () => {
+    expect(playableSource).toContain("h-14 w-14 overflow-hidden rounded-full bg-black/30");
+  });
+
   test("keeps the desktop sidebar footer compact and sticky", () => {
     expect(playableSource).toContain("md:h-[calc(100dvh-2.75rem)]");
     expect(navSource).toContain("h-[calc(100dvh-2.75rem)]");

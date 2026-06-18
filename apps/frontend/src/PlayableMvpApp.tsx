@@ -7014,7 +7014,7 @@ function PlanetSelectorButton({
           <AlertTriangle size={12} strokeWidth={2.4} />
         </span>
       ) : null}
-      <span className="h-14 w-14 overflow-hidden rounded bg-black/30">
+      <span className="h-14 w-14 overflow-hidden rounded-full bg-black/30">
         <img
           alt=""
           className="h-full w-full object-cover"
