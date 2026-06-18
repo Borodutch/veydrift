@@ -40,7 +40,7 @@ import {
   infrastructureDisplayActionNoticeFor,
   type BuildingActionState,
 } from "./buildingActionNotice";
-import { buildingUpgradeStatus } from "./buildingDetails";
+import { buildingUpgradeStatus, formatMissingResources } from "./buildingDetails";
 
 export { infrastructureActionNoticeFor, infrastructureDisplayActionNoticeFor } from "./buildingActionNotice";
 import {
@@ -52,14 +52,17 @@ import {
 } from "./data/mockUniverse";
 import {
   buildingContractIds,
+  canAfford,
   progress,
   researchCatalog,
+  researchRequirementsFor,
   type BuildingKey,
   type DefenseKey,
   type EnergyBalance,
   type PlanetProductionProfile,
   type PlayableState,
   type ResearchKey,
+  type ResearchRequirement,
   type Resources,
   type ShipKey,
 } from "./playableMvp";
@@ -1246,11 +1249,15 @@ export function researchStateWithPreservedActiveQueue({
 export function researchStartUnavailableReasonFor({
   canTransact,
   knownResearchQueue,
+  selectedResearchKey,
+  selectedTechnologyId,
   researchState,
   walletResearchQueue,
 }: {
   canTransact: boolean;
   knownResearchQueue?: ChainResearchState["queue"] | PlayerQueuesResponse["research"] | undefined;
+  selectedResearchKey?: ResearchKey | undefined;
+  selectedTechnologyId?: number | undefined;
   researchState: ChainResearchState | null;
   walletResearchQueue?: PlayerQueuesResponse["research"] | undefined;
 }): string | undefined {
@@ -1278,7 +1285,79 @@ export function researchStartUnavailableReasonFor({
     return researchStartActiveQueueLabel;
   }
 
+  if (selectedResearchKey !== undefined) {
+    return selectedResearchStartBlocker(researchState, selectedResearchKey, selectedTechnologyId);
+  }
+
   return undefined;
+}
+
+export function selectedResearchStartBlocker(
+  researchState: ChainResearchState,
+  key: ResearchKey,
+  technologyId = researchCatalog.find((research) => research.key === key)?.id,
+): string | undefined {
+  const missingRequirement = researchStartMissingRequirement(researchState, key);
+  if (missingRequirement) {
+    return `${formatResearchRequirementLabel(missingRequirement)} is required before starting ${researchLabelForKey(key)}.`;
+  }
+
+  if (technologyId === undefined) {
+    return "Research technology is unavailable. Refresh research state and retry.";
+  }
+
+  const resources = resourcesFromChain(researchState.resourcesAsOfNow ?? researchState.resources);
+  if (!resources) {
+    return "Resources unavailable. Refresh research state and retry before starting research.";
+  }
+
+  const cost = resourcesFromChain(researchState.technologies.find((technology) => technology.id === technologyId)?.cost ?? null);
+  if (!cost) {
+    return "Research cost unavailable. Refresh research state and retry before starting research.";
+  }
+
+  return canAfford(resources, cost) ? undefined : formatMissingResources(resources, cost);
+}
+
+function researchStartMissingRequirement(
+  researchState: ChainResearchState,
+  key: ResearchKey,
+): ResearchRequirement | undefined {
+  return researchRequirementsFor(key).find((requirement) => {
+    if (requirement.type === "building") {
+      return requirement.key === "researchLab" && researchState.researchLabLevel < requirement.level;
+    }
+
+    if (requirement.type === "research") {
+      return researchLevelFor(researchState, requirement.key) < requirement.level;
+    }
+
+    return false;
+  });
+}
+
+function researchLevelFor(researchState: ChainResearchState, key: ResearchKey): number {
+  const entry = researchCatalog.find((research) => research.key === key);
+  if (!entry) return 0;
+  return researchState.technologies.find((technology) => technology.id === entry.id)?.level
+    ?? researchState.technologyLevels[entry.id.toString()]
+    ?? 0;
+}
+
+function formatResearchRequirementLabel(requirement: ResearchRequirement): string {
+  if (requirement.type === "building") {
+    return `Research Lab ${requirement.level}`;
+  }
+
+  if (requirement.type === "research") {
+    return `${researchLabelForKey(requirement.key)} ${requirement.level}`;
+  }
+
+  return `Energy production ${requirement.produced.toLocaleString()}`;
+}
+
+function researchLabelForKey(key: ResearchKey): string {
+  return researchCatalog.find((research) => research.key === key)?.label ?? key;
 }
 
 export async function researchStartUnavailableReasonAfterLiveRevalidation({
@@ -1289,6 +1368,8 @@ export async function researchStartUnavailableReasonAfterLiveRevalidation({
   knownResearchQueue,
   loadResearchState = fetchResearchState,
   loadWalletQueues = fetchWalletQueues,
+  selectedResearchKey,
+  selectedTechnologyId,
 }: {
   account: string | undefined;
   activePlanetId: string | undefined;
@@ -1297,6 +1378,8 @@ export async function researchStartUnavailableReasonAfterLiveRevalidation({
   knownResearchQueue?: ChainResearchState["queue"] | PlayerQueuesResponse["research"] | undefined;
   loadResearchState?: typeof fetchResearchState;
   loadWalletQueues?: typeof fetchWalletQueues;
+  selectedResearchKey?: ResearchKey | undefined;
+  selectedTechnologyId?: number | undefined;
 }): Promise<{
   researchState: ChainResearchState | null;
   queues: PlayerQueuesResponse | null;
@@ -1309,6 +1392,8 @@ export async function researchStartUnavailableReasonAfterLiveRevalidation({
       unavailableReason: researchStartUnavailableReasonFor({
         canTransact: true,
         knownResearchQueue,
+        selectedResearchKey,
+        selectedTechnologyId,
         researchState: fallback,
       }),
     };
@@ -1325,6 +1410,8 @@ export async function researchStartUnavailableReasonAfterLiveRevalidation({
     unavailableReason: researchStartUnavailableReasonFor({
       canTransact: true,
       knownResearchQueue,
+      selectedResearchKey,
+      selectedTechnologyId,
       researchState,
       walletResearchQueue: queues.research,
     }),
@@ -4839,6 +4926,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       apiBaseUrl,
       fallback: effectiveResearchState,
       knownResearchQueue,
+      selectedResearchKey: key,
+      selectedTechnologyId: technologyId,
     })
       .then(({ queues, researchState: latestResearchState, unavailableReason }) => {
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;

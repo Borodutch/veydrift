@@ -43,6 +43,7 @@ import {
   researchStateWithFallbackQueue,
   researchStartUnavailableReasonAfterLiveRevalidation,
   researchStartUnavailableReasonFor,
+  selectedResearchStartBlocker,
   researchStateForCompletionRevalidation,
   researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
@@ -909,6 +910,46 @@ describe("Playable MVP app display helpers", () => {
     });
 
     expect(result.unavailableReason).toBe("Another research is already active. Finish or refresh the active research before starting a new one.");
+  });
+
+  test("blocks Shielding Technology level 1 before wallet submission when Energy Technology is below level 3", async () => {
+    const latestResearch = researchState({
+      technologyLevels: { "0": 2, "6": 0 },
+      technologies: [
+        { id: 0, level: 2, cost: { metal: "0", crystal: "3200", deuterium: "1600" } },
+        { id: 6, level: 0, cost: { metal: "200", crystal: "600", deuterium: "0" } },
+      ],
+      researchLabLevel: 6,
+    });
+
+    const result = await researchStartUnavailableReasonAfterLiveRevalidation({
+      account: "0x2222222222222222222222222222222222222222",
+      activePlanetId: "7",
+      apiBaseUrl: "https://api.test",
+      fallback: researchState(),
+      selectedResearchKey: "shielding",
+      selectedTechnologyId: 6,
+      loadResearchState: (() => Promise.resolve(latestResearch)) as never,
+      loadWalletQueues: (() => Promise.resolve(walletQueues({ research: null }))) as never,
+    });
+
+    expect(result.unavailableReason)
+      .toBe("Energy Technology 3 is required before starting Shielding Technology.");
+  });
+
+  test("allows Shielding Technology level 1 preflight when Research Lab 6, Energy 3, and resources are present", () => {
+    expect(selectedResearchStartBlocker(
+      researchState({
+        technologyLevels: { "0": 3, "6": 0 },
+        technologies: [
+          { id: 0, level: 3, cost: { metal: "0", crystal: "6400", deuterium: "3200" } },
+          { id: 6, level: 0, cost: { metal: "200", crystal: "600", deuterium: "0" } },
+        ],
+        researchLabLevel: 6,
+      }),
+      "shielding",
+      6,
+    )).toBeUndefined();
   });
 
   test("allows Overview-ready research completion to reach backend revalidation before wallet submission", () => {
@@ -2614,15 +2655,16 @@ function shipyardState({
 
 function researchState({
   queue,
+  researchLabLevel,
   technologyLevels,
   technologies,
-}: Partial<Pick<ChainResearchState, "queue" | "technologies" | "technologyLevels">> = {}): ChainResearchState {
+}: Partial<Pick<ChainResearchState, "queue" | "researchLabLevel" | "technologies" | "technologyLevels">> = {}): ChainResearchState {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
     homePlanetId: "7",
     researchAvailable: true,
     resources: { metal: "5000", crystal: "5000", deuterium: "5000" },
-    researchLabLevel: 1,
+    researchLabLevel: researchLabLevel ?? 1,
     researchNetworkLabLevels: [],
     technologyLevels: technologyLevels ?? { "0": 1 },
     technologies: technologies ?? [
