@@ -83,8 +83,8 @@ nothing is lost; it merely settles later. Any mission type that emits no `FleetM
 | `GAME_CONTRACT_ADDRESS` | yes      | —       | VeydriftGame proxy address (the battle event emitter).             |
 | `KEEPER_PRIVATE_KEY`    | yes      | —       | 0x-prefixed 32-byte key of a **funded** EOA that pays for resolves.|
 | `CHAIN_ID`              | no       | `84532` | EVM chain id (Base Sepolia by default).                            |
-| `RESOLVE_INTERVAL_MS`   | no       | `5000`  | Resolution loop cadence.                                           |
-| `SWEEP_INTERVAL_MS`     | no       | `15000` | Backstop log-backfill sweep cadence.                               |
+| `RESOLVE_INTERVAL_MS`   | no       | `2000`  | Resolution loop cadence.                                           |
+| `SWEEP_INTERVAL_MS`     | no       | `10000` | Backstop log-backfill sweep cadence.                               |
 | `PORT`                  | no       | `8080`  | HTTP health/status port.                                           |
 | `MAX_CONCURRENCY`       | no       | `3`     | Max concurrent `resolveFleetMission` submissions.                  |
 | `GIT_SHA`               | no       | —       | Deployed commit surfaced in `/health` as `build.gitSha`.           |

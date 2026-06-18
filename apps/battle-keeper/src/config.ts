@@ -37,8 +37,8 @@ const privateKeyPattern = /^0x[0-9a-fA-F]{64}$/;
 
 /** Base Sepolia. Overridable so the keeper can target any EVM chain that exposes the game contract. */
 const defaultChainId = 84532;
-const defaultSweepIntervalMs = 15_000;
-const defaultResolveIntervalMs = 5_000;
+const defaultSweepIntervalMs = 10_000;
+const defaultResolveIntervalMs = 2_000;
 const defaultPort = 8080;
 const defaultMaxConcurrency = 3;
 // ~2 days of Base L2 blocks (2s). Covers the active-mission window; kept at/under the node's

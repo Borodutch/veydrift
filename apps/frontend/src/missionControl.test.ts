@@ -707,7 +707,7 @@ describe("Mission Control battle reports", () => {
     // retained by the defender, so there is no fabricated "Loot left" row.
     expect(text).toContain("Loot grabbed");
     expect(text).not.toContain("Loot left");
-    expect(text).toContain("Fleet / defenses");
+    expect(text).toContain("Current fleet / defenses");
     // VEY-KANEO-406: the redundant per-side "Commander" rows were removed from the battle report —
     // origin/target commanders already render in the Route hero, which still links to each profile.
     expect(text).toContain("Aggressor");
@@ -949,9 +949,10 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Small Cargo ×3");
     expect(text).toContain("Cruiser ×2");
     expect(text).toContain("Rocket Launcher ×5");
-    // With the defender planet charted, the combined "Fleet / defenses" caveat is replaced by the
-    // per-row icon lists.
-    expect(text).not.toContain("Fleet / defenses");
+    // With the defender planet charted, the combined caveat is replaced by the per-row icon lists.
+    expect(text).toContain("Current fleet");
+    expect(text).toContain("Current defenses");
+    expect(text).not.toContain("Current fleet / defenses");
 
     // The chips render the mapped game art for ships (combat + civil) and defenses, not just text.
     const imageSrcs = findElements(tree, "img").map((node) => String(node.props?.src ?? ""));
@@ -959,6 +960,44 @@ describe("Mission Control battle reports", () => {
     expect(imageSrcs.some((src) => src.includes("/ships/small-cargo"))).toBe(true);
     expect(imageSrcs.some((src) => src.includes("/ships/cruiser"))).toBe(true);
     expect(imageSrcs.some((src) => src.includes("/defenses/rocket-launcher"))).toBe(true);
+  });
+
+  test("VEY-KANEO-571: distinguishes battle-time defender units from current defender composition", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: {
+        ...mission("1240", "Attack", "Resolved", "0x1111111111111111111111111111111111111111", "7", "92", now - 120_000),
+        ships: { lightFighter: "16" },
+      },
+      battleReport: {
+        ...battleReport("1240"),
+        outcome: "DefenderWin",
+        rounds: 4,
+        attackerLosses: { metal: "62000", crystal: "26000", deuterium: "0" },
+        defenderLosses: { metal: "0", crystal: "0", deuterium: "0" },
+        roundReports: [
+          {
+            round: 1,
+            attackerUnits: "16",
+            defenderUnits: "37",
+            attackerLosses: { metal: "12000", crystal: "6000", deuterium: "0" },
+            defenderLosses: { metal: "0", crystal: "0", deuterium: "0" },
+          },
+        ],
+      },
+      defenderPlanetState: {
+        fleet: [],
+        defenses: [{ id: 0, count: 4 }],
+        stationedDefenders: [],
+      },
+    }))).join(" ");
+
+    expect(text).toContain("Defender victory");
+    expect(text).toContain("Battle-time units");
+    expect(text).toContain("37 aggregate units");
+    expect(text).toContain("Current defenses");
+    expect(text).toContain("Rocket Launcher ×4");
+    expect(text).not.toContain("Current fleet / defenses");
   });
 
   test("VEY-KANEO-407: renders unit art in the standalone Fleet And Cargo panel for non-combat missions", () => {
@@ -1053,6 +1092,33 @@ describe("Mission Control battle reports", () => {
 
     expect(text).not.toContain("No indexed battle report");
     expect(text).not.toContain("Combat is due or resolving");
+  });
+
+  test("VEY-KANEO-571: hides the 'no battle report' notice for a returned recalled attack", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: {
+        ...mission("1692", "Attack", "Returned", "0x1111111111111111111111111111111111111111", "7", "9", now + 600_000),
+        recallCost: "695",
+      },
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).not.toContain("No indexed battle report");
+    expect(text).not.toContain("Combat is due or resolving");
+  });
+
+  test("VEY-KANEO-571: still shows the missing-report notice for a normal returned attack", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: {
+        ...mission("1693", "Attack", "Returned", "0x1111111111111111111111111111111111111111", "7", "9", now - 600_000),
+        recallCost: null,
+      },
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).toContain("No indexed battle report is available for this combat mission yet.");
   });
 
   test("VEY-KANEO-425: still shows the due/resolving notice for an outbound combat fleet whose arrival has passed", () => {

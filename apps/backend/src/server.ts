@@ -645,6 +645,18 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             headers: indexedStateHeaders(indexedStateLabel(snapshot))
           });
         }
+        const mission = indexer.fleetMission(missionId);
+        if (mission && !expectsBattleReport(mission)) {
+          return Response.json(
+            {
+              error: "battle_report_not_expected",
+              detail: "No battle report exists because this combat mission did not reach battle resolution.",
+              mission,
+              source: indexedSource
+            },
+            { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
+          );
+        }
         return Response.json(
           {
             error: "battle_report_not_indexed",
@@ -1706,6 +1718,14 @@ function activeMissionBattleReports(visibility: FleetMissionVisibility): FleetMi
       || (report.attackGroupId ? activeMissionIds.has(report.attackGroupId) : false)
       || report.participants.some((participant) => activeMissionIds.has(participant.missionId))
   );
+}
+
+function expectsBattleReport(mission: FleetMissionSummary): boolean {
+  if (!["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType)) return false;
+  if (mission.status === "Recalled") return false;
+  if (mission.status === "Returned" && mission.recallCost !== null) return false;
+  if (mission.status === "Outbound" && Number(mission.arrivalAt) > Math.floor(Date.now() / 1_000)) return false;
+  return true;
 }
 
 function indexedMissionArchive(
