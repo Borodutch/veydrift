@@ -429,8 +429,13 @@ function normalizedPositiveEntries(values: Record<string, string>): Array<[strin
 }
 
 function numericString(value: string): string {
-  const normalized = Number(value);
-  return Number.isFinite(normalized) ? String(Math.max(0, Math.trunc(normalized))) : "0";
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return "0";
+  try {
+    return BigInt(trimmed).toString();
+  } catch {
+    return "0";
+  }
 }
 
 function missionShips(ships: Record<string, number | string | undefined>): Record<string, string> {
