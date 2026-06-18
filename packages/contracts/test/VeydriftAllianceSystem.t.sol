@@ -489,6 +489,76 @@ contract VeydriftAllianceSystemTest is Test {
         assertTrue(scoreProtectionException);
     }
 
+    function testOnlyOwnerCanDeclareWarAndOfficerCanEndWar() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("ALLY", "Alliance", "");
+        _inviteAndAccept(allianceId, member);
+
+        vm.prank(enemy);
+        uint256 enemyAllianceId = alliances.createAlliance("WAR", "War Target", "");
+
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        vm.prank(member);
+        vm.expectRevert();
+        alliances.setDiplomacy(
+            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
+        );
+
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Member);
+        vm.prank(member);
+        vm.expectRevert();
+        alliances.setDiplomacy(
+            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
+        );
+
+        vm.prank(enemy);
+        vm.expectRevert();
+        alliances.setDiplomacy(
+            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
+        );
+
+        vm.expectEmit(true, true, false, true);
+        emit VeydriftAllianceSystem.AllianceDiplomacyUpdated(
+            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
+        );
+        vm.prank(leader);
+        alliances.setDiplomacy(
+            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
+        );
+        assertEq(
+            uint8(alliances.diplomacyStatus(allianceId, enemyAllianceId)),
+            uint8(VeydriftAllianceSystem.DiplomacyStatus.War)
+        );
+        assertEq(
+            uint8(alliances.diplomacyStatus(enemyAllianceId, allianceId)),
+            uint8(VeydriftAllianceSystem.DiplomacyStatus.War)
+        );
+
+        vm.prank(member);
+        vm.expectRevert();
+        alliances.setDiplomacy(
+            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.None
+        );
+
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+        vm.expectEmit(true, true, false, true);
+        emit VeydriftAllianceSystem.AllianceDiplomacyUpdated(
+            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.None
+        );
+        vm.prank(member);
+        alliances.setDiplomacy(
+            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.None
+        );
+        assertEq(
+            uint8(alliances.diplomacyStatus(allianceId, enemyAllianceId)),
+            uint8(VeydriftAllianceSystem.DiplomacyStatus.None)
+        );
+    }
+
     function testTransferAllianceOwnershipPromotesOfficer() public {
         vm.prank(leader);
         uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");

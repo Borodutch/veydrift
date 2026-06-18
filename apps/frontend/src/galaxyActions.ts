@@ -20,6 +20,7 @@ export type GalaxyAttackProtectionStatus = {
   allowed: boolean;
   blockedReason: "none" | "bashing_limit" | "score_protection" | "same_alliance";
   blockedReasonLabel: string | null;
+  atWar?: boolean;
 };
 
 export type MissionShipKey =

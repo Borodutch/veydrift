@@ -101,6 +101,12 @@ export type AttackProtectionStatus = {
   defenderHonorStatus?: "neutral" | "honorable" | "bandit";
   plunderBps?: number;
   defenderInactive?: boolean;
+  atWar?: boolean;
+  targetAlliance?: {
+    allianceId: string;
+    tag: string;
+    name: string;
+  } | null;
 };
 
 export type GalaxyActionState =
@@ -929,6 +935,7 @@ export function formatAttackRuleLabels(status: AttackProtectionStatus | undefine
   if (status.relation === "weaker") labels.push("Weaker target");
   if (status.defenderHonorStatus === "honorable") labels.push("Honor target");
   if (status.defenderHonorStatus === "bandit") labels.push("Bandit target");
+  if (status.atWar) labels.push("War target");
   if (status.plunderBps && status.plunderBps !== 5000) {
     labels.push(`Loot: ${Math.floor(status.plunderBps / 100)}%`);
   }

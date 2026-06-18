@@ -784,6 +784,8 @@ export type AllianceState = {
     };
     requestedAt: string;
   }>;
+  diplomacy: AllianceDiplomacyEntry[];
+  activeWars: AllianceDiplomacyEntry[];
   members: Array<{
     address: Address;
     displayName?: string | null;
@@ -794,6 +796,15 @@ export type AllianceState = {
 };
 
 export type AllianceRoleName = "none" | "member" | "officer" | "owner";
+export type AllianceDiplomacyStatusName = "none" | "ally" | "non_aggression_pact" | "war";
+export type AllianceDiplomacyEntry = {
+  allianceId: string;
+  otherAllianceId: string;
+  status: AllianceDiplomacyStatusName;
+  statusId: number;
+  updatedAt: string | null;
+  alliance: AllianceState["directory"][number] | null;
+};
 
 // Canonical-mirror seed shapes for the alliance sub-states that have no on-chain enumeration getter
 // covered by the directory snapshot. Read from contract getters during explicit rebuild and used
@@ -831,6 +842,8 @@ export type AttackProtectionStatus = {
   defenderHonorStatus: HonorStatus;
   plunderBps: number;
   defenderInactive: boolean;
+  atWar?: boolean;
+  targetAlliance?: AllianceIdentity | null;
 };
 
 export type AllianceIdentity = {
@@ -2107,6 +2120,8 @@ export class VeydriftGameReader implements ChainReader {
       pendingInvites: [],
       pendingJoinRequests: [],
       allianceJoinRequests: [],
+      diplomacy: [],
+      activeWars: [],
       members: []
     });
 
@@ -2169,6 +2184,8 @@ export class VeydriftGameReader implements ChainReader {
         pendingInvites,
         pendingJoinRequests,
         allianceJoinRequests: [],
+        diplomacy: [],
+        activeWars: [],
         members: []
       };
     }
@@ -2229,6 +2246,8 @@ export class VeydriftGameReader implements ChainReader {
       pendingInvites,
       pendingJoinRequests,
       allianceJoinRequests,
+      diplomacy: [],
+      activeWars: [],
       members: memberAddresses.map((address, index) => {
         const words = splitWords(memberMemberships[index] ?? "0x");
         return {
@@ -5385,6 +5404,13 @@ export function attackBlockReasonLabel(reason: AttackBlockReason): string | null
     return "Attack blocked: target belongs to your alliance.";
   }
   return null;
+}
+
+export function diplomacyStatusName(statusId: number): AllianceDiplomacyStatusName {
+  if (statusId === 1) return "ally";
+  if (statusId === 2) return "non_aggression_pact";
+  if (statusId === 3) return "war";
+  return "none";
 }
 
 function decodeAttackBlockReason(reason: number): AttackBlockReason {

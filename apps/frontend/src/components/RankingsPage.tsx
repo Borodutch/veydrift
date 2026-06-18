@@ -425,6 +425,7 @@ function RankingRow({
   const isCurrentPlayer = Boolean(currentWallet && normalizedWallet === currentWallet.toLowerCase());
   const alliance = entry.alliance ?? null;
   const isSameAllianceProtection = entry.attackProtection?.blockedReason === "same_alliance";
+  const isAtWar = entry.attackProtection?.atWar === true;
   const isSameAlliance = Boolean(
     !isCurrentPlayer && (
       isSameAllianceProtection
@@ -447,6 +448,8 @@ function RankingRow({
     ? "border-cyan-300/25 bg-cyan-300/[0.09] shadow-[inset_3px_0_0_rgba(103,232,249,0.7)]"
     : isAttackProtected
         ? "border-red-300/20 bg-red-300/[0.06] shadow-[inset_3px_0_0_rgba(248,113,113,0.5)]"
+        : isAtWar
+          ? "border-rose-300/25 bg-rose-300/[0.08] shadow-[inset_3px_0_0_rgba(251,113,133,0.7)]"
         : isSameAlliance
           ? "border-sky-400/30 bg-sky-300/[0.12] shadow-[inset_3px_0_0_rgba(56,189,248,0.85)]"
           : "border-white/5";
@@ -516,6 +519,14 @@ function RankingRow({
                 title={entry.attackProtection?.blockedReasonLabel ?? `Same alliance — ${alliance.name}`}
               >
                 {`Ally [${alliance.tag}]`}
+              </span>
+            ) : null}
+            {isAtWar && alliance ? (
+              <span
+                className="shrink-0 rounded border border-rose-300/40 bg-rose-400/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase leading-none tracking-normal text-rose-100"
+                title={`At war with ${alliance.name}`}
+              >
+                {`War [${alliance.tag}]`}
               </span>
             ) : null}
           </span>

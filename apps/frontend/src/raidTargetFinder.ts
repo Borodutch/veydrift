@@ -43,6 +43,8 @@ export type RaidTargetProtection = {
   isProtected: boolean;
   // Target belongs to the viewer's alliance.
   isSameAlliance: boolean;
+  // Target alliance is in active war with the viewer's alliance.
+  isAtWar: boolean;
   blockedReason: "none" | "bashing_limit" | "score_protection" | "same_alliance";
   blockedReasonLabel: string | null;
   defenderInactive: boolean;
@@ -280,6 +282,7 @@ function classifyProtection(entry: HighscoreEntry): RaidTargetProtection {
   const protection = entry.attackProtection ?? null;
   const blockedReason = protection?.blockedReason ?? "none";
   const isSameAlliance = blockedReason === "same_alliance";
+  const isAtWar = protection?.atWar === true;
   const isProtected = Boolean(
     protection
       && !protection.allowed
@@ -289,6 +292,7 @@ function classifyProtection(entry: HighscoreEntry): RaidTargetProtection {
   return {
     isProtected,
     isSameAlliance,
+    isAtWar,
     blockedReason,
     blockedReasonLabel: protection?.blockedReasonLabel ?? null,
     defenderInactive: protection?.defenderInactive === true,

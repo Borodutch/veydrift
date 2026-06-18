@@ -381,7 +381,14 @@ describe("sortRaidTargets", () => {
       shipUnits: [],
       combatShipUnits: [],
       defenseUnits: [],
-      protection: { isProtected: false, isSameAlliance: false, blockedReason: "none", blockedReasonLabel: null, defenderInactive: false },
+      protection: {
+        isProtected: false,
+        isSameAlliance: false,
+        isAtWar: false,
+        blockedReason: "none",
+        blockedReasonLabel: null,
+        defenderInactive: false,
+      },
       inbound: { count: 0, nextArrivalAtMs: null },
       ...partial,
     };

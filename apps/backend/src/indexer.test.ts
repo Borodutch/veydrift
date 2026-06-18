@@ -3275,7 +3275,9 @@ describe("SettlementIndexer", () => {
       ],
       allianceJoinRequests: [
         { allianceId: "1", requester: applicant, requestedAt: "1770003000" }
-      ]
+      ],
+      diplomacy: [],
+      activeWars: []
     });
     expect(indexer.allianceState(invitee).pendingInvites).toEqual([
       { allianceId: "1", inviter: officer, inviterDisplayName: null, invitedAt: String(0x69801c85) }
@@ -3558,6 +3560,14 @@ describe("SettlementIndexer", () => {
     ).toEqual([
       { alliance_id: "1", other_alliance_id: "2", status_id: 3 },
       { alliance_id: "2", other_alliance_id: "1", status_id: 3 }
+    ]);
+    expect(indexer.allianceState(owner).activeWars).toMatchObject([
+      {
+        allianceId: "1",
+        otherAllianceId: "2",
+        status: "war",
+        alliance: { allianceId: "2", tag: "RVL", name: "Rivals" }
+      }
     ]);
   });
 

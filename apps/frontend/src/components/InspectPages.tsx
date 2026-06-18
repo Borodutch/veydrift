@@ -717,11 +717,15 @@ export function playerPlanetTacticalSignals(
   const protectionSignal = attackProtection && !attackProtection.allowed && attackProtection.blockedReason !== "none"
     ? [{ label: "Protection", value: attackProtection.blockedReasonLabel ?? "Protected" }]
     : [];
+  const warSignal = attackProtection?.atWar
+    ? [{ label: "War", value: attackProtection.targetAlliance?.tag ? `[${attackProtection.targetAlliance.tag}]` : "Active" }]
+    : [];
 
   return [
     { label: "Distance", value: originCoords ? fleetMissionDistance(originCoords, planet).toLocaleString("en-US") : "Home planet unavailable" },
     { label: "Resources", value: formatResources(planet.tactical?.raidableResources ?? planet.resources) },
     ...protectionSignal,
+    ...warSignal,
     { label: "Ships", value: planetTacticalUnitSignal(planet.tactical?.ships) },
     { label: "Defenses", value: planetTacticalUnitSignal(planet.tactical?.defenses) },
     { label: "Fields", value: `${planet.fieldsUsed}/${planet.fieldsCapacity}` },

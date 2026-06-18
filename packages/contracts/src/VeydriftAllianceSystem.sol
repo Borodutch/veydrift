@@ -438,7 +438,11 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     function setDiplomacy(uint256 allianceId, uint256 otherAllianceId, DiplomacyStatus status)
         external
     {
-        _requireOfficer(allianceId, msg.sender);
+        if (status == DiplomacyStatus.War) {
+            _requireOwner(allianceId, msg.sender);
+        } else {
+            _requireOfficer(allianceId, msg.sender);
+        }
         _requireAlliance(otherAllianceId);
         if (allianceId == otherAllianceId) revert SelfDiplomacy(allianceId);
 
