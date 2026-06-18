@@ -254,13 +254,15 @@ describe("Playable MVP app display helpers", () => {
     const visibility = {
       ...emptyFleetVisibilityFixture(wallet, "7"),
       incoming: [
-        fleetMission({ missionId: "attack", missionType: "Attack", targetPlanetId: "8" }),
+        fleetMission({ missionId: "attack", missionType: "Attack", owner: "0x3333333333333333333333333333333333333333", targetPlanetId: "8" }),
         fleetMission({ missionId: "transport", missionType: "Transport", targetPlanetId: "7" }),
+        fleetMission({ missionId: "owned-attack", missionType: "Attack", owner: wallet, targetPlanetId: "9" }),
       ],
     };
 
     expect(planetHasIncomingAttack(visibility, "8")).toBe(true);
     expect(planetHasIncomingAttack(visibility, "7")).toBe(false);
+    expect(planetHasIncomingAttack(visibility, "9")).toBe(false);
   });
 
   test("keys galaxy home sync by coordinates instead of background snapshot identity", () => {
