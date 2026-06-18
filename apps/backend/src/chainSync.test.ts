@@ -379,6 +379,42 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
+  test("marks indexed state unsafe when the RPC head is pinned across sustained polls", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll(); // healthy anchor
+    expect(service.snapshot().connected).toBe(true);
+
+    for (let i = 0; i < 29; i += 1) await service.poll();
+    expect(service.snapshot().connected).toBe(true);
+
+    await service.poll();
+    expect(service.snapshot()).toMatchObject({
+      connected: false,
+      headStallPollCount: 30,
+      lastError: "RPC head stalled at block 384",
+      latestHeadBlock: "384"
+    });
+    expect(indexer.snapshot()).toMatchObject({
+      pendingReconciliationReason: "rpc_head_stalled:384",
+      safeToServeIndexedState: false,
+      staleReason: "rpc_head_stalled:384"
+    });
+
+    backfiller.head = 0x181n;
+    await service.poll();
+    expect(service.snapshot()).toMatchObject({
+      connected: true,
+      headStallPollCount: 0,
+      lastError: null,
+      latestHeadBlock: "385"
+    });
+    expect(indexer.snapshot().pendingReconciliationReason).toBeNull();
+    service.stop();
+  });
+
   test("start() is disabled (and reports it) without a log backfiller", () => {
     const indexer = makeIndexer();
     const service = new ChainSyncService(config, indexer, {});

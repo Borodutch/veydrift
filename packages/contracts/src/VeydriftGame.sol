@@ -95,6 +95,10 @@ contract VeydriftGame is VeydriftResourceReserves {
     function startBuildingUpgrade(uint256 planetId, Building building) external {
         _touchPlayer(msg.sender);
         _requirePlanetOwner(planetId);
+        // VEY-KANEO-572: an arrived Attack/Harvest on this planet can block `_settleResources`
+        // with FleetMissionNotResolved. Try the lazy combat resolver first so a randomness-ready
+        // mission does not force a separate keeper/manual tx before the next infrastructure action.
+        _settleDueCombatArrivals(msg.sender);
         // Lazy on-chain reconciliation (VEY-KANEO-477): settle BEFORE the active check so a construction
         // whose `readyAt` has elapsed completes here and clears `active`, letting the owner immediately
         // queue the next upgrade without a finish tx. Mirrors `startMoonBuildingUpgrade`. A construction

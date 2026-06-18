@@ -611,6 +611,12 @@ export type InfrastructureState = {
   planetLastSettledAt?: string | null;
   infrastructureAvailable: boolean;
   unavailableReason?: string;
+  actionBlocker?: {
+    kind: "mission_resolution_pending";
+    detail: string;
+    missionIds: string[];
+    earliestArrivalAt: string;
+  };
   resources: Resources | null;
   // Accrued-to-now projection of `resources` (VEY-KANEO-464).
   resourcesAsOfNow?: Resources | null;

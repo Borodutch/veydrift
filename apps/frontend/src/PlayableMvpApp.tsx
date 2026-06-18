@@ -311,6 +311,8 @@ const buildingFinishRejectedLabel =
 const buildingFinishClientClockSafetyMs = 30_000;
 export const infrastructureBackendSyncPausedLabel =
   "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
+export const infrastructureMissionResolutionPendingLabel =
+  "Mission resolution is pending for this planet. Refresh after the battle keeper or indexer settles the due mission before starting another upgrade.";
 const buildingWalletConfirmationLabel = (label: string) =>
   label === "Building completion"
     ? "Building completion: confirm the game-state update in your wallet; token balance changes are not expected."
@@ -1593,6 +1595,8 @@ export function infrastructureUnavailableReasonFor({
   }
   if (!gameContract) return "Game contract unavailable; upgrades are disabled.";
   if (!homePlanetId) return "No home planet found for this wallet.";
+  const actionBlockerReason = infrastructureActionBlockerReasonFor(infrastructureChainState);
+  if (actionBlockerReason) return actionBlockerReason;
   if (infrastructureChainState?.infrastructureAvailable === false) {
     return infrastructureChainState.unavailableReason ?? "Infrastructure is unavailable on this deployment.";
   }
@@ -1614,6 +1618,15 @@ export function infrastructureBackendSyncPausedReasonFor({
 }): string | undefined {
   if (infrastructureError || isInfrastructureBackendSyncPaused(infrastructureChainState)) {
     return infrastructureBackendSyncPausedLabel;
+  }
+  return undefined;
+}
+
+function infrastructureActionBlockerReasonFor(
+  infrastructureChainState: ChainInfrastructureState | null,
+): string | undefined {
+  if (infrastructureChainState?.actionBlocker?.kind === "mission_resolution_pending") {
+    return infrastructureMissionResolutionPendingLabel;
   }
   return undefined;
 }

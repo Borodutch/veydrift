@@ -1423,11 +1423,12 @@ function indexedWarmJsonResponse<T extends object>(
   snapshot: ReturnType<SettlementIndexer["snapshot"]>,
   detail = indexedWarmDetail(surface)
 ): Response {
+  const bodyStale = (body as { stale?: unknown }).stale === true;
   return indexedJsonResponse({
     ...body,
     detail,
-    stale: !snapshot.safeToServeIndexedState
-  }, snapshot);
+    stale: bodyStale || !snapshot.safeToServeIndexedState
+  }, snapshot, bodyStale ? "stale" : indexedStateLabel(snapshot));
 }
 
 function indexedWarmDetail(surface: string): string {
@@ -1874,6 +1875,8 @@ function indexedInfrastructureState(
   indexer: SettlementIndexer
 ): InfrastructureState {
   const planetResourcesPending = planet ? indexer.hasPendingPlanetResources(planet.planetId) : false;
+  const missionBlockers = planet ? indexer.dueUnresolvedFleetMissionsForPlanet(planet.planetId) : [];
+  const missionBlocker = missionBlockers[0];
   const buildings = planet ? indexer.infrastructureRows(planet.planetId) : [];
   const ships = planet ? indexer.shipRows(planet.planetId) : [];
   const queue = planet ? indexer.planetQueue(planet.planetId, "building") : null;
@@ -1889,15 +1892,32 @@ function indexedInfrastructureState(
       raidableResources: null
     };
 
+  const missionBlockerDetail = missionBlocker
+    ? `Mission resolution is pending for this planet (mission ${missionBlocker.missionId}). The indexer or keeper must settle the due mission before infrastructure upgrades can be started.`
+    : undefined;
+
   return {
     wallet,
     homePlanetId: settlement.homePlanetId,
     planetId: planet?.planetId ?? settlement.homePlanetId,
     planetLastSettledAt: planetResourcesPending ? null : planet?.lastSettledAt ?? null,
-    infrastructureAvailable: !planetResourcesPending,
+    infrastructureAvailable: !planetResourcesPending && missionBlockers.length === 0,
     unavailableReason: planetResourcesPending
       ? "Infrastructure indexed resources for this planet are still warming. Refresh shortly."
+      : missionBlockerDetail
+      ? missionBlockerDetail
       : unavailableReason,
+    ...(missionBlocker && missionBlockerDetail
+      ? {
+        actionBlocker: {
+          kind: "mission_resolution_pending" as const,
+          detail: missionBlockerDetail,
+          missionIds: missionBlockers.map((mission) => mission.missionId),
+          earliestArrivalAt: missionBlocker.arrivalAt
+        },
+        stale: true
+      }
+      : {}),
     resources: planet && !planetResourcesPending ? planet.resources : null,
     resourcesAsOfNow: currentPlanet?.resources ?? null,
     ...derived,

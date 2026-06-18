@@ -27,6 +27,7 @@ import {
   infrastructureActionNoticeFor,
   infrastructureDisplayActionNoticeFor,
   infrastructureLoadErrorFor,
+  infrastructureMissionResolutionPendingLabel,
   infrastructureUnavailableReasonFor,
   loadWalletPlanetSyncSnapshot,
   markFreshStateWrite,
@@ -2121,6 +2122,28 @@ describe("Playable MVP app display helpers", () => {
     })).toBe(infrastructureBackendSyncPausedLabel);
   });
 
+  test("blocks infrastructure upgrades with mission-resolution copy before wallet signing", () => {
+    expect(refreshedInfrastructureUpgradeUnavailableReasonFor({
+      buildingKey: "solarPlant",
+      gameContract: "0x3333333333333333333333333333333333333333",
+      homePlanetId: "188",
+      infrastructureChainState: infrastructureState({
+        actionBlocker: {
+          kind: "mission_resolution_pending",
+          detail: "Mission resolution is pending for this planet (mission 1737).",
+          missionIds: ["1737"],
+          earliestArrivalAt: "1781805853",
+        },
+        infrastructureAvailable: false,
+        stale: true,
+        unavailableReason: "Mission resolution is pending for this planet (mission 1737).",
+      }),
+      isWalletConnected: true,
+      onChainResources: { metal: 500, crystal: 500, deuterium: 0 },
+      runtimeConfigStatus: "ready",
+    })).toBe(infrastructureMissionResolutionPendingLabel);
+  });
+
   test("keeps Shipyard upgrade backend read failures out of wallet reconnect copy", () => {
     const label = buildingUpgradeActionErrorLabel(
       new Error("Infrastructure API failed: 400: RPC 3: execution reverted")
@@ -2594,24 +2617,29 @@ function fleetMission(overrides: Partial<FleetMissionSummary> = {}): FleetMissio
 }
 
 function infrastructureState({
+  actionBlocker,
   buildings,
   degraded,
   energyBalance,
   indexer,
+  infrastructureAvailable,
   queue,
   resources,
   resourcesAsOfNow,
   source,
   stale,
-}: Partial<Pick<ChainInfrastructureState, "buildings" | "degraded" | "energyBalance" | "indexer" | "queue" | "resources" | "resourcesAsOfNow" | "source" | "stale">> = {}): ChainInfrastructureState {
+  unavailableReason,
+}: Partial<Pick<ChainInfrastructureState, "actionBlocker" | "buildings" | "degraded" | "energyBalance" | "indexer" | "infrastructureAvailable" | "queue" | "resources" | "resourcesAsOfNow" | "source" | "stale" | "unavailableReason">> = {}): ChainInfrastructureState {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
     homePlanetId: "7",
+    actionBlocker,
     degraded,
     indexer,
     source,
     stale,
-    infrastructureAvailable: true,
+    infrastructureAvailable: infrastructureAvailable ?? true,
+    unavailableReason,
     resources: resources ?? { metal: "500", crystal: "500", deuterium: "0" },
     resourcesAsOfNow,
     productionPerHour: { metal: "60", crystal: "30", deuterium: "0" },

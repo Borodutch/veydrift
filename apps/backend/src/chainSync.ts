@@ -15,7 +15,7 @@ type LogBackfiller = {
   listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
 };
 
-type ChainSyncIndexer = Partial<Pick<SettlementIndexer, "applyLog" | "healCanonicalPlanets" | "snapshot">>;
+type ChainSyncIndexer = Partial<Pick<SettlementIndexer, "applyLog" | "clearPendingReconciliationReason" | "healCanonicalPlanets" | "markStale" | "snapshot">>;
 
 export type ChainSyncSnapshot = {
   connected: boolean;
@@ -25,7 +25,9 @@ export type ChainSyncSnapshot = {
   lastEventAt: string | null;
   lastPolledAt: string | null;
   latestHeadBlock: string | null;
+  lastHeadAdvancedAt: string | null;
   latestSyncedBlock: string | null;
+  headStallPollCount: number;
   pollFailureCount: number;
   reorgDetectedAt: string | null;
   subscribedAddresses: string[];
@@ -49,6 +51,7 @@ type ChainSyncListener = (event: ChainSyncEvent) => void;
 // eth_blockNumber blip must not flap the backend out of "ready" (and trip the redeploy health gate);
 // a sustained RPC outage should. lastError surfaces immediately on the very first failure regardless.
 const CONNECTED_FAILURE_THRESHOLD = 5;
+const HEAD_STALL_FAILURE_THRESHOLD = 30;
 
 export class ChainSyncService {
   private connected = false;
@@ -56,6 +59,7 @@ export class ChainSyncService {
   private lastConnectedAt: string | null = null;
   private lastError: string | null = null;
   private lastEventAt: string | null = null;
+  private lastHeadAdvancedAt: string | null = null;
   private lastPolledAt: string | null = null;
   private latestHeadBlock: string | null = null;
   private latestSyncedBlock: string | null = null;
@@ -67,6 +71,8 @@ export class ChainSyncService {
   private pollTimer: ReturnType<typeof setInterval> | undefined;
   private pollInProgress = false;
   private pollFailureCount = 0;
+  private headStallPollCount = 0;
+  private headStallReason: string | null = null;
   // Next block the poll loop must scan FROM. null until the first successful head fetch, after which we
   // resume from the durable DB cursor. A cold/manual event replay may seed history; the live poll must
   // never skip directly to head because there is no startup canonical self-heal to cover the gap.
@@ -96,9 +102,11 @@ export class ChainSyncService {
       lastConnectedAt: this.lastConnectedAt,
       lastError: this.lastError,
       lastEventAt: this.lastEventAt,
+      lastHeadAdvancedAt: this.lastHeadAdvancedAt,
       lastPolledAt: this.lastPolledAt,
       latestHeadBlock: this.latestHeadBlock,
       latestSyncedBlock: this.latestSyncedBlock,
+      headStallPollCount: this.headStallPollCount,
       pollFailureCount: this.pollFailureCount,
       reorgDetectedAt: this.reorgDetectedAt,
       subscribedAddresses: this.subscribedAddresses(),
@@ -177,6 +185,11 @@ export class ChainSyncService {
     try {
       const head = await backfiller.getHeadBlock();
       this.lastPolledAt = new Date().toISOString();
+      if (this.isHeadStalled(head)) {
+        this.markHeadStalled(head);
+        this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
+        return;
+      }
       this.latestHeadBlock = head.toString();
       this.markConnected();
 
@@ -186,6 +199,7 @@ export class ChainSyncService {
 
       if (head <= this.cursor) {
         // No new blocks since the last pass; nothing to ingest. Still a healthy poll.
+        this.clearRecoveredHeadStall();
         this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
         return;
       }
@@ -205,6 +219,7 @@ export class ChainSyncService {
           ...(lastHash ? { transactionHash: lastHash } : {})
         });
       }
+      this.clearRecoveredHeadStall();
       this.notify({ kind: "sync-status", blockNumber: this.latestSyncedBlock });
     } catch (error) {
       // No self-heal escalation: record the failure, leave the cursor put, and let the next interval
@@ -266,6 +281,33 @@ export class ChainSyncService {
       this.lastConnectedAt = new Date().toISOString();
     }
     this.lastError = null;
+  }
+
+  private isHeadStalled(head: bigint): boolean {
+    const headLabel = head.toString();
+    if (this.latestHeadBlock === headLabel) {
+      this.headStallPollCount += 1;
+    } else {
+      this.headStallPollCount = 0;
+      this.lastHeadAdvancedAt = new Date().toISOString();
+    }
+    return this.headStallPollCount >= HEAD_STALL_FAILURE_THRESHOLD;
+  }
+
+  private markHeadStalled(head: bigint): void {
+    const headLabel = head.toString();
+    this.latestHeadBlock = headLabel;
+    this.connected = false;
+    this.pollFailureCount = CONNECTED_FAILURE_THRESHOLD;
+    this.lastError = `RPC head stalled at block ${headLabel}`;
+    this.headStallReason = `rpc_head_stalled:${headLabel}`;
+    this.indexer?.markStale?.(this.headStallReason);
+  }
+
+  private clearRecoveredHeadStall(): void {
+    if (!this.headStallReason || this.headStallPollCount !== 0) return;
+    this.indexer?.clearPendingReconciliationReason?.(this.headStallReason);
+    this.headStallReason = null;
   }
 
   private initialCursor(): bigint {

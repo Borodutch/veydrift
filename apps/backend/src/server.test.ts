@@ -5279,6 +5279,47 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("marks infrastructure stale and blocks actions when a due mission still needs resolution (VEY-KANEO-572)", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    for (const log of activeFleetMissionLogs({
+      arrivalAt: 1_770_000_000n,
+      missionId: 572n,
+      missionTypeId: 3n,
+      owner: player,
+      originPlanetId: 7n,
+      targetPlanetId: 8n,
+    })) {
+      indexer.applyLog(log);
+    }
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-index-state")).toBe("stale");
+    expect(body).toMatchObject({
+      infrastructureAvailable: false,
+      stale: true,
+      unavailableReason: "Mission resolution is pending for this planet (mission 572). The indexer or keeper must settle the due mission before infrastructure upgrades can be started.",
+      actionBlocker: {
+        kind: "mission_resolution_pending",
+        missionIds: ["572"],
+        earliestArrivalAt: "1770000000"
+      },
+      indexer: {
+        indexedState: "healthy",
+        safeToServeIndexedState: true
+      }
+    });
+  });
+
   test("serves every player surface from indexed page state with no per-request chain reads (VEY-KANEO-461)", async () => {
     const chainReader = new MockChainReader();
     const liveReads: string[] = [];
@@ -6564,20 +6605,24 @@ function addressTopic(address: Address): string {
 }
 
 function completedFleetMissionLogs({
+  arrivalAt: arrivalAtOverride,
   missionId,
   missionTypeId = 0n,
   owner,
+  returnAt: returnAtOverride,
   originPlanetId,
   targetPlanetId,
 }: {
+  arrivalAt?: bigint;
   missionId: bigint;
   missionTypeId?: bigint;
   owner: Address;
+  returnAt?: bigint;
   originPlanetId: bigint;
   targetPlanetId: bigint;
 }): IndexedRpcLog[] {
-  const arrivalAt = 1_800_000_000n + missionId;
-  const returnAt = arrivalAt + 300n;
+  const arrivalAt = arrivalAtOverride ?? 1_800_000_000n + missionId;
+  const returnAt = returnAtOverride ?? arrivalAt + 300n;
   return [
     fleetMissionLog({
       topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(missionTypeId)],
@@ -6605,9 +6650,11 @@ function completedFleetMissionLogs({
 // A launched-but-not-resolved mission (status "Outbound"): the first three logs of a completed
 // mission without the trailing "returned" event.
 function activeFleetMissionLogs(args: {
+  arrivalAt?: bigint;
   missionId: bigint;
   missionTypeId?: bigint;
   owner: Address;
+  returnAt?: bigint;
   originPlanetId: bigint;
   targetPlanetId: bigint;
 }): IndexedRpcLog[] {

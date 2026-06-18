@@ -526,6 +526,12 @@ export type ChainInfrastructureState = {
   stale?: boolean;
   infrastructureAvailable?: boolean;
   unavailableReason?: string;
+  actionBlocker?: {
+    kind: "mission_resolution_pending";
+    detail: string;
+    missionIds: string[];
+    earliestArrivalAt: string;
+  };
   resources: OnChainResources | null;
   // Server-accrued "spendable now" balance (VEY-KANEO-464): canonical `resources`
   // projected forward at the production rate and capped at storage, computed
