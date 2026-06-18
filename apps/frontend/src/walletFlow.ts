@@ -1074,6 +1074,7 @@ export function walletRequestErrorMessage(error: unknown): string {
 }
 
 const INSUFFICIENT_RESOURCES_REVERT_SELECTOR = "0x2ab0f96f";
+const INSUFFICIENT_SHIPS_REVERT_SELECTOR = "0x705f508b";
 export const INSUFFICIENT_RESOURCES_SPEND_MESSAGE =
   "You don't have enough resources for this action. Your spendable balance may still be catching up with recent spending — refresh resources and try again once you can cover the cost.";
 
@@ -1092,6 +1093,24 @@ export function spendTransactionErrorMessage(error: unknown): string {
 }
 
 const COLONY_SHIP_ID = 3n;
+const shipLabelByContractId: Record<number, string> = {
+  0: "Small Cargo",
+  1: "Light Fighter",
+  2: "Recycler",
+  3: "Colony Ship",
+  4: "Large Cargo",
+  5: "Heavy Fighter",
+  6: "Cruiser",
+  7: "Battleship",
+  8: "Bomber",
+  9: "Solar Satellite",
+  10: "Destroyer",
+  11: "Dreadstar",
+  12: "Battlecruiser",
+  13: "Reaper",
+  14: "Pathfinder",
+  15: "Crawler",
+};
 
 type FleetMissionRevertContext = {
   missionType?: number | string | bigint | undefined;
@@ -1166,10 +1185,19 @@ function revertUintArg(error: unknown, index: number): bigint | undefined {
 
 function contractRevertReason(error: unknown, context?: FleetMissionRevertContext): string | undefined {
   const selector = revertSelector(error);
-  if (selector === "0x705f508b") {
-    return revertUintArg(error, 0) === COLONY_SHIP_ID || isColonizeMissionContext(context)
-      ? "Build or keep a Colony Ship on the origin planet before colonizing."
-      : "Selected origin planet does not have the requested ships. Refresh shipyard state and retry.";
+  if (selector === INSUFFICIENT_SHIPS_REVERT_SELECTOR) {
+    const shipId = revertUintArg(error, 0);
+    if (shipId === COLONY_SHIP_ID || isColonizeMissionContext(context)) {
+      const available = revertUintArg(error, 1);
+      const required = revertUintArg(error, 2);
+      const countDetail = available !== undefined && required !== undefined
+        ? ` Need ${required.toLocaleString()} ${pluralShipLabel("Colony Ship", required)}, only ${available.toLocaleString()} available.`
+        : "";
+      return `Build or keep a Colony Ship on the origin planet before colonizing.${countDetail}`;
+    }
+    const insufficientShips = insufficientShipsRevertReason(shipId, revertUintArg(error, 1), revertUintArg(error, 2));
+    return insufficientShips
+      ?? "Selected origin planet does not have the requested ships. Refresh shipyard state and retry.";
   }
 
   if (selector === "0x524f409b" && isColonizeMissionContext(context)) {
@@ -1177,6 +1205,29 @@ function contractRevertReason(error: unknown, context?: FleetMissionRevertContex
   }
 
   return contractRevertReasons[selector ?? ""];
+}
+
+function insufficientShipsRevertReason(
+  shipId: bigint | undefined,
+  available: bigint | undefined,
+  required: bigint | undefined,
+): string | undefined {
+  if (shipId === undefined || available === undefined || required === undefined) {
+    return undefined;
+  }
+  const shipNumber = Number(shipId);
+  const shipLabel = Number.isSafeInteger(shipNumber)
+    ? shipLabelByContractId[shipNumber] ?? `ship #${shipNumber}`
+    : "selected ship";
+
+  return `Need ${required.toLocaleString()} ${pluralShipLabel(shipLabel, required)}, only ${available.toLocaleString()} available on the origin planet. Refresh fleet state or reduce the selected ships before launching.`;
+}
+
+function pluralShipLabel(label: string, quantity: bigint): string {
+  if (quantity === 1n) return label;
+  if (label.endsWith("Cargo")) return label;
+  if (label.endsWith("y")) return `${label.slice(0, -1)}ies`;
+  return `${label}s`;
 }
 
 function fleetMissionRevertReason(error: unknown, context?: FleetMissionRevertContext): string | undefined {

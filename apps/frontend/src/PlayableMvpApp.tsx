@@ -113,6 +113,7 @@ import {
   galaxyActionsForSlot,
   missionTypeId,
   type GalaxyAction,
+  type MissionShipKey,
   type MissionShips,
 } from "./galaxyActions";
 import type { RaidTargetAttackAction } from "./components/RaidTargetFinderPage";
@@ -749,6 +750,47 @@ export function shipyardStateForMissionActions({
     ships: [],
     queue: null,
   };
+}
+
+const missionShipInventoryRows: Array<{ key: MissionShipKey; id: number; label: string }> = [
+  { key: "smallCargo", id: 0, label: "Small Cargo" },
+  { key: "lightFighter", id: 1, label: "Light Fighter" },
+  { key: "recycler", id: 2, label: "Recycler" },
+  { key: "colonyShip", id: 3, label: "Colony Ship" },
+  { key: "largeCargo", id: 4, label: "Large Cargo" },
+  { key: "heavyFighter", id: 5, label: "Heavy Fighter" },
+  { key: "cruiser", id: 6, label: "Cruiser" },
+  { key: "battleship", id: 7, label: "Battleship" },
+  { key: "bomber", id: 8, label: "Bomber" },
+  { key: "destroyer", id: 10, label: "Destroyer" },
+  { key: "deathstar", id: 11, label: "Dreadstar" },
+  { key: "battlecruiser", id: 12, label: "Battlecruiser" },
+  { key: "reaper", id: 13, label: "Reaper" },
+  { key: "pathfinder", id: 14, label: "Pathfinder" },
+];
+
+export function missionShipInventoryBlocker({
+  shipyardState,
+  ships,
+}: {
+  shipyardState: Pick<ChainShipyardState, "ships"> | null | undefined;
+  ships: Partial<MissionShips>;
+}): string | undefined {
+  if (!shipyardState) return "Shipyard state is still loading.";
+
+  const overSelected = missionShipInventoryRows
+    .map((ship) => {
+      const selected = Math.max(0, Math.trunc(ships[ship.key] ?? 0));
+      if (selected <= 0) return null;
+      const available = shipyardState.ships.find((item) => item.id === ship.id)?.count ?? 0;
+      return selected > available
+        ? `Need ${selected.toLocaleString()} ${ship.label}, only ${available.toLocaleString()} available`
+        : null;
+    })
+    .filter((row): row is string => Boolean(row));
+
+  if (overSelected.length <= 0) return undefined;
+  return `${overSelected.join(", ")} on the origin planet; refresh fleet state or reduce selected ships before launching.`;
 }
 
 function resourceSnapshotSettledAt(snapshot: ResourceSnapshotFreshness): bigint | undefined {
@@ -4325,13 +4367,33 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const runGalaxyTransaction = useCallback(async (
     label: string,
     send: () => Promise<string>,
-    options: { pendingMissionLaunch?: ((txHash: string) => FleetMissionSummary); syncMissionLaunch?: boolean } = {},
+    options: {
+      pendingMissionLaunch?: ((txHash: string) => FleetMissionSummary);
+      syncMissionLaunch?: boolean;
+      validateShipInventory?: { originPlanetId: string; ships: MissionShips } | undefined;
+    } = {},
   ) => {
     const planetSwitchRequestId = planetSwitchGate.current;
     setGalaxyAction({ status: "pending", label });
     let txHash: string | undefined;
 
     try {
+      if (options.validateShipInventory) {
+        setGalaxyAction({ status: "pending", label: `${label}: refreshing fleet inventory.` });
+        if (!apiBaseUrl || !account) {
+          throw new Error("Wallet or game API is unavailable while refreshing fleet inventory.");
+        }
+        const freshShipyardState = await fetchShipyardState(apiBaseUrl, account, options.validateShipInventory.originPlanetId);
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setShipyardState(freshShipyardState);
+        const shipBlocker = missionShipInventoryBlocker({
+          shipyardState: freshShipyardState,
+          ships: options.validateShipInventory.ships,
+        });
+        if (shipBlocker) {
+          throw new Error(shipBlocker);
+        }
+      }
       txHash = await send();
       if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
       setGalaxyAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
@@ -4358,6 +4420,15 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setFleetVisibility(missionSnapshot.fleetVisibility);
         setAllActiveMissions(mergeActiveMissionList(missionSnapshot.allActiveMissions, launchedMissions));
         setPendingMissionLaunches((current) => removePendingMissionLaunchForTransaction(current, confirmedTxHash));
+        if (options.validateShipInventory && apiBaseUrl && account) {
+          try {
+            const nextShipyardState = await fetchShipyardState(apiBaseUrl, account, options.validateShipInventory.originPlanetId);
+            if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+            setShipyardState(nextShipyardState);
+          } catch (error) {
+            console.error(error);
+          }
+        }
       }
       if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
       setGalaxyAction({ status: "success", label: `${label} confirmed.` });
@@ -4373,7 +4444,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         label: galaxyMissionActionErrorLabel(label, error),
       });
     }
-  }, [confirmSubmittedTransaction, loadMissionLaunchSnapshot, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState]);
+  }, [account, apiBaseUrl, confirmSubmittedTransaction, loadMissionLaunchSnapshot, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState]);
 
   const runMoonTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
     const planetSwitchRequestId = planetSwitchGate.current;
@@ -5177,12 +5248,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       targetPlanet,
       targetPlanetId,
       targetCoords,
+      validateShipInventory,
     }: {
       cargo?: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
       missionType: string;
       targetPlanet?: Planet | undefined;
       targetPlanetId: string;
       targetCoords: Coordinates;
+      validateShipInventory?: { originPlanetId: string; ships: MissionShips } | undefined;
     }) => ({
       pendingMissionLaunch: (txHash: string) => pendingMissionLaunchForDraft(txHash, {
         account,
@@ -5197,6 +5270,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         driveLevels,
       }),
       syncMissionLaunch: true,
+      validateShipInventory,
     });
 
     if (action.mode === "colonize") {
@@ -5216,6 +5290,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         missionType: "Colonize",
         targetPlanetId: encodeColonizationTargetId(coords.galaxy, coords.system, coords.position),
         targetCoords: coords,
+        validateShipInventory: { originPlanetId, ships: draft.ships },
       }));
       return;
     }
@@ -5267,6 +5342,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         targetPlanet: target,
         targetPlanetId,
         targetCoords: coords,
+        validateShipInventory: { originPlanetId, ships: draft.ships },
       }));
       return;
     }
@@ -5292,6 +5368,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         targetPlanet: target,
         targetPlanetId,
         targetCoords: coords,
+        validateShipInventory: { originPlanetId, ships: draft.ships },
       }));
       return;
     }
@@ -5322,6 +5399,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       targetPlanet: target,
       targetPlanetId,
       targetCoords: coords,
+      validateShipInventory: { originPlanetId, ships: draft.ships },
     }));
   }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingGalaxyMission, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
 
@@ -5459,6 +5537,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         driveLevels,
       }),
       syncMissionLaunch: true,
+      validateShipInventory: { originPlanetId, ships: draft.ships },
     });
   }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingAcsDefend, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
 
@@ -5518,6 +5597,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         driveLevels,
       }),
       syncMissionLaunch: true,
+      validateShipInventory: { originPlanetId: onChainSettlement.homePlanetId ?? "0", ships: draft.ships },
     });
   }, [account, gameContract, onChainSettlement?.homePlanetId, pendingJoinAttack, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
 

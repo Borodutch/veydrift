@@ -48,6 +48,7 @@ import {
   researchStartTransactionLabel,
   raidTargetPlanetForMission,
   missionOriginResources,
+  missionShipInventoryBlocker,
   nextProductionQueueCompletionEventMs,
   shouldApplyResourceSnapshot,
   shipyardStateForMissionActions,
@@ -338,6 +339,38 @@ describe("Playable MVP app display helpers", () => {
       shipyardLoading: true,
       shipyardState: null,
     })).toBeNull();
+  });
+
+  test("blocks backend-refetched mission manifests that exceed available ship inventory", () => {
+    const blocker = missionShipInventoryBlocker({
+      shipyardState: {
+        ships: [
+          { id: 0, count: 3 },
+          { id: 1, count: 4 },
+          { id: 5, count: 6 },
+        ],
+      },
+      ships: {
+        smallCargo: 4,
+        lightFighter: 4,
+        recycler: 0,
+        colonyShip: 0,
+        largeCargo: 0,
+        heavyFighter: 1,
+        cruiser: 0,
+        battleship: 0,
+        bomber: 0,
+        destroyer: 0,
+        deathstar: 0,
+        battlecruiser: 0,
+        reaper: 0,
+        pathfinder: 0,
+      },
+    });
+
+    expect(blocker).toBe(
+      "Need 4 Small Cargo, only 3 available on the origin planet; refresh fleet state or reduce selected ships before launching."
+    );
   });
 
   test("labels mission launch wallet, API/RPC, and preflight failures distinctly", () => {
