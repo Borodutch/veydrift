@@ -3,7 +3,7 @@ export type DescriptionLinkPart = {
   href?: string;
 };
 
-const descriptionUrlPattern = /https?:\/\/[^\s<>"']+/gi;
+const descriptionUrlPattern = /(?<![\w@:/.-])(?:https?:\/\/[^\s<>"']+|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}(?:\/[^\s<>"']*)?)/gi;
 const trailingUrlPunctuation = /[),.;:!?]+$/;
 
 export function descriptionLinkParts(description: string): DescriptionLinkPart[] {
@@ -19,8 +19,9 @@ export function descriptionLinkParts(description: string): DescriptionLinkPart[]
 
     const trimmedUrl = rawUrl.replace(trailingUrlPunctuation, "");
     const trailing = rawUrl.slice(trimmedUrl.length);
-    if (isSafeDescriptionUrl(trimmedUrl)) {
-      parts.push({ href: trimmedUrl, text: trimmedUrl });
+    const href = descriptionUrlHref(trimmedUrl);
+    if (href) {
+      parts.push({ href, text: trimmedUrl });
     } else {
       parts.push({ text: trimmedUrl });
     }
@@ -42,4 +43,13 @@ export function isSafeDescriptionUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+export function descriptionUrlHref(value: string): string | undefined {
+  if (/^https?:\/\//i.test(value)) {
+    return isSafeDescriptionUrl(value) ? value : undefined;
+  }
+
+  const href = `https://${value}`;
+  return isSafeDescriptionUrl(href) ? href : undefined;
 }
