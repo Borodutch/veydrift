@@ -2,7 +2,6 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import heroUrl from "./assets/veydrift-hero.webp";
 import { TelegramIcon } from "./components/TelegramIcon";
-import { hasPersistableGameState, readGameStateSnapshot } from "./gameStateCache";
 import { PlayableMvpApp } from "./PlayableMvpApp";
 import { gameContractAddress, playableApiUrl, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
@@ -179,16 +178,6 @@ export function FirstPlanetSettlementApp() {
   const walletProviderCleanup = useRef<(() => void) | undefined>();
   const walletBootstrapAttempts = useRef(0);
   const walletBootstrapRetryTimer = useRef<ReturnType<typeof setTimeout> | undefined>();
-
-  // VEY-242: did this tab already load a game overview earlier in the session?
-  // The snapshot is only written once a wallet settlement exists, so its presence
-  // means we previously rendered the game and can keep showing it (from cache)
-  // while the wallet/planet re-resolve on reload, instead of the full-page
-  // "Reading wallet link" loader replacing the loaded data.
-  const [hasPersistedOverview] = useState(() => {
-    const snapshot = readGameStateSnapshot();
-    return Boolean(snapshot && hasPersistableGameState(snapshot));
-  });
 
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
@@ -825,24 +814,6 @@ export function FirstPlanetSettlementApp() {
   }
 
   const mode = preSettlementMode(wallet, planet);
-
-  // VEY-242: during a reload the wallet provider/account and the planet check
-  // resolve asynchronously, which would otherwise blank the page into the
-  // full-page "Reading wallet link" loader. If this tab already loaded an
-  // overview this session, keep the game surface mounted so PlayableMvpApp can
-  // render the persisted snapshot (stale-while-revalidate) until hasOverview
-  // takes over. Only the transient resolving window is covered; once the wallet
-  // resolves to a non-connected/no-planet state we fall back to the flow below.
-  if (mode === "resolving" && hasPersistedOverview) {
-    return (
-      <PlayableMvpApp
-        provider={provider}
-        account={account}
-        miniAppMode={miniAppMode}
-        planet={undefined}
-      />
-    );
-  }
 
   return (
     <main className="settlement-stage">
