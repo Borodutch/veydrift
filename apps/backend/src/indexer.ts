@@ -263,6 +263,7 @@ type PlanetResourceRow = ResourceColumns & {
 };
 
 type PlayerProfileRow = {
+  description: string | null;
   display_name: string | null;
   updated_at: string | null;
   wallet: string;
@@ -614,7 +615,7 @@ export class SettlementIndexer {
   playerProfile(wallet: string): PlayerProfile {
     const normalizedWallet = wallet.toLowerCase() as Address;
     const row = this.db.query(`
-      SELECT wallet, display_name, updated_at
+      SELECT wallet, display_name, description, updated_at
       FROM player_profiles
       WHERE wallet = lower(?)
     `).get(wallet) as PlayerProfileRow | null;
@@ -622,6 +623,7 @@ export class SettlementIndexer {
     return {
       wallet: normalizedWallet,
       displayName: row?.display_name ?? null,
+      description: row?.description ?? null,
       fallbackName: playerFallbackName(normalizedWallet),
       updatedAt: row?.updated_at ?? null
     };
@@ -717,6 +719,20 @@ export class SettlementIndexer {
         display_name = excluded.display_name,
         updated_at = excluded.updated_at
     `).run(wallet, displayName, updatedAt);
+
+    return this.playerProfile(wallet);
+  }
+
+  upsertPlayerProfile(wallet: Address, displayName: string, description: string | null): PlayerProfile {
+    const updatedAt = new Date().toISOString();
+    this.db.query(`
+      INSERT INTO player_profiles (wallet, display_name, description, updated_at)
+      VALUES (lower(?), ?, ?, ?)
+      ON CONFLICT(wallet) DO UPDATE SET
+        display_name = excluded.display_name,
+        description = excluded.description,
+        updated_at = excluded.updated_at
+    `).run(wallet, displayName, description, updatedAt);
 
     return this.playerProfile(wallet);
   }
@@ -2077,6 +2093,7 @@ export class SettlementIndexer {
       CREATE TABLE IF NOT EXISTS player_profiles (
         wallet TEXT PRIMARY KEY,
         display_name TEXT,
+        description TEXT,
         updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS indexed_player_activity (
@@ -2426,6 +2443,7 @@ export class SettlementIndexer {
         updated_at TEXT NOT NULL
       );
     `);
+    this.ensureColumn("player_profiles", "description", "TEXT");
     this.ensureColumn("contract_production_queues", "backlog_json", "TEXT");
     this.ensureColumn("contract_planet_resources", "log_index", "TEXT NOT NULL DEFAULT '0x0'");
     this.backfillMissionEventLogs();

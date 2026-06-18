@@ -5,7 +5,10 @@ import { ArrowLeftRight, Check, Crosshair, Factory, FlaskConical, Menu, Moon, Or
 
 import {
   playerDisplayLabel,
+  normalizePlayerDescription,
+  playerDescriptionMaxLength,
   shortAddress,
+  validatePlayerDescription,
   validatePlayerDisplayName,
   type PlayerProfile,
 } from "../walletFlow";
@@ -33,7 +36,7 @@ interface NavBarProps {
   coordinates?: string | undefined;
   account?: string | undefined;
   onNavigate: (page: Page) => void;
-  onUpdatePlayerDisplayName?: ((name: string) => void) | undefined;
+  onUpdatePlayerProfile?: ((name: string, description: string | null) => void) | undefined;
   playerProfile?: PlayerProfile | undefined;
   playerProfileAction?: PlayerProfileActionState | undefined;
   canEditPlayerProfile?: boolean | undefined;
@@ -66,7 +69,7 @@ export function NavBar({
   account,
   coordinates,
   onNavigate,
-  onUpdatePlayerDisplayName,
+  onUpdatePlayerProfile,
   playerProfile,
   playerProfileAction = { status: "idle" },
   canEditPlayerProfile = false,
@@ -74,6 +77,7 @@ export function NavBar({
 }: NavBarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [playerDraft, setPlayerDraft] = useState(playerProfile?.displayName ?? "");
+  const [playerDescriptionDraft, setPlayerDescriptionDraft] = useState(playerProfile?.description ?? "");
   const [playerPanelOpen, setPlayerPanelOpen] = useState(false);
   const [playerValidation, setPlayerValidation] = useState<string | undefined>(undefined);
   const playerLabel = playerDisplayLabel(playerProfile, account);
@@ -104,9 +108,10 @@ export function NavBar({
   useEffect(() => {
     if (!playerPanelOpen) {
       setPlayerDraft(playerProfile?.displayName ?? "");
+      setPlayerDescriptionDraft(playerProfile?.description ?? "");
       setPlayerValidation(undefined);
     }
-  }, [playerPanelOpen, playerProfile?.displayName]);
+  }, [playerPanelOpen, playerProfile?.description, playerProfile?.displayName]);
 
   useEffect(() => {
     if (playerProfileAction.status === "success") {
@@ -133,9 +138,19 @@ export function NavBar({
       setPlayerValidation(validation);
       return;
     }
+    const nextDescription = normalizePlayerDescription(playerDescriptionDraft);
+    const descriptionValidation = validatePlayerDescription(playerDescriptionDraft);
+    if (descriptionValidation) {
+      setPlayerValidation(descriptionValidation);
+      return;
+    }
     setPlayerValidation(undefined);
-    onUpdatePlayerDisplayName?.(nextName);
+    onUpdatePlayerProfile?.(nextName, nextDescription);
   };
+
+  const descriptionLength = Array.from(playerDescriptionDraft.replace(/\r\n?/g, "\n").trim()).length;
+  const descriptionRemaining = Math.max(0, playerDescriptionMaxLength - descriptionLength);
+  const descriptionCountTone = descriptionLength > playerDescriptionMaxLength ? "text-amber-200" : "text-slate-500";
 
   const accountSummary = (className: string) => (
     <aside className={className} aria-label="Sidebar account summary">
@@ -154,21 +169,22 @@ export function NavBar({
             <p className={`mt-1 break-words text-[10px] leading-4 ${playerStatusTone}`}>{playerStatusLabel}</p>
           ) : null}
         </div>
-        {onUpdatePlayerDisplayName ? (
+        {onUpdatePlayerProfile ? (
           <button
             aria-controls="commander-name-editor"
             aria-expanded={playerPanelOpen}
             aria-haspopup="dialog"
-            aria-label="Edit player display name"
+            aria-label="Edit player profile"
             className="inline-grid h-7 w-7 shrink-0 place-items-center rounded border border-white/10 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
             disabled={playerProfileBusy}
             onClick={() => {
               setMobileMenuOpen(false);
               setPlayerPanelOpen(true);
               setPlayerDraft(playerProfile?.displayName ?? "");
+              setPlayerDescriptionDraft(playerProfile?.description ?? "");
               setPlayerValidation(undefined);
             }}
-            title="Edit player display name"
+            title="Edit player profile"
             type="button"
           >
             <Pencil aria-hidden="true" size={12} strokeWidth={2} />
@@ -194,7 +210,7 @@ export function NavBar({
     </aside>
   );
 
-  const playerEditorDialog = onUpdatePlayerDisplayName && playerPanelOpen ? (
+  const playerEditorDialog = onUpdatePlayerProfile && playerPanelOpen ? (
     <div
       className="fixed inset-0 z-50 grid place-items-end bg-black/60 p-3 backdrop-blur-sm sm:place-items-center sm:p-4"
       onClick={(event) => {
@@ -215,7 +231,7 @@ export function NavBar({
               Commander
             </p>
             <h2 className="mt-1 break-words text-sm font-semibold leading-5 text-white" id="commander-name-editor-title">
-              Edit display name
+              Edit profile
             </h2>
           </div>
           <button
@@ -243,6 +259,23 @@ export function NavBar({
             value={playerDraft}
           />
         </label>
+        <label className="grid gap-1 text-xs font-medium text-slate-200">
+          Description
+          <textarea
+            className="min-h-28 resize-y rounded border border-white/10 bg-[#050b14]/95 px-3 py-2 text-sm leading-5 text-white outline-none transition placeholder:text-slate-500 focus:border-cyan-300/60 disabled:cursor-not-allowed disabled:text-slate-500"
+            disabled={playerProfileBusy}
+            maxLength={playerDescriptionMaxLength}
+            onInput={(event) => {
+              setPlayerDescriptionDraft(event.currentTarget.value);
+              setPlayerValidation(undefined);
+            }}
+            placeholder="Public commander bio; plain URLs become links on your profile"
+            value={playerDescriptionDraft}
+          />
+        </label>
+        <p className={`text-right text-[10px] leading-3 ${descriptionCountTone}`}>
+          {descriptionRemaining} / {playerDescriptionMaxLength}
+        </p>
         <p className="text-[11px] leading-4 text-slate-300">
           Free wallet signature; no transaction or gas.
         </p>
@@ -263,10 +296,10 @@ export function NavBar({
             <X aria-hidden="true" size={14} strokeWidth={2} />
           </button>
           <button
-            aria-label="Save player display name"
+            aria-label="Save player profile"
             className="inline-grid h-8 w-8 place-items-center rounded border border-cyan-300/40 bg-cyan-300/10 text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
             disabled={!canEditPlayerProfile || playerProfileBusy}
-            title={playerProfileBusy ? "Signing" : "Save name"}
+            title={playerProfileBusy ? "Signing" : "Save profile"}
             type="submit"
           >
             <Check aria-hidden="true" size={14} strokeWidth={2} />
