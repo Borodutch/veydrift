@@ -405,6 +405,7 @@ function ResearchDetailPanel({
     researchNetworkLabLevels: researchState?.researchNetworkLabLevels,
   });
   const isSelectedResearchQueued = queue?.key === research.key;
+  const detailBadge = researchDetailBadge(status);
   const [isInfoOpen, setIsInfoOpen] = useState(false);
 
   return (
@@ -429,9 +430,11 @@ function ResearchDetailPanel({
               />
             </div>
           </div>
-          <span className={`rounded px-2 py-1 text-xs font-semibold ${status.disabled ? "bg-white/5 text-slate-400" : "bg-emerald-300/10 text-emerald-200"}`}>
-            {status.badge}
-          </span>
+          {detailBadge ? (
+            <span className="rounded bg-white/5 px-2 py-1 text-xs font-semibold text-slate-400">
+              {detailBadge}
+            </span>
+          ) : null}
         </div>
 
         <p className="mt-3 text-sm leading-6 text-slate-300">
@@ -977,6 +980,12 @@ export function researchCatalogStatusText(
   status: Pick<ReturnType<typeof researchActionStatus>, "tileStatus">,
 ): string {
   return status.tileStatus === "Active" ? "Active" : "";
+}
+
+export function researchDetailBadge(
+  status: Pick<ReturnType<typeof researchActionStatus>, "badge">,
+): string | undefined {
+  return status.badge === "In progress" ? status.badge : undefined;
 }
 
 export function researchViewState(

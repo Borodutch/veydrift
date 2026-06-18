@@ -12,6 +12,7 @@ import {
   ResearchStatusPanel,
   researchCatalogStatusText,
   researchCatalogTitleTone,
+  researchDetailBadge,
   researchLevelInfoRows,
   researchRefreshErrorLabel,
   researchActionStatus,
@@ -601,6 +602,7 @@ describe("Research page load-error display", () => {
     });
     expect(researchCatalogTitleTone(ready)).toBe("normal");
     expect(researchCatalogStatusText(ready)).toBe("");
+    expect(researchDetailBadge(ready)).toBeUndefined();
 
     expect(locked).toMatchObject({
       disabled: true,
@@ -609,9 +611,11 @@ describe("Research page load-error display", () => {
     });
     expect(researchCatalogTitleTone(locked)).toBe("muted");
     expect(researchCatalogStatusText(locked)).toBe("");
+    expect(researchDetailBadge(locked)).toBeUndefined();
 
     expect(researchCatalogTitleTone(active)).toBe("normal");
     expect(researchCatalogStatusText(active)).toBe("Active");
+    expect(researchDetailBadge(active)).toBe("In progress");
 
     expect(insufficientResources).toMatchObject({
       disabled: true,
@@ -620,6 +624,7 @@ describe("Research page load-error display", () => {
     });
     expect(researchCatalogTitleTone(insufficientResources)).toBe("muted");
     expect(researchCatalogStatusText(insufficientResources)).toBe("");
+    expect(researchDetailBadge(insufficientResources)).toBeUndefined();
   });
 
   test("reports the exact single resource missing for research actions", () => {
