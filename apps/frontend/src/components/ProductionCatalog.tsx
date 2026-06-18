@@ -246,7 +246,6 @@ function CatalogButton<Key extends string>({
     unavailable: "text-slate-400",
   }[item.status];
   const labelClass = item.labelTone === "muted" ? "text-slate-500" : "text-white";
-  const dimmedClass = item.labelTone === "muted" ? "opacity-60 grayscale" : "";
 
   return (
     <button
@@ -255,7 +254,7 @@ function CatalogButton<Key extends string>({
         selected
           ? "border-cyan-300/50 bg-cyan-300/10"
           : "border-white/10 bg-[#101624] hover:border-white/20 hover:bg-white/5"
-      } ${dimmedClass}`}
+      }`}
       onClick={() => onSelect(item.key)}
       type="button"
     >

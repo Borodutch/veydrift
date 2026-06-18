@@ -118,8 +118,8 @@ describe("ProductionCatalog selected panel", () => {
       .find((node) => node.type === "button" && visibleText(node).includes("Rocket Launcher"));
 
     expect(title?.props.className).toContain("text-slate-500");
-    expect(catalogButton?.props.className).toContain("opacity-60");
-    expect(catalogButton?.props.className).toContain("grayscale");
+    expect(catalogButton?.props.className).not.toContain("opacity-60");
+    expect(catalogButton?.props.className).not.toContain("grayscale");
     expect(visibleText(catalog)).toContain("Rocket Launcher");
     expect(visibleText(catalog)).not.toContain("Ready");
     expect(visibleText(catalog)).not.toContain("Locked");
