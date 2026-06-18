@@ -4444,6 +4444,92 @@ describe("SettlementIndexer", () => {
     );
   });
 
+  test("startup replay repairs missing fleet mission rows from indexed mission logs under a stale canonical baseline", async () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listCurrentPlanets() { return [planet]; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return [moonChance]; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async listCanonicalFleetMissions() { return []; }
+    };
+    const writer = new SettlementIndexer(reader, 100n, { database });
+
+    await writer.rebuild();
+    expect(writer.snapshot().lastReconciledBlock).toBe("125");
+    database.query(`
+      INSERT INTO indexer_metadata (key, value)
+      VALUES ('lastFleetMissionsReconciledAt', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run("2026-01-01T00:00:00.000Z");
+
+    writer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xtransport1448",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(1448n), addressTopic(player), topic(0n)],
+      data: abiWords(BigInt(planet.planetId), 188n, 1800000000n, 1800000300n)
+    });
+    writer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xtransport1448",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(1448n)],
+      data: abiWords(10n, 20n, 30n, 4n)
+    });
+    writer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xtransport1448",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(1448n)],
+      data: abiWords(1n, ...Array.from({ length: 13 }, () => 0n))
+    });
+
+    expect(writer.fleetMission("1448")).toMatchObject({
+      missionId: "1448",
+      status: "Outbound",
+      missionType: "Transport",
+      owner: player,
+      originPlanetId: planet.planetId,
+      targetPlanetId: "188",
+      transactionHash: "0xtransport1448"
+    });
+
+    database.query("DELETE FROM contract_fleet_missions WHERE mission_id = ?").run("1448");
+    const readerRestart = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    expect(readerRestart.fleetMission("1448")).toBeNull();
+
+    const restart = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: true });
+    const row = database.query(`
+      SELECT mission_id, status_id, mission_type_id, owner, origin_planet_id, target_planet_id, event_json
+      FROM contract_fleet_missions
+      WHERE mission_id = ?
+    `).get("1448") as {
+      mission_id: string;
+      status_id: number;
+      mission_type_id: number;
+      owner: string;
+      origin_planet_id: string;
+      target_planet_id: string;
+      event_json: string;
+    } | null;
+    expect(row).toMatchObject({
+      mission_id: "1448",
+      status_id: 1,
+      mission_type_id: 0,
+      owner: player,
+      origin_planet_id: planet.planetId,
+      target_planet_id: "188"
+    });
+    expect(JSON.parse(row!.event_json)).toMatchObject({ source: "indexed_mission_event_logs" });
+    expect(restart.fleetMission("1448")).toMatchObject({
+      missionId: "1448",
+      status: "Outbound",
+      missionType: "Transport",
+      transactionHash: "0xtransport1448"
+    });
+  });
+
   test("explicit rebuild uses canonical fleet mission status to repair active mission counts", async () => {
     const indexer = new SettlementIndexer({
       async listCurrentPlanets() { return [planet]; },

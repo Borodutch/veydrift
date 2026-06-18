@@ -2428,6 +2428,7 @@ export class SettlementIndexer {
     this.backfillMissionEventLogs();
     if (runStartupBackfill) {
       this.backfillCanonicalTables();
+      this.replayFleetMissionRowsFromEventLogs();
     }
   }
 
@@ -3188,6 +3189,85 @@ export class SettlementIndexer {
     });
   }
 
+  private replayFleetMissionRowsFromEventLogs(): void {
+    const missions = this.decodedMissionLogs().eventMissions;
+    if (missions.length === 0) return;
+
+    let replayedFleetRows = 0;
+    for (const mission of missions) {
+      replayedFleetRows += this.upsertEventDerivedFleetMissionRow(mission);
+    }
+
+    if (replayedFleetRows > 0) {
+      this.setMetadata("lastFleetMissionEventReplayAt", new Date().toISOString());
+      this.touchMissionReadModel();
+      this.touch();
+    }
+  }
+
+  private upsertEventDerivedFleetMissionRow(mission: FleetMissionSummary): number {
+    const statusId = fleetMissionStatusId(mission.status);
+    const missionTypeId = fleetMissionTypeId(mission.missionType);
+    if (statusId === null || missionTypeId === null) return 0;
+
+    const existing = this.db.query(`
+      SELECT event_json
+      FROM contract_fleet_missions
+      WHERE mission_id = ?
+    `).get(mission.missionId) as EventRow | null;
+    if (existing) {
+      const marker = parseJson<{ source?: string }>(existing.event_json, {});
+      if (marker.source !== "indexed_mission_event_logs") return 0;
+    }
+
+    const eventJson = JSON.stringify({
+      source: "indexed_mission_event_logs",
+      mission
+    });
+    const result = this.db.query(`
+      INSERT INTO contract_fleet_missions (
+        mission_id, status_id, mission_type_id, owner, origin_planet_id, target_planet_id,
+        departure_at, arrival_at, return_at, fuel_cost,
+        metal_cargo, crystal_cargo, deuterium_cargo, ships_json, randomness_request_id, event_json
+      )
+      VALUES (?, ?, ?, lower(?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(mission_id) DO UPDATE SET
+        status_id = excluded.status_id,
+        mission_type_id = excluded.mission_type_id,
+        owner = excluded.owner,
+        origin_planet_id = excluded.origin_planet_id,
+        target_planet_id = excluded.target_planet_id,
+        departure_at = excluded.departure_at,
+        arrival_at = excluded.arrival_at,
+        return_at = excluded.return_at,
+        fuel_cost = excluded.fuel_cost,
+        metal_cargo = excluded.metal_cargo,
+        crystal_cargo = excluded.crystal_cargo,
+        deuterium_cargo = excluded.deuterium_cargo,
+        ships_json = excluded.ships_json,
+        randomness_request_id = excluded.randomness_request_id,
+        event_json = excluded.event_json
+    `).run(
+      mission.missionId,
+      statusId,
+      missionTypeId,
+      mission.owner,
+      mission.originPlanetId,
+      mission.targetPlanetId,
+      mission.launchBlockNumber,
+      mission.arrivalAt,
+      mission.returnAt,
+      mission.fuelCost,
+      mission.cargo.metal,
+      mission.cargo.crystal,
+      mission.cargo.deuterium,
+      JSON.stringify(mission.ships),
+      missionBattleRandomnessRequestId(mission),
+      eventJson
+    );
+    return result.changes;
+  }
+
   private upsertCanonicalFleetMission(mission: CanonicalFleetMissionSnapshot): void {
     this.db.query(`
       INSERT INTO contract_fleet_missions (
@@ -3732,17 +3812,19 @@ export class SettlementIndexer {
     const missions = decodeCompleteFleetMissionLogs(txLogs);
     for (const mission of missions) {
       const mutationKey = `legacy:fleet-launch:${mission.missionId}`;
-      if (this.hasLegacyUnitMutation(mutationKey)) continue;
-      const mutations: LegacyUnitMutation[] = [];
-      for (const [shipKey, value] of Object.entries(mission.ships)) {
-        const shipId = shipKeyToId(shipKey);
-        const quantity = Number(value);
-        if (shipId === null || !Number.isFinite(quantity) || quantity <= 0) continue;
-        if (this.hasTransactionUnitCountChanged(log.transactionHash, "ship", mission.originPlanetId, shipId)) continue;
-        mutations.push({ kind: "ship", planetId: mission.originPlanetId, itemId: shipId, delta: -quantity });
+      if (!this.hasLegacyUnitMutation(mutationKey)) {
+        const mutations: LegacyUnitMutation[] = [];
+        for (const [shipKey, value] of Object.entries(mission.ships)) {
+          const shipId = shipKeyToId(shipKey);
+          const quantity = Number(value);
+          if (shipId === null || !Number.isFinite(quantity) || quantity <= 0) continue;
+          if (this.hasTransactionUnitCountChanged(log.transactionHash, "ship", mission.originPlanetId, shipId)) continue;
+          mutations.push({ kind: "ship", planetId: mission.originPlanetId, itemId: shipId, delta: -quantity });
+        }
+        this.applyLegacyUnitMutationsOnce(mutationKey, mutations, log);
       }
-      this.applyLegacyUnitMutationsOnce(mutationKey, mutations, log);
     }
+    this.replayFleetMissionRowsFromEventLogs();
   }
 
   private applyInterplanetaryMissileAttackCompatibilityEvent(event: InterplanetaryMissileAttackEvent): void {
@@ -5613,30 +5695,44 @@ function safeBigInt(value: string | null | undefined, fallback: bigint): bigint 
   }
 }
 
+const FLEET_MISSION_TYPE_LABELS = [
+  "Transport",
+  "Deploy",
+  "Colonize",
+  "Attack",
+  "Harvest",
+  "AcsDefend",
+  "Intercept",
+  "MissileAttack",
+  "AcsAttack",
+  "DefenseHold"
+] as const;
+
+const FLEET_MISSION_STATUS_LABELS = [
+  "None",
+  "Outbound",
+  "Returning",
+  "Resolved",
+  "Returned",
+  "Recalled"
+] as const;
+
 function fleetMissionTypeLabel(id: number): string {
-  return [
-    "Transport",
-    "Deploy",
-    "Colonize",
-    "Attack",
-    "Harvest",
-    "AcsDefend",
-    "Intercept",
-    "MissileAttack",
-    "AcsAttack",
-    "DefenseHold"
-  ][id] ?? `Unknown:${id}`;
+  return FLEET_MISSION_TYPE_LABELS[id] ?? `Unknown:${id}`;
 }
 
 function fleetMissionStatusLabel(id: number): string {
-  return [
-    "None",
-    "Outbound",
-    "Returning",
-    "Resolved",
-    "Returned",
-    "Recalled"
-  ][id] ?? `Unknown:${id}`;
+  return FLEET_MISSION_STATUS_LABELS[id] ?? `Unknown:${id}`;
+}
+
+function fleetMissionTypeId(label: string): number | null {
+  const index = FLEET_MISSION_TYPE_LABELS.indexOf(label as typeof FLEET_MISSION_TYPE_LABELS[number]);
+  return index >= 0 ? index : null;
+}
+
+function fleetMissionStatusId(label: string): number | null {
+  const index = FLEET_MISSION_STATUS_LABELS.indexOf(label as typeof FLEET_MISSION_STATUS_LABELS[number]);
+  return index >= 0 ? index : null;
 }
 
 function isActiveFleetMissionStatus(status: string): boolean {
