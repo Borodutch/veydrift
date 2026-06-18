@@ -36,6 +36,26 @@ export type PlanetSectionStore = Record<string, PlanetSectionState>;
 
 export type PlanetSectionValueUpdater<T> = T | ((current: T) => T);
 
+export type PlanetSectionRefreshFunction = () => unknown | Promise<unknown>;
+
+export type PlanetSectionRefreshers = Partial<Record<PlanetSectionDataKey, PlanetSectionRefreshFunction>>;
+
+export type PlanetSectionData<K extends PlanetSectionDataKey> = PlanetSectionState[K];
+
+export type PlanetSectionReader<K extends PlanetSectionDataKey> = {
+  key: K;
+  data: PlanetSectionData<K>;
+  status: PlanetSectionRefreshStatus;
+  refresh: PlanetSectionRefreshFunction | undefined;
+};
+
+export type PlanetSectionAccess = {
+  planetId: string | null | undefined;
+  section: PlanetSectionState;
+  read: <K extends PlanetSectionDataKey>(key: K) => PlanetSectionReader<K>;
+  refresh: (key: PlanetSectionDataKey) => unknown | Promise<unknown>;
+};
+
 export type PlanetSectionDataKey =
   | "infrastructureChainState"
   | "moonState"
@@ -73,6 +93,32 @@ export function planetSectionForPlanet(
   planetId: string | null | undefined,
 ): PlanetSectionState {
   return planetId ? store[planetId] ?? emptyPlanetSectionState : emptyPlanetSectionState;
+}
+
+export function planetSectionStatus(
+  section: PlanetSectionState,
+  key: PlanetSectionDataKey,
+): PlanetSectionRefreshStatus {
+  return section.sectionStatus[key] ?? { loading: false };
+}
+
+export function planetSectionAccessForPlanet(
+  store: PlanetSectionStore,
+  planetId: string | null | undefined,
+  refreshers: PlanetSectionRefreshers = {},
+): PlanetSectionAccess {
+  const section = planetSectionForPlanet(store, planetId);
+  return {
+    planetId,
+    section,
+    read: <K extends PlanetSectionDataKey>(key: K): PlanetSectionReader<K> => ({
+      key,
+      data: section[key],
+      status: planetSectionStatus(section, key),
+      refresh: refreshers[key],
+    }),
+    refresh: (key: PlanetSectionDataKey) => refreshers[key]?.(),
+  };
 }
 
 export function planetSectionStoreFromInitialState(

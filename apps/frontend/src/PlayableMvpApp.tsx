@@ -86,6 +86,7 @@ import {
 } from "./overviewData";
 import {
   hasPlanetSectionData,
+  planetSectionAccessForPlanet,
   planetSectionForPlanet,
   setPlanetSectionData,
   setPlanetSectionStatus,
@@ -2375,6 +2376,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     () => planetSectionForPlanet(planetSectionStore, activePlanetId),
     [activePlanetId, planetSectionStore]
   );
+  const setActivePlanetSectionStatus = useCallback((
+    key: Parameters<typeof setPlanetSectionStatus>[2],
+    status: Parameters<typeof setPlanetSectionStatus>[3],
+  ) => {
+    setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, key, status));
+  }, [activePlanetId]);
   const [onChainQueuesState, setOnChainQueuesState] = useState<PlayerQueuesResponse | undefined>();
   const onChainQueues = activePlanetSection.queuesState ?? onChainQueuesState;
   const setOnChainQueues = useCallback((
@@ -2720,13 +2727,15 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     settlementPlanet,
   });
 
-  useEffect(() => {
+  const refreshMissionUniverseSystems = useCallback(async (signal?: AbortSignal) => {
     if (!apiBaseUrl || missionUniverseSystemKeys.length === 0) return;
-
-    const abortController = new AbortController();
     const apiRoot = apiBaseUrl.replace(/\/+$/, "");
-    Promise.all(
-      missionUniverseSystemKeys.map(async (systemKey) => {
+    setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "galaxySystemDataByKey", {
+      loading: true,
+      error: undefined,
+    }));
+    try {
+      const systems = await Promise.all(missionUniverseSystemKeys.map(async (systemKey) => {
         const [galaxy, system] = systemKey.split(":").map((part) => Number(part));
         if (!Number.isInteger(galaxy) || !Number.isInteger(system)) {
           return {
@@ -2737,7 +2746,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         }
         const response = await fetch(`${apiRoot}/universe/galaxies/${galaxy}/systems/${system}`, {
           headers: { accept: "application/json" },
-          signal: abortController.signal,
+          ...(signal ? { signal } : {}),
         });
         if (!response.ok) throw new Error(`Universe request failed with ${response.status}`);
         const payload = await response.json();
@@ -2749,50 +2758,50 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
             planet.type,
           ] as const),
         };
-      })
-    )
-      .then((systems) => {
-        if (abortController.signal.aborted) return;
-        setMissionPlanetArchetypesByCoordinate((current) => {
-          let changed = false;
-          const next = new Map(current);
-          for (const [coordinateKey, archetype] of systems.flatMap((system) => system.archetypes)) {
-            if (next.get(coordinateKey) === archetype) continue;
-            next.set(coordinateKey, archetype);
-            changed = true;
-          }
-          return changed ? next : current;
-        });
-        setPlanetSectionStore((current) => {
-          const existing = planetSectionForPlanet(current, activePlanetId).galaxySystemDataByKey ?? {};
-          const nextSystems = { ...existing };
-          for (const system of systems) {
-            if (system.payload === undefined) continue;
-            nextSystems[system.systemKey] = system.payload;
-          }
-          return setPlanetSectionData(current, activePlanetId, "galaxySystemDataByKey", nextSystems, {
-            loading: false,
-            error: undefined,
-            lastSuccessfulRefreshAt: Date.now(),
-          });
-        });
-      })
-      .catch((error) => {
-        if (!abortController.signal.aborted) {
-          console.error(error);
-          setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "galaxySystemDataByKey", {
-            loading: false,
-            error: error instanceof Error ? error.message : "Universe system data could not be loaded.",
-          }));
+      }));
+      if (signal?.aborted) return;
+      setMissionPlanetArchetypesByCoordinate((current) => {
+        let changed = false;
+        const next = new Map(current);
+        for (const [coordinateKey, archetype] of systems.flatMap((system) => system.archetypes)) {
+          if (next.get(coordinateKey) === archetype) continue;
+          next.set(coordinateKey, archetype);
+          changed = true;
         }
+        return changed ? next : current;
       });
+      setPlanetSectionStore((current) => {
+        const existing = planetSectionForPlanet(current, activePlanetId).galaxySystemDataByKey ?? {};
+        const nextSystems = { ...existing };
+        for (const system of systems) {
+          if (system.payload === undefined) continue;
+          nextSystems[system.systemKey] = system.payload;
+        }
+        return setPlanetSectionData(current, activePlanetId, "galaxySystemDataByKey", nextSystems, {
+          loading: false,
+          error: undefined,
+          lastSuccessfulRefreshAt: Date.now(),
+        });
+      });
+    } catch (error) {
+      if (signal?.aborted) return;
+      setPlanetSectionStore((current) => setPlanetSectionStatus(current, activePlanetId, "galaxySystemDataByKey", {
+        loading: false,
+        error: error instanceof Error ? error.message : "Universe system data could not be loaded.",
+      }));
+      throw error;
+    }
+  }, [activePlanetId, apiBaseUrl, missionUniverseSystemKey]);
 
+  useEffect(() => {
+    if (!apiBaseUrl || missionUniverseSystemKeys.length === 0) return;
+
+    const abortController = new AbortController();
+    refreshMissionUniverseSystems(abortController.signal).catch((error) => {
+      if (!abortController.signal.aborted) console.error(error);
+    });
     return () => abortController.abort();
-  }, [
-    apiBaseUrl,
-    activePlanetId,
-    missionUniverseSystemKey,
-  ]);
+  }, [apiBaseUrl, missionUniverseSystemKeys.length, refreshMissionUniverseSystems]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -3120,6 +3129,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       setMoonState(null);
       setInfrastructureLoading(false);
       setMoonLoading(false);
+      setPlanetSectionStore((current) => {
+        let next = setPlanetSectionStatus(current, activePlanetId, "infrastructureChainState", { loading: false, error: undefined });
+        next = setPlanetSectionStatus(next, activePlanetId, "moonState", { loading: false, error: undefined });
+        return next;
+      });
       return;
     }
 
@@ -3127,6 +3141,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setMoonLoading(true);
     setInfrastructureError(undefined);
     setMoonError(undefined);
+    setPlanetSectionStore((current) => {
+      let next = setPlanetSectionStatus(current, activePlanetId, "infrastructureChainState", { loading: true, error: undefined });
+      next = setPlanetSectionStatus(next, activePlanetId, "moonState", { loading: true, error: undefined });
+      return next;
+    });
     try {
       const [infrastructureResult, moonResult] = await Promise.all([
         settlePromise(fetchInfrastructureState(apiBaseUrl, account, activePlanetId)),
@@ -3148,15 +3167,29 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           current,
           next: nextInfrastructure,
         }));
+        setActivePlanetSectionStatus("infrastructureChainState", {
+          loading: false,
+          error: undefined,
+          lastSuccessfulRefreshAt: Date.now(),
+        });
       } else {
         console.error(infrastructureResult.reason);
-        setInfrastructureError(infrastructureResult.reason instanceof Error ? infrastructureResult.reason.message : "Infrastructure state could not be loaded.");
+        const message = infrastructureResult.reason instanceof Error ? infrastructureResult.reason.message : "Infrastructure state could not be loaded.";
+        setInfrastructureError(message);
+        setActivePlanetSectionStatus("infrastructureChainState", { loading: false, error: message });
       }
       if (moonResult.status === "fulfilled") {
         setMoonState(moonResult.value);
+        setActivePlanetSectionStatus("moonState", {
+          loading: false,
+          error: undefined,
+          lastSuccessfulRefreshAt: Date.now(),
+        });
       } else {
         console.error(moonResult.reason);
-        setMoonError(moonResult.reason instanceof Error ? moonResult.reason.message : "Moon state could not be loaded.");
+        const message = moonResult.reason instanceof Error ? moonResult.reason.message : "Moon state could not be loaded.";
+        setMoonError(message);
+        setActivePlanetSectionStatus("moonState", { loading: false, error: message });
       }
     } finally {
       if (canApplyRefreshRequest(infrastructureRefreshGate, requestId)) {
@@ -3171,11 +3204,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     if (!apiBaseUrl || !account) {
       latestInfrastructureResourceSnapshot.current = { planetId: null, lastSettledAt: null };
       setInfrastructureChainState(null);
+      setActivePlanetSectionStatus("infrastructureChainState", { loading: false, error: undefined });
       return null;
     }
 
     setInfrastructureLoading(true);
     setInfrastructureError(undefined);
+    setActivePlanetSectionStatus("infrastructureChainState", { loading: true, error: undefined });
     try {
       const nextInfrastructure = await fetchInfrastructureState(apiBaseUrl, account, activePlanetId);
       if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) return nextInfrastructure;
@@ -3192,11 +3227,18 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         current,
         next: nextInfrastructure,
       }));
+      setActivePlanetSectionStatus("infrastructureChainState", {
+        loading: false,
+        error: undefined,
+        lastSuccessfulRefreshAt: Date.now(),
+      });
       return nextInfrastructure;
     } catch (error) {
       console.error(error);
       if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) throw error;
-      setInfrastructureError(error instanceof Error ? error.message : "Infrastructure state could not be loaded.");
+      const message = error instanceof Error ? error.message : "Infrastructure state could not be loaded.";
+      setInfrastructureError(message);
+      setActivePlanetSectionStatus("infrastructureChainState", { loading: false, error: message });
       throw error;
     } finally {
       if (canApplyRefreshRequest(infrastructureRefreshGate, requestId)) {
@@ -3210,20 +3252,29 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     if (!apiBaseUrl || !account) {
       setDefenseState(null);
       setDefenseLoading(false);
+      setActivePlanetSectionStatus("defenseState", { loading: false, error: undefined });
       return null;
     }
 
     setDefenseLoading(true);
     setDefenseError(undefined);
+    setActivePlanetSectionStatus("defenseState", { loading: true, error: undefined });
     try {
       const next = await fetchDefenseState(apiBaseUrl, account, activePlanetId);
       if (!canApplyRefreshRequest(defenseRefreshGate, requestId)) return next;
       setDefenseState(next);
+      setActivePlanetSectionStatus("defenseState", {
+        loading: false,
+        error: undefined,
+        lastSuccessfulRefreshAt: Date.now(),
+      });
       return next;
     } catch (error) {
       console.error(error);
       if (canApplyRefreshRequest(defenseRefreshGate, requestId)) {
-        setDefenseError(error instanceof Error ? error.message : "Defense state could not be loaded.");
+        const message = error instanceof Error ? error.message : "Defense state could not be loaded.";
+        setDefenseError(message);
+        setActivePlanetSectionStatus("defenseState", { loading: false, error: message });
       }
       return null;
     } finally {
@@ -3261,20 +3312,29 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     if (!apiBaseUrl || !account) {
       setShipyardState(null);
       setShipyardLoading(false);
+      setActivePlanetSectionStatus("shipyardState", { loading: false, error: undefined });
       return null;
     }
 
     setShipyardLoading(true);
     setShipyardError(undefined);
+    setActivePlanetSectionStatus("shipyardState", { loading: true, error: undefined });
     try {
       const next = await fetchShipyardState(apiBaseUrl, account, activePlanetId);
       if (!canApplyRefreshRequest(shipyardRefreshGate, requestId)) return next;
       setShipyardState(next);
+      setActivePlanetSectionStatus("shipyardState", {
+        loading: false,
+        error: undefined,
+        lastSuccessfulRefreshAt: Date.now(),
+      });
       return next;
     } catch (error) {
       console.error(error);
       if (canApplyRefreshRequest(shipyardRefreshGate, requestId)) {
-        setShipyardError(error instanceof Error ? error.message : "Shipyard state could not be loaded.");
+        const message = error instanceof Error ? error.message : "Shipyard state could not be loaded.";
+        setShipyardError(message);
+        setActivePlanetSectionStatus("shipyardState", { loading: false, error: message });
       }
       return null;
     } finally {
@@ -3289,11 +3349,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     if (!apiBaseUrl || !account) {
       setResearchState(null);
       setResearchLoading(false);
+      setActivePlanetSectionStatus("researchState", { loading: false, error: undefined });
       return null;
     }
 
     setResearchLoading(true);
     setResearchError(undefined);
+    setActivePlanetSectionStatus("researchState", { loading: true, error: undefined });
     try {
       const next = await fetchResearchState(apiBaseUrl, account, activePlanetId);
       if (!canApplyRefreshRequest(researchRefreshGate, requestId)) return next;
@@ -3301,11 +3363,18 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         const preserved = preserveActiveResearchState(current, next);
         return researchStateWithFallbackQueue(preserved, onChainQueues?.research) ?? preserved;
       });
+      setActivePlanetSectionStatus("researchState", {
+        loading: false,
+        error: undefined,
+        lastSuccessfulRefreshAt: Date.now(),
+      });
       return next;
     } catch (error) {
       console.error(error);
       if (canApplyRefreshRequest(researchRefreshGate, requestId)) {
-        setResearchError(error instanceof Error ? error.message : "Research state could not be loaded.");
+        const message = error instanceof Error ? error.message : "Research state could not be loaded.";
+        setResearchError(message);
+        setActivePlanetSectionStatus("researchState", { loading: false, error: message });
       }
       return null;
     } finally {
@@ -3320,20 +3389,29 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     if (!apiBaseUrl || !account) {
       setRiftState(null);
       setRiftLoading(false);
+      setActivePlanetSectionStatus("riftState", { loading: false, error: undefined });
       return null;
     }
 
     setRiftLoading(true);
     setRiftError(undefined);
+    setActivePlanetSectionStatus("riftState", { loading: true, error: undefined });
     try {
       const next = await fetchRiftState(apiBaseUrl, account, activePlanetId);
       if (!canApplyRefreshRequest(riftRefreshGate, requestId)) return next;
       setRiftState(next);
+      setActivePlanetSectionStatus("riftState", {
+        loading: false,
+        error: undefined,
+        lastSuccessfulRefreshAt: Date.now(),
+      });
       return next;
     } catch (error) {
       console.error(error);
       if (canApplyRefreshRequest(riftRefreshGate, requestId)) {
-        setRiftError(error instanceof Error ? error.message : "Rift state could not be loaded.");
+        const message = error instanceof Error ? error.message : "Rift state could not be loaded.";
+        setRiftError(message);
+        setActivePlanetSectionStatus("riftState", { loading: false, error: message });
       }
       return null;
     } finally {
@@ -6275,6 +6353,30 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const canSubmitAllianceTransaction = Boolean(provider && account && allianceContract) && !transactionActionPending;
   const canSubmitMoonTransaction = Boolean(provider && account && moonContract) && !transactionActionPending;
   const canSubmitProfileMutation = Boolean(provider && account && apiBaseUrl) && !transactionActionPending;
+  const activePlanetSections = planetSectionAccessForPlanet(planetSectionStore, activePlanetId, {
+    settlementState: () => refreshOnChainState(),
+    queuesState: () => refreshOnChainState(),
+    fleetVisibilityState: refreshMissionControl,
+    infrastructureChainState: refreshInfrastructureState,
+    moonState: refreshInfrastructureState,
+    defenseState: refreshDefenseState,
+    shipyardState: refreshShipyardState,
+    researchState: refreshResearchState,
+    riftState: refreshRiftState,
+    missionArchiveState: () => loadMissionArchive(missionArchivePage),
+    allActiveMissionsState: loadAllActiveMissions,
+    globalMissionArchiveState: () => loadGlobalMissionArchive(globalMissionArchivePage),
+    missionArchetypesByCoordinate: refreshMissionUniverseSystems,
+    galaxySystemDataByKey: refreshMissionUniverseSystems,
+  });
+  const infrastructureSection = activePlanetSections.read("infrastructureChainState");
+  const moonSection = activePlanetSections.read("moonState");
+  const defenseSection = activePlanetSections.read("defenseState");
+  const shipyardSection = activePlanetSections.read("shipyardState");
+  const researchSection = activePlanetSections.read("researchState");
+  const riftSection = activePlanetSections.read("riftState");
+  const missionArchiveSection = activePlanetSections.read("missionArchiveState");
+  const globalMissionArchiveSection = activePlanetSections.read("globalMissionArchiveState");
 
   const content = (() => {
     if (page === "battle-reports") {
@@ -6445,16 +6547,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
             infrastructureChainState,
             onChainResources,
           })}
-          loading={infrastructureLoading}
+          loading={infrastructureLoading || infrastructureSection.status.loading}
           loadError={infrastructureLoadErrorFor({
             activeBuildingQueue,
             infrastructureChainState,
-            infrastructureError,
+            infrastructureError: infrastructureSection.status.error ?? infrastructureError,
             isWalletConnected,
           })}
           now={now}
           onOpenRequirement={handleOpenRequirement}
-          onRefresh={refreshInfrastructureState}
+          onRefresh={infrastructureSection.refresh ?? refreshInfrastructureState}
           onSelectBuilding={setSelectedBuildingKey}
           onUpgrade={handleUpgrade}
           planetProductionProfile={planetProductionProfile}
@@ -6473,11 +6575,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         <MoonPage
           action={moonAction}
           canTransact={canSubmitMoonTransaction}
-          error={moonError}
-          loading={moonLoading}
+          error={moonSection.status.error ?? moonError}
+          loading={moonLoading || moonSection.status.loading}
           moonState={moonState}
           onJumpGate={handleJumpGate}
-          onRefresh={refreshInfrastructureState}
+          onRefresh={moonSection.refresh ?? refreshInfrastructureState}
           onStartBuilding={handleStartMoonBuilding}
         />
       );
@@ -6491,15 +6593,15 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           canTransact={canSubmitGameTransaction}
           fleetVisibility={displayFleetVisibility}
           globalMissionArchive={globalMissionArchive}
-          globalMissionArchiveError={globalMissionArchiveError}
-          globalMissionArchiveLoading={globalMissionArchiveLoading}
+          globalMissionArchiveError={globalMissionArchiveSection.status.error ?? globalMissionArchiveError}
+          globalMissionArchiveLoading={globalMissionArchiveLoading || globalMissionArchiveSection.status.loading}
           incomingAttackArchive={incomingAttackArchive}
           incomingAttackArchiveError={incomingAttackArchiveError}
           incomingAttackArchiveLoading={incomingAttackArchiveLoading}
           loading={isWalletConnected && onChainStatus === "loading"}
           missionArchive={missionArchive}
-          missionArchiveError={missionArchiveError}
-          missionArchiveLoading={missionArchiveLoading}
+          missionArchiveError={missionArchiveSection.status.error ?? missionArchiveError}
+          missionArchiveLoading={missionArchiveLoading || missionArchiveSection.status.loading}
           now={now}
           onCounterplay={handleMissionCounterplay}
           onDefendPlanet={handleDefendPlanet}
@@ -6510,7 +6612,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onGlobalMissionArchivePageChange={(page) => void loadGlobalMissionArchive(page)}
           onIncomingAttackArchivePageChange={(page) => void loadIncomingAttackArchive(page)}
           onMissionArchivePageChange={(page) => void loadMissionArchive(page)}
-          onRefresh={refreshMissionControl}
+          onRefresh={() => void activePlanetSections.refresh("fleetVisibilityState")}
           planetArchetypesByCoordinate={missionPlanetArchetypesByCoordinate}
           reportMissionId={missionReportId ?? undefined}
           reportUrlForMission={missionReportUrlForMission}
@@ -6524,11 +6626,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         <ResearchPage
           actionState={researchAction}
           canTransact={canSubmitGameTransaction}
-          error={researchError}
-          loading={researchLoading}
+          error={researchSection.status.error ?? researchError}
+          loading={researchLoading || researchSection.status.loading}
           now={now}
           onOpenRequirement={handleOpenRequirement}
-          onRefresh={refreshResearchState}
+          onRefresh={researchSection.refresh ?? refreshResearchState}
           onResearch={handleResearch}
           onSelectResearch={setSelectedResearchKey}
           productionRates={productionRatesForEta}
@@ -6548,12 +6650,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           actionState={defenseAction}
           canTransact={canSubmitGameTransaction}
           defenseState={defenseState}
-          error={defenseError}
-          loading={defenseLoading}
+          error={defenseSection.status.error ?? defenseError}
+          loading={defenseLoading || defenseSection.status.loading}
           now={now}
           onBuild={handleBuildDefense}
           onOpenRequirement={handleOpenRequirement}
-          onRefresh={refreshDefenseState}
+          onRefresh={defenseSection.refresh ?? refreshDefenseState}
           onSelectDefense={setSelectedDefenseKey}
           overviewQueue={onChainQueues?.defense}
           productionRates={productionRatesForEta}
@@ -6634,13 +6736,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         <ShipyardPage
           actionState={shipyardAction}
           canTransact={canSubmitGameTransaction}
-          error={shipyardError}
-          loading={shipyardLoading}
+          error={shipyardSection.status.error ?? shipyardError}
+          loading={shipyardLoading || shipyardSection.status.loading}
           now={now}
           onBuild={handleBuildShip}
-          onCollect={refreshShipyardState}
+          onCollect={shipyardSection.refresh ?? refreshShipyardState}
           onOpenRequirement={handleOpenRequirement}
-          onRefresh={refreshShipyardState}
+          onRefresh={shipyardSection.refresh ?? refreshShipyardState}
           onSelectShip={setSelectedShipKey}
           overviewQueue={onChainQueues?.ship}
           productionRates={productionRatesForEta}
@@ -6656,14 +6758,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         <RiftPage
           actionState={riftAction}
           canTransact={canSubmitGameTransaction}
-          error={riftError}
-          loading={riftLoading}
+          error={riftSection.status.error ?? riftError}
+          loading={riftLoading || riftSection.status.loading}
           now={now}
           onApprove={handleApproveRiftResource}
           onDeposit={handleDepositRiftResource}
           onFinishWithdrawal={handleFinishRiftWithdrawal}
           onOpenRequirement={handleOpenRequirement}
-          onRefresh={refreshRiftState}
+          onRefresh={riftSection.refresh ?? refreshRiftState}
           onRequestWithdrawal={handleRequestRiftWithdrawal}
           riftState={riftState}
         />

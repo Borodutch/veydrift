@@ -2,16 +2,28 @@ import { describe, expect, test } from "bun:test";
 import {
   emptyPlanetSectionState,
   hasPlanetSectionData,
+  planetSectionAccessForPlanet,
   planetSectionForPlanet,
   planetSectionStoreFromInitialState,
   setPlanetSectionData,
   setPlanetSectionStatus,
   setPlanetSectionValue,
 } from "./planetSectionStore";
-import type { ChainDefenseState, ChainInfrastructureState, FleetMissionVisibilityResponse, WalletSettlementResponse } from "./walletFlow";
+import type {
+  ChainDefenseState,
+  ChainInfrastructureState,
+  ChainShipyardState,
+  FleetMissionVisibilityResponse,
+  WalletSettlementResponse,
+} from "./walletFlow";
 
 const infrastructure = { homePlanetId: "planet-1", buildings: [] } as unknown as ChainInfrastructureState;
 const defense = { homePlanetId: "planet-1", defenses: [] } as unknown as ChainDefenseState;
+const shipyard = (count: number) => ({
+  homePlanetId: "planet-1",
+  planetId: "planet-1",
+  ships: [{ id: 0, count }],
+} as unknown as ChainShipyardState);
 const settlement = {
   homePlanetId: "planet-1",
   planet: { planetId: "planet-1", resources: { metal: "100", crystal: "50", deuterium: "25" } },
@@ -96,5 +108,60 @@ describe("planetSectionStore", () => {
       loading: true,
       lastSuccessfulRefreshAt: 1234,
     });
+  });
+
+  test("exposes section data, refresh status, and refresh functions through one access object", async () => {
+    let store = setPlanetSectionData({}, "planet-1", "shipyardState", shipyard(3), {
+      loading: false,
+      lastSuccessfulRefreshAt: 1000,
+    });
+    const refresh = async () => {
+      store = setPlanetSectionStatus(store, "planet-1", "shipyardState", { loading: true, error: undefined });
+      store = setPlanetSectionData(store, "planet-1", "shipyardState", shipyard(7), {
+        loading: false,
+        error: undefined,
+        lastSuccessfulRefreshAt: 2000,
+      });
+    };
+
+    const missionCreationConsumer = planetSectionAccessForPlanet(store, "planet-1", {
+      shipyardState: refresh,
+    }).read("shipyardState");
+    expect(missionCreationConsumer.data?.ships[0]?.count).toBe(3);
+    expect(missionCreationConsumer.status).toEqual({ loading: false, lastSuccessfulRefreshAt: 1000 });
+
+    await missionCreationConsumer.refresh?.();
+
+    const galaxyConsumer = planetSectionAccessForPlanet(store, "planet-1", {
+      shipyardState: refresh,
+    }).read("shipyardState");
+    expect(galaxyConsumer.data?.ships[0]?.count).toBe(7);
+    expect(galaxyConsumer.status).toEqual({
+      loading: false,
+      error: undefined,
+      lastSuccessfulRefreshAt: 2000,
+    });
+  });
+
+  test("keeps ship refresh propagation scoped to the selected planet", async () => {
+    let store = setPlanetSectionData({}, "planet-1", "shipyardState", shipyard(2), { loading: false });
+    store = setPlanetSectionData(store, "planet-2", "shipyardState", {
+      ...shipyard(11),
+      homePlanetId: "planet-2",
+      planetId: "planet-2",
+    } as ChainShipyardState, { loading: false });
+    const refreshPlanetOneShips = () => {
+      store = setPlanetSectionData(store, "planet-1", "shipyardState", shipyard(5), {
+        loading: false,
+        lastSuccessfulRefreshAt: 3000,
+      });
+    };
+
+    await planetSectionAccessForPlanet(store, "planet-1", {
+      shipyardState: refreshPlanetOneShips,
+    }).refresh("shipyardState");
+
+    expect(planetSectionAccessForPlanet(store, "planet-1").read("shipyardState").data?.ships[0]?.count).toBe(5);
+    expect(planetSectionAccessForPlanet(store, "planet-2").read("shipyardState").data?.ships[0]?.count).toBe(11);
   });
 });
