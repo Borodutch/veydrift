@@ -654,7 +654,7 @@ export function planOnChainRefresh(
 }
 
 export function shouldRefreshAllianceStateForPage(page: Page): boolean {
-  return page === "alliance" || page === "rankings" || page === "alliance-inspect";
+  return page === "alliance" || page === "rankings" || page === "raid-target-finder" || page === "alliance-inspect";
 }
 
 export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
