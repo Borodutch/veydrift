@@ -1,5 +1,5 @@
 import { queueProgress as queueProgressValue, researchCatalog, type MainQueueItem, type PlayableState, type Resources } from "../playableMvp";
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import { AlertTriangle, ArrowRight, Check, Info, Pencil, Trash2, X } from "lucide-preact";
 import { researchQueueForDisplay } from "../chainState";
 import {
@@ -20,7 +20,7 @@ import {
 } from "../overviewData";
 import { overviewHeroImage } from "../overviewHeroImage";
 import { isImageReady } from "../imageLoadState";
-import { formatPlanetType } from "../data/mockUniverse";
+import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
 import type { Planet } from "../types";
 import {
   decodeColonizationTargetId,
@@ -29,6 +29,7 @@ import {
   type PlanetSummary,
   type PlayerQueuesResponse,
   type QueueStateResponse,
+  type WatchedPlanetsResponse,
   type WalletSettlementResponse
 } from "../walletFlow";
 import { formatDurationUntil } from "../durationFormat";
@@ -41,6 +42,14 @@ import {
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { InlineSyncIndicator } from "./VeydriftLoader";
+import {
+  formatGalaxyAllianceIdentityLabel,
+  formatGalaxyCommanderLabel,
+  formatCompactResource,
+  formatGalaxyHeatLabel,
+} from "./GalaxyView";
+import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
+import { watchedPlanetsPanelRange } from "../watchedPlanetsView";
 
 function queueRemaining(readyAt: string | null, now: number): string {
   if (!readyAt) return "Pending";
@@ -79,6 +88,10 @@ interface OverviewPageProps {
   buildingActionPendingLabel?: string | undefined;
   researchAction?: OverviewResearchActionState | undefined;
   onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard" | "mission-control") => void;
+  onSelectAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectPlanet?: ((coords: { galaxy: number; system: number; position: number }) => void) | undefined;
+  onSelectPlayer?: ((wallet: string) => void) | undefined;
+  onToggleWatchPlanet?: ((planetId: string, watched: boolean) => void) | undefined;
   onRenamePlanet?: ((name: string) => void) | undefined;
   onChainError?: string | undefined;
   fleetVisibility?: FleetMissionVisibilityResponse | undefined;
@@ -91,6 +104,12 @@ interface OverviewPageProps {
   canAbandonPlanet?: boolean | undefined;
   onAbandonPlanet?: (() => void) | undefined;
   usedFields?: number | undefined;
+  watchedPlanets?: WatchedPlanetsResponse | undefined;
+  watchedPlanetsError?: string | undefined;
+  watchedPlanetsLoading?: boolean | undefined;
+  watchedPlanetsPage?: number | undefined;
+  onWatchedPlanetsPageChange?: ((page: number) => void) | undefined;
+  watchBusyPlanetId?: string | undefined;
 }
 
 export function OverviewPage({
@@ -109,6 +128,10 @@ export function OverviewPage({
   buildingActionPendingLabel,
   researchAction = { status: "idle" },
   onNavigate,
+  onSelectAlliance,
+  onSelectPlanet,
+  onSelectPlayer,
+  onToggleWatchPlanet,
   onRenamePlanet,
   onChainError,
   fleetVisibility,
@@ -121,6 +144,12 @@ export function OverviewPage({
   canAbandonPlanet = false,
   onAbandonPlanet,
   usedFields: selectedPlanetUsedFields,
+  watchedPlanets,
+  watchedPlanetsError,
+  watchedPlanetsLoading = false,
+  watchedPlanetsPage = 1,
+  onWatchedPlanetsPageChange,
+  watchBusyPlanetId,
 }: OverviewPageProps) {
   const usedFields = selectedPlanetUsedFields ?? usedFieldsFromBuildings(settledState.buildings);
   const stats = displayPlanetStats(onChainSettlement, onChainQueues, usedFields, isWalletConnected ? onChainStatus : "local");
@@ -184,6 +213,16 @@ export function OverviewPage({
     buildingNoticeKey,
   );
   const shouldShowFleetsSummary = Boolean(isWalletConnected && fleetVisibility);
+  const watchedPlanetRows = useMemo(() =>
+    watchedPlanets
+      ? planetsFromSystemResponse({
+          galaxy: 0,
+          system: 0,
+          planets: watchedPlanets.planets,
+        })
+      : [],
+    [watchedPlanets]
+  );
 
   // Only ever derive the planet name from real data: the loaded home planet's name, or a
   // coordinate-derived label once coordinates hydrate. Never fall back to a hardcoded fake planet
@@ -444,6 +483,30 @@ export function OverviewPage({
         </div>
       )}
 
+      {shouldRenderWatchedPlanetsPanel({
+        error: watchedPlanetsError,
+        isWalletConnected,
+        loading: watchedPlanetsLoading,
+        planetCount: watchedPlanetRows.length,
+      }) ? (
+        <WatchedPlanetsPanel
+          loading={watchedPlanetsLoading}
+          onPageChange={onWatchedPlanetsPageChange}
+          onSelectAlliance={onSelectAlliance}
+          onSelectPlanet={onSelectPlanet}
+          onSelectPlayer={onSelectPlayer}
+          onToggleWatchPlanet={onToggleWatchPlanet}
+          page={watchedPlanetsPage}
+          pageSize={watchedPlanets?.pagination.pageSize ?? 25}
+          planets={watchedPlanetRows}
+          total={watchedPlanets?.pagination.total ?? watchedPlanetRows.length}
+          totalPages={watchedPlanets?.pagination.totalPages ?? 1}
+          watchBusyPlanetId={watchBusyPlanetId}
+          watchedPlanetIds={watchedPlanets?.watchedPlanetIds ?? []}
+          error={watchedPlanetsError}
+        />
+      ) : null}
+
       {/* Contract production queues */}
       <div className="grid min-w-0 auto-rows-fr gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {/* Building queue */}
@@ -640,6 +703,136 @@ export function overviewBuildingActionNoticeFor(
 ): InfrastructureActionNotice | undefined {
   if (!buildingKey) return actionNotice;
   return actionNoticeForBuilding(actionNotice, buildingKey);
+}
+
+function WatchedPlanetsPanel({
+  error,
+  loading,
+  onPageChange,
+  onSelectAlliance,
+  onSelectPlanet,
+  onSelectPlayer,
+  onToggleWatchPlanet,
+  page,
+  pageSize,
+  planets,
+  total,
+  totalPages,
+  watchBusyPlanetId,
+  watchedPlanetIds,
+}: {
+  error: string | undefined;
+  loading: boolean;
+  onPageChange: ((page: number) => void) | undefined;
+  onSelectAlliance: ((allianceId: string) => void) | undefined;
+  onSelectPlanet: ((coords: { galaxy: number; system: number; position: number }) => void) | undefined;
+  onSelectPlayer: ((wallet: string) => void) | undefined;
+  onToggleWatchPlanet: ((planetId: string, watched: boolean) => void) | undefined;
+  page: number;
+  pageSize: number;
+  planets: Planet[];
+  total: number;
+  totalPages: number;
+  watchBusyPlanetId: string | undefined;
+  watchedPlanetIds: readonly string[];
+}) {
+  const { start, end } = watchedPlanetsPanelRange({ page, pageSize, total });
+
+  return (
+    <section className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-white">Watched planets</h3>
+          <p className="text-xs text-slate-500">
+            {total > 0 ? `${start}-${end} of ${total}` : "Loading watched planets"}
+          </p>
+        </div>
+        {totalPages > 1 ? (
+          <div className="flex items-center gap-2">
+            <button
+              className="h-8 rounded border border-white/15 bg-white/5 px-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-600"
+              disabled={page <= 1 || loading}
+              onClick={() => onPageChange?.(Math.max(1, page - 1))}
+              type="button"
+            >
+              Prev
+            </button>
+            <span className="min-w-16 text-center text-xs text-slate-500">
+              {page} / {totalPages}
+            </span>
+            <button
+              className="h-8 rounded border border-white/15 bg-white/5 px-2 text-xs font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-600"
+              disabled={page >= totalPages || loading}
+              onClick={() => onPageChange?.(Math.min(totalPages, page + 1))}
+              type="button"
+            >
+              Next
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      {error ? (
+        <div className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
+          {error}
+        </div>
+      ) : null}
+      {loading ? <InlineSyncIndicator label="Refreshing watched planets" /> : null}
+
+      <div className="grid gap-1.5">
+        {planets.map((planet) => {
+          const planetId = planet.occupiedBy?.planetId;
+          const coords = { galaxy: planet.galaxy, system: planet.system, position: planet.position };
+          return (
+            <WatchablePlanetRow
+              allianceLabel={formatGalaxyAllianceIdentityLabel(planet.alliance)}
+              commanderLabel={formatGalaxyCommanderLabel(planet)}
+              coords={coords}
+              key={planetId ?? planet.id}
+              meta={watchedPlanetMeta(planet)}
+              onInspect={onSelectPlanet ?? (() => undefined)}
+              onSelectAlliance={onSelectAlliance}
+              onSelectPlayer={onSelectPlayer}
+              onToggleWatch={planetId ? () => onToggleWatchPlanet?.(planetId, watchedPlanetIds.includes(planetId)) : undefined}
+              planet={planet}
+              watchBusy={watchBusyPlanetId === planetId}
+              watched={Boolean(planetId && watchedPlanetIds.includes(planetId))}
+            />
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function watchedPlanetMeta(planet: Planet): PlanetMetaItem[] {
+  const meta: PlanetMetaItem[] = [
+    { label: `${planet.galaxy}:${planet.system}:${planet.position}` },
+    { label: formatGalaxyHeatLabel(planet.temperature) },
+    { label: `${planet.fields} fields` },
+  ];
+  if (planet.hasMoon) meta.push({ label: "Moon" });
+  if (planet.debrisField) {
+    meta.push({
+      label: `${formatCompactResource(planet.debrisField.metal)} M / ${formatCompactResource(planet.debrisField.crystal)} C`,
+      tone: "warning",
+    });
+  }
+  return meta;
+}
+
+export function shouldRenderWatchedPlanetsPanel({
+  error,
+  isWalletConnected,
+  loading,
+  planetCount,
+}: {
+  error?: string | undefined;
+  isWalletConnected: boolean;
+  loading: boolean;
+  planetCount: number;
+}): boolean {
+  return Boolean(isWalletConnected && (planetCount > 0 || loading || error));
 }
 
 // Research completions settle automatically on-chain (lazy reconcile), so there is no manual

@@ -39,6 +39,18 @@ export function playerProfileMessage(wallet: Address, displayName: string, descr
   ].join("\n");
 }
 
+export type WatchedPlanetAction = "watch" | "unwatch";
+
+export function watchedPlanetMessage(wallet: Address, action: WatchedPlanetAction, planetId: string): string {
+  return [
+    "Veydrift watched planet",
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Action: ${action}`,
+    `Planet ID: ${planetId}`,
+    "Only sign this message if you want to update your Veydrift watched planets."
+  ].join("\n");
+}
+
 export function validatePlayerDisplayName(value: unknown): PlayerDisplayNameValidation {
   if (typeof value !== "string") {
     return { ok: false, error: "Enter a display name." };
@@ -127,6 +139,32 @@ export async function verifyPlayerProfileSignature({
     return await verifyMessage({
       address: getAddress(wallet) as ViemAddress,
       message: playerProfileMessage(wallet, displayName, description),
+      signature: signature as `0x${string}`
+    });
+  } catch {
+    return false;
+  }
+}
+
+export async function verifyWatchedPlanetSignature({
+  action,
+  planetId,
+  signature,
+  wallet
+}: {
+  action: WatchedPlanetAction;
+  planetId: string;
+  signature: unknown;
+  wallet: Address;
+}): Promise<boolean> {
+  if (typeof signature !== "string" || !/^0x[a-fA-F0-9]+$/.test(signature)) {
+    return false;
+  }
+
+  try {
+    return await verifyMessage({
+      address: getAddress(wallet) as ViemAddress,
+      message: watchedPlanetMessage(wallet, action, planetId),
       signature: signature as `0x${string}`
     });
   } catch {

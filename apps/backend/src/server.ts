@@ -48,6 +48,7 @@ import {
   validatePlayerDisplayName,
   verifyPlayerDisplayNameSignature,
   verifyPlayerProfileSignature,
+  verifyWatchedPlanetSignature,
   type PlayerProfile
 } from "./playerProfiles";
 import { deriveInfrastructureFields, isCombatShipId } from "./readModels";
@@ -60,7 +61,7 @@ const jsonHeaders = {
 
 const corsHeaders = {
   "access-control-allow-headers": "content-type",
-  "access-control-allow-methods": "GET,POST,OPTIONS",
+  "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
   "access-control-allow-origin": process.env.VEYDRIFT_ALLOWED_ORIGIN ?? "https://test.veydrift.com",
   ...jsonHeaders
 } as const;
@@ -448,6 +449,84 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const indexed = indexedWalletPlanetsWarmResponse(indexer, wallet);
         if (indexed) return indexed;
         return indexedReadNotReadyResponse("wallet planets", indexer, indexedReadLookup(url, wallet));
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/watched-planets$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        if (!indexer || !hasWarmPlanetIndex(indexer)) return indexedReadNotReadyResponse("watched planets", indexer, indexedReadLookup(url, wallet));
+        return indexedJsonResponse(
+          await watchedPlanetsResponse(indexer, wallet, url, loaded.config),
+          indexer.snapshot()
+        );
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname.match(/^\/wallet\/[^/]+\/watched-planets$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        if (!indexer || !hasWarmPlanetIndex(indexer)) return indexedReadNotReadyResponse("watched planets", indexer, indexedReadLookup(url, wallet));
+        const body = await readJsonBody(request);
+        const planetId = validBodyPlanetId(body?.planetId);
+        const verified = await verifyWatchedPlanetSignature({
+          action: "watch",
+          planetId,
+          signature: body?.signature,
+          wallet
+        });
+        if (!verified) {
+          return Response.json({
+            error: "invalid_signature",
+            message: "Sign the Veydrift watched-planet message with the connected wallet."
+          }, {
+            headers: corsHeaders,
+            status: 401
+          });
+        }
+        const planet = indexer.planet(planetId);
+        if (!planet) return errorResponse(new Error("Watched planet does not exist in indexed state."), 404);
+        if (planet.owner.toLowerCase() === wallet.toLowerCase()) {
+          return errorResponse(new Error("Own planets cannot be added to the watchlist."), 400);
+        }
+        const result = indexer.watchPlanet(wallet, planetId);
+        return Response.json(result, { headers: corsHeaders });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "DELETE" && url.pathname.match(/^\/wallet\/[^/]+\/watched-planets\/[0-9]+$/)) {
+      const parts = url.pathname.split("/");
+      const wallet = decodeURIComponent(parts[2] ?? "");
+      try {
+        assertAddress(wallet);
+        if (!indexer || !hasWarmPlanetIndex(indexer)) return indexedReadNotReadyResponse("watched planets", indexer, indexedReadLookup(url, wallet));
+        const planetId = validBodyPlanetId(parts[4]);
+        const body = await readJsonBody(request);
+        const verified = await verifyWatchedPlanetSignature({
+          action: "unwatch",
+          planetId,
+          signature: body?.signature,
+          wallet
+        });
+        if (!verified) {
+          return Response.json({
+            error: "invalid_signature",
+            message: "Sign the Veydrift watched-planet message with the connected wallet."
+          }, {
+            headers: corsHeaders,
+            status: 401
+          });
+        }
+        const result = indexer.unwatchPlanet(wallet, planetId);
+        return Response.json(result, { headers: corsHeaders });
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -1459,6 +1538,68 @@ function indexedWalletPlanets(
   return {
     ...response,
     planets: response.planets.map((planet) => indexedWalletPlanetState(indexer, planet))
+  };
+}
+
+async function watchedPlanetsResponse(
+  indexer: SettlementIndexer,
+  wallet: `0x${string}`,
+  url: URL,
+  config: BackendConfig
+): Promise<{
+  wallet: `0x${string}`;
+  watchedPlanetIds: string[];
+  pagination: { page: number; pageSize: number; total: number; totalPages: number };
+  planets: GalaxySystemPayload["planets"];
+  detail: string;
+  stale: boolean;
+}> {
+  const page = positiveIntegerQuery(url, "page", 1, 1_000_000);
+  const pageSize = positiveIntegerQuery(url, "pageSize", 25, 100);
+  const watched = indexer.watchedPlanets(wallet, page, pageSize);
+  const watchedPlanetIds = indexer.watchedPlanetIds(wallet);
+  const allianceIntel = allianceIntelForPlayers(watched.planets.map((planet) => planet.owner), indexer);
+  const snapshot = indexer.snapshot();
+
+  return {
+    wallet,
+    watchedPlanetIds,
+    pagination: {
+      page,
+      pageSize,
+      total: watched.total,
+      totalPages: Math.max(1, Math.ceil(watched.total / pageSize))
+    },
+    planets: watched.planets.map((planet) =>
+      watchedPlanetPayload(planet, indexer, allianceIntel, config)
+    ),
+    detail: indexedWarmDetail("watched planets"),
+    stale: !snapshot.safeToServeIndexedState
+  };
+}
+
+function watchedPlanetPayload(
+  planet: SettledPlanetEvent,
+  indexer: SettlementIndexer,
+  allianceIntel: ReadonlyMap<string, AllianceIdentity>,
+  config: BackendConfig
+): GalaxySystemPayload["planets"][number] {
+  return {
+    ...planetMetadata(config.chainId, config.settlementContractAddress ?? config.gameContractAddress ?? "0x0000000000000000000000000000000000000000", {
+      galaxy: planet.galaxy,
+      system: planet.system,
+      position: planet.position
+    }),
+    fields: planet.fields,
+    temperature: planet.temperature,
+    metalMultiplierBps: planet.metalMultiplierBps,
+    crystalMultiplierBps: planet.crystalMultiplierBps,
+    deuteriumMultiplierBps: planet.deuteriumMultiplierBps,
+    archetype: planetArchetypeForTemperature(planet.temperature),
+    occupiedBy: occupiedPlanetRef(planet, indexer, allianceIntel),
+    publicState: publicPlanetStateRef(planet, indexer),
+    debrisField: debrisFieldRef(indexer.debrisFieldsInSystem(planet.galaxy, planet.system).find((field) => field.position === planet.position)),
+    moonChance: moonChanceReportRef(indexer.moonChanceReportsInSystem(planet.galaxy, planet.system).find((report) => report.position === planet.position))
   };
 }
 
@@ -3273,6 +3414,17 @@ function selectedPlanetId(url: URL): bigint | undefined {
     throw new Error("planetId must be a positive integer.");
   }
   return planetId;
+}
+
+function validBodyPlanetId(value: unknown): string {
+  if (typeof value !== "string" && typeof value !== "number" && typeof value !== "bigint") {
+    throw new Error("planetId must be a positive integer.");
+  }
+  const stringValue = String(value);
+  if (!/^[1-9][0-9]*$/.test(stringValue)) {
+    throw new Error("planetId must be a positive integer.");
+  }
+  return stringValue;
 }
 
 function parseMissionId(value: string): bigint {

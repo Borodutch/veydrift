@@ -77,6 +77,9 @@ import {
   isOnChainRevertError,
   playerProfileMessage,
   updatePlayerProfile,
+  unwatchPlanet,
+  watchedPlanetMessage,
+  watchPlanet,
   walletRequestErrorMessage,
   type Eip1193Provider
 } from "./walletFlow";
@@ -2295,6 +2298,82 @@ describe("walletFlow", () => {
       await expect(updatePlayerProfile("https://api.example.test///", provider, account, "borodutch", description)).resolves.toMatchObject({
         description,
         displayName: "borodutch"
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("signs watched-planet mutations before sending them to the backend", async () => {
+    const originalFetch = globalThis.fetch;
+    const provider = mockProvider(async ({ method, params }) => {
+      expect(method).toBe("personal_sign");
+      expect(params).toEqual([watchedPlanetMessage(account, "watch", "42"), account]);
+      return "0xwatchsignature";
+    });
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      expect(String(input)).toBe(`https://api.example.test/wallet/${account}/watched-planets`);
+      expect(init?.method).toBe("POST");
+      expect(init?.headers).toEqual({
+        accept: "application/json",
+        "content-type": "application/json"
+      });
+      expect(JSON.parse(String(init?.body))).toEqual({
+        planetId: "42",
+        signature: "0xwatchsignature"
+      });
+      return new Response(JSON.stringify({
+        watched: true,
+        watchedPlanetIds: ["42"],
+      }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(watchPlanet("https://api.example.test///", provider, account, "42")).resolves.toEqual({
+        watched: true,
+        watchedPlanetIds: ["42"],
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("signs watched-planet removals with the unwatch action", async () => {
+    const originalFetch = globalThis.fetch;
+    const provider = mockProvider(async ({ method, params }) => {
+      expect(method).toBe("personal_sign");
+      expect(params).toEqual([watchedPlanetMessage(account, "unwatch", "42"), account]);
+      return "0xunwatchsignature";
+    });
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      expect(String(input)).toBe(`https://api.example.test/wallet/${account}/watched-planets/42`);
+      expect(init?.method).toBe("DELETE");
+      expect(init?.headers).toEqual({
+        accept: "application/json",
+        "content-type": "application/json"
+      });
+      expect(JSON.parse(String(init?.body))).toEqual({
+        planetId: "42",
+        signature: "0xunwatchsignature"
+      });
+      return new Response(JSON.stringify({
+        watched: false,
+        watchedPlanetIds: [],
+      }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(unwatchPlanet("https://api.example.test///", provider, account, "42")).resolves.toEqual({
+        watched: false,
+        watchedPlanetIds: [],
       });
     } finally {
       globalThis.fetch = originalFetch;

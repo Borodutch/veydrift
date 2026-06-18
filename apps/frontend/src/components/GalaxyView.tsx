@@ -1,4 +1,3 @@
-import { Fragment } from "preact";
 import { useState, useEffect, useMemo, useRef } from "preact/hooks";
 import type { Planet, Coordinates } from "../types";
 import {
@@ -33,12 +32,10 @@ import {
   coordinateDraftAfterExternalValueChange,
   sanitizeCoordinateDraft,
 } from "../galaxyCoordinateInput";
-import { isImageReady } from "../imageLoadState";
-import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 import { InlineSyncIndicator } from "./VeydriftLoader";
 import { GalaxyRowsSkeleton } from "./LoadingSkeletons";
-import { AfkFlair } from "./AfkFlair";
+import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
 
 const SMALL_CARGO_SHIP_ID = 0;
 const defaultMissionShips = (): Partial<MissionShips> => ({ smallCargo: 1 });
@@ -129,8 +126,11 @@ interface Props {
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
+  onToggleWatchPlanet?: ((planetId: string, watched: boolean) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
   onNavigate: (galaxy: number, system: number) => void;
+  watchedPlanetIds?: readonly string[] | undefined;
+  watchBusyPlanetId?: string | undefined;
 }
 
 export function GalaxyView({
@@ -147,8 +147,11 @@ export function GalaxyView({
   onAction,
   onSelectAlliance,
   onSelectPlayer,
+  onToggleWatchPlanet,
   onSelectPlanet,
   onNavigate,
+  watchedPlanetIds = [],
+  watchBusyPlanetId,
 }: Props) {
   const [systemPlanets, setSystemPlanets] = useState<Planet[]>([]);
   const [attackProtection, setAttackProtection] = useState<Record<string, AttackProtectionStatus>>({});
@@ -430,6 +433,7 @@ export function GalaxyView({
                   onSelectPlanet={onSelectPlanet}
                   onSelectAlliance={onSelectAlliance}
                   onSelectPlayer={onSelectPlayer}
+                  onToggleWatchPlanet={onToggleWatchPlanet}
                   onAction={onAction}
                   attackProtection={planet?.occupiedBy ? attackProtection[planet.occupiedBy.planetId] : undefined}
                   homeCoords={homeCoordsInSystem}
@@ -439,6 +443,8 @@ export function GalaxyView({
                   defenseState={defenseState}
                   shipyardState={shipyardState}
                   system={system}
+                  watchedPlanetIds={watchedPlanetIds}
+                  watchBusyPlanetId={watchBusyPlanetId}
                 />
               );
             })}
@@ -642,6 +648,9 @@ function GalaxySlot({
   onSelectPlanet,
   onSelectAlliance,
   onSelectPlayer,
+  onToggleWatchPlanet,
+  watchedPlanetIds,
+  watchBusyPlanetId,
 }: {
   account: string | undefined;
   actionState: GalaxyActionState;
@@ -659,9 +668,10 @@ function GalaxySlot({
   onSelectPlanet: (coords: Coordinates) => void;
   onSelectAlliance: ((allianceId: string) => void) | undefined;
   onSelectPlayer: ((wallet: string) => void) | undefined;
+  onToggleWatchPlanet: ((planetId: string, watched: boolean) => void) | undefined;
+  watchedPlanetIds: readonly string[];
+  watchBusyPlanetId: string | undefined;
 }) {
-  const [imageLoaded, setImageLoaded] = useState(false);
-  const imageRef = useRef<HTMLImageElement>(null);
   const isPendingHomePlanet = !planet && homeCoords?.position === position;
   const coords = { galaxy, system, position };
   const actions = galaxyActionsForSlot({
@@ -673,10 +683,6 @@ function GalaxySlot({
     defenseState,
     shipyardState,
   });
-
-  useEffect(() => {
-    setImageLoaded(isImageReady(imageRef.current));
-  }, [planet?.image]);
 
   if (!planet) {
     if (isPendingHomePlanet) {
@@ -721,129 +727,21 @@ function GalaxySlot({
   const moonChanceLabel = formatMoonChanceLabel(planet.moonChance);
   const attackBlockLabel = formatAttackBlockReason(attackProtection);
   const attackRuleLabels = formatAttackRuleLabels(attackProtection);
+  const watched = Boolean(planet.occupiedBy?.planetId && watchedPlanetIds.includes(planet.occupiedBy.planetId));
+  const meta: PlanetMetaItem[] = [
+    { label: formatGalaxyHeatLabel(planet.temperature) },
+    { label: `${planet.fields} fields` },
+    ...(planet.hasMoon ? [{ label: "Moon" }] : []),
+    ...(attackProtection?.defenderInactive ? [{ label: "Inactive", tone: "warning" as const }] : []),
+    ...(attackBlockLabel ? [{ label: attackBlockLabel, tone: "warning" as const }] : []),
+    ...attackRuleLabels.map((label) => ({ label, tone: "info" as const })),
+    ...(debrisLabel ? [{ label: debrisLabel, tone: "warning" as const }] : []),
+    ...(moonChanceLabel ? [{ label: moonChanceLabel, tone: "info" as const }] : []),
+  ];
 
   return (
-    <div
-      className={`group grid min-h-16 w-full grid-cols-[3rem_minmax(0,1fr)_auto] items-center gap-3 rounded-md border px-3 py-2 text-left transition sm:grid-cols-[4rem_minmax(0,1fr)_7rem_auto] ${
-        isHome
-          ? "border-cyan-300/40 bg-cyan-300/10 shadow-[0_0_18px_rgba(103,232,249,0.10)]"
-          : "border-white/10 bg-white/[0.035] hover:border-signal/35 hover:bg-white/[0.06]"
-      }`}
-    >
-      <SlotNumber position={position} />
-
-      <button
-        className="flex min-w-0 items-center gap-3 text-left"
-        onClick={() => onSelectPlanet(coords)}
-        type="button"
-      >
-        <div className={`relative h-11 w-11 flex-shrink-0 overflow-hidden rounded-md border bg-black/30 ${
-          isHome ? "border-cyan-300/35" : "border-white/15"
-        }`}>
-          {!imageLoaded && <PlanetImageSkeleton className="absolute inset-0" />}
-          <OptimizedImage
-            key={planet.image}
-            alt={planet.name}
-            className={`h-full w-full object-cover transition-opacity duration-200 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
-            imageRef={imageRef}
-            loading="eager"
-            onLoad={(event) => {
-              if (isImageReady(event.currentTarget)) setImageLoaded(true);
-            }}
-            sizes="icon"
-            src={planet.image}
-          />
-        </div>
-
-        <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <span className="truncate text-sm font-semibold text-white group-hover:text-signal">
-              {planet.name}
-            </span>
-            {isHome ? (
-              <span className="rounded border border-cyan-300/35 bg-cyan-300/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-cyan-100">
-                Home
-              </span>
-            ) : null}
-            {attackProtection?.defenderInactive ? <AfkFlair /> : null}
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-            <span>{formatGalaxyHeatLabel(planet.temperature)}</span>
-            <span className="text-slate-700">/</span>
-            <span>{planet.fields} fields</span>
-            {planet.hasMoon ? (
-              <>
-                <span className="text-slate-700">/</span>
-                <span>Moon</span>
-              </>
-            ) : null}
-            {attackBlockLabel ? (
-              <>
-                <span className="text-slate-700">/</span>
-                <span className="text-amber-200">{attackBlockLabel}</span>
-              </>
-            ) : null}
-            {attackRuleLabels.map((label) => (
-              <Fragment key={label}>
-                <span className="text-slate-700">/</span>
-                <span className="text-cyan-200">{label}</span>
-              </Fragment>
-            ))}
-            {debrisLabel ? (
-              <>
-                <span className="text-slate-700">/</span>
-                <span className="text-amber-200">{debrisLabel}</span>
-              </>
-            ) : null}
-            {moonChanceLabel ? (
-              <>
-                <span className="text-slate-700">/</span>
-                <span className="text-cyan-200">{moonChanceLabel}</span>
-              </>
-            ) : null}
-          </div>
-        </div>
-      </button>
-
-      <div className={`hidden min-w-32 justify-self-end text-right text-xs font-medium sm:block ${isHome ? "text-cyan-100" : "text-slate-500"}`}>
-        <div className="min-w-0">
-          {planet.occupiedBy?.owner ? (
-            <button
-              className="break-words text-right hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
-              disabled={!onSelectPlayer}
-              onClick={() => onSelectPlayer?.(planet.occupiedBy?.owner ?? "")}
-              title={`Open player ${commanderLabel}`}
-              type="button"
-            >
-              {commanderLabel}
-            </button>
-          ) : (
-            <span className="break-words">{commanderLabel}</span>
-          )}
-        </div>
-        {planet.alliance ? (
-          <button
-            className="mt-1 text-cyan-200 underline-offset-2 hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
-            disabled={!onSelectAlliance}
-            onClick={() => onSelectAlliance?.(planet.alliance?.allianceId ?? "")}
-            title={`Open ${allianceLabel}`}
-            type="button"
-          >
-            {allianceLabel}
-          </button>
-        ) : (
-          <div className="mt-1 text-slate-600">{allianceLabel}</div>
-        )}
-      </div>
-
-      <div className="flex flex-wrap justify-end gap-1.5">
-        <button
-          className="rounded border border-signal/25 px-2 py-1 text-xs font-medium text-signal hover:bg-signal/10"
-          onClick={() => onSelectPlanet(coords)}
-          type="button"
-        >
-          Inspect
-        </button>
+    <WatchablePlanetRow
+      actionSlot={(
         <GalaxyActionButtons
           actions={actions}
           busy={actionState.status === "pending"}
@@ -851,27 +749,21 @@ function GalaxySlot({
           onAction={onAction}
           planet={planet}
         />
-      </div>
-
-      <div className="col-span-2 col-start-2 -mt-1 min-w-0 text-xs font-medium sm:hidden">
-        <div className={isHome ? "text-cyan-100" : "text-slate-500"}>
-          <span className="break-words">{commanderLabel}</span>
-        </div>
-        {planet.alliance ? (
-          <button
-            className="mt-1 max-w-full truncate text-cyan-200 underline-offset-2 hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
-            disabled={!onSelectAlliance}
-            onClick={() => onSelectAlliance?.(planet.alliance?.allianceId ?? "")}
-            title={`Open ${allianceLabel}`}
-            type="button"
-          >
-            {allianceLabel}
-          </button>
-        ) : (
-          <div className="mt-1 text-slate-600">{allianceLabel}</div>
-        )}
-      </div>
-    </div>
+      )}
+      allianceLabel={allianceLabel}
+      commanderLabel={commanderLabel}
+      coords={coords}
+      isHome={isHome}
+      leadingSlot={<SlotNumber position={position} />}
+      meta={meta}
+      onInspect={onSelectPlanet}
+      onSelectAlliance={onSelectAlliance}
+      onSelectPlayer={onSelectPlayer}
+      onToggleWatch={planet.occupiedBy?.planetId ? () => onToggleWatchPlanet?.(planet.occupiedBy!.planetId, watched) : undefined}
+      planet={planet}
+      watchBusy={watchBusyPlanetId === planet.occupiedBy?.planetId}
+      watched={watched}
+    />
   );
 }
 
@@ -963,7 +855,7 @@ function formatMissionClock(timestamp: number): string {
   return formatUserTimestamp(timestamp);
 }
 
-function formatCompactResource(value: number): string {
+export function formatCompactResource(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
   return value.toString();
