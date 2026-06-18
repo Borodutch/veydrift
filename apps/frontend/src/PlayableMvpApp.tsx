@@ -4476,10 +4476,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       void refreshOnChainState(undefined, { force: true });
       refreshInfrastructureState();
       if (options.syncMissionLaunch) {
-        const missionSnapshot = await waitForMissionLaunchState(loadMissionLaunchSnapshot, txHash);
+        const missionSnapshot = await waitForMissionLaunchState(loadMissionLaunchSnapshot, txHash, {
+          expectedMission: pendingMission,
+        });
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         markFreshStateWrite(onChainRefreshGate);
-        const launchedMissions = missionLaunchMissionsForTransaction(missionSnapshot, txHash);
+        const launchedMissions = missionLaunchMissionsForTransaction(missionSnapshot, txHash, pendingMission);
         setFleetVisibility(missionSnapshot.fleetVisibility);
         setAllActiveMissions(mergeActiveMissionList(missionSnapshot.allActiveMissions, launchedMissions));
         setPendingMissionLaunches((current) => removePendingMissionLaunchForTransaction(current, confirmedTxHash));

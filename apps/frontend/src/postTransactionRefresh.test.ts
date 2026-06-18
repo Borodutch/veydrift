@@ -72,6 +72,75 @@ describe("post-transaction refresh reconciliation", () => {
     expect(missionLaunchMissionsForTransaction(snapshot, txHash)).toEqual([launched]);
   });
 
+  test("accepts a visible launched mission with placeholder transaction metadata when launch details match", async () => {
+    const txHash = "0xlaunch";
+    const expected = pendingMissionLaunch({
+      txHash,
+      owner: wallet,
+      originPlanetId: "7",
+      targetPlanetId: "9",
+      missionType: "Transport",
+      ships: { smallCargo: 2 },
+      cargo: { metal: 6000, crystal: 1000, deuterium: 0 },
+      submittedAtMs: 1_770_000_000_000,
+      travelSeconds: 300,
+    });
+    const visible = mission("1473", {
+      transactionHash: "0x",
+      blockNumber: "0",
+      missionType: "Transport",
+      ships: { smallCargo: "2" },
+      cargo: { metal: "6000", crystal: "1000", deuterium: "0" },
+      arrivalAt: "1770000305",
+      returnAt: "1770000605",
+    });
+    const snapshot = missionLaunchSnapshot({ outgoing: [visible], allActiveMissions: [visible] });
+
+    expect(isMissionLaunchStateVisible(snapshot, txHash, expected)).toBe(true);
+    expect(missionLaunchMissionsForTransaction(snapshot, txHash, expected).map((entry) => entry.missionId)).toEqual(["1473"]);
+    expect(reconcilePendingMissionLaunches([expected], snapshot)).toEqual([]);
+    expect(mergePendingMissionLaunches([visible], [expected]).map((entry) => entry.missionId)).toEqual(["1473"]);
+
+    const result = await waitForMissionLaunchState(
+      async () => snapshot,
+      txHash,
+      { attempts: 1, intervalMs: 1, delay: async () => undefined, expectedMission: expected },
+    );
+    expect(result.fleetVisibility.outgoing.map((entry) => entry.missionId)).toEqual(["1473"]);
+  });
+
+  test("does not clear a mission launch sync error for a different placeholder-hash mission", async () => {
+    const txHash = "0xlaunch";
+    const expected = pendingMissionLaunch({
+      txHash,
+      owner: wallet,
+      originPlanetId: "7",
+      targetPlanetId: "9",
+      missionType: "Transport",
+      ships: { smallCargo: 2 },
+      cargo: { metal: 6000, crystal: 1000, deuterium: 0 },
+      submittedAtMs: 1_770_000_000_000,
+      travelSeconds: 300,
+    });
+    const differentMission = mission("1474", {
+      transactionHash: "0x",
+      missionType: "Transport",
+      ships: { smallCargo: "1" },
+      cargo: { metal: "6000", crystal: "1000", deuterium: "0" },
+      arrivalAt: "1770000305",
+      returnAt: "1770000605",
+    });
+    const snapshot = missionLaunchSnapshot({ outgoing: [differentMission], allActiveMissions: [differentMission] });
+
+    expect(isMissionLaunchStateVisible(snapshot, txHash, expected)).toBe(false);
+    expect(reconcilePendingMissionLaunches([expected], snapshot)).toEqual([expected]);
+    await expect(waitForMissionLaunchState(
+      async () => snapshot,
+      txHash,
+      { attempts: 1, intervalMs: 1, delay: async () => undefined, expectedMission: expected },
+    )).rejects.toThrow("launched mission is still syncing");
+  });
+
   test("creates a pending indexing mission row keyed by transaction hash and draft context", () => {
     const pending = pendingMissionLaunch({
       txHash: "0xABCDEF1234567890",
