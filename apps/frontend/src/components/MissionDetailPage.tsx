@@ -422,12 +422,8 @@ function MissionBattleReport({
   const isGroupedAttack = participants.length > 1;
   const attackerShips = isGroupedAttack ? sumShips(participants.map((participant) => participant.ships)) : mission.ships;
   const totalLoot = isGroupedAttack ? sumLoot(participants) : report.loot;
-  // Defender fleet/defenses come from the indexed target-planet composition (ShipCountChanged +
-  // defense events) rather than the single AttackBattleResolved event. For a freshly-resolved
-  // battle this is the surviving force; we show "None" when the planet had no fleet/defenses, and
-  // fall back to a precise caveat only when the target planet is not charted in the indexed state.
-  const defenderFleetUnits = compositionUnits(defenderState?.fleet, shipCatalog, shipAssetByKey);
-  const defenderDefenseUnits = compositionUnits(defenderState?.defenses, defenseCatalog, defenseAssetByKey);
+  const battleTimeFleetUnits = compositionUnits(report.defenderSnapshot?.fleet, shipCatalog, shipAssetByKey);
+  const battleTimeDefenseUnits = compositionUnits(report.defenderSnapshot?.defenses, defenseCatalog, defenseAssetByKey);
   const stationedDefenders = defenderState?.stationedDefenders ?? [];
   const battleTimeDefenderUnits = report.roundReports[0]?.defenderUnits ?? null;
 
@@ -447,10 +443,10 @@ function MissionBattleReport({
 
       {/* Two-sided report modelled on the classic combat report: the attacker column folds in the
           offensive fleet and cargo it carried, its losses, and the loot it grabbed; the defender
-          column carries its losses, battle-time aggregate units, and current indexed composition.
+          column carries its losses and battle-time defender composition when the indexer can
+          reconstruct it from historical unit-count events.
           The origin/target commanders are not repeated here — they already render in the Route hero
-          above. Fields the on-chain log does not expose (battle-time unit mix, loot retained) are
-          flagged compactly rather than fabricated.
+          above. Fields the indexed history cannot prove are flagged compactly rather than fabricated.
           Debris is shown on its own below. */}
       <div className="grid gap-3 lg:grid-cols-2">
         <Panel title={isGroupedAttack ? "Attackers (group)" : "Attacker"}>
@@ -462,41 +458,36 @@ function MissionBattleReport({
         </Panel>
         <Panel title="Defender">
           <Row label="Fleet losses" value={formatResources(report.defenderLosses)} />
-          {battleTimeDefenderUnits ? (
-            <Row label="Battle-time units" value={`${formatResource(battleTimeDefenderUnits)} aggregate units`} />
-          ) : null}
-          {/* Fleet/defenses are the defender planet's current indexed composition, not the missing
-              battle-time unit mix. "None" when the planet has no fleet/defenses; a precise caveat
-              only when it isn't charted. */}
-          {defenderState ? (
-            defenderFleetUnits.length > 0 || defenderDefenseUnits.length > 0 || stationedDefenders.length > 0 ? (
-              <>
-                <Row label="Current fleet" value={<UnitIcons units={defenderFleetUnits} />} />
-                <Row label="Current defenses" value={<UnitIcons units={defenderDefenseUnits} />} />
-                {stationedDefenders.length > 0 ? (
-                  <Row
-                    label="Stationed defenders"
-                    value={
-                      <div className="grid gap-2">
-                        {stationedDefenders.map((defender) => (
-                          <div className="grid gap-1" key={defender.missionId}>
-                            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-violet-200">
-                              {defender.defenderDisplayName ?? shortAddress(defender.defender)}
-                            </span>
-                            <UnitIcons units={shipUnits(defender.ships)} />
-                          </div>
-                        ))}
-                      </div>
-                    }
-                  />
-                ) : null}
-              </>
-            ) : (
-              <Row label="Current fleet / defenses" value="None" />
-            )
+          {report.defenderSnapshot ? (
+            <>
+              <Row label="Battle-time fleet" value={<UnitIcons units={battleTimeFleetUnits} />} />
+              <Row label="Battle-time defenses" value={<UnitIcons units={battleTimeDefenseUnits} />} />
+            </>
           ) : (
-            <Row label="Current fleet / defenses" value="The defender planet isn't charted in the indexed state, so its current composition can't be derived." />
+            <Row
+              label="Battle-time defenders"
+              value={battleTimeDefenderUnits
+                ? `${formatResource(battleTimeDefenderUnits)} units fought; exact unit composition was not captured in indexed history.`
+                : "Exact unit composition was not captured in indexed history."}
+            />
           )}
+          {stationedDefenders.length > 0 ? (
+            <Row
+              label="Stationed defenders"
+              value={
+                <div className="grid gap-2">
+                  {stationedDefenders.map((defender) => (
+                    <div className="grid gap-1" key={defender.missionId}>
+                      <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-violet-200">
+                        {defender.defenderDisplayName ?? shortAddress(defender.defender)}
+                      </span>
+                      <UnitIcons units={shipUnits(defender.ships)} />
+                    </div>
+                  ))}
+                </div>
+              }
+            />
+          ) : null}
         </Panel>
       </div>
 

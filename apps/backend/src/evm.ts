@@ -527,6 +527,11 @@ export type BattleReportParticipant = {
   loot: Resources;
 };
 
+export type BattleReportDefenderSnapshot = {
+  fleet: Array<{ id: number; count: number }>;
+  defenses: Array<{ id: number; count: number }>;
+};
+
 export type BattleReport = {
   missionId: string;
   attacker: Address;
@@ -544,6 +549,8 @@ export type BattleReport = {
   roundReports: CombatRoundReport[];
   transactionHash: string;
   blockNumber: string;
+  logIndex: string;
+  defenderSnapshot: BattleReportDefenderSnapshot | null;
   // ACS attack group: the main attack mission id for a grouped attack (null for a solo attack), and
   // every participant (main attacker + joiners) with their individual loot share. A solo attack still
   // populates `participants` with the single main attacker so the frontend can render uniformly.
@@ -1010,6 +1017,7 @@ type JsonRpcResponse<T> = {
 
 export type RpcLog = {
   blockNumber: string;
+  logIndex?: string;
   transactionHash: string;
   topics: string[];
   data: string;
@@ -4214,7 +4222,7 @@ export function isBattleReportLog(log: RpcLog): boolean {
 }
 
 export function decodeBattleReportLogs(logs: RpcLog[], requestedMissionId?: string): BattleReport | null {
-  let base: Omit<BattleReport, "attackGroupId" | "attackerLosses" | "debris" | "defenderLosses" | "participants" | "roundReports"> | null = null;
+  let base: Omit<BattleReport, "attackGroupId" | "attackerLosses" | "debris" | "defenderLosses" | "defenderSnapshot" | "participants" | "roundReports"> | null = null;
   let attackerLosses: Resources = emptyResources();
   let defenderLosses: Resources = emptyResources();
   let debris: BattleReport["debris"] = { metal: "0", crystal: "0" };
@@ -4238,7 +4246,8 @@ export function decodeBattleReportLogs(logs: RpcLog[], requestedMissionId?: stri
         randomSeed: decodeUintWord(wordAt(words, 2)).toString(),
         loot: decodeResources(words.slice(3, 6)),
         transactionHash: log.transactionHash,
-        blockNumber: BigInt(log.blockNumber).toString()
+        blockNumber: BigInt(log.blockNumber).toString(),
+        logIndex: log.logIndex ?? "0x0"
       };
     } else if (topic === combatRoundResolvedTopic) {
       roundReports.push({
@@ -4274,6 +4283,7 @@ export function decodeBattleReportLogs(logs: RpcLog[], requestedMissionId?: stri
     attackerLosses,
     defenderLosses,
     debris,
+    defenderSnapshot: null,
     roundReports: roundReports.sort((left, right) => left.round - right.round),
     // Default to a solo report: the main attacker is the only participant and its loot is the report
     // loot. attachAttackGroupParticipants() later folds in any ACS joiners and the group id once the

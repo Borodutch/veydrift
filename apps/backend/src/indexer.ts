@@ -58,6 +58,7 @@ import {
   type CanonicalPlanetChainState,
   type CanonicalFleetMissionSnapshot,
   type BattleReport,
+  type BattleReportDefenderSnapshot,
   type DebrisFieldEvent,
   type DefenseState,
   type FleetMissionPlanetReference,
@@ -187,6 +188,11 @@ type LegacyUnitMutation = {
   planetId: string;
   itemId: number;
   delta: number;
+};
+
+type UnitCountSnapshot = {
+  fleet: Map<number, number>;
+  defenses: Map<number, number>;
 };
 
 type QueueRow = {
@@ -5525,11 +5531,74 @@ export class SettlementIndexer {
     // Enrich each report with its ACS attack group participants + per-participant loot, joining the
     // decoded battle reports against the fleet-mission read model (which carries joinedAttackMissionIds
     // and each joiner's resulting return-leg cargo). Solo attacks come back with a single participant.
-    const reports = attachAttackGroupParticipants(this.decodedMissionLogs().battleReports, summaries);
+    // The defender snapshot is reconstructed from historical absolute ship/defense count events before
+    // the battle report log, so the UI can show battle-time units without substituting current defenses.
+    const reportsWithParticipants = attachAttackGroupParticipants(this.decodedMissionLogs().battleReports, summaries);
+    const defenderSnapshots = this.battleTimeDefenderSnapshots(reportsWithParticipants);
+    const reports = reportsWithParticipants.map((report) => ({
+      ...report,
+      defenderSnapshot: defenderSnapshots.get(report.missionId) ?? null
+    }));
     if (cached && cached.missionGeneration === this.missionGeneration && cached.summaries === summaries) {
       cached.battleReports = reports;
     }
     return reports;
+  }
+
+  private battleTimeDefenderSnapshots(reports: BattleReport[]): Map<string, BattleReportDefenderSnapshot> {
+    if (reports.length === 0) return new Map();
+
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+    `).all() as EventRow[];
+    const logs = sortedEventRows(rows);
+    const reportsByPosition = [...reports].sort(compareRpcLogPosition);
+    const snapshots = new Map<string, BattleReportDefenderSnapshot>();
+    const currentByPlanet = new Map<string, UnitCountSnapshot>();
+    let logIndex = 0;
+
+    for (const report of reportsByPosition) {
+      while (logIndex < logs.length && compareRpcLogPosition(logs[logIndex]!, report) < 0) {
+        this.applyUnitCountSnapshotLog(currentByPlanet, logs[logIndex]!);
+        logIndex += 1;
+      }
+
+      const snapshot = currentByPlanet.get(report.targetPlanetId);
+      const materialized = materializeBattleReportDefenderSnapshot(snapshot);
+      if (materialized) snapshots.set(report.missionId, materialized);
+    }
+
+    return snapshots;
+  }
+
+  private applyUnitCountSnapshotLog(snapshots: Map<string, UnitCountSnapshot>, log: IndexedRpcLog): void {
+    if (isShipCountChangedLog(log)) {
+      const event = decodeShipCountChangedLog(log);
+      const snapshot = unitCountSnapshotForPlanet(snapshots, event.planetId);
+      if (event.total > 0) snapshot.fleet.set(event.shipId, event.total);
+      else snapshot.fleet.delete(event.shipId);
+      return;
+    }
+    if (isDefenseCountChangedLog(log)) {
+      const event = decodeDefenseCountChangedLog(log);
+      const snapshot = unitCountSnapshotForPlanet(snapshots, event.planetId);
+      if (event.total > 0) snapshot.defenses.set(event.defenseId, event.total);
+      else snapshot.defenses.delete(event.defenseId);
+      return;
+    }
+    if (!isIndexedQueueCompletedLog(log)) return;
+    const event = decodeIndexedQueueCompletedLog(log);
+    if (event.total === undefined || !event.planetId) return;
+    const snapshot = unitCountSnapshotForPlanet(snapshots, event.planetId);
+    if (event.eventName === "ShipCompleted") {
+      if (event.total > 0) snapshot.fleet.set(event.itemId, event.total);
+      else snapshot.fleet.delete(event.itemId);
+    } else if (event.eventName === "DefenseCompleted") {
+      if (event.total > 0) snapshot.defenses.set(event.itemId, event.total);
+      else snapshot.defenses.delete(event.itemId);
+    }
   }
 
   // VEY-KANEO-456: resolve an incoming attack's stationed allied defenders into the per-defender detail
@@ -5963,6 +6032,30 @@ function parseEvent<T>(value: string): T {
 
 function sortedEventRows(rows: readonly EventRow[]): IndexedRpcLog[] {
   return sortRpcLogs(rows.map((row) => parseEvent<IndexedRpcLog>(row.event_json))) as IndexedRpcLog[];
+}
+
+function unitCountSnapshotForPlanet(snapshots: Map<string, UnitCountSnapshot>, planetId: string): UnitCountSnapshot {
+  let snapshot = snapshots.get(planetId);
+  if (!snapshot) {
+    snapshot = { fleet: new Map(), defenses: new Map() };
+    snapshots.set(planetId, snapshot);
+  }
+  return snapshot;
+}
+
+function materializeBattleReportDefenderSnapshot(snapshot: UnitCountSnapshot | undefined): BattleReportDefenderSnapshot | null {
+  if (!snapshot) return null;
+  const fleet = unitCountRows(snapshot.fleet);
+  const defenses = unitCountRows(snapshot.defenses);
+  if (fleet.length === 0 && defenses.length === 0) return null;
+  return { fleet, defenses };
+}
+
+function unitCountRows(counts: Map<number, number>): Array<{ id: number; count: number }> {
+  return [...counts.entries()]
+    .filter(([, count]) => count > 0)
+    .map(([id, count]) => ({ id, count }))
+    .sort((left, right) => left.id - right.id);
 }
 
 function sortRpcLogs(logs: readonly RpcLog[]): RpcLog[] {

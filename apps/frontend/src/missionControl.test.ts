@@ -707,7 +707,9 @@ describe("Mission Control battle reports", () => {
     // retained by the defender, so there is no fabricated "Loot left" row.
     expect(text).toContain("Loot grabbed");
     expect(text).not.toContain("Loot left");
-    expect(text).toContain("Current fleet / defenses");
+    expect(text).toContain("Battle-time defenders");
+    expect(text).not.toContain("Current fleet / defenses");
+    expect(text).not.toContain("Current defenses");
     // VEY-KANEO-406: the redundant per-side "Commander" rows were removed from the battle report —
     // origin/target commanders already render in the Route hero, which still links to each profile.
     expect(text).toContain("Aggressor");
@@ -924,7 +926,13 @@ describe("Mission Control battle reports", () => {
           originPlanet: planetReference("7", "0x1111111111111111111111111111111111111111", "Aggressor", "1:2:3"),
           targetPlanet: planetReference("9", "0x3333333333333333333333333333333333333333", "Bastion", "4:5:6"),
         },
-        battleReport: battleReport("42"),
+        battleReport: {
+          ...battleReport("42"),
+          defenderSnapshot: {
+            fleet: [{ id: 6, count: 2 }],
+            defenses: [{ id: 0, count: 5 }],
+          },
+        },
         // Indexed surviving composition for the defender planet (catalog-id keyed): cruiser (id 6) and
         // a rocket launcher (id 0).
         defenderPlanetState: {
@@ -949,9 +957,11 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Small Cargo ×3");
     expect(text).toContain("Cruiser ×2");
     expect(text).toContain("Rocket Launcher ×5");
-    // With the defender planet charted, the combined caveat is replaced by the per-row icon lists.
-    expect(text).toContain("Current fleet");
-    expect(text).toContain("Current defenses");
+    // The report renders battle-time defender composition from the report snapshot, not current state.
+    expect(text).toContain("Battle-time fleet");
+    expect(text).toContain("Battle-time defenses");
+    expect(text).not.toContain("Current fleet");
+    expect(text).not.toContain("Current defenses");
     expect(text).not.toContain("Current fleet / defenses");
 
     // The chips render the mapped game art for ships (combat + civil) and defenses, not just text.
@@ -962,7 +972,7 @@ describe("Mission Control battle reports", () => {
     expect(imageSrcs.some((src) => src.includes("/defenses/rocket-launcher"))).toBe(true);
   });
 
-  test("VEY-KANEO-571: distinguishes battle-time defender units from current defender composition", () => {
+  test("VEY-KANEO-571: renders exact battle-time defender units and omits current defenses from battle report", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage(missionDetailProps(now, {
       mission: {
@@ -973,6 +983,10 @@ describe("Mission Control battle reports", () => {
         ...battleReport("1240"),
         outcome: "DefenderWin",
         rounds: 4,
+        defenderSnapshot: {
+          fleet: [],
+          defenses: [{ id: 0, count: 37 }],
+        },
         attackerLosses: { metal: "62000", crystal: "26000", deuterium: "0" },
         defenderLosses: { metal: "0", crystal: "0", deuterium: "0" },
         roundReports: [
@@ -993,10 +1007,11 @@ describe("Mission Control battle reports", () => {
     }))).join(" ");
 
     expect(text).toContain("Defender victory");
-    expect(text).toContain("Battle-time units");
-    expect(text).toContain("37 aggregate units");
-    expect(text).toContain("Current defenses");
-    expect(text).toContain("Rocket Launcher ×4");
+    expect(text).toContain("Battle-time defenses");
+    expect(text).toContain("Rocket Launcher ×37");
+    expect(text).not.toContain("37 aggregate units");
+    expect(text).not.toContain("Current defenses");
+    expect(text).not.toContain("Rocket Launcher ×4");
     expect(text).not.toContain("Current fleet / defenses");
   });
 

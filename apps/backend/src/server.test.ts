@@ -67,6 +67,7 @@ const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
 const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
+const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
@@ -1464,6 +1465,76 @@ describe("Veydrift backend", () => {
     expect(body.defenderPlanetState).toEqual({
       fleet: [{ id: 1, count: 12 }],
       defenses: [{ id: 4, count: 3 }],
+      stationedDefenders: []
+    });
+  });
+
+  test("mission detail battle report carries historical battle-time defender composition instead of current defenses", async () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+    const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.applyEvent({
+      ...planet,
+      planetId: "92",
+      owner: attacker,
+      eventName: "PlanetStarted",
+      transactionHash: "0xtargetplanet",
+      blockNumber: "100"
+    });
+    indexer.applyLog({
+      blockNumber: "0x66",
+      transactionHash: "0xdefense-before-battle",
+      logIndex: "0x0",
+      removed: false,
+      topics: [planetDefenseCountChangedTopic, topic(92n), topic(0n)],
+      data: abiWords(37n)
+    });
+    for (const log of completedFleetMissionLogs({ missionId: 1240n, owner: attacker, originPlanetId: 7n, targetPlanetId: 92n })) {
+      indexer.applyLog(log);
+    }
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xbattle-1240",
+      logIndex: "0x0",
+      removed: false,
+      topics: [attackBattleResolvedTopic, topic(1240n), addressTopic(attacker), topic(92n)],
+      data: abiWords(2n, 4n, 12345n, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xbattle-1240",
+      logIndex: "0x1",
+      removed: false,
+      topics: [combatRoundResolvedTopic, topic(1240n), topic(1n)],
+      data: abiWords(16n, 37n, 17_000n, 7_000n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xbattle-1240",
+      logIndex: "0x2",
+      removed: false,
+      topics: [planetDefenseCountChangedTopic, topic(92n), topic(0n)],
+      data: abiWords(4n)
+    });
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    })(new Request("http://localhost/mission/1240"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.battleReport.defenderSnapshot).toEqual({
+      fleet: [],
+      defenses: [{ id: 0, count: 37 }]
+    });
+    expect(body.battleReport.roundReports[0].defenderUnits).toBe("37");
+    expect(body.defenderPlanetState).toEqual({
+      fleet: [],
+      defenses: [{ id: 0, count: 4 }],
       stationedDefenders: []
     });
   });
