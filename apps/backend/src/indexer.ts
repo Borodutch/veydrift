@@ -364,6 +364,7 @@ export class SettlementIndexer {
   private stateGeneration = 0;
   private missionGeneration = 0;
   private missionReadModelDbVersion: string | null = null;
+  private battleReportReadModelDbVersion: string | null = null;
   // Memoized full highscore leaderboard (every owner's score + their planets). The leaderboard is a
   // function of indexed state plus request-time lazy-completion projection. It is valid until the next
   // touch() or until the next active queue readyAt can change projected levels/counts.
@@ -378,6 +379,7 @@ export class SettlementIndexer {
   private missionReadModelCache:
     | {
       missionGeneration: number;
+      battleReportGeneration: number;
       asOfSeconds: number;
       summaries: FleetMissionSummary[];
       battleReports: BattleReport[] | null;
@@ -391,6 +393,7 @@ export class SettlementIndexer {
       battleReports: BattleReport[];
     }
     | null = null;
+  private battleReportGeneration = 0;
   private missionReferenceCache:
     | {
       source: FleetMissionSummary[];
@@ -2300,6 +2303,14 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS indexed_mission_event_logs_kind_block_idx
         ON indexed_mission_event_logs (event_kind, block_number);
+      CREATE TABLE IF NOT EXISTS indexed_unit_count_event_logs (
+        event_id TEXT PRIMARY KEY,
+        block_number TEXT NOT NULL,
+        log_index TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS indexed_unit_count_event_logs_position_idx
+        ON indexed_unit_count_event_logs (block_number, log_index);
       CREATE TABLE IF NOT EXISTS indexed_planet_queues (
         queue_key TEXT PRIMARY KEY,
         kind TEXT NOT NULL,
@@ -2598,6 +2609,7 @@ export class SettlementIndexer {
     this.ensureColumn("contract_production_queues", "backlog_json", "TEXT");
     this.ensureColumn("contract_planet_resources", "log_index", "TEXT NOT NULL DEFAULT '0x0'");
     this.backfillMissionEventLogs();
+    this.backfillUnitCountEventLogs();
     if (runStartupBackfill) {
       this.backfillCanonicalTables();
       this.replayFleetMissionRowsFromEventLogs();
@@ -2714,11 +2726,46 @@ export class SettlementIndexer {
     })();
   }
 
+  private backfillUnitCountEventLogs(): void {
+    const existing = this.count("indexed_unit_count_event_logs");
+    if (existing > 0) return;
+
+    const rows = this.db.query(`
+      SELECT event_id, event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+    `).all() as Array<EventRow & { event_id: string }>;
+    if (rows.length === 0) return;
+
+    const insert = this.db.query(`
+      INSERT OR IGNORE INTO indexed_unit_count_event_logs (event_id, block_number, log_index, event_json)
+      VALUES (?, ?, ?, ?)
+    `);
+    this.db.transaction(() => {
+      for (const row of rows) {
+        const log = parseEvent<IndexedRpcLog>(row.event_json);
+        if (!this.isUnitCountSnapshotLog(log)) continue;
+        insert.run(row.event_id, blockNumberToDecimal(log.blockNumber), log.logIndex ?? "0x0", row.event_json);
+      }
+    })();
+  }
+
   private missionEventKind(log: IndexedRpcLog): "fleet" | "battle" | "randomness" | null {
     if (isFleetMissionLog(log)) return "fleet";
     if (isBattleReportLog(log)) return "battle";
     if (isRandomnessFulfilledLog(log)) return "randomness";
     return null;
+  }
+
+  private isUnitCountSnapshotLog(log: IndexedRpcLog): boolean {
+    if (isShipCountChangedLog(log) || isDefenseCountChangedLog(log)) return true;
+    if (!isIndexedQueueCompletedLog(log)) return false;
+    const event = decodeIndexedQueueCompletedLog(log);
+    return Boolean(
+      event.planetId
+      && event.total !== undefined
+      && (event.eventName === "ShipCompleted" || event.eventName === "DefenseCompleted")
+    );
   }
 
   private replayMaterializedStateFromEventLogs(): void {
@@ -5065,6 +5112,45 @@ export class SettlementIndexer {
     return row?.value ?? this.metadata("missionReadModelVersion") ?? "0";
   }
 
+  private currentBattleReportReadModelDbVersion(): string {
+    const version = this.metadata("battleReportReadModelVersion") ?? "0";
+    if (this.battleReportReadModelDbVersion !== version) {
+      this.battleReportReadModelDbVersion = version;
+      this.battleReportGeneration += 1;
+      if (this.missionReadModelCache) {
+        this.missionReadModelCache = {
+          ...this.missionReadModelCache,
+          battleReportGeneration: this.battleReportGeneration,
+          battleReports: null
+        };
+      }
+    }
+    return version;
+  }
+
+  private advanceBattleReportReadModelDbVersion(): string {
+    this.snapshotCache = null;
+    const row = this.db.query(`
+      INSERT INTO indexer_metadata (key, value)
+      VALUES ('battleReportReadModelVersion', '1')
+      ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(indexer_metadata.value AS INTEGER) + 1 AS TEXT)
+      RETURNING value
+    `).get() as MetadataRow | null;
+    return row?.value ?? this.metadata("battleReportReadModelVersion") ?? "0";
+  }
+
+  private touchBattleReportReadModel(): void {
+    this.battleReportGeneration += 1;
+    this.battleReportReadModelDbVersion = this.advanceBattleReportReadModelDbVersion();
+    if (this.missionReadModelCache) {
+      this.missionReadModelCache = {
+        ...this.missionReadModelCache,
+        battleReportGeneration: this.battleReportGeneration,
+        battleReports: null
+      };
+    }
+  }
+
   private recordLog(eventId: string, log: IndexedRpcLog): boolean {
     const result = this.db.query(`
       INSERT INTO indexed_event_logs (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
@@ -5081,6 +5167,7 @@ export class SettlementIndexer {
     );
     if (result.changes > 0) {
       this.recordMissionEventLog(eventId, log);
+      this.recordUnitCountEventLog(eventId, log);
     }
     return result.changes > 0;
   }
@@ -5094,6 +5181,15 @@ export class SettlementIndexer {
       VALUES (?, ?, ?, ?)
     `).run(eventId, eventKind, blockNumberToDecimal(log.blockNumber), JSON.stringify(log));
     this.touchMissionReadModel();
+  }
+
+  private recordUnitCountEventLog(eventId: string, log: IndexedRpcLog): void {
+    if (log.removed || !this.isUnitCountSnapshotLog(log)) return;
+    this.db.query(`
+      INSERT OR REPLACE INTO indexed_unit_count_event_logs (event_id, block_number, log_index, event_json)
+      VALUES (?, ?, ?, ?)
+    `).run(eventId, blockNumberToDecimal(log.blockNumber), log.logIndex ?? "0x0", JSON.stringify(log));
+    this.touchBattleReportReadModel();
   }
 
   private recordLogIfMissing(log: IndexedRpcLog): void {
@@ -5318,6 +5414,7 @@ export class SettlementIndexer {
     });
     this.missionReadModelCache = {
       missionGeneration: this.missionGeneration,
+      battleReportGeneration: this.battleReportGeneration,
       asOfSeconds,
       summaries,
       battleReports: null
@@ -5569,10 +5666,12 @@ export class SettlementIndexer {
 
   private indexedBattleReports(): BattleReport[] {
     const summaries = this.indexedFleetMissionSummaries();
+    this.currentBattleReportReadModelDbVersion();
     const cached = this.missionReadModelCache;
     if (
       cached
       && cached.missionGeneration === this.missionGeneration
+      && cached.battleReportGeneration === this.battleReportGeneration
       && cached.summaries === summaries
       && cached.battleReports
     ) {
@@ -5591,6 +5690,7 @@ export class SettlementIndexer {
       defenderSnapshot: defenderSnapshots.get(report.missionId) ?? null
     }));
     if (cached && cached.missionGeneration === this.missionGeneration && cached.summaries === summaries) {
+      cached.battleReportGeneration = this.battleReportGeneration;
       cached.battleReports = reports;
     }
     return reports;
@@ -5599,13 +5699,14 @@ export class SettlementIndexer {
   private battleTimeDefenderSnapshots(reports: BattleReport[]): Map<string, BattleReportDefenderSnapshot> {
     if (reports.length === 0) return new Map();
 
+    const reportsByPosition = [...reports].sort(compareRpcLogPosition);
     const rows = this.db.query(`
       SELECT event_json
-      FROM indexed_event_logs
-      WHERE removed = 0
-    `).all() as EventRow[];
+      FROM indexed_unit_count_event_logs
+      WHERE CAST(block_number AS INTEGER) <= ?
+      ORDER BY CAST(block_number AS INTEGER) ASC
+    `).all(maxReportBlockNumber(reportsByPosition).toString()) as EventRow[];
     const logs = sortedEventRows(rows);
-    const reportsByPosition = [...reports].sort(compareRpcLogPosition);
     const snapshots = new Map<string, BattleReportDefenderSnapshot>();
     const currentByPlanet = new Map<string, UnitCountSnapshot>();
     let logIndex = 0;
@@ -5845,6 +5946,7 @@ export class SettlementIndexer {
     | "indexed_debris_fields"
     | "indexed_event_logs"
     | "indexed_mission_event_logs"
+    | "indexed_unit_count_event_logs"
     | "indexed_moon_chance_reports"
     | "indexed_moons"
     | "indexed_planets"
@@ -6137,6 +6239,13 @@ function unitCountRows(counts: Map<number, number>): Array<{ id: number; count: 
     .filter(([, count]) => count > 0)
     .map(([id, count]) => ({ id, count }))
     .sort((left, right) => left.id - right.id);
+}
+
+function maxReportBlockNumber(reports: readonly BattleReport[]): bigint {
+  return reports.reduce((max, report) => {
+    const block = BigInt(report.blockNumber);
+    return block > max ? block : max;
+  }, 0n);
 }
 
 function sortRpcLogs(logs: readonly RpcLog[]): RpcLog[] {
