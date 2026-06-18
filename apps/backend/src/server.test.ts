@@ -1214,6 +1214,59 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("serves paginated incoming attack archive from the indexed read model", async () => {
+    const attacker = "0x5555555555555555555555555555555555555555" as Address;
+    const chainReader = new class extends MockChainReader {
+      override async getFleetMissionVisibility(): Promise<never> {
+        throw new Error("mission archive must not call chain reader");
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "100"
+    });
+    for (const log of completedFleetMissionLogs({ missionId: 1n, missionTypeId: 3n, owner: attacker, originPlanetId: 9n, targetPlanetId: 7n })) {
+      indexer.applyLog(log);
+    }
+    for (const log of completedFleetMissionLogs({ missionId: 2n, missionTypeId: 3n, owner: player, originPlanetId: 7n, targetPlanetId: 9n })) {
+      indexer.applyLog(log);
+    }
+    for (const log of completedFleetMissionLogs({ missionId: 3n, missionTypeId: 0n, owner: attacker, originPlanetId: 9n, targetPlanetId: 7n })) {
+      indexer.applyLog(log);
+    }
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    })(new Request(`http://localhost/wallet/${player}/missions?status=completed&filter=incomingAttacks&page=1&pageSize=25`));
+
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.pagination).toEqual({
+      page: 1,
+      pageSize: 25,
+      totalEntries: 1,
+      totalPages: 1,
+      hasPreviousPage: false,
+      hasNextPage: false
+    });
+    expect(body.rows).toEqual([
+      expect.objectContaining({
+        kind: "mission",
+        mission: expect.objectContaining({
+          missionId: "1",
+          missionType: "Attack",
+          owner: attacker,
+          targetPlanetId: "7"
+        })
+      })
+    ]);
+  });
+
   test("embeds matching battle reports into completed attack archive rows before pagination", async () => {
     const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
     const chainReader = new class extends MockChainReader {
@@ -6229,11 +6282,13 @@ function addressTopic(address: Address): string {
 
 function completedFleetMissionLogs({
   missionId,
+  missionTypeId = 0n,
   owner,
   originPlanetId,
   targetPlanetId,
 }: {
   missionId: bigint;
+  missionTypeId?: bigint;
   owner: Address;
   originPlanetId: bigint;
   targetPlanetId: bigint;
@@ -6242,7 +6297,7 @@ function completedFleetMissionLogs({
   const returnAt = arrivalAt + 300n;
   return [
     fleetMissionLog({
-      topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(0n)],
+      topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(missionTypeId)],
       data: abiWords(originPlanetId, targetPlanetId, arrivalAt, returnAt),
       logIndex: Number(missionId * 10n),
     }),

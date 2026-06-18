@@ -2327,6 +2327,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [missionArchivePage, setMissionArchivePage] = useState(1);
   const [missionArchiveLoading, setMissionArchiveLoading] = useState(false);
   const [missionArchiveError, setMissionArchiveError] = useState<string | undefined>();
+  const [incomingAttackArchive, setIncomingAttackArchive] = useState<FleetMissionArchiveResponse | undefined>();
+  const [incomingAttackArchivePage, setIncomingAttackArchivePage] = useState(1);
+  const [incomingAttackArchiveLoading, setIncomingAttackArchiveLoading] = useState(false);
+  const [incomingAttackArchiveError, setIncomingAttackArchiveError] = useState<string | undefined>();
   const [allActiveMissions, setAllActiveMissions] = useState<FleetMissionSummary[] | undefined>();
   const [pendingMissionLaunches, setPendingMissionLaunches] = useState<FleetMissionSummary[]>([]);
   const [globalMissionArchive, setGlobalMissionArchive] = useState<GlobalMissionArchiveResponse | undefined>();
@@ -3177,6 +3181,28 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
   }, [account, apiBaseUrl]);
 
+  const loadIncomingAttackArchive = useCallback(async (page: number) => {
+    if (!apiBaseUrl || !account) {
+      setIncomingAttackArchive(undefined);
+      setIncomingAttackArchiveError(undefined);
+      setIncomingAttackArchiveLoading(false);
+      return;
+    }
+
+    setIncomingAttackArchiveLoading(true);
+    setIncomingAttackArchiveError(undefined);
+    try {
+      const nextArchive = await fetchFleetMissionArchive(apiBaseUrl, account, { filter: "incomingAttacks", page, pageSize: 25 });
+      setIncomingAttackArchive(nextArchive);
+      setIncomingAttackArchivePage(nextArchive.pagination.page);
+    } catch (error) {
+      console.error(error);
+      setIncomingAttackArchiveError(error instanceof Error ? error.message : "Incoming attack archive could not be loaded.");
+    } finally {
+      setIncomingAttackArchiveLoading(false);
+    }
+  }, [account, apiBaseUrl]);
+
   const loadAllActiveMissions = useCallback(async () => {
     if (!apiBaseUrl) {
       setAllActiveMissions(undefined);
@@ -3231,10 +3257,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   useEffect(() => {
     if (page === "mission-control") {
       void loadMissionArchive(1);
+      void loadIncomingAttackArchive(1);
       void loadAllActiveMissions();
       void loadGlobalMissionArchive(1);
     }
-  }, [account, apiBaseUrl, loadAllActiveMissions, loadGlobalMissionArchive, loadMissionArchive, page]);
+  }, [account, apiBaseUrl, loadAllActiveMissions, loadGlobalMissionArchive, loadIncomingAttackArchive, loadMissionArchive, page]);
 
   // VEY-KANEO-445: the Rankings page shows each planet's active inbound/outbound fleet missions as
   // subtext. Load the universe-wide active feed when Rankings opens and poll it on the shared cadence
@@ -3272,10 +3299,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     await Promise.allSettled([
       refreshOnChainState(),
       loadMissionArchive(missionArchivePage),
+      loadIncomingAttackArchive(incomingAttackArchivePage),
       loadAllActiveMissions(),
       loadGlobalMissionArchive(globalMissionArchivePage),
     ]);
-  }, [globalMissionArchivePage, loadAllActiveMissions, loadGlobalMissionArchive, loadMissionArchive, missionArchivePage, refreshOnChainState]);
+  }, [globalMissionArchivePage, incomingAttackArchivePage, loadAllActiveMissions, loadGlobalMissionArchive, loadIncomingAttackArchive, loadMissionArchive, missionArchivePage, refreshOnChainState]);
 
   const refreshFinishedBuildingState = useCallback(async (expectation: FinishedBuildingExpectation): Promise<boolean> => {
     const planetSwitchRequestId = planetSwitchGate.current;
@@ -6092,6 +6120,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           globalMissionArchive={globalMissionArchive}
           globalMissionArchiveError={globalMissionArchiveError}
           globalMissionArchiveLoading={globalMissionArchiveLoading}
+          incomingAttackArchive={incomingAttackArchive}
+          incomingAttackArchiveError={incomingAttackArchiveError}
+          incomingAttackArchiveLoading={incomingAttackArchiveLoading}
           loading={isWalletConnected && onChainStatus === "loading"}
           missionArchive={missionArchive}
           missionArchiveError={missionArchiveError}
@@ -6104,6 +6135,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onOpenReportList={handleOpenMissionReportList}
           onRecall={handleRecallMission}
           onGlobalMissionArchivePageChange={(page) => void loadGlobalMissionArchive(page)}
+          onIncomingAttackArchivePageChange={(page) => void loadIncomingAttackArchive(page)}
           onMissionArchivePageChange={(page) => void loadMissionArchive(page)}
           onRefresh={refreshMissionControl}
           planetArchetypesByCoordinate={missionPlanetArchetypesByCoordinate}

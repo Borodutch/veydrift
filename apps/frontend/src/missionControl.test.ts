@@ -101,6 +101,41 @@ describe("Mission Control battle reports", () => {
     }
   });
 
+  test("fetches wallet incoming attack archive with server-side pagination", async () => {
+    const originalFetch = globalThis.fetch;
+    const requestedUrls: string[] = [];
+    const wallet = "0x1111111111111111111111111111111111111111";
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      requestedUrls.push(String(input));
+      return new Response(JSON.stringify({
+        wallet,
+        homePlanetId: "7",
+        rows: [],
+        pagination: {
+          page: 1,
+          pageSize: 25,
+          totalEntries: 0,
+          totalPages: 1,
+          hasPreviousPage: false,
+          hasNextPage: false,
+        },
+      }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as typeof fetch;
+
+    try {
+      await fetchFleetMissionArchive("https://api.example.test/", wallet, { filter: "incomingAttacks", page: 1, pageSize: 25 });
+      expect(requestedUrls).toEqual([
+        `https://api.example.test/wallet/${wallet}/missions?status=completed&filter=incomingAttacks&page=1&pageSize=25`,
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   test("renders player-facing fleet dashboard copy and report actions", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionControlPage({
@@ -240,6 +275,51 @@ describe("Mission Control battle reports", () => {
     expect(links.some((link) => String(link.props?.title ?? "").includes("5:407:4"))).toBe(true);
     expect(text).toContain("New Zion");
     expect(text).toContain("Borealis");
+  });
+
+  test("renders the Incoming attacks past mission filter as a restored tab (VEY-KANEO-564)", () => {
+    const now = Date.parse("2026-06-08T23:00:00.000Z");
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const attacker = "0x3333333333333333333333333333333333333333";
+    const incomingAttack: FleetMissionSummary = {
+      ...mission("80", "Attack", "Returned", attacker, "9", "7", now - 7_200_000),
+      originPlanet: planetReference("9", attacker, "Raider", "1:2:3"),
+      targetPlanet: planetReference("7", wallet, "New Zion", "6:9:1"),
+    };
+    const outgoingAttack: FleetMissionSummary = {
+      ...mission("81", "Attack", "Returned", wallet, "7", "9", now - 7_100_000),
+      originPlanet: planetReference("7", wallet, "New Zion", "6:9:1"),
+      targetPlanet: planetReference("9", attacker, "Borealis", "5:407:4"),
+    };
+    const tree = MissionControlPage({
+      ...missionControlProps(now, {}),
+      incomingAttackArchive: {
+        wallet,
+        homePlanetId: "7",
+        rows: [{ kind: "mission", mission: incomingAttack }],
+        pagination: { page: 1, pageSize: 25, totalEntries: 1, totalPages: 1, hasPreviousPage: false, hasNextPage: false },
+      },
+      initialView: { activePage: 0, activeTab: "mine", pastPage: 0, pastTab: "incomingAttacks" },
+      missionArchive: {
+        wallet,
+        homePlanetId: "7",
+        rows: [{ kind: "mission", mission: incomingAttack }, { kind: "mission", mission: outgoingAttack }],
+        pagination: { page: 1, pageSize: 25, totalEntries: 2, totalPages: 1, hasPreviousPage: false, hasNextPage: false },
+      },
+    });
+
+    const section = findElements(tree, "section").find((node) => node.props?.["data-past-tab"] !== undefined);
+    expect(section?.props?.["data-past-tab"]).toBe("incomingAttacks");
+    const incomingButton = findElements(tree, "button").find((node) => node.props?.["data-past-tab-button"] === "incomingAttacks");
+    expect(incomingButton?.props?.["aria-selected"]).toBe(true);
+    expect(collectText(incomingButton).join(" ")).toContain("Incoming attacks (1)");
+
+    const incomingPanel = findElements(tree, "div").find((node) => node.props?.["data-past-tab-panel"] === "incomingAttacks");
+    const incomingText = collectText(incomingPanel).join(" ");
+    expect(incomingPanel?.props?.hidden).toBe(false);
+    expect(incomingText).toContain("Incoming attack");
+    expect(incomingText).toContain("Raider");
+    expect(incomingText).not.toContain("Borealis");
   });
 
   test("VEY-KANEO-440: stationed-defense panel lists own defending fleets and allied defenders at your planets", () => {
@@ -1369,11 +1449,11 @@ describe("Mission Control battle reports", () => {
   });
 
   test("parses a URL query back into a partial view, ignoring junk (VEY-412)", () => {
-    expect(parseMissionControlViewParams("at=alliance&pt=all&ap=3&pp=2")).toEqual({
+    expect(parseMissionControlViewParams("at=alliance&pt=incomingAttacks&ap=3&pp=2")).toEqual({
       activePage: 3,
       activeTab: "alliance",
       pastPage: 2,
-      pastTab: "all",
+      pastTab: "incomingAttacks",
     });
 
     // Unknown tab keys and negative/garbage pages are dropped rather than restoring a broken view.
