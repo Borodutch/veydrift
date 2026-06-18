@@ -136,6 +136,18 @@ describe("BattleKeeper pending tracking", () => {
     expect(snap.pendingMissionIds).toEqual(["5"]);
   });
 
+  test("DefenseHold waits until holdUntil instead of retrying from arrivalAt", () => {
+    const { keeper } = makeKeeper(async () => "0xhash");
+    keeper.recordLaunched(launch("6", MissionType.DefenseHold, 500, 1_500));
+    expect(keeper.pendingMissions()[0]?.dueAt).toBe(500);
+
+    keeper.recordDefenseHoldStationed({ missionId: "6", holdUntil: 1_200, returnAt: 1_500 });
+
+    const snap = keeper.snapshot();
+    expect(snap.awaitingArrivalCount).toBe(1);
+    expect(keeper.pendingMissions()[0]?.dueAt).toBe(1_200);
+  });
+
   test("status reconciliation prunes a stale Deploy return tracked from old logic", () => {
     const { keeper } = makeKeeper(async () => "0xhash");
     keeper.recordLaunched(launch("4", MissionType.Deploy, 500, 900));

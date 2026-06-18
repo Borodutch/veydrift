@@ -2,6 +2,7 @@ import {
   FleetMissionStatus,
   hasReturnLegAfterArrival,
   keeperResolvableMissionTypes,
+  MissionType,
   missionTypeNames
 } from "./events";
 import { MissionNotResolvableError, type MissionLeg, type MissionResolver } from "./resolver";
@@ -202,6 +203,35 @@ export class BattleKeeper {
       returnAt
     });
     this.logger.info("[keeper] return exposed, awaiting return", { missionId, returnAt });
+  }
+
+  /** DefenseHold launch events expose travel arrival, but the permissionless resolve call is only
+   * valid after the stationing hold window ends. The companion DefenseHoldStationed event carries
+   * the exact `holdUntil`; use it so a holding fleet does not retry every tick while still active. */
+  recordDefenseHoldStationed(event: { missionId: string; holdUntil: number; returnAt: number }): void {
+    const { missionId, holdUntil, returnAt } = event;
+    if (this.terminal.has(missionId)) {
+      return;
+    }
+
+    this.knownMissionTypes.set(missionId, MissionType.DefenseHold);
+    const existing = this.pending.get(missionId);
+    if (existing && existing.leg !== "arrival") {
+      return;
+    }
+
+    this.pending.set(missionId, {
+      missionId,
+      missionType: MissionType.DefenseHold,
+      leg: "arrival",
+      dueAt: holdUntil,
+      returnAt
+    });
+    this.logger.info("[keeper] defense hold stationed, awaiting hold end", {
+      missionId,
+      holdUntil,
+      returnAt
+    });
   }
 
   /** The return leg is done (FleetMissionReturned). Drop the mission — it is terminal. */

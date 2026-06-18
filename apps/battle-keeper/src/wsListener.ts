@@ -238,6 +238,12 @@ export class WsBattleListener {
         status: decoded.status,
         returnAt: decoded.returnAt
       });
+    } else if (decoded.kind === "defenseHoldStationed") {
+      this.keeper.recordDefenseHoldStationed({
+        missionId: decoded.missionId,
+        holdUntil: decoded.holdUntil,
+        returnAt: decoded.returnAt
+      });
     } else {
       this.keeper.recordReturned(decoded.missionId);
     }

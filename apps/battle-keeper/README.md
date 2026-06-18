@@ -34,6 +34,8 @@ awaiting-return  --completeFleetMissionReturn(0xc2472852)--> terminal
   - `FleetMissionReturnExposed` → authoritative signal that a mission actually entered a return leg;
     this is what queues blocked Colonize returns and any other return that cannot be inferred from
     `FleetMissionResolved.returnAt` alone.
+  - `DefenseHoldStationed` → carries the DefenseHold `holdUntil` timestamp. DefenseHold cannot be
+    sent home at travel arrival; the keeper waits until the hold window ends before resolving it.
   - `FleetMissionReturned` → the return leg is done; the mission is **terminal**.
 - **Resolution loop** (every `RESOLVE_INTERVAL_MS`): for each pending mission whose current leg is due
   (`dueAt <= now`), submit the leg's call — `resolveFleetMission(missionId)` for arrival,
