@@ -1,7 +1,7 @@
 import { loadKeeperConfig, safeConfigSummary } from "./config";
 import { BattleKeeper, consoleLogger } from "./keeper";
 import { ViemMissionResolver } from "./resolver";
-import { createHandler } from "./server";
+import { buildInfoFromEnv, createHandler } from "./server";
 import { LogBackfillSweep } from "./sweep";
 import { HttpJsonRpcTransport } from "./transport";
 import { WsBattleListener } from "./wsListener";
@@ -58,7 +58,10 @@ function main(): void {
   void sweep.sweep(BigInt(config.backfillBlocks)).then(() => keeper.tick());
 
   const startedAtMs = Date.now();
-  const handler = createHandler(keeper, listener, startedAtMs);
+  const handler = createHandler(keeper, listener, startedAtMs, () => Date.now(), {
+    build: buildInfoFromEnv(),
+    sweep
+  });
   const server = Bun.serve({ port: config.port, fetch: handler });
   consoleLogger.info("[battle-keeper] health server listening", { port: server.port });
 
