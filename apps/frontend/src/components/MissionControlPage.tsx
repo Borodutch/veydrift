@@ -122,9 +122,6 @@ export function MissionControlPage({
   const battleReports = fleetVisibility?.battleReports ?? [];
   const activeMissionRows = chronologicalActiveMissionRows({ incoming, joinableAttacks, outgoing, returning });
   const { alliance: allianceMissionRows, mine: myMissionRows } = partitionActiveMissionRows(activeMissionRows);
-  // "Due"/"Needs orders now" must count only the player's own actionable missions. Alliance joinable
-  // attacks are opt-in and never an obligation for the player, so they are excluded here.
-  const due = myMissionRows.filter(({ mission }) => isMissionDue(mission, now) || isMissionReturned(mission, now));
   // Universe-wide active rows for the "All" tab: the player's own/alliance missions keep their exact
   // classification (direction + lifecycle actions); every other active mission renders read-only.
   const allActiveRows = allActiveMissionRows(allActiveMissions, activeMissionRows);
@@ -219,7 +216,6 @@ export function MissionControlPage({
             allRows={allActiveRows}
             allianceRows={allianceMissionRows}
             canTransact={canTransact}
-            dueCount={due.length}
             lootByMissionId={lootByMissionId}
             lossesByMissionId={lossesByMissionId}
             myRows={myMissionRows}
@@ -642,7 +638,6 @@ function ActiveMissionSection({
   allRows,
   allianceRows,
   canTransact,
-  dueCount,
   lootByMissionId,
   lossesByMissionId,
   myRows,
@@ -659,7 +654,6 @@ function ActiveMissionSection({
   allRows: ActiveMissionRow[];
   allianceRows: ActiveMissionRow[];
   canTransact: boolean;
-  dueCount: number;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
   myRows: ActiveMissionRow[];
@@ -703,11 +697,6 @@ function ActiveMissionSection({
             </button>
           ))}
         </div>
-        {dueCount > 0 ? (
-          <span className="self-start rounded border border-red-300/25 bg-red-400/10 px-2 py-1 text-xs font-medium text-red-100 sm:self-auto">
-            Needs orders now {dueCount}
-          </span>
-        ) : null}
       </div>
       {ACTIVE_MISSION_TABS.map((tab) => (
         <div data-active-tab-panel={tab.key} hidden={tab.key !== activeTab} key={tab.key} role="tabpanel">
