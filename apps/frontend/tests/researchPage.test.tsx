@@ -10,6 +10,8 @@ import {
   ResearchLevelInfoModal,
   ResearchLoadErrorPanel,
   ResearchStatusPanel,
+  researchCatalogStatusText,
+  researchCatalogTitleTone,
   researchLevelInfoRows,
   researchRefreshErrorLabel,
   researchActionStatus,
@@ -519,6 +521,105 @@ describe("Research page load-error display", () => {
       targetLevel: 2,
       tileStatus: "Active",
     });
+  });
+
+  test("fades unavailable research titles without generic ready/locked tile text (VEY-KANEO-576)", () => {
+    const base = createInitialPlayableState(10_000);
+    const state = {
+      ...base,
+      buildings: {
+        ...base.buildings,
+        researchLab: 1,
+      },
+      resources: { metal: 1_000, crystal: 1_000, deuterium: 1_000 },
+    };
+    const ready = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 0, crystal: 800, deuterium: 400 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_000_000,
+      researchState: researchState(),
+      state,
+    });
+    const locked = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 1_600, crystal: 800, deuterium: 0 },
+      error: undefined,
+      key: "laser",
+      loading: false,
+      now: 1_700_000_000_000,
+      researchState: researchState(),
+      state,
+    });
+    const active = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 0, crystal: 1_600, deuterium: 800 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_119_000,
+      researchState: researchState({
+        technologyLevels: { "0": 1 },
+        queue: {
+          active: true,
+          kind: "research",
+          itemId: 0,
+          targetLevel: 2,
+          readyAt: "1700000120",
+          startedAt: "1700000000",
+          cost: { metal: "0", crystal: "1600", deuterium: "800" },
+        },
+      }),
+      state: researchViewState({
+        readyAt: 1_700_000_120_000,
+      }),
+    });
+    const insufficientResources = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 1_600, crystal: 800, deuterium: 0 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_000_000,
+      researchState: researchState({
+        resources: { metal: "700", crystal: "1000", deuterium: "1000" },
+      }),
+      state: {
+        ...state,
+        resources: { metal: 700, crystal: 1_000, deuterium: 1_000 },
+      },
+    });
+
+    expect(ready).toMatchObject({
+      tileStatus: "Ready",
+    });
+    expect(researchCatalogTitleTone(ready)).toBe("normal");
+    expect(researchCatalogStatusText(ready)).toBe("");
+
+    expect(locked).toMatchObject({
+      disabled: true,
+      reason: "Locked by unmet prerequisites",
+      tileStatus: "Locked",
+    });
+    expect(researchCatalogTitleTone(locked)).toBe("muted");
+    expect(researchCatalogStatusText(locked)).toBe("");
+
+    expect(researchCatalogTitleTone(active)).toBe("normal");
+    expect(researchCatalogStatusText(active)).toBe("Active");
+
+    expect(insufficientResources).toMatchObject({
+      disabled: true,
+      reason: "Requires 900 more Metal",
+      tileStatus: "Locked",
+    });
+    expect(researchCatalogTitleTone(insufficientResources)).toBe("muted");
+    expect(researchCatalogStatusText(insufficientResources)).toBe("");
   });
 
   test("reports the exact single resource missing for research actions", () => {

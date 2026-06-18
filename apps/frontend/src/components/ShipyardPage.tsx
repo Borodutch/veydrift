@@ -286,6 +286,7 @@ export function shipProductionItems({
       groupLabel: groupLabels[ship.group],
       id: ship.id,
       key: ship.key,
+      labelTone: blockedReason ? "muted" : "normal",
       label: ship.label,
       missing,
       notes: shipNotes(ship),
@@ -295,7 +296,7 @@ export function shipProductionItems({
       queued,
       requirements,
       status: queued > 0 ? "queued" : shipUnavailable ? "unavailable" : missing.length === 0 ? "ready" : "locked",
-      statusLabel: queued > 0 ? "Queued" : shipUnavailable ? "Unavailable" : missing.length === 0 ? "Ready" : "Locked",
+      statusLabel: queued > 0 ? "Queued" : undefined,
     };
   });
 }
