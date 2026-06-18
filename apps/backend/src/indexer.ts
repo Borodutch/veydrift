@@ -277,6 +277,11 @@ type PlayerProfileRow = {
   wallet: string;
 };
 
+type WatchedPlanetRow = {
+  planet_id: string;
+  watched_at: string;
+};
+
 type PlayerActivityRow = {
   last_active_at: string;
   wallet: string;
@@ -640,6 +645,63 @@ export class SettlementIndexer {
   playerProfiles(wallets: Iterable<string>): Map<string, PlayerProfile> {
     const uniqueWallets = [...new Set([...wallets].map((wallet) => wallet.toLowerCase()))];
     return new Map(uniqueWallets.map((wallet) => [wallet, this.playerProfile(wallet)]));
+  }
+
+  watchedPlanetIds(wallet: string): string[] {
+    const rows = this.db.query(`
+      SELECT planet_id
+      FROM player_watched_planets
+      WHERE wallet = lower(?)
+      ORDER BY watched_at DESC, CAST(planet_id AS INTEGER) ASC
+    `).all(wallet) as Array<Pick<WatchedPlanetRow, "planet_id">>;
+
+    return rows.map((row) => row.planet_id);
+  }
+
+  watchedPlanets(wallet: string, page = 1, pageSize = 25): { total: number; planets: SettledPlanetEvent[] } {
+    const limit = Math.max(1, Math.min(100, Math.floor(pageSize)));
+    const normalizedPage = Math.max(1, Math.floor(page));
+    const offset = (normalizedPage - 1) * limit;
+    const totalRow = this.db.query(`
+      SELECT COUNT(*) AS count
+      FROM player_watched_planets watch
+      INNER JOIN contract_planets planet ON planet.planet_id = watch.planet_id
+      WHERE watch.wallet = lower(?)
+    `).get(wallet) as { count: number } | null;
+    const rows = this.db.query(`
+      SELECT planet.event_json
+      FROM player_watched_planets watch
+      INNER JOIN contract_planets planet ON planet.planet_id = watch.planet_id
+      WHERE watch.wallet = lower(?)
+      ORDER BY watch.watched_at DESC, CAST(watch.planet_id AS INTEGER) ASC
+      LIMIT ? OFFSET ?
+    `).all(wallet, limit, offset) as EventRow[];
+
+    return {
+      total: Number(totalRow?.count ?? 0),
+      planets: rows.map((row) => this.withResourceSnapshot(parseEvent<SettledPlanetEvent>(row.event_json)))
+    };
+  }
+
+  watchPlanet(wallet: Address, planetId: string): { watched: boolean; watchedPlanetIds: string[] } {
+    const updatedAt = new Date().toISOString();
+    this.db.query(`
+      INSERT INTO player_watched_planets (wallet, planet_id, watched_at)
+      VALUES (lower(?), ?, ?)
+      ON CONFLICT(wallet, planet_id) DO UPDATE SET
+        watched_at = excluded.watched_at
+    `).run(wallet, planetId, updatedAt);
+    this.touch();
+    return { watched: true, watchedPlanetIds: this.watchedPlanetIds(wallet) };
+  }
+
+  unwatchPlanet(wallet: Address, planetId: string): { watched: boolean; watchedPlanetIds: string[] } {
+    this.db.query(`
+      DELETE FROM player_watched_planets
+      WHERE wallet = lower(?) AND planet_id = ?
+    `).run(wallet, planetId);
+    this.touch();
+    return { watched: false, watchedPlanetIds: this.watchedPlanetIds(wallet) };
   }
 
   playerLastActiveSeconds(wallets: Iterable<string>): Map<string, number> {
@@ -2139,6 +2201,13 @@ export class SettlementIndexer {
         description TEXT,
         updated_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS player_watched_planets (
+        wallet TEXT NOT NULL,
+        planet_id TEXT NOT NULL,
+        watched_at TEXT NOT NULL,
+        PRIMARY KEY (wallet, planet_id)
+      );
+      CREATE INDEX IF NOT EXISTS player_watched_planets_wallet_idx ON player_watched_planets (wallet, watched_at DESC);
       CREATE TABLE IF NOT EXISTS indexed_player_activity (
         wallet TEXT PRIMARY KEY,
         last_active_at TEXT NOT NULL,

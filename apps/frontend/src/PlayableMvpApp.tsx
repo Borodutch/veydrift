@@ -137,6 +137,7 @@ import {
   fetchRiftState,
   fetchWalletOverviewSnapshot,
   fetchWalletPlanets,
+  fetchWatchedPlanets,
   fetchFleetMissionArchive,
   fetchFleetMissionVisibility,
   fetchGlobalActiveMissions,
@@ -153,6 +154,8 @@ import {
   fetchWalletQueues,
   fetchWalletSettlement,
   parseRiftTokenAmount,
+  unwatchPlanet,
+  watchPlanet,
   sendApproveResourceTokenTransaction,
   sendFinishResourceWithdrawalTransaction,
   sendAbandonPlanetTransaction,
@@ -214,8 +217,10 @@ import {
   type PlayerQueuesResponse,
   type QueueStateResponse,
   type WalletPlanetsResponse,
+  type WatchedPlanetsResponse,
   type WalletSettlementResponse,
 } from "./walletFlow";
+import { nextWatchedPlanetsPageAfterToggle } from "./watchedPlanetsView";
 import {
   createTransactionActionGate,
   transactionAwaitingWalletLabel,
@@ -2332,6 +2337,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, []);
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile | undefined>();
   const [walletPlanets, setWalletPlanets] = useState<ManagedPlanetResponse[]>([]);
+  const [watchedPlanets, setWatchedPlanets] = useState<WatchedPlanetsResponse | undefined>();
+  const [watchedPlanetsLoading, setWatchedPlanetsLoading] = useState(false);
+  const [watchedPlanetsError, setWatchedPlanetsError] = useState<string | undefined>();
+  const [watchedPlanetsPage, setWatchedPlanetsPage] = useState(1);
+  const [watchBusyPlanetId, setWatchBusyPlanetId] = useState<string | undefined>();
   const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>();
   const [onChainQueues, setOnChainQueues] = useState<PlayerQueuesResponse | undefined>();
   const [fleetVisibility, setFleetVisibility] = useState<FleetMissionVisibilityResponse | undefined>();
@@ -2854,6 +2864,65 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   useEffect(() => {
     void refreshPlayerProfile();
   }, [refreshPlayerProfile]);
+
+  useEffect(() => {
+    setWatchedPlanetsPage(1);
+  }, [account]);
+
+  const refreshWatchedPlanets = useCallback(async (page = watchedPlanetsPage) => {
+    if (!apiBaseUrl || !account) {
+      setWatchedPlanets(undefined);
+      setWatchedPlanetsError(undefined);
+      setWatchedPlanetsLoading(false);
+      return;
+    }
+
+    setWatchedPlanetsLoading(true);
+    setWatchedPlanetsError(undefined);
+    try {
+      const response = await fetchWatchedPlanets(apiBaseUrl, account, { page, pageSize: 25 });
+      setWatchedPlanets(response);
+    } catch (error) {
+      console.error(error);
+      setWatchedPlanetsError(walletRequestErrorMessage(error));
+    } finally {
+      setWatchedPlanetsLoading(false);
+    }
+  }, [account, apiBaseUrl, watchedPlanetsPage]);
+
+  useEffect(() => {
+    void refreshWatchedPlanets(watchedPlanetsPage);
+  }, [refreshWatchedPlanets, watchedPlanetsPage]);
+
+  const handleToggleWatchPlanet = useCallback(async (planetId: string, watched: boolean) => {
+    if (!apiBaseUrl || !account || !provider) return;
+    setWatchBusyPlanetId(planetId);
+    setWatchedPlanetsError(undefined);
+    try {
+      const result = watched
+        ? await unwatchPlanet(apiBaseUrl, provider, account, planetId)
+        : await watchPlanet(apiBaseUrl, provider, account, planetId);
+      setWatchedPlanets((current) => current
+        ? { ...current, watchedPlanetIds: result.watchedPlanetIds }
+        : current
+      );
+      const nextPage = nextWatchedPlanetsPageAfterToggle({
+        currentPage: watchedPlanetsPage,
+        currentPagePlanetCount: watchedPlanets?.planets.length ?? 0,
+        wasWatched: watched,
+      });
+      if (nextPage !== watchedPlanetsPage) {
+        setWatchedPlanetsPage(nextPage);
+      } else {
+        await refreshWatchedPlanets(nextPage);
+      }
+    } catch (error) {
+      console.error(error);
+      setWatchedPlanetsError(walletRequestErrorMessage(error));
+    } finally {
+      setWatchBusyPlanetId(undefined);
+    }
+  }, [account, apiBaseUrl, provider, refreshWatchedPlanets, watchedPlanets?.planets.length, watchedPlanetsPage]);
 
   const onChainResources = useMemo(() => {
     if (!onChainSettlement?.planet) return undefined;
@@ -6140,9 +6209,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onAction={handleGalaxyAction}
           onSelectAlliance={handleSelectAlliance}
           onSelectPlayer={handleSelectPlayer}
+          onToggleWatchPlanet={handleToggleWatchPlanet}
           onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}
           onSelectPlanet={handleSelectPlanet}
           system={galaxyNav.system}
+          watchedPlanetIds={watchedPlanets?.watchedPlanetIds ?? []}
+          watchBusyPlanetId={watchBusyPlanetId}
         />
       );
     }
@@ -6472,8 +6544,18 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           ? shouldShowAbandonPlanetButton(selectedManagedPlanet, canSubmitGameTransaction, planetManagementAction)
           : false}
         onAbandonPlanet={handleAbandonPlanet}
+        onSelectAlliance={handleSelectAlliance}
+        onSelectPlanet={handleSelectPlanet}
+        onSelectPlayer={handleSelectPlayer}
+        onToggleWatchPlanet={handleToggleWatchPlanet}
         planetManagementAction={planetManagementAction}
         usedFields={selectedManagedPlanet?.fieldsUsed}
+        watchedPlanets={watchedPlanets}
+        watchedPlanetsError={watchedPlanetsError}
+        watchedPlanetsLoading={watchedPlanetsLoading}
+        watchedPlanetsPage={watchedPlanetsPage}
+        onWatchedPlanetsPageChange={setWatchedPlanetsPage}
+        watchBusyPlanetId={watchBusyPlanetId}
       />
     );
   })();

@@ -1,5 +1,6 @@
 import { sdk } from "@farcaster/miniapp-sdk";
 import { GAME_UNAVAILABLE_MESSAGE } from "./gameUnavailable";
+import type { ApiPlanet } from "./data/mockUniverse";
 import type { PlanetType } from "./types";
 
 export type Eip1193Provider = {
@@ -331,6 +332,25 @@ export type WalletOverviewSnapshotResponse = {
   planetsResponse: WalletPlanetsResponse;
   queues: PlayerQueuesResponse;
   settlement: WalletSettlementResponse;
+};
+
+export type WatchedPlanetsResponse = {
+  wallet: string;
+  watchedPlanetIds: string[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+  };
+  planets: ApiPlanet[];
+  detail?: string;
+  stale?: boolean;
+};
+
+export type WatchPlanetMutationResponse = {
+  watched: boolean;
+  watchedPlanetIds: string[];
 };
 
 export type FleetMissionArchiveEntry =
@@ -1508,6 +1528,18 @@ export function playerProfileMessage(wallet: string, displayName: string, descri
     `Display name: ${displayName}`,
     `Description: ${description ?? ""}`,
     "Only sign this message if you want this public profile shown in Veydrift."
+  ].join("\n");
+}
+
+type WatchedPlanetAction = "watch" | "unwatch";
+
+export function watchedPlanetMessage(wallet: string, action: WatchedPlanetAction, planetId: string): string {
+  return [
+    "Veydrift watched planet",
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Action: ${action}`,
+    `Planet ID: ${planetId}`,
+    "Only sign this message if you want to update your Veydrift watched planets."
   ].join("\n");
 }
 
@@ -2726,6 +2758,25 @@ export async function fetchWalletPlanets(apiUrl: string, wallet: string, options
   return fetchWalletJson<WalletPlanetsResponse>(apiUrl, wallet, withWalletReadOptions("planets", undefined, options), "Planets");
 }
 
+export async function fetchWatchedPlanets(
+  apiUrl: string,
+  wallet: string,
+  options: { page?: number; pageSize?: number } = {}
+): Promise<WatchedPlanetsResponse> {
+  const params = new URLSearchParams();
+  params.set("page", String(options.page ?? 1));
+  params.set("pageSize", String(options.pageSize ?? 25));
+  return fetchWalletJson<WatchedPlanetsResponse>(apiUrl, wallet, `watched-planets?${params.toString()}`, "Watched planets");
+}
+
+export async function watchPlanet(apiUrl: string, provider: Eip1193Provider, wallet: string, planetId: string): Promise<WatchPlanetMutationResponse> {
+  return mutateWatchedPlanet(apiUrl, provider, wallet, "watch", "POST", "watched-planets", planetId);
+}
+
+export async function unwatchPlanet(apiUrl: string, provider: Eip1193Provider, wallet: string, planetId: string): Promise<WatchPlanetMutationResponse> {
+  return mutateWatchedPlanet(apiUrl, provider, wallet, "unwatch", "DELETE", `watched-planets/${encodeURIComponent(planetId)}`, planetId);
+}
+
 type WalletReadOptions = {
   source?: "indexed";
 };
@@ -3101,6 +3152,33 @@ async function fetchWalletJson<T>(
     throw new Error(await apiErrorMessage(response, label));
   }
   return response.json() as Promise<T>;
+}
+
+async function mutateWatchedPlanet(
+  apiUrl: string,
+  provider: Eip1193Provider,
+  wallet: string,
+  action: WatchedPlanetAction,
+  method: "POST" | "DELETE",
+  path: string,
+  planetId: string
+): Promise<WatchPlanetMutationResponse> {
+  const signature = await provider.request<string>({
+    method: "personal_sign",
+    params: [watchedPlanetMessage(wallet, action, planetId), wallet]
+  });
+  const init: RequestInit = {
+    body: JSON.stringify({ planetId, signature }),
+    cache: "no-store",
+    headers: {
+      accept: "application/json",
+      "content-type": "application/json"
+    },
+    method
+  };
+  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`, init);
+  if (!response.ok) throw new Error(await apiErrorMessage(response, "Watched planets"));
+  return response.json() as Promise<WatchPlanetMutationResponse>;
 }
 
 function withPlanetId(path: string, planetId: string | undefined): string {

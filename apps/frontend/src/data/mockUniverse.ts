@@ -42,7 +42,7 @@ function pickPlanetType(position: number, seed: number): PlanetType {
   return pickFromSeed(seed, types);
 }
 
-type ApiPlanet = {
+export type ApiPlanet = {
   key?: string;
   galaxy: number;
   system: number;

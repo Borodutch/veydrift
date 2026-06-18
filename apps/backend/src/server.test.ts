@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
 import { createHmac } from "node:crypto";
+import { privateKeyToAccount } from "viem/accounts";
 import { resolveWsRpcUrl, type BackendConfig } from "./config";
 import type {
   Address,
@@ -27,6 +28,7 @@ import type {
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import { VeydriftGameReader, riftRequirements } from "./evm";
 import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
+import { watchedPlanetMessage } from "./playerProfiles";
 import { deriveInfrastructureFields } from "./readModels";
 import { createRequestHandler, deriveLogBackfiller, shouldRecoverFailedReconciliation } from "./server";
 
@@ -1809,6 +1811,158 @@ describe("Veydrift backend", () => {
       owner: player,
       planetId: "7"
     });
+  });
+
+  test("persists watched planets and lists them paginated from indexed state", async () => {
+    const watcher = privateKeyToAccount("0x1111111111111111111111111111111111111111111111111111111111111111");
+    const watcherWallet = watcher.address as Address;
+    const defender = "0x4444444444444444444444444444444444444444" as Address;
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      owner: watcherWallet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xhome",
+      blockNumber: "123"
+    });
+    indexer.applyEvent({
+      ...planet,
+      planetId: "8",
+      owner: defender,
+      position: 10,
+      eventName: "PlanetStarted",
+      transactionHash: "0xwatched8",
+      blockNumber: "124"
+    });
+    indexer.applyEvent({
+      ...planet,
+      planetId: "9",
+      owner: defender,
+      position: 11,
+      eventName: "PlanetStarted",
+      transactionHash: "0xwatched9",
+      blockNumber: "125"
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+    const watchEightSignature = await watcher.signMessage({ message: watchedPlanetMessage(watcherWallet, "watch", "8") });
+    const watchNineSignature = await watcher.signMessage({ message: watchedPlanetMessage(watcherWallet, "watch", "9") });
+
+    const watchEight = await handler(new Request(`http://localhost/wallet/${watcherWallet}/watched-planets`, {
+      method: "POST",
+      body: JSON.stringify({ planetId: "8", signature: watchEightSignature }),
+      headers: { "content-type": "application/json" }
+    }));
+    const watchNine = await handler(new Request(`http://localhost/wallet/${watcherWallet}/watched-planets`, {
+      method: "POST",
+      body: JSON.stringify({ planetId: "9", signature: watchNineSignature }),
+      headers: { "content-type": "application/json" }
+    }));
+    const pageOne = await handler(new Request(`http://localhost/wallet/${watcherWallet}/watched-planets?page=1&pageSize=1`));
+    const body = await pageOne.json();
+
+    expect(watchEight.status).toBe(200);
+    expect(watchNine.status).toBe(200);
+    expect(pageOne.status).toBe(200);
+    expect(body.watchedPlanetIds).toEqual(["8", "9"]);
+    expect(body.pagination).toMatchObject({ page: 1, pageSize: 1, total: 2, totalPages: 2 });
+    expect(body.planets).toHaveLength(1);
+    expect(body.planets[0]).toMatchObject({
+      position: 10,
+      occupiedBy: {
+        owner: defender,
+        planetId: "8"
+      }
+    });
+  });
+
+  test("unwatches planets and rejects watching own planets", async () => {
+    const watcher = privateKeyToAccount("0x1111111111111111111111111111111111111111111111111111111111111111");
+    const watcherWallet = watcher.address as Address;
+    const defender = "0x4444444444444444444444444444444444444444" as Address;
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      owner: watcherWallet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xhome",
+      blockNumber: "123"
+    });
+    indexer.applyEvent({
+      ...planet,
+      planetId: "8",
+      owner: defender,
+      position: 10,
+      eventName: "PlanetStarted",
+      transactionHash: "0xwatched8",
+      blockNumber: "124"
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+    const ownSignature = await watcher.signMessage({ message: watchedPlanetMessage(watcherWallet, "watch", planet.planetId) });
+    const watchSignature = await watcher.signMessage({ message: watchedPlanetMessage(watcherWallet, "watch", "8") });
+    const unwatchSignature = await watcher.signMessage({ message: watchedPlanetMessage(watcherWallet, "unwatch", "8") });
+
+    const ownWatch = await handler(new Request(`http://localhost/wallet/${watcherWallet}/watched-planets`, {
+      method: "POST",
+      body: JSON.stringify({ planetId: planet.planetId, signature: ownSignature }),
+      headers: { "content-type": "application/json" }
+    }));
+    const watch = await handler(new Request(`http://localhost/wallet/${watcherWallet}/watched-planets`, {
+      method: "POST",
+      body: JSON.stringify({ planetId: "8", signature: watchSignature }),
+      headers: { "content-type": "application/json" }
+    }));
+    const unwatch = await handler(new Request(`http://localhost/wallet/${watcherWallet}/watched-planets/8`, {
+      method: "DELETE",
+      body: JSON.stringify({ signature: unwatchSignature }),
+      headers: { "content-type": "application/json" }
+    }));
+    const list = await handler(new Request(`http://localhost/wallet/${watcherWallet}/watched-planets`));
+    const body = await list.json();
+
+    expect(ownWatch.status).toBe(400);
+    expect(watch.status).toBe(200);
+    expect(unwatch.status).toBe(200);
+    expect(await unwatch.json()).toMatchObject({ watched: false, watchedPlanetIds: [] });
+    expect(body.watchedPlanetIds).toEqual([]);
+    expect(body.planets).toEqual([]);
+    expect(body.pagination.total).toBe(0);
+  });
+
+  test("rejects watched planet mutations signed by another wallet", async () => {
+    const watcher = privateKeyToAccount("0x1111111111111111111111111111111111111111111111111111111111111111");
+    const attacker = privateKeyToAccount("0x2222222222222222222222222222222222222222222222222222222222222222");
+    const watcherWallet = watcher.address as Address;
+    const defender = "0x4444444444444444444444444444444444444444" as Address;
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      owner: watcherWallet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xhome",
+      blockNumber: "123"
+    });
+    indexer.applyEvent({
+      ...planet,
+      planetId: "8",
+      owner: defender,
+      position: 10,
+      eventName: "PlanetStarted",
+      transactionHash: "0xwatched8",
+      blockNumber: "124"
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+    const wrongSignature = await attacker.signMessage({ message: watchedPlanetMessage(watcherWallet, "watch", "8") });
+
+    const watch = await handler(new Request(`http://localhost/wallet/${watcherWallet}/watched-planets`, {
+      method: "POST",
+      body: JSON.stringify({ planetId: "8", signature: wrongSignature }),
+      headers: { "content-type": "application/json" }
+    }));
+    const body = await watch.json();
+
+    expect(watch.status).toBe(401);
+    expect(body).toMatchObject({ error: "invalid_signature" });
+    expect(indexer.watchedPlanetIds(watcherWallet)).toEqual([]);
   });
 
   test("serves contract-aligned unoccupied planet preview traits", async () => {
