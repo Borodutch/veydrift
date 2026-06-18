@@ -625,6 +625,44 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Debris 600 M / 150 C");
   });
 
+  test("shows outcome and loot on a returned attack archive card when the report is embedded in the mission row", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      missionArchive: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        rows: [{
+          kind: "mission",
+          mission: mission({ missionId: "77", missionType: "Attack", status: "Returned" }),
+          report: battleReport("77"),
+        }],
+        pagination: {
+          page: 1,
+          pageSize: 25,
+          totalEntries: 1,
+          totalPages: 1,
+          hasPreviousPage: false,
+          hasNextPage: false,
+        },
+      },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Past missions");
+    expect(text).toContain("Loot 1,200 M / 300 C / 0 D");
+    expect(text).toContain("Outcome Attacker win");
+    expect(text).toContain("Losses 100 M / 50 C / 0 D / 900 M / 250 C / 0 D");
+  });
+
   test("renders a standalone battle report row when no completed mission matches", () => {
     const page = missionControlPage({
       fleetVisibility: {
