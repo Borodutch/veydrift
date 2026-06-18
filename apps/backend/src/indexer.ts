@@ -5564,6 +5564,7 @@ export class SettlementIndexer {
       crystal: row.crystal_cargo,
       deuterium: row.deuterium_cargo
     };
+    const canonicalEventMission = parseCanonicalFleetMissionEvent(row.event_json);
     const base = eventMission ?? {
       missionId: row.mission_id,
       recallCost: null,
@@ -5578,8 +5579,25 @@ export class SettlementIndexer {
       launchBlockNumber: this.metadata("lastReconciledBlock") ?? "0",
       needsResolution: false
     };
+    const mergedBase = canonicalEventMission
+      ? {
+        ...base,
+        recallCost: canonicalEventMission.recallCost ?? base.recallCost,
+        attackGroupId: canonicalEventMission.attackGroupId,
+        joinedAttackMissionIds: canonicalEventMission.joinedAttackMissionIds,
+        defendsMissionId: canonicalEventMission.defendsMissionId,
+        counterplayDefenderMissionIds: canonicalEventMission.counterplayDefenderMissionIds,
+        returnCargo: canonicalEventMission.returnCargo,
+        ships: canonicalEventMission.ships,
+        transactionHash: canonicalEventMission.transactionHash,
+        blockNumber: canonicalEventMission.blockNumber,
+        launchBlockNumber: canonicalEventMission.launchBlockNumber,
+        needsResolution: canonicalEventMission.needsResolution,
+        ...(canonicalEventMission.randomnessRequestId ? { randomnessRequestId: canonicalEventMission.randomnessRequestId } : {})
+      }
+      : base;
     return {
-      ...base,
+      ...mergedBase,
       missionId: row.mission_id,
       status: fleetMissionStatusLabel(row.status_id),
       missionType: fleetMissionTypeLabel(row.mission_type_id),
@@ -5590,7 +5608,7 @@ export class SettlementIndexer {
       returnAt: row.return_at,
       fuelCost: row.fuel_cost,
       cargo,
-      recallCost: row.status_id === 1 && base.recallCost === null ? projectedFleetRecallCost(row.fuel_cost) : base.recallCost,
+      recallCost: row.status_id === 1 && mergedBase.recallCost === null ? projectedFleetRecallCost(row.fuel_cost) : mergedBase.recallCost,
       ...(row.randomness_request_id ? { randomnessRequestId: row.randomness_request_id } : {})
     };
   }
@@ -6029,6 +6047,11 @@ type ContractFleetMissionRow = {
   deuterium_cargo: string;
   ships_json: string;
   randomness_request_id: string | null;
+  event_json: string | null;
+};
+
+type CanonicalFleetMissionPayload = {
+  mission?: FleetMissionSummary;
 };
 
 function moonChanceReportKey(event: MoonChanceReportEvent): string {
@@ -6137,6 +6160,31 @@ function parseJson<T>(value: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function parseCanonicalFleetMissionEvent(value: string | null): FleetMissionSummary | null {
+  if (!value) return null;
+  const payload = parseJson<CanonicalFleetMissionPayload | FleetMissionSummary | null>(value, null);
+  if (!payload || typeof payload !== "object") return null;
+  const mission = "mission" in payload ? payload.mission : payload;
+  return isStoredFleetMissionSummary(mission) ? mission : null;
+}
+
+function isStoredFleetMissionSummary(value: unknown): value is FleetMissionSummary {
+  if (!value || typeof value !== "object") return false;
+  const mission = value as Partial<FleetMissionSummary>;
+  return typeof mission.missionId === "string"
+    && typeof mission.transactionHash === "string"
+    && typeof mission.blockNumber === "string"
+    && typeof mission.launchBlockNumber === "string"
+    && mission.returnCargo !== undefined
+    && typeof mission.ships === "object"
+    && mission.ships !== null
+    && mission.attackGroupId !== undefined
+    && Array.isArray(mission.joinedAttackMissionIds)
+    && Array.isArray(mission.counterplayDefenderMissionIds)
+    && mission.defendsMissionId !== undefined
+    && mission.needsResolution !== undefined;
 }
 
 function openIndexerDatabase(databasePath: string): Database {
