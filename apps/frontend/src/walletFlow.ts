@@ -333,7 +333,7 @@ export type WalletOverviewSnapshotResponse = {
 };
 
 export type FleetMissionArchiveEntry =
-  | { kind: "mission"; mission: FleetMissionSummary }
+  | { kind: "mission"; mission: FleetMissionSummary; report?: BattleReport | undefined }
   | { kind: "battleReport"; report: BattleReport };
 
 // Universe-wide (no wallet scope) active missions for the Mission Control "All" active tab.

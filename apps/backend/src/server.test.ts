@@ -1214,6 +1214,63 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("embeds matching battle reports into completed attack archive rows before pagination", async () => {
+    const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+    const chainReader = new class extends MockChainReader {
+      override async getFleetMissionVisibility(): Promise<never> {
+        throw new Error("mission archive must not call chain reader");
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xhomeplanet",
+      blockNumber: "100"
+    });
+    for (const log of completedFleetMissionLogs({ missionId: 77n, owner: player, originPlanetId: 7n, targetPlanetId: 8n })) {
+      indexer.applyLog(log);
+    }
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xbattleresolved-77",
+      logIndex: "0x0",
+      removed: false,
+      topics: [attackBattleResolvedTopic, topic(77n), addressTopic(player), topic(8n)],
+      data: abiWords(1n, 2n, 12345n, 75n, 25n, 0n)
+    });
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    })(new Request(`http://localhost/wallet/${player}/missions?status=completed&page=1&pageSize=1`));
+
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.pagination).toEqual({
+      page: 1,
+      pageSize: 1,
+      totalEntries: 1,
+      totalPages: 1,
+      hasPreviousPage: false,
+      hasNextPage: false
+    });
+    expect(body.rows).toHaveLength(1);
+    expect(body.rows[0]).toMatchObject({
+      kind: "mission",
+      mission: {
+        missionId: "77",
+        status: "Returned"
+      },
+      report: {
+        missionId: "77",
+        outcome: "AttackerWin",
+        loot: { metal: "75", crystal: "25", deuterium: "0" }
+      }
+    });
+  });
+
   test("serves universe-wide active missions from the indexed read model (all players, no wallet scope)", async () => {
     const otherPlayer = "0x5555555555555555555555555555555555555555" as Address;
     const chainReader = new MockChainReader();

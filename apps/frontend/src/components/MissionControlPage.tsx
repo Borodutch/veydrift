@@ -2228,7 +2228,10 @@ function missionsFromArchiveRows(rows: readonly FleetMissionArchiveEntry[]): Fle
 }
 
 function battleReportsFromArchiveRows(rows: readonly FleetMissionArchiveEntry[]): BattleReport[] {
-  return rows.flatMap((row) => (row.kind === "battleReport" ? [row.report] : []));
+  return rows.flatMap((row) => {
+    if (row.kind === "battleReport") return [row.report];
+    return row.report ? [row.report] : [];
+  });
 }
 
 // Return-leg loot keyed by mission id, gathered from every battle report visible across the live

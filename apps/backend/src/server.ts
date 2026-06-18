@@ -1658,10 +1658,34 @@ function chronologicalMissionArchiveRows(
   completedMissions: FleetMissionSummary[],
   battleReports: FleetMissionVisibility["battleReports"]
 ): FleetMissionArchiveEntry[] {
+  const reportsByMissionId = battleReportsByAssociatedMissionId(battleReports);
+  const completedMissionIds = new Set(completedMissions.map((mission) => mission.missionId));
   return [
-    ...completedMissions.map((mission): FleetMissionArchiveEntry => ({ kind: "mission", mission })),
-    ...battleReports.map((report): FleetMissionArchiveEntry => ({ kind: "battleReport", report })),
+    ...completedMissions.map((mission): FleetMissionArchiveEntry => ({
+      kind: "mission",
+      mission,
+      report: reportsByMissionId.get(mission.missionId)
+    })),
+    ...battleReports
+      .filter((report) => !associatedBattleReportMissionIds(report).some((missionId) => completedMissionIds.has(missionId)))
+      .map((report): FleetMissionArchiveEntry => ({ kind: "battleReport", report })),
   ].sort((left, right) => missionArchiveTimestamp(right) - missionArchiveTimestamp(left));
+}
+
+function battleReportsByAssociatedMissionId(
+  battleReports: FleetMissionVisibility["battleReports"]
+): Map<string, FleetMissionVisibility["battleReports"][number]> {
+  const lookup = new Map<string, FleetMissionVisibility["battleReports"][number]>();
+  for (const report of battleReports) {
+    for (const missionId of associatedBattleReportMissionIds(report)) {
+      lookup.set(missionId, report);
+    }
+  }
+  return lookup;
+}
+
+function associatedBattleReportMissionIds(report: FleetMissionVisibility["battleReports"][number]): string[] {
+  return [report.missionId, ...report.participants.map((participant) => participant.missionId)];
 }
 
 function missionArchiveTimestamp(row: FleetMissionArchiveEntry): number {

@@ -357,7 +357,7 @@ export type FleetMissionVisibility = {
 };
 
 export type FleetMissionArchiveEntry =
-  | { kind: "mission"; mission: FleetMissionSummary }
+  | { kind: "mission"; mission: FleetMissionSummary; report?: BattleReport | undefined }
   | { kind: "battleReport"; report: BattleReport };
 
 export type FleetMissionArchiveResponse = {
