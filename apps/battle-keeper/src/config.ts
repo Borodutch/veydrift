@@ -5,6 +5,7 @@
 
 export type KeeperConfig = {
   rpcUrl: string;
+  rpcFallbackUrls: string[];
   wsRpcUrl: string;
   gameContractAddress: `0x${string}`;
   keeperPrivateKey: `0x${string}`;
@@ -69,6 +70,7 @@ export function loadKeeperConfig(env: NodeJS.ProcessEnv = process.env): LoadConf
   if (!rpcUrl) {
     problems.push({ field: "RPC_URL", message: "RPC_URL (http JSON-RPC endpoint) is required." });
   }
+  const rpcFallbackUrls = splitUrlList(env.RPC_FALLBACK_URLS).filter((url) => url !== rpcUrl);
 
   const wsRpcUrl = env.WS_RPC_URL?.trim() ?? "";
   if (!wsRpcUrl) {
@@ -125,6 +127,7 @@ export function loadKeeperConfig(env: NodeJS.ProcessEnv = process.env): LoadConf
   return {
     config: {
       rpcUrl,
+      rpcFallbackUrls,
       wsRpcUrl,
       gameContractAddress: gameContractAddress as `0x${string}`,
       keeperPrivateKey: keeperPrivateKey as `0x${string}`,
@@ -143,6 +146,8 @@ export function loadKeeperConfig(env: NodeJS.ProcessEnv = process.env): LoadConf
 export function safeConfigSummary(config: KeeperConfig): Record<string, unknown> {
   return {
     rpcUrl: config.rpcUrl,
+    rpcFallbackConfigured: config.rpcFallbackUrls.length > 0,
+    rpcFallbackCount: config.rpcFallbackUrls.length,
     wsRpcUrl: config.wsRpcUrl,
     gameContractAddress: config.gameContractAddress,
     keeperPrivateKey: "[redacted]",
@@ -152,4 +157,16 @@ export function safeConfigSummary(config: KeeperConfig): Record<string, unknown>
     port: config.port,
     maxConcurrency: config.maxConcurrency
   };
+}
+
+function splitUrlList(value: string | undefined): string[] {
+  if (!value) return [];
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const url of value.split(",").map((item) => item.trim()).filter(Boolean)) {
+    if (seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
+  }
+  return urls;
 }

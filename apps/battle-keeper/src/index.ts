@@ -19,7 +19,7 @@ function main(): void {
 
   consoleLogger.info("[battle-keeper] starting", safeConfigSummary(config));
 
-  const transport = new HttpJsonRpcTransport(config.rpcUrl);
+  const transport = new HttpJsonRpcTransport([config.rpcUrl, ...config.rpcFallbackUrls]);
   const resolver = new ViemMissionResolver(
     transport,
     config.keeperPrivateKey,
@@ -60,6 +60,7 @@ function main(): void {
   const startedAtMs = Date.now();
   const handler = createHandler(keeper, listener, startedAtMs, () => Date.now(), {
     build: buildInfoFromEnv(),
+    rpc: transport,
     sweep
   });
   const server = Bun.serve({ port: config.port, fetch: handler });

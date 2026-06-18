@@ -963,14 +963,19 @@ export interface ChainReader {
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
   listAllianceLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listContractLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  failoverRpc?(reason: string): boolean;
   getBlockNumber?(): Promise<bigint>;
   rpcMetrics?(): RpcMetrics;
 }
 
 export type RpcMetrics = {
+  activeRpcUrl: string | null;
   batchRequests: number;
   callsByMethod: Record<string, number>;
+  failoverCount: number;
   httpRequests: number;
+  lastFailoverReason: string | null;
+  rpcUrls: string[];
   // Count of upstream RPC fetches aborted for exceeding the per-request deadline. Surfaced on /health
   // and /debug/indexer so an Alchemy live-read timeout storm is visible before it escalates to a crash
   // (VEY-KANEO-459).
@@ -1020,9 +1025,13 @@ export type RpcBlock = {
 
 export class HttpJsonRpcTransport {
   private readonly metrics: RpcMetrics = {
+    activeRpcUrl: null,
     batchRequests: 0,
     callsByMethod: {},
+    failoverCount: 0,
     httpRequests: 0,
+    lastFailoverReason: null,
+    rpcUrls: [],
     timeouts: 0
   };
   private readonly cache = new Map<string, RpcCacheEntry<unknown>>();
@@ -1031,11 +1040,19 @@ export class HttpJsonRpcTransport {
   private readonly requestTimeoutMs: number;
   private nextRequestAt = 0;
   private requestQueue: Promise<void> = Promise.resolve();
+  private readonly rpcUrls: string[];
+  private activeRpcIndex = 0;
 
   constructor(
-    private readonly rpcUrl: string,
+    rpcUrl: string | readonly string[],
     options: { cacheTtlMs?: number; minRequestIntervalMs?: number; requestTimeoutMs?: number } = {}
   ) {
+    this.rpcUrls = (Array.isArray(rpcUrl) ? rpcUrl : [rpcUrl]).filter((url) => url.trim().length > 0);
+    if (this.rpcUrls.length === 0) {
+      throw new Error("RPC URL is required.");
+    }
+    this.metrics.activeRpcUrl = this.activeRpcUrl();
+    this.metrics.rpcUrls = [...this.rpcUrls];
     this.cacheTtlMs = options.cacheTtlMs ?? 2_000;
     this.minRequestIntervalMs = options.minRequestIntervalMs ?? 300;
     this.requestTimeoutMs = options.requestTimeoutMs ?? defaultRpcRequestTimeoutMs();
@@ -1052,62 +1069,80 @@ export class HttpJsonRpcTransport {
   }
 
   private async requestUncached<T>(method: string, params: unknown[]): Promise<T> {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      this.metrics.httpRequests += 1;
-      let response: Response;
-      try {
-        response = await this.fetchRpc({
-          method: "POST",
-          headers: {
-            "content-type": "application/json"
-          },
-          body: JSON.stringify({
-            jsonrpc: "2.0",
-            id: 1,
-            method,
-            params
-          })
-        });
-      } catch (error) {
-        if (isRetryableTransportError(error) && attempt < 2) {
-          await retryDelay(attempt);
-          continue;
+    endpointLoop: for (let endpointAttempt = 0; endpointAttempt < this.rpcUrls.length; endpointAttempt += 1) {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        this.metrics.httpRequests += 1;
+        let response: Response;
+        try {
+          response = await this.fetchRpc({
+            method: "POST",
+            headers: {
+              "content-type": "application/json"
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method,
+              params
+            })
+          });
+        } catch (error) {
+          if (isRetryableTransportError(error) && attempt < 2) {
+            await retryDelay(attempt);
+            continue;
+          }
+          if (isRetryableTransportError(error) && this.failoverRpc("transport_error")) {
+            await retryDelay(0);
+            continue endpointLoop;
+          }
+          throw error;
         }
-        throw error;
-      }
 
-      if (!response.ok) {
-        if (isRetryableRpcHttpStatus(response.status) && attempt < 2) {
-          await retryDelay(attempt);
-          continue;
+        if (!response.ok) {
+          if (isRetryableRpcHttpStatus(response.status) && attempt < 2) {
+            await retryDelay(attempt);
+            continue;
+          }
+          if (isRetryableRpcHttpStatus(response.status) && this.failoverRpc(`http_${response.status}`)) {
+            await retryDelay(0);
+            continue endpointLoop;
+          }
+          throw new Error(`RPC HTTP ${response.status}`);
         }
-        throw new Error(`RPC HTTP ${response.status}`);
-      }
 
-      let body: JsonRpcResponse<T>;
-      try {
-        body = await readRpcJson<JsonRpcResponse<T>>(response);
-      } catch (error) {
-        // A truncated/empty body (e.g. the node cutting the stream short) is transient — retry.
-        if (error instanceof RpcResponseParseError && attempt < 2) {
-          await retryDelay(attempt);
-          continue;
+        let body: JsonRpcResponse<T>;
+        try {
+          body = await readRpcJson<JsonRpcResponse<T>>(response);
+        } catch (error) {
+          // A truncated/empty body (e.g. the node cutting the stream short) is transient — retry.
+          if (error instanceof RpcResponseParseError && attempt < 2) {
+            await retryDelay(attempt);
+            continue;
+          }
+          if (error instanceof RpcResponseParseError && this.failoverRpc("rpc_response_parse_error")) {
+            await retryDelay(0);
+            continue endpointLoop;
+          }
+          throw error;
         }
-        throw error;
-      }
-      if (body.error) {
-        if (isRetryableRpcError(body.error) && attempt < 2) {
-          await retryDelay(attempt);
-          continue;
+        if (body.error) {
+          if (isRetryableRpcError(body.error) && attempt < 2) {
+            await retryDelay(attempt);
+            continue;
+          }
+          if (isRetryableRpcError(body.error) && this.failoverRpc(`rpc_${body.error.code}`)) {
+            await retryDelay(0);
+            continue endpointLoop;
+          }
+          throw new Error(`RPC ${body.error.code}: ${body.error.message}`);
         }
-        throw new Error(`RPC ${body.error.code}: ${body.error.message}`);
-      }
 
-      if (body.result === undefined) {
-        throw new Error("RPC response missing result.");
-      }
+        if (body.result === undefined) {
+          throw new Error("RPC response missing result.");
+        }
 
-      return body.result;
+        return body.result;
+      }
     }
 
     throw new Error("RPC request failed after retries.");
@@ -1180,85 +1215,107 @@ export class HttpJsonRpcTransport {
   }
 
   private async requestBatchUncached<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      this.metrics.batchRequests += 1;
-      this.metrics.httpRequests += 1;
+    endpointLoop: for (let endpointAttempt = 0; endpointAttempt < this.rpcUrls.length; endpointAttempt += 1) {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        this.metrics.batchRequests += 1;
+        this.metrics.httpRequests += 1;
 
-      let response: Response;
-      try {
-        response = await this.fetchRpc({
-          method: "POST",
-          headers: {
-            "content-type": "application/json"
-          },
-          body: JSON.stringify(requests.map((request, index) => ({
-            jsonrpc: "2.0",
-            id: index + 1,
-            method: request.method,
-            params: request.params
-          })))
+        let response: Response;
+        try {
+          response = await this.fetchRpc({
+            method: "POST",
+            headers: {
+              "content-type": "application/json"
+            },
+            body: JSON.stringify(requests.map((request, index) => ({
+              jsonrpc: "2.0",
+              id: index + 1,
+              method: request.method,
+              params: request.params
+            })))
+          });
+        } catch (error) {
+          if (isRetryableTransportError(error) && attempt < 2) {
+            await retryDelay(attempt);
+            continue;
+          }
+          if (isRetryableTransportError(error) && this.failoverRpc("transport_error")) {
+            await retryDelay(0);
+            continue endpointLoop;
+          }
+          throw error;
+        }
+
+        if (!response.ok) {
+          if (isRetryableRpcHttpStatus(response.status) && attempt < 2) {
+            await retryDelay(attempt);
+            continue;
+          }
+          if (isRetryableRpcHttpStatus(response.status) && this.failoverRpc(`http_${response.status}`)) {
+            await retryDelay(0);
+            continue endpointLoop;
+          }
+          throw new Error(`RPC HTTP ${response.status}`);
+        }
+
+        let body: JsonRpcResponse<T> | Array<JsonRpcResponse<T> & { id?: number }>;
+        try {
+          body = await readRpcJson<JsonRpcResponse<T> | Array<JsonRpcResponse<T> & { id?: number }>>(response);
+        } catch (error) {
+          // An oversized batch response truncated mid-stream throws "Unexpected end of JSON input" here.
+          // Retry the batch; if it keeps failing the typed error makes batchCallContract fall back to
+          // sequential single calls, whose small responses never truncate (VEY-KANEO-461).
+          if (error instanceof RpcResponseParseError && attempt < 2) {
+            await retryDelay(attempt);
+            continue;
+          }
+          if (error instanceof RpcResponseParseError && this.failoverRpc("rpc_response_parse_error")) {
+            await retryDelay(0);
+            continue endpointLoop;
+          }
+          throw error;
+        }
+        if (!Array.isArray(body)) {
+          if (body.error && isRetryableRpcError(body.error) && attempt < 2) {
+            await retryDelay(attempt);
+            continue;
+          }
+          if (body.error && isRetryableRpcError(body.error) && this.failoverRpc(`rpc_${body.error.code}`)) {
+            await retryDelay(0);
+            continue endpointLoop;
+          }
+          if (body.error) {
+            throw new Error(`RPC ${body.error.code}: ${body.error.message}`);
+          }
+          throw new Error("RPC batch response missing items.");
+        }
+
+        const bodies = body;
+        const retryableError = bodies.find((body) => body.error && isRetryableRpcError(body.error));
+        if (retryableError?.error && attempt < 2) {
+          await retryDelay(attempt);
+          continue;
+        }
+        if (retryableError?.error && this.failoverRpc(`rpc_${retryableError.error.code}`)) {
+          await retryDelay(0);
+          continue endpointLoop;
+        }
+        const byId = new Map(bodies.map((body) => [body.id, body]));
+
+        return requests.map((_, index) => {
+          const body = byId.get(index + 1);
+          if (!body) {
+            throw new Error("RPC batch response missing item.");
+          }
+          if (body.error) {
+            throw new Error(`RPC ${body.error.code}: ${body.error.message}`);
+          }
+          if (body.result === undefined) {
+            throw new Error("RPC response missing result.");
+          }
+          return body.result;
         });
-      } catch (error) {
-        if (isRetryableTransportError(error) && attempt < 2) {
-          await retryDelay(attempt);
-          continue;
-        }
-        throw error;
       }
-
-      if (!response.ok) {
-        if (isRetryableRpcHttpStatus(response.status) && attempt < 2) {
-          await retryDelay(attempt);
-          continue;
-        }
-        throw new Error(`RPC HTTP ${response.status}`);
-      }
-
-      let body: JsonRpcResponse<T> | Array<JsonRpcResponse<T> & { id?: number }>;
-      try {
-        body = await readRpcJson<JsonRpcResponse<T> | Array<JsonRpcResponse<T> & { id?: number }>>(response);
-      } catch (error) {
-        // An oversized batch response truncated mid-stream throws "Unexpected end of JSON input" here.
-        // Retry the batch; if it keeps failing the typed error makes batchCallContract fall back to
-        // sequential single calls, whose small responses never truncate (VEY-KANEO-461).
-        if (error instanceof RpcResponseParseError && attempt < 2) {
-          await retryDelay(attempt);
-          continue;
-        }
-        throw error;
-      }
-      if (!Array.isArray(body)) {
-        if (body.error && isRetryableRpcError(body.error) && attempt < 2) {
-          await retryDelay(attempt);
-          continue;
-        }
-        if (body.error) {
-          throw new Error(`RPC ${body.error.code}: ${body.error.message}`);
-        }
-        throw new Error("RPC batch response missing items.");
-      }
-
-      const bodies = body;
-      const retryableError = bodies.find((body) => body.error && isRetryableRpcError(body.error));
-      if (retryableError?.error && attempt < 2) {
-        await retryDelay(attempt);
-        continue;
-      }
-      const byId = new Map(bodies.map((body) => [body.id, body]));
-
-      return requests.map((_, index) => {
-        const body = byId.get(index + 1);
-        if (!body) {
-          throw new Error("RPC batch response missing item.");
-        }
-        if (body.error) {
-          throw new Error(`RPC ${body.error.code}: ${body.error.message}`);
-        }
-        if (body.result === undefined) {
-          throw new Error("RPC response missing result.");
-        }
-        return body.result;
-      });
     }
 
     throw new Error("RPC batch request failed after retries.");
@@ -1266,11 +1323,25 @@ export class HttpJsonRpcTransport {
 
   snapshot(): RpcMetrics {
     return {
+      activeRpcUrl: this.activeRpcUrl(),
       batchRequests: this.metrics.batchRequests,
       callsByMethod: { ...this.metrics.callsByMethod },
+      failoverCount: this.metrics.failoverCount,
       httpRequests: this.metrics.httpRequests,
+      lastFailoverReason: this.metrics.lastFailoverReason,
+      rpcUrls: [...this.rpcUrls],
       timeouts: this.metrics.timeouts
     };
+  }
+
+  failoverRpc(reason: string): boolean {
+    if (this.rpcUrls.length <= 1) return false;
+    this.activeRpcIndex = (this.activeRpcIndex + 1) % this.rpcUrls.length;
+    this.cache.clear();
+    this.metrics.failoverCount += 1;
+    this.metrics.lastFailoverReason = reason;
+    this.metrics.activeRpcUrl = this.activeRpcUrl();
+    return true;
   }
 
   private countRpc(method: string): void {
@@ -1301,14 +1372,14 @@ export class HttpJsonRpcTransport {
   // at the deadline frees the socket promptly and surfaces a retryable timeout error (VEY-KANEO-459).
   private async fetchWithTimeout(init: RequestInit): Promise<Response> {
     if (!Number.isFinite(this.requestTimeoutMs) || this.requestTimeoutMs <= 0) {
-      return fetch(this.rpcUrl, init);
+      return fetch(this.activeRpcUrl(), init);
     }
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
     timer.unref?.();
     try {
-      return await fetch(this.rpcUrl, { ...init, signal: controller.signal });
+      return await fetch(this.activeRpcUrl(), { ...init, signal: controller.signal });
     } catch (error) {
       if (controller.signal.aborted) {
         this.metrics.timeouts += 1;
@@ -1352,6 +1423,10 @@ export class HttpJsonRpcTransport {
     if (!isCacheableRpcMethod(method)) return null;
     return `${method}:${JSON.stringify(params)}`;
   }
+
+  private activeRpcUrl(): string {
+    return this.rpcUrls[this.activeRpcIndex] ?? this.rpcUrls[0]!;
+  }
 }
 
 function createDeferred<T>(): Deferred<T> {
@@ -1372,7 +1447,7 @@ function isCacheableRpcMethod(method: string): boolean {
 }
 
 export class VeydriftGameReader implements ChainReader {
-  private readonly transport: Pick<HttpJsonRpcTransport, "request"> & Partial<Pick<HttpJsonRpcTransport, "requestBatch" | "snapshot">>;
+  private readonly transport: Pick<HttpJsonRpcTransport, "request"> & Partial<Pick<HttpJsonRpcTransport, "failoverRpc" | "requestBatch" | "snapshot">>;
   private readonly gameContractAddress: Address;
   private readonly allianceContractAddress: Address | undefined;
   private readonly moonContractAddress: Address | undefined;
@@ -1390,7 +1465,7 @@ export class VeydriftGameReader implements ChainReader {
 
   constructor(
     config: BackendConfig,
-    transport?: Pick<HttpJsonRpcTransport, "request"> & Partial<Pick<HttpJsonRpcTransport, "requestBatch" | "snapshot">>,
+    transport?: Pick<HttpJsonRpcTransport, "request"> & Partial<Pick<HttpJsonRpcTransport, "failoverRpc" | "requestBatch" | "snapshot">>,
     options: VeydriftGameReaderOptions = {}
   ) {
     if (!config.rpcUrl) {
@@ -1400,7 +1475,10 @@ export class VeydriftGameReader implements ChainReader {
       throw new Error("VeydriftGame contract address is required.");
     }
 
-    this.transport = transport ?? new HttpJsonRpcTransport(config.rpcUrl);
+    this.transport = transport ?? new HttpJsonRpcTransport([
+      config.rpcUrl,
+      ...(config.rpcFallbackUrls ?? [])
+    ]);
     this.allianceContractAddress = config.allianceContractAddress;
     this.gameContractAddress = config.gameContractAddress;
     this.moonContractAddress = config.moonContractAddress;
@@ -1417,9 +1495,17 @@ export class VeydriftGameReader implements ChainReader {
     return this.transport.snapshot?.() ?? {
       batchRequests: 0,
       callsByMethod: {},
+      activeRpcUrl: null,
+      failoverCount: 0,
       httpRequests: 0,
+      lastFailoverReason: null,
+      rpcUrls: [],
       timeouts: 0
     };
+  }
+
+  failoverRpc(reason: string): boolean {
+    return this.transport.failoverRpc?.(reason) ?? false;
   }
 
   async getWalletSettlement(wallet: Address): Promise<WalletSettlement> {

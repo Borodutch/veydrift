@@ -64,6 +64,7 @@ class MockBackfiller {
   head: bigint;
   headError: Error | null = null;
   logsError: Error | null = null;
+  failoverReasons: string[] = [];
   ranges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   headCalls = 0;
   logsFor: (from: bigint, to: bigint | "latest") => TestLog[];
@@ -83,6 +84,11 @@ class MockBackfiller {
     this.ranges.push({ from, to });
     if (this.logsError) throw this.logsError;
     return this.logsFor(from, to);
+  }
+
+  failoverRpc(reason: string): boolean {
+    this.failoverReasons.push(reason);
+    return true;
   }
 }
 
@@ -394,9 +400,10 @@ describe("ChainSyncService (polling)", () => {
     expect(service.snapshot()).toMatchObject({
       connected: false,
       headStallPollCount: 30,
-      lastError: "RPC head stalled at block 384",
+      lastError: "RPC head stalled at block 384; failed over to fallback RPC",
       latestHeadBlock: "384"
     });
+    expect(backfiller.failoverReasons).toEqual(["rpc_head_stalled:384"]);
     expect(indexer.snapshot()).toMatchObject({
       pendingReconciliationReason: "rpc_head_stalled:384",
       safeToServeIndexedState: false,

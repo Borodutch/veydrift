@@ -11,6 +11,7 @@ import type { SettlementIndexer } from "./indexer";
 // ranges are idempotent. Combat/fleet logs may also enqueue a planet-scoped canonical heal when the
 // contract does not emit enough per-unit survivor data to update ship/defense rows from logs alone.
 type LogBackfiller = {
+  failoverRpc?(reason: string): boolean;
   getHeadBlock(): Promise<bigint>;
   listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
 };
@@ -299,8 +300,11 @@ export class ChainSyncService {
     this.latestHeadBlock = headLabel;
     this.connected = false;
     this.pollFailureCount = CONNECTED_FAILURE_THRESHOLD;
-    this.lastError = `RPC head stalled at block ${headLabel}`;
     this.headStallReason = `rpc_head_stalled:${headLabel}`;
+    const failedOver = this.options.logBackfiller?.failoverRpc?.(this.headStallReason) ?? false;
+    this.lastError = failedOver
+      ? `RPC head stalled at block ${headLabel}; failed over to fallback RPC`
+      : `RPC head stalled at block ${headLabel}`;
     this.indexer?.markStale?.(this.headStallReason);
   }
 

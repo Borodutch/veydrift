@@ -244,9 +244,13 @@ export class CachedChainReader implements ChainReader {
 
   rpcMetrics(): RpcMetrics {
     return this.inner.rpcMetrics?.() ?? {
+      activeRpcUrl: null,
       batchRequests: 0,
       callsByMethod: {},
+      failoverCount: 0,
       httpRequests: 0,
+      lastFailoverReason: null,
+      rpcUrls: [],
       timeouts: 0
     };
   }

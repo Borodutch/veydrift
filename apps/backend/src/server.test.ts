@@ -744,6 +744,8 @@ describe("Veydrift backend", () => {
           deuterium: false,
           metal: false
         },
+        rpcFallbackConfigured: false,
+        rpcFallbackCount: 0,
         rpcSource: "missing",
         wsRpcSource: "missing",
         hasWsRpcUrl: false,

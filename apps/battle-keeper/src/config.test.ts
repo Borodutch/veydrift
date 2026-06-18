@@ -14,6 +14,7 @@ describe("loadKeeperConfig", () => {
     const { config, problems } = loadKeeperConfig(validEnv);
     expect(problems).toEqual([]);
     expect(config).not.toBeNull();
+    expect(config?.rpcFallbackUrls).toEqual([]);
     expect(config?.chainId).toBe(84532);
     expect(config?.sweepIntervalMs).toBe(10_000);
     expect(config?.resolveIntervalMs).toBe(2_000);
@@ -63,6 +64,19 @@ describe("loadKeeperConfig", () => {
     expect(config?.port).toBe(9000);
     expect(config?.sweepIntervalMs).toBe(30_000);
     expect(config?.maxConcurrency).toBe(5);
+  });
+
+  test("loads static HTTP RPC fallback URLs", () => {
+    const { config, problems } = loadKeeperConfig({
+      ...validEnv,
+      RPC_FALLBACK_URLS: "http://localhost:8545, https://fallback.example/rpc"
+    });
+    expect(problems).toEqual([]);
+    expect(config?.rpcFallbackUrls).toEqual(["https://fallback.example/rpc"]);
+    expect(safeConfigSummary(config!)).toMatchObject({
+      rpcFallbackConfigured: true,
+      rpcFallbackCount: 1
+    });
   });
 
   test("safeConfigSummary redacts the private key", () => {
