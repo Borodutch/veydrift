@@ -111,6 +111,7 @@ export type ServerDependencies = {
   config?: BackendConfig;
   configProblems?: ConfigProblem[];
   chainReader?: ChainReader;
+  enableResponseCache?: boolean;
   randomnessCommitter?: RandomnessCommitterService;
   indexer?: SettlementIndexer;
   // Worker role in the multi-process pool (VEY-KANEO-466). "writer" (the default) owns chain-sync
@@ -218,12 +219,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const responseCache = new Map<string, CachedJsonResponse>();
   const inflightResponseCache = new Map<string, Promise<CachedJsonResponse | null>>();
   const galaxySystemCache = new Map<string, GalaxySystemCacheEntry>();
-  const enableResponseCache =
+  const enableResponseCache = dependencies.enableResponseCache ?? (
     !dependencies.chainReader
     && !dependencies.chainSync
     && !dependencies.config
     && !dependencies.indexer
-    && !dependencies.randomnessCommitter;
+    && !dependencies.randomnessCommitter
+  );
 
   const handleRequest = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -1027,7 +1029,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     const url = new URL(request.url);
     const cacheTtlMs = enableResponseCache ? cacheableJsonRequestTtlMs(request, url) : 0;
     if (cacheTtlMs > 0) {
-      const cacheKey = `${request.method} ${url.pathname}${url.search}`;
+      const cacheKey = cacheableJsonRequestKey(request, url, indexer);
       const cached = responseCache.get(cacheKey);
       if (cached && cached.expiresAt > Date.now()) {
         return cachedJsonResponse(cached);
@@ -1150,6 +1152,11 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   return 0;
 }
 
+function cacheableJsonRequestKey(request: Request, url: URL, indexer: SettlementIndexer | undefined): string {
+  const indexerVersion = indexer ? indexer.responseCacheVersion() : "none";
+  return `${request.method} ${url.pathname}${url.search} indexer=${indexerVersion}`;
+}
+
 function cachedJsonResponse(cached: CachedJsonResponse): Response {
   return new Response(cached.body.slice(0), {
     headers: cached.headers,
@@ -1179,16 +1186,18 @@ function prewarmHotResponseCache(
 ): void {
   if (!enabled || !indexer) return;
 
+  let paths: string[] = [];
   try {
     indexer.allActiveFleetMissions();
     globalMissionArchiveRows(indexer);
+    paths = hotResponseCachePaths(indexer);
   } catch {
     // Best-effort only. A cold/stale index should not make worker startup fail.
   }
 
   const timer = setTimeout(() => {
     void (async () => {
-      for (const path of hotResponseCachePaths(indexer)) {
+      for (const path of paths) {
         try {
           const response = await serve(new Request(`http://localhost${path}`));
           await response.arrayBuffer();
@@ -1799,15 +1808,17 @@ function globalMissionArchive(url: URL, indexer: SettlementIndexer): GlobalMissi
   };
 }
 
-const globalMissionArchiveRowsCache = new WeakMap<SettlementIndexer, { expiresAt: number; rows: FleetMissionArchiveEntry[] }>();
+const globalMissionArchiveRowsCache = new WeakMap<SettlementIndexer, { expiresAt: number; stateVersion: string; rows: FleetMissionArchiveEntry[] }>();
 
 function globalMissionArchiveRows(indexer: SettlementIndexer): FleetMissionArchiveEntry[] {
+  const stateVersion = indexer.responseCacheVersion();
   const cached = globalMissionArchiveRowsCache.get(indexer);
-  if (cached && cached.expiresAt > Date.now()) return cached.rows;
+  if (cached && cached.stateVersion === stateVersion && cached.expiresAt > Date.now()) return cached.rows;
 
   const rows = chronologicalMissionArchiveRows(indexer.allCompletedFleetMissions(), indexer.battleReports());
   globalMissionArchiveRowsCache.set(indexer, {
     expiresAt: Date.now() + 60_000,
+    stateVersion,
     rows
   });
   return rows;

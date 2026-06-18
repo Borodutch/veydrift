@@ -1,5 +1,8 @@
 import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
 import { createHmac } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
 import { resolveWsRpcUrl, type BackendConfig } from "./config";
 import type {
@@ -73,6 +76,7 @@ const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a96
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
+const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
@@ -1333,6 +1337,50 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("refreshes global completed mission archive rows when a resolved attack report is indexed", async () => {
+    const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xhomeplanet",
+      blockNumber: "100"
+    });
+    for (const log of completedFleetMissionLogs({ missionId: 88n, owner: player, originPlanetId: 7n, targetPlanetId: 8n })) {
+      indexer.applyLog(log);
+    }
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
+
+    const beforeReportResponse = await handler(new Request("http://localhost/missions?status=completed&page=1&pageSize=25"));
+    const beforeReportBody = await beforeReportResponse.json();
+    expect(beforeReportResponse.status).toBe(200);
+    expect(beforeReportBody.rows[0]).toMatchObject({ kind: "mission", mission: { missionId: "88" } });
+    expect(beforeReportBody.rows[0].report).toBeUndefined();
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xbattleresolved-88",
+      logIndex: "0x0",
+      removed: false,
+      topics: [attackBattleResolvedTopic, topic(88n), addressTopic(player), topic(8n)],
+      data: abiWords(1n, 2n, 12345n, 75n, 25n, 0n)
+    });
+
+    const afterReportResponse = await handler(new Request("http://localhost/missions?status=completed&page=1&pageSize=25"));
+    const afterReportBody = await afterReportResponse.json();
+    expect(afterReportResponse.status).toBe(200);
+    expect(afterReportBody.rows[0]).toMatchObject({
+      kind: "mission",
+      mission: { missionId: "88" },
+      report: {
+        missionId: "88",
+        outcome: "AttackerWin",
+        loot: { metal: "75", crystal: "25", deuterium: "0" }
+      }
+    });
+  });
+
   test("serves universe-wide active missions from the indexed read model (all players, no wallet scope)", async () => {
     const otherPlayer = "0x5555555555555555555555555555555555555555" as Address;
     const chainReader = new MockChainReader();
@@ -1467,6 +1515,150 @@ describe("Veydrift backend", () => {
       defenses: [{ id: 4, count: 3 }],
       stationedDefenders: []
     });
+  });
+
+  test("refreshes cached mission detail when a resolved attack report is indexed", async () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+    const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.applyEvent({
+      ...planet,
+      planetId: "9",
+      owner: attacker,
+      eventName: "PlanetStarted",
+      transactionHash: "0xtargetplanet",
+      blockNumber: "100"
+    });
+    for (const log of completedFleetMissionLogs({ missionId: 89n, owner: attacker, originPlanetId: 7n, targetPlanetId: 9n })) {
+      indexer.applyLog(log);
+    }
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      enableResponseCache: true,
+      indexer
+    });
+
+    const beforeReportResponse = await handler(new Request("http://localhost/mission/89"));
+    const beforeReportBody = await beforeReportResponse.json();
+    expect(beforeReportResponse.status).toBe(200);
+    expect(beforeReportBody.mission).toMatchObject({ missionId: "89", status: "Returned" });
+    expect(beforeReportBody.battleReport).toBeNull();
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xbattleresolved-89",
+      logIndex: "0x0",
+      removed: false,
+      topics: [attackBattleResolvedTopic, topic(89n), addressTopic(attacker), topic(9n)],
+      data: abiWords(1n, 2n, 12345n, 100n, 50n, 10n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xcombatlosses-89",
+      logIndex: "0x0",
+      removed: false,
+      topics: [combatLossesTopic, topic(89n)],
+      data: abiWords(100n, 50n, 0n, 900n, 250n, 0n)
+    });
+
+    const afterReportResponse = await handler(new Request("http://localhost/mission/89"));
+    const afterReportBody = await afterReportResponse.json();
+    expect(afterReportResponse.status).toBe(200);
+    expect(afterReportBody.battleReport).toMatchObject({
+      missionId: "89",
+      outcome: "AttackerWin",
+      loot: { metal: "100", crystal: "50", deuterium: "10" },
+      attackerLosses: { metal: "100", crystal: "50", deuterium: "0" },
+      defenderLosses: { metal: "900", crystal: "250", deuterium: "0" }
+    });
+  });
+
+  test("refreshes reader-worker cached mission detail after another process indexes resolved attack logs", async () => {
+    const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+    const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-server-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    try {
+      const writer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, { databasePath });
+      writer.applyEvent({
+        ...planet,
+        eventName: "PlanetStarted",
+        transactionHash: "0xhomeplanet",
+        blockNumber: "100"
+      });
+      for (const log of activeFleetMissionLogs({ missionId: 1777n, missionTypeId: 3n, owner: player, originPlanetId: 7n, targetPlanetId: 8n })) {
+        writer.applyLog(log);
+      }
+
+      const reader = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, {
+        databasePath,
+        runStartupBackfill: false
+      });
+      const handler = createRequestHandler({
+        config: configuredTestConfig,
+        chainReader: new MockChainReader(),
+        enableResponseCache: true,
+        indexer: reader
+      });
+
+      const beforeReportResponse = await handler(new Request("http://localhost/mission/1777"));
+      const beforeReportBody = await beforeReportResponse.json();
+      expect(beforeReportResponse.status).toBe(200);
+      expect(beforeReportBody.mission).toMatchObject({ missionId: "1777", status: "Outbound" });
+      expect(beforeReportBody.battleReport).toBeNull();
+
+      writer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xbattleresolved-1777",
+        logIndex: "0x0",
+        removed: false,
+        topics: [attackBattleResolvedTopic, topic(1777n), addressTopic(player), topic(8n)],
+        data: abiWords(1n, 2n, 12345n, 3098n, 1448n, 454n)
+      });
+      writer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xbattleresolved-1777",
+        logIndex: "0x1",
+        removed: false,
+        topics: [combatLossesTopic, topic(1777n)],
+        data: abiWords(0n, 0n, 0n, 0n, 0n, 0n)
+      });
+      writer.applyLog({
+        blockNumber: "0x91",
+        transactionHash: "0xreturn-1777",
+        logIndex: "0x0",
+        removed: false,
+        topics: [fleetMissionReturnExposedTopic, topic(1777n), addressTopic(player), topic(4n)],
+        data: abiWords(7n, 8n, 1_800_000_300n + 1777n, 3098n, 1448n, 454n)
+      });
+      writer.applyLog({
+        blockNumber: "0x92",
+        transactionHash: "0xreturn-1777",
+        logIndex: "0x1",
+        removed: false,
+        topics: [fleetMissionReturnedTopic, topic(1777n), addressTopic(player), topic(7n)],
+        data: "0x"
+      });
+
+      const afterReportResponse = await handler(new Request("http://localhost/mission/1777"));
+      const afterReportBody = await afterReportResponse.json();
+      expect(afterReportResponse.status).toBe(200);
+      expect(afterReportBody.mission).toMatchObject({
+        missionId: "1777",
+        status: "Returned",
+        returnCargo: { metal: "3098", crystal: "1448", deuterium: "454" },
+        transactionHash: "0xreturn-1777"
+      });
+      expect(afterReportBody.battleReport).toMatchObject({
+        missionId: "1777",
+        loot: { metal: "3098", crystal: "1448", deuterium: "454" }
+      });
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
   });
 
   test("mission detail battle report carries historical battle-time defender composition instead of current defenses", async () => {

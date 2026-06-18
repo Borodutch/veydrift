@@ -363,6 +363,7 @@ export class SettlementIndexer {
   // changed state — never per request (VEY-KANEO-467).
   private stateGeneration = 0;
   private missionGeneration = 0;
+  private missionReadModelDbVersion: string | null = null;
   // Memoized full highscore leaderboard (every owner's score + their planets). The leaderboard is a
   // function of indexed state plus request-time lazy-completion projection. It is valid until the next
   // touch() or until the next active queue readyAt can change projected levels/counts.
@@ -1494,6 +1495,10 @@ export class SettlementIndexer {
   // memoization off "has the indexed state changed since I last computed this?" (VEY-KANEO-467).
   stateVersion(): number {
     return this.stateGeneration;
+  }
+
+  responseCacheVersion(): string {
+    return `${this.stateGeneration}:${this.currentMissionReadModelDbVersion()}`;
   }
 
   checkpointWal(mode: "PASSIVE" | "TRUNCATE" = "PASSIVE"): Array<{ busy: number; log: number; checkpointed: number }> {
@@ -5029,10 +5034,35 @@ export class SettlementIndexer {
 
   private touchMissionReadModel(): void {
     this.missionGeneration += 1;
+    this.missionReadModelDbVersion = this.advanceMissionReadModelDbVersion();
     this.missionReadModelCache = null;
     this.decodedMissionLogCache = null;
     this.missionReferenceCache = null;
     this.attackLaunchSecondsCache.clear();
+  }
+
+  private currentMissionReadModelDbVersion(): string {
+    const version = this.metadata("missionReadModelVersion") ?? "0";
+    if (this.missionReadModelDbVersion !== version) {
+      this.missionReadModelDbVersion = version;
+      this.missionGeneration += 1;
+      this.missionReadModelCache = null;
+      this.decodedMissionLogCache = null;
+      this.missionReferenceCache = null;
+      this.attackLaunchSecondsCache.clear();
+    }
+    return version;
+  }
+
+  private advanceMissionReadModelDbVersion(): string {
+    this.snapshotCache = null;
+    const row = this.db.query(`
+      INSERT INTO indexer_metadata (key, value)
+      VALUES ('missionReadModelVersion', '1')
+      ON CONFLICT(key) DO UPDATE SET value = CAST(CAST(indexer_metadata.value AS INTEGER) + 1 AS TEXT)
+      RETURNING value
+    `).get() as MetadataRow | null;
+    return row?.value ?? this.metadata("missionReadModelVersion") ?? "0";
   }
 
   private recordLog(eventId: string, log: IndexedRpcLog): boolean {
@@ -5245,6 +5275,7 @@ export class SettlementIndexer {
   }
 
   private indexedFleetMissionSummaries(): FleetMissionSummary[] {
+    this.currentMissionReadModelDbVersion();
     // Fleet mission summaries are derived by decoding historical mission logs. Cache them in a short
     // bucket instead of the exact current second so hot read paths don't rescan the full event log table
     // every second on every API worker. Route-level response caches use similar TTLs; the UI already
@@ -5344,6 +5375,7 @@ export class SettlementIndexer {
     fulfilledRandomnessRequestIds: ReadonlySet<string>;
     battleReports: BattleReport[];
   } {
+    this.currentMissionReadModelDbVersion();
     const cached = this.decodedMissionLogCache;
     if (cached && cached.missionGeneration === this.missionGeneration) {
       return cached;
@@ -5485,6 +5517,7 @@ export class SettlementIndexer {
   // Launches whose block lacks an ingested timestamp are skipped (they cannot be placed in the 24h
   // window), which biases toward not-blocking rather than fabricating a window position.
   attackLaunchSecondsByTarget(attacker: `0x${string}`): Map<string, number[]> {
+    this.currentMissionReadModelDbVersion();
     const normalizedAttacker = attacker.toLowerCase();
     const cached = this.attackLaunchSecondsCache.get(normalizedAttacker);
     if (cached && cached.missionGeneration === this.missionGeneration) {
