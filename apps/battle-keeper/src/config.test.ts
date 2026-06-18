@@ -15,8 +15,8 @@ describe("loadKeeperConfig", () => {
     expect(problems).toEqual([]);
     expect(config).not.toBeNull();
     expect(config?.chainId).toBe(84532);
-    expect(config?.sweepIntervalMs).toBe(15_000);
-    expect(config?.resolveIntervalMs).toBe(5_000);
+    expect(config?.sweepIntervalMs).toBe(10_000);
+    expect(config?.resolveIntervalMs).toBe(2_000);
     expect(config?.port).toBe(8080);
     expect(config?.maxConcurrency).toBe(3);
   });

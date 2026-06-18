@@ -429,6 +429,7 @@ function MissionBattleReport({
   const defenderFleetUnits = compositionUnits(defenderState?.fleet, shipCatalog, shipAssetByKey);
   const defenderDefenseUnits = compositionUnits(defenderState?.defenses, defenseCatalog, defenseAssetByKey);
   const stationedDefenders = defenderState?.stationedDefenders ?? [];
+  const battleTimeDefenderUnits = report.roundReports[0]?.defenderUnits ?? null;
 
   return (
     <section className="rounded-lg border border-white/10 bg-[#101624] p-4">
@@ -446,9 +447,10 @@ function MissionBattleReport({
 
       {/* Two-sided report modelled on the classic combat report: the attacker column folds in the
           offensive fleet and cargo it carried, its losses, and the loot it grabbed; the defender
-          column carries its losses and surviving composition. The origin/target commanders are not
-          repeated here — they already render in the Route hero above. Fields the on-chain log does not
-          expose (defender composition, loot retained) are flagged compactly rather than fabricated.
+          column carries its losses, battle-time aggregate units, and current indexed composition.
+          The origin/target commanders are not repeated here — they already render in the Route hero
+          above. Fields the on-chain log does not expose (battle-time unit mix, loot retained) are
+          flagged compactly rather than fabricated.
           Debris is shown on its own below. */}
       <div className="grid gap-3 lg:grid-cols-2">
         <Panel title={isGroupedAttack ? "Attackers (group)" : "Attacker"}>
@@ -460,13 +462,17 @@ function MissionBattleReport({
         </Panel>
         <Panel title="Defender">
           <Row label="Fleet losses" value={formatResources(report.defenderLosses)} />
-          {/* Fleet/defenses are the defender planet's indexed composition (surviving force). "None"
-              when the planet had no fleet/defenses; a precise caveat only when it isn't charted. */}
+          {battleTimeDefenderUnits ? (
+            <Row label="Battle-time units" value={`${formatResource(battleTimeDefenderUnits)} aggregate units`} />
+          ) : null}
+          {/* Fleet/defenses are the defender planet's current indexed composition, not the missing
+              battle-time unit mix. "None" when the planet has no fleet/defenses; a precise caveat
+              only when it isn't charted. */}
           {defenderState ? (
             defenderFleetUnits.length > 0 || defenderDefenseUnits.length > 0 || stationedDefenders.length > 0 ? (
               <>
-                <Row label="Fleet" value={<UnitIcons units={defenderFleetUnits} />} />
-                <Row label="Defenses" value={<UnitIcons units={defenderDefenseUnits} />} />
+                <Row label="Current fleet" value={<UnitIcons units={defenderFleetUnits} />} />
+                <Row label="Current defenses" value={<UnitIcons units={defenderDefenseUnits} />} />
                 {stationedDefenders.length > 0 ? (
                   <Row
                     label="Stationed defenders"
@@ -486,10 +492,10 @@ function MissionBattleReport({
                 ) : null}
               </>
             ) : (
-              <Row label="Fleet / defenses" value="None" />
+              <Row label="Current fleet / defenses" value="None" />
             )
           ) : (
-            <Row label="Fleet / defenses" value="The defender planet isn't charted in the indexed state, so its surviving composition can't be derived." />
+            <Row label="Current fleet / defenses" value="The defender planet isn't charted in the indexed state, so its current composition can't be derived." />
           )}
         </Panel>
       </div>
@@ -758,12 +764,14 @@ function isCombatMission(mission: FleetMissionSummary): boolean {
 }
 
 // VEY-KANEO-425: a combat fleet has not fought yet while it is still outbound and en route (arrival
-// in the future), or when it was recalled before ever reaching its target. In those states there is
-// no battle to report, so the "No indexed battle report" notice is misleading noise and is hidden.
-// A due/arrived/returning/resolved mission falls through and keeps the notice, since a report is
-// genuinely expected (and merely missing/unindexed) at that point.
+// in the future), or when it was recalled before ever reaching its target. A fully-landed recalled
+// fleet decodes as Returned after FleetMissionReturned, but it keeps the emitted recallCost, so that
+// also means no battle ever happened. In those states the "No indexed battle report" notice is
+// misleading noise and is hidden. A due/arrived/returning/resolved mission falls through and keeps
+// the notice, since a report is genuinely expected (and merely missing/unindexed) at that point.
 function hasNotReachedCombat(mission: FleetMissionSummary, now: number): boolean {
   if (mission.status === "Recalled") return true;
+  if (mission.status === "Returned" && mission.recallCost !== null) return true;
   return mission.status === "Outbound" && !isMissionDue(mission, now);
 }
 

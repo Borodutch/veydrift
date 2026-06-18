@@ -71,6 +71,7 @@ const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c82
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
@@ -1463,6 +1464,53 @@ describe("Veydrift backend", () => {
       defenses: [{ id: 4, count: 3 }],
       stationedDefenders: []
     });
+  });
+
+  test("battle report endpoint distinguishes returned recalled attacks from missing indexed reports", async () => {
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+
+    const missionId = 1692n;
+    const arrivalAt = 1_800_010_000n;
+    const recallReturnAt = arrivalAt - 600n;
+    for (const log of activeFleetMissionLogs({
+      missionId,
+      missionTypeId: 3n,
+      owner: player,
+      originPlanetId: 7n,
+      targetPlanetId: 9n,
+    })) {
+      indexer.applyLog(log);
+    }
+    indexer.applyLog(fleetMissionLog({
+      topics: [fleetMissionRecalledTopic, topic(missionId), addressTopic(player)],
+      data: abiWords(recallReturnAt, 695n),
+      logIndex: Number(missionId * 10n + 3n),
+    }));
+    indexer.applyLog(fleetMissionLog({
+      topics: [fleetMissionReturnedTopic, topic(missionId), addressTopic(player), topic(7n)],
+      data: "0x",
+      logIndex: Number(missionId * 10n + 4n),
+    }));
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    })(new Request("http://localhost/battle-report/1692"));
+    const body = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(body).toMatchObject({
+      error: "battle_report_not_expected",
+      mission: {
+        missionId: "1692",
+        missionType: "Attack",
+        status: "Returned",
+        recallCost: "695"
+      }
+    });
+    expect(body.detail).not.toContain("catches up");
   });
 
   test("lightweight fleet visibility keeps active attack battle reports for Mission Control cards", async () => {
@@ -6558,6 +6606,7 @@ function completedFleetMissionLogs({
 // mission without the trailing "returned" event.
 function activeFleetMissionLogs(args: {
   missionId: bigint;
+  missionTypeId?: bigint;
   owner: Address;
   originPlanetId: bigint;
   targetPlanetId: bigint;
