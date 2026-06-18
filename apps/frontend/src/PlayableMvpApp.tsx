@@ -85,6 +85,12 @@ import {
   type ChainLoadStatus,
 } from "./overviewData";
 import {
+  hasPlanetSectionData,
+  planetSectionForPlanet,
+  setPlanetSectionValue,
+  type PlanetSectionStore,
+} from "./planetSectionStore";
+import {
   isTransientGameStateReadFailure,
   mergePendingMissionLaunches,
   missionLaunchMissionsForTransaction,
@@ -2359,6 +2365,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [watchedPlanetsPage, setWatchedPlanetsPage] = useState(1);
   const [watchBusyPlanetId, setWatchBusyPlanetId] = useState<string | undefined>();
   const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>();
+  const selectedManagedPlanet = useMemo(
+    () => walletPlanets.find((item) => item.planetId === (selectedPlanetId ?? onChainSettlement?.homePlanetId))
+      ?? walletPlanets[0],
+    [onChainSettlement?.homePlanetId, selectedPlanetId, walletPlanets]
+  );
+  const activePlanetId = selectedManagedPlanet?.planetId ?? onChainSettlement?.homePlanetId ?? undefined;
   const [onChainQueues, setOnChainQueues] = useState<PlayerQueuesResponse | undefined>();
   const [fleetVisibility, setFleetVisibility] = useState<FleetMissionVisibilityResponse | undefined>();
   const [missionArchive, setMissionArchive] = useState<FleetMissionArchiveResponse | undefined>();
@@ -2388,16 +2400,32 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [onChainError, setOnChainError] = useState<string | undefined>();
   const [hydratedWalletSnapshotKey, setHydratedWalletSnapshotKey] = useState<string | undefined>();
   const [chainSyncHealthy, setChainSyncHealthy] = useState(false);
-  const [infrastructureChainState, setInfrastructureChainState] = useState<ChainInfrastructureState | null>(null);
+  const [planetSectionStore, setPlanetSectionStore] = useState<PlanetSectionStore>({});
+  const activePlanetSection = useMemo(
+    () => planetSectionForPlanet(planetSectionStore, activePlanetId),
+    [activePlanetId, planetSectionStore]
+  );
+  const infrastructureChainState = activePlanetSection.infrastructureChainState;
+  const setInfrastructureChainState = useCallback((
+    value: ChainInfrastructureState | null | ((current: ChainInfrastructureState | null) => ChainInfrastructureState | null),
+  ) => {
+    setPlanetSectionStore((current) => setPlanetSectionValue(current, activePlanetId, "infrastructureChainState", value));
+  }, [activePlanetId]);
   // Client-side ledger of submitted-but-not-yet-settled resource spends. Keeps
   // the displayed/gated balance from over-reporting during the window between a
   // spend mining and the backend infrastructure read reflecting it (VEY-392).
   const [infrastructureLoading, setInfrastructureLoading] = useState(false);
   const [infrastructureError, setInfrastructureError] = useState<string | undefined>();
-  const [moonState, setMoonState] = useState<ChainMoonState | null>(null);
+  const moonState = activePlanetSection.moonState;
+  const setMoonState = useCallback((value: ChainMoonState | null) => {
+    setPlanetSectionStore((current) => setPlanetSectionValue(current, activePlanetId, "moonState", value));
+  }, [activePlanetId]);
   const [moonLoading, setMoonLoading] = useState(false);
   const [moonError, setMoonError] = useState<string | undefined>();
-  const [defenseState, setDefenseState] = useState<ChainDefenseState | null>(null);
+  const defenseState = activePlanetSection.defenseState;
+  const setDefenseState = useCallback((value: ChainDefenseState | null) => {
+    setPlanetSectionStore((current) => setPlanetSectionValue(current, activePlanetId, "defenseState", value));
+  }, [activePlanetId]);
   const [defenseLoading, setDefenseLoading] = useState(false);
   const [defenseError, setDefenseError] = useState<string | undefined>();
   const [defenseAction, setDefenseAction] = useState<DefenseActionState>({ status: "idle" });
@@ -2406,7 +2434,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [allianceError, setAllianceError] = useState<string | undefined>();
   const [allianceAction, setAllianceAction] = useState<AllianceActionState>({ status: "idle" });
   const [selectedAllianceId, setSelectedAllianceId] = useState<string | null>(null);
-  const [shipyardState, setShipyardState] = useState<ChainShipyardState | null>(null);
+  const shipyardState = activePlanetSection.shipyardState;
+  const setShipyardState = useCallback((value: ChainShipyardState | null) => {
+    setPlanetSectionStore((current) => setPlanetSectionValue(current, activePlanetId, "shipyardState", value));
+  }, [activePlanetId]);
   const [shipyardLoading, setShipyardLoading] = useState(false);
   const [shipyardError, setShipyardError] = useState<string | undefined>();
   const [shipyardAction, setShipyardAction] = useState<ShipyardActionState>({ status: "idle" });
@@ -2429,11 +2460,19 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     hostileArrivalMs: number;
     depotLevel: number;
   } | null>(null);
-  const [researchState, setResearchState] = useState<ChainResearchState | null>(null);
+  const researchState = activePlanetSection.researchState;
+  const setResearchState = useCallback((
+    value: ChainResearchState | null | ((current: ChainResearchState | null) => ChainResearchState | null),
+  ) => {
+    setPlanetSectionStore((current) => setPlanetSectionValue(current, activePlanetId, "researchState", value));
+  }, [activePlanetId]);
   const [researchLoading, setResearchLoading] = useState(false);
   const [researchError, setResearchError] = useState<string | undefined>();
   const [researchAction, setResearchAction] = useState<ResearchActionState>({ status: "idle" });
-  const [riftState, setRiftState] = useState<ChainRiftState | null>(null);
+  const riftState = activePlanetSection.riftState;
+  const setRiftState = useCallback((value: ChainRiftState | null) => {
+    setPlanetSectionStore((current) => setPlanetSectionValue(current, activePlanetId, "riftState", value));
+  }, [activePlanetId]);
   const [riftLoading, setRiftLoading] = useState(false);
   const [riftError, setRiftError] = useState<string | undefined>();
   const [riftAction, setRiftAction] = useState<RiftActionState>({ status: "idle" });
@@ -2518,12 +2557,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
     return fallbackHomeCoords;
   }, [fallbackHomeCoords, onChainSettlement?.planet]);
-  const selectedManagedPlanet = useMemo(
-    () => walletPlanets.find((item) => item.planetId === (selectedPlanetId ?? onChainSettlement?.homePlanetId))
-      ?? walletPlanets[0],
-    [onChainSettlement?.homePlanetId, selectedPlanetId, walletPlanets]
-  );
-  const activePlanetId = selectedManagedPlanet?.planetId ?? onChainSettlement?.homePlanetId ?? undefined;
   const missionActionShipyardState = useMemo(() => shipyardStateForMissionActions({
     account,
     activePlanetId,
@@ -2727,6 +2760,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   useEffect(() => {
     setPlayerProfile(undefined);
+    setPlanetSectionStore({});
     setPlayerProfileAction({ status: "idle" });
   }, [account]);
 
@@ -5309,24 +5343,19 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setOnChainQueues(walletQueuesForManagedPlanet(onChainQueues, nextPlanet));
     setOnChainError(undefined);
     setOnChainStatus(nextPlanet ? "ready" : "loading");
-    setInfrastructureChainState(null);
+    const nextSection = planetSectionForPlanet(planetSectionStore, planetId);
     setInfrastructureError(undefined);
-    setInfrastructureLoading(Boolean(apiBaseUrl && account));
-    setMoonState(null);
+    setInfrastructureLoading(Boolean(apiBaseUrl && account && !hasPlanetSectionData(nextSection, "infrastructureChainState")));
     setMoonError(undefined);
-    setMoonLoading(Boolean(apiBaseUrl && account));
-    setDefenseState(null);
+    setMoonLoading(Boolean(apiBaseUrl && account && !hasPlanetSectionData(nextSection, "moonState")));
     setDefenseError(undefined);
-    setDefenseLoading(Boolean(apiBaseUrl && account));
-    setShipyardState(null);
+    setDefenseLoading(Boolean(apiBaseUrl && account && !hasPlanetSectionData(nextSection, "defenseState")));
     setShipyardError(undefined);
-    setShipyardLoading(Boolean(apiBaseUrl && account));
-    setResearchState(null);
+    setShipyardLoading(Boolean(apiBaseUrl && account && !hasPlanetSectionData(nextSection, "shipyardState")));
     setResearchError(undefined);
-    setResearchLoading(Boolean(apiBaseUrl && account));
-    setRiftState(null);
+    setResearchLoading(Boolean(apiBaseUrl && account && !hasPlanetSectionData(nextSection, "researchState")));
     setRiftError(undefined);
-    setRiftLoading(Boolean(apiBaseUrl && account));
+    setRiftLoading(Boolean(apiBaseUrl && account && !hasPlanetSectionData(nextSection, "riftState")));
     setBuildingAction({ status: "idle" });
     setDefenseAction({ status: "idle" });
     setShipyardAction({ status: "idle" });
