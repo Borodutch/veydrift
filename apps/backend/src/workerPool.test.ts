@@ -162,9 +162,9 @@ describe("createForwardingFetch", () => {
   });
 
   test("forwards the SSE chain event stream to the writer", async () => {
-    const calls: string[] = [];
-    const fetchImpl = (async (input: string | URL) => {
-      calls.push(String(input));
+    const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
+    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: init?.body });
       return new Response("event: sync-status\n\n", {
         status: 200,
         headers: { "content-type": "text/event-stream" }
@@ -176,9 +176,33 @@ describe("createForwardingFetch", () => {
 
     const response = await handler(new Request("http://localhost/chain/events?client=ui"));
 
-    expect(calls).toEqual(["http://127.0.0.1:4001/chain/events?client=ui"]);
+    expect(calls).toEqual([{ url: "http://127.0.0.1:4001/chain/events?client=ui", body: undefined }]);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
+    await expect(response.text()).resolves.toBe("event: sync-status\n\n");
+  });
+
+  test("does not try to consume a body when forwarding bodyless writer-only reads", async () => {
+    const fetchImpl = (async () =>
+      new Response("event: sync-status\n\n", {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })) as unknown as typeof fetch;
+    const local = async () => new Response("reader-has-no-chain-sync", { status: 503 });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    const request = {
+      headers: new Headers(),
+      method: "GET",
+      url: "http://localhost/chain/events",
+      arrayBuffer: () => {
+        throw new Error("GET forwarding must not read a request body");
+      }
+    } as unknown as Request;
+
+    const response = await handler(request);
+
+    expect(response.status).toBe(200);
     await expect(response.text()).resolves.toBe("event: sync-status\n\n");
   });
 

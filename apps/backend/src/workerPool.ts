@@ -29,6 +29,7 @@ export type WorkerRole = "writer" | "reader";
 // fleet-mission reconcile queue drained after applyLog) — happen on exactly one process.
 const READ_ONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const WRITER_ONLY_READ_PATHS = new Set(["/chain/events"]);
+const BODYLESS_METHODS = new Set(["GET", "HEAD"]);
 
 // Request headers that must not be copied verbatim when re-issuing a forwarded request: the body is
 // re-encoded by fetch (content-length) and the connection is to the writer's loopback listener (host).
@@ -119,7 +120,9 @@ export function createForwardingFetch(
     for (const name of STRIPPED_FORWARD_REQUEST_HEADERS) {
       headers.delete(name);
     }
-    const body = await request.arrayBuffer();
+    const body = BODYLESS_METHODS.has(request.method)
+      ? undefined
+      : await request.arrayBuffer();
 
     let upstream: Response;
     try {
@@ -127,7 +130,7 @@ export function createForwardingFetch(
         method: request.method,
         headers,
         redirect: "manual",
-        ...(body.byteLength > 0 ? { body } : {})
+        ...(body && body.byteLength > 0 ? { body } : {})
       });
     } catch {
       return Response.json(
