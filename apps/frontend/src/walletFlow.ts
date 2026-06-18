@@ -444,6 +444,11 @@ export type BattleReportParticipant = {
   loot: OnChainResources;
 };
 
+export type BattleReportDefenderSnapshot = {
+  fleet: Array<{ id: number; count: number }>;
+  defenses: Array<{ id: number; count: number }>;
+};
+
 export type BattleReport = {
   missionId: string;
   attacker: string;
@@ -461,6 +466,8 @@ export type BattleReport = {
   roundReports: CombatRoundReport[];
   transactionHash: string;
   blockNumber: string;
+  logIndex?: string;
+  defenderSnapshot?: BattleReportDefenderSnapshot | null;
   // ACS attack group: the main attack mission id for a grouped attack (null for a solo attack), and
   // every participant (main attacker + joiners) with their individual loot share. Older feeds that
   // predate VEY-KANEO-432 may omit these; consumers fall back to the single-attacker fields.

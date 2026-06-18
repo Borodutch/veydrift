@@ -1839,6 +1839,8 @@ describe("ACS attack group participants", () => {
       roundReports: [],
       transactionHash: "0xtx",
       blockNumber: "10",
+      logIndex: "0x0",
+      defenderSnapshot: null,
       attackGroupId: null,
       participants: [],
       ...overrides
