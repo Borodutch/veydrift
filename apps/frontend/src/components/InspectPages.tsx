@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { ArrowLeft, Crown, UserRound } from "lucide-preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { planetImageForType, planetTypeFromTemperature } from "../data/mockUniverse";
+import { descriptionLinkParts, isSafeDescriptionUrl, type DescriptionLinkPart } from "../descriptionLinks";
 import { fleetMissionDistance } from "../fleetMissionRules";
 import type { Coordinates } from "../types";
 import { formatUserTimestamp } from "../timestampFormat";
@@ -19,6 +20,7 @@ import {
 } from "../walletFlow";
 import {
   AllianceMemberActions,
+  AllianceDescription,
   AllianceSummary,
   allianceRosterPageSize,
   allianceDisplayName,
@@ -197,51 +199,9 @@ function PlayerProfileDescription({ profile }: { profile: Pick<PlayerProfile, "d
   );
 }
 
-export type ProfileDescriptionPart = {
-  text: string;
-  href?: string;
-};
-
-const profileUrlPattern = /https?:\/\/[^\s<>"']+/gi;
-const trailingUrlPunctuation = /[),.;:!?]+$/;
-
-export function profileDescriptionParts(description: string): ProfileDescriptionPart[] {
-  const parts: ProfileDescriptionPart[] = [];
-  let cursor = 0;
-
-  for (const match of description.matchAll(profileUrlPattern)) {
-    const rawUrl = match[0];
-    const index = match.index ?? 0;
-    if (index > cursor) {
-      parts.push({ text: description.slice(cursor, index) });
-    }
-
-    const trimmedUrl = rawUrl.replace(trailingUrlPunctuation, "");
-    const trailing = rawUrl.slice(trimmedUrl.length);
-    if (isSafeProfileDescriptionUrl(trimmedUrl)) {
-      parts.push({ href: trimmedUrl, text: trimmedUrl });
-    } else {
-      parts.push({ text: trimmedUrl });
-    }
-    if (trailing) parts.push({ text: trailing });
-    cursor = index + rawUrl.length;
-  }
-
-  if (cursor < description.length) {
-    parts.push({ text: description.slice(cursor) });
-  }
-
-  return parts.length ? parts : [{ text: description }];
-}
-
-export function isSafeProfileDescriptionUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
+export type ProfileDescriptionPart = DescriptionLinkPart;
+export const profileDescriptionParts = descriptionLinkParts;
+export const isSafeProfileDescriptionUrl = isSafeDescriptionUrl;
 
 function PlayerPlanetRow({
   attackProtection,
@@ -467,8 +427,8 @@ function PublicAllianceInspectSummary({
           </span>
           <h3 className="min-w-0 text-base font-semibold text-white">{alliance.name}</h3>
         </div>
-        <p className="mt-2 max-w-3xl text-sm text-slate-400">
-          {alliance.description || "No public alliance description."}
+        <p className="mt-2 max-w-3xl whitespace-pre-wrap break-words text-sm text-slate-400">
+          <AllianceDescription description={alliance.description} fallback="No public alliance description." />
         </p>
       </div>
       <div className="grid gap-2 sm:grid-cols-3">

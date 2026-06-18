@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   allianceDisplayName,
   buildAllianceRoster,
@@ -97,5 +98,16 @@ describe("AlliancePage helpers", () => {
 
   test("allianceDisplayName keeps tag and name compact", () => {
     expect(allianceDisplayName({ tag: "VDFT", name: "Veydrift Union" })).toBe("VDFT - Veydrift Union");
+  });
+
+  test("renders alliance descriptions through clickable link parts", () => {
+    const alliancePageSource = readFileSync(new URL("../src/components/AlliancePage.tsx", import.meta.url), "utf8");
+    const inspectPagesSource = readFileSync(new URL("../src/components/InspectPages.tsx", import.meta.url), "utf8");
+
+    expect(alliancePageSource).toContain("<AllianceDescription description={currentAlliance.description}");
+    expect(alliancePageSource).toContain("<AllianceDescription description={alliance.description}");
+    expect(alliancePageSource).toContain('target="_blank"');
+    expect(alliancePageSource).toContain('rel="noreferrer noopener"');
+    expect(inspectPagesSource).toContain("<AllianceDescription description={alliance.description}");
   });
 });

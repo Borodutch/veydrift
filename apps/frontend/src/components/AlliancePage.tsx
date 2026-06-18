@@ -2,6 +2,7 @@ import { Crown, Shield, UserRound, Users, X } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
+import { descriptionLinkParts } from "../descriptionLinks";
 import { formatUserTimestamp } from "../timestampFormat";
 import type { AllianceDiplomacyStatus, AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsResponse } from "../walletFlow";
 import { fetchWalletPlanets, shortAddress } from "../walletFlow";
@@ -547,8 +548,8 @@ function MyAllianceSection({
               </span>
               <h3 className="min-w-0 text-base font-semibold text-white">{currentAlliance.name}</h3>
             </button>
-            <p className="mt-2 max-w-3xl text-sm text-slate-400">
-              {currentAlliance.description || "No public alliance description."}
+            <p className="mt-2 max-w-3xl whitespace-pre-wrap break-words text-sm text-slate-400">
+              <AllianceDescription description={currentAlliance.description} fallback="No public alliance description." />
             </p>
           </div>
         </div>
@@ -655,26 +656,28 @@ function DirectorySection({
                 }`}
                 key={alliance.allianceId}
               >
-                <button
-                  className="min-w-0 text-left"
-                  onClick={() => onOpenAlliance ? onOpenAlliance(alliance.allianceId) : onSelectAlliance(alliance.allianceId)}
-                  type="button"
-                >
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <div className="min-w-0">
+                  <button
+                    className="flex min-w-0 flex-wrap items-center gap-2 text-left"
+                    onClick={() => onOpenAlliance ? onOpenAlliance(alliance.allianceId) : onSelectAlliance(alliance.allianceId)}
+                    type="button"
+                  >
                     <span className="rounded border border-white/10 bg-white/5 px-2 py-1 font-mono text-xs font-semibold text-cyan-100">
                       {alliance.tag}
                     </span>
                     <span className="truncate text-sm font-semibold text-white">{alliance.name}</span>
                     <span className="text-xs text-slate-500">#{alliance.allianceId}</span>
-                  </div>
-                  <p className="mt-2 line-clamp-2 text-sm text-slate-400">{alliance.description || "No public description."}</p>
+                  </button>
+                  <p className="mt-2 line-clamp-2 break-words text-sm text-slate-400">
+                    <AllianceDescription description={alliance.description} fallback="No public description." />
+                  </p>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
                     <span>{memberCountLabel(alliance.memberCount)}</span>
                     <span>Total score {formatScore(alliance.totalMemberScore)}</span>
                     <span>Owner {playerLabel(alliance.ownerDisplayName, alliance.owner)}</span>
                     <span>Created {formatUserTimestamp(alliance.createdAt)}</span>
                   </div>
-                </button>
+                </div>
                 <div className="flex flex-wrap gap-2 md:justify-end">
                   <button
                     className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10"
@@ -846,8 +849,8 @@ export function AllianceSummary({
           <h3 className="min-w-0 text-base font-semibold text-white">{alliance.name}</h3>
           <span className="text-xs text-slate-500">#{alliance.allianceId}</span>
         </div>
-        <p className="mt-2 max-w-3xl text-sm text-slate-400">
-          {alliance.description || "No public alliance description."}
+        <p className="mt-2 max-w-3xl whitespace-pre-wrap break-words text-sm text-slate-400">
+          <AllianceDescription description={alliance.description} fallback="No public alliance description." />
         </p>
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
@@ -863,6 +866,36 @@ export function AllianceSummary({
         Owner <span className="font-mono text-cyan-100">{playerLabel(alliance.ownerDisplayName, alliance.owner)}</span>
       </button>
     </div>
+  );
+}
+
+export function AllianceDescription({
+  description,
+  fallback,
+}: {
+  description: string | null | undefined;
+  fallback: string;
+}) {
+  const value = description?.trim();
+  if (!value) return <>{fallback}</>;
+
+  return (
+    <>
+      {descriptionLinkParts(value).map((part, index) => part.href ? (
+        <a
+          className="break-all text-cyan-200 underline decoration-cyan-300/40 underline-offset-2 hover:text-cyan-100"
+          href={part.href}
+          key={`${part.href}-${index}`}
+          rel="noreferrer noopener"
+          target="_blank"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {part.text}
+        </a>
+      ) : (
+        <span key={`${part.text}-${index}`}>{part.text}</span>
+      ))}
+    </>
   );
 }
 
