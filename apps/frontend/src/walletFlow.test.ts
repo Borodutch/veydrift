@@ -47,6 +47,7 @@ import {
   sendFinishResourceWithdrawalTransaction,
   sendCreateColonyTransaction,
   sendJoinAttackMissionTransaction,
+  sendLaunchAttackMissionTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchFleetMissionTransaction,
   sendJumpGateJumpTransaction,
@@ -768,14 +769,14 @@ describe("walletFlow", () => {
       .rejects.toThrow("This position is already occupied");
   });
 
-  test("reports stale ship counts from the fleet launch send revert", async () => {
+  test("reports stale ship counts from the attack launch send revert", async () => {
     const ships = {
-      smallCargo: 1,
-      lightFighter: 0,
+      smallCargo: 4,
+      lightFighter: 4,
       recycler: 0,
       colonyShip: 0,
       largeCargo: 0,
-      heavyFighter: 0,
+      heavyFighter: 1,
       cruiser: 0,
       battleship: 0,
       bomber: 0,
@@ -789,17 +790,18 @@ describe("walletFlow", () => {
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
       if (method === "eth_sendTransaction") {
-        throw { code: 3, message: "execution reverted", data: "0x705f508b" };
+        throw { code: 3, message: "execution reverted", data: customErrorData("0x705f508b", [0, 3, 4]) };
       }
       throw new Error(`Unexpected method ${method}`);
     });
 
-    await expect(sendLaunchFleetMissionTransaction(provider, account, contract, {
+    await expect(sendLaunchAttackMissionTransaction(provider, account, contract, {
       originPlanetId: 7,
       targetPlanetId: 9,
-      missionType: 3,
       ships,
-    })).rejects.toThrow("Selected origin planet does not have the requested ships");
+      speedPercent: 100,
+      lootRatio: { metalBps: 3400, crystalBps: 3300, deuteriumBps: 3300 },
+    })).rejects.toThrow("Need 4 Small Cargo, only 3 available on the origin planet");
 
     expect(requests).toEqual([
       {
@@ -807,11 +809,12 @@ describe("walletFlow", () => {
         params: [{
           from: account,
           to: contract,
-          data: encodeLaunchFleetMissionCall({
+          data: encodeLaunchAttackMissionCall({
             originPlanetId: 7,
             targetPlanetId: 9,
-            missionType: 3,
             ships,
+            speedPercent: 100,
+            lootRatio: { metalBps: 3400, crystalBps: 3300, deuteriumBps: 3300 },
           }),
         }],
       },
