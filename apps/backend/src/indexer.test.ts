@@ -4534,10 +4534,18 @@ describe("SettlementIndexer", () => {
       target_planet_id: "188"
     });
     expect(JSON.parse(row!.event_json)).toMatchObject({ source: "indexed_mission_event_logs" });
+    database.query(`
+      UPDATE contract_fleet_missions
+      SET fuel_cost = '0'
+      WHERE mission_id = ?
+    `).run("1448");
+
     expect(restart.fleetMission("1448")).toMatchObject({
       missionId: "1448",
       status: "Outbound",
       missionType: "Transport",
+      fuelCost: "4",
+      recallCost: "1",
       transactionHash: "0xtransport1448"
     });
   });
@@ -4722,6 +4730,7 @@ describe("SettlementIndexer", () => {
       db.query(`
         UPDATE contract_fleet_missions
         SET status_id = 4,
+          fuel_cost = '0',
           event_json = ?
         WHERE mission_id = ?
       `).run(JSON.stringify({ source: "indexed_mission_event_logs", mission: returnedMission }), "1776");
@@ -4731,6 +4740,7 @@ describe("SettlementIndexer", () => {
       expect(reader.fleetMission("1776")).toMatchObject({
         missionId: "1776",
         status: "Returned",
+        fuelCost: "24",
         returnCargo: { metal: "3098", crystal: "1448", deuterium: "454" },
         transactionHash: "0xreturn1776",
         blockNumber: "43026481",
