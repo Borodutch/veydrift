@@ -2797,6 +2797,19 @@ export async function unwatchPlanet(apiUrl: string, provider: Eip1193Provider, w
   return mutateWatchedPlanet(apiUrl, provider, wallet, "unwatch", "DELETE", `watched-planets/${encodeURIComponent(planetId)}`, planetId);
 }
 
+export async function requestWatchedPlanetSignature(
+  provider: Eip1193Provider,
+  wallet: string,
+  action: WatchedPlanetAction,
+  planetId: string,
+  timeoutMs?: number
+): Promise<string> {
+  return readWalletRequest<string>(provider, {
+    method: "personal_sign",
+    params: [watchedPlanetMessage(wallet, action, planetId), wallet]
+  }, "watched planet signature", timeoutMs);
+}
+
 type WalletReadOptions = {
   source?: "indexed";
 };
@@ -3183,10 +3196,7 @@ async function mutateWatchedPlanet(
   path: string,
   planetId: string
 ): Promise<WatchPlanetMutationResponse> {
-  const signature = await provider.request<string>({
-    method: "personal_sign",
-    params: [watchedPlanetMessage(wallet, action, planetId), wallet]
-  });
+  const signature = await requestWatchedPlanetSignature(provider, wallet, action, planetId);
   const init: RequestInit = {
     body: JSON.stringify({ planetId, signature }),
     cache: "no-store",

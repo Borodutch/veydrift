@@ -67,6 +67,7 @@ import {
   sendDismissAllianceJoinRequestTransaction,
   sendRequestResourceWithdrawalTransaction,
   requestAccounts,
+  requestWatchedPlanetSignature,
   sendSettlementTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartMoonBuildingUpgradeTransaction,
@@ -2340,6 +2341,18 @@ describe("walletFlow", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  test("times out stuck watched-planet signature requests", async () => {
+    const provider = mockProvider(async ({ method, params }) => {
+      expect(method).toBe("personal_sign");
+      expect(params).toEqual([watchedPlanetMessage(account, "watch", "42"), account]);
+      return await new Promise<string>(() => undefined);
+    });
+
+    await expect(requestWatchedPlanetSignature(provider, account, "watch", "42", 1)).rejects.toThrow(
+      "Timed out reading watched planet signature from the wallet after 0 seconds."
+    );
   });
 
   test("signs watched-planet removals with the unwatch action", async () => {
