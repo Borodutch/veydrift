@@ -52,6 +52,9 @@ export type KeeperSnapshot = {
   pendingCount: number;
   awaitingArrivalCount: number;
   awaitingReturnCount: number;
+  dueMissionCount: number;
+  oldestDueAt: string | null;
+  oldestDueAgeSeconds: number | null;
   inFlightCount: number;
   resolvedCount: number;
   submitFailureCount: number;
@@ -379,17 +382,30 @@ export class BattleKeeper {
   snapshot(): KeeperSnapshot {
     let awaitingArrivalCount = 0;
     let awaitingReturnCount = 0;
+    let dueMissionCount = 0;
+    let oldestDueAtSeconds: number | null = null;
+    const nowSeconds = this.now();
     for (const mission of this.pending.values()) {
       if (mission.leg === "return") {
         awaitingReturnCount += 1;
       } else {
         awaitingArrivalCount += 1;
       }
+      if (mission.dueAt <= nowSeconds) {
+        dueMissionCount += 1;
+        oldestDueAtSeconds =
+          oldestDueAtSeconds === null ? mission.dueAt : Math.min(oldestDueAtSeconds, mission.dueAt);
+      }
     }
     return {
       pendingCount: this.pending.size,
       awaitingArrivalCount,
       awaitingReturnCount,
+      dueMissionCount,
+      oldestDueAt:
+        oldestDueAtSeconds === null ? null : new Date(oldestDueAtSeconds * 1_000).toISOString(),
+      oldestDueAgeSeconds:
+        oldestDueAtSeconds === null ? null : Math.max(0, nowSeconds - oldestDueAtSeconds),
       inFlightCount: this.inFlight.size,
       resolvedCount: this.resolvedCount,
       submitFailureCount: this.submitFailureCount,

@@ -64,9 +64,12 @@ nothing is lost; it merely settles later. Any mission type that emits no `FleetM
 
 ## Endpoints
 
-- `GET /health` — `200` when the WS feed is connected, `503` (degraded) otherwise. Body includes
-  `pendingCount`, `lastResolvedMissionId`, `lastResolvedAt`, `lastError`, plus full keeper + ws
-  snapshots and `uptimeSeconds`.
+- `GET /health` — `200` when the WS feed is connected, `503` only when liveness is degraded. Body
+  includes build identity (`build.gitSha` when `GIT_SHA` or provider commit env is set), `pendingCount`,
+  `healthWarnings`, `lastResolvedMissionId`, `lastResolvedAt`, `lastError`, full keeper + sweep + ws
+  snapshots, and `uptimeSeconds`. A live keeper with a stale due retry backlog reports
+  `status: "degraded"` and `healthWarnings: ["stale_due_retry_backlog"]` while keeping HTTP 200 so the
+  process is visible instead of restarted blindly.
 - `GET /` — same payload.
 
 ## Configuration (env)
@@ -82,6 +85,7 @@ nothing is lost; it merely settles later. Any mission type that emits no `FleetM
 | `SWEEP_INTERVAL_MS`     | no       | `15000` | Backstop log-backfill sweep cadence.                               |
 | `PORT`                  | no       | `8080`  | HTTP health/status port.                                           |
 | `MAX_CONCURRENCY`       | no       | `3`     | Max concurrent `resolveFleetMission` submissions.                  |
+| `GIT_SHA`               | no       | —       | Deployed commit surfaced in `/health` as `build.gitSha`.           |
 
 **Never commit secrets.** `KEEPER_PRIVATE_KEY` must come from the deploy environment.
 
