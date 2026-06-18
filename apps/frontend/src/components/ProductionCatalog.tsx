@@ -40,7 +40,8 @@ export type ProductionCatalogItem<Key extends string = string> = {
   countValue: number | undefined;
   queued?: number | undefined;
   status: "ready" | "locked" | "queued" | "unavailable";
-  statusLabel: string;
+  statusLabel?: string | undefined;
+  labelTone?: "normal" | "muted" | undefined;
   cost: Resources | undefined;
   // Predicted build time for the selected quantity (VEY-KANEO-472). Backend-sourced
   // per-unit duration scaled by quantity; undefined when the backend omits it.
@@ -244,6 +245,7 @@ function CatalogButton<Key extends string>({
     ready: "text-emerald-300",
     unavailable: "text-slate-400",
   }[item.status];
+  const labelClass = item.labelTone === "muted" ? "text-slate-500" : "text-white";
 
   return (
     <button
@@ -266,13 +268,13 @@ function CatalogButton<Key extends string>({
         />
       </div>
       <div className="min-w-0">
-        <p className="truncate text-sm font-semibold text-white">{item.label}</p>
+        <p className={`truncate text-sm font-semibold ${labelClass}`}>{item.label}</p>
         <p className="mt-0.5 truncate text-xs text-slate-400">
           {item.countLabel}: {item.countValue === undefined ? "unavailable" : format(item.countValue)}
           {item.queued ? ` · Queued ${format(item.queued)}` : ""}
         </p>
       </div>
-      <span className={`text-xs font-semibold ${statusClass}`}>{item.statusLabel}</span>
+      {item.statusLabel ? <span className={`text-xs font-semibold ${statusClass}`}>{item.statusLabel}</span> : null}
     </button>
   );
 }

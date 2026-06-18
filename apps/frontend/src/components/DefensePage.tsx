@@ -252,6 +252,7 @@ export function defenseProductionItems({
       groupLabel: groupLabels[defense.group],
       id: defense.id,
       key: defense.key,
+      labelTone: blockedReason ? "muted" : "normal",
       label: defense.label,
       missing,
       quantity,
@@ -260,7 +261,7 @@ export function defenseProductionItems({
       queued,
       requirements,
       status: queued > 0 ? "queued" : missing.length === 0 ? "ready" : "locked",
-      statusLabel: queued > 0 ? "Queued" : missing.length === 0 ? "Ready" : "Locked",
+      statusLabel: queued > 0 ? "Queued" : undefined,
     };
   });
 }
