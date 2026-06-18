@@ -506,6 +506,43 @@ contract VeydriftGameTest is Test {
         assertFalse(game.researchQueue(player).active);
     }
 
+    function testShieldingLevelOneRequiresResearchLabSixAndEnergyThree() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setResources(planetId, 100_000, 100_000, 100_000);
+        _setTechnologyLevel(player, Technology.Energy, 3);
+
+        _setBuildingLevel(planetId, Building.ResearchLab, 5);
+        vm.prank(player);
+        bytes32 researchLabSixDependency = "RESEARCH_LAB_6";
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.MissingDependency.selector, researchLabSixDependency
+            )
+        );
+        game.startResearch(planetId, Technology.Shielding);
+
+        _setBuildingLevel(planetId, Building.ResearchLab, 6);
+        _setTechnologyLevel(player, Technology.Energy, 2);
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.MissingDependency.selector, ENERGY_3)
+        );
+        game.startResearch(planetId, Technology.Shielding);
+
+        _setTechnologyLevel(player, Technology.Energy, 3);
+        vm.prank(player);
+        game.startResearch(planetId, Technology.Shielding);
+
+        VeydriftGameStorage.ResearchQueue memory queue = game.researchQueue(player);
+        assertTrue(queue.active);
+        assertEq(uint8(queue.technology), uint8(Technology.Shielding));
+        assertEq(queue.targetLevel, 1);
+        assertEq(queue.cost.metal, 200);
+        assertEq(queue.cost.crystal, 600);
+        assertEq(queue.cost.deuterium, 0);
+    }
+
     function testResearchDurationUsesLinkedLabsFromNetwork() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
