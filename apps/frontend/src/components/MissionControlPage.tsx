@@ -63,6 +63,9 @@ interface MissionControlPageProps {
   globalMissionArchive?: GlobalMissionArchiveResponse | undefined;
   globalMissionArchiveError?: string | undefined;
   globalMissionArchiveLoading?: boolean | undefined;
+  incomingAttackArchive?: FleetMissionArchiveResponse | undefined;
+  incomingAttackArchiveError?: string | undefined;
+  incomingAttackArchiveLoading?: boolean | undefined;
   // VEY-412: the tab/page selection to render initially. Defaults to the sessionStorage-persisted
   // view so the selection survives the mission-detail round-trip; tests pass it explicitly.
   initialView?: MissionControlView | undefined;
@@ -78,6 +81,7 @@ interface MissionControlPageProps {
   onOpenReport: (missionId: string) => void;
   onOpenReportList: () => void;
   onGlobalMissionArchivePageChange?: ((page: number) => void) | undefined;
+  onIncomingAttackArchivePageChange?: ((page: number) => void) | undefined;
   onMissionArchivePageChange?: ((page: number) => void) | undefined;
   onRecall: (missionId: string) => void;
   onRefresh: () => void;
@@ -95,6 +99,9 @@ export function MissionControlPage({
   globalMissionArchive,
   globalMissionArchiveError,
   globalMissionArchiveLoading = false,
+  incomingAttackArchive,
+  incomingAttackArchiveError,
+  incomingAttackArchiveLoading = false,
   initialView,
   loading,
   missionArchive,
@@ -106,6 +113,7 @@ export function MissionControlPage({
   onOpenReport,
   onOpenReportList,
   onGlobalMissionArchivePageChange,
+  onIncomingAttackArchivePageChange,
   onMissionArchivePageChange,
   onRecall,
   onRefresh,
@@ -135,6 +143,7 @@ export function MissionControlPage({
   const fallbackPastMissionRows = chronologicalPastMissionRows(completedMissions, battleReports);
   const rawPastMissionRows = missionArchive?.rows ?? fallbackPastMissionRows;
   const pastMissionRows = dedupePastMissionRows(rawPastMissionRows, activeMissionIds);
+  const rawIncomingAttackArchiveRows = incomingAttackArchive?.rows;
   // Rows collapsed by the dedupe (a mission + its battle report -> one row, or an active mission's
   // report suppressed) so the section header count can match the actual rendered rows even with
   // server-side pagination (VEY-399#1, VEY-KANEO-434).
@@ -148,13 +157,15 @@ export function MissionControlPage({
   // resolves each row's origin/target planet, so seed the lookup from those references too — otherwise
   // their coordinates render as "External coordinates unavailable" even though the data is available.
   const pastArchiveMissions = missionsFromArchiveRows(rawPastMissionRows);
+  const incomingAttackArchiveMissions = missionsFromArchiveRows(rawIncomingAttackArchiveRows ?? []);
   const globalArchiveMissions = missionsFromArchiveRows(rawGlobalPastRows);
-  const lookupMissions = uniqueMissions([...allMissions, ...allActiveMissions, ...pastArchiveMissions, ...globalArchiveMissions]);
+  const lookupMissions = uniqueMissions([...allMissions, ...allActiveMissions, ...pastArchiveMissions, ...incomingAttackArchiveMissions, ...globalArchiveMissions]);
   // Loot grabbed per mission (return leg), drawn from every visible battle report so a mission card
   // can show "Cargo" (outbound) and "Loot" (return) on separate lines — VEY-404.
   const lootByMissionId = lootByMissionIdFromReports([
     ...battleReports,
     ...battleReportsFromArchiveRows(rawPastMissionRows),
+    ...battleReportsFromArchiveRows(rawIncomingAttackArchiveRows ?? []),
     ...battleReportsFromArchiveRows(rawGlobalPastRows),
   ]);
   // VEY-KANEO-495: fleet losses (attacker / defender) keyed by mission id, from the same battle
@@ -164,12 +175,16 @@ export function MissionControlPage({
   const lossesByMissionId = lossesByMissionIdFromReports([
     ...battleReports,
     ...battleReportsFromArchiveRows(rawPastMissionRows),
+    ...battleReportsFromArchiveRows(rawIncomingAttackArchiveRows ?? []),
     ...battleReportsFromArchiveRows(rawGlobalPastRows),
   ]);
   const selectedReport = reportMissionId ? lookupMissions.find((mission) => mission.missionId === reportMissionId) : undefined;
   const planetLookup = planetLookupFromMissionData(lookupMissions, walletPlanets, planetArchetypesByCoordinate);
   const walletAddress = fleetVisibility?.wallet ?? missionArchive?.wallet;
   const walletPlanetIds = walletPlanetIdSet(walletPlanets, planetLookup, walletAddress);
+  const rawIncomingAttackPastRows = rawIncomingAttackArchiveRows ?? incomingAttackPastMissionRows(pastMissionRows, walletAddress, walletPlanetIds);
+  const incomingAttackRows = dedupePastMissionRows(rawIncomingAttackPastRows, activeMissionIds);
+  const incomingAttackPastCollapsedCount = rawIncomingAttackPastRows.length - incomingAttackRows.length;
   const activeCount = activeMissionRows.length;
   const initialLoading = loading && !fleetVisibility;
   // VEY-412: restore the previously selected tabs + past page. The panel is DOM-driven (tabs/pages
@@ -247,11 +262,17 @@ export function MissionControlPage({
             allRows={globalPastMissionRows}
             collapsedCount={pastCollapsedCount}
             error={missionArchiveError}
+            incomingAttackCollapsedCount={incomingAttackPastCollapsedCount}
+            incomingAttackError={incomingAttackArchiveError}
+            incomingAttackLoading={incomingAttackArchiveLoading}
+            incomingAttackPagination={incomingAttackArchive?.pagination}
+            incomingAttackRows={incomingAttackRows}
             loading={missionArchiveLoading}
             lootByMissionId={lootByMissionId}
             lossesByMissionId={lossesByMissionId}
             now={now}
             onAllPageChange={onGlobalMissionArchivePageChange}
+            onIncomingAttackPageChange={onIncomingAttackArchivePageChange}
             onOpenReport={onOpenReport}
             onPageChange={onMissionArchivePageChange}
             pagination={missionArchive?.pagination}
@@ -1234,6 +1255,7 @@ function MissionReportDetail({
 
 const PAST_MISSION_TABS = [
   { emptyLabel: "No completed missions are visible for this wallet yet.", key: "mine", label: "My missions" },
+  { emptyLabel: "No completed incoming attacks are visible for this wallet yet.", key: "incomingAttacks", label: "Incoming attacks" },
   { emptyLabel: "No completed missions in the universe yet.", key: "all", label: "All" },
 ] as const;
 
@@ -1455,11 +1477,17 @@ function PastMissionSection({
   allRows,
   collapsedCount = 0,
   error,
+  incomingAttackCollapsedCount = 0,
+  incomingAttackError,
+  incomingAttackLoading = false,
+  incomingAttackPagination,
+  incomingAttackRows,
   loading,
   lootByMissionId,
   lossesByMissionId,
   now,
   onAllPageChange,
+  onIncomingAttackPageChange,
   onOpenReport,
   onPageChange,
   pagination,
@@ -1477,11 +1505,17 @@ function PastMissionSection({
   allRows: PastMissionRow[];
   collapsedCount?: number | undefined;
   error?: string | undefined;
+  incomingAttackCollapsedCount?: number | undefined;
+  incomingAttackError?: string | undefined;
+  incomingAttackLoading?: boolean | undefined;
+  incomingAttackPagination?: FleetMissionArchiveResponse["pagination"] | undefined;
+  incomingAttackRows: PastMissionRow[];
   loading: boolean;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
   now: number;
   onAllPageChange?: ((page: number) => void) | undefined;
+  onIncomingAttackPageChange?: ((page: number) => void) | undefined;
   onOpenReport: (missionId: string) => void;
   onPageChange?: ((page: number) => void) | undefined;
   pagination?: FleetMissionArchiveResponse["pagination"] | undefined;
@@ -1501,6 +1535,15 @@ function PastMissionSection({
       onPageChange: onAllPageChange,
       pagination: allPagination,
       rows: allRows,
+    },
+    incomingAttacks: {
+      collapsedCount: incomingAttackCollapsedCount,
+      emptyLabel: "No completed incoming attacks are visible for this wallet yet.",
+      error: incomingAttackError,
+      loading: incomingAttackLoading,
+      onPageChange: onIncomingAttackPageChange,
+      pagination: incomingAttackPagination,
+      rows: incomingAttackRows,
     },
     mine: {
       collapsedCount,
@@ -2122,6 +2165,18 @@ function dedupePastMissionRows(
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
+  });
+}
+
+function incomingAttackPastMissionRows(
+  rows: PastMissionRow[],
+  wallet: string | undefined,
+  walletPlanetIds: ReadonlySet<string>,
+): PastMissionRow[] {
+  return rows.filter((row) => {
+    if (row.kind === "battleReport") return walletPlanetIds.has(row.report.targetPlanetId);
+    return row.mission.missionType === "Attack"
+      && resolveMissionDirection({ mission: row.mission, wallet, walletPlanetIds }) === "incoming";
   });
 }
 

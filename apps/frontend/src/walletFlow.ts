@@ -2680,10 +2680,11 @@ export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string
 export async function fetchFleetMissionArchive(
   apiUrl: string,
   wallet: string,
-  options: { page?: number; pageSize?: number } = {}
+  options: { filter?: "incomingAttacks"; page?: number; pageSize?: number } = {}
 ): Promise<FleetMissionArchiveResponse> {
   const params = new URLSearchParams();
   params.set("status", "completed");
+  if (options.filter) params.set("filter", options.filter);
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
   return fetchWalletJson<FleetMissionArchiveResponse>(apiUrl, wallet, `missions?${params.toString()}`, "Mission archive");

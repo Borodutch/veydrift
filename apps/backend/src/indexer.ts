@@ -961,7 +961,9 @@ export class SettlementIndexer {
     };
   }
 
-  fleetMissionArchive(wallet: `0x${string}`): Pick<FleetMissionVisibility, "battleReports" | "completedMissions" | "homePlanetId" | "wallet"> {
+  fleetMissionArchive(
+    wallet: `0x${string}`
+  ): Pick<FleetMissionVisibility, "battleReports" | "completedMissions" | "homePlanetId" | "wallet"> & { ownedPlanetIds: Set<string> } {
     const settlement = this.walletSettlement(wallet);
     const walletLower = wallet.toLowerCase();
     const ownedPlanetIds = new Set(
@@ -981,6 +983,7 @@ export class SettlementIndexer {
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
+      ownedPlanetIds,
       completedMissions,
       battleReports
     };

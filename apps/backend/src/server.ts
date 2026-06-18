@@ -1525,7 +1525,12 @@ function indexedMissionArchive(
   indexer: SettlementIndexer
 ): FleetMissionArchiveResponse {
   const archive = indexer.fleetMissionArchive(wallet);
-  const rows = chronologicalMissionArchiveRows(archive.completedMissions, archive.battleReports);
+  const rows = filterMissionArchiveRows(
+    chronologicalMissionArchiveRows(archive.completedMissions, archive.battleReports),
+    url.searchParams.get("filter"),
+    wallet,
+    archive.ownedPlanetIds
+  );
   const requested = missionArchivePagination(url);
   const totalEntries = rows.length;
   const totalPages = Math.max(1, Math.ceil(totalEntries / requested.pageSize));
@@ -1545,6 +1550,22 @@ function indexedMissionArchive(
       hasNextPage: page < totalPages
     }
   };
+}
+
+function filterMissionArchiveRows(
+  rows: FleetMissionArchiveEntry[],
+  filter: string | null,
+  wallet: `0x${string}`,
+  ownedPlanetIds: ReadonlySet<string>
+): FleetMissionArchiveEntry[] {
+  if (filter !== "incomingAttacks") return rows;
+  const walletLower = wallet.toLowerCase();
+  return rows.filter((row) => {
+    if (row.kind === "battleReport") return ownedPlanetIds.has(row.report.targetPlanetId);
+    return row.mission.missionType === "Attack"
+      && row.mission.owner.toLowerCase() !== walletLower
+      && ownedPlanetIds.has(row.mission.targetPlanetId);
+  });
 }
 
 function globalMissionArchive(url: URL, indexer: SettlementIndexer): GlobalMissionArchiveResponse {
