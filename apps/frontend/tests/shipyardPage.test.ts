@@ -216,16 +216,86 @@ describe("Shipyard page display helpers", () => {
       notes: [
         "A nimble freighter for early raids and supply runs. Its hold is modest, but it is cheap enough to mass-produce while a young colony is still finding its footing.",
       ],
+      labelTone: "normal",
       quantity: 3,
       status: "ready",
+      statusLabel: undefined,
     });
     expect(JSON.stringify(items.find((item) => item.key === "smallCargo")?.detailSections)).not.toContain(
       "Ships stationed at this planet now. Fleets in flight on missions are not counted here.",
     );
     expect(items.find((item) => item.key === "smallCargo")).not.toHaveProperty("description");
     expect(items.find((item) => item.key === "battleship")).toMatchObject({
+      labelTone: "muted",
       status: "locked",
-      statusLabel: "Locked",
+      statusLabel: undefined,
+    });
+  });
+
+  test("fades non-buildable ship titles without generic ready/locked/unavailable labels (VEY-KANEO-576)", () => {
+    const items = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      quantities: { smallCargo: 2 },
+      queue: undefined,
+      resources: {
+        metal: 3_500,
+        crystal: 3_900,
+        deuterium: 0,
+      },
+      shipyardLevel: 5,
+      shipyardState: shipyardState({
+        ships: [
+          ...shipyardState().ships,
+          {
+            id: 1,
+            count: 0,
+            cost: {
+              metal: "3000",
+              crystal: "1000",
+              deuterium: "0",
+            },
+          },
+        ],
+      }),
+    });
+
+    expect(items.find((item) => item.key === "smallCargo")).toMatchObject({
+      blockedReason: "Requires 500 more Metal, 100 more Crystal",
+      labelTone: "muted",
+      status: "ready",
+      statusLabel: undefined,
+    });
+    expect(items.find((item) => item.key === "lightFighter")).toMatchObject({
+      labelTone: "normal",
+      status: "ready",
+      statusLabel: undefined,
+    });
+    expect(items.find((item) => item.key === "battleship")).toMatchObject({
+      labelTone: "muted",
+      status: "locked",
+      statusLabel: undefined,
+    });
+
+    const unavailableItems = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      quantities: {},
+      queue: undefined,
+      resources: {
+        metal: 100000,
+        crystal: 100000,
+        deuterium: 100000,
+      },
+      shipyardLevel: 5,
+      shipyardState: shipyardState({ ships: [] }),
+    });
+    expect(unavailableItems.find((item) => item.key === "smallCargo")).toMatchObject({
+      labelTone: "muted",
+      status: "unavailable",
+      statusLabel: undefined,
     });
   });
 
@@ -519,6 +589,8 @@ describe("Shipyard page display helpers", () => {
     expect(items.find((item) => item.key === "smallCargo")).toMatchObject({
       blockedReason: "Requires 500 more Metal, 100 more Crystal",
       disabled: true,
+      labelTone: "muted",
+      statusLabel: undefined,
     });
   });
 
@@ -567,6 +639,7 @@ describe("Shipyard page display helpers", () => {
       disabled: false,
       queued: 3,
       status: "queued",
+      statusLabel: "Queued",
     });
     expect(items.find((item) => item.key === "lightFighter")).toMatchObject({
       blockedReason: undefined,

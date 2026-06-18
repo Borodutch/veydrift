@@ -178,8 +178,9 @@ export function ResearchPage({
                       isSelected={research.key === selectedResearch.key}
                       key={research.key}
                       label={research.label}
+                      labelTone={researchCatalogTitleTone(status)}
                       onClick={() => handleSelectResearch(research.key)}
-                      statusText={status.tileStatus}
+                      statusText={researchCatalogStatusText(status)}
                       statusTone={status.tileStatus === "Locked" ? "warning" : "accent"}
                     />
                   );
@@ -964,6 +965,18 @@ export function researchActionStatus({
     targetLevel,
     tileStatus: active ? "Active" : disabled ? "Locked" : "Ready",
   };
+}
+
+export function researchCatalogTitleTone(
+  status: Pick<ReturnType<typeof researchActionStatus>, "tileStatus">,
+): "normal" | "muted" {
+  return status.tileStatus === "Locked" ? "muted" : "normal";
+}
+
+export function researchCatalogStatusText(
+  status: Pick<ReturnType<typeof researchActionStatus>, "tileStatus">,
+): string {
+  return status.tileStatus === "Active" ? "Active" : "";
 }
 
 export function researchViewState(
