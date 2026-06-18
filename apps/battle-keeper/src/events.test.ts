@@ -83,11 +83,35 @@ function returnExposedLog(args: {
   return { topics: topics as string[], data };
 }
 
+function defenseHoldStationedLog(args: {
+  missionId: bigint;
+  holdUntil: bigint;
+  returnAt: bigint;
+}): { topics: string[]; data: string } {
+  const topics = encodeEventTopics({
+    abi: battleEventsAbi,
+    eventName: "DefenseHoldStationed",
+    args: { missionId: args.missionId, owner, defenderPlanetId: 200n }
+  });
+  const data = encodeAbiParameters(
+    [
+      { name: "originPlanetId", type: "uint256" },
+      { name: "arrivalAt", type: "uint64" },
+      { name: "holdUntil", type: "uint64" },
+      { name: "returnAt", type: "uint64" }
+    ],
+    [100n, 1_000n, args.holdUntil, args.returnAt]
+  );
+  return { topics: topics as string[], data };
+}
+
 describe("event topic selectors", () => {
   test("computes the canonical fleet-mission event topics", () => {
     expect(eventTopics.fleetMissionLaunched.startsWith("0x")).toBe(true);
     expect(eventTopics.fleetMissionResolved.startsWith("0x")).toBe(true);
     expect(eventTopics.fleetMissionReturned.startsWith("0x")).toBe(true);
+    expect(eventTopics.fleetMissionReturnExposed.startsWith("0x")).toBe(true);
+    expect(eventTopics.defenseHoldStationed.startsWith("0x")).toBe(true);
     expect(eventTopics.fleetMissionLaunched).not.toBe(eventTopics.fleetMissionResolved);
     expect(eventTopics.fleetMissionResolved).not.toBe(eventTopics.fleetMissionReturned);
   });
@@ -183,6 +207,18 @@ describe("decodeBattleLog", () => {
       kind: "returnExposed",
       missionId: "56",
       status: 2,
+      returnAt: 2_000
+    });
+  });
+
+  test("decodes DefenseHoldStationed with holdUntil", () => {
+    const decoded = decodeBattleLog(
+      defenseHoldStationedLog({ missionId: 57n, holdUntil: 1_500n, returnAt: 2_000n })
+    );
+    expect(decoded).toEqual({
+      kind: "defenseHoldStationed",
+      missionId: "57",
+      holdUntil: 1_500,
       returnAt: 2_000
     });
   });

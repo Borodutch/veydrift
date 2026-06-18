@@ -55,6 +55,19 @@ export const battleEventsAbi = [
       { name: "crystal", type: "uint128", indexed: false },
       { name: "deuterium", type: "uint128", indexed: false }
     ]
+  },
+  {
+    type: "event",
+    name: "DefenseHoldStationed",
+    inputs: [
+      { name: "missionId", type: "uint256", indexed: true },
+      { name: "owner", type: "address", indexed: true },
+      { name: "defenderPlanetId", type: "uint256", indexed: true },
+      { name: "originPlanetId", type: "uint256", indexed: false },
+      { name: "arrivalAt", type: "uint64", indexed: false },
+      { name: "holdUntil", type: "uint64", indexed: false },
+      { name: "returnAt", type: "uint64", indexed: false }
+    ]
   }
 ] as const satisfies Abi;
 
@@ -121,6 +134,9 @@ export const eventTopics = {
   fleetMissionReturned: toEventSelector("FleetMissionReturned(uint256,address,uint256)"),
   fleetMissionReturnExposed: toEventSelector(
     "FleetMissionReturnExposed(uint256,address,uint8,uint256,uint256,uint64,uint128,uint128,uint128)"
+  ),
+  defenseHoldStationed: toEventSelector(
+    "DefenseHoldStationed(uint256,address,uint256,uint256,uint64,uint64,uint64)"
   )
 } as const;
 
@@ -129,7 +145,8 @@ export const subscribedTopic0 = [
   eventTopics.fleetMissionLaunched,
   eventTopics.fleetMissionResolved,
   eventTopics.fleetMissionReturned,
-  eventTopics.fleetMissionReturnExposed
+  eventTopics.fleetMissionReturnExposed,
+  eventTopics.defenseHoldStationed
 ] as const;
 
 export type RawLog = {
@@ -168,11 +185,21 @@ export type DecodedReturnExposed = {
   returnAt: number;
 };
 
+export type DecodedDefenseHoldStationed = {
+  kind: "defenseHoldStationed";
+  missionId: string;
+  /** DefenseHold can be sent home after this hold-window end, not at arrivalAt. */
+  holdUntil: number;
+  /** Final return timestamp after the holding fleet is sent home. */
+  returnAt: number;
+};
+
 export type DecodedBattleEvent =
   | DecodedLaunched
   | DecodedResolved
   | DecodedReturned
-  | DecodedReturnExposed;
+  | DecodedReturnExposed
+  | DecodedDefenseHoldStationed;
 
 /**
  * Decode a raw JSON-RPC log into the keeper's internal event shape. Returns `null` for logs that are
@@ -252,6 +279,26 @@ export function decodeBattleLog(log: RawLog): DecodedBattleEvent | null {
         kind: "returnExposed",
         missionId: args.missionId.toString(),
         status: Number(args.status),
+        returnAt: Number(args.returnAt)
+      };
+    }
+
+    if (topic0 === eventTopics.defenseHoldStationed) {
+      const decoded = decodeEventLog({
+        abi: battleEventsAbi,
+        eventName: "DefenseHoldStationed",
+        topics: log.topics as [signature: `0x${string}`, ...args: `0x${string}`[]],
+        data: log.data as `0x${string}`
+      });
+      const args = decoded.args as {
+        missionId: bigint;
+        holdUntil: bigint;
+        returnAt: bigint;
+      };
+      return {
+        kind: "defenseHoldStationed",
+        missionId: args.missionId.toString(),
+        holdUntil: Number(args.holdUntil),
         returnAt: Number(args.returnAt)
       };
     }

@@ -2,6 +2,7 @@ import {
   FleetMissionStatus,
   hasReturnLegAfterArrival,
   keeperResolvableMissionTypes,
+  MissionType,
   missionTypeNames
 } from "./events";
 import { MissionNotResolvableError, type MissionLeg, type MissionResolver } from "./resolver";
@@ -52,6 +53,9 @@ export type KeeperSnapshot = {
   pendingCount: number;
   awaitingArrivalCount: number;
   awaitingReturnCount: number;
+  dueMissionCount: number;
+  oldestDueAt: string | null;
+  oldestDueAgeSeconds: number | null;
   inFlightCount: number;
   resolvedCount: number;
   submitFailureCount: number;
@@ -199,6 +203,35 @@ export class BattleKeeper {
       returnAt
     });
     this.logger.info("[keeper] return exposed, awaiting return", { missionId, returnAt });
+  }
+
+  /** DefenseHold launch events expose travel arrival, but the permissionless resolve call is only
+   * valid after the stationing hold window ends. The companion DefenseHoldStationed event carries
+   * the exact `holdUntil`; use it so a holding fleet does not retry every tick while still active. */
+  recordDefenseHoldStationed(event: { missionId: string; holdUntil: number; returnAt: number }): void {
+    const { missionId, holdUntil, returnAt } = event;
+    if (this.terminal.has(missionId)) {
+      return;
+    }
+
+    this.knownMissionTypes.set(missionId, MissionType.DefenseHold);
+    const existing = this.pending.get(missionId);
+    if (existing && existing.leg !== "arrival") {
+      return;
+    }
+
+    this.pending.set(missionId, {
+      missionId,
+      missionType: MissionType.DefenseHold,
+      leg: "arrival",
+      dueAt: holdUntil,
+      returnAt
+    });
+    this.logger.info("[keeper] defense hold stationed, awaiting hold end", {
+      missionId,
+      holdUntil,
+      returnAt
+    });
   }
 
   /** The return leg is done (FleetMissionReturned). Drop the mission — it is terminal. */
@@ -379,17 +412,30 @@ export class BattleKeeper {
   snapshot(): KeeperSnapshot {
     let awaitingArrivalCount = 0;
     let awaitingReturnCount = 0;
+    let dueMissionCount = 0;
+    let oldestDueAtSeconds: number | null = null;
+    const nowSeconds = this.now();
     for (const mission of this.pending.values()) {
       if (mission.leg === "return") {
         awaitingReturnCount += 1;
       } else {
         awaitingArrivalCount += 1;
       }
+      if (mission.dueAt <= nowSeconds) {
+        dueMissionCount += 1;
+        oldestDueAtSeconds =
+          oldestDueAtSeconds === null ? mission.dueAt : Math.min(oldestDueAtSeconds, mission.dueAt);
+      }
     }
     return {
       pendingCount: this.pending.size,
       awaitingArrivalCount,
       awaitingReturnCount,
+      dueMissionCount,
+      oldestDueAt:
+        oldestDueAtSeconds === null ? null : new Date(oldestDueAtSeconds * 1_000).toISOString(),
+      oldestDueAgeSeconds:
+        oldestDueAtSeconds === null ? null : Math.max(0, nowSeconds - oldestDueAtSeconds),
       inFlightCount: this.inFlight.size,
       resolvedCount: this.resolvedCount,
       submitFailureCount: this.submitFailureCount,
