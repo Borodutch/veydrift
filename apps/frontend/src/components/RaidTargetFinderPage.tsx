@@ -722,6 +722,8 @@ export function RaidTargetRow({
   const alliance = target.alliance;
   const rowTone = target.protection.isProtected
     ? "border-red-300/15 bg-red-300/[0.04]"
+    : target.protection.isAtWar
+      ? "border-rose-300/20 bg-rose-300/[0.06]"
     : target.protection.isSameAlliance
       ? "border-sky-400/20 bg-sky-300/[0.06]"
       : "border-white/5";
@@ -767,6 +769,14 @@ export function RaidTargetRow({
                 title={`Same alliance — ${alliance.name}`}
               >
                 {`Ally [${alliance.tag}]`}
+              </span>
+            ) : null}
+            {target.protection.isAtWar && alliance ? (
+              <span
+                className="shrink-0 rounded border border-rose-300/40 bg-rose-400/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase leading-none text-rose-100"
+                title={`At war with ${alliance.name}`}
+              >
+                {`War [${alliance.tag}]`}
               </span>
             ) : null}
             {target.inbound.count > 0 ? (

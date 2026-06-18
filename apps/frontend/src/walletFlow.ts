@@ -702,6 +702,8 @@ export type ChainAllianceState = {
     };
     requestedAt: string;
   }>;
+  diplomacy: AllianceDiplomacyEntry[];
+  activeWars: AllianceDiplomacyEntry[];
   members: Array<{
     address: string;
     displayName?: string | null;
@@ -712,6 +714,15 @@ export type ChainAllianceState = {
 };
 
 export type AllianceRole = "none" | "member" | "officer" | "owner";
+export type AllianceDiplomacyStatus = "none" | "ally" | "non_aggression_pact" | "war";
+export type AllianceDiplomacyEntry = {
+  allianceId: string;
+  otherAllianceId: string;
+  status: AllianceDiplomacyStatus;
+  statusId: number;
+  updatedAt: string | null;
+  alliance: ChainAllianceState["directory"][number] | null;
+};
 
 export type HighscoreCategory =
   | "total"
@@ -736,6 +747,12 @@ export type HighscoreEntry = {
     blockedReason: "none" | "bashing_limit" | "score_protection" | "same_alliance";
     blockedReasonLabel: string | null;
     defenderInactive?: boolean;
+    atWar?: boolean;
+    targetAlliance?: {
+      allianceId: string;
+      tag: string;
+      name: string;
+    } | null;
   } | null;
   displayName?: string | null;
   homePlanetId: string | null;
@@ -916,6 +933,7 @@ const ALLIANCE_SELECTORS = {
   kickMember: "0xbd0e667c",
   leaveAlliance: "0xdabd761d",
   setMemberRole: "0xbfbb73f1",
+  setDiplomacy: "0x63b9e8f8",
   transferAllianceOwnership: "0xb1d3b1e4"
 } as const;
 const ERC20_SELECTORS = {
@@ -2248,6 +2266,25 @@ export async function sendAllianceRoleTransaction(
   });
 }
 
+export async function sendAllianceDiplomacyTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  otherAllianceId: string,
+  status: AllianceDiplomacyStatus
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(ALLIANCE_SELECTORS.setDiplomacy, [
+      allianceId,
+      otherAllianceId,
+      allianceDiplomacyStatusId(status),
+    ])
+  });
+}
+
 export async function sendAllianceTransferOwnershipTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -2260,6 +2297,13 @@ export async function sendAllianceTransferOwnershipTransaction(
     to: contractAddress,
     data: encodeUintAddressCall(ALLIANCE_SELECTORS.transferAllianceOwnership, allianceId, playerAddress)
   });
+}
+
+function allianceDiplomacyStatusId(status: AllianceDiplomacyStatus): number {
+  if (status === "ally") return 1;
+  if (status === "non_aggression_pact") return 2;
+  if (status === "war") return 3;
+  return 0;
 }
 
 export async function sendStartBuildingUpgradeTransaction(

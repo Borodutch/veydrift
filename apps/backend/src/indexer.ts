@@ -87,7 +87,8 @@ import {
   type RpcLog,
   type SettledPlanetEvent,
   type ShipyardState,
-  type WalletPlanets
+  type WalletPlanets,
+  diplomacyStatusName
 } from "./evm";
 import {
   calculateIndexedHighscore,
@@ -172,6 +173,13 @@ type MetadataRow = {
 
 type EventRow = {
   event_json: string;
+};
+
+type AllianceDiplomacyRow = {
+  alliance_id: string;
+  other_alliance_id: string;
+  status_id: number;
+  updated_at: string | null;
 };
 
 type LegacyUnitMutation = {
@@ -664,6 +672,7 @@ export class SettlementIndexer {
     const members = membership.allianceId === "0" ? [] : this.allianceMembers(membership.allianceId);
     const allianceJoinRequests = membership.allianceId === "0" ? [] : this.allianceJoinRequestsForAlliance(membership.allianceId);
     const profile = membership.allianceId === "0" ? null : directoryById.get(membership.allianceId) ?? null;
+    const diplomacy = membership.allianceId === "0" ? [] : this.allianceDiplomacy(membership.allianceId, directoryById);
 
     return {
       wallet,
@@ -685,6 +694,8 @@ export class SettlementIndexer {
       pendingInvites,
       pendingJoinRequests,
       allianceJoinRequests,
+      diplomacy,
+      activeWars: diplomacy.filter((relation) => relation.status === "war"),
       members
     };
   }
@@ -708,6 +719,18 @@ export class SettlementIndexer {
         name: row.name
       }
     ]));
+  }
+
+  allianceRelationship(allianceId: string | null | undefined, otherAllianceId: string | null | undefined): ReturnType<typeof diplomacyStatusName> {
+    if (!allianceId || !otherAllianceId || allianceId === "0" || otherAllianceId === "0" || allianceId === otherAllianceId) {
+      return "none";
+    }
+    const row = this.db.query(`
+      SELECT status_id
+      FROM contract_alliance_diplomacy
+      WHERE alliance_id = ? AND other_alliance_id = ?
+    `).get(allianceId, otherAllianceId) as { status_id: number } | null;
+    return diplomacyStatusName(row?.status_id ?? 0);
   }
 
   upsertPlayerDisplayName(wallet: Address, displayName: string): PlayerProfile {
@@ -842,6 +865,26 @@ export class SettlementIndexer {
       requesterDisplayName: this.playerProfile(row.requester).displayName,
       requesterMembership: this.allianceMembership(row.requester.toLowerCase() as Address),
       requestedAt: row.requested_at
+    }));
+  }
+
+  private allianceDiplomacy(
+    allianceId: string,
+    directoryById: ReadonlyMap<string, AllianceState["directory"][number]>
+  ): AllianceState["diplomacy"] {
+    const rows = this.db.query(`
+      SELECT alliance_id, other_alliance_id, status_id, updated_at
+      FROM contract_alliance_diplomacy
+      WHERE alliance_id = ? AND status_id != 0
+      ORDER BY status_id DESC, CAST(other_alliance_id AS INTEGER) ASC
+    `).all(allianceId) as AllianceDiplomacyRow[];
+    return rows.map((row) => ({
+      allianceId: row.alliance_id,
+      otherAllianceId: row.other_alliance_id,
+      status: diplomacyStatusName(row.status_id),
+      statusId: row.status_id,
+      updatedAt: row.updated_at,
+      alliance: directoryById.get(row.other_alliance_id) ?? null
     }));
   }
 

@@ -3,7 +3,7 @@ import type { LucideIcon } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { formatUserTimestamp } from "../timestampFormat";
-import type { AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsResponse } from "../walletFlow";
+import type { AllianceDiplomacyStatus, AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsResponse } from "../walletFlow";
 import { fetchWalletPlanets, shortAddress } from "../walletFlow";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { VeydriftLoader } from "./VeydriftLoader";
@@ -65,6 +65,7 @@ interface AlliancePageProps {
   onOpenPlayer?: ((playerAddress: string) => void) | undefined;
   onRefresh: () => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
+  onSetDiplomacy: (otherAllianceId: string, status: AllianceDiplomacyStatus) => void;
   onTransferOwnership: (playerAddress: string) => void;
   onUpdateProfile: (tag: string, name: string, description: string) => void;
 }
@@ -90,6 +91,7 @@ export function AlliancePage({
   onOpenPlayer,
   onRefresh,
   onSetRole,
+  onSetDiplomacy,
   onTransferOwnership,
   onUpdateProfile,
 }: AlliancePageProps) {
@@ -103,6 +105,7 @@ export function AlliancePage({
   const [inviteFormOpen, setInviteFormOpen] = useState(false);
   const [activeAllianceId, setActiveAllianceId] = useState<string | null>(selectedAllianceId ?? null);
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
+  const [warTargetAllianceId, setWarTargetAllianceId] = useState("");
   const [playerProfile, setPlayerProfile] = useState<PlayerProfileState>({ status: "idle" });
 
   const profile = allianceState?.profile;
@@ -192,6 +195,7 @@ export function AlliancePage({
             <MyAllianceSection
               canManageMembers={canManageMembers}
               currentAlliance={currentAlliance}
+              directory={directory}
               disabled={disabled}
               exitAction={exitAction}
               inviteAddress={inviteAddress}
@@ -203,6 +207,7 @@ export function AlliancePage({
               profileTag={profileTag}
               role={role}
               roster={roster}
+              activeWars={allianceState?.activeWars ?? []}
               tag={tag}
               name={name}
               description={description}
@@ -222,8 +227,11 @@ export function AlliancePage({
               onSetProfileTag={setProfileTag}
               onSetRole={onSetRole}
               onSetTag={setTag}
+              onSetDiplomacy={onSetDiplomacy}
+              onSetWarTargetAllianceId={setWarTargetAllianceId}
               onTransferOwnership={onTransferOwnership}
               onUpdateProfile={onUpdateProfile}
+              warTargetAllianceId={warTargetAllianceId}
             />
 
             {inspectedAlliance && !onOpenAlliance ? (
@@ -411,6 +419,7 @@ export function canTransferAllianceOwnership(
 function MyAllianceSection({
   canManageMembers,
   currentAlliance,
+  directory,
   disabled,
   exitAction,
   inviteAddress,
@@ -422,6 +431,7 @@ function MyAllianceSection({
   profileTag,
   role,
   roster,
+  activeWars,
   tag,
   name,
   description,
@@ -441,11 +451,15 @@ function MyAllianceSection({
   onSetProfileTag,
   onSetRole,
   onSetTag,
+  onSetDiplomacy,
+  onSetWarTargetAllianceId,
   onTransferOwnership,
   onUpdateProfile,
+  warTargetAllianceId,
 }: {
   canManageMembers: boolean;
   currentAlliance: AllianceEntry | null;
+  directory: DirectoryEntry[];
   disabled: boolean;
   exitAction: { canSubmit: boolean; label: "Leave Alliance" | "Delete Alliance"; reason: string | null };
   inviteAddress: string;
@@ -457,6 +471,7 @@ function MyAllianceSection({
   profileTag: string;
   role: AllianceRole;
   roster: RosterGroups;
+  activeWars: ChainAllianceState["activeWars"];
   tag: string;
   name: string;
   description: string;
@@ -476,8 +491,11 @@ function MyAllianceSection({
   onSetProfileTag: (value: string) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
   onSetTag: (value: string) => void;
+  onSetDiplomacy: (otherAllianceId: string, status: AllianceDiplomacyStatus) => void;
+  onSetWarTargetAllianceId: (value: string) => void;
   onTransferOwnership: (playerAddress: string) => void;
   onUpdateProfile: (tag: string, name: string, description: string) => void;
+  warTargetAllianceId: string;
 }) {
   if (!isMember || !currentAlliance) {
     return (
@@ -555,6 +573,18 @@ function MyAllianceSection({
             </button>
           </div>
         ) : null}
+
+        <WarSection
+          activeWars={activeWars}
+          currentAlliance={currentAlliance}
+          directory={directory}
+          disabled={disabled}
+          canDeclareWar={isOwner}
+          canEndWar={canManageMembers}
+          warTargetAllianceId={warTargetAllianceId}
+          onSetDiplomacy={onSetDiplomacy}
+          onSetWarTargetAllianceId={onSetWarTargetAllianceId}
+        />
 
         <RosterSection
           canManageMembers={canManageMembers}
@@ -695,6 +725,107 @@ function PublicAllianceSection({
     <Panel title="Alliance" action={<SectionIcon icon={Shield} />}>
       <AllianceSummary alliance={alliance} onOpenPlayer={onOpenPlayer} />
     </Panel>
+  );
+}
+
+function WarSection({
+  activeWars,
+  canDeclareWar,
+  canEndWar,
+  currentAlliance,
+  directory,
+  disabled,
+  warTargetAllianceId,
+  onSetDiplomacy,
+  onSetWarTargetAllianceId,
+}: {
+  activeWars: ChainAllianceState["activeWars"];
+  canDeclareWar: boolean;
+  canEndWar: boolean;
+  currentAlliance: AllianceEntry;
+  directory: DirectoryEntry[];
+  disabled: boolean;
+  warTargetAllianceId: string;
+  onSetDiplomacy: (otherAllianceId: string, status: AllianceDiplomacyStatus) => void;
+  onSetWarTargetAllianceId: (value: string) => void;
+}) {
+  const activeWarIds = new Set(activeWars.map((war) => war.otherAllianceId));
+  const declareTargets = sortedAllianceDirectory(directory)
+    .filter((alliance) => alliance.allianceId !== currentAlliance.allianceId)
+    .filter((alliance) => !activeWarIds.has(alliance.allianceId));
+  const selectedTarget = declareTargets.find((alliance) => alliance.allianceId === warTargetAllianceId) ?? null;
+
+  return (
+    <div className="rounded border border-white/10 bg-black/20 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Wars</h3>
+        <span className="text-xs text-slate-500">{activeWars.length}</span>
+      </div>
+
+      {activeWars.length ? (
+        <div className="mt-2 grid gap-1.5">
+          {activeWars.map((war) => {
+            const alliance = war.alliance;
+            return (
+              <div className="grid gap-2 rounded border border-rose-300/25 bg-rose-300/[0.06] px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center" key={war.otherAllianceId}>
+                <div className="min-w-0">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="rounded border border-rose-300/40 bg-rose-400/15 px-2 py-1 font-mono text-xs font-semibold text-rose-100">
+                      {alliance?.tag ?? `#${war.otherAllianceId}`}
+                    </span>
+                    <span className="truncate text-sm font-semibold text-white">{alliance?.name ?? `Alliance #${war.otherAllianceId}`}</span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-400">Attack score protection and bashing limits are bypassed for this relationship.</p>
+                </div>
+                {canEndWar ? (
+                  <button
+                    className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={disabled}
+                    onClick={() => onSetDiplomacy(war.otherAllianceId, "none")}
+                    type="button"
+                  >
+                    End War
+                  </button>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-slate-400">No active wars.</p>
+      )}
+
+      {canDeclareWar ? (
+        <div className="mt-3 grid gap-2 border-t border-white/10 pt-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+          <label className="block">
+            <span className="text-xs uppercase tracking-[0.14em] text-slate-500">Declare War</span>
+            <select
+              className="mt-1 w-full rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/50"
+              disabled={disabled || declareTargets.length === 0}
+              onInput={(event) => onSetWarTargetAllianceId(event.currentTarget.value)}
+              value={selectedTarget?.allianceId ?? ""}
+            >
+              <option value="">Select alliance</option>
+              {declareTargets.map((alliance) => (
+                <option key={alliance.allianceId} value={alliance.allianceId}>
+                  {alliance.tag} - {alliance.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="self-end rounded border border-rose-300/30 px-3 py-2 text-sm font-semibold text-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={disabled || !selectedTarget}
+            onClick={() => {
+              if (selectedTarget) onSetDiplomacy(selectedTarget.allianceId, "war");
+            }}
+            type="button"
+          >
+            Declare War
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

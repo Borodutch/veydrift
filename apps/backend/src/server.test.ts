@@ -76,6 +76,7 @@ const allianceCreatedTopic = "0x4a2634d9b86143d681c41580ee71aad7571fc28bc42c855f
 const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425e5b688ec918c2f58df7360e";
 const allianceJoinRequestedTopic = "0x57dc0d6d966259dfce732817e0ad98a199174482159ce86fec64334a407ed2b5";
 const allianceJoinedTopic = "0x966912f1fd05e1765f8d822e0db01e534676a830ea4b161fc254f4e63f0324eb";
+const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
 const planet: PlanetState = {
   planetId: "7",
   owner: player,
@@ -581,6 +582,8 @@ class MockChainReader implements ChainReader {
       pendingInvites: [],
       pendingJoinRequests: [],
       allianceJoinRequests: [],
+      diplomacy: [],
+      activeWars: [],
       members: [{ address: wallet, role: "owner", joinedAt: "1770000000" }]
     };
   }
@@ -2487,6 +2490,84 @@ describe("Veydrift backend", () => {
       allowed: false,
       blockedReason: "same_alliance",
       blockedReasonLabel: "Attack blocked: target belongs to your alliance."
+    });
+  });
+
+  test("indexed attack protection reports active war and bypasses score/bashing gates", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const indexer = await twoPlanetIndexer(attacker);
+    indexer.applyLog(defenseCompletedLog({ planetId: 8n, defenseId: 0n, total: 350_000n, logIndex: 1 }));
+    indexer.applyLog(defenseCompletedLog({ planetId: 7n, defenseId: 0n, total: 1n, logIndex: 2 }));
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    for (let index = 0; index < 6; index++) {
+      indexer.applyLog(attackLaunchLog({
+        missionId: BigInt(index + 1),
+        attacker,
+        targetPlanetId: 7n,
+        blockTimestampSeconds: nowSeconds - 3_600 + index,
+        logIndex: 100 + index,
+      }));
+    }
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: "0x69801c80",
+      transactionHash: "0xattacker-alliance-create",
+      logIndex: "0x0",
+      topics: [allianceCreatedTopic, topic(1n), addressTopic(attacker)],
+      data: abiStrings("ATK", "Attackers")
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      blockTimestamp: "0x69801c81",
+      transactionHash: "0xattacker-alliance-owner",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(attacker)],
+      data: abiWords(3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92",
+      blockTimestamp: "0x69801c82",
+      transactionHash: "0xdefender-alliance-create",
+      logIndex: "0x0",
+      topics: [allianceCreatedTopic, topic(2n), addressTopic(player)],
+      data: abiStrings("DEF", "Defenders")
+    });
+    indexer.applyLog({
+      blockNumber: "0x93",
+      blockTimestamp: "0x69801c83",
+      transactionHash: "0xdefender-alliance-owner",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(2n), addressTopic(player)],
+      data: abiWords(3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      blockTimestamp: "0x69801c84",
+      transactionHash: "0xalliance-war",
+      logIndex: "0x0",
+      topics: [allianceDiplomacyUpdatedTopic, topic(1n), topic(2n)],
+      data: abiWords(3n)
+    });
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+
+    const response = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      allowed: true,
+      atWar: true,
+      blockedReason: "none",
+      targetAlliance: { allianceId: "2", tag: "DEF", name: "Defenders" }
+    });
+
+    const highscores = await handler(new Request(`http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`));
+    const highscoreBody = await highscores.json();
+    expect(highscoreBody.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toMatchObject({
+      allowed: true,
+      atWar: true,
+      blockedReason: "none",
+      targetAlliance: { allianceId: "2", tag: "DEF", name: "Defenders" }
     });
   });
 

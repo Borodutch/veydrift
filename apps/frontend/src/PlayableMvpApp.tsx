@@ -177,6 +177,7 @@ import {
   sendAllianceInviteTransaction,
   sendAllianceProfileTransaction,
   sendAllianceRoleTransaction,
+  sendAllianceDiplomacyTransaction,
   sendAllianceTransferOwnershipTransaction,
   sendApproveAllianceJoinRequestTransaction,
   sendCancelAllianceJoinRequestTransaction,
@@ -4973,6 +4974,23 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     ));
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
+  const handleSetAllianceDiplomacy = useCallback((otherAllianceId: string, status: "none" | "ally" | "non_aggression_pact" | "war") => {
+    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+
+    const label = status === "war" ? "Alliance war declaration" : "Alliance diplomacy update";
+    void runAllianceTransaction(label, () => sendAllianceDiplomacyTransaction(
+      provider,
+      account,
+      allianceContract,
+      allianceState.membership.allianceId,
+      otherAllianceId,
+      status,
+    ));
+  }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+
   const handleTransferAllianceOwnership = useCallback((playerAddress: string) => {
     if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
       setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
@@ -6272,6 +6290,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onOpenAlliance={handleSelectAlliance}
           onOpenPlayer={handleSelectPlayer}
           onRefresh={refreshAllianceState}
+          onSetDiplomacy={handleSetAllianceDiplomacy}
           onSetRole={handleSetAllianceRole}
           onTransferOwnership={handleTransferAllianceOwnership}
           onUpdateProfile={handleUpdateAllianceProfile}

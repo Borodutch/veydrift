@@ -1221,6 +1221,8 @@ function allianceStateWithApplication(overrides: Partial<ChainAllianceState> = {
     directory: [],
     pendingInvites: [],
     pendingJoinRequests: [],
+    diplomacy: [],
+    activeWars: [],
     allianceJoinRequests: [
       {
         allianceId: "7",
