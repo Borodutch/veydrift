@@ -2482,6 +2482,21 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       lastSuccessfulRefreshAt: settlement ? Date.now() : undefined,
     }));
   }, [activePlanetId]);
+  const updateOnChainSettlementSnapshot = useCallback((
+    updater: (current: WalletSettlementResponse | undefined) => WalletSettlementResponse | undefined,
+  ) => {
+    setPlanetSectionStore((current) => {
+      const sectionSettlement = planetSectionForPlanet(current, activePlanetId).settlementState;
+      const nextSettlement = updater(sectionSettlement ?? onChainSettlementState);
+      const planetId = nextSettlement?.planet?.planetId ?? nextSettlement?.homePlanetId ?? activePlanetId;
+      return setPlanetSectionData(current, planetId, "settlementState", nextSettlement, {
+        loading: false,
+        error: undefined,
+        lastSuccessfulRefreshAt: nextSettlement ? Date.now() : undefined,
+      });
+    });
+    setOnChainSettlementState((current) => updater(current));
+  }, [activePlanetId, onChainSettlementState]);
   const infrastructureChainState = activePlanetSection.infrastructureChainState;
   const setInfrastructureChainState = useCallback((
     value: ChainInfrastructureState | null | ((current: ChainInfrastructureState | null) => ChainInfrastructureState | null),
@@ -5567,7 +5582,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     latestInfrastructureResourceSnapshot.current = { planetId, lastSettledAt: null };
     setSelectedPlanetId(planetId);
     applyOnChainSettlementSnapshot(walletSettlementForManagedPlanet(onChainSettlement, nextPlanet));
-    setOnChainQueues(walletQueuesForManagedPlanet(onChainQueues, nextPlanet));
+    const nextQueues = walletQueuesForManagedPlanet(onChainQueues, nextPlanet);
+    setOnChainQueuesState(nextQueues);
+    setPlanetSectionStore((current) => setPlanetSectionData(current, planetId, "queuesState", nextQueues, {
+      loading: false,
+      error: undefined,
+      lastSuccessfulRefreshAt: nextQueues ? Date.now() : undefined,
+    }));
     setOnChainError(undefined);
     setOnChainStatus(nextPlanet ? "ready" : "loading");
     const nextSection = planetSectionForPlanet(planetSectionStore, planetId);
@@ -5661,12 +5682,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         const profile = await updatePlayerProfile(apiBaseUrl, provider, account, displayName, description);
         setPlayerProfile((current) => mergePlayerProfile(current, profile));
         markFreshStateWrite(onChainRefreshGate);
-        setOnChainSettlementState((current) => current ? { ...current, player: profile } : current);
+        updateOnChainSettlementSnapshot((current) => current ? { ...current, player: profile } : current);
         try {
           const refreshedProfile = await fetchPlayerProfile(apiBaseUrl, account);
           setPlayerProfile((current) => mergePlayerProfile(current, refreshedProfile));
           markFreshStateWrite(onChainRefreshGate);
-          setOnChainSettlementState((current) => current ? { ...current, player: refreshedProfile } : current);
+          updateOnChainSettlementSnapshot((current) => current ? { ...current, player: refreshedProfile } : current);
         } catch (error) {
           console.error(error);
         }
@@ -5680,7 +5701,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         });
       }
     });
-  }, [account, apiBaseUrl, page, provider, refreshAllianceState, runGatedTransaction]);
+  }, [account, apiBaseUrl, page, provider, refreshAllianceState, runGatedTransaction, updateOnChainSettlementSnapshot]);
 
   const handleAbandonPlanet = useCallback(() => {
     if (!provider || !account || !gameContract || !activePlanetId || selectedManagedPlanet?.isHomePlanet) {
