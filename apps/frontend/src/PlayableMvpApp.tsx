@@ -720,8 +720,10 @@ export function planetHasIncomingAttack(
   fleetVisibility: FleetMissionVisibilityResponse | undefined,
   planetId: string,
 ): boolean {
+  const wallet = fleetVisibility?.wallet.trim().toLowerCase();
   return Boolean(fleetVisibility?.incoming.some((mission) =>
     mission.missionType === "Attack" && mission.targetPlanetId === planetId
+    && (!wallet || mission.owner.trim().toLowerCase() !== wallet)
   ));
 }
 
