@@ -58,6 +58,29 @@ button {
   font: inherit;
 }
 
+button:focus {
+  outline: none;
+}
+
+button:focus:not(:focus-visible) {
+  outline: none;
+  --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-ring-shadow: 0 0 #0000;
+  box-shadow: var(--tw-shadow, 0 0 #0000);
+}
+
+button:focus-visible {
+  outline: 2px solid rgba(128, 241, 255, 0.78);
+  outline-offset: 2px;
+  --tw-ring-color: rgba(128, 241, 255, 0.5);
+  --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-ring-shadow: 0 0 0 3px var(--tw-ring-color);
+  box-shadow:
+    var(--tw-ring-offset-shadow),
+    var(--tw-ring-shadow),
+    var(--tw-shadow, 0 0 #0000);
+}
+
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
