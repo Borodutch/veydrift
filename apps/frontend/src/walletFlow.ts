@@ -35,6 +35,7 @@ const WALLET_READ_TIMEOUT_MS = 10_000;
 export const WALLET_BOOTSTRAP_READ_TIMEOUT_MS = 6_000;
 const FARCASTER_WALLET_PROVIDER_TIMEOUT_MS = 1_200;
 const WALLET_API_READ_TIMEOUT_MS = 10_000;
+export const WATCHED_PLANETS_API_READ_TIMEOUT_MS = 25_000;
 export const WALLET_LOCKED_MESSAGE = "Wallet is locked. Please unlock your wallet and try again.";
 export const WALLET_ACCOUNT_UNAVAILABLE_MESSAGE = "Wallet account is unavailable. Reconnect your wallet, then retry.";
 export const WALLET_CONNECTION_REJECTED_MESSAGE = "Wallet connection was rejected. Reconnect your wallet, then retry.";
@@ -2781,12 +2782,18 @@ export async function fetchWalletPlanets(apiUrl: string, wallet: string, options
 export async function fetchWatchedPlanets(
   apiUrl: string,
   wallet: string,
-  options: { page?: number; pageSize?: number } = {}
+  options: { page?: number; pageSize?: number; timeoutMs?: number } = {}
 ): Promise<WatchedPlanetsResponse> {
   const params = new URLSearchParams();
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
-  return fetchWalletJson<WatchedPlanetsResponse>(apiUrl, wallet, `watched-planets?${params.toString()}`, "Watched planets");
+  return fetchWalletJson<WatchedPlanetsResponse>(
+    apiUrl,
+    wallet,
+    `watched-planets?${params.toString()}`,
+    "Watched planets",
+    { timeoutMs: options.timeoutMs ?? WATCHED_PLANETS_API_READ_TIMEOUT_MS }
+  );
 }
 
 export async function watchPlanet(apiUrl: string, provider: Eip1193Provider, wallet: string, planetId: string): Promise<WatchPlanetMutationResponse> {
@@ -3156,12 +3163,14 @@ async function fetchWalletJson<T>(
   apiUrl: string,
   wallet: string,
   path: string,
-  label: string
+  label: string,
+  options: { timeoutMs?: number } = {}
 ): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? WALLET_API_READ_TIMEOUT_MS;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
-    controller.abort(new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(WALLET_API_READ_TIMEOUT_MS / 1_000)} seconds.`));
-  }, WALLET_API_READ_TIMEOUT_MS);
+    controller.abort(new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(timeoutMs / 1_000)} seconds.`));
+  }, timeoutMs);
 
   let response: Response;
   try {
@@ -3174,7 +3183,7 @@ async function fetchWalletJson<T>(
     if (controller.signal.aborted) {
       throw controller.signal.reason instanceof Error
         ? controller.signal.reason
-        : new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(WALLET_API_READ_TIMEOUT_MS / 1_000)} seconds.`);
+        : new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(timeoutMs / 1_000)} seconds.`);
     }
     throw new Error(walletApiNetworkFailureMessage(label, error));
   } finally {

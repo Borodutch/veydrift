@@ -1,6 +1,6 @@
 import { queueProgress as queueProgressValue, researchCatalog, type MainQueueItem, type PlayableState, type Resources } from "../playableMvp";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
-import { AlertTriangle, ArrowRight, Check, Info, Pencil, Trash2, X } from "lucide-preact";
+import { AlertTriangle, ArrowRight, Check, Info, Pencil, RefreshCw, Trash2, X } from "lucide-preact";
 import { researchQueueForDisplay } from "../chainState";
 import {
   buildingQueueAsset,
@@ -109,6 +109,7 @@ interface OverviewPageProps {
   watchedPlanetsLoading?: boolean | undefined;
   watchedPlanetsPage?: number | undefined;
   onWatchedPlanetsPageChange?: ((page: number) => void) | undefined;
+  onRefreshWatchedPlanets?: (() => void) | undefined;
   watchBusyPlanetId?: string | undefined;
 }
 
@@ -149,6 +150,7 @@ export function OverviewPage({
   watchedPlanetsLoading = false,
   watchedPlanetsPage = 1,
   onWatchedPlanetsPageChange,
+  onRefreshWatchedPlanets,
   watchBusyPlanetId,
 }: OverviewPageProps) {
   const usedFields = selectedPlanetUsedFields ?? usedFieldsFromBuildings(settledState.buildings);
@@ -491,6 +493,7 @@ export function OverviewPage({
         <WatchedPlanetsPanel
           loading={watchedPlanetsLoading}
           onPageChange={onWatchedPlanetsPageChange}
+          onRefresh={onRefreshWatchedPlanets}
           onSelectAlliance={onSelectAlliance}
           onSelectPlanet={onSelectPlanet}
           onSelectPlayer={onSelectPlayer}
@@ -708,6 +711,7 @@ function WatchedPlanetsPanel({
   error,
   loading,
   onPageChange,
+  onRefresh,
   onSelectAlliance,
   onSelectPlanet,
   onSelectPlayer,
@@ -723,6 +727,7 @@ function WatchedPlanetsPanel({
   error: string | undefined;
   loading: boolean;
   onPageChange: ((page: number) => void) | undefined;
+  onRefresh: (() => void) | undefined;
   onSelectAlliance: ((allianceId: string) => void) | undefined;
   onSelectPlanet: ((coords: { galaxy: number; system: number; position: number }) => void) | undefined;
   onSelectPlayer: ((wallet: string) => void) | undefined;
@@ -772,8 +777,19 @@ function WatchedPlanetsPanel({
       </div>
 
       {error ? (
-        <div className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
-          {error}
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
+          <span>{error}</span>
+          {onRefresh ? (
+            <button
+              className="inline-flex h-8 items-center gap-1.5 rounded border border-amber-200/30 bg-amber-200/10 px-2 font-semibold text-amber-50 transition hover:bg-amber-200/20 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={loading}
+              onClick={onRefresh}
+              type="button"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              Retry
+            </button>
+          ) : null}
         </div>
       ) : null}
       {loading ? <InlineSyncIndicator label="Refreshing watched planets" /> : null}
