@@ -5489,6 +5489,49 @@ describe("SettlementIndexer", () => {
     expect(indexer.allCompletedFleetMissions().map((mission) => mission.missionId)).toEqual(["70"]);
   });
 
+  test("overdue attacks awaiting randomness do not pollute active mission feeds", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    }, 100n, { randomnessEngineConfigured: true });
+    indexer.applyEvent(planet);
+
+    const missionId = 1947n;
+    const attacker = "0x1c458243217468a52fe6389c57370b6ac075e166" as Address;
+    indexer.applyLog({
+      blockNumber: "0x290d14f",
+      transactionHash: "0xlaunch-1947",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(attacker), topic(3n)],
+      data: abiWords(35n, BigInt(planet.planetId), 1767225000n, 1767225300n, 1648n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x290d14f",
+      transactionHash: "0xlaunch-1947",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(missionId)],
+      data: abiWords(0n, 0n, 0n, 24n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x290d14f",
+      transactionHash: "0xlaunch-1947",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(missionId)],
+      data: abiWords(1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    expect(indexer.fleetMission("1947")).toMatchObject({
+      missionId: "1947",
+      status: "Outbound",
+      needsResolution: false,
+      resolutionBlocker: "randomness_pending"
+    });
+    expect(indexer.allActiveFleetMissions().map((mission) => mission.missionId)).not.toContain("1947");
+    expect(indexer.activeFleetMissionsForTarget(planet.planetId).map((mission) => mission.missionId)).not.toContain("1947");
+    expect(indexer.dueUnresolvedFleetMissionsForPlanet(planet.planetId).map((mission) => mission.missionId)).toContain("1947");
+  });
+
   test("explicit canonical sync is not aborted by the normal cold rebuild deadline", async () => {
     const reader = {
       async listContractLogs() {
@@ -6373,7 +6416,7 @@ describe("attack needsResolution is gated on battle randomness (VEY-KANEO-479)",
       transactionHash: "0xattack",
       logIndex: "0x0",
       topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(attacker), topic(3n)],
-      data: abiWords(99n, 7n, 1700000000n, 1700000300n, requestId)
+      data: abiWords(99n, 7n, 1700000000n, 1800000300n, requestId)
     });
     indexer.applyLog({
       blockNumber: "0x90",

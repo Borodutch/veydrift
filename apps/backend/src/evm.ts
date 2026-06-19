@@ -449,6 +449,10 @@ export type FleetMissionSummary = {
   // carry no battle randomness). The read model gates `needsResolution` on this request being
   // fulfilled so Mission Control never shows a phantom "Ready to resolve" before the keeper can settle.
   randomnessRequestId?: string;
+  // Arrived combat can be blocked by missing external randomness. Keep the canonical status intact,
+  // but surface why the mission is not actually resolvable/reportable.
+  resolutionBlocker?: "randomness_pending";
+  resolutionBlockerDetail?: string;
   // VEY-KANEO-498: DefenseHold-specific hold expiry from DefenseHoldStationed. A DefenseHold can defend
   // attacks whose arrival is inside [arrivalAt, defenseHoldUntil]; returnAt includes the flight home and
   // is therefore too broad for public attack-risk intel.
