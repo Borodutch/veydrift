@@ -30,6 +30,7 @@ import {
   fetchWalletPlanets,
   fetchWalletSettlement,
   fetchWalletQueues,
+  fetchWatchedPlanets,
   getAvailableWalletProvider,
   getAvailableWalletProviderDetails,
   getChainId,
@@ -81,6 +82,7 @@ import {
   unwatchPlanet,
   watchedPlanetMessage,
   watchPlanet,
+  WATCHED_PLANETS_API_READ_TIMEOUT_MS,
   walletRequestErrorMessage,
   type Eip1193Provider
 } from "./walletFlow";
@@ -2574,6 +2576,65 @@ describe("walletFlow", () => {
     try {
       await expect(fetchHighscores("https://api.example.test")).rejects.toThrow(
         "Rankings are warming from indexed game state. Retry in a moment."
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("allows slow watched-planets reads to outlive the normal wallet API timeout", async () => {
+    expect(WATCHED_PLANETS_API_READ_TIMEOUT_MS).toBeGreaterThan(10_000);
+
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; aborted: boolean }> = [];
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      calls.push({
+        url: String(input),
+        aborted: init?.signal instanceof AbortSignal ? init.signal.aborted : false,
+      });
+      return new Response(JSON.stringify({
+        pagination: { page: 2, pageSize: 25, total: 0, totalPages: 1 },
+        planets: [],
+        watchedPlanetIds: [],
+        wallet: account,
+      }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchWatchedPlanets("https://api.example.test///", account, { page: 2, pageSize: 25 })).resolves.toMatchObject({
+        watchedPlanetIds: [],
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(calls).toEqual([{
+      url: `https://api.example.test/wallet/${account}/watched-planets?page=2&pageSize=25`,
+      aborted: false,
+    }]);
+  });
+
+  test("times out watched-planets reads with watched-planets specific copy", async () => {
+    const originalFetch = globalThis.fetch;
+
+    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
+      await new Promise<Response>((_resolve, reject) => {
+        if (init?.signal instanceof AbortSignal) {
+          init.signal.addEventListener("abort", () => {
+            reject(init.signal instanceof AbortSignal && init.signal.reason instanceof Error
+              ? init.signal.reason
+              : new Error("aborted"));
+          });
+        }
+      })) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchWatchedPlanets("https://api.example.test", account, { timeoutMs: 1 })).rejects.toThrow(
+        "Timed out reading watched planets from the game API after 0 seconds."
       );
     } finally {
       globalThis.fetch = originalFetch;

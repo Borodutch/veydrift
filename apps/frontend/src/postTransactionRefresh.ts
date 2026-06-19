@@ -114,6 +114,13 @@ export type AllianceApplicationExpectation = {
   requester: string;
 };
 
+export type AllianceProfileExpectation = {
+  allianceId: string;
+  tag: string;
+  name: string;
+  description: string;
+};
+
 export type HydratedWalletPlanetSnapshot = WalletPlanetSyncSnapshot & {
   selectedPlanet: ManagedPlanetResponse | NonNullable<WalletSettlementResponse["planet"]>;
 };
@@ -234,6 +241,20 @@ export function isAllianceApplicationCleared(
     request.allianceId === expectation.allianceId
       && request.requester.toLowerCase() === expectation.requester.toLowerCase()
   );
+}
+
+export function isAllianceProfileUpdated(
+  snapshot: ChainAllianceState,
+  expectation: AllianceProfileExpectation,
+): boolean {
+  const profile = snapshot.profile;
+  if (!profile || profile.active !== true || snapshot.membership.allianceId !== expectation.allianceId) {
+    return false;
+  }
+
+  return profile.tag === expectation.tag
+    && profile.name === expectation.name
+    && profile.description === expectation.description;
 }
 
 export function missionLaunchMissionsForTransaction(
@@ -704,6 +725,36 @@ export async function waitForAllianceApplicationCleared(
   throw new Error(allianceApplicationClearTimeoutMessage(latest, expectation, lastError));
 }
 
+export async function waitForAllianceProfileState(
+  load: () => Promise<ChainAllianceState>,
+  expectation: AllianceProfileExpectation,
+  options: WaitOptions = {},
+): Promise<ChainAllianceState> {
+  const attempts = options.attempts ?? 8;
+  const intervalMs = options.intervalMs ?? 1_500;
+  const delay = options.delay ?? defaultDelay;
+  let latest: ChainAllianceState | undefined;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      latest = await load();
+      lastError = undefined;
+      if (isAllianceProfileUpdated(latest, expectation)) {
+        return latest;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < attempts - 1) {
+      await delay(intervalMs);
+    }
+  }
+
+  throw new Error(allianceProfileUpdateTimeoutMessage(latest, expectation, lastError));
+}
+
 export async function waitForMissionLaunchState(
   load: () => Promise<MissionLaunchSnapshot>,
   txHash: string,
@@ -948,6 +999,30 @@ function allianceApplicationClearTimeoutMessage(
   }
 
   return "Alliance application transaction confirmed, but Alliance state is still syncing. Try refreshing Alliance state in a few seconds.";
+}
+
+function allianceProfileUpdateTimeoutMessage(
+  snapshot: ChainAllianceState | undefined,
+  expectation: AllianceProfileExpectation,
+  lastError?: unknown,
+): string {
+  const recovery = transientGameStateReadFailureMessage(lastError);
+  if (recovery) return recovery;
+
+  if (snapshot?.membership.allianceId !== expectation.allianceId) {
+    return "Alliance profile transaction confirmed, but your current alliance state is still syncing. Try refreshing Alliance state in a few seconds.";
+  }
+
+  const profile = snapshot.profile;
+  if (!profile) {
+    return "Alliance profile transaction confirmed, but the updated alliance profile is still syncing in the game API. Try refreshing Alliance state in a few seconds.";
+  }
+
+  if (profile.description !== expectation.description) {
+    return "Alliance profile transaction confirmed, but the updated description is still syncing in the game API. Try refreshing Alliance state in a few seconds.";
+  }
+
+  return "Alliance profile transaction confirmed, but the updated alliance profile is still syncing in the game API. Try refreshing Alliance state in a few seconds.";
 }
 
 function missionLaunchTimeoutMessage(txHash: string, lastError?: unknown): string {

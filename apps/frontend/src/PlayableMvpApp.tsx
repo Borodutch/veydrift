@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Coordinates, Planet, PlanetType } from "./types";
-import { GalaxyView, type GalaxyActionState } from "./components/GalaxyView";
+import {
+  GalaxyView,
+  rememberGalaxySystemPayload,
+  type GalaxyActionState,
+} from "./components/GalaxyView";
 import { PlanetDetail } from "./components/PlanetDetail";
 import { TopBar } from "./components/TopBar";
 import { NavBar, type Page } from "./components/NavBar";
@@ -109,6 +113,7 @@ import {
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
   waitForAllianceApplicationCleared,
+  waitForAllianceProfileState,
   waitForMissionLaunchState,
   waitForRenamedWalletPlanet,
   type AllianceApplicationExpectation,
@@ -4070,7 +4075,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         return response.json();
       })
       .then((payload) => {
-        const systemPlanet = planetsFromSystemResponse(payload)
+        const systemPlanet = rememberGalaxySystemPayload(apiBaseUrl, homeCoords.galaxy, homeCoords.system, payload)
           .find((item) => item.position === homeCoords.position);
         const basePlanet = systemPlanet ?? (settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined);
         const mergedPlanet = basePlanet && settlementPlanet
@@ -5154,21 +5159,25 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
   const handleUpdateAllianceProfile = useCallback((tag: string, name: string, description: string) => {
-    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+    if (!provider || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
       setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
       return;
     }
 
+    const allianceId = allianceState.membership.allianceId;
     void runAllianceTransaction("Alliance profile update", () => sendAllianceProfileTransaction(
       provider,
       account,
       allianceContract,
-      allianceState.membership.allianceId,
+      allianceId,
       tag,
       name,
       description,
+    ), () => waitForAllianceProfileState(
+      async () => fetchAllianceState(apiBaseUrl, account),
+      { allianceId, tag, name, description },
     ));
-  }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+  }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
   const handleAcceptAllianceInvite = useCallback((allianceId: string) => {
     if (!provider || !account || !apiBaseUrl || !allianceContract) {
@@ -6914,6 +6923,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         watchedPlanetsLoading={watchedPlanetsLoading}
         watchedPlanetsPage={watchedPlanetsPage}
         onWatchedPlanetsPageChange={setWatchedPlanetsPage}
+        onRefreshWatchedPlanets={() => void refreshWatchedPlanets(watchedPlanetsPage)}
         watchBusyPlanetId={watchBusyPlanetId}
       />
     );
