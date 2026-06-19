@@ -140,6 +140,8 @@ export type IndexerSnapshot = {
   staleReason: string | null;
 };
 
+const indexedStateVersionMetadataKey = "indexedStateVersion";
+
 export type SettlementIndexerOptions = {
   database?: Database;
   databasePath?: string;
@@ -1501,7 +1503,10 @@ export class SettlementIndexer {
   }
 
   responseCacheVersion(): string {
-    return `${this.stateGeneration}:${this.currentMissionReadModelDbVersion()}`;
+    // Reader workers do not receive the writer worker's in-memory `stateGeneration`, so route-level
+    // caches must include a token persisted into the shared WAL database.
+    const indexedStateVersion = this.metadata(indexedStateVersionMetadataKey) ?? this.stateGeneration.toString();
+    return `${indexedStateVersion}:${this.currentMissionReadModelDbVersion()}`;
   }
 
   checkpointWal(mode: "PASSIVE" | "TRUNCATE" = "PASSIVE"): Array<{ busy: number; log: number; checkpointed: number }> {
@@ -5076,6 +5081,7 @@ export class SettlementIndexer {
   private touch(): void {
     this.stateGeneration += 1;
     this.snapshotCache = null;
+    this.setMetadata(indexedStateVersionMetadataKey, this.stateGeneration.toString());
     this.setMetadata("lastRebuiltAt", new Date().toISOString());
   }
 

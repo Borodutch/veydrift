@@ -111,7 +111,6 @@ export type ServerDependencies = {
   config?: BackendConfig;
   configProblems?: ConfigProblem[];
   chainReader?: ChainReader;
-  enableResponseCache?: boolean;
   randomnessCommitter?: RandomnessCommitterService;
   indexer?: SettlementIndexer;
   // Worker role in the multi-process pool (VEY-KANEO-466). "writer" (the default) owns chain-sync
@@ -122,6 +121,11 @@ export type ServerDependencies = {
   // Test/operator seam for an explicit canonical rebuild. Production defaults to false: the normal
   // backend no longer self-heals from eth_call at boot. Chain-sync event replay is the automatic path.
   runStartupReconcile?: boolean;
+  // Test seam for the production route-level response cache. Production enables it only for the
+  // dependency-free server construction path.
+  enableResponseCache?: boolean;
+  // Test seam for disabling asynchronous production cache prewarming while exercising the response cache.
+  prewarmResponseCache?: boolean;
 };
 
 const defaultUniverseSeed = "veydrift-mainnet-preview";
@@ -226,6 +230,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     && !dependencies.indexer
     && !dependencies.randomnessCommitter
   );
+  const prewarmResponseCache = dependencies.prewarmResponseCache ?? enableResponseCache;
 
   const handleRequest = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -1072,7 +1077,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     return handleRequest(request);
   };
 
-  prewarmHotResponseCache(serveWithResponseCache, indexer, enableResponseCache);
+  prewarmHotResponseCache(serveWithResponseCache, indexer, prewarmResponseCache);
   return serveWithResponseCache;
 }
 
