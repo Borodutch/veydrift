@@ -10,6 +10,7 @@ import {
   fleetMissionTravelSeconds,
 } from "../fleetMissionRules";
 import type { MissionShips } from "../galaxyActions";
+import { GAME_UNAVAILABLE_MESSAGE } from "../gameUnavailable";
 import {
   formatPlanetType,
   GALAXY_COUNT,
@@ -17,7 +18,8 @@ import {
   POSITION_COUNT,
   mergePlanetAtCoordinates,
   planetsFromSystemResponse,
-  planetTypeFromTemperature
+  planetTypeFromTemperature,
+  type ApiSystemResponse,
 } from "../data/mockUniverse";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress } from "../walletFlow";
@@ -38,8 +40,16 @@ import { GalaxyRowsSkeleton } from "./LoadingSkeletons";
 import { WatchablePlanetRow, type PlanetMetaItem } from "./WatchablePlanetRow";
 
 const SMALL_CARGO_SHIP_ID = 0;
+const GALAXY_SYSTEM_CACHE_TTL_MS = 2 * 60 * 1_000;
 const defaultMissionShips = (): Partial<MissionShips> => ({ smallCargo: 1 });
 export const PUBLIC_INTEL_SUMMARY_LABEL = "Public intel";
+
+type GalaxySystemCacheEntry = {
+  planets: Planet[];
+  storedAt: number;
+};
+
+const galaxySystemCache = new Map<string, GalaxySystemCacheEntry>();
 
 export function formatAllianceLabel(alliance: Planet["alliance"]): string {
   if (!alliance) return "";
@@ -153,14 +163,17 @@ export function GalaxyView({
   watchedPlanetIds = [],
   watchBusyPlanetId,
 }: Props) {
-  const [systemPlanets, setSystemPlanets] = useState<Planet[]>([]);
+  const currentSystemKey = galaxySystemKey(galaxy, system);
+  const cachedSystem = cachedGalaxySystemPlanets(apiBaseUrl, galaxy, system);
+  const [systemPlanets, setSystemPlanets] = useState<Planet[]>(() => cachedSystem ?? []);
   const [attackProtection, setAttackProtection] = useState<Record<string, AttackProtectionStatus>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | undefined>();
-  const [loadedSystemKey, setLoadedSystemKey] = useState<string | undefined>();
   const [reloadNonce, setReloadNonce] = useState(0);
-  const [source, setSource] = useState<GalaxySystemSource>("loading");
-  const currentSystemKey = galaxySystemKey(galaxy, system);
+  const [loadedSystemKey, setLoadedSystemKey] = useState<string | undefined>(
+    () => cachedSystem ? currentSystemKey : undefined
+  );
+  const [source, setSource] = useState<GalaxySystemSource>(cachedSystem ? "cache" : "loading");
   const loadedSystemKeyRef = useRef<string | undefined>();
   const homeCoordsInSystem = homeCoords?.galaxy === galaxy && homeCoords.system === system
     ? homeCoords
@@ -184,9 +197,17 @@ export function GalaxyView({
   useEffect(() => {
     const abortController = new AbortController();
     const canPreserveCurrentSystem = loadedSystemKeyRef.current === currentSystemKey;
+    const cachedPlanets = cachedGalaxySystemPlanets(apiBaseUrl, galaxy, system);
+
+    if (cachedPlanets && !canPreserveCurrentSystem) {
+      setSystemPlanets(cachedPlanets);
+      setLoadedSystemKey(currentSystemKey);
+      setSource("cache");
+    }
+
     setLoading(true);
     setLoadError(undefined);
-    setSource("loading");
+    if (!cachedPlanets) setSource("loading");
 
     fetch(galaxySystemUrl, {
       headers: { accept: "application/json" },
@@ -197,7 +218,8 @@ export function GalaxyView({
         return response.json();
       })
       .then((payload) => {
-        setSystemPlanets(planetsFromSystemResponse(payload));
+        const nextPlanets = rememberGalaxySystemPayload(apiBaseUrl, galaxy, system, payload);
+        setSystemPlanets(nextPlanets);
         setLoadedSystemKey(currentSystemKey);
         setSource("api");
       })
@@ -217,7 +239,7 @@ export function GalaxyView({
       });
 
     return () => abortController.abort();
-  }, [currentSystemKey, galaxySystemUrl, reloadNonce]);
+  }, [apiBaseUrl, currentSystemKey, galaxy, galaxySystemUrl, reloadNonce, system]);
 
   useEffect(() => {
     const occupiedTargets = planets
@@ -534,7 +556,7 @@ export function formatGalaxyOccupancySummary(occupiedCount: number): string {
   return occupiedCount > 0 ? `${occupiedCount} occupied` : "No occupants";
 }
 
-export type GalaxySystemSource = "api" | "loading" | "error";
+export type GalaxySystemSource = "api" | "cache" | "loading" | "error";
 
 export function formatGalaxyOccupancySource(
   source: GalaxySystemSource,
@@ -546,6 +568,41 @@ export function formatGalaxyOccupancySource(
 
 export function planetsForFailedGalaxyLoad(): Planet[] {
   return [];
+}
+
+export function rememberGalaxySystemPayload(
+  apiBaseUrl: string,
+  galaxy: number,
+  system: number,
+  payload: ApiSystemResponse,
+  now = Date.now()
+): Planet[] {
+  const planets = planetsFromSystemResponse(payload);
+  galaxySystemCache.set(galaxySystemCacheKey(apiBaseUrl, galaxy, system), {
+    planets,
+    storedAt: now,
+  });
+  return planets;
+}
+
+export function cachedGalaxySystemPlanets(
+  apiBaseUrl: string,
+  galaxy: number,
+  system: number,
+  now = Date.now()
+): Planet[] | undefined {
+  const key = galaxySystemCacheKey(apiBaseUrl, galaxy, system);
+  const entry = galaxySystemCache.get(key);
+  if (!entry) return undefined;
+  if (now - entry.storedAt > GALAXY_SYSTEM_CACHE_TTL_MS) {
+    galaxySystemCache.delete(key);
+    return undefined;
+  }
+  return entry.planets;
+}
+
+export function clearGalaxySystemCache(): void {
+  galaxySystemCache.clear();
 }
 
 export function shouldShowGalaxyInitialLoader({
@@ -567,7 +624,14 @@ export function shouldShowGalaxyRows({
 }
 
 export function systemLoadErrorLabel(error: unknown): string {
+  if (error instanceof Error && error.name === "AbortError") return "The universe API request was cancelled.";
+  if (error instanceof TypeError) return GAME_UNAVAILABLE_MESSAGE;
+  if (error instanceof Error && /\b5\d\d\b/.test(error.message)) return GAME_UNAVAILABLE_MESSAGE;
   return error instanceof Error ? error.message : "The universe API request failed.";
+}
+
+function galaxySystemCacheKey(apiBaseUrl: string, galaxy: number, system: number): string {
+  return galaxySystemRequestUrl(apiBaseUrl, galaxy, system);
 }
 
 export function formatGalaxyHeatLabel(temperature: Planet["temperature"]): string {

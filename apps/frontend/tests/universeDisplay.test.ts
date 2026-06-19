@@ -9,6 +9,8 @@ import {
 import { buildingCatalog, defenseCatalog, shipCatalog } from "../src/playableMvp";
 import { emptyMissionShips, galaxyActionsForSlot } from "../src/galaxyActions";
 import {
+  cachedGalaxySystemPlanets,
+  clearGalaxySystemCache,
   estimateGalaxyMissionPreview,
   PUBLIC_INTEL_SUMMARY_LABEL,
   formatGalaxyHeatLabel,
@@ -25,9 +27,12 @@ import {
   galaxyMissionFuelCost,
   galaxyMissionTravelSeconds,
   planetsForFailedGalaxyLoad,
+  rememberGalaxySystemPayload,
   shouldShowGalaxyInitialLoader,
-  shouldShowGalaxyRows
+  shouldShowGalaxyRows,
+  systemLoadErrorLabel
 } from "../src/components/GalaxyView";
+import { GAME_UNAVAILABLE_MESSAGE } from "../src/gameUnavailable";
 import {
   planetDetailRefreshResultPlanet,
   planetDetailRefreshStartPlanet,
@@ -135,6 +140,41 @@ describe("tester universe display data", () => {
     expect(galaxySystemRequestUrl("https://api.test", 2, 44)).toBe(
       "https://api.test/universe/galaxies/2/systems/44"
     );
+  });
+
+  test("reuses a recently loaded galaxy system payload for instant same-system renders", () => {
+    clearGalaxySystemCache();
+    const payload = {
+      galaxy: 6,
+      system: 9,
+      planets: [
+        {
+          fields: 211,
+          galaxy: 6,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
+          occupiedBy: {
+            owner: "0x2222222222222222222222222222222222222222",
+            planetId: "7",
+          },
+          position: 1,
+          system: 9,
+          temperature: -8,
+        },
+      ],
+    };
+
+    const planets = rememberGalaxySystemPayload("https://api.test", 6, 9, payload, 1_000);
+
+    expect(planets).toHaveLength(1);
+    expect(cachedGalaxySystemPlanets("https://api.test/", 6, 9, 1_000 + 119_999)?.[0]?.occupiedBy?.planetId).toBe("7");
+    expect(cachedGalaxySystemPlanets("https://api.test", 6, 9, 1_000 + 120_001)).toBeUndefined();
+  });
+
+  test("galaxy system network failures use the shared unavailable retry copy", () => {
+    expect(systemLoadErrorLabel(new TypeError("Failed to fetch"))).toBe(GAME_UNAVAILABLE_MESSAGE);
+    expect(systemLoadErrorLabel(new Error("Universe request failed with 503"))).toBe(GAME_UNAVAILABLE_MESSAGE);
   });
 
   test("public planet detail preserves public state rows and queue labels", () => {
