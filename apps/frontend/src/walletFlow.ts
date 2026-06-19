@@ -1,5 +1,5 @@
 import { sdk } from "@farcaster/miniapp-sdk";
-import { GAME_UNAVAILABLE_MESSAGE } from "./gameUnavailable";
+import { GAME_UNAVAILABLE_MESSAGE, serverUnavailableRetryMessage } from "./gameUnavailable";
 import type { ApiPlanet } from "./data/mockUniverse";
 import type { PlanetType } from "./types";
 
@@ -1127,7 +1127,7 @@ export function walletRequestErrorMessage(error: unknown): string {
   }
 
   if (/timed out reading .* from the game api/i.test(message)) {
-    return `${message} The game API may be temporarily unavailable; the app will retry with backend state.`;
+    return serverUnavailableRetryMessage();
   }
 
   // A genuine on-chain revert can arrive wrapped in an internal JSON-RPC error
@@ -1138,7 +1138,7 @@ export function walletRequestErrorMessage(error: unknown): string {
   }
 
   if (code === -32603 || code === "-32603" || /internal json-rpc error/i.test(message)) {
-    return "The wallet could not read the current game contract state. Retry in a moment while the app checks whether the game API or RPC recovered.";
+    return serverUnavailableRetryMessage();
   }
 
   return message;

@@ -387,16 +387,16 @@ describe("Playable MVP app display helpers", () => {
     );
   });
 
-  test("labels mission launch wallet, API/RPC, and preflight failures distinctly", () => {
+  test("labels mission launch wallet, server, and preflight failures distinctly", () => {
     expect(galaxyMissionActionErrorLabel("Attack mission", {
       code: -32603,
       message: "Internal JSON-RPC error.",
-    })).toBe("Attack mission could not verify game contract state before launch. The game API or RPC is temporarily unavailable; refresh mission state and retry.");
+    })).toBe("Servers are unavailable. Retrying in 10 seconds.");
 
     expect(galaxyMissionActionErrorLabel(
       "Attack mission",
       new Error("The wallet could not read the current game contract state. Retry in a moment while the app checks whether the game API or RPC recovered."),
-    )).toBe("Attack mission could not verify game contract state before launch. The game API or RPC is temporarily unavailable; refresh mission state and retry.");
+    )).toBe("Servers are unavailable. Retrying in 10 seconds.");
 
     expect(galaxyMissionActionErrorLabel(
       "Attack mission",
@@ -425,12 +425,12 @@ describe("Playable MVP app display helpers", () => {
       data: { originalError: { code: 3, message: "execution reverted", data: "0x65dba1c3" } },
     })).toBe("Attack mission was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying.");
 
-    // A bare -32603 with no revert markers is genuine RPC/node unavailability and
-    // must keep the transient-unavailability label.
+    // A bare -32603 with no revert markers is genuine server unavailability and
+    // must keep the transient retry label.
     expect(galaxyMissionActionErrorLabel("Attack mission", {
       code: -32603,
       message: "Internal JSON-RPC error.",
-    })).toBe("Attack mission could not verify game contract state before launch. The game API or RPC is temporarily unavailable; refresh mission state and retry.");
+    })).toBe("Servers are unavailable. Retrying in 10 seconds.");
   });
 
   test("blocks stale attack submissions after target protection refresh", () => {
@@ -1576,7 +1576,8 @@ describe("Playable MVP app display helpers", () => {
       isDisplayedBuildingQueueReady: true,
       now: 1_700_000_030_000,
     })).toBeUndefined();
-    expect(infrastructureBackendSyncPausedLabel).toContain("Infrastructure API is temporarily unavailable");
+    expect(infrastructureBackendSyncPausedLabel).toBe("Servers are unavailable. Retrying in 10 seconds. Building actions are paused until current game state is available.");
+    expect(infrastructureBackendSyncPausedLabel).not.toMatch(/API|RPC|backend|wallet network|last game state/i);
     expect(infrastructureBackendSyncPausedLabel).not.toContain("Syncing building queue");
   });
 
@@ -2312,7 +2313,7 @@ describe("Playable MVP app display helpers", () => {
 
     try {
       await expect(loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined))
-        .rejects.toThrow("Veydrift is temporarily unavailable or restarting. Refresh or try again in a few minutes.");
+        .rejects.toThrow("Servers are unavailable. Retrying in 10 seconds.");
       expect(requestedPaths).toEqual([`/wallet/${wallet}/overview`]);
     } finally {
       globalThis.fetch = originalFetch;

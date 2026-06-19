@@ -142,8 +142,8 @@ describe("Infrastructure page display helpers", () => {
     })).toBe(true);
   });
 
-  test("suppresses duplicate selected-building backend unavailable action notices", () => {
-    const unavailableReason = "Infrastructure API is temporarily unavailable.";
+  test("suppresses duplicate selected-building server unavailable action notices", () => {
+    const unavailableReason = "Servers are unavailable. Retrying in 10 seconds.";
 
     expect(deduplicatedInfrastructureActionNotice({
       label: unavailableReason,
@@ -165,9 +165,9 @@ describe("Infrastructure page display helpers", () => {
     });
   });
 
-  test("keeps backend unavailable copy out of infrastructure buttons and duplicate notices", () => {
+  test("keeps server unavailable copy out of infrastructure buttons and duplicate notices", () => {
     const unavailableReason =
-      "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
+      "Servers are unavailable. Retrying in 10 seconds. Building actions are paused until current game state is available.";
 
     expect(infrastructureUpgradeButtonLabel({
       actionUnavailableReason: unavailableReason,
@@ -181,7 +181,7 @@ describe("Infrastructure page display helpers", () => {
       tone: "error",
     }, [unavailableReason])).toBeUndefined();
     expect(deduplicatedInfrastructureActionNotice({
-      label: "Infrastructure API is temporarily unavailable.",
+      label: "Servers are unavailable. Retrying in 10 seconds.",
       tone: "error",
     }, [unavailableReason])).toBeUndefined();
   });

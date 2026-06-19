@@ -41,6 +41,7 @@ import {
   type BuildingActionState,
 } from "./buildingActionNotice";
 import { buildingUpgradeStatus, formatMissingResources } from "./buildingDetails";
+import { serverUnavailableRetryMessage } from "./gameUnavailable";
 
 export { infrastructureActionNoticeFor, infrastructureDisplayActionNoticeFor } from "./buildingActionNotice";
 import {
@@ -310,7 +311,7 @@ const buildingFinishRejectedLabel =
   "Building completion was cancelled in the wallet. The ready queue is still available; retry when you are ready to confirm the game-state update.";
 const buildingFinishClientClockSafetyMs = 30_000;
 export const infrastructureBackendSyncPausedLabel =
-  "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.";
+  `${serverUnavailableRetryMessage()} Building actions are paused until current game state is available.`;
 export const infrastructureMissionResolutionPendingLabel =
   "Mission resolution is pending for this planet. Refresh after the battle keeper or indexer settles the due mission before starting another upgrade.";
 const buildingWalletConfirmationLabel = (label: string) =>
@@ -854,7 +855,7 @@ export function galaxyMissionActionErrorLabel(label: string, error: unknown): st
   }
 
   if (/timed out reading .* from the game api/i.test(message)) {
-    return `${label} could not load current game API state before launch. The game API may be temporarily unavailable; refresh mission state and retry.`;
+    return serverUnavailableRetryMessage();
   }
 
   // A genuine on-chain revert is often wrapped in an internal JSON-RPC error
@@ -871,7 +872,7 @@ export function galaxyMissionActionErrorLabel(label: string, error: unknown): st
     || normalizedMessage.includes("internal json-rpc error")
     || normalizedMessage.includes("wallet could not read the current game contract state")
   ) {
-    return `${label} could not verify game contract state before launch. The game API or RPC is temporarily unavailable; refresh mission state and retry.`;
+    return serverUnavailableRetryMessage();
   }
 
   return message || `${label} failed.`;
@@ -4750,7 +4751,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         setShipyardAction(synced
           ? { status: "success", label: `${label} confirmed.` }
-          : { status: "pending", label: `${label} confirmed. Rechecking game state after a temporary API/RPC outage.` });
+          : { status: "pending", label: serverUnavailableRetryMessage() });
       } catch (error) {
         console.error(error);
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
