@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   ACTION_NOTICE_AUTO_DISMISS_MS,
+  isTransientRequestActionLabel,
   isUserRejectedActionLabel,
   scheduleActionNoticeAutoDismiss,
 } from "./actionNoticeAutoDismiss";
 
 type ActionState =
   | { status: "idle" }
+  | { status: "pending"; label: string }
   | { status: "success"; label: string }
   | { status: "error"; label: string; autoDismiss?: boolean };
 
@@ -121,5 +123,57 @@ describe("action notice auto-dismiss timers", () => {
 
     expect(rejectedHarness.state).toEqual({ status: "idle" });
     expect(contractHarness.state).toBe(contractAction);
+  });
+
+  test("auto-dismisses transient request progress notices after the configured delay", () => {
+    const timers = createFakeTimers();
+    const requestAction: ActionState = { status: "pending", label: "Alliance join request: awaiting wallet" };
+    const requestHarness = createActionHarness(requestAction);
+
+    scheduleActionNoticeAutoDismiss({
+      action: requestAction,
+      clearTimeoutFn: timers.clearTimeoutFn,
+      setAction: requestHarness.setAction,
+      setTimeoutFn: timers.setTimeoutFn,
+    });
+
+    expect(isTransientRequestActionLabel(requestAction.label)).toBe(true);
+    timers.advanceBy(ACTION_NOTICE_AUTO_DISMISS_MS);
+
+    expect(requestHarness.state).toEqual({ status: "idle" });
+  });
+
+  test("auto-dismisses submitted and syncing request notices without dismissing blockers", () => {
+    const timers = createFakeTimers();
+    const submittedAction: ActionState = { status: "pending", label: "Metal withdrawal request: submitted 0x1234abcd..." };
+    const syncingAction: ActionState = { status: "pending", label: "Alliance join request: syncing indexed state..." };
+    const blockerAction: ActionState = { status: "error", label: "Wallet is locked." };
+    const submittedHarness = createActionHarness(submittedAction);
+    const syncingHarness = createActionHarness(syncingAction);
+    const blockerHarness = createActionHarness(blockerAction);
+
+    for (const [action, harness] of [
+      [submittedAction, submittedHarness],
+      [syncingAction, syncingHarness],
+      [blockerAction, blockerHarness],
+    ] as const) {
+      scheduleActionNoticeAutoDismiss({
+        action,
+        clearTimeoutFn: timers.clearTimeoutFn,
+        setAction: harness.setAction,
+        setTimeoutFn: timers.setTimeoutFn,
+      });
+    }
+
+    expect(isTransientRequestActionLabel(submittedAction.label)).toBe(true);
+    expect(isTransientRequestActionLabel(syncingAction.label)).toBe(true);
+    expect(isTransientRequestActionLabel(blockerAction.label)).toBe(false);
+    expect(timers.pendingCount()).toBe(2);
+
+    timers.advanceBy(ACTION_NOTICE_AUTO_DISMISS_MS);
+
+    expect(submittedHarness.state).toEqual({ status: "idle" });
+    expect(syncingHarness.state).toEqual({ status: "idle" });
+    expect(blockerHarness.state).toBe(blockerAction);
   });
 });
