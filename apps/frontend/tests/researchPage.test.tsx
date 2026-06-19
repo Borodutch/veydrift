@@ -614,12 +614,57 @@ describe("Research page load-error display", () => {
     expect(researchCatalogStatusText(active)).toBe("Active");
 
     expect(insufficientResources).toMatchObject({
+      badge: "Need resources",
       disabled: true,
       reason: "Requires 900 more Metal",
-      tileStatus: "Locked",
+      tileStatus: "ShortResources",
     });
     expect(researchCatalogTitleTone(insufficientResources)).toBe("muted");
-    expect(researchCatalogStatusText(insufficientResources)).toBe("");
+    expect(researchCatalogStatusText(insufficientResources)).toBe("Need 900 Metal");
+  });
+
+  test("marks Shielding short on crystal when prerequisites are met but resourcesAsOfNow cannot pay (VEY-KANEO-596)", () => {
+    const base = createInitialPlayableState(10_000);
+    const state = {
+      ...base,
+      buildings: {
+        ...base.buildings,
+        researchLab: 6,
+      },
+      research: {
+        ...base.research,
+        energy: 4,
+        shielding: 0,
+      },
+      resources: { metal: 1_785, crystal: 535, deuterium: 10_757 },
+    };
+
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 200, crystal: 600, deuterium: 0 },
+      error: undefined,
+      key: "shielding",
+      loading: false,
+      now: 1_700_000_000_000,
+      researchState: researchState({
+        researchLabLevel: 6,
+        resources: null,
+        resourcesAsOfNow: { metal: "1785", crystal: "535", deuterium: "10757" },
+        technologyLevels: { "1": 4, "6": 0 },
+      }),
+      state,
+    });
+
+    expect(status).toMatchObject({
+      badge: "Need resources",
+      disabled: true,
+      hasMissingRequirement: false,
+      reason: "Requires 65 more Crystal",
+      tileStatus: "ShortResources",
+    });
+    expect(researchCatalogTitleTone(status)).toBe("muted");
+    expect(researchCatalogStatusText(status)).toBe("Need 65 Crystal");
   });
 
   test("reports the exact single resource missing for research actions", () => {
