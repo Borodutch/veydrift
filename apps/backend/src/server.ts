@@ -759,6 +759,34 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
+    if (request.method === "GET" && url.pathname.match(/^\/alliance\/[0-9]+$/)) {
+      const allianceId = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        if (!indexer) return indexedReadNotReadyResponse("alliance", indexer, { allianceId });
+        const snapshot = indexer.snapshot();
+        const alliance = indexer.allianceProfile(allianceId);
+        if (!alliance) {
+          return Response.json(
+            {
+              error: "alliance_not_found",
+              detail: "That alliance is not available in the indexed alliance directory.",
+              source: indexedSource
+            },
+            { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
+          );
+        }
+        return Response.json(
+          {
+            alliance,
+            source: indexedSource
+          },
+          { headers: indexedStateHeaders(indexedStateLabel(snapshot)) }
+        );
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/rift$/)) {
       try {
         return await indexedWalletStateResponse(url, indexer, "rift", indexedRiftState);

@@ -800,6 +800,10 @@ export class SettlementIndexer {
     };
   }
 
+  allianceProfile(allianceId: string): AllianceState["directory"][number] | null {
+    return this.allianceDirectory().find((alliance) => alliance.allianceId === allianceId) ?? null;
+  }
+
   allianceIntelForPlayers(wallets: readonly string[]): Map<string, AllianceIdentity> {
     const uniqueWallets = [...new Set(wallets.map((wallet) => wallet.toLowerCase()))];
     if (uniqueWallets.length === 0) return new Map();
