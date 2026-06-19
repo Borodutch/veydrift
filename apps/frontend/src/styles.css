@@ -244,6 +244,243 @@ body {
   }
 }
 
+.landing-page {
+  --landing-scroll: 0;
+}
+
+.landing-layer {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+  transform: translate3d(0, calc(var(--landing-scroll) * -0.035px), 0);
+  will-change: transform;
+}
+
+.landing-layer-planet {
+  transform: translate3d(0, calc(var(--landing-scroll) * -0.055px), 0) scale(1.02);
+  filter: drop-shadow(0 30px 80px rgba(0, 0, 0, 0.52));
+}
+
+.landing-layer-ship {
+  transform: translate3d(0, calc(var(--landing-scroll) * -0.11px), 0) rotate(-12deg);
+  mix-blend-mode: screen;
+  filter: drop-shadow(0 24px 42px rgba(0, 0, 0, 0.5));
+}
+
+.landing-layer-ship-slow {
+  transform: translate3d(0, calc(var(--landing-scroll) * -0.075px), 0) rotate(8deg);
+  mix-blend-mode: screen;
+  filter: drop-shadow(0 18px 36px rgba(0, 0, 0, 0.48));
+}
+
+.landing-layer-hero-ship {
+  transform: translate3d(0, calc(var(--landing-scroll) * -0.085px), 0) rotate(-5deg);
+  mix-blend-mode: screen;
+  filter: drop-shadow(0 30px 70px rgba(0, 0, 0, 0.46));
+}
+
+.landing-layer-research {
+  z-index: 0;
+  transform: translate3d(0, calc(var(--landing-scroll) * -0.045px), 0);
+  mix-blend-mode: screen;
+  filter: drop-shadow(0 26px 52px rgba(0, 0, 0, 0.44));
+}
+
+.landing-screenshot-frame {
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  border-radius: 8px;
+  background: rgba(13, 19, 32, 0.84);
+  box-shadow: 0 28px 96px rgba(0, 0, 0, 0.34);
+}
+
+.landing-screenshot-frame img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 11;
+  object-fit: cover;
+  object-position: left top;
+}
+
+.landing-screenshot-frame div {
+  min-height: 8.25rem;
+  padding: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.035);
+}
+
+.landing-screenshot-frame h3,
+.landing-feature h3 {
+  margin: 0;
+  color: white;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.landing-screenshot-frame p,
+.landing-feature p {
+  margin: 0.4rem 0 0;
+  color: rgb(203 213 225);
+  font-size: 0.875rem;
+  line-height: 1.55;
+}
+
+.landing-feature {
+  min-height: 14rem;
+  padding: 1rem;
+  border: 1px solid rgba(255, 255, 255, 0.045);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.028)),
+    rgba(13, 19, 32, 0.74);
+}
+
+.landing-feature h3 {
+  margin-top: 1.25rem;
+}
+
+.landing-feed-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 0.75rem;
+  min-height: 4.5rem;
+  padding: 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.landing-feed-row svg {
+  margin-top: 0.1rem;
+  color: rgb(128 241 255);
+}
+
+.landing-feed-row p {
+  margin: 0;
+  color: white;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.landing-feed-row span {
+  display: block;
+  margin-top: 0.2rem;
+  color: rgb(203 213 225);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.landing-feed-row[data-tone="rose"] svg {
+  color: rgb(251 113 133);
+}
+
+.landing-feed-row[data-tone="amber"] svg {
+  color: rgb(246 179 92);
+}
+
+.landing-feed-row[data-tone="emerald"] svg {
+  color: rgb(110 231 183);
+}
+
+.landing-alliance-board {
+  overflow: hidden;
+  border: 1px solid rgba(246, 179, 92, 0.065);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(246, 179, 92, 0.05), rgba(128, 241, 255, 0.026)),
+    rgba(13, 19, 32, 0.82);
+  box-shadow: 0 24px 90px rgba(0, 0, 0, 0.36);
+}
+
+.landing-alliance-row {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 4.25rem;
+  padding: 0.8rem;
+  border: 1px solid rgba(255, 255, 255, 0.038);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.landing-alliance-rank {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  background: rgba(246, 179, 92, 0.105);
+  color: rgb(254 215 170);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.landing-alliance-row p {
+  margin: 0;
+  overflow: hidden;
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.landing-alliance-row span {
+  font-size: 0.8rem;
+}
+
+.landing-alliance-row div span {
+  display: block;
+  margin-top: 0.15rem;
+  color: rgb(148 163 184);
+  line-height: 1.35;
+}
+
+.landing-alliance-row strong {
+  color: rgb(254 215 170);
+  font-size: 0.86rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+@media (max-width: 767px) {
+  .landing-layer-planet,
+  .landing-layer-ship,
+  .landing-layer-ship-slow,
+  .landing-layer-hero-ship,
+  .landing-layer-research {
+    opacity: 0.28;
+  }
+
+  .landing-screenshot-frame div {
+    min-height: auto;
+  }
+
+  .landing-alliance-row {
+    grid-template-columns: 1.8rem minmax(0, 1fr);
+  }
+
+  .landing-alliance-row strong {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-layer,
+  .landing-layer-planet,
+  .landing-layer-ship,
+  .landing-layer-ship-slow,
+  .landing-layer-hero-ship,
+  .landing-layer-research {
+    transform: none;
+  }
+}
+
 .playable-starfield {
   background:
     radial-gradient(circle at 50% 0%, rgba(21, 30, 48, 0.52), transparent 38rem),
