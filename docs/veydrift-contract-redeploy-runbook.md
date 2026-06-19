@@ -186,6 +186,8 @@ cd apps/backend
 bun run fleet-defense:parity -- \
   --api-url https://api-test.veydrift.com \
   --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --api-timeout-ms 15000 \
+  --rpc-timeout-ms 20000 \
   --out /Users/borodutch/.openclaw/workspace/artifacts/veydrift_fleet_defense_parity_YYYYMMDDTHHMMSSZ.json
 ```
 
@@ -196,7 +198,9 @@ Sepolia `shipCount` / `defenseCount` against both raw indexed DB rows from
 If the guard reports `raw_db_mismatch` (for example the 2026-06-18 planet 21 / LightLaser
 raw DB `5` vs chain `4` case), run `cd apps/backend && bun run index:seed-current` on the
 backend-test service to repair the canonical DB mirror, then rerun the parity guard and record the
-zero-divergence artifact.
+zero-divergence artifact. If the RPC or API path fails before comparison, the guard still writes a
+non-zero failure artifact; use that artifact as the deploy/readiness blocker instead of leaving a
+hung validation run.
 
 ## 5. Kaneo Evidence
 
