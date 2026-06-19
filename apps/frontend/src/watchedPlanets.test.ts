@@ -120,11 +120,18 @@ describe("overview planet sections", () => {
   test("wires My planets actions through the existing galaxy mission flow", () => {
     expect(appSource).toContain("overviewMyPlanetActionsFor");
     expect(appSource).toContain("galaxyActionsForSlot");
+    expect(appSource).toContain('page === "overview"');
     expect(appSource).toContain("handleOverviewMyPlanetAction");
+    expect(appSource).toContain("originPlanet: selectedManagedPlanet");
+    expect(appSource).toContain("const missionOriginPlanet = pending.originPlanet ?? selectedManagedPlanet");
     expect(appSource).toContain("myPlanets={overviewMyPlanetActionGroups}");
+    expect(appSource).toContain("selectedPlanetId={activePlanetId}");
     expect(appSource).toContain("onMyPlanetAction={handleOverviewMyPlanetAction}");
     expect(overviewSource).toContain("<MyPlanetActionButtons");
     expect(overviewSource).toContain("onAction={(action) => onAction?.(action, planet)}");
+    expect(overviewSource).toContain("showIdentity={false}");
+    expect(overviewSource).toContain("current={isSelected}");
+    expect(overviewSource).not.toContain("{myPlanets.length} owned");
   });
 
   test("labels owned planets by custom name, then coordinates", () => {

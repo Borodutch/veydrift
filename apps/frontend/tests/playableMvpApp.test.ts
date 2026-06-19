@@ -31,6 +31,7 @@ import {
   infrastructureUnavailableReasonFor,
   loadWalletPlanetSyncSnapshot,
   markFreshStateWrite,
+  overviewMyPlanetActionsFor,
   overviewBuildingReadyToFinishFlag,
   overviewResearchCompletionUnavailableReasonFor,
   preserveActiveResearchQueue,
@@ -251,6 +252,122 @@ describe("Playable MVP app display helpers", () => {
     expect(scoped?.incoming.map((mission) => mission.missionId)).toEqual(["in-selected"]);
     expect(scoped?.outgoing.map((mission) => mission.missionId)).toEqual(["out-selected"]);
     expect(scoped?.returning.map((mission) => mission.missionId)).toEqual(["ret-selected"]);
+  });
+
+  test("Overview owned planet actions use the selected planet as origin and hide self-target actions", () => {
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const selectedPlanet = {
+      ...indexedPlanet(wallet),
+      planetId: "8",
+      name: "Astro",
+      coordinates: "6:9:13",
+      galaxy: 6,
+      system: 9,
+      position: 13,
+      isHomePlanet: false,
+    };
+    const otherPlanet = {
+      ...indexedPlanet(wallet),
+      planetId: "7",
+      name: "New Zion",
+      coordinates: "2:44:9",
+      isHomePlanet: true,
+    };
+    const selectedShipyardState: ChainShipyardState = {
+      wallet,
+      homePlanetId: "7",
+      planetId: "8",
+      productionAvailable: true,
+      resources: null,
+      fleetLaunchAvailable: true,
+      fleetSlots: { active: 0, limit: 2 },
+      shipyardLevel: 1,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: [{ id: 0, count: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      queue: null,
+    };
+
+    expect(overviewMyPlanetActionsFor({
+      account: wallet,
+      activePlanetId: "8",
+      defenseState: null,
+      homePlanetId: "7",
+      planet: selectedPlanet,
+      shipyardState: selectedShipyardState,
+    })).toEqual([]);
+
+    const actions = overviewMyPlanetActionsFor({
+      account: wallet,
+      activePlanetId: "8",
+      defenseState: null,
+      homePlanetId: "7",
+      planet: otherPlanet,
+      shipyardState: selectedShipyardState,
+    });
+
+    expect(actions.find((action) => action.kind === "transport")).toMatchObject({
+      enabled: true,
+      mission: "transport",
+      ships: { smallCargo: 1 },
+    });
+    expect(actions.find((action) => action.kind === "deploy")).toMatchObject({
+      enabled: true,
+      mission: "deploy",
+      ships: { smallCargo: 1 },
+    });
+  });
+
+  test("Overview owned planet disabled action copy names the selected planet state", () => {
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const otherPlanet = {
+      ...indexedPlanet(wallet),
+      planetId: "7",
+      name: "New Zion",
+      isHomePlanet: true,
+    };
+
+    const loadingActions = overviewMyPlanetActionsFor({
+      account: wallet,
+      activePlanetId: "8",
+      defenseState: null,
+      homePlanetId: "7",
+      planet: otherPlanet,
+      shipyardState: null,
+    });
+
+    expect(loadingActions.find((action) => action.kind === "transport")).toMatchObject({
+      enabled: false,
+      reason: "Selected planet fleet inventory is still syncing.",
+    });
+
+    const emptyShipyardState: ChainShipyardState = {
+      wallet,
+      homePlanetId: "7",
+      planetId: "8",
+      productionAvailable: true,
+      resources: null,
+      fleetLaunchAvailable: true,
+      fleetSlots: { active: 0, limit: 2 },
+      shipyardLevel: 1,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: [],
+      queue: null,
+    };
+    const emptyActions = overviewMyPlanetActionsFor({
+      account: wallet,
+      activePlanetId: "8",
+      defenseState: null,
+      homePlanetId: "7",
+      planet: otherPlanet,
+      shipyardState: emptyShipyardState,
+    });
+
+    expect(emptyActions.find((action) => action.kind === "transport")).toMatchObject({
+      enabled: false,
+      reason: "Requires a cargo-capable ship on your selected planet.",
+    });
   });
 
   test("detects incoming attacks per planet for selector warning badges", () => {
