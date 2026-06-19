@@ -6894,6 +6894,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         watchedPlanetsLoading={watchedPlanetsLoading}
         watchedPlanetsPage={watchedPlanetsPage}
         onWatchedPlanetsPageChange={setWatchedPlanetsPage}
+        onRefreshWatchedPlanets={() => void refreshWatchedPlanets(watchedPlanetsPage)}
         watchBusyPlanetId={watchBusyPlanetId}
       />
     );

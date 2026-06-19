@@ -94,10 +94,13 @@ describe("watched planets UI", () => {
     expect(galaxySource).toContain("WatchablePlanetRow");
     expect(overviewSource).toContain("WatchablePlanetRow");
     expect(appSource).toContain("fetchWatchedPlanets(apiBaseUrl, account, { page, pageSize: 25 })");
+    expect(appSource).toContain("onRefreshWatchedPlanets={() => void refreshWatchedPlanets(watchedPlanetsPage)}");
     expect(appSource).toContain("nextWatchedPlanetsPageAfterToggle");
     expect(appSource).toContain("watchPlanet(apiBaseUrl, provider, account, planetId)");
     expect(appSource).toContain("unwatchPlanet(apiBaseUrl, provider, account, planetId)");
     expect(overviewSource).toContain("onWatchedPlanetsPageChange");
+    expect(overviewSource).toContain("onRefresh");
+    expect(overviewSource).toContain("Retry");
     expect(overviewSource).toContain("watchedPlanetsPanelRange");
   });
 });
