@@ -3077,11 +3077,10 @@ export function indexedPlanetTacticalSummary(
   const raidableResources = derived?.raidableResources ?? fallbackResources;
   const shipSummary = tacticalUnitSummary(ships);
   const defenseSummary = tacticalUnitSummary(defenses);
-  // COMBAT is a fighting-strength figure, not an inventory value: non-combat ships
-  // (Solar Satellites, cargo, recyclers, colony ships, crawlers) carry a build cost but
-  // do not fight, so they are excluded from combat power even though they remain in the
-  // ship totals above. This keeps satellite-only / undefended planets reading as soft
-  // targets in the Raid Finder and Rankings COMBAT column. (VEY-KANEO-450)
+  // COMBAT is a fighting-strength figure, not a raw inventory value: stationary
+  // support ships are excluded even though they remain in the ship totals above.
+  // Mobile cargo/support hulls still count because they can be committed to
+  // Attack/Raid combat and should not read as harmless. (VEY-KANEO-450)
   const combatShipSummary = tacticalUnitSummary(ships.filter((ship) => isCombatShipId(ship.id)));
 
   return {

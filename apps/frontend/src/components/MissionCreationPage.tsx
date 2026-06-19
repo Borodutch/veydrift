@@ -66,6 +66,8 @@ const DEFAULT_LOOT_RATIO: MissionLootRatioDraft = { metal: 34, crystal: 33, deut
 const GREEDY_LOOT_RATIO: MissionLootRatioDraft = { metal: 100, crystal: 0, deuterium: 0 };
 const RAID_PLUNDER_BPS = 5_000;
 const BPS = 10_000;
+const PROBABLE_WIN_POWER_RATIO = 1.35;
+const PROBABLE_DEFEAT_POWER_RATIO = 0.85;
 const RESOURCE_KEYS = ["metal", "crystal", "deuterium"] as const;
 const ZERO_COMBAT_TECH_LEVELS: CombatTechLevels = { weapons: 0, shielding: 0, armor: 0 };
 
@@ -896,7 +898,7 @@ export function publicTargetBattleForecast(
       ...forecastTech,
     };
   }
-  if (attackerPower >= defenderPower * 1.15) {
+  if (attackerPower >= defenderPower * PROBABLE_WIN_POWER_RATIO) {
     return {
       kind: "win",
       label: "Probable win",
@@ -908,7 +910,7 @@ export function publicTargetBattleForecast(
       ...forecastTech,
     };
   }
-  if (attackerPower <= defenderPower * 0.85) {
+  if (attackerPower <= defenderPower * PROBABLE_DEFEAT_POWER_RATIO) {
     return {
       kind: "defeat",
       label: "Probable defeat",
