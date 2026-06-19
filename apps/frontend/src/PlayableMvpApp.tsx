@@ -7184,11 +7184,11 @@ function PlanetSelectorButton({
     <button
       aria-current={selected ? "true" : undefined}
       aria-label={label}
-      className={`group relative grid w-20 shrink-0 justify-items-center gap-1 rounded border p-1.5 text-center transition focus:outline-none focus:ring-2 focus:ring-cyan-300/60 ${
+      className={`veydrift-planet-selector-button group relative grid w-20 shrink-0 justify-items-center gap-1 rounded border p-1.5 text-center transition focus:outline-none ${
         hasIncomingAttack
           ? "border-red-400/70 bg-red-500/15 shadow-lg shadow-red-950/25"
           : selected
-          ? "border-cyan-300/70 bg-cyan-300/12 shadow-lg shadow-cyan-950/25"
+          ? "border-cyan-300/35 bg-cyan-300/[0.07] shadow-[inset_0_0_0_1px_rgba(128,241,255,0.10)]"
           : "border-white/10 bg-white/[0.045] hover:border-cyan-200/40 hover:bg-white/[0.075]"
       }`}
       onClick={() => onSelect(planet.planetId)}

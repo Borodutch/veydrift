@@ -9,5 +9,7 @@ describe("button focus outline styling", () => {
     expect(stylesSource).toContain("button:focus-visible");
     expect(stylesSource).toContain("outline: 2px solid rgba(128, 241, 255");
     expect(stylesSource).toContain("--tw-ring-color: rgba(128, 241, 255");
+    expect(stylesSource).toContain(".veydrift-planet-selector-button:focus-visible");
+    expect(stylesSource).toContain("outline: 1px solid rgba(128, 241, 255, 0.68)");
   });
 });

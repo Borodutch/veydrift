@@ -81,6 +81,13 @@ button:focus-visible {
     var(--tw-shadow, 0 0 #0000);
 }
 
+.veydrift-planet-selector-button:focus-visible {
+  outline: 1px solid rgba(128, 241, 255, 0.68);
+  outline-offset: 2px;
+  --tw-ring-color: rgba(128, 241, 255, 0.28);
+  --tw-ring-shadow: 0 0 0 2px var(--tw-ring-color);
+}
+
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -468,6 +475,29 @@ body {
   font-size: 0.86rem;
   font-weight: 800;
   white-space: nowrap;
+}
+
+.landing-alliance-empty {
+  min-height: 4.25rem;
+  padding: 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.038);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.landing-alliance-empty p {
+  margin: 0;
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.landing-alliance-empty span {
+  display: block;
+  margin-top: 0.2rem;
+  color: rgb(148 163 184);
+  font-size: 0.82rem;
+  line-height: 1.5;
 }
 
 @media (max-width: 767px) {
