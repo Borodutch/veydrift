@@ -47,19 +47,13 @@ export const defenseCount = 10;
 export const supportedShipIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] as const;
 export const supportedTechnologyIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] as const;
 
-// Ships with no meaningful combat role: they carry a build cost but deal no (or
-// negligible) damage, so they must not count toward the COMBAT / fighting-strength
-// figure that the Raid Finder and Rankings surface. Excluding them keeps satellite-only
-// or logistics-only planets reading as soft targets. (VEY-KANEO-450)
-//   0  Small Cargo      (logistics)
-//   2  Recycler         (debris salvage)
-//   3  Colony Ship      (settlement)
-//   4  Large Cargo      (logistics)
+// Stationary support units have no meaningful fleet-combat role, so they must not
+// inflate the COMBAT / fighting-strength figure that Raid Finder and Rankings surface.
+// Cargo and other mobile support hulls are intentionally not listed here: they can be
+// committed to Attack/Raid combat and must not read as harmless. (VEY-KANEO-450)
 //   9  Solar Satellite  (stationary energy platform)
 //   15 Crawler          (stationary mining support)
-// Combat-capable hulls — fighters, cruisers, battleships, bombers, destroyers,
-// battlecruisers, reapers, Dreadstar, and the attack-bearing Pathfinder — still count.
-export const nonCombatShipIds: ReadonlySet<number> = new Set([0, 2, 3, 4, 9, 15]);
+export const nonCombatShipIds: ReadonlySet<number> = new Set([9, 15]);
 
 export function isCombatShipId(id: number): boolean {
   return !nonCombatShipIds.has(id);

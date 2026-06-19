@@ -357,6 +357,33 @@ describe("mission creation", () => {
     }))).toMatchObject({ kind: "defeat", label: "Probable defeat" });
   });
 
+  test("does not label the mission-1791 cargo defender shape as a probable win", () => {
+    const forecast = publicTargetBattleForecast({
+      ...attackAction.ships,
+      smallCargo: 2,
+      lightFighter: 1,
+    }, targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        // Mission 1791 resolved Draw against three defending Small Cargo. Cargo has
+        // contract battle stats and soaks rounds, so this close matchup must not be
+        // presented as a confident win.
+        fleet: [{ id: 0, count: 3 }],
+        defenses: [],
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    }));
+
+    expect(forecast).toMatchObject({
+      kind: "draw",
+      label: "Probable draw",
+      attackerPower: 210,
+      defenderPower: 165,
+    });
+  });
+
   test("applies combat tech levels to public battle forecast power and outcome", () => {
     const selectedShips = { ...attackAction.ships, lightFighter: 1 };
     const target = targetPlanet({
