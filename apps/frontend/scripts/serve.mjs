@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import sharp from "sharp";
 
 const distRoot = new URL("../dist/", import.meta.url);
 const publicRoot = new URL("../public/", import.meta.url);
@@ -10,6 +9,7 @@ const siteName = "Veydrift";
 const ogImageCache = new Map();
 const ogDataCache = new Map();
 const assetDataCache = new Map();
+let sharpModule;
 
 const planetAssets = {
   "cold-tundra": "/assets/game/style-pass/generated/planets/cold-tundra.webp",
@@ -411,6 +411,7 @@ async function ogImageResponse(route) {
 
   const meta = await routeMeta(route);
   const svg = await ogSvg(meta);
+  const sharp = await getSharp();
   const body = await sharp(Buffer.from(svg)).png().toBuffer();
   ogImageCache.set(cacheKey, { body, expiresAt: Date.now() + 300_000 });
   return new Response(body.slice(0), { headers: ogImageHeaders() });
@@ -492,10 +493,18 @@ async function assetDataUri(pathname, maxWidth) {
 
   const fileUrl = existingAssetUrl(pathname);
   const buffer = await readFile(fileUrl);
+  const sharp = await getSharp();
   const png = await sharp(buffer).resize({ width: maxWidth, withoutEnlargement: true }).png().toBuffer();
   const uri = `data:image/png;base64,${png.toString("base64")}`;
   assetDataCache.set(key, uri);
   return uri;
+}
+
+async function getSharp() {
+  if (!sharpModule) {
+    sharpModule = (await import("sharp")).default;
+  }
+  return sharpModule;
 }
 
 function existingAssetUrl(pathname) {
