@@ -6032,10 +6032,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       setPendingJoinAttack(null);
       setPendingAcsDefend(null);
     };
+    const closeMissionCreationWhenComplete = (transaction: Promise<boolean>) => {
+      void (async () => {
+        if (await transaction) closeMissionCreation();
+      })();
+    };
 
     if (action.mode === "colonize") {
-      closeMissionCreation();
-      void runGalaxyTransaction("Colony mission", () => sendCreateColonyTransaction(
+      closeMissionCreationWhenComplete(runGalaxyTransaction("Colony mission", () => sendCreateColonyTransaction(
         provider,
         account,
         gameContract,
@@ -6049,7 +6053,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         targetPlanetId: encodeColonizationTargetId(coords.galaxy, coords.system, coords.position),
         targetCoords: coords,
         validateShipInventory: { originPlanetId, ships: draft.ships },
-      }));
+      })));
       return;
     }
 
@@ -6060,8 +6064,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     if (action.mode === "missile") {
-      closeMissionCreation();
-      void runGalaxyTransaction("Missile attack", () => sendLaunchInterplanetaryMissileAttackTransaction(
+      closeMissionCreationWhenComplete(runGalaxyTransaction("Missile attack", () => sendLaunchInterplanetaryMissileAttackTransaction(
         provider,
         account,
         gameContract,
@@ -6071,16 +6074,15 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           primaryTargetId: draft.primaryTargetId ?? action.primaryTargetId,
           quantity: draft.quantity ?? action.quantity,
         },
-      ));
+      )));
       return;
     }
 
     if (action.kind === "defenseHold") {
-      closeMissionCreation();
       // VEY-KANEO-440: proactive ACS Defend — station the fleet at the target own/ally planet for the
       // chosen hold window via launchDefenseHold (pre-flighted so ineligible / out-of-window /
       // under-fuelled reverts surface as a clear message before the wallet prompt).
-      void runGalaxyTransaction("Stationed defense", () => sendLaunchDefenseHoldTransaction(
+      closeMissionCreationWhenComplete(runGalaxyTransaction("Stationed defense", () => sendLaunchDefenseHoldTransaction(
         provider,
         account,
         gameContract,
@@ -6097,13 +6099,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         targetPlanetId,
         targetCoords: coords,
         validateShipInventory: { originPlanetId, ships: draft.ships },
-      }));
+      })));
       return;
     }
     if (action.kind === "attack" && draft.lootRatio) {
       const { metal, crystal, deuterium } = draft.lootRatio;
-      void (async () => {
-        const completed = await runGalaxyTransaction(`${action.label} mission`, () => sendLaunchAttackMissionTransaction(
+      closeMissionCreationWhenComplete(runGalaxyTransaction(`${action.label} mission`, () => sendLaunchAttackMissionTransaction(
           provider,
           account,
           gameContract,
@@ -6125,9 +6126,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           targetCoords: coords,
           validateAttackProtection: { targetPlanetId },
           validateShipInventory: { originPlanetId, ships: draft.ships },
-        }));
-        if (completed) closeMissionCreation();
-      })();
+        })));
       return;
     }
     const cargo = action.kind === "transport" || action.kind === "deploy"
@@ -6160,14 +6159,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       validateAttackProtection: action.kind === "attack" ? { targetPlanetId } : undefined,
       validateShipInventory: { originPlanetId, ships: draft.ships },
     }));
-    if (action.kind === "attack") {
-      void (async () => {
-        if (await runMission()) closeMissionCreation();
-      })();
-      return;
-    }
-    closeMissionCreation();
-    void runMission();
+    closeMissionCreationWhenComplete(runMission());
   }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingGalaxyMission, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
 
   const handleStartMoonBuilding = useCallback((buildingId: number, label: string) => {
@@ -6277,12 +6269,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    setPendingAcsDefend(null);
+    const closeAcsDefendWhenComplete = (transaction: Promise<boolean>) => {
+      void (async () => {
+        if (await transaction) setPendingAcsDefend(null);
+      })();
+    };
     const driveLevels = driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels);
     // The hostile mission id is passed as targetPlanetId; the contract resolves the defended planet and
     // pins the defending fleet's arrival to the attack. The chosen speed controls the natural arrival
     // (and therefore the hold duration), so it must reach the chain.
-    void runGalaxyTransaction("Group defense", () => sendLaunchFleetMissionTransaction(
+    closeAcsDefendWhenComplete(runGalaxyTransaction("Group defense", () => sendLaunchFleetMissionTransaction(
       provider,
       account,
       gameContract,
@@ -6306,7 +6302,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       }),
       syncMissionLaunch: true,
       validateShipInventory: { originPlanetId, ships: draft.ships },
-    });
+    }));
   }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingAcsDefend, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
 
   const handleShareMissionReport = useCallback((url: string) => {
