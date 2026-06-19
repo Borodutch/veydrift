@@ -1,5 +1,6 @@
 [phases.setup]
-nixPkgs = ["gcc-unwrapped"]
+nixPkgs = ["nodejs_22", "bun"]
+nixLibs = ["gcc-unwrapped"]
 
 [phases.install]
 cmds = ["NODE_ENV=development bun install --frozen-lockfile && cd apps/frontend && NODE_ENV=development bun install --frozen-lockfile --force && rm -rf /root/.cache/nix"]
@@ -12,4 +13,3 @@ cmd = "cd apps/frontend && bun run serve"
 
 [variables]
 NODE_ENV = "production"
-LD_LIBRARY_PATH = "/root/.nix-profile/lib"
