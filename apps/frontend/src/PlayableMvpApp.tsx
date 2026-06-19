@@ -669,7 +669,7 @@ export function shouldRefreshAllianceStateForPage(page: Page): boolean {
 }
 
 export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
-  return page === "galaxy" || page === "planet" || page === "mission-control" || page === "raid-target-finder";
+  return page === "overview" || page === "galaxy" || page === "planet" || page === "mission-control" || page === "raid-target-finder";
 }
 
 // VEY-KANEO-433: Mission Control auto-polls its own data (active missions, the past-mission archives,
@@ -1829,9 +1829,10 @@ type PendingGalaxyMission = {
   action: EnabledGalaxyAction;
   target: Planet | undefined;
   coords: Coordinates;
+  originPlanet: ManagedPlanetResponse | undefined;
 };
 
-function overviewMyPlanetActionsFor({
+export function overviewMyPlanetActionsFor({
   account,
   activePlanetId,
   defenseState,
@@ -1846,6 +1847,8 @@ function overviewMyPlanetActionsFor({
   planet: ManagedPlanetResponse;
   shipyardState: ChainShipyardState | null;
 }): GalaxyAction[] {
+  if (activePlanetId === planet.planetId) return [];
+
   const rowPlanet = planetFromSettlementPlanet(planet);
   const actionsByKind = new Map(
     galaxyActionsForSlot({
@@ -1859,10 +1862,31 @@ function overviewMyPlanetActionsFor({
   );
   const samePlanetReason = "Select another owned planet before launching this mission.";
   return [
-    actionsByKind.get("transport") ?? disabledOwnedPlanetMissionAction("transport", "Transport", samePlanetReason),
-    actionsByKind.get("deploy") ?? disabledOwnedPlanetMissionAction("deploy", "Deploy", samePlanetReason),
-    actionsByKind.get("defenseHold") ?? disabledOwnedPlanetMissionAction("defenseHold", "Defend", "Defend is unavailable for this planet."),
+    overviewOwnedPlanetMissionAction(actionsByKind.get("transport"), "transport", "Transport", samePlanetReason),
+    overviewOwnedPlanetMissionAction(actionsByKind.get("deploy"), "deploy", "Deploy", samePlanetReason),
+    overviewOwnedPlanetMissionAction(actionsByKind.get("defenseHold"), "defenseHold", "Defend", "Defend is unavailable for this planet."),
   ];
+}
+
+function overviewOwnedPlanetMissionAction(
+  action: GalaxyAction | undefined,
+  kind: "transport" | "deploy" | "defenseHold",
+  label: string,
+  fallbackReason: string,
+): GalaxyAction {
+  if (!action) return disabledOwnedPlanetMissionAction(kind, label, fallbackReason);
+  if (action.enabled) return action;
+  return {
+    ...action,
+    reason: overviewOwnedPlanetActionReason(action.reason),
+  };
+}
+
+function overviewOwnedPlanetActionReason(reason: string): string {
+  if (reason === "Shipyard state is still loading.") {
+    return "Selected planet fleet inventory is still syncing.";
+  }
+  return reason.replace(/\bhome planet\b/g, "selected planet");
 }
 
 function disabledOwnedPlanetMissionAction(
@@ -4386,12 +4410,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   // the active (origin) planet — the same value the top bar shows and a transaction spends
   // against — falling back to the backend wallet-planet snapshot only when no wallet-connected
   // spendable balance is available.
-  const originMissionResources = useMemo(() => missionOriginResources({
+  const missionResourcesForOrigin = useCallback((originPlanet: ManagedPlanetResponse | undefined) => missionOriginResources({
     isWalletConnected,
-    spendableResources,
+    spendableResources: originPlanet?.planetId === activePlanetId ? spendableResources : undefined,
     // Prefer the live settled-to-now balance over the settled snapshot (VEY-KANEO-488).
-    planetResources: selectedManagedPlanet?.resourcesAsOfNow ?? selectedManagedPlanet?.resources,
-  }), [isWalletConnected, spendableResources, selectedManagedPlanet?.resourcesAsOfNow, selectedManagedPlanet?.resources]);
+    planetResources: originPlanet?.resourcesAsOfNow ?? originPlanet?.resources,
+  }), [activePlanetId, isWalletConnected, spendableResources]);
+  const originMissionResources = useMemo(
+    () => missionResourcesForOrigin(selectedManagedPlanet),
+    [missionResourcesForOrigin, selectedManagedPlanet]
+  );
   const activeBuildingQueue = useMemo(
     () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],
@@ -5828,8 +5856,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const handleGalaxyAction = useCallback((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => {
     if (!action.enabled) return;
     setGalaxyAction({ status: "idle" });
-    setPendingGalaxyMission({ action, target, coords });
-  }, []);
+    setPendingGalaxyMission({ action, target, coords, originPlanet: selectedManagedPlanet });
+  }, [selectedManagedPlanet]);
 
   const overviewMyPlanetActionGroups = useMemo<OverviewMyPlanetActionGroup[]>(() =>
     walletPlanets.map((managedPlanet) => ({
@@ -5925,7 +5953,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     const pending = pendingGalaxyMission;
     if (!pending) return;
     const { action, target, coords } = pending;
-    const originPlanetId = activePlanetId ?? onChainSettlement?.homePlanetId;
+    const missionOriginPlanet = pending.originPlanet ?? selectedManagedPlanet;
+    const originPlanetId = missionOriginPlanet?.planetId ?? activePlanetId ?? onChainSettlement?.homePlanetId;
     if (!provider || !account || !gameContract || !originPlanetId) {
       setGalaxyAction({ status: "error", label: "Wallet, game contract, or origin planet is unavailable." });
       return;
@@ -5951,7 +5980,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       validateAttackProtection,
       pendingMissionLaunch: (txHash: string) => pendingMissionLaunchForDraft(txHash, {
         account,
-        originPlanet: selectedManagedPlanet,
+        originPlanet: missionOriginPlanet,
         originPlanetId,
         targetPlanet,
         targetPlanetId,
@@ -6070,7 +6099,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
     const cargo = action.kind === "transport" || action.kind === "deploy"
       ? missionCargoFromDraft(draft.cargo) ?? transportCargoForSelectedPlanet(
-          selectedManagedPlanet,
+          missionOriginPlanet,
           draft.ships,
           coords,
           driveLevels,
@@ -6577,6 +6606,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     if (pendingGalaxyMission) {
+      const pendingMissionOriginPlanet = pendingGalaxyMission.originPlanet ?? selectedManagedPlanet;
+      const pendingMissionOriginCoords = managedPlanetCoordinates(pendingMissionOriginPlanet) ?? activePlanetCoords;
+      const pendingMissionOriginLabel = pendingMissionOriginPlanet?.name
+        ?? pendingMissionOriginPlanet?.coordinates
+        ?? homePlanetIdentity?.name;
+      const pendingMissionOriginResources = missionResourcesForOrigin(pendingMissionOriginPlanet);
       return (
         <MissionCreationPage
           action={pendingGalaxyMission.action}
@@ -6590,9 +6625,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
           onBack={() => setPendingGalaxyMission(null)}
           onConfirm={handleConfirmGalaxyMission}
-          originCoords={activePlanetCoords}
-          originLabel={selectedManagedPlanet?.name ?? homePlanetIdentity?.name}
-          resources={originMissionResources}
+          originCoords={pendingMissionOriginCoords}
+          originLabel={pendingMissionOriginLabel}
+          resources={pendingMissionOriginResources}
           shipyardState={shipyardState}
           target={pendingGalaxyMission.target}
         />
@@ -7005,6 +7040,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         watchBusyPlanetId={watchBusyPlanetId}
         myPlanets={overviewMyPlanetActionGroups}
         currentCommanderLabel={playerProfile?.displayName ?? "You"}
+        selectedPlanetId={activePlanetId}
         onMyPlanetAction={handleOverviewMyPlanetAction}
       />
     );

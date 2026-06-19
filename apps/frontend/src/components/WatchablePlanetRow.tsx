@@ -17,6 +17,7 @@ export function WatchablePlanetRow({
   allianceLabel,
   commanderLabel,
   coords,
+  current,
   isHome = false,
   leadingSlot,
   meta,
@@ -25,6 +26,7 @@ export function WatchablePlanetRow({
   onSelectPlayer,
   onToggleWatch,
   planet,
+  showIdentity = true,
   watchBusy = false,
   watched = false,
 }: {
@@ -32,6 +34,7 @@ export function WatchablePlanetRow({
   allianceLabel: string;
   commanderLabel: string;
   coords: Coordinates;
+  current?: boolean | undefined;
   isHome?: boolean | undefined;
   leadingSlot?: ComponentChildren;
   meta: PlanetMetaItem[];
@@ -40,12 +43,14 @@ export function WatchablePlanetRow({
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onToggleWatch?: (() => void) | undefined;
   planet: Planet;
+  showIdentity?: boolean | undefined;
   watchBusy?: boolean | undefined;
   watched?: boolean | undefined;
 }) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
   const canWatch = Boolean(onToggleWatch && !isHome && planet.occupiedBy?.planetId);
+  const isHighlighted = current ?? isHome;
 
   useEffect(() => {
     setImageLoaded(isImageReady(imageRef.current));
@@ -56,10 +61,12 @@ export function WatchablePlanetRow({
       className={`group grid min-h-16 w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition ${
         leadingSlot
           ? "grid-cols-[3rem_minmax(0,1fr)_auto] sm:grid-cols-[4rem_minmax(0,1fr)_8rem_auto]"
-          : "grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_8rem_auto]"
+          : showIdentity
+            ? "grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,1fr)_8rem_auto]"
+            : "grid-cols-[minmax(0,1fr)_auto]"
       } ${
-        isHome
-          ? "border-cyan-300/40 bg-cyan-300/10 shadow-[0_0_18px_rgba(103,232,249,0.10)]"
+        isHighlighted
+          ? "border-emerald-300/40 bg-emerald-300/10 shadow-[0_0_18px_rgba(110,231,183,0.10)]"
           : "border-white/10 bg-white/[0.035] hover:border-signal/35 hover:bg-white/[0.06]"
       }`}
     >
@@ -70,7 +77,7 @@ export function WatchablePlanetRow({
         type="button"
       >
         <div className={`relative h-11 w-11 flex-shrink-0 overflow-hidden rounded-md border bg-black/30 ${
-          isHome ? "border-cyan-300/35" : "border-white/15"
+          isHighlighted ? "border-emerald-300/35" : "border-white/15"
         }`}>
           {!imageLoaded && <PlanetImageSkeleton className="absolute inset-0" />}
           <OptimizedImage
@@ -110,36 +117,38 @@ export function WatchablePlanetRow({
         </div>
       </button>
 
-      <div className={`hidden min-w-32 justify-self-end text-right text-xs font-medium sm:block ${isHome ? "text-cyan-100" : "text-slate-500"}`}>
-        <div className="min-w-0">
-          {planet.occupiedBy?.owner ? (
+      {showIdentity ? (
+        <div className={`hidden min-w-32 justify-self-end text-right text-xs font-medium sm:block ${isHighlighted ? "text-emerald-100" : "text-slate-500"}`}>
+          <div className="min-w-0">
+            {planet.occupiedBy?.owner ? (
+              <button
+                className="break-words text-right hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
+                disabled={!onSelectPlayer}
+                onClick={() => onSelectPlayer?.(planet.occupiedBy?.owner ?? "")}
+                title={`Open player ${commanderLabel}`}
+                type="button"
+              >
+                {commanderLabel}
+              </button>
+            ) : (
+              <span className="break-words">{commanderLabel}</span>
+            )}
+          </div>
+          {planet.alliance ? (
             <button
-              className="break-words text-right hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
-              disabled={!onSelectPlayer}
-              onClick={() => onSelectPlayer?.(planet.occupiedBy?.owner ?? "")}
-              title={`Open player ${commanderLabel}`}
+              className="mt-1 text-cyan-200 underline-offset-2 hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
+              disabled={!onSelectAlliance}
+              onClick={() => onSelectAlliance?.(planet.alliance?.allianceId ?? "")}
+              title={`Open ${allianceLabel}`}
               type="button"
             >
-              {commanderLabel}
+              {allianceLabel}
             </button>
           ) : (
-            <span className="break-words">{commanderLabel}</span>
+            <div className="mt-1 text-slate-600">{allianceLabel}</div>
           )}
         </div>
-        {planet.alliance ? (
-          <button
-            className="mt-1 text-cyan-200 underline-offset-2 hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
-            disabled={!onSelectAlliance}
-            onClick={() => onSelectAlliance?.(planet.alliance?.allianceId ?? "")}
-            title={`Open ${allianceLabel}`}
-            type="button"
-          >
-            {allianceLabel}
-          </button>
-        ) : (
-          <div className="mt-1 text-slate-600">{allianceLabel}</div>
-        )}
-      </div>
+      ) : null}
 
       <div className="flex flex-wrap justify-end gap-1.5">
         {canWatch ? (
@@ -169,24 +178,26 @@ export function WatchablePlanetRow({
         {actionSlot}
       </div>
 
-      <div className={`${leadingSlot ? "col-span-2 col-start-2" : "col-span-2"} min-w-0 text-xs font-medium sm:hidden`}>
-        <div className={isHome ? "text-cyan-100" : "text-slate-500"}>
-          <span className="break-words">{commanderLabel}</span>
+      {showIdentity ? (
+        <div className={`${leadingSlot ? "col-span-2 col-start-2" : "col-span-2"} min-w-0 text-xs font-medium sm:hidden`}>
+          <div className={isHighlighted ? "text-emerald-100" : "text-slate-500"}>
+            <span className="break-words">{commanderLabel}</span>
+          </div>
+          {planet.alliance ? (
+            <button
+              className="mt-1 max-w-full truncate text-cyan-200 underline-offset-2 hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
+              disabled={!onSelectAlliance}
+              onClick={() => onSelectAlliance?.(planet.alliance?.allianceId ?? "")}
+              title={`Open ${allianceLabel}`}
+              type="button"
+            >
+              {allianceLabel}
+            </button>
+          ) : (
+            <div className="mt-1 text-slate-600">{allianceLabel}</div>
+          )}
         </div>
-        {planet.alliance ? (
-          <button
-            className="mt-1 max-w-full truncate text-cyan-200 underline-offset-2 hover:text-cyan-100 hover:underline disabled:cursor-not-allowed disabled:text-slate-600"
-            disabled={!onSelectAlliance}
-            onClick={() => onSelectAlliance?.(planet.alliance?.allianceId ?? "")}
-            title={`Open ${allianceLabel}`}
-            type="button"
-          >
-            {allianceLabel}
-          </button>
-        ) : (
-          <div className="mt-1 text-slate-600">{allianceLabel}</div>
-        )}
-      </div>
+      ) : null}
     </div>
   );
 }

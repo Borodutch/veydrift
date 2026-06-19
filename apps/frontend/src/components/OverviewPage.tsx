@@ -120,6 +120,7 @@ interface OverviewPageProps {
   watchBusyPlanetId?: string | undefined;
   myPlanets?: readonly OverviewMyPlanetActionGroup[] | undefined;
   currentCommanderLabel?: string | undefined;
+  selectedPlanetId?: string | undefined;
   onMyPlanetAction?: ((action: GalaxyAction, planet: ManagedPlanetResponse) => void) | undefined;
 }
 
@@ -164,6 +165,7 @@ export function OverviewPage({
   watchBusyPlanetId,
   myPlanets = [],
   currentCommanderLabel,
+  selectedPlanetId,
   onMyPlanetAction,
 }: OverviewPageProps) {
   const usedFields = selectedPlanetUsedFields ?? usedFieldsFromBuildings(settledState.buildings);
@@ -684,6 +686,7 @@ export function OverviewPage({
           myPlanets={myPlanets}
           onAction={onMyPlanetAction}
           onSelectPlanet={onSelectPlanet}
+          selectedPlanetId={selectedPlanetId ?? onChainSettlement?.homePlanetId ?? onChainSettlement?.planet?.planetId}
         />
       ) : null}
 
@@ -726,32 +729,36 @@ function MyPlanetsPanel({
   myPlanets,
   onAction,
   onSelectPlanet,
+  selectedPlanetId,
 }: {
   commanderLabel: string;
   myPlanets: readonly OverviewMyPlanetActionGroup[];
   onAction: ((action: GalaxyAction, planet: ManagedPlanetResponse) => void) | undefined;
   onSelectPlanet: ((coords: Coordinates) => void) | undefined;
+  selectedPlanetId: string | undefined;
 }) {
   return (
     <section className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-3">
       <div>
         <h3 className="text-sm font-semibold text-white">My planets</h3>
-        <p className="text-xs text-slate-500">{myPlanets.length} owned</p>
       </div>
       <div className="grid gap-1.5">
         {myPlanets.map(({ actions, planet }) => {
           const coords = { galaxy: planet.galaxy, system: planet.system, position: planet.position };
           const rowPlanet = overviewPlanetFromManagedPlanet(planet);
+          const isSelected = planet.planetId === selectedPlanetId;
           return (
             <WatchablePlanetRow
               allianceLabel="No alliance"
               commanderLabel={commanderLabel}
               coords={coords}
+              current={isSelected}
               isHome={planet.isHomePlanet}
               key={planet.planetId}
               meta={myPlanetMeta(planet)}
               onInspect={onSelectPlanet ?? (() => undefined)}
               planet={rowPlanet}
+              showIdentity={false}
               actionSlot={(
                 <MyPlanetActionButtons
                   actions={actions}
