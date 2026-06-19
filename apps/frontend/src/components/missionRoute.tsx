@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight } from "lucide-preact";
 
 import { planetArtTypeFromArchetypeOrCoords, planetImageForType } from "../data/mockUniverse";
-import { buildInspectHash } from "../inspectRoutes";
+import { buildInspectPath } from "../inspectRoutes";
 import { timestampToMs } from "../timestampFormat";
 import type { Coordinates, PlanetType } from "../types";
 import { type FleetMissionSummary, decodeColonizationTargetId } from "../walletFlow";
@@ -12,7 +12,7 @@ import { type FleetMissionSummary, decodeColonizationTargetId } from "../walletF
 // the same `MissionEndpoint` model so they always look the same and stay in sync.
 //
 // Navigation is pluggable so each screen keeps its existing behaviour: Mission Control passes no
-// handlers and the endpoints render as hash links (`buildInspectHash`); Mission Detail passes
+// handlers and the endpoints render as clean links (`buildInspectPath`); Mission Detail passes
 // `onSelectCoordinates`/`onSelectPlayer` and the endpoints render as buttons that call back into the
 // page's existing in-app navigation.
 
@@ -144,7 +144,7 @@ function EndpointName({ endpoint, nav }: { endpoint: MissionEndpoint; nav: Route
   const title = endpoint.coordinates ? `Open ${endpoint.coordinates} in Galaxy` : undefined;
   if (endpoint.coords) {
     const coords = endpoint.coords;
-    // Mission Detail wires in-app navigation through a callback; Mission Control links via the hash.
+    // Mission Detail wires in-app navigation through a callback; Mission Control links via clean paths.
     if (nav.onSelectCoordinates) {
       return (
         <button className={`${linkClass} text-left`} onClick={() => nav.onSelectCoordinates?.(coords)} title={title} type="button">
@@ -153,7 +153,7 @@ function EndpointName({ endpoint, nav }: { endpoint: MissionEndpoint; nav: Route
       );
     }
     return (
-      <a className={linkClass} href={buildInspectHash({ coords, kind: "planet" })} title={title}>
+      <a className={linkClass} href={buildInspectPath({ coords, kind: "planet" })} title={title}>
         {endpoint.name}
       </a>
     );
@@ -178,7 +178,7 @@ function EndpointCommander({ endpoint, nav }: { endpoint: MissionEndpoint; nav: 
             {commanderName}
           </button>
         ) : (
-          <a className={linkClass} href={buildInspectHash({ kind: "player", wallet })} title={`Open ${commanderName}'s profile`}>
+          <a className={linkClass} href={buildInspectPath({ kind: "player", wallet })} title={`Open ${commanderName}'s profile`}>
             {commanderName}
           </a>
         )

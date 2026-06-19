@@ -35,7 +35,7 @@ import { RaidTargetFinderPage } from "./components/RaidTargetFinderPage";
 import { AllianceInspectPage, PlayerInspectPage } from "./components/InspectPages";
 import { AlertTriangle } from "lucide-preact";
 import {
-  buildInspectHash,
+  buildInspectPath,
   hasUsefulPlanetDetailBackRoute,
   parseInspectRouteFromLocation,
   planetDetailBackRouteForCurrentScreen,
@@ -2439,11 +2439,12 @@ function initialSelectedCoords(): Coordinates | undefined {
   return route.kind === "planet" ? route.coords : undefined;
 }
 
-function writeInspectHash(route: InspectRoute): void {
+function writeInspectRoute(route: InspectRoute): void {
   if (typeof window === "undefined") return;
-  const hash = buildInspectHash(route);
-  if (window.location.hash !== hash) {
-    window.location.hash = hash;
+  const path = buildInspectPath(route);
+  const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (currentPath !== path) {
+    window.history.pushState(null, "", path);
   }
 }
 
@@ -6356,7 +6357,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setMissionReportId(null);
     setPage(target);
     setSelectedCoords(undefined);
-    writeInspectHash({ kind: "page", page: target });
+    writeInspectRoute({ kind: "page", page: target });
   }, []);
 
   const handleOpenMissionReport = useCallback((missionId: string) => {
@@ -6370,7 +6371,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setMissionReportId(null);
     setSelectedCoords(undefined);
     setPage("mission-control");
-    writeInspectHash({ kind: "mission", missionId });
+    writeInspectRoute({ kind: "mission", missionId });
   }, []);
 
   const handleOpenMissionReportList = useCallback(() => {
@@ -6382,13 +6383,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setMissionReportId(null);
     setPage("mission-control");
     setSelectedCoords(undefined);
-    writeInspectHash({ kind: "page", page: "mission-control" });
+    writeInspectRoute({ kind: "page", page: "mission-control" });
   }, []);
 
   const missionReportUrlForMission = useCallback((missionId: string) => {
-    const hash = buildInspectHash({ kind: "mission", missionId });
-    if (typeof window === "undefined") return hash;
-    return `${window.location.origin}${window.location.pathname}${window.location.search}${hash}`;
+    const path = buildInspectPath({ kind: "mission", missionId });
+    if (typeof window === "undefined") return path;
+    return `${window.location.origin}${path}`;
   }, []);
 
   const handleSelectPlanet = useCallback((coords: Coordinates) => {
@@ -6409,7 +6410,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setMissionDetailId(null);
     setMissionReportId(null);
     setPage("planet");
-    writeInspectHash({ kind: "planet", coords });
+    writeInspectRoute({ kind: "planet", coords });
   }, [inspectedAllianceId, inspectedPlayerWallet, missionDetailId, missionReportId, page]);
 
   const handlePlanetDetailBack = useCallback(() => {
@@ -6450,7 +6451,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setMissionReportId(null);
     setSelectedCoords(undefined);
     setPage("alliance-inspect");
-    writeInspectHash({ kind: "alliance", allianceId });
+    writeInspectRoute({ kind: "alliance", allianceId });
   }, []);
 
   const handleSelectPlayer = useCallback((wallet: string) => {
@@ -6463,7 +6464,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setMissionReportId(null);
     setSelectedCoords(undefined);
     setPage("player-inspect");
-    writeInspectHash({ kind: "player", wallet });
+    writeInspectRoute({ kind: "player", wallet });
   }, []);
 
   const handleOpenRequirement = useCallback((target: RequirementTarget) => {
@@ -6531,7 +6532,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     : `${window.location.origin}/mission/${encodeURIComponent(missionDetailId)}`;
   const battleReportsShareUrl = typeof window === "undefined"
     ? ""
-    : `${window.location.origin}${window.location.pathname}${buildInspectHash({ kind: "page", page: "battle-reports" })}`;
+    : `${window.location.origin}${buildInspectPath({ kind: "page", page: "battle-reports" })}`;
   const canSubmitGameTransaction = Boolean(provider && account && gameContract) && !transactionActionPending;
   const canSubmitAllianceTransaction = Boolean(provider && account && allianceContract) && !transactionActionPending;
   const canSubmitMoonTransaction = Boolean(provider && account && moonContract) && !transactionActionPending;
