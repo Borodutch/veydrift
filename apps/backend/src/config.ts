@@ -186,9 +186,13 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     "VEYDRIFT_MISSION_RESOLVER_ADDRESS",
     problems
   );
+  const randomnessFulfillerPrivateKeyEnv =
+    env.VEYDRIFT_RANDOMNESS_FULFILLER_KEY ?? env.VEYDRIFT_RANDOMNESS_FULFILLER_PRIVATE_KEY;
   const randomnessFulfillerPrivateKey = parsePrivateKey(
-    env.VEYDRIFT_RANDOMNESS_FULFILLER_KEY,
-    "VEYDRIFT_RANDOMNESS_FULFILLER_KEY",
+    randomnessFulfillerPrivateKeyEnv,
+    env.VEYDRIFT_RANDOMNESS_FULFILLER_KEY
+      ? "VEYDRIFT_RANDOMNESS_FULFILLER_KEY"
+      : "VEYDRIFT_RANDOMNESS_FULFILLER_PRIVATE_KEY",
     problems
   );
   const randomnessCommitmentStorePath =

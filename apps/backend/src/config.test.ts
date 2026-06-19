@@ -101,6 +101,20 @@ describe("backend config", () => {
     });
   });
 
+  test("accepts the standalone oracle randomness fulfiller key alias", () => {
+    const privateKey = `0x${"12".repeat(32)}` as const;
+    const result = loadBackendConfig({
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS: "0x51a5faba3fa903edcecdebceea3865bd63d359bb",
+      VEYDRIFT_RANDOMNESS_FULFILLER_PRIVATE_KEY: privateKey,
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config.randomnessFulfillerPrivateKey).toBe(privateKey);
+    expect(safeConfigSummary(result.config).randomnessCommitterConfigured).toBe(true);
+  });
+
   test("defaults the chain-sync poll cadence and accepts env overrides", () => {
     const defaults = loadBackendConfig({
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",

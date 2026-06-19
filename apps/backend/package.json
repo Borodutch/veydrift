@@ -12,6 +12,7 @@
     "index:replay": "bun src/replayIndexer.ts",
     "index:seed-current": "bun src/replayIndexer.ts --current-state-seed --current-state-concurrency 25",
     "index:sync": "bun src/replayIndexer.ts --canonical-sync",
+    "randomness:oracle": "bun src/randomnessOracle.ts",
     "start": "bun src/index.ts",
     "test": "bun test"
   },
