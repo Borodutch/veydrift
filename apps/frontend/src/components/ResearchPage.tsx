@@ -181,7 +181,7 @@ export function ResearchPage({
                       labelTone={researchCatalogTitleTone(status)}
                       onClick={() => handleSelectResearch(research.key)}
                       statusText={researchCatalogStatusText(status)}
-                      statusTone={status.tileStatus === "Locked" ? "warning" : "accent"}
+                      statusTone={status.tileStatus === "Locked" || status.tileStatus === "ShortResources" ? "warning" : "accent"}
                     />
                   );
                 })}
@@ -905,7 +905,7 @@ export function researchActionStatus({
     ? undefined
     : researchCatalog.find((research) => research.id === activeQueue.itemId);
   const missingRequirement = unmetResearchRequirement(state, key);
-  const resourcesAvailable = Boolean(researchState?.resources);
+  const resourcesAvailable = Boolean(researchState?.resourcesAsOfNow ?? researchState?.resources);
   const spendable = spendableResources ?? state.resources;
   const affordable = cost ? canAfford(spendable, cost) : false;
   const displayedActive = state.researchQueue?.key === key;
@@ -946,11 +946,26 @@ export function researchActionStatus({
                         ? formatMissingResources(spendable, cost, productionRates)
                         : `Ready for Level ${targetLevel}`;
 
+  const resourceShortfall = !actionPending
+    && !loading
+    && !error
+    && Boolean(researchState)
+    && researchState?.researchAvailable !== false
+    && Boolean(researchState?.homePlanetId)
+    && canTransact
+    && !activeReady
+    && !active
+    && !queueOccupied
+    && !missingRequirement
+    && resourcesAvailable
+    && Boolean(cost)
+    && !affordable;
+
   // Completions settle automatically on-chain (lazy reconcile) — the button only ever
   // starts a new research level and is disabled while a level is in progress/completing.
   const researchReady = reason === `Ready for Level ${targetLevel}`;
   const disabled = !researchReady;
-  const badge = active ? "In progress" : disabled ? "Locked" : "Available";
+  const badge = active ? "In progress" : resourceShortfall ? "Need resources" : disabled ? "Locked" : "Available";
 
   return {
     actionLabel: actionPending ? actionPendingLabel ?? "Awaiting wallet" : active ? "In progress" : `Research Level ${targetLevel}`,
@@ -963,20 +978,28 @@ export function researchActionStatus({
     hasMissingRequirement: Boolean(missingRequirement),
     reason,
     targetLevel,
-    tileStatus: active ? "Active" : disabled ? "Locked" : "Ready",
+    tileStatus: active ? "Active" : resourceShortfall ? "ShortResources" : disabled ? "Locked" : "Ready",
   };
 }
 
 export function researchCatalogTitleTone(
   status: Pick<ReturnType<typeof researchActionStatus>, "tileStatus">,
 ): "normal" | "muted" {
-  return status.tileStatus === "Locked" ? "muted" : "normal";
+  return status.tileStatus === "Locked" || status.tileStatus === "ShortResources" ? "muted" : "normal";
 }
 
 export function researchCatalogStatusText(
-  status: Pick<ReturnType<typeof researchActionStatus>, "tileStatus">,
+  status: Pick<ReturnType<typeof researchActionStatus>, "reason" | "tileStatus">,
 ): string {
-  return status.tileStatus === "Active" ? "Active" : "";
+  if (status.tileStatus === "Active") return "Active";
+  if (status.tileStatus === "ShortResources") return researchCatalogShortResourceText(status.reason);
+  return "";
+}
+
+function researchCatalogShortResourceText(reason: string): string {
+  const missing = reason.replace(/\s+\(.*\)$/, "").match(/^Requires (.+)$/)?.[1];
+  if (!missing) return "Need resources";
+  return `Need ${missing.replace(/\bmore\s+/g, "")}`;
 }
 
 export function researchViewState(
