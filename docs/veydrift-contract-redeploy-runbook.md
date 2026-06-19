@@ -178,6 +178,26 @@ If rankings or any tab returns an unsupported deployment error, do not start bro
 backend/ABI/config mismatch or create a narrow follow-up task if the deployed contract truly lacks
 that feature.
 
+For backend-test fixes touching the indexer, response cache, mission lifecycle, shipyard, defenses,
+or read models, also run the fleet/defense parity guard before review handoff:
+
+```sh
+cd apps/backend
+bun run fleet-defense:parity -- \
+  --api-url https://api-test.veydrift.com \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --out /Users/borodutch/.openclaw/workspace/artifacts/veydrift_fleet_defense_parity_YYYYMMDDTHHMMSSZ.json
+```
+
+The guard must exit zero and the Kaneo workpad must include the artifact path. It compares Base
+Sepolia `shipCount` / `defenseCount` against both raw indexed DB rows from
+`/debug/fleet-defense-state` and warmed served `/wallet/:wallet/shipyard` plus
+`/wallet/:wallet/defenses` read models, so a PR is not accepted on UI screenshots alone.
+If the guard reports `raw_db_mismatch` (for example the 2026-06-18 planet 21 / LightLaser
+raw DB `5` vs chain `4` case), run `cd apps/backend && bun run index:seed-current` on the
+backend-test service to repair the canonical DB mirror, then rerun the parity guard and record the
+zero-divergence artifact.
+
 ## 5. Kaneo Evidence
 
 Record the manifest path, deployed addresses, deploy block, commit SHA, smoke command output, and

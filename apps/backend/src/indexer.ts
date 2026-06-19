@@ -8,6 +8,7 @@ import {
   shipIds,
   technologyIds
 } from "./contractStateSchema";
+import type { FleetDefenseUnitCount } from "./fleetDefenseParity";
 import {
   attachAttackGroupParticipants,
   decodeAllianceLog,
@@ -623,6 +624,31 @@ export class SettlementIndexer {
       planetsByOwner.set(owner, [...(planetsByOwner.get(owner) ?? []), planet]);
     }
     return planetsByOwner;
+  }
+
+  fleetDefenseRawCounts(): FleetDefenseUnitCount[] {
+    const counts: FleetDefenseUnitCount[] = [];
+    for (const planet of this.settledPlanets()) {
+      for (const unitId of shipIds) {
+        counts.push({
+          count: this.indexedLevel("contract_ship_counts", "ship_id", planet.planetId, unitId),
+          owner: planet.owner.toLowerCase() as Address,
+          planetId: planet.planetId,
+          unitId,
+          unitKind: "ship"
+        });
+      }
+      for (const unitId of defenseIds) {
+        counts.push({
+          count: this.indexedLevel("contract_defense_counts", "defense_id", planet.planetId, unitId),
+          owner: planet.owner.toLowerCase() as Address,
+          planetId: planet.planetId,
+          unitId,
+          unitKind: "defense"
+        });
+      }
+    }
+    return counts;
   }
 
   planet(planetId: string): SettledPlanetEvent | null {

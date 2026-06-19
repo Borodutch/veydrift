@@ -305,6 +305,18 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       );
     }
 
+    if (request.method === "GET" && url.pathname === "/debug/fleet-defense-state") {
+      return Response.json(
+        {
+          indexer: indexer?.snapshot() ?? null,
+          counts: indexer?.fleetDefenseRawCounts() ?? []
+        },
+        {
+          headers: corsHeaders
+        }
+      );
+    }
+
     if (request.method === "GET" && url.pathname === "/chain/events") {
       if (!chainSync) {
         return unavailableResponse(loaded.problems);
