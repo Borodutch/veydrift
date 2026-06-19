@@ -78,6 +78,7 @@ const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446
 const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632088b8c4dc0211479dc6ca";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
+const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const allianceCreatedTopic = "0x4a2634d9b86143d681c41580ee71aad7571fc28bc42c855fcd354bfee4485372";
@@ -5789,6 +5790,49 @@ describe("Veydrift backend", () => {
         safeToServeIndexedState: true
       }
     });
+  });
+
+  test("does not keep infrastructure blocked when a resolved attack report is indexed without a terminal mission log (VEY-KANEO-590)", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    for (const log of activeFleetMissionLogs({
+      arrivalAt: 1_770_000_000n,
+      missionId: 590n,
+      missionTypeId: 3n,
+      owner: player,
+      originPlanetId: 7n,
+      targetPlanetId: 8n,
+    })) {
+      indexer.applyLog(log);
+    }
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xresolved-590",
+      logIndex: "0x0",
+      topics: [attackBattleResolvedTopic, topic(590n), addressTopic(player), topic(8n)],
+      data: abiWords(1n, 2n, 12345n, 100n, 50n, 0n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-index-state")).toBe("healthy");
+    expect(body).toMatchObject({
+      infrastructureAvailable: true,
+      stale: false,
+      indexer: {
+        indexedState: "healthy",
+        safeToServeIndexedState: true
+      }
+    });
+    expect(body.actionBlocker).toBeUndefined();
   });
 
   test("serves every player surface from indexed page state with no per-request chain reads (VEY-KANEO-461)", async () => {
