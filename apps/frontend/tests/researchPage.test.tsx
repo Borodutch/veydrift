@@ -5,6 +5,7 @@ import {
   formatCost,
   formatResearchRequirements,
   getResearchRequirementStates,
+  ResearchActionReasonNotice,
   ResearchEffectsSection,
   ResearchLevelInfoButton,
   ResearchLevelInfoModal,
@@ -620,7 +621,7 @@ describe("Research page load-error display", () => {
       tileStatus: "ShortResources",
     });
     expect(researchCatalogTitleTone(insufficientResources)).toBe("muted");
-    expect(researchCatalogStatusText(insufficientResources)).toBe("Need 900 Metal");
+    expect(researchCatalogStatusText(insufficientResources)).toBe("Need resources");
   });
 
   test("marks Shielding short on crystal when prerequisites are met but resourcesAsOfNow cannot pay (VEY-KANEO-596)", () => {
@@ -664,7 +665,51 @@ describe("Research page load-error display", () => {
       tileStatus: "ShortResources",
     });
     expect(researchCatalogTitleTone(status)).toBe("muted");
-    expect(researchCatalogStatusText(status)).toBe("Need 65 Crystal");
+    expect(researchCatalogStatusText(status)).toBe("Need resources");
+  });
+
+  test("keeps detailed short-resource reasons in the selected details panel, not selector cards (VEY-KANEO-599)", () => {
+    const base = createInitialPlayableState(10_000);
+    const state = {
+      ...base,
+      buildings: {
+        ...base.buildings,
+        researchLab: 6,
+      },
+      research: {
+        ...base.research,
+        energy: 4,
+        shielding: 0,
+      },
+      resources: { metal: 1_785, crystal: 535, deuterium: 10_757 },
+    };
+
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: true,
+      chainCost: { metal: 200, crystal: 600, deuterium: 0 },
+      error: undefined,
+      now: 1_700_000_000_000,
+      loading: false,
+      researchState: researchState({
+        researchLabLevel: 6,
+        resources: null,
+        resourcesAsOfNow: { metal: "1785", crystal: "535", deuterium: "10757" },
+        technologyLevels: { "1": 4, "6": 0 },
+      }),
+      key: "shielding",
+      state,
+    });
+
+    expect(status.reason).toBe("Requires 65 more Crystal");
+    expect(researchCatalogStatusText(status)).toBe("Need resources");
+    expect(researchCatalogStatusText(status)).not.toContain("65");
+
+    const detailReason = ResearchActionReasonNotice({
+      disabled: status.disabled,
+      reason: status.reason,
+    });
+    expect(visibleText(detailReason)).toContain("Requires 65 more Crystal");
   });
 
   test("reports the exact single resource missing for research actions", () => {
