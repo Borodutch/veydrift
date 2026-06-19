@@ -16,6 +16,8 @@ import { playableApiUrl } from "./runtimeConfig";
 
 const alphaUrl = "https://test.veydrift.com";
 const faucetUrl = "https://docs.base.org/base-chain/network-information/network-faucets";
+export const landingFeedRefreshMs = 60_000;
+export const landingAllianceRefreshMs = 300_000;
 
 const ships = {
   colonyShip: "/assets/game/style-pass/generated/ships/colony-ship.webp",
@@ -66,21 +68,6 @@ const howItWorks = [
   },
 ] as const;
 
-const feedItems = [
-  { label: "Shipyard", value: "A Small Cargo line is leaving the docks on New Zion", tone: "cyan" },
-  { label: "Battle", value: "Raiders returned with loot while the defender burns", tone: "rose" },
-  { label: "Galaxy", value: "Fresh debris lit up near 8:42 and scouts are moving", tone: "amber" },
-  { label: "Rift", value: "Resource flows are opening between the universe and open markets", tone: "emerald" },
-] as const;
-
-const fallbackAlliances = [
-  { tag: "Shalex", name: "Shalex", members: 58, score: "16838" },
-  { tag: "SETO", name: "SETO", members: 39, score: "14424" },
-  { tag: "CERBERUS", name: "Cerberus", members: 1, score: "3710" },
-  { tag: "FROZEN FLAME", name: "FROZEN FLAME", members: 6, score: "2947" },
-  { tag: "NEST", name: "TheNEST", members: 4, score: "1836" },
-] as const;
-
 type LandingAlliance = {
   members: number;
   name: string;
@@ -97,6 +84,38 @@ type LandingHighscoreEntry = {
   score: {
     total: string;
   };
+  wallet?: string;
+};
+
+type LandingFeedTone = "amber" | "cyan" | "emerald" | "rose";
+
+type LandingFeedItem = {
+  label: string;
+  tone: LandingFeedTone;
+  value: string;
+};
+
+type LandingLoadStatus = "empty" | "loading" | "offline" | "ready";
+
+type LandingMissionPlanet = {
+  coordinates?: string;
+  galaxy?: number;
+  name?: string | null;
+  position?: number;
+  system?: number;
+};
+
+type LandingFleetMission = {
+  arrivalAt: string;
+  missionId: string;
+  missionType: string;
+  originPlanet?: LandingMissionPlanet | null;
+  originPlanetId: string;
+  owner: string;
+  returnAt: string;
+  status: string;
+  targetPlanet?: LandingMissionPlanet | null;
+  targetPlanetId: string;
 };
 
 export function ComingSoonApp() {
@@ -287,6 +306,8 @@ function RiftPoint({ title, body }: { title: string; body: string }) {
 }
 
 function FeedSection() {
+  const feed = useLandingFeed();
+
   return (
     <section className="relative overflow-hidden bg-[#05070d] px-5 py-18 sm:px-8 lg:px-10">
       <img
@@ -308,20 +329,20 @@ function FeedSection() {
               <Radio className="h-4 w-4 text-signal" />
               <h3 className="text-sm font-semibold text-white">Live alpha feed</h3>
             </div>
-            <span className="rounded border border-emerald-300/[0.1] bg-emerald-300/10 px-2 py-1 text-xs text-emerald-100">
-              Live
-            </span>
+            <LandingStatusPill status={feed.status} />
           </div>
           <div className="grid gap-2 p-3">
-            {feedItems.map((item) => (
-              <div className="landing-feed-row" data-tone={item.tone} key={item.value}>
-                <Activity className="h-4 w-4" />
-                <div>
-                  <p>{item.label}</p>
-                  <span>{item.value}</span>
-                </div>
-              </div>
-            ))}
+            {feed.items.length > 0
+              ? feed.items.map((item) => <LandingFeedRow item={item} key={item.value} />)
+              : (
+                <LandingFeedRow
+                  item={{
+                    label: feed.status === "loading" ? "Syncing indexed missions" : "No active fleet movement",
+                    tone: feed.status === "offline" ? "amber" : "cyan",
+                    value: landingFeedEmptyCopy(feed.status),
+                  }}
+                />
+              )}
           </div>
         </div>
       </div>
@@ -355,6 +376,8 @@ function AlphaSection() {
           <a
             className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.07] px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/[0.12]"
             href={TELEGRAM_SUPPORT_URL}
+            rel="noopener noreferrer"
+            target="_blank"
           >
             Telegram testers
             <ExternalLink className="h-4 w-4" />
@@ -394,19 +417,21 @@ function AlliancesSection() {
               <Users className="h-4 w-4 text-ember" />
               <h3 className="text-sm font-semibold text-white">Top alliances</h3>
             </div>
-            <span className="text-xs font-semibold text-slate-500">Total score</span>
+            <span className="text-xs font-semibold text-slate-500">{landingAllianceBoardLabel(alliances.status)}</span>
           </div>
           <div className="grid gap-2 p-3">
-            {alliances.map((alliance, index) => (
-              <div className="landing-alliance-row" key={`${alliance.tag}-${index}`}>
-                <span className="landing-alliance-rank">{index + 1}</span>
-                <div className="min-w-0">
-                  <p>{alliance.name}</p>
-                  <span>{alliance.members} commanders</span>
+            {alliances.items.length > 0
+              ? alliances.items.map((alliance, index) => (
+                <div className="landing-alliance-row" key={`${alliance.tag}-${index}`}>
+                  <span className="landing-alliance-rank">{index + 1}</span>
+                  <div className="min-w-0">
+                    <p>{alliance.name}</p>
+                    <span>{landingCommanderCount(alliance.members)}</span>
+                  </div>
+                  <strong>{formatLandingScore(alliance.score)}</strong>
                 </div>
-                <strong>{formatLandingScore(alliance.score)}</strong>
-              </div>
-            ))}
+              ))
+              : <LandingAllianceEmpty status={alliances.status} />}
           </div>
         </div>
       </div>
@@ -414,31 +439,137 @@ function AlliancesSection() {
   );
 }
 
-function useTopAlliances(): LandingAlliance[] {
-  const [alliances, setAlliances] = useState<LandingAlliance[]>(() => [...fallbackAlliances]);
+function LandingFeedRow({ item }: { item: LandingFeedItem }) {
+  return (
+    <div className="landing-feed-row" data-tone={item.tone}>
+      <Activity className="h-4 w-4" />
+      <div>
+        <p>{item.label}</p>
+        <span>{item.value}</span>
+      </div>
+    </div>
+  );
+}
+
+function LandingAllianceEmpty({ status }: { status: LandingLoadStatus }) {
+  return (
+    <div className="landing-alliance-empty">
+      <p>{status === "loading" ? "Syncing indexed alliances" : "No ranked alliances"}</p>
+      <span>{landingAllianceEmptyCopy(status)}</span>
+    </div>
+  );
+}
+
+function LandingStatusPill({ status }: { status: LandingLoadStatus }) {
+  const ready = status === "ready";
+  const offline = status === "offline";
+  const empty = status === "empty";
+  return (
+    <span
+      className={`rounded border px-2 py-1 text-xs ${
+        ready
+          ? "border-emerald-300/[0.1] bg-emerald-300/10 text-emerald-100"
+          : offline
+            ? "border-amber-300/[0.12] bg-amber-300/10 text-amber-100"
+            : "border-cyan-300/[0.12] bg-cyan-300/10 text-cyan-100"
+      }`}
+    >
+      {ready ? "Live" : offline ? "Offline" : empty ? "Quiet" : "Syncing"}
+    </span>
+  );
+}
+
+function useLandingFeed(): { items: LandingFeedItem[]; status: LandingLoadStatus } {
+  const [feed, setFeed] = useState<{ items: LandingFeedItem[]; status: LandingLoadStatus }>({
+    items: [],
+    status: "loading",
+  });
 
   useEffect(() => {
     let cancelled = false;
+    let activeController: AbortController | null = null;
 
-    fetchLandingHighscores()
-      .then((data) => {
-        if (cancelled) return;
-        const next = topAlliancesFromHighscores(data);
-        if (next.length > 0) setAlliances(next);
-      })
-      .catch(() => {
-        // The landing page should stay usable if the alpha API is down or blocked locally.
-      });
+    const loadLandingFeed = () => {
+      activeController?.abort();
+      const controller = new AbortController();
+      activeController = controller;
+
+      fetchLandingActiveMissions(controller.signal)
+        .then((missions) => {
+          if (cancelled) return;
+          const items = landingFeedFromMissions(missions);
+          setFeed({ items, status: items.length > 0 ? "ready" : "empty" });
+        })
+        .catch((error) => {
+          if (cancelled || isAbortError(error)) return;
+          setFeed({ items: [], status: "offline" });
+        });
+    };
+
+    loadLandingFeed();
+    const intervalId = window.setInterval(loadLandingFeed, landingFeedRefreshMs);
 
     return () => {
       cancelled = true;
+      window.clearInterval(intervalId);
+      activeController?.abort();
+    };
+  }, []);
+
+  return feed;
+}
+
+function useTopAlliances(): { items: LandingAlliance[]; status: LandingLoadStatus } {
+  const [alliances, setAlliances] = useState<{ items: LandingAlliance[]; status: LandingLoadStatus }>({
+    items: [],
+    status: "loading",
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    let activeController: AbortController | null = null;
+
+    const loadLandingAlliances = () => {
+      activeController?.abort();
+      const controller = new AbortController();
+      activeController = controller;
+
+      fetchLandingHighscores(controller.signal)
+        .then((data) => {
+          if (cancelled) return;
+          const next = topAlliancesFromHighscores(data);
+          setAlliances({ items: next, status: next.length > 0 ? "ready" : "empty" });
+        })
+        .catch((error) => {
+          if (cancelled || isAbortError(error)) return;
+          setAlliances({ items: [], status: "offline" });
+        });
+    };
+
+    loadLandingAlliances();
+    const intervalId = window.setInterval(loadLandingAlliances, landingAllianceRefreshMs);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      activeController?.abort();
     };
   }, []);
 
   return alliances;
 }
 
-async function fetchLandingHighscores(): Promise<LandingHighscoreEntry[]> {
+async function fetchLandingActiveMissions(signal?: AbortSignal): Promise<LandingFleetMission[]> {
+  const response = await fetch(`${playableApiUrl}/missions?status=active`, {
+    headers: { accept: "application/json" },
+    ...(signal ? { signal } : {}),
+  });
+  if (!response.ok) throw new Error("Failed to load landing missions");
+  const data = await response.json() as { missions?: LandingFleetMission[] };
+  return data.missions ?? [];
+}
+
+async function fetchLandingHighscores(signal?: AbortSignal): Promise<LandingHighscoreEntry[]> {
   const params = new URLSearchParams({
     category: "total",
     page: "1",
@@ -446,38 +577,144 @@ async function fetchLandingHighscores(): Promise<LandingHighscoreEntry[]> {
   });
   const response = await fetch(`${playableApiUrl}/highscores?${params.toString()}`, {
     headers: { accept: "application/json" },
+    ...(signal ? { signal } : {}),
   });
   if (!response.ok) throw new Error("Failed to load landing highscores");
   const data = await response.json() as { rankings?: { total?: LandingHighscoreEntry[] } };
   return data.rankings?.total ?? [];
 }
 
-function topAlliancesFromHighscores(entries: LandingHighscoreEntry[]): LandingAlliance[] {
-  const byId = new Map<string, LandingAlliance>();
+export function landingFeedFromMissions(missions: readonly LandingFleetMission[], now = Date.now()): LandingFeedItem[] {
+  return [...missions]
+    .sort((left, right) => landingMissionSortTime(left, now) - landingMissionSortTime(right, now))
+    .slice(0, 4)
+    .map((mission) => landingFeedItemFromMission(mission, now));
+}
+
+function landingFeedItemFromMission(mission: LandingFleetMission, now: number): LandingFeedItem {
+  const label = landingMissionTypeLabel(mission.missionType);
+  const origin = landingPlanetLabel(mission.originPlanet, mission.originPlanetId);
+  const target = landingPlanetLabel(mission.targetPlanet, mission.targetPlanetId);
+  const commander = shortLandingWallet(mission.owner);
+  const timeCopy = landingMissionTimeCopy(mission, now);
+
+  return {
+    label,
+    tone: landingMissionTone(mission.missionType),
+    value: `${commander}: ${landingMissionMovementCopy(mission.missionType, origin, target)}${timeCopy ? `, ${timeCopy}` : ""}`,
+  };
+}
+
+function landingMissionMovementCopy(missionType: string, origin: string, target: string): string {
+  if (["Attack", "AcsAttack", "MissileAttack"].includes(missionType)) return `strike fleet inbound to ${target}`;
+  if (missionType === "Harvest") return `recyclers moving toward ${target}`;
+  if (missionType === "Transport") return `transport convoy crossing from ${origin} to ${target}`;
+  if (missionType === "Deploy") return `deployment moving from ${origin} to ${target}`;
+  if (missionType === "Colonize") return `colony fleet moving from ${origin} to ${target}`;
+  if (["AcsDefend", "DefenseHold", "Intercept"].includes(missionType)) return `defense fleet stationing at ${target}`;
+  return `${landingMissionTypeLabel(missionType).toLowerCase()} mission moving from ${origin} to ${target}`;
+}
+
+function landingMissionTone(missionType: string): LandingFeedTone {
+  if (["Attack", "AcsAttack", "MissileAttack"].includes(missionType)) return "rose";
+  if (missionType === "Harvest") return "amber";
+  if (["Deploy", "Colonize", "AcsDefend", "DefenseHold", "Intercept"].includes(missionType)) return "emerald";
+  return "cyan";
+}
+
+function landingMissionTypeLabel(missionType: string): string {
+  if (missionType === "AcsAttack") return "Group attack";
+  if (missionType === "AcsDefend") return "Group defense";
+  if (missionType === "DefenseHold") return "Stationed defense";
+  return missionType.replace(/([A-Z])/g, " $1").trim() || "Fleet mission";
+}
+
+function landingMissionTimeCopy(mission: LandingFleetMission, now: number): string {
+  const returning = mission.status === "Returning" || mission.status === "Recalled";
+  const timestamp = landingTimestampMs(returning ? mission.returnAt : mission.arrivalAt);
+  const countdown = formatLandingCountdown(timestamp, now);
+  if (!countdown) return "";
+  if (countdown === "now") return returning ? "landing now" : "arriving now";
+  return returning ? `lands in ${countdown}` : `arrives in ${countdown}`;
+}
+
+function landingMissionSortTime(mission: LandingFleetMission, now: number): number {
+  const returning = mission.status === "Returning" || mission.status === "Recalled";
+  const timestamp = landingTimestampMs(returning ? mission.returnAt : mission.arrivalAt);
+  if (timestamp === undefined) return Number.MAX_SAFE_INTEGER;
+  return Math.max(timestamp, now);
+}
+
+function landingPlanetLabel(planet: LandingMissionPlanet | null | undefined, fallbackId: string): string {
+  if (planet?.name) return planet.name;
+  if (planet?.coordinates) return planet.coordinates;
+  if (
+    Number.isFinite(planet?.galaxy)
+    && Number.isFinite(planet?.system)
+    && Number.isFinite(planet?.position)
+  ) {
+    return `${planet!.galaxy}:${planet!.system}:${planet!.position}`;
+  }
+  return `planet #${fallbackId}`;
+}
+
+function landingTimestampMs(value: string): number | undefined {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed > 10_000_000_000 ? parsed : parsed * 1_000;
+}
+
+function formatLandingCountdown(timestamp: number | undefined, now: number): string {
+  if (timestamp === undefined) return "";
+  const seconds = Math.max(0, Math.round((timestamp - now) / 1_000));
+  if (seconds < 60) return "now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (hours < 24) return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`;
+}
+
+function shortLandingWallet(wallet: string): string {
+  return /^0x[a-fA-F0-9]{40}$/.test(wallet)
+    ? `${wallet.slice(0, 6)}...${wallet.slice(-4)}`
+    : wallet || "Commander";
+}
+
+export function topAlliancesFromHighscores(entries: readonly LandingHighscoreEntry[]): LandingAlliance[] {
+  const byId = new Map<string, LandingAlliance & { wallets: Set<string> }>();
 
   for (const entry of entries) {
     if (!entry.alliance) continue;
     const existing = byId.get(entry.alliance.allianceId);
-    const score = BigInt(entry.score.total);
+    const score = safeLandingBigInt(entry.score.total);
     if (!existing) {
       byId.set(entry.alliance.allianceId, {
-        members: 1,
-        name: entry.alliance.name,
+        members: 0,
+        name: entry.alliance.name || entry.alliance.tag || `Alliance #${entry.alliance.allianceId}`,
         score: String(score),
         tag: entry.alliance.tag,
+        wallets: new Set(entry.wallet ? [entry.wallet.toLowerCase()] : []),
       });
       continue;
     }
 
-    existing.members += 1;
-    existing.score = String(BigInt(existing.score) + score);
+    if (entry.wallet) existing.wallets.add(entry.wallet.toLowerCase());
+    existing.score = String(safeLandingBigInt(existing.score) + score);
   }
 
   return [...byId.values()]
+    .map(({ wallets, ...alliance }) => ({
+      ...alliance,
+      members: Math.max(alliance.members, wallets.size || 1),
+    }))
     .sort((left, right) => {
-      const leftScore = BigInt(left.score);
-      const rightScore = BigInt(right.score);
-      if (leftScore === rightScore) return 0;
+      const leftScore = safeLandingBigInt(left.score);
+      const rightScore = safeLandingBigInt(right.score);
+      if (leftScore === rightScore) return left.name.localeCompare(right.name);
       return leftScore < rightScore ? 1 : -1;
     })
     .slice(0, 5);
@@ -487,4 +724,38 @@ function formatLandingScore(score: string): string {
   const value = Number(score);
   if (!Number.isFinite(value) || value <= 0) return "Forming";
   return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
+
+function safeLandingBigInt(value: string | undefined): bigint {
+  try {
+    return BigInt(value ?? 0);
+  } catch {
+    return 0n;
+  }
+}
+
+function landingFeedEmptyCopy(status: LandingLoadStatus): string {
+  if (status === "loading") return "Reading the backend mission index for current fleet movement.";
+  if (status === "offline") return "The alpha API is not reachable from this page right now.";
+  return "The backend mission index has no active universe-wide fleet rows right now.";
+}
+
+function landingAllianceEmptyCopy(status: LandingLoadStatus): string {
+  if (status === "loading") return "Reading the backend highscore index for alliance membership.";
+  if (status === "offline") return "The alpha API is not reachable from this page right now.";
+  return "The backend highscore index has no alliance-ranked commanders yet.";
+}
+
+function landingAllianceBoardLabel(status: LandingLoadStatus): string {
+  if (status === "loading") return "Syncing";
+  if (status === "offline") return "Offline";
+  return "Total score";
+}
+
+function landingCommanderCount(count: number): string {
+  return `${count} commander${count === 1 ? "" : "s"}`;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
 }
