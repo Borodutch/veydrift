@@ -23,6 +23,8 @@ import {
 import type { GalaxyAction } from "./galaxyActions";
 import type { Planet } from "./types";
 
+const missionCreationSource = await Bun.file(new URL("./components/MissionCreationPage.tsx", import.meta.url)).text();
+
 const attackAction: Extract<GalaxyAction, { enabled: true }> = {
   enabled: true,
   kind: "attack",
@@ -531,6 +533,17 @@ describe("mission creation", () => {
     expect(text).not.toContain("Public state");
     expect(text).not.toContain("Projected arrival resources use");
     expect(text).not.toContain("not charted");
+  });
+
+  test("keeps Attack Mission setup grouped into target, fleet, timing, loot, and launch summary sections", () => {
+    expect(missionCreationSource).toContain("<MissionFormSection title=\"Fleet selection\" eyebrow=\"Ships\">");
+    expect(missionCreationSource).toContain("<MissionFormSection title=\"Speed and timing\" eyebrow=\"Flight plan\">");
+    expect(missionCreationSource).toContain("<MissionFormSection title=\"Loot priority\" eyebrow=\"Plunder\">");
+    expect(missionCreationSource).toContain("Launch decision");
+    expect(missionCreationSource).toContain("Target readout");
+    expect(missionCreationSource).toContain("MissionStatCard label={holdingBreakdown ? \"Reach planet\" : \"Arrival\"}");
+    expect(missionCreationSource).toContain("MissionStatCard label=\"Return\"");
+    expect(missionCreationSource).not.toContain("Projected arrival resources use");
   });
 
   test("keeps the legacy standalone outcome and destination panels available for non-attack surfaces", () => {

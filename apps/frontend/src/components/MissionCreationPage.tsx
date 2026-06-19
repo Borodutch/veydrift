@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useMemo, useState } from "preact/hooks";
 import type { Coordinates, Planet, PublicStationedDefender } from "../types";
 import {
@@ -351,7 +352,7 @@ export function MissionCreationPage({
   };
 
   return (
-    <section className="grid gap-3 p-3 sm:p-4">
+    <section className="grid gap-4 p-4 sm:p-5 lg:p-6">
       <PageHeader
         actions={(
           <button
@@ -371,8 +372,8 @@ export function MissionCreationPage({
         titleSize="xl"
       />
 
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <section className="grid gap-3">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
+        <section className="grid gap-4">
           {lootRatioSupported ? (
             <AttackIntelPanel
               battleForecast={battleForecast}
@@ -418,23 +419,24 @@ export function MissionCreationPage({
           ) : null}
 
           {action.mode === "missile" ? (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <NumberField
-                label="Missiles"
-                min={1}
-                onChange={setQuantity}
-                value={quantity}
-              />
-              <NumberField
-                label="Primary target"
-                min={0}
-                onChange={setPrimaryTargetId}
-                value={primaryTargetId}
-              />
-            </div>
+            <MissionFormSection title="Strike payload" eyebrow="Ordnance">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <NumberField
+                  label="Missiles"
+                  min={1}
+                  onChange={setQuantity}
+                  value={quantity}
+                />
+                <NumberField
+                  label="Primary target"
+                  min={0}
+                  onChange={setPrimaryTargetId}
+                  value={primaryTargetId}
+                />
+              </div>
+            </MissionFormSection>
           ) : (
-            <div className="grid gap-3">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Ships</h3>
+            <MissionFormSection title="Fleet selection" eyebrow="Ships">
               {availableShips.length > 0 ? (
                 <div className="grid gap-2">
                   {availableShips.map((ship) => {
@@ -455,13 +457,13 @@ export function MissionCreationPage({
                   No eligible ships are available on the active planet.
                 </p>
               )}
-            </div>
+            </MissionFormSection>
           )}
 
           {cargoSupported ? (
-            <div className="grid gap-3">
+            <MissionFormSection title="Cargo manifest" eyebrow="Resources">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Cargo</h3>
+                <p className="text-xs text-slate-400">Load resources after reserving mission fuel.</p>
                 <span className="text-xs text-slate-500">Capacity {cargoCapacity.toLocaleString()}</span>
               </div>
               <div className="grid gap-2 sm:grid-cols-3">
@@ -469,12 +471,11 @@ export function MissionCreationPage({
                 <ResourceField label="Crystal" max={maxCargoResources.crystal} onChange={(crystal) => setCargo((current) => ({ ...current, crystal }))} value={cargo.crystal ?? ""} />
                 <ResourceField label="Deuterium" max={maxCargoResources.deuterium} onChange={(deuterium) => setCargo((current) => ({ ...current, deuterium }))} value={cargo.deuterium ?? ""} />
               </div>
-            </div>
+            </MissionFormSection>
           ) : null}
 
           {joinAttackMode ? null : (
-            <div className="grid gap-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Speed</h3>
+            <MissionFormSection title="Speed and timing" eyebrow="Flight plan">
               <div className="flex flex-wrap gap-1.5">
                 {MISSION_SPEED_OPTIONS.map((speed) => (
                   <button
@@ -492,12 +493,19 @@ export function MissionCreationPage({
                   </button>
                 ))}
               </div>
-            </div>
+              {timingSummary ? (
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <MissionStatCard label={holdingBreakdown ? "Reach planet" : "Arrival"} value={timingSummary.arrivalDuration} subvalue={timingSummary.arrivalClock} />
+                  {shouldShowReturnTiming(action, Boolean(holdingBreakdown)) ? (
+                    <MissionStatCard label="Return" value={timingSummary.returnDuration} subvalue={timingSummary.returnClock} />
+                  ) : null}
+                </div>
+              ) : null}
+            </MissionFormSection>
           )}
 
           {defenseHoldMode ? (
-            <div className="grid gap-2">
-              <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Hold duration</h3>
+            <MissionFormSection title="Defense hold" eyebrow="Stationing">
               <div className="flex flex-wrap gap-1.5">
                 {DEFENSE_HOLD_HOUR_OPTIONS.map((hours) => (
                   <button
@@ -519,28 +527,33 @@ export function MissionCreationPage({
                 The fleet holds at the target planet for this long, defending any attack that lands while
                 stationed, then flies home. Longer holds cost more deuterium.
               </p>
-            </div>
+            </MissionFormSection>
           ) : null}
 
           {lootRatioSupported ? (
-            <LootRatioControls
-              cargoCapacity={cargoCapacity}
-              greedyLootEnabled={greedyLootEnabled}
-              lootRatio={displayedLootRatio}
-              lootRatioTotal={lootRatioTotal}
-              onAmountChange={updateLootAmount}
-              onGreedyChange={setGreedyLootEnabled}
-              onPercentChange={updateLootPercent}
-              onResetEven={() => {
-                setGreedyLootEnabled(false);
-                setLootRatio(DEFAULT_LOOT_RATIO);
-              }}
-            />
+            <MissionFormSection title="Loot priority" eyebrow="Plunder">
+              <LootRatioControls
+                cargoCapacity={cargoCapacity}
+                greedyLootEnabled={greedyLootEnabled}
+                lootRatio={displayedLootRatio}
+                lootRatioTotal={lootRatioTotal}
+                onAmountChange={updateLootAmount}
+                onGreedyChange={setGreedyLootEnabled}
+                onPercentChange={updateLootPercent}
+                onResetEven={() => {
+                  setGreedyLootEnabled(false);
+                  setLootRatio(DEFAULT_LOOT_RATIO);
+                }}
+              />
+            </MissionFormSection>
           ) : null}
         </section>
 
-        <aside className="grid content-start gap-3 rounded-lg border border-white/10 bg-[#101624] p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Mission Summary</h3>
+        <aside className="grid content-start gap-3 rounded-lg border border-signal/20 bg-[#101624] p-4 shadow-lg shadow-black/20 lg:sticky lg:top-4">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-signal/80">Launch decision</p>
+            <h3 className="mt-1 text-base font-semibold text-white">Mission Summary</h3>
+          </div>
           <SummaryRow label="Distance" value={distance.toLocaleString()} />
           <SummaryRow label="Ships" value={action.mode === "missile" ? "Missile launch" : selectedShipCount.toLocaleString()} />
           <SummaryRow
@@ -600,6 +613,44 @@ export function MissionCreationPage({
         </aside>
       </div>
     </section>
+  );
+}
+
+function MissionFormSection({
+  children,
+  eyebrow,
+  title,
+}: {
+  children: ComponentChildren;
+  eyebrow: string;
+  title: string;
+}) {
+  return (
+    <section className="grid gap-3 rounded-lg border border-white/10 bg-[#101624] p-4 shadow-sm shadow-black/10">
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{eyebrow}</p>
+        <h3 className="mt-1 text-sm font-semibold text-white">{title}</h3>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function MissionStatCard({
+  label,
+  subvalue,
+  value,
+}: {
+  label: string;
+  subvalue?: string | undefined;
+  value: string;
+}) {
+  return (
+    <div className="rounded border border-white/10 bg-black/15 px-3 py-2">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</p>
+      <p className="mt-1 text-sm font-semibold tabular-nums text-slate-100">{value}</p>
+      {subvalue ? <p className="mt-0.5 break-words text-[11px] text-slate-500">{subvalue}</p> : null}
+    </div>
   );
 }
 
@@ -1065,16 +1116,18 @@ export function AttackIntelPanel({
   targetFleetUnits: UnitItem[];
 }) {
   return (
-    <section className="grid gap-3 rounded-md border border-white/10 bg-white/[0.04] p-3">
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:items-start">
-        <div className="grid gap-2 sm:grid-cols-[4rem_minmax(0,1fr)]">
+    <section className="grid gap-4 rounded-lg border border-white/10 bg-[#101624] p-4 shadow-sm shadow-black/10">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.9fr)] xl:items-stretch">
+        <div className="grid gap-3 rounded-md border border-white/10 bg-black/15 p-3 sm:grid-cols-[4rem_minmax(0,1fr)]">
           <TargetIdentityContent compact coords={coords} target={target} />
         </div>
-        <AttackOutcomeContent
-          battleForecast={battleForecast}
-          lootableAtArrival={lootableAtArrival}
-          maxLootForecast={maxLootForecast}
-        />
+        <div className="rounded-md border border-signal/15 bg-signal/[0.06] p-3">
+          <AttackOutcomeContent
+            battleForecast={battleForecast}
+            lootableAtArrival={lootableAtArrival}
+            maxLootForecast={maxLootForecast}
+          />
+        </div>
       </div>
       <div className="border-t border-white/10 pt-3">
         <DestinationIntelContent
@@ -1122,11 +1175,11 @@ function AttackOutcomeContent({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Probable outcome</h3>
-          <p className={`mt-0.5 text-sm font-semibold ${battleForecast.kind === "win" ? "text-emerald-200" : battleForecast.kind === "defeat" ? "text-red-200" : battleForecast.kind === "draw" ? "text-amber-200" : "text-slate-300"}`}>
+          <p className={`mt-0.5 text-base font-semibold ${battleForecast.kind === "win" ? "text-emerald-200" : battleForecast.kind === "defeat" ? "text-red-200" : battleForecast.kind === "draw" ? "text-amber-200" : "text-slate-300"}`}>
             {battleForecast.label}
           </p>
         </div>
-        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-right text-[11px] text-slate-500">
+        <div className="grid min-w-[8.5rem] grid-cols-2 gap-x-3 gap-y-0.5 text-right text-[11px] text-slate-500">
           <span>Attack</span>
           <span className="font-medium tabular-nums text-slate-300">{battleForecast.attackerPower.toLocaleString()}</span>
           <span>Defense</span>
@@ -1224,8 +1277,11 @@ function DestinationIntelContent({
 }) {
   return (
     <div className="grid gap-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Destination intel</h3>
-      <div className="grid gap-2 lg:grid-cols-2 xl:grid-cols-3">
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">Target readout</p>
+        <h3 className="mt-1 text-sm font-semibold text-white">Destination intel</h3>
+      </div>
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
         <UnitSection emptyLabel="No fleet is stationed here." title="Destination Fleet" units={targetFleetUnits} />
         <UnitSection emptyLabel="No defenses are deployed here." title="Defenses" units={targetDefenseUnits} />
         {stationedDefenderUnits.length > 0 ? (
