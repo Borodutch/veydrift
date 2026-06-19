@@ -268,6 +268,16 @@ export function researchStartTransactionLabel(
   return `${label} level ${currentLevel + 1} research`;
 }
 
+export function researchStartPlanetIdFor({
+  activePlanetId,
+  researchState,
+}: {
+  activePlanetId: string | undefined;
+  researchState: Pick<ChainResearchState, "homePlanetId" | "planetId"> | null;
+}): string | undefined {
+  return researchState?.planetId ?? activePlanetId ?? researchState?.homePlanetId ?? undefined;
+}
+
 export function walletSpendableResourcesFor({
   isWalletConnected,
   onChainResources,
@@ -5560,9 +5570,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           latestResearchState ?? effectiveResearchState,
           activeResearchQueue(queues?.research),
         ) ?? latestResearchState ?? effectiveResearchState;
-        const homePlanetId = stateForTransaction.homePlanetId;
-        if (!homePlanetId) {
-          setResearchAction({ status: "error", label: "No VeydriftGame home planet is available for research." });
+        const transactionPlanetId = researchStartPlanetIdFor({
+          activePlanetId,
+          researchState: stateForTransaction,
+        });
+        if (!transactionPlanetId) {
+          setResearchAction({ status: "error", label: "No VeydriftGame planet is available for research." });
           return;
         }
 
@@ -5574,7 +5587,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           provider,
           account,
           gameContract,
-          homePlanetId,
+          transactionPlanetId,
           technologyId,
         ), () => refreshStartedResearchState({
           itemId: technologyId,

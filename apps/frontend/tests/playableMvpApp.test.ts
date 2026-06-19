@@ -48,6 +48,7 @@ import {
   researchStartUnavailableReasonFor,
   selectedResearchStartBlocker,
   researchStateForCompletionRevalidation,
+  researchStartPlanetIdFor,
   researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
   raidTargetPlanetForMission,
@@ -699,6 +700,23 @@ describe("Playable MVP app display helpers", () => {
       ],
       queue: null,
     })).toBe("Energy Technology level 2 research");
+  });
+
+  test("starts research against the selected research planet before falling back to home planet", () => {
+    expect(researchStartPlanetIdFor({
+      activePlanetId: "8",
+      researchState: researchState({ homePlanetId: "7", planetId: "9" }),
+    })).toBe("9");
+
+    expect(researchStartPlanetIdFor({
+      activePlanetId: "8",
+      researchState: researchState({ homePlanetId: "7" }),
+    })).toBe("8");
+
+    expect(researchStartPlanetIdFor({
+      activePlanetId: undefined,
+      researchState: researchState({ homePlanetId: "7" }),
+    })).toBe("7");
   });
 
   test("uses backend-accrued wallet resources without adding local pending deltas", () => {
@@ -2860,14 +2878,16 @@ function shipyardState({
 function researchState({
   queue,
   indexer,
+  planetId,
   stale,
   researchLabLevel,
   technologyLevels,
   technologies,
-}: Partial<Pick<ChainResearchState, "indexer" | "queue" | "researchLabLevel" | "stale" | "technologies" | "technologyLevels">> = {}): ChainResearchState {
+}: Partial<Pick<ChainResearchState, "indexer" | "planetId" | "queue" | "researchLabLevel" | "stale" | "technologies" | "technologyLevels">> = {}): ChainResearchState {
   return {
     wallet: "0x2222222222222222222222222222222222222222",
     homePlanetId: "7",
+    planetId,
     indexer,
     stale,
     researchAvailable: true,

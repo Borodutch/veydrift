@@ -598,6 +598,7 @@ export type ChainMoonState = {
 export type ChainResearchState = {
   wallet: string;
   homePlanetId: string | null;
+  planetId?: string | null;
   indexer?: BackendIndexerState;
   source?: "contract-state-indexer" | string;
   degraded?: boolean;
