@@ -1,6 +1,7 @@
 [phases.setup]
 nixPkgs = ["nodejs_22", "bun"]
 nixLibs = ["gcc-unwrapped"]
+aptPkgs = ["libstdc++6", "fontconfig", "fonts-dejavu-core"]
 
 [phases.install]
 cmds = ["NODE_ENV=development bun install --frozen-lockfile && cd apps/frontend && NODE_ENV=development bun install --frozen-lockfile --force && rm -rf /root/.cache/nix"]

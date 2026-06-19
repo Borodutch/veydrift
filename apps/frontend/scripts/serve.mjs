@@ -359,7 +359,7 @@ function shortAddress(value) {
 
 async function shareHtmlResponse(request, route) {
   const url = new URL(request.url);
-  const origin = `${url.protocol}//${url.host}`;
+  const origin = publicOrigin(request, url);
   const meta = await routeMeta(route);
   const canonicalPath = sharePathForRoute(route);
   const canonicalUrl = `${origin}${canonicalPath}`;
@@ -400,6 +400,13 @@ async function shareHtmlResponse(request, route) {
       "content-type": "text/html; charset=utf-8",
     },
   });
+}
+
+function publicOrigin(request, url) {
+  const host = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || url.host;
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const protocol = forwardedProto || (host.endsWith("veydrift.com") ? "https" : url.protocol.replace(/:$/, ""));
+  return `${protocol}://${host}`;
 }
 
 async function ogImageResponse(route) {
@@ -476,13 +483,13 @@ async function ogSvg(meta) {
   <rect width="1200" height="630" fill="url(#glow)"/>
   ${visual}
   <rect width="1200" height="630" fill="url(#shade)"/>
-  <text x="58" y="82" font-family="Inter, SF Pro Display, Helvetica Neue, Arial, sans-serif" font-size="24" font-weight="850" fill="#f8fbff">Veydrift</text>
+  <text x="58" y="82" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="850" fill="#f8fbff">Veydrift</text>
   <rect x="60" y="132" width="520" height="2" fill="url(#rule)"/>
-  <text x="58" y="238" font-family="Inter, SF Pro Display, Helvetica Neue, Arial, sans-serif" font-size="82" font-weight="900" fill="#f8fbff">${escapeXml(title)}</text>
-  <text x="62" y="304" font-family="Inter, SF Pro Display, Helvetica Neue, Arial, sans-serif" font-size="40" font-weight="780" fill="#d8e2f1">${escapeXml(subtitle)}</text>
+  <text x="58" y="238" font-family="DejaVu Sans, Arial, sans-serif" font-size="82" font-weight="900" fill="#f8fbff">${escapeXml(title)}</text>
+  <text x="62" y="304" font-family="DejaVu Sans, Arial, sans-serif" font-size="40" font-weight="780" fill="#d8e2f1">${escapeXml(subtitle)}</text>
   <rect x="64" y="358" width="10" height="38" fill="${accent}"/>
-  <text x="92" y="386" font-family="Inter, SF Pro Display, Helvetica Neue, Arial, sans-serif" font-size="27" font-weight="850" fill="${accent}">${escapeXml(status)}</text>
-  <text x="64" y="596" font-family="Inter, SF Pro Display, Helvetica Neue, Arial, sans-serif" font-size="17" font-weight="760" fill="#71839a">test.veydrift.com</text>
+  <text x="92" y="386" font-family="DejaVu Sans, Arial, sans-serif" font-size="27" font-weight="850" fill="${accent}">${escapeXml(status)}</text>
+  <text x="64" y="596" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" font-weight="760" fill="#71839a">test.veydrift.com</text>
 </svg>`;
 }
 
