@@ -1216,12 +1216,25 @@ export class SettlementIndexer {
   }
 
   dueUnresolvedFleetMissionsForPlanet(planetId: string, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
+    const resolvedBattleMissionIds = this.resolvedBattleMissionIds();
     return this.indexedFleetMissionReferenceIndex().active.filter((mission) =>
       mission.status === "Outbound"
         && (mission.missionType === "Attack" || mission.missionType === "Harvest")
         && Number(mission.arrivalAt) <= asOfSeconds
         && (mission.originPlanetId === planetId || mission.targetPlanetId === planetId)
+        && !resolvedBattleMissionIds.has(mission.missionId)
     ).sort((left, right) => Number(left.arrivalAt) - Number(right.arrivalAt));
+  }
+
+  private resolvedBattleMissionIds(): ReadonlySet<string> {
+    const missionIds = new Set<string>();
+    for (const report of this.indexedBattleReports()) {
+      missionIds.add(report.missionId);
+      for (const participant of report.participants) {
+        missionIds.add(participant.missionId);
+      }
+    }
+    return missionIds;
   }
 
   pendingFleetSlotSettlementMissionsForWallet(wallet: `0x${string}`, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
