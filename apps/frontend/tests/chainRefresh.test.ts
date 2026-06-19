@@ -145,6 +145,19 @@ describe("playable chain refresh", () => {
     expect(source).toContain("await refreshOnChainState(undefined, { force: true });");
     expect(source).not.toContain("void refreshOnChainState(undefined, { force: true });");
   });
+
+  test("keeps attack mission confirmation open until receipt confirmation and indexing settle", async () => {
+    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+
+    expect(source).toContain("): Promise<boolean> => {\n    let completed = false;");
+    expect(source).toContain("await confirmSubmittedTransaction(txHash);");
+    expect(source).toContain("await waitForMissionLaunchState(loadMissionLaunchSnapshot, txHash");
+    expect(source).toContain("setGalaxyAction({ status: \"success\", label: `${label} confirmed.` });\n        completed = true;");
+    expect(source).toContain("if (completed) closeMissionCreation();");
+    expect(source).toContain("if (completed) closeJoinAttack();");
+    expect(source).not.toContain("setPendingGalaxyMission(null);\n    setPendingJoinAttack(null);\n    setPendingAcsDefend(null);\n    if (action.kind === \"attack\"");
+    expect(source).not.toContain("setPendingJoinAttack(null);\n    setPendingAcsDefend(null);\n    const driveLevels");
+  });
 });
 
 function settlementSnapshot(
