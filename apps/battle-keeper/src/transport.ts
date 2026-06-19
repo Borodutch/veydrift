@@ -35,7 +35,7 @@ type JsonRpcResponse<T> = {
   };
 };
 
-const retryableStatuses = new Set([429, 500, 502, 503, 504]);
+const retryableStatuses = new Set([403, 429, 500, 502, 503, 504]);
 
 function isRetryableStatus(status: number): boolean {
   return retryableStatuses.has(status);
