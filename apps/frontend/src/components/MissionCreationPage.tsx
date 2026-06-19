@@ -372,8 +372,8 @@ export function MissionCreationPage({
         titleSize="xl"
       />
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-start">
-        <section className="grid gap-4">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start">
+        <section className="grid gap-3">
           {lootRatioSupported ? (
             <AttackIntelPanel
               battleForecast={battleForecast}
@@ -419,7 +419,7 @@ export function MissionCreationPage({
           ) : null}
 
           {action.mode === "missile" ? (
-            <MissionFormSection title="Strike payload" eyebrow="Ordnance">
+            <MissionFormSection title="Payload" eyebrow="Ordnance">
               <div className="grid gap-3 sm:grid-cols-2">
                 <NumberField
                   label="Missiles"
@@ -436,7 +436,7 @@ export function MissionCreationPage({
               </div>
             </MissionFormSection>
           ) : (
-            <MissionFormSection title="Fleet selection" eyebrow="Ships">
+            <MissionFormSection title="Fleet" eyebrow="Ships">
               {availableShips.length > 0 ? (
                 <div className="grid gap-2">
                   {availableShips.map((ship) => {
@@ -461,7 +461,7 @@ export function MissionCreationPage({
           )}
 
           {cargoSupported ? (
-            <MissionFormSection title="Cargo manifest" eyebrow="Resources">
+            <MissionFormSection title="Cargo" eyebrow="Resources">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-slate-400">Load resources after reserving mission fuel.</p>
                 <span className="text-xs text-slate-500">Capacity {cargoCapacity.toLocaleString()}</span>
@@ -475,7 +475,7 @@ export function MissionCreationPage({
           ) : null}
 
           {joinAttackMode ? null : (
-            <MissionFormSection title="Speed and timing" eyebrow="Flight plan">
+            <MissionFormSection title="Speed" eyebrow="Flight plan">
               <div className="flex flex-wrap gap-1.5">
                 {MISSION_SPEED_OPTIONS.map((speed) => (
                   <button
@@ -494,10 +494,10 @@ export function MissionCreationPage({
                 ))}
               </div>
               {timingSummary ? (
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <MissionStatCard label={holdingBreakdown ? "Reach planet" : "Arrival"} value={timingSummary.arrivalDuration} subvalue={timingSummary.arrivalClock} />
+                <div className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
+                  <CompactFactRow label={holdingBreakdown ? "Reach" : "Arrival"} value={`${timingSummary.arrivalDuration} / ${timingSummary.arrivalClock}`} />
                   {shouldShowReturnTiming(action, Boolean(holdingBreakdown)) ? (
-                    <MissionStatCard label="Return" value={timingSummary.returnDuration} subvalue={timingSummary.returnClock} />
+                    <CompactFactRow label="Return" value={`${timingSummary.returnDuration} / ${timingSummary.returnClock}`} />
                   ) : null}
                 </div>
               ) : null}
@@ -505,7 +505,7 @@ export function MissionCreationPage({
           )}
 
           {defenseHoldMode ? (
-            <MissionFormSection title="Defense hold" eyebrow="Stationing">
+            <MissionFormSection title="Hold" eyebrow="Stationing">
               <div className="flex flex-wrap gap-1.5">
                 {DEFENSE_HOLD_HOUR_OPTIONS.map((hours) => (
                   <button
@@ -531,7 +531,7 @@ export function MissionCreationPage({
           ) : null}
 
           {lootRatioSupported ? (
-            <MissionFormSection title="Loot priority" eyebrow="Plunder">
+            <MissionFormSection title="Loot" eyebrow="Plunder">
               <LootRatioControls
                 cargoCapacity={cargoCapacity}
                 greedyLootEnabled={greedyLootEnabled}
@@ -549,11 +549,8 @@ export function MissionCreationPage({
           ) : null}
         </section>
 
-        <aside className="grid content-start gap-3 rounded-lg border border-signal/20 bg-[#101624] p-4 shadow-lg shadow-black/20 lg:sticky lg:top-4">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-signal/80">Launch decision</p>
-            <h3 className="mt-1 text-base font-semibold text-white">Mission Summary</h3>
-          </div>
+        <aside className="grid content-start gap-2 rounded-lg border border-signal/20 bg-[#101624] p-3 shadow-lg shadow-black/20 lg:sticky lg:top-4">
+          <h3 className="text-sm font-semibold text-white">Launch</h3>
           <SummaryRow label="Distance" value={distance.toLocaleString()} />
           <SummaryRow label="Ships" value={action.mode === "missile" ? "Missile launch" : selectedShipCount.toLocaleString()} />
           <SummaryRow
@@ -595,7 +592,7 @@ export function MissionCreationPage({
             </p>
           ) : null}
           <button
-            className="h-10 rounded border border-signal/35 bg-signal/15 px-3 text-sm font-semibold text-signal transition hover:bg-signal/25 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
+            className="mt-1 h-10 rounded border border-signal/35 bg-signal/15 px-3 text-sm font-semibold text-signal transition hover:bg-signal/25 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
             disabled={Boolean(blockedReason) || actionPending}
             onClick={() => onConfirm({
               speedPercent,
@@ -618,7 +615,6 @@ export function MissionCreationPage({
 
 function MissionFormSection({
   children,
-  eyebrow,
   title,
 }: {
   children: ComponentChildren;
@@ -626,31 +622,10 @@ function MissionFormSection({
   title: string;
 }) {
   return (
-    <section className="grid gap-3 rounded-lg border border-white/10 bg-[#101624] p-4 shadow-sm shadow-black/10">
-      <div>
-        <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{eyebrow}</p>
-        <h3 className="mt-1 text-sm font-semibold text-white">{title}</h3>
-      </div>
+    <section className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-3 shadow-sm shadow-black/10">
+      <h3 className="text-xs font-semibold uppercase text-slate-400">{title}</h3>
       {children}
     </section>
-  );
-}
-
-function MissionStatCard({
-  label,
-  subvalue,
-  value,
-}: {
-  label: string;
-  subvalue?: string | undefined;
-  value: string;
-}) {
-  return (
-    <div className="rounded border border-white/10 bg-black/15 px-3 py-2">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{label}</p>
-      <p className="mt-1 text-sm font-semibold tabular-nums text-slate-100">{value}</p>
-      {subvalue ? <p className="mt-0.5 break-words text-[11px] text-slate-500">{subvalue}</p> : null}
-    </div>
   );
 }
 
@@ -1116,22 +1091,22 @@ export function AttackIntelPanel({
   targetFleetUnits: UnitItem[];
 }) {
   return (
-    <section className="grid gap-4 rounded-lg border border-white/10 bg-[#101624] p-4 shadow-sm shadow-black/10">
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.9fr)] xl:items-stretch">
-        <div className="grid gap-3 rounded-md border border-white/10 bg-black/15 p-3 sm:grid-cols-[4rem_minmax(0,1fr)]">
-          <TargetIdentityContent compact coords={coords} target={target} />
-        </div>
-        <div className="rounded-md border border-signal/15 bg-signal/[0.06] p-3">
-          <AttackOutcomeContent
-            battleForecast={battleForecast}
-            lootableAtArrival={lootableAtArrival}
-            maxLootForecast={maxLootForecast}
-          />
-        </div>
+    <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624] shadow-sm shadow-black/10">
+      <div className="grid divide-y divide-white/10 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] xl:divide-x xl:divide-y-0">
+        <TargetDecisionTable coords={coords} target={target} />
+        <AttackOutcomeContent
+          battleForecast={battleForecast}
+          compact
+          lootableAtArrival={lootableAtArrival}
+          maxLootForecast={maxLootForecast}
+        />
       </div>
-      <div className="border-t border-white/10 pt-3">
-        <DestinationIntelContent
+      <div className="grid divide-y divide-white/10 border-t border-white/10 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] xl:divide-x xl:divide-y-0">
+        <ResourceIntelTable
+          maxLootForecast={maxLootForecast}
           resourceIntel={resourceIntel}
+        />
+        <ForceIntelTable
           stationedDefenderUnits={stationedDefenderUnits}
           targetDefenseUnits={targetDefenseUnits}
           targetFleetUnits={targetFleetUnits}
@@ -1163,13 +1138,42 @@ export function AttackOutcomePanel({
 
 function AttackOutcomeContent({
   battleForecast,
+  compact = false,
   lootableAtArrival,
   maxLootForecast,
 }: {
   battleForecast: BattleForecastState;
+  compact?: boolean | undefined;
   lootableAtArrival: MissionResourceSnapshot | null;
   maxLootForecast: MissionResourceSnapshot;
 }) {
+  if (compact) {
+    return (
+      <div className="grid content-start gap-2 bg-signal/[0.04] p-3">
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <span className="text-[11px] font-semibold uppercase text-slate-500">Outcome</span>
+            <p className={`truncate text-base font-semibold ${battleForecast.kind === "win" ? "text-emerald-200" : battleForecast.kind === "defeat" ? "text-red-200" : battleForecast.kind === "draw" ? "text-amber-200" : "text-slate-300"}`}>
+              {battleForecast.label}
+            </p>
+          </div>
+          <div className="grid shrink-0 gap-1 text-right text-[11px] text-slate-500">
+            <span>ATK <span className="font-semibold tabular-nums text-slate-200">{battleForecast.attackerPower.toLocaleString()}</span></span>
+            <span>DEF <span className="font-semibold tabular-nums text-slate-200">{battleForecast.defenderPower == null ? "unknown" : battleForecast.defenderPower.toLocaleString()}</span></span>
+          </div>
+        </div>
+        <div className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
+          <CompactFactRow label="Max loot" value={formatCompactResources(maxLootForecast)} />
+          <CompactFactRow label="Lootable" value={formatCompactResources(lootableAtArrival)} />
+          <CompactFactRow
+            label="Tech"
+            value={`${formatTechLevels(battleForecast.attackerTechLevels ?? ZERO_COMBAT_TECH_LEVELS)} / ${battleForecast.defenderTechKnown ? formatTechLevels(battleForecast.defenderTechLevels ?? ZERO_COMBAT_TECH_LEVELS) : "DEF unknown"}`}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="grid gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1195,6 +1199,113 @@ function AttackOutcomeContent({
       <div className="grid gap-2 sm:grid-cols-2">
         <ResourceSummary title="Max loot at arrival" resources={maxLootForecast} />
         <ResourceSummary title="Lootable at arrival" resources={lootableAtArrival} />
+      </div>
+    </div>
+  );
+}
+
+function TargetDecisionTable({ coords, target }: { coords: Coordinates; target: Planet | undefined }) {
+  return (
+    <div className="grid gap-3 p-3 sm:grid-cols-[3.75rem_minmax(0,1fr)]">
+      {target?.image ? (
+        <img
+          alt=""
+          className="h-16 w-16 rounded-md border border-white/10 object-cover sm:h-14 sm:w-14"
+          loading="lazy"
+          src={target.image}
+        />
+      ) : (
+        <div className="grid h-16 w-16 place-items-center rounded-md border border-white/10 bg-white/[0.03] text-[11px] text-slate-500 sm:h-14 sm:w-14">
+          No image
+        </div>
+      )}
+      <div className="min-w-0">
+        <div className="flex min-w-0 items-start justify-between gap-3">
+          <div className="min-w-0">
+            <span className="text-[11px] font-semibold uppercase text-slate-500">Target</span>
+            <p className="truncate text-base font-semibold text-white" title={target?.name ?? undefined}>
+              {target?.name ?? `Coordinate ${coords.galaxy}:${coords.system}:${coords.position}`}
+            </p>
+          </div>
+          <span className="shrink-0 rounded border border-white/10 bg-black/20 px-1.5 py-0.5 text-[11px] tabular-nums text-slate-400">
+            {target?.id ? `#${target.id}` : "Uncharted"}
+          </span>
+        </div>
+        <div className="mt-2 grid gap-1">
+          <CompactFactRow label="Coords" value={`[${coords.galaxy}:${coords.system}:${coords.position}]`} />
+          <CompactFactRow label="Commander" value={commanderLabel(target)} />
+          <CompactFactRow label="Alliance" value={allianceLabel(target)} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResourceIntelTable({
+  maxLootForecast,
+  resourceIntel,
+}: {
+  maxLootForecast: MissionResourceSnapshot;
+  resourceIntel: TargetResourceIntel;
+}) {
+  return (
+    <div className="grid content-start gap-2 p-3">
+      <span className="text-[11px] font-semibold uppercase text-slate-500">Resources</span>
+      <div className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
+        <ResourceTableRow label="Now" resources={resourceIntel.current} />
+        <ResourceTableRow label="Arrival" resources={resourceIntel.projectedArrival} />
+        <ResourceTableRow label="Loot now" resources={resourceIntel.currentLootable} />
+        <ResourceTableRow label="Loot arr." resources={resourceIntel.projectedArrivalLootable} />
+        <ResourceTableRow label="Max carry" resources={maxLootForecast} tone="signal" />
+      </div>
+    </div>
+  );
+}
+
+function ResourceTableRow({
+  label,
+  resources,
+  tone = "default",
+}: {
+  label: string;
+  resources: MissionResourceSnapshot | null;
+  tone?: "default" | "signal" | undefined;
+}) {
+  const valueClass = tone === "signal" ? "text-signal" : "text-slate-200";
+  return (
+    <div className="grid grid-cols-[4.75rem_repeat(3,minmax(0,1fr))] items-baseline gap-2 text-[11px] sm:grid-cols-[5.5rem_repeat(3,minmax(0,1fr))]">
+      <span className="truncate text-slate-500">{label}</span>
+      {resources ? (
+        <>
+          <span className={`truncate text-right tabular-nums ${valueClass}`} title={`${resources.metal.toLocaleString()} metal`}>{formatResourceAmount(resources.metal)} M</span>
+          <span className={`truncate text-right tabular-nums ${valueClass}`} title={`${resources.crystal.toLocaleString()} crystal`}>{formatResourceAmount(resources.crystal)} C</span>
+          <span className={`truncate text-right tabular-nums ${valueClass}`} title={`${resources.deuterium.toLocaleString()} deuterium`}>{formatResourceAmount(resources.deuterium)} D</span>
+        </>
+      ) : (
+        <span className="col-span-3 text-right text-slate-500">Unknown</span>
+      )}
+    </div>
+  );
+}
+
+function ForceIntelTable({
+  stationedDefenderUnits,
+  targetDefenseUnits,
+  targetFleetUnits,
+}: {
+  stationedDefenderUnits: UnitItem[];
+  targetDefenseUnits: UnitItem[];
+  targetFleetUnits: UnitItem[];
+}) {
+  return (
+    <div className="grid content-start gap-2 p-3">
+      <span className="text-[11px] font-semibold uppercase text-slate-500">Forces</span>
+      <div className="grid gap-1">
+        <UnitSection emptyLabel="None" title="Fleet" units={targetFleetUnits} />
+        <UnitSection emptyLabel="None" title="Defense" units={targetDefenseUnits} />
+        {stationedDefenderUnits.length > 0 ? (
+          <UnitSection emptyLabel="None" title="Held" units={stationedDefenderUnits} />
+        ) : null}
       </div>
     </div>
   );
@@ -1385,10 +1496,19 @@ function TargetFact({ label, value }: { label: string; value: string }) {
   );
 }
 
+function CompactFactRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-baseline gap-2 text-[11px]">
+      <span className="truncate text-slate-500">{label}</span>
+      <span className="truncate text-right tabular-nums text-slate-200" title={value}>{value}</span>
+    </div>
+  );
+}
+
 function UnitSection({ emptyLabel, title, units }: { emptyLabel: string; title: string; units: UnitItem[] }) {
   return (
     <section className="grid gap-1.5 rounded border border-white/10 bg-[#070913]/60 p-2">
-      <h4 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-600">{title}</h4>
+      <h4 className="text-[11px] font-semibold uppercase text-slate-500">{title}</h4>
       <UnitIcons emptyLabel={emptyLabel} units={units} />
     </section>
   );
@@ -1420,6 +1540,10 @@ function ResourceSummary({ resources, title }: { resources: MissionResourceSnaps
       <p className="mt-1 text-sm font-medium text-slate-200">{formatCompactResources(resources)}</p>
     </section>
   );
+}
+
+function formatTechLevels(levels: CombatTechLevels): string {
+  return `W${levels.weapons} S${levels.shielding} A${levels.armor}`;
 }
 
 function compositionUnits(
