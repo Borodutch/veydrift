@@ -37,7 +37,7 @@ import { AlertTriangle } from "lucide-preact";
 import {
   buildInspectHash,
   hasUsefulPlanetDetailBackRoute,
-  parseInspectRoute,
+  parseInspectRouteFromLocation,
   planetDetailBackRouteForCurrentScreen,
   type InspectRoute,
   type PlanetDetailBackRoute,
@@ -2414,7 +2414,7 @@ function initialInspectPageState(): {
   if (typeof window === "undefined") {
     return { page: "overview", playerWallet: null, allianceId: null, missionDetailId: null, missionReportId: null };
   }
-  const route = parseInspectRoute(window.location.hash);
+  const route = parseInspectRouteFromLocation(window.location);
   if (route.kind === "player") {
     return { page: "player-inspect", playerWallet: route.wallet, allianceId: null, missionDetailId: null, missionReportId: null };
   }
@@ -2435,7 +2435,7 @@ function initialInspectPageState(): {
 
 function initialSelectedCoords(): Coordinates | undefined {
   if (typeof window === "undefined") return undefined;
-  const route = parseInspectRoute(window.location.hash);
+  const route = parseInspectRouteFromLocation(window.location);
   return route.kind === "planet" ? route.coords : undefined;
 }
 
@@ -2926,9 +2926,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const handleRouteChange = () => applyInspectRoute(parseInspectRoute(window.location.hash));
+    const handleRouteChange = () => applyInspectRoute(parseInspectRouteFromLocation(window.location));
     window.addEventListener("hashchange", handleRouteChange);
-    return () => window.removeEventListener("hashchange", handleRouteChange);
+    window.addEventListener("popstate", handleRouteChange);
+    return () => {
+      window.removeEventListener("hashchange", handleRouteChange);
+      window.removeEventListener("popstate", handleRouteChange);
+    };
 
     function applyInspectRoute(route: InspectRoute) {
       setPlanetBackRoute(null);

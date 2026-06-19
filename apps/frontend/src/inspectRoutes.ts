@@ -39,10 +39,10 @@ function parsePlanetCoords(query: string): Coordinates | null {
   return null;
 }
 
-export function parseInspectRoute(hash: string): InspectRoute {
-  const withoutHash = hash.replace(/^#/, "").replace(/^\/+/, "");
+function parseInspectPathValue(rawPath: string): InspectRoute | null {
+  const withoutHash = rawPath.replace(/^#/, "").replace(/^\/+/, "");
   const [path = "", query = ""] = withoutHash.split("?");
-  if (!path) return { kind: "page", page: "overview" };
+  if (!path) return null;
 
   const [kind, value, detailId, positionId] = path.split("/");
   if (kind === "player" && value) {
@@ -79,7 +79,22 @@ export function parseInspectRoute(hash: string): InspectRoute {
   if (pageNames.has(kind as Page)) {
     return { kind: "page", page: kind as Page };
   }
-  return { kind: "page", page: "overview" };
+  return null;
+}
+
+export function parseInspectRoute(hash: string): InspectRoute {
+  return parseInspectPathValue(hash) ?? { kind: "page", page: "overview" };
+}
+
+export function parseInspectPath(pathname: string): InspectRoute | null {
+  return parseInspectPathValue(pathname);
+}
+
+export function parseInspectRouteFromLocation(location: Pick<Location, "hash" | "pathname">): InspectRoute {
+  if (location.hash && location.hash !== "#" && location.hash !== "#/") {
+    return parseInspectRoute(location.hash);
+  }
+  return parseInspectPath(location.pathname) ?? parseInspectRoute(location.hash);
 }
 
 export function buildInspectHash(route: InspectRoute): string {

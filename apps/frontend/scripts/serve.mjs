@@ -149,13 +149,6 @@ function imagePathForRoute(route) {
   return `/og/alliance/${encodeURIComponent(route.allianceId)}.png`;
 }
 
-function appHashForRoute(route) {
-  if (route.kind === "mission") return `#/mission/${encodeURIComponent(route.id)}`;
-  if (route.kind === "planet") return `#/planet/${route.galaxy}/${route.system}/${route.position}`;
-  if (route.kind === "player") return `#/player/${encodeURIComponent(route.wallet)}`;
-  return `#/alliance/${encodeURIComponent(route.allianceId)}`;
-}
-
 async function routeMeta(route) {
   const key = JSON.stringify(route);
   const cached = ogDataCache.get(key);
@@ -364,35 +357,13 @@ async function shareHtmlResponse(request, route) {
   const canonicalPath = sharePathForRoute(route);
   const canonicalUrl = `${origin}${canonicalPath}`;
   const imageUrl = `${origin}${imagePathForRoute(route)}`;
-  const appHash = appHashForRoute(route);
-  const html = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>${escapeHtml(meta.title)}</title>
-    <meta name="description" content="${escapeHtml(meta.description)}" />
-    <link rel="canonical" href="${escapeHtml(canonicalUrl)}" />
-    <meta property="og:title" content="${escapeHtml(meta.title)}" />
-    <meta property="og:description" content="${escapeHtml(meta.description)}" />
-    <meta property="og:url" content="${escapeHtml(canonicalUrl)}" />
-    <meta property="og:image" content="${escapeHtml(imageUrl)}" />
-    <meta property="og:image:secure_url" content="${escapeHtml(imageUrl)}" />
-    <meta property="og:image:type" content="image/png" />
-    <meta property="og:image:width" content="1200" />
-    <meta property="og:image:height" content="630" />
-    <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="${siteName}" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="${escapeHtml(meta.title)}" />
-    <meta name="twitter:description" content="${escapeHtml(meta.description)}" />
-    <meta name="twitter:image" content="${escapeHtml(imageUrl)}" />
-    <script>location.replace("/${appHash}");</script>
-  </head>
-  <body>
-    <a href="/${escapeHtml(appHash)}">Open ${siteName}</a>
-  </body>
-</html>`;
+  const appHtml = await readFile(staticFileUrl("/index.html"), "utf8");
+  const html = injectShareMeta(appHtml, {
+    canonicalUrl,
+    description: meta.description,
+    imageUrl,
+    title: meta.title,
+  });
 
   return new Response(html, {
     headers: {
@@ -400,6 +371,72 @@ async function shareHtmlResponse(request, route) {
       "content-type": "text/html; charset=utf-8",
     },
   });
+}
+
+function injectShareMeta(html, { canonicalUrl, description, imageUrl, title }) {
+  let nextHtml = html;
+  nextHtml = replaceHeadTag(nextHtml, /<title>.*?<\/title>/s, `<title>${escapeHtml(title)}</title>`);
+  nextHtml = replaceHeadTag(
+    nextHtml,
+    /<meta\s+name="description"\s+content="[^"]*"\s*\/>/s,
+    `<meta name="description" content="${escapeHtml(description)}" />`,
+  );
+  nextHtml = replaceHeadTag(
+    nextHtml,
+    /<link\s+rel="canonical"\s+href="[^"]*"\s*\/>/s,
+    `<link rel="canonical" href="${escapeHtml(canonicalUrl)}" />`,
+  );
+  nextHtml = replaceHeadTag(
+    nextHtml,
+    /<meta\s+property="og:title"\s+content="[^"]*"\s*\/>/s,
+    `<meta property="og:title" content="${escapeHtml(title)}" />`,
+  );
+  nextHtml = replaceHeadTag(
+    nextHtml,
+    /<meta\s+property="og:description"\s+content="[^"]*"\s*\/>/s,
+    `<meta property="og:description" content="${escapeHtml(description)}" />`,
+  );
+  nextHtml = replaceHeadTag(
+    nextHtml,
+    /<meta\s+property="og:url"\s+content="[^"]*"\s*\/>/s,
+    `<meta property="og:url" content="${escapeHtml(canonicalUrl)}" />`,
+  );
+  nextHtml = replaceHeadTag(
+    nextHtml,
+    /<meta\s+property="og:image"\s+content="[^"]*"\s*\/>/s,
+    `<meta property="og:image" content="${escapeHtml(imageUrl)}" />`,
+  );
+  nextHtml = replaceHeadTag(
+    nextHtml,
+    /<meta\s+property="og:image:secure_url"\s+content="[^"]*"\s*\/>/s,
+    `<meta property="og:image:secure_url" content="${escapeHtml(imageUrl)}" />`,
+  );
+  nextHtml = replaceHeadTag(
+    nextHtml,
+    /<meta\s+property="og:image:type"\s+content="[^"]*"\s*\/>/s,
+    `<meta property="og:image:type" content="image/png" />`,
+  );
+  nextHtml = replaceHeadTag(
+    nextHtml,
+    /<meta\s+name="twitter:title"\s+content="[^"]*"\s*\/>/s,
+    `<meta name="twitter:title" content="${escapeHtml(title)}" />`,
+  );
+  nextHtml = replaceHeadTag(
+    nextHtml,
+    /<meta\s+name="twitter:description"\s+content="[^"]*"\s*\/>/s,
+    `<meta name="twitter:description" content="${escapeHtml(description)}" />`,
+  );
+  nextHtml = replaceHeadTag(
+    nextHtml,
+    /<meta\s+name="twitter:image"\s+content="[^"]*"\s*\/>/s,
+    `<meta name="twitter:image" content="${escapeHtml(imageUrl)}" />`,
+  );
+  return nextHtml;
+}
+
+function replaceHeadTag(html, pattern, replacement) {
+  if (pattern.test(html)) return html.replace(pattern, replacement);
+  return html.replace("</head>", `    ${replacement}\n  </head>`);
 }
 
 function publicOrigin(request, url) {
