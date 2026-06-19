@@ -5596,6 +5596,7 @@ export class SettlementIndexer {
         ...(canonicalEventMission.randomnessRequestId ? { randomnessRequestId: canonicalEventMission.randomnessRequestId } : {})
       }
       : base;
+    const fuelCost = eventDerivedFuelCost(row, canonicalEventMission ?? eventMission);
     return {
       ...mergedBase,
       missionId: row.mission_id,
@@ -5606,9 +5607,9 @@ export class SettlementIndexer {
       targetPlanetId: row.target_planet_id,
       arrivalAt: row.arrival_at,
       returnAt: row.return_at,
-      fuelCost: row.fuel_cost,
+      fuelCost,
       cargo,
-      recallCost: row.status_id === 1 && mergedBase.recallCost === null ? projectedFleetRecallCost(row.fuel_cost) : mergedBase.recallCost,
+      recallCost: row.status_id === 1 && mergedBase.recallCost === null ? projectedFleetRecallCost(fuelCost) : mergedBase.recallCost,
       ...(row.randomness_request_id ? { randomnessRequestId: row.randomness_request_id } : {})
     };
   }
@@ -6168,6 +6169,14 @@ function parseCanonicalFleetMissionEvent(value: string | null): FleetMissionSumm
   if (!payload || typeof payload !== "object") return null;
   const mission = "mission" in payload ? payload.mission : payload;
   return isStoredFleetMissionSummary(mission) ? mission : null;
+}
+
+function eventDerivedFuelCost(row: ContractFleetMissionRow, mission: FleetMissionSummary | null | undefined): string {
+  const marker = parseJson<{ source?: string }>(row.event_json ?? "", {});
+  if (marker.source !== "indexed_mission_event_logs") return row.fuel_cost;
+  if (row.fuel_cost !== "0") return row.fuel_cost;
+  if (!mission?.fuelCost || mission.fuelCost === "0") return row.fuel_cost;
+  return mission.fuelCost;
 }
 
 function isStoredFleetMissionSummary(value: unknown): value is FleetMissionSummary {
