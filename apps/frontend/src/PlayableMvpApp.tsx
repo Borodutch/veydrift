@@ -36,6 +36,7 @@ import { AllianceInspectPage, PlayerInspectPage } from "./components/InspectPage
 import { AlertTriangle } from "lucide-preact";
 import {
   buildInspectPath,
+  canonicalEntityPathForLegacyHashLocation,
   hasUsefulPlanetDetailBackRoute,
   parseInspectRouteFromLocation,
   planetDetailBackRouteForCurrentScreen,
@@ -2424,6 +2425,7 @@ function initialInspectPageState(): {
   if (typeof window === "undefined") {
     return { page: "overview", playerWallet: null, allianceId: null, missionDetailId: null, missionReportId: null };
   }
+  replaceLegacyHashEntityRoute();
   const route = parseInspectRouteFromLocation(window.location);
   if (route.kind === "player") {
     return { page: "player-inspect", playerWallet: route.wallet, allianceId: null, missionDetailId: null, missionReportId: null };
@@ -2445,8 +2447,17 @@ function initialInspectPageState(): {
 
 function initialSelectedCoords(): Coordinates | undefined {
   if (typeof window === "undefined") return undefined;
+  replaceLegacyHashEntityRoute();
   const route = parseInspectRouteFromLocation(window.location);
   return route.kind === "planet" ? route.coords : undefined;
+}
+
+function replaceLegacyHashEntityRoute(): boolean {
+  if (typeof window === "undefined") return false;
+  const canonicalPath = canonicalEntityPathForLegacyHashLocation(window.location);
+  if (!canonicalPath) return false;
+  window.history.replaceState(null, "", canonicalPath);
+  return true;
 }
 
 function writeInspectRoute(route: InspectRoute): void {
@@ -2937,7 +2948,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const handleRouteChange = () => applyInspectRoute(parseInspectRouteFromLocation(window.location));
+    const handleRouteChange = () => {
+      replaceLegacyHashEntityRoute();
+      applyInspectRoute(parseInspectRouteFromLocation(window.location));
+    };
+    handleRouteChange();
     window.addEventListener("hashchange", handleRouteChange);
     window.addEventListener("popstate", handleRouteChange);
     return () => {

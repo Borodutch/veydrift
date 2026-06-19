@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { buildInspectHash, buildInspectPath, parseInspectPath, parseInspectRoute, parseInspectRouteFromLocation } from "../src/inspectRoutes";
+import {
+  buildInspectHash,
+  buildInspectPath,
+  canonicalEntityPathForLegacyHashLocation,
+  parseInspectPath,
+  parseInspectRoute,
+  parseInspectRouteFromLocation,
+} from "../src/inspectRoutes";
 
 describe("inspect routes", () => {
   test("parses dedicated player and alliance hash routes", () => {
@@ -51,6 +58,15 @@ describe("inspect routes", () => {
       kind: "page",
       page: "rankings",
     });
+  });
+
+  test("canonicalizes legacy hash entity links to clean share paths", () => {
+    expect(canonicalEntityPathForLegacyHashLocation({ hash: "#/planet/6/9/13", pathname: "/", search: "" })).toBe("/planet/6/9/13");
+    expect(canonicalEntityPathForLegacyHashLocation({ hash: "#/player/0xabc", pathname: "/", search: "?miniApp=true" })).toBe(
+      "/player/0xabc?miniApp=true",
+    );
+    expect(canonicalEntityPathForLegacyHashLocation({ hash: "#/rankings", pathname: "/", search: "" })).toBeNull();
+    expect(canonicalEntityPathForLegacyHashLocation({ hash: "#/planet/6/9/13", pathname: "/mission/2104", search: "" })).toBeNull();
   });
 
   test("falls back to overview for unknown routes", () => {
