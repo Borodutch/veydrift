@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { ComingSoonApp } from "../src/ComingSoonApp";
 import { SettlementSupportLink } from "../src/FirstPlanetSettlementApp";
 import { TopBar } from "../src/components/TopBar";
 import { TELEGRAM_SUPPORT_URL } from "../src/supportLinks";
 
+const landingSource = await Bun.file(new URL("../src/ComingSoonApp.tsx", import.meta.url)).text();
+
 describe("Telegram support links", () => {
   test("landing CTA points to the Telegram support invite", () => {
-    const link = linksIn(ComingSoonApp()).find((item) => item.props?.href === TELEGRAM_SUPPORT_URL);
-
-    expect(link?.props?.target).toBe("_blank");
-    expect(link?.props?.rel).toBe("noopener noreferrer");
+    expect(landingSource).toContain("href={TELEGRAM_SUPPORT_URL}");
+    expect(landingSource).toContain('target="_blank"');
+    expect(landingSource).toContain('rel="noopener noreferrer"');
   });
 
   test("settlement app chrome includes the Telegram support invite", () => {

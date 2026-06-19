@@ -470,6 +470,29 @@ body {
   white-space: nowrap;
 }
 
+.landing-alliance-empty {
+  min-height: 4.25rem;
+  padding: 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.038);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.landing-alliance-empty p {
+  margin: 0;
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.landing-alliance-empty span {
+  display: block;
+  margin-top: 0.2rem;
+  color: rgb(148 163 184);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
 @media (max-width: 767px) {
   .landing-layer-planet,
   .landing-layer-ship,
