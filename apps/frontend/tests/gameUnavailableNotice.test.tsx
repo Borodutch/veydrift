@@ -6,6 +6,7 @@ import {
   GameUnavailableNotice,
   isGameUnavailableMessage,
 } from "../src/components/GameUnavailableNotice";
+import { serverUnavailableRetryMessage } from "../src/gameUnavailable";
 
 describe("shared game unavailable notice", () => {
   test("renders player-facing outage copy without diagnostics", () => {
@@ -14,7 +15,12 @@ describe("shared game unavailable notice", () => {
 
     expect(text).toContain(GAME_UNAVAILABLE_TITLE);
     expect(text).toContain(GAME_UNAVAILABLE_MESSAGE);
-    expect(text).not.toMatch(/CORS|deployment|browser|Settlement API|wallet|last known game state/i);
+    expect(text).not.toMatch(/CORS|deployment|browser|Settlement API|wallet|last known game state|RPC|backend|network mismatch/i);
+  });
+
+  test("formats retry countdown pluralization", () => {
+    expect(serverUnavailableRetryMessage(1)).toBe("Servers are unavailable. Retrying in 1 second.");
+    expect(serverUnavailableRetryMessage(10)).toBe("Servers are unavailable. Retrying in 10 seconds.");
   });
 
   test("classifies page-level backend outage messages from affected surfaces", () => {
@@ -22,7 +28,7 @@ describe("shared game unavailable notice", () => {
       "Rankings are temporarily unavailable because the game API could not be reached from this browser. Check the API deployment or CORS settings, then retry.",
     )).toBe(true);
     expect(isGameUnavailableMessage("Game API unavailable.")).toBe(true);
-    expect(isGameUnavailableMessage("Veydrift is temporarily unavailable or restarting. Refresh or try again in a few minutes.")).toBe(true);
+    expect(isGameUnavailableMessage("Servers are unavailable. Retrying in 1 second.")).toBe(true);
     expect(isGameUnavailableMessage("Wallet connection was rejected.")).toBe(false);
     expect(isGameUnavailableMessage("Rankings are warming from indexed game state. Retry in a moment.")).toBe(false);
   });

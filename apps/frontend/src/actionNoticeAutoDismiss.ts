@@ -20,6 +20,7 @@ const transientRequestActionLabelPatterns = [
   /unlock your wallet if needed, then confirm in your wallet/i,
   /waiting for backend state to clear this completed queue/i,
   /refreshing backend state before another finish attempt/i,
+  /^servers are unavailable\. retrying in \d+ seconds?\.$/i,
   /rechecking game state after a temporary API\/RPC outage/i,
 ] as const;
 

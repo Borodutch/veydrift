@@ -1,6 +1,12 @@
-export const GAME_UNAVAILABLE_TITLE = "Game temporarily unavailable";
-export const GAME_UNAVAILABLE_MESSAGE =
-  "Veydrift is temporarily unavailable or restarting. Refresh or try again in a few minutes.";
+export const DEFAULT_SERVER_RETRY_SECONDS = 10;
+
+export function serverUnavailableRetryMessage(seconds = DEFAULT_SERVER_RETRY_SECONDS): string {
+  const wholeSeconds = Math.max(1, Math.round(seconds));
+  return `Servers are unavailable. Retrying in ${wholeSeconds} ${wholeSeconds === 1 ? "second" : "seconds"}.`;
+}
+
+export const GAME_UNAVAILABLE_TITLE = "Servers unavailable";
+export const GAME_UNAVAILABLE_MESSAGE = serverUnavailableRetryMessage();
 
 export function isGameUnavailableMessage(message: string | undefined): boolean {
   if (typeof message !== "string") return false;
@@ -10,7 +16,8 @@ export function isGameUnavailableMessage(message: string | undefined): boolean {
   if (normalized === GAME_UNAVAILABLE_MESSAGE) return true;
 
   return (
-    /^game api (is )?unavailable\.?$/i.test(normalized)
+    /^servers are unavailable\. retrying in \d+ seconds?\.?$/i.test(normalized)
+    || /^game api (is )?unavailable\.?$/i.test(normalized)
     || /veydrift backend is temporarily (unavailable|unreachable)/i.test(normalized)
     || /veydrift backend is likely restarting/i.test(normalized)
     || /game api could not be reached from this browser/i.test(normalized)

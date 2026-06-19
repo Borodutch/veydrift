@@ -14,6 +14,7 @@ import type {
   WalletSettlementResponse,
   WalletPlanetsResponse,
 } from "./walletFlow";
+import { serverUnavailableRetryMessage } from "./gameUnavailable";
 
 export type FinishedBuildingExpectation = {
   itemId?: number | undefined;
@@ -870,7 +871,7 @@ function finishedBuildingTimeoutMessage(
 function transientGameStateReadFailureMessage(error: unknown): string | undefined {
   if (!isTransientGameStateReadFailure(error)) return undefined;
 
-  return "The game API or RPC is temporarily unavailable while the confirmed transaction state is being checked. Keeping the last known game state and retrying from backend state; this is not a wallet network mismatch.";
+  return serverUnavailableRetryMessage();
 }
 
 export function isTransientGameStateReadFailure(error: unknown): boolean {

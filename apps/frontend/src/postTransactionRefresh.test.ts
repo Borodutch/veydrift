@@ -376,7 +376,7 @@ describe("post-transaction refresh reconciliation", () => {
       },
       { itemId: 3, targetLevel: 2 },
       { attempts: 2, intervalMs: 1, delay: async () => undefined },
-    )).rejects.toThrow("temporarily unavailable");
+    )).rejects.toThrow("Servers are unavailable. Retrying in 10 seconds.");
   });
 
   test("does not report success when every post-finish snapshot is still stale", async () => {
@@ -628,7 +628,7 @@ describe("post-transaction refresh reconciliation", () => {
         { itemId: 3, planetId: "7", targetLevel: 2 },
         { attempts: 2, intervalMs: 1, delay: async () => undefined },
       ),
-    ).rejects.toThrow(/temporarily unavailable while the confirmed transaction state is being checked/);
+    ).rejects.toThrow("Servers are unavailable. Retrying in 10 seconds.");
   });
 
   test("polls until started research is visible on Research and Overview state", async () => {

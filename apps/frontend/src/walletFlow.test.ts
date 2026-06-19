@@ -86,6 +86,7 @@ import {
   walletRequestErrorMessage,
   type Eip1193Provider
 } from "./walletFlow";
+import { GAME_UNAVAILABLE_MESSAGE } from "./gameUnavailable";
 
 const account = "0x1111111111111111111111111111111111111111";
 const contract = "0x2222222222222222222222222222222222222222";
@@ -1403,9 +1404,7 @@ describe("walletFlow", () => {
   });
 
   test("formats raw JSON-RPC provider errors into an actionable wallet message", () => {
-    expect(walletRequestErrorMessage({ code: -32603, message: "Internal JSON-RPC error." })).toContain(
-      "wallet could not read the current game contract state"
-    );
+    expect(walletRequestErrorMessage({ code: -32603, message: "Internal JSON-RPC error." })).toBe(GAME_UNAVAILABLE_MESSAGE);
     expect(walletRequestErrorMessage({ message: "execution reverted", data: customErrorData("0x2ab0f96f", [0, 0, 0]) }))
       .toContain("indexed spendable balance");
     expect(walletRequestErrorMessage({ message: "execution reverted", data: "0x13b7fff2" }))
@@ -1420,7 +1419,7 @@ describe("walletFlow", () => {
       "Unlock or reconnect your wallet"
     );
     expect(walletRequestErrorMessage(new Error("Timed out reading settlement from the game API after 10 seconds."))).toContain(
-      "game API may be temporarily unavailable"
+      "Servers are unavailable"
     );
     expect(walletRequestErrorMessage(new Error("Timed out reading settlement from the game API after 10 seconds."))).not.toContain(
       "sync resumes"
@@ -1460,10 +1459,8 @@ describe("walletFlow", () => {
       "The game contract rejected this transaction, but the wallet did not provide a specific reason. Refresh game state and retry, or choose a different action if the state changed."
     );
 
-    // A bare -32603 with no revert markers stays in the RPC-unavailable bucket.
-    expect(walletRequestErrorMessage({ code: -32603, message: "Internal JSON-RPC error." })).toContain(
-      "wallet could not read the current game contract state"
-    );
+    // A bare -32603 with no revert markers stays in the server-unavailable bucket.
+    expect(walletRequestErrorMessage({ code: -32603, message: "Internal JSON-RPC error." })).toBe(GAME_UNAVAILABLE_MESSAGE);
   });
 
   test("surfaces a contract-rejection message when a mission send reverts without a decodable reason", async () => {
@@ -2212,7 +2209,7 @@ describe("walletFlow", () => {
       }
       expect(error).toBeInstanceOf(Error);
       const message = (error as Error).message;
-      expect(message).toBe("Veydrift is temporarily unavailable or restarting. Refresh or try again in a few minutes.");
+      expect(message).toBe(GAME_UNAVAILABLE_MESSAGE);
       expect(message).not.toMatch(/Wallet|Settlement API|last known game state|CORS|deployment|browser/i);
     } finally {
       globalThis.fetch = originalFetch;
@@ -2227,7 +2224,7 @@ describe("walletFlow", () => {
     )) as unknown as typeof fetch;
     try {
       await expect(fetchInfrastructureState("https://api.example.test", account, "7")).rejects.toThrow(
-        "Veydrift is temporarily unavailable or restarting. Refresh or try again in a few minutes."
+        GAME_UNAVAILABLE_MESSAGE
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -2505,7 +2502,7 @@ describe("walletFlow", () => {
 
     try {
       await expect(fetchHighscores("https://api.example.test")).rejects.toThrow(
-        "Veydrift is temporarily unavailable or restarting. Refresh or try again in a few minutes."
+        GAME_UNAVAILABLE_MESSAGE
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -2553,7 +2550,7 @@ describe("walletFlow", () => {
 
     try {
       await expect(fetchHighscores("https://api.example.test")).rejects.toThrow(
-        "Veydrift is temporarily unavailable or restarting. Refresh or try again in a few minutes."
+        GAME_UNAVAILABLE_MESSAGE
       );
     } finally {
       globalThis.fetch = originalFetch;
@@ -2660,7 +2657,7 @@ describe("walletFlow", () => {
       }
       expect(error).toBeInstanceOf(Error);
       const message = (error as Error).message;
-      expect(message).toBe("Veydrift is temporarily unavailable or restarting. Refresh or try again in a few minutes.");
+      expect(message).toBe(GAME_UNAVAILABLE_MESSAGE);
       expect(message).not.toMatch(/CORS|API deployment|browser|Failed to fetch/i);
     } finally {
       globalThis.fetch = originalFetch;

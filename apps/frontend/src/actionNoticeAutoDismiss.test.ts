@@ -198,7 +198,7 @@ describe("action notice auto-dismiss timers", () => {
       { status: "pending", label: "Refreshing research queue..." },
       {
         status: "pending",
-        label: "Small Cargo build confirmed. Rechecking game state after a temporary API/RPC outage.",
+        label: "Servers are unavailable. Retrying in 10 seconds.",
       },
     ];
     const harnesses = transientActions.map(createActionHarness);
@@ -227,7 +227,7 @@ describe("action notice auto-dismiss timers", () => {
       { status: "error", label: "Wallet is locked." },
       {
         status: "error",
-        label: "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.",
+        label: "Servers are unavailable. Retrying in 10 seconds. Building actions are paused until current game state is available.",
       },
       {
         status: "error",
