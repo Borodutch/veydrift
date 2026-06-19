@@ -108,6 +108,17 @@ export function buildInspectHash(route: InspectRoute): string {
   return route.page === "overview" ? "#/" : `#/${route.page}`;
 }
 
+export function buildInspectPath(route: InspectRoute): string {
+  if (route.kind === "planet") {
+    return `/planet/${route.coords.galaxy}/${route.coords.system}/${route.coords.position}`;
+  }
+  if (route.kind === "player") return `/player/${encodeURIComponent(route.wallet)}`;
+  if (route.kind === "alliance") return `/alliance/${encodeURIComponent(route.allianceId)}`;
+  if (route.kind === "mission") return `/mission/${encodeURIComponent(route.missionId)}`;
+  if (route.kind === "mission-report") return `/mission-control/report/${encodeURIComponent(route.missionId)}`;
+  return route.page === "overview" ? "/#/" : `/#/${route.page}`;
+}
+
 export function planetDetailBackRouteForCurrentScreen({
   inspectedAllianceId,
   inspectedPlayerWallet,

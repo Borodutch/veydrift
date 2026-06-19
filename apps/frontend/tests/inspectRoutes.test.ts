@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildInspectHash, parseInspectPath, parseInspectRoute, parseInspectRouteFromLocation } from "../src/inspectRoutes";
+import { buildInspectHash, buildInspectPath, parseInspectPath, parseInspectRoute, parseInspectRouteFromLocation } from "../src/inspectRoutes";
 
 describe("inspect routes", () => {
   test("parses dedicated player and alliance hash routes", () => {
@@ -18,6 +18,17 @@ describe("inspect routes", () => {
     expect(parseInspectRoute("#/alliance/fleet%207")).toEqual({ kind: "alliance", allianceId: "fleet 7" });
     expect(parseInspectRoute("#/battle-report/12")).toEqual({ kind: "mission", missionId: "12" });
     expect(parseInspectRoute("#/mission-control/report/attack%2012")).toEqual({ kind: "mission-report", missionId: "attack 12" });
+  });
+
+  test("builds clean shareable paths for entity routes", () => {
+    expect(buildInspectPath({ kind: "page", page: "rankings" })).toBe("/#/rankings");
+    expect(buildInspectPath({ kind: "page", page: "overview" })).toBe("/#/");
+    expect(buildInspectPath({ kind: "mission", missionId: "2104" })).toBe("/mission/2104");
+    expect(buildInspectPath({ kind: "planet", coords: { galaxy: 6, system: 9, position: 1 } })).toBe("/planet/6/9/1");
+    expect(buildInspectPath({ kind: "player", wallet: "0x4e15e6643964f1a3d3a5af82d7683b9a30553aa1" })).toBe(
+      "/player/0x4e15e6643964f1a3d3a5af82d7683b9a30553aa1",
+    );
+    expect(buildInspectPath({ kind: "alliance", allianceId: "fleet 7" })).toBe("/alliance/fleet%207");
   });
 
   test("parses clean share path routes for first-load OG URLs", () => {
