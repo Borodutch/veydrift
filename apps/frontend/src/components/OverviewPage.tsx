@@ -228,8 +228,7 @@ export function OverviewPage({
   // coordinate-derived label once coordinates hydrate. Never fall back to a hardcoded fake planet
   // name; the hero renders a skeleton until a real name exists, and the disconnected state shows a
   // connect-wallet card instead of a fabricated home planet (VEY-KANEO-458).
-  const livePlanetName = homePlanet?.name
-    ?? (planet?.coordinates ? `Planet ${planet.coordinates}` : undefined);
+  const livePlanetName = overviewPlanetDisplayName(homePlanet, planet);
   const planetName = livePlanetName ?? "";
   const [renameDraft, setRenameDraft] = useState(planetName);
   const [renamePanelOpen, setRenamePanelOpen] = useState(false);
@@ -880,6 +879,19 @@ function OverviewResearchActionNotice({
       {notice.label}
     </div>
   );
+}
+
+export function overviewPlanetDisplayName(
+  homePlanet: Planet | undefined,
+  planet: PlanetSummary | undefined,
+): string | undefined {
+  const name = homePlanet?.name.trim();
+  if (name) return name;
+
+  const coordinates = homePlanet
+    ? `${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}`
+    : planet?.coordinates?.trim();
+  return coordinates ? `Planet ${coordinates}` : undefined;
 }
 
 export function overviewResearchActionNoticeFor(
