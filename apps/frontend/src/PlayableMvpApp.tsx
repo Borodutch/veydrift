@@ -6417,7 +6417,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const missionDetailShareUrl = typeof window === "undefined" || !missionDetailId
     ? ""
-    : `${window.location.origin}${window.location.pathname}${window.location.search}${buildInspectHash({ kind: "mission", missionId: missionDetailId })}`;
+    : `${window.location.origin}/mission/${encodeURIComponent(missionDetailId)}`;
   const battleReportsShareUrl = typeof window === "undefined"
     ? ""
     : `${window.location.origin}${window.location.pathname}${buildInspectHash({ kind: "page", page: "battle-reports" })}`;
