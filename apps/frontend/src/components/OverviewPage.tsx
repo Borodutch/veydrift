@@ -20,18 +20,20 @@ import {
 } from "../overviewData";
 import { overviewHeroImage } from "../overviewHeroImage";
 import { isImageReady } from "../imageLoadState";
-import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
-import type { Planet } from "../types";
+import { formatPlanetType, planetFromSettlementPlanet, planetsFromSystemResponse } from "../data/mockUniverse";
+import type { Coordinates, Planet } from "../types";
 import {
   decodeColonizationTargetId,
   type FleetMissionPlanetReference,
   type FleetMissionVisibilityResponse,
+  type ManagedPlanetResponse,
   type PlanetSummary,
   type PlayerQueuesResponse,
   type QueueStateResponse,
   type WatchedPlanetsResponse,
   type WalletSettlementResponse
 } from "../walletFlow";
+import type { GalaxyAction } from "../galaxyActions";
 import { formatDurationUntil } from "../durationFormat";
 import { timestampToMs, type TimestampInput } from "../timestampFormat";
 import {
@@ -70,6 +72,11 @@ type OverviewResearchActionState =
   | { status: "pending"; label: string }
   | { status: "success"; label: string }
   | { status: "error"; label: string };
+
+export type OverviewMyPlanetActionGroup = {
+  planet: ManagedPlanetResponse;
+  actions: GalaxyAction[];
+};
 
 interface OverviewPageProps {
   state: PlayableState;
@@ -111,6 +118,9 @@ interface OverviewPageProps {
   onWatchedPlanetsPageChange?: ((page: number) => void) | undefined;
   onRefreshWatchedPlanets?: (() => void) | undefined;
   watchBusyPlanetId?: string | undefined;
+  myPlanets?: readonly OverviewMyPlanetActionGroup[] | undefined;
+  currentCommanderLabel?: string | undefined;
+  onMyPlanetAction?: ((action: GalaxyAction, planet: ManagedPlanetResponse) => void) | undefined;
 }
 
 export function OverviewPage({
@@ -152,6 +162,9 @@ export function OverviewPage({
   onWatchedPlanetsPageChange,
   onRefreshWatchedPlanets,
   watchBusyPlanetId,
+  myPlanets = [],
+  currentCommanderLabel,
+  onMyPlanetAction,
 }: OverviewPageProps) {
   const usedFields = selectedPlanetUsedFields ?? usedFieldsFromBuildings(settledState.buildings);
   const stats = displayPlanetStats(onChainSettlement, onChainQueues, usedFields, isWalletConnected ? onChainStatus : "local");
@@ -484,31 +497,6 @@ export function OverviewPage({
         </div>
       )}
 
-      {shouldRenderWatchedPlanetsPanel({
-        error: watchedPlanetsError,
-        isWalletConnected,
-        loading: watchedPlanetsLoading,
-        planetCount: watchedPlanetRows.length,
-      }) ? (
-        <WatchedPlanetsPanel
-          loading={watchedPlanetsLoading}
-          onPageChange={onWatchedPlanetsPageChange}
-          onRefresh={onRefreshWatchedPlanets}
-          onSelectAlliance={onSelectAlliance}
-          onSelectPlanet={onSelectPlanet}
-          onSelectPlayer={onSelectPlayer}
-          onToggleWatchPlanet={onToggleWatchPlanet}
-          page={watchedPlanetsPage}
-          pageSize={watchedPlanets?.pagination.pageSize ?? 25}
-          planets={watchedPlanetRows}
-          total={watchedPlanets?.pagination.total ?? watchedPlanetRows.length}
-          totalPages={watchedPlanets?.pagination.totalPages ?? 1}
-          watchBusyPlanetId={watchBusyPlanetId}
-          watchedPlanetIds={watchedPlanets?.watchedPlanetIds ?? []}
-          error={watchedPlanetsError}
-        />
-      ) : null}
-
       {/* Contract production queues */}
       <div className="grid min-w-0 auto-rows-fr gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {/* Building queue */}
@@ -690,6 +678,40 @@ export function OverviewPage({
         </QueuePanel>
       </div>
 
+      {isWalletConnected && myPlanets.length > 0 ? (
+        <MyPlanetsPanel
+          commanderLabel={currentCommanderLabel?.trim() || "You"}
+          myPlanets={myPlanets}
+          onAction={onMyPlanetAction}
+          onSelectPlanet={onSelectPlanet}
+        />
+      ) : null}
+
+      {shouldRenderWatchedPlanetsPanel({
+        error: watchedPlanetsError,
+        isWalletConnected,
+        loading: watchedPlanetsLoading,
+        planetCount: watchedPlanetRows.length,
+      }) ? (
+        <WatchedPlanetsPanel
+          loading={watchedPlanetsLoading}
+          onPageChange={onWatchedPlanetsPageChange}
+          onRefresh={onRefreshWatchedPlanets}
+          onSelectAlliance={onSelectAlliance}
+          onSelectPlanet={onSelectPlanet}
+          onSelectPlayer={onSelectPlayer}
+          onToggleWatchPlanet={onToggleWatchPlanet}
+          page={watchedPlanetsPage}
+          pageSize={watchedPlanets?.pagination.pageSize ?? 25}
+          planets={watchedPlanetRows}
+          total={watchedPlanets?.pagination.total ?? watchedPlanetRows.length}
+          totalPages={watchedPlanets?.pagination.totalPages ?? 1}
+          watchBusyPlanetId={watchBusyPlanetId}
+          watchedPlanetIds={watchedPlanets?.watchedPlanetIds ?? []}
+          error={watchedPlanetsError}
+        />
+      ) : null}
+
       {/* Resource values live in the persistent top bar; keep Overview focused on planet state and actions. */}
       {isWalletConnected && onChainStatus === "loading" && (
         <InlineSyncIndicator label="Refreshing resources" />
@@ -697,6 +719,110 @@ export function OverviewPage({
 
     </div>
   );
+}
+
+function MyPlanetsPanel({
+  commanderLabel,
+  myPlanets,
+  onAction,
+  onSelectPlanet,
+}: {
+  commanderLabel: string;
+  myPlanets: readonly OverviewMyPlanetActionGroup[];
+  onAction: ((action: GalaxyAction, planet: ManagedPlanetResponse) => void) | undefined;
+  onSelectPlanet: ((coords: Coordinates) => void) | undefined;
+}) {
+  return (
+    <section className="grid gap-2 rounded-lg border border-white/10 bg-[#101624] p-3">
+      <div>
+        <h3 className="text-sm font-semibold text-white">My planets</h3>
+        <p className="text-xs text-slate-500">{myPlanets.length} owned</p>
+      </div>
+      <div className="grid gap-1.5">
+        {myPlanets.map(({ actions, planet }) => {
+          const coords = { galaxy: planet.galaxy, system: planet.system, position: planet.position };
+          const rowPlanet = overviewPlanetFromManagedPlanet(planet);
+          return (
+            <WatchablePlanetRow
+              allianceLabel="No alliance"
+              commanderLabel={commanderLabel}
+              coords={coords}
+              isHome={planet.isHomePlanet}
+              key={planet.planetId}
+              meta={myPlanetMeta(planet)}
+              onInspect={onSelectPlanet ?? (() => undefined)}
+              planet={rowPlanet}
+              actionSlot={(
+                <MyPlanetActionButtons
+                  actions={actions}
+                  onAction={(action) => onAction?.(action, planet)}
+                />
+              )}
+            />
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function MyPlanetActionButtons({
+  actions,
+  onAction,
+}: {
+  actions: GalaxyAction[];
+  onAction: (action: GalaxyAction) => void;
+}) {
+  return (
+    <>
+      {actions.map((action) => (
+        <button
+          className={`rounded border px-2 py-1 text-xs font-medium transition ${
+            action.enabled
+              ? "border-signal/30 bg-signal/10 text-signal hover:bg-signal/20"
+              : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
+          }`}
+          disabled={!action.enabled}
+          key={action.kind}
+          onClick={() => {
+            if (action.enabled) onAction(action);
+          }}
+          title={action.enabled ? action.label : action.reason}
+          type="button"
+        >
+          {action.label}
+        </button>
+      ))}
+    </>
+  );
+}
+
+function overviewPlanetFromManagedPlanet(planet: ManagedPlanetResponse): Planet {
+  const rowPlanet = planetFromSettlementPlanet(planet);
+  return {
+    ...rowPlanet,
+    name: managedPlanetOverviewDisplayName(planet),
+    occupiedBy: rowPlanet.occupiedBy
+      ? {
+          ...rowPlanet.occupiedBy,
+          ownerDisplayName: null,
+        }
+      : rowPlanet.occupiedBy,
+  };
+}
+
+export function managedPlanetOverviewDisplayName(planet: ManagedPlanetResponse): string {
+  return planet.name?.trim() || `Planet ${planet.coordinates}`;
+}
+
+function myPlanetMeta(planet: ManagedPlanetResponse): PlanetMetaItem[] {
+  const meta: PlanetMetaItem[] = [
+    { label: planet.coordinates },
+    { label: formatGalaxyHeatLabel({ min: planet.temperature - 20, max: planet.temperature + 20 }) },
+    { label: `${planet.fieldsUsed}/${planet.fieldsCapacity} fields` },
+  ];
+  if (planet.moon?.exists) meta.push({ label: "Moon", tone: "info" });
+  return meta;
 }
 
 export function overviewBuildingActionNoticeFor(

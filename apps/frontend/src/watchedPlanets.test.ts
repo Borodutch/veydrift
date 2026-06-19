@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { planetsFromSystemResponse } from "./data/mockUniverse";
-import { shouldRenderWatchedPlanetsPanel } from "./components/OverviewPage";
+import { managedPlanetOverviewDisplayName, shouldRenderWatchedPlanetsPanel } from "./components/OverviewPage";
 import { nextWatchedPlanetsPageAfterToggle, watchedPlanetsPanelRange } from "./watchedPlanetsView";
+import type { ManagedPlanetResponse } from "./walletFlow";
 
 const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
 const galaxySource = await Bun.file(new URL("./components/GalaxyView.tsx", import.meta.url)).text();
@@ -104,3 +105,69 @@ describe("watched planets UI", () => {
     expect(overviewSource).toContain("watchedPlanetsPanelRange");
   });
 });
+
+describe("overview planet sections", () => {
+  test("orders production blocks before My planets and Watched planets", () => {
+    const queueIndex = overviewSource.indexOf("{/* Contract production queues */}");
+    const myPlanetsIndex = overviewSource.indexOf("<MyPlanetsPanel");
+    const watchedPlanetsIndex = overviewSource.indexOf("<WatchedPlanetsPanel");
+
+    expect(queueIndex).toBeGreaterThan(-1);
+    expect(myPlanetsIndex).toBeGreaterThan(queueIndex);
+    expect(watchedPlanetsIndex).toBeGreaterThan(myPlanetsIndex);
+  });
+
+  test("wires My planets actions through the existing galaxy mission flow", () => {
+    expect(appSource).toContain("overviewMyPlanetActionsFor");
+    expect(appSource).toContain("galaxyActionsForSlot");
+    expect(appSource).toContain("handleOverviewMyPlanetAction");
+    expect(appSource).toContain("myPlanets={overviewMyPlanetActionGroups}");
+    expect(appSource).toContain("onMyPlanetAction={handleOverviewMyPlanetAction}");
+    expect(overviewSource).toContain("<MyPlanetActionButtons");
+    expect(overviewSource).toContain("onAction={(action) => onAction?.(action, planet)}");
+  });
+
+  test("labels owned planets by custom name, then coordinates", () => {
+    expect(managedPlanetOverviewDisplayName(managedPlanet({ name: "  Foundry  " }))).toBe("Foundry");
+    expect(managedPlanetOverviewDisplayName(managedPlanet({ name: "   ", coordinates: "2:44:9" }))).toBe("Planet 2:44:9");
+  });
+});
+
+function managedPlanet(overrides: Partial<ManagedPlanetResponse> = {}): ManagedPlanetResponse {
+  return {
+    planetId: "7",
+    owner: "0x1111111111111111111111111111111111111111",
+    name: null,
+    galaxy: 1,
+    system: 2,
+    position: 3,
+    fields: 180,
+    temperature: 12,
+    metalMultiplierBps: 10000,
+    crystalMultiplierBps: 10000,
+    deuteriumMultiplierBps: 10000,
+    lastSettledAt: "0",
+    resources: { metal: "0", crystal: "0", deuterium: "0" },
+    coordinates: "1:2:3",
+    isHomePlanet: false,
+    fieldsUsed: 12,
+    fieldsCapacity: 180,
+    keyLevels: {
+      metalMine: 1,
+      crystalMine: 1,
+      deuteriumSynthesizer: 1,
+      solarPlant: 1,
+      roboticsFactory: 0,
+      shipyard: 0,
+      researchLab: 0,
+      terraformer: 0,
+    },
+    queues: {
+      building: null,
+      defense: null,
+      ship: null,
+    },
+    moon: null,
+    ...overrides,
+  };
+}
