@@ -4,6 +4,7 @@ import {
   isFinishedBuildingStateVisible,
   isFinishedResearchStateVisible,
   isAllianceApplicationCleared,
+  isAllianceProfileUpdated,
   isStartedBuildingStateVisible,
   isStartedDefenseProductionVisible,
   isStartedShipProductionVisible,
@@ -24,6 +25,7 @@ import {
   waitForHydratedWalletPlanet,
   waitForFinishedBuildingState,
   waitForAllianceApplicationCleared,
+  waitForAllianceProfileState,
   waitForMissionLaunchState,
   waitForRenamedWalletPlanet,
   type FinishedResearchSnapshot,
@@ -305,6 +307,46 @@ describe("post-transaction refresh reconciliation", () => {
       },
       { attempts: 2, intervalMs: 1, delay: async () => undefined },
     )).rejects.toThrow("Alliance application transaction confirmed, but the pending application is still syncing in the game API.");
+  });
+
+  test("polls past stale alliance profile state after profile update confirmation", async () => {
+    const updatedProfile = {
+      allianceId: "7",
+      tag: "VDFT",
+      name: "Veydrift Union",
+      description: "Updated public charter",
+    };
+    const snapshots = [
+      allianceStateWithApplication(),
+      allianceStateWithProfile(updatedProfile),
+    ];
+    const loads: ChainAllianceState[] = [];
+
+    const result = await waitForAllianceProfileState(
+      async () => {
+        const snapshot = snapshots.shift() ?? allianceStateWithProfile(updatedProfile);
+        loads.push(snapshot);
+        return snapshot;
+      },
+      updatedProfile,
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(loads).toHaveLength(2);
+    expect(isAllianceProfileUpdated(result, updatedProfile)).toBe(true);
+  });
+
+  test("explains alliance profile sync timeout when the description remains stale", async () => {
+    await expect(waitForAllianceProfileState(
+      async () => allianceStateWithApplication(),
+      {
+        allianceId: "7",
+        tag: "VDFT",
+        name: "Veydrift Union",
+        description: "Updated public charter",
+      },
+      { attempts: 2, intervalMs: 1, delay: async () => undefined },
+    )).rejects.toThrow("Alliance profile transaction confirmed, but the updated description is still syncing in the game API.");
   });
 
   test("recovers from a transient post-finish game-state read failure", async () => {
@@ -1239,6 +1281,30 @@ function allianceStateWithApplication(overrides: Partial<ChainAllianceState> = {
     ],
     ...overrides,
   };
+}
+
+function allianceStateWithProfile(profile: {
+  allianceId: string;
+  tag: string;
+  name: string;
+  description: string;
+}): ChainAllianceState {
+  return allianceStateWithApplication({
+    membership: {
+      allianceId: profile.allianceId,
+      role: "owner",
+      joinedAt: "1770000000",
+    },
+    profile: {
+      active: true,
+      createdAt: "1770000000",
+      description: profile.description,
+      memberCount: 1,
+      name: profile.name,
+      owner: wallet,
+      tag: profile.tag,
+    },
+  });
 }
 
 function missionLaunchSnapshot(overrides: {
