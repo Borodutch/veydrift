@@ -12,6 +12,7 @@ type ActionState =
   | { status: "success"; label: string }
   | { status: "error"; label: string; autoDismiss?: boolean };
 
+type VisibleActionState = Exclude<ActionState, { status: "idle" }>;
 type TimerHandle = ReturnType<typeof window.setTimeout>;
 
 function createFakeTimers() {
@@ -175,5 +176,83 @@ describe("action notice auto-dismiss timers", () => {
     expect(submittedHarness.state).toEqual({ status: "idle" });
     expect(syncingHarness.state).toEqual({ status: "idle" });
     expect(blockerHarness.state).toBe(blockerAction);
+  });
+
+  test("auto-dismisses real overview infrastructure and research progress labels", () => {
+    const timers = createFakeTimers();
+    const transientActions: VisibleActionState[] = [
+      { status: "pending", label: "Refreshing infrastructure state" },
+      { status: "pending", label: "Building upgrade: unlock your wallet if needed, then confirm in your wallet." },
+      {
+        status: "pending",
+        label: "Building completion: confirm the game-state update in your wallet; token balance changes are not expected.",
+      },
+      {
+        status: "pending",
+        label: "Building completion submitted. Waiting for backend state to clear this completed queue before another finish attempt.",
+      },
+      {
+        status: "error",
+        label: "Building completion failed for this ready queue. Refreshing backend state before another finish attempt.",
+      },
+      { status: "pending", label: "Refreshing research queue..." },
+      {
+        status: "pending",
+        label: "Small Cargo build confirmed. Rechecking game state after a temporary API/RPC outage.",
+      },
+    ];
+    const harnesses = transientActions.map(createActionHarness);
+
+    for (const [index, action] of transientActions.entries()) {
+      scheduleActionNoticeAutoDismiss({
+        action,
+        clearTimeoutFn: timers.clearTimeoutFn,
+        setAction: harnesses[index]!.setAction,
+        setTimeoutFn: timers.setTimeoutFn,
+      });
+
+      expect(isTransientRequestActionLabel(action.label)).toBe(true);
+    }
+
+    expect(timers.pendingCount()).toBe(transientActions.length);
+
+    timers.advanceBy(ACTION_NOTICE_AUTO_DISMISS_MS);
+
+    expect(harnesses.map((harness) => harness.state)).toEqual(transientActions.map(() => ({ status: "idle" })));
+  });
+
+  test("keeps actionable infrastructure and wallet blockers visible", () => {
+    const timers = createFakeTimers();
+    const blockerActions: VisibleActionState[] = [
+      { status: "error", label: "Wallet is locked." },
+      {
+        status: "error",
+        label: "Infrastructure API is temporarily unavailable. The app will keep retrying, and building actions are paused until current backend state is available.",
+      },
+      {
+        status: "error",
+        label: "Can't verify the current building queue right now. Refresh infrastructure state and retry before finishing.",
+      },
+      { status: "error", label: "Game contract rejected this fleet action: INVALID_MISSION_SPEED." },
+      { status: "error", label: "Mission launch was rejected by mission preflight. Refresh fleet, cargo, fuel, and target state before retrying." },
+    ];
+    const harnesses = blockerActions.map(createActionHarness);
+
+    for (const [index, action] of blockerActions.entries()) {
+      scheduleActionNoticeAutoDismiss({
+        action,
+        clearTimeoutFn: timers.clearTimeoutFn,
+        setAction: harnesses[index]!.setAction,
+        setTimeoutFn: timers.setTimeoutFn,
+      });
+
+      expect(isTransientRequestActionLabel(action.label)).toBe(false);
+    }
+
+    expect(timers.pendingCount()).toBe(0);
+
+    timers.advanceBy(ACTION_NOTICE_AUTO_DISMISS_MS);
+
+    expect(harnesses.map((harness) => harness.state)).toEqual(blockerActions);
   });
 });

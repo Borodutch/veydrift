@@ -10,6 +10,19 @@ export type ActionStateSetter<State extends AutoDismissableActionState> = (
 
 type TimeoutHandle = ReturnType<typeof window.setTimeout>;
 
+const transientRequestActionLabelPatterns = [
+  /awaiting wallet/i,
+  /waiting for wallet signature/i,
+  /submitted 0x[a-f0-9]+/i,
+  /syncing indexed state/i,
+  /refreshing (?:alliance (?:application|invitation)|fleet inventory|target protection|infrastructure state|research queue)/i,
+  /confirm (?:the game-state update )?in your wallet/i,
+  /unlock your wallet if needed, then confirm in your wallet/i,
+  /waiting for backend state to clear this completed queue/i,
+  /refreshing backend state before another finish attempt/i,
+  /rechecking game state after a temporary API\/RPC outage/i,
+] as const;
+
 export function isUserRejectedActionLabel(label: string): boolean {
   if (/game contract rejected|contract rejected|mission preflight/i.test(label)) {
     return false;
@@ -19,7 +32,7 @@ export function isUserRejectedActionLabel(label: string): boolean {
 }
 
 export function isTransientRequestActionLabel(label: string): boolean {
-  return /awaiting wallet|waiting for wallet signature|submitted 0x[a-f0-9]+|syncing indexed state|refreshing alliance (?:application|invitation)|refreshing (?:fleet inventory|target protection)/i.test(label);
+  return transientRequestActionLabelPatterns.some((pattern) => pattern.test(label));
 }
 
 export function shouldAutoDismissActionNotice(action: AutoDismissableActionState): boolean {
