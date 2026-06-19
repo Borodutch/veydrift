@@ -452,11 +452,7 @@ function ResearchDetailPanel({
 
       <ResearchEffectsSection effectRows={effectRows} unlockRows={unlockRows} />
 
-      <div className="mt-4 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
-        <p className={`text-sm font-semibold ${status.disabled ? "text-slate-400" : "text-emerald-200"}`}>
-          {status.reason}
-        </p>
-      </div>
+      <ResearchActionReasonNotice disabled={status.disabled} reason={status.reason} />
 
       {queue && (
         <ActiveResearchQueueDetail
@@ -485,6 +481,22 @@ function ResearchDetailPanel({
         />
       )}
     </InspectDetailShell>
+  );
+}
+
+export function ResearchActionReasonNotice({
+  disabled,
+  reason,
+}: {
+  disabled: boolean;
+  reason: string;
+}) {
+  return (
+    <div className="mt-4 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
+      <p className={`text-sm font-semibold ${disabled ? "text-slate-400" : "text-emerald-200"}`}>
+        {reason}
+      </p>
+    </div>
   );
 }
 
@@ -989,17 +1001,11 @@ export function researchCatalogTitleTone(
 }
 
 export function researchCatalogStatusText(
-  status: Pick<ReturnType<typeof researchActionStatus>, "reason" | "tileStatus">,
+  status: Pick<ReturnType<typeof researchActionStatus>, "tileStatus">,
 ): string {
   if (status.tileStatus === "Active") return "Active";
-  if (status.tileStatus === "ShortResources") return researchCatalogShortResourceText(status.reason);
+  if (status.tileStatus === "ShortResources") return "Need resources";
   return "";
-}
-
-function researchCatalogShortResourceText(reason: string): string {
-  const missing = reason.replace(/\s+\(.*\)$/, "").match(/^Requires (.+)$/)?.[1];
-  if (!missing) return "Need resources";
-  return `Need ${missing.replace(/\bmore\s+/g, "")}`;
 }
 
 export function researchViewState(
