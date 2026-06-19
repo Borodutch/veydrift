@@ -399,6 +399,13 @@ function MissionBattleReport({
         </Notice>
       );
     }
+    if (mission.resolutionBlocker === "randomness_pending") {
+      return (
+        <Notice tone="warning">
+          Battle randomness is still pending, so this combat mission cannot resolve yet.
+        </Notice>
+      );
+    }
     // A combat fleet only fights once it reaches its target. While it is still flying out (Outbound
     // and not yet due) — or was recalled before it ever arrived — no battle has happened, so the
     // "no report" notice is pure noise; the whole block is suppressed until combat is actually due.

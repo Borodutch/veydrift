@@ -1006,6 +1006,9 @@ export function missionStatusPill(mission: FleetMissionSummary, now: number): Mi
   if (isPendingMissionLaunch(mission)) {
     return { label: "Indexing", tone: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100" };
   }
+  if (mission.resolutionBlocker === "randomness_pending") {
+    return { label: "Awaiting randomness", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
+  }
   // VEY-KANEO-468: completions settle lazily on-chain (the next mutating call; combat via the battle
   // keeper). A leg whose clock has passed but whose backend status has not advanced is mid-settlement,
   // so the pill reads "Resolving" until the chain reflects it — not a finished "Arrived"/"Returned".
@@ -2261,6 +2264,7 @@ export function missionDisplayStatusLabel(mission: FleetMissionSummary, now: num
   // mid-settlement (lazy reconcile / battle keeper), so it reads "resolving" until the chain
   // reflects it — mirroring the "Resolving" list pill.
   if (mission.status === "Outbound" && isMissionDue(mission, now)) {
+    if (mission.resolutionBlocker === "randomness_pending") return "awaiting randomness";
     return "resolving";
   }
   if ((mission.status === "Returning" || mission.status === "Recalled") && isMissionReturned(mission, now)) {

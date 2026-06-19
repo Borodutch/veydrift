@@ -1076,10 +1076,11 @@ export class SettlementIndexer {
 
     const incoming = summaries
       .filter((mission) =>
-        mission.owner.toLowerCase() !== walletLower
-          && ownedPlanetIds.has(mission.targetPlanetId)
-          && ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
-          && mission.status === "Outbound"
+        isVisibleActiveFleetMission(mission)
+        && mission.owner.toLowerCase() !== walletLower
+        && ownedPlanetIds.has(mission.targetPlanetId)
+        && ["Attack", "AcsAttack", "MissileAttack"].includes(mission.missionType)
+        && mission.status === "Outbound"
       )
       .map((attack) => ({
         ...attack,
@@ -1098,17 +1099,21 @@ export class SettlementIndexer {
       homePlanetId: settlement.homePlanetId,
       incoming: syntheticIncoming ? [syntheticIncoming, ...incoming] : incoming,
       outgoing: summaries.filter((mission) =>
-        mission.owner.toLowerCase() === walletLower && mission.status === "Outbound"
+        isVisibleActiveFleetMission(mission)
+        && mission.owner.toLowerCase() === walletLower
+        && mission.status === "Outbound"
       ),
       returning: summaries.filter((mission) =>
-        mission.owner.toLowerCase() === walletLower
-          && (mission.status === "Returning" || mission.status === "Recalled")
+        isVisibleActiveFleetMission(mission)
+        && mission.owner.toLowerCase() === walletLower
+        && (mission.status === "Returning" || mission.status === "Recalled")
       ),
       joinableAttacks: summaries.filter((mission) =>
-        mission.owner.toLowerCase() !== walletLower
-          && !ownedPlanetIds.has(mission.targetPlanetId)
-          && mission.missionType === "Attack"
-          && mission.status === "Outbound"
+        isVisibleActiveFleetMission(mission)
+        && mission.owner.toLowerCase() !== walletLower
+        && !ownedPlanetIds.has(mission.targetPlanetId)
+        && mission.missionType === "Attack"
+        && mission.status === "Outbound"
       ),
       completedMissions: summaries
         .filter((mission) => isVisibleCompletedMission(mission, walletLower, ownedPlanetIds))
@@ -1217,7 +1222,9 @@ export class SettlementIndexer {
 
   dueUnresolvedFleetMissionsForPlanet(planetId: string, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
     const resolvedBattleMissionIds = this.resolvedBattleMissionIds();
-    return this.indexedFleetMissionReferenceIndex().active.filter((mission) =>
+    // Use the full mission set, not the public active feed: over-due attacks awaiting randomness are
+    // hidden from active report/intel surfaces, but they still block planet actions until settled.
+    return this.indexedFleetMissionReferenceIndex().summaries.filter((mission) =>
       mission.status === "Outbound"
         && (mission.missionType === "Attack" || mission.missionType === "Harvest")
         && Number(mission.arrivalAt) <= asOfSeconds
@@ -5459,11 +5466,12 @@ export class SettlementIndexer {
       )
         ? "Returned"
         : mission.status;
-      return {
+      const needsResolution = fleetMissionNeedsResolution({ ...mission, status }, asOfSeconds, fulfilledRandomnessRequestIds);
+      return withFleetMissionResolutionBlocker({
         ...mission,
         status,
-        needsResolution: fleetMissionNeedsResolution({ ...mission, status }, asOfSeconds, fulfilledRandomnessRequestIds)
-      };
+        needsResolution
+      }, asOfSeconds, fulfilledRandomnessRequestIds);
     });
     this.missionReadModelCache = {
       missionGeneration: this.missionGeneration,
@@ -5496,7 +5504,7 @@ export class SettlementIndexer {
     const summaries = source.map((mission) => this.withFleetMissionPlanetReferences(mission));
     const byId = new Map(summaries.map((mission) => [mission.missionId, mission]));
     const active = summaries
-      .filter((mission) => mission.status === "Outbound" || mission.status === "Returning" || mission.status === "Recalled")
+      .filter(isVisibleActiveFleetMission)
       .sort(compareFleetMissionsActiveSoonestFirst);
     const completed = summaries
       .filter((mission) => mission.status === "Resolved" || mission.status === "Returned")
@@ -6179,6 +6187,40 @@ function fleetMissionStatusId(label: string): number | null {
 
 function isActiveFleetMissionStatus(status: string): boolean {
   return status === "Outbound" || status === "Returning" || status === "Recalled";
+}
+
+function isVisibleActiveFleetMission(mission: FleetMissionSummary): boolean {
+  return isActiveFleetMissionStatus(mission.status) && !isOverduePendingRandomnessMission(mission);
+}
+
+function isOverduePendingRandomnessMission(mission: FleetMissionSummary): boolean {
+  return mission.resolutionBlocker === "randomness_pending";
+}
+
+function withFleetMissionResolutionBlocker(
+  mission: FleetMissionSummary,
+  asOfSeconds: number,
+  fulfilledRandomnessRequestIds: ReadonlySet<string> | null
+): FleetMissionSummary {
+  const requestId = missionBattleRandomnessRequestId(mission);
+  const isOverduePendingRandomness =
+    mission.status === "Outbound"
+    && mission.missionType === "Attack"
+    && requestId !== null
+    && fulfilledRandomnessRequestIds !== null
+    && !fulfilledRandomnessRequestIds.has(requestId)
+    && Number(mission.arrivalAt) <= asOfSeconds
+    && Number(mission.returnAt) <= asOfSeconds;
+
+  if (!isOverduePendingRandomness) {
+    return mission;
+  }
+
+  return {
+    ...mission,
+    resolutionBlocker: "randomness_pending",
+    resolutionBlockerDetail: `Battle randomness request ${requestId} is still pending; this attack cannot resolve until randomness is fulfilled.`
+  };
 }
 
 function fleetSlotSettlementDue(mission: FleetMissionSummary, asOfSeconds: number): boolean {
