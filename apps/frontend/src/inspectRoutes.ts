@@ -97,6 +97,16 @@ export function parseInspectRouteFromLocation(location: Pick<Location, "hash" | 
   return parseInspectPath(location.pathname) ?? parseInspectRoute(location.hash);
 }
 
+export function canonicalEntityPathForLegacyHashLocation(location: Pick<Location, "hash" | "pathname" | "search">): string | null {
+  if (location.pathname !== "/" && location.pathname !== "/index.html") return null;
+  if (!location.hash || location.hash === "#" || location.hash === "#/") return null;
+
+  const route = parseInspectRoute(location.hash);
+  if (route.kind === "page") return null;
+
+  return `${buildInspectPath(route)}${location.search ?? ""}`;
+}
+
 export function buildInspectHash(route: InspectRoute): string {
   if (route.kind === "planet") {
     return `#/planet/${route.coords.galaxy}/${route.coords.system}/${route.coords.position}`;
