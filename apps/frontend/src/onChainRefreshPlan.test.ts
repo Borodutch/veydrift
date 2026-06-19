@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { planOnChainRefresh } from "./PlayableMvpApp";
+import { planOnChainRefresh, shouldRefreshAllianceStateForPage } from "./PlayableMvpApp";
 
 describe("planOnChainRefresh", () => {
   test("always applies authoritative queues + fleet visibility", () => {
@@ -77,5 +77,11 @@ describe("planOnChainRefresh", () => {
       { planetId: "7", lastSettledAt: "100" },
     );
     expect(plan.applyResourceState).toBe(false);
+  });
+});
+
+describe("shouldRefreshAllianceStateForPage", () => {
+  test("loads alliance membership for Raid Finder before the Alliance tab is opened", () => {
+    expect(shouldRefreshAllianceStateForPage("raid-target-finder")).toBe(true);
   });
 });
