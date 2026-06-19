@@ -1821,8 +1821,39 @@ describe("SettlementIndexer", () => {
     expect(indexer.fleetMissionVisibility(player).completedMissions.find((mission) => mission.missionId === "82")).toMatchObject({
       status: "Returned"
     });
-    expect(indexer.fleetSlots(player)).toEqual({ active: 2, limit: 1 });
-    expect(indexer.pendingFleetSlotSettlementMissionsForWallet(player).map((mission) => mission.missionId)).toEqual(["82"]);
+    expect(indexer.fleetSlots(player)).toEqual({ active: 1, limit: 1 });
+    expect(indexer.pendingFleetSlotSettlementMissionsForWallet(player).map((mission) => mission.missionId)).toEqual([]);
+  });
+
+  test("frees due transport arrivals from projected fleet slots because launch lazily settles them (VEY-590)", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xtransport-arrival",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(590n), addressTopic(player), topic(0n)],
+      data: abiWords(7n, 99n, 1767225000n, 1767225200n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xtransport-arrival",
+      logIndex: "0x1",
+      topics: [fleetMissionShipsTopic, topic(590n)],
+      data: abiWords(1n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    expect(indexer.allActiveFleetMissions().find((mission) => mission.missionId === "590")).toMatchObject({
+      missionType: "Transport",
+      needsResolution: true,
+      status: "Outbound"
+    });
+    expect(indexer.fleetSlots(player)).toEqual({ active: 0, limit: 1 });
+    expect(indexer.pendingFleetSlotSettlementMissionsForWallet(player)).toEqual([]);
   });
 
   // Canonical-mirror rework: the combat-triggered bounded per-planet reconcile was removed; combat

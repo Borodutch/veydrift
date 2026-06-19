@@ -5751,7 +5751,7 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("marks infrastructure stale and blocks actions when a due mission still needs resolution (VEY-KANEO-572)", async () => {
+  test("keeps infrastructure available when a due mission can be lazily resolved (VEY-590)", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
@@ -5775,14 +5775,53 @@ describe("Veydrift backend", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
+    expect(response.headers.get("x-veydrift-index-state")).toBe("healthy");
+    expect(body).toMatchObject({
+      infrastructureAvailable: true,
+      indexer: {
+        indexedState: "healthy",
+        safeToServeIndexedState: true
+      }
+    });
+    expect(body.actionBlocker).toBeUndefined();
+    expect(body.stale).not.toBe(true);
+  });
+
+  test("keeps pending-randomness combat arrivals as hard infrastructure blockers (VEY-590)", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock, {
+      randomnessEngineConfigured: true
+    });
+    await indexer.rebuild();
+    for (const log of activeFleetMissionLogs({
+      arrivalAt: 1_770_000_000n,
+      missionId: 590n,
+      missionTypeId: 3n,
+      owner: player,
+      originPlanetId: 7n,
+      targetPlanetId: 8n,
+      randomnessRequestId: 5900n,
+    })) {
+      indexer.applyLog(log);
+    }
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
     expect(response.headers.get("x-veydrift-index-state")).toBe("stale");
     expect(body).toMatchObject({
       infrastructureAvailable: false,
       stale: true,
-      unavailableReason: "Mission resolution is pending for this planet (mission 572). The indexer or keeper must settle the due mission before infrastructure upgrades can be started.",
+      unavailableReason: "Mission resolution is pending for this planet (mission 590). The indexer or keeper must settle the due mission before infrastructure upgrades can be started.",
       actionBlocker: {
         kind: "mission_resolution_pending",
-        missionIds: ["572"],
+        missionIds: ["590"],
         earliestArrivalAt: "1770000000"
       },
       indexer: {
@@ -7124,6 +7163,7 @@ function completedFleetMissionLogs({
   missionId,
   missionTypeId = 0n,
   owner,
+  randomnessRequestId = 0n,
   returnAt: returnAtOverride,
   originPlanetId,
   targetPlanetId,
@@ -7132,6 +7172,7 @@ function completedFleetMissionLogs({
   missionId: bigint;
   missionTypeId?: bigint;
   owner: Address;
+  randomnessRequestId?: bigint;
   returnAt?: bigint;
   originPlanetId: bigint;
   targetPlanetId: bigint;
@@ -7141,7 +7182,7 @@ function completedFleetMissionLogs({
   return [
     fleetMissionLog({
       topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(owner), topic(missionTypeId)],
-      data: abiWords(originPlanetId, targetPlanetId, arrivalAt, returnAt),
+      data: abiWords(originPlanetId, targetPlanetId, arrivalAt, returnAt, randomnessRequestId),
       logIndex: Number(missionId * 10n),
     }),
     fleetMissionLog({
@@ -7169,6 +7210,7 @@ function activeFleetMissionLogs(args: {
   missionId: bigint;
   missionTypeId?: bigint;
   owner: Address;
+  randomnessRequestId?: bigint;
   returnAt?: bigint;
   originPlanetId: bigint;
   targetPlanetId: bigint;

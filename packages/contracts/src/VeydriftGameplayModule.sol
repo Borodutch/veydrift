@@ -170,6 +170,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         }
         if (!counterplayMission && originPlanetId == targetPlanetId) revert SamePlanet();
         if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
+        _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
         if (
@@ -334,6 +335,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             revert InvalidMissionType(FleetMissionType.AcsAttack);
         }
         if (attack.targetPlanetId != expectedTargetPlanetId) revert InvalidId();
+        _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(attack.targetPlanetId);
 
@@ -464,6 +466,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (mission.status != FleetMissionStatus.Outbound) {
             revert FleetMissionNotResolved(mission.returnAt);
         }
+        _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(mission.originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(mission.targetPlanetId);
         if (_currentTimestamp() >= mission.arrivalAt) revert FleetAlreadyArrived();
