@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { FleetsSummary, summarizeFleets } from "./components/OverviewPage";
+import { FleetsSummary, overviewPlanetDisplayName, summarizeFleets } from "./components/OverviewPage";
+import type { Planet } from "./types";
 import type { FleetMissionPlanetReference, FleetMissionSummary, FleetMissionVisibilityResponse } from "./walletFlow";
 
 const PLAYER_WALLET = "0x1111111111111111111111111111111111111111";
@@ -168,6 +169,24 @@ describe("Overview fleets summary", () => {
   });
 });
 
+describe("Overview planet display name", () => {
+  test("uses a trimmed real planet name when one is loaded", () => {
+    expect(overviewPlanetDisplayName(planet({ name: "  New Eos  " }), undefined)).toBe("New Eos");
+  });
+
+  test("falls back to hydrated coordinates when the loaded planet name is blank", () => {
+    expect(overviewPlanetDisplayName(planet({ name: "   ", galaxy: 3, system: 12, position: 4 }), undefined)).toBe("Planet 3:12:4");
+  });
+
+  test("falls back to settlement summary coordinates while the planet identity hydrates", () => {
+    expect(overviewPlanetDisplayName(undefined, {
+      label: "Home planet",
+      coordinates: " 2:44:9 ",
+      source: "chain",
+    })).toBe("Planet 2:44:9");
+  });
+});
+
 function collectText(node: unknown): string[] {
   if (node === null || node === undefined || typeof node === "boolean") return [];
   if (Array.isArray(node)) return node.flatMap(collectText);
@@ -223,6 +242,35 @@ function planetRef(
     system,
     position,
     coordinates: `${galaxy}:${system}:${position}`,
+  };
+}
+
+function planet(overrides: Partial<Planet> = {}): Planet {
+  return {
+    id: "planet-7",
+    name: "New Eos",
+    type: "temperate-ocean",
+    image: "/assets/game/style-pass/generated/planets/temperate-ocean.webp",
+    position: 9,
+    galaxy: 2,
+    system: 44,
+    owner: PLAYER_WALLET,
+    ownerId: PLAYER_WALLET,
+    alliance: null,
+    occupiedBy: null,
+    debrisField: null,
+    moonChance: null,
+    resources: {
+      metal: 500,
+      crystal: 500,
+      deuterium: 0,
+      energy: 0,
+    },
+    temperature: { min: -32, max: 8 },
+    diameter: 14_353,
+    fields: 206,
+    hasMoon: false,
+    ...overrides,
   };
 }
 
