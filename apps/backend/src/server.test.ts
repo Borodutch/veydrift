@@ -4861,6 +4861,62 @@ describe("Veydrift backend", () => {
     expect(body.source).toBe("contract-state-indexer");
   });
 
+  test("serves selected research planet id from the indexed DB without falling back to home planet", async () => {
+    const wallet = "0x9ea58b89140f60b7a706e88128c56b9de62c8bd8" as Address;
+    const homePlanet: SettledPlanetEvent = {
+      ...planet,
+      planetId: "7",
+      owner: wallet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xhome",
+      blockNumber: "321"
+    };
+    const selectedPlanet: SettledPlanetEvent = {
+      ...planet,
+      planetId: "10",
+      owner: wallet,
+      eventName: "ColonyCreated",
+      transactionHash: "0xselected",
+      blockNumber: "322"
+    };
+    const chainReader = new MockChainReader();
+    chainReader.getResearchState = (async () => {
+      throw new Error("research page must be served from the indexed DB, never a live eth_call");
+    }) as ChainReader["getResearchState"];
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm research endpoint should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent(homePlanet);
+    indexer.applyEvent(selectedPlanet);
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xlab",
+      logIndex: "0x0",
+      topics: [
+        buildingCompletedTopic,
+        topic(10n),
+        topic(6n)
+      ],
+      data: abiWords(6n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${wallet}/research?planetId=10`));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      source: "contract-state-indexer",
+      planetId: "10",
+      researchLabLevel: 6
+    });
+  });
+
   test("serves shipyard ships from the indexed roster without a per-request chain read (VEY-KANEO-461)", async () => {
     // The shipyard page is now served straight from the event-synced indexed roster; the contract
     // getter must not be invoked per request (AC2).

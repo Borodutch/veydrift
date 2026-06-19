@@ -2076,6 +2076,7 @@ function indexedResearchState(
   return {
     wallet,
     homePlanetId: settlement.homePlanetId,
+    planetId: planet?.planetId ?? settlement.homePlanetId,
     researchAvailable: true,
     unavailableReason,
     resources: planet?.resources ?? null,

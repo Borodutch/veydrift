@@ -674,6 +674,7 @@ export type MoonState = {
 export type ResearchState = {
   wallet: Address;
   homePlanetId: string | null;
+  planetId?: string | null;
   researchAvailable: boolean;
   unavailableReason?: string;
   resources: Resources | null;
