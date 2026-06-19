@@ -110,6 +110,7 @@ type EngineRequest = {
  */
 export class ViemRandomnessCommitmentChainClient implements RandomnessCommitmentChainClient {
   private scanFloorId = 1n;
+  private scansSinceFullRescan = 0;
 
   constructor(
     private readonly publicClient: PublicClient,
@@ -192,6 +193,12 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
       functionName: "nextRequestId"
     })) as bigint;
 
+    if (this.scansSinceFullRescan >= fullRandomnessRequestRescanInterval) {
+      this.scanFloorId = 1n;
+      this.scansSinceFullRescan = 0;
+    }
+    this.scansSinceFullRescan += 1;
+
     const pending: RandomnessRequestEvent[] = [];
     let oldestUnfulfilled = nextRequestId;
 
@@ -263,6 +270,7 @@ const consoleLogger: RandomnessCommitterLogger = {
 };
 
 const defaultCommitIntervalMs = 15_000;
+const fullRandomnessRequestRescanInterval = 20;
 
 /**
  * Long-running service that drives {@link RandomnessCommitmentWorker} on an interval so a pending
