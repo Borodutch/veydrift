@@ -58,6 +58,17 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("h-14 w-14 overflow-hidden rounded-full bg-black/30");
   });
 
+  test("keeps planet selector selected and keyboard focus states subtle", () => {
+    expect(playableSource).toContain("veydrift-planet-selector-button");
+    expect(playableSource).toContain("border-cyan-300/35 bg-cyan-300/[0.07]");
+    expect(playableSource).toContain("shadow-[inset_0_0_0_1px_rgba(128,241,255,0.10)]");
+    expect(playableSource).not.toContain("border-cyan-300/70 bg-cyan-300/12 shadow-lg shadow-cyan-950/25");
+    expect(playableSource).not.toContain("focus:ring-2 focus:ring-cyan-300/60");
+    expect(stylesSource).toContain(".veydrift-planet-selector-button:focus-visible");
+    expect(stylesSource).toContain("outline: 1px solid rgba(128, 241, 255, 0.68)");
+    expect(stylesSource).toContain("--tw-ring-shadow: 0 0 0 2px var(--tw-ring-color);");
+  });
+
   test("keeps the desktop sidebar footer compact and sticky", () => {
     expect(playableSource).toContain("md:h-[calc(100dvh-2.75rem)]");
     expect(navSource).toContain("h-[calc(100dvh-2.75rem)]");

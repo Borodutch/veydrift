@@ -81,6 +81,13 @@ button:focus-visible {
     var(--tw-shadow, 0 0 #0000);
 }
 
+.veydrift-planet-selector-button:focus-visible {
+  outline: 1px solid rgba(128, 241, 255, 0.68);
+  outline-offset: 2px;
+  --tw-ring-color: rgba(128, 241, 255, 0.28);
+  --tw-ring-shadow: 0 0 0 2px var(--tw-ring-color);
+}
+
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
