@@ -4836,6 +4836,106 @@ describe("Veydrift backend", () => {
     expect(body.source).toBe("contract-state-indexer");
   });
 
+  test("does not serve stale cached shipyard inventory after indexed ship counts change", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getShipyardState = (async () => {
+      throw new Error("shipyard page must be served from the indexed DB, never a live eth_call");
+    }) as ChainReader["getShipyardState"];
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm shipyard endpoint should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123"
+    });
+    indexer.applyLog({
+      blockNumber: "0x7d",
+      transactionHash: "0xship-warm",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(5n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      enableResponseCache: true,
+      prewarmResponseCache: false,
+      indexer
+    });
+
+    const warmed = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`))).json();
+    expect(warmed.ships).toContainEqual(expect.objectContaining({ id: 0, count: 5 }));
+
+    indexer.applyLog({
+      blockNumber: "0x7e",
+      transactionHash: "0xship-debit",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(0n)
+    });
+
+    const fresh = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`))).json();
+    expect(fresh.ships).toContainEqual(expect.objectContaining({ id: 0, count: 0 }));
+  });
+
+  test("invalidates reader-worker shipyard response cache from the shared indexed-state version", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-server-cache-"));
+    const databasePath = join(dir, "index.sqlite");
+    const chainReader = new MockChainReader();
+    chainReader.getShipyardState = (async () => {
+      throw new Error("shipyard page must be served from the indexed DB, never a live eth_call");
+    }) as ChainReader["getShipyardState"];
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm shipyard endpoint should not rebuild from chain");
+    };
+
+    try {
+      const writerIndexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock, { databasePath });
+      writerIndexer.applyEvent({
+        ...planet,
+        eventName: "PlanetStarted",
+        transactionHash: "0xabc",
+        blockNumber: "123"
+      });
+      writerIndexer.applyLog({
+        blockNumber: "0x7d",
+        transactionHash: "0xship-warm",
+        logIndex: "0x0",
+        topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+        data: abiWords(5n)
+      });
+
+      const readerIndexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock, { databasePath });
+      const handler = createRequestHandler({
+        config: { ...configuredTestConfig, indexDbPath: databasePath },
+        chainReader,
+        enableResponseCache: true,
+        indexer: readerIndexer,
+        prewarmResponseCache: false,
+        role: "reader"
+      });
+
+      const warmed = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`))).json();
+      expect(warmed.ships).toContainEqual(expect.objectContaining({ id: 0, count: 5 }));
+
+      writerIndexer.applyLog({
+        blockNumber: "0x7e",
+        transactionHash: "0xship-debit",
+        logIndex: "0x0",
+        topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+        data: abiWords(0n)
+      });
+
+      const fresh = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`))).json();
+      expect(fresh.ships).toContainEqual(expect.objectContaining({ id: 0, count: 0 }));
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("serves post-spend indexed resources after multiple active queued spends", async () => {
     const chainReader = new MockChainReader();
     chainReader.getWalletSettlement = async () => {
