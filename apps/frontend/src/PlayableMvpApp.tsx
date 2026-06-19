@@ -8,7 +8,12 @@ import {
 import { PlanetDetail } from "./components/PlanetDetail";
 import { TopBar } from "./components/TopBar";
 import { NavBar, type Page } from "./components/NavBar";
-import { isOverviewResearchReadyToFinish, OverviewPage, type PlanetRenameActionState } from "./components/OverviewPage";
+import {
+  isOverviewResearchReadyToFinish,
+  OverviewPage,
+  type OverviewMyPlanetActionGroup,
+  type PlanetRenameActionState,
+} from "./components/OverviewPage";
 import { InfrastructurePage } from "./components/InfrastructurePage";
 import { DefensePage } from "./components/DefensePage";
 import { AlliancePage, allianceInviteAcceptanceState, allianceJoinRequestApprovalState, allianceJoinRequestDismissalState } from "./components/AlliancePage";
@@ -1825,6 +1830,55 @@ type PendingGalaxyMission = {
   target: Planet | undefined;
   coords: Coordinates;
 };
+
+function overviewMyPlanetActionsFor({
+  account,
+  activePlanetId,
+  defenseState,
+  homePlanetId,
+  planet,
+  shipyardState,
+}: {
+  account: string | undefined;
+  activePlanetId: string | undefined;
+  defenseState: ChainDefenseState | null;
+  homePlanetId: string | null | undefined;
+  planet: ManagedPlanetResponse;
+  shipyardState: ChainShipyardState | null;
+}): GalaxyAction[] {
+  const rowPlanet = planetFromSettlementPlanet(planet);
+  const actionsByKind = new Map(
+    galaxyActionsForSlot({
+      account,
+      defenseState,
+      homePlanetId,
+      isOrigin: activePlanetId === planet.planetId,
+      planet: rowPlanet,
+      shipyardState,
+    }).map((action) => [action.kind, action])
+  );
+  const samePlanetReason = "Select another owned planet before launching this mission.";
+  return [
+    actionsByKind.get("transport") ?? disabledOwnedPlanetMissionAction("transport", "Transport", samePlanetReason),
+    actionsByKind.get("deploy") ?? disabledOwnedPlanetMissionAction("deploy", "Deploy", samePlanetReason),
+    actionsByKind.get("defenseHold") ?? disabledOwnedPlanetMissionAction("defenseHold", "Defend", "Defend is unavailable for this planet."),
+  ];
+}
+
+function disabledOwnedPlanetMissionAction(
+  kind: "transport" | "deploy" | "defenseHold",
+  label: string,
+  reason: string,
+): GalaxyAction {
+  return {
+    enabled: false,
+    kind,
+    label,
+    mode: "mission",
+    mission: kind,
+    reason,
+  };
+}
 
 function transportCargoForSelectedPlanet(
   planet: ManagedPlanetResponse | undefined,
@@ -5777,6 +5831,30 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setPendingGalaxyMission({ action, target, coords });
   }, []);
 
+  const overviewMyPlanetActionGroups = useMemo<OverviewMyPlanetActionGroup[]>(() =>
+    walletPlanets.map((managedPlanet) => ({
+      planet: managedPlanet,
+      actions: overviewMyPlanetActionsFor({
+        account,
+        activePlanetId,
+        defenseState,
+        homePlanetId: onChainSettlement?.homePlanetId,
+        planet: managedPlanet,
+        shipyardState,
+      }),
+    })),
+    [account, activePlanetId, defenseState, onChainSettlement?.homePlanetId, shipyardState, walletPlanets]
+  );
+
+  const handleOverviewMyPlanetAction = useCallback((action: GalaxyAction, managedPlanet: ManagedPlanetResponse) => {
+    const targetPlanet = planetFromSettlementPlanet(managedPlanet);
+    handleGalaxyAction(action, targetPlanet, {
+      galaxy: managedPlanet.galaxy,
+      system: managedPlanet.system,
+      position: managedPlanet.position,
+    });
+  }, [handleGalaxyAction]);
+
   const raidFinderAttackAction = useCallback((target: RaidTarget): GalaxyAction => {
     const planet = raidTargetPlanetForMission(target);
     return galaxyActionsForSlot({
@@ -6925,6 +7003,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         onWatchedPlanetsPageChange={setWatchedPlanetsPage}
         onRefreshWatchedPlanets={() => void refreshWatchedPlanets(watchedPlanetsPage)}
         watchBusyPlanetId={watchBusyPlanetId}
+        myPlanets={overviewMyPlanetActionGroups}
+        currentCommanderLabel={playerProfile?.displayName ?? "You"}
+        onMyPlanetAction={handleOverviewMyPlanetAction}
       />
     );
   })();
