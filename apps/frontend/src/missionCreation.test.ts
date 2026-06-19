@@ -454,8 +454,8 @@ describe("mission creation", () => {
 
     expect(shipyardOnlyForecast.attackerPower).toBeGreaterThan(baseForecast.attackerPower);
     expect(shipyardOnlyForecast.attackerTechLevels).toEqual({ weapons: 4, shielding: 0, armor: 5 });
-    expect(text).toMatch(/Attacker tech W\s+4 S\s+0 A\s+5/);
-    expect(text).toMatch(/Defender tech W\s+0 S\s+0 A\s+0/);
+    expect(text).toMatch(/Tech W4 S0 A5/);
+    expect(text).toMatch(/\/ W0 S0 A0/);
   });
 
   test("includes public stationed defenders in attack intel and battle forecast", () => {
@@ -519,30 +519,36 @@ describe("mission creation", () => {
     expect(text).toContain("Target");
     expect(text).toContain("New Zion");
     expect(text).toContain("[7:41:6]");
-    expect(text).toContain("Probable outcome");
+    expect(text).toContain("Outcome");
     expect(text).toContain("Probable win");
-    expect(text).toContain("Attacker tech");
-    expect(text).toContain("Defender tech unknown");
-    expect(text).toContain("Max loot at arrival");
-    expect(text).toContain("Destination intel");
-    expect(text).toContain("Destination Fleet");
+    expect(text).toContain("Tech");
+    expect(text).toContain("DEF unknown");
+    expect(text).toContain("Max loot");
+    expect(text).toContain("Resources");
+    expect(text).toContain("Max carry");
+    expect(text).toContain("Forces");
+    expect(text).toContain("Fleet");
     expect(text).toContain("Small Cargo");
     expect(text).toContain("Rocket Launcher");
-    expect(text).toContain("Resources now");
-    expect(text).toContain("1,000 M");
+    expect(text).toContain("Now");
+    expect(text).toMatch(/1,000\s+M/);
     expect(text).not.toContain("Public state");
+    expect(text).not.toContain("Destination intel");
     expect(text).not.toContain("Projected arrival resources use");
     expect(text).not.toContain("not charted");
   });
 
-  test("keeps Attack Mission setup grouped into target, fleet, timing, loot, and launch summary sections", () => {
-    expect(missionCreationSource).toContain("<MissionFormSection title=\"Fleet selection\" eyebrow=\"Ships\">");
-    expect(missionCreationSource).toContain("<MissionFormSection title=\"Speed and timing\" eyebrow=\"Flight plan\">");
-    expect(missionCreationSource).toContain("<MissionFormSection title=\"Loot priority\" eyebrow=\"Plunder\">");
-    expect(missionCreationSource).toContain("Launch decision");
-    expect(missionCreationSource).toContain("Target readout");
-    expect(missionCreationSource).toContain("MissionStatCard label={holdingBreakdown ? \"Reach planet\" : \"Arrival\"}");
-    expect(missionCreationSource).toContain("MissionStatCard label=\"Return\"");
+  test("keeps Attack Mission setup compact with aligned intel rows and no rejected section clutter", () => {
+    expect(missionCreationSource).toContain("<MissionFormSection title=\"Fleet\" eyebrow=\"Ships\">");
+    expect(missionCreationSource).toContain("<MissionFormSection title=\"Speed\" eyebrow=\"Flight plan\">");
+    expect(missionCreationSource).toContain("<MissionFormSection title=\"Loot\" eyebrow=\"Plunder\">");
+    expect(missionCreationSource).toContain("<h3 className=\"text-sm font-semibold text-white\">Launch</h3>");
+    expect(missionCreationSource).toContain("ResourceIntelTable");
+    expect(missionCreationSource).toContain("ForceIntelTable");
+    expect(missionCreationSource).toContain("CompactFactRow label={holdingBreakdown ? \"Reach\" : \"Arrival\"}");
+    expect(missionCreationSource).not.toContain("Launch decision");
+    expect(missionCreationSource).not.toContain("Mission Summary");
+    expect(missionCreationSource).not.toContain("MissionStatCard");
     expect(missionCreationSource).not.toContain("Projected arrival resources use");
   });
 
