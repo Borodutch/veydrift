@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Coordinates, Planet, PlanetType } from "./types";
-import { GalaxyView, type GalaxyActionState } from "./components/GalaxyView";
+import {
+  GalaxyView,
+  rememberGalaxySystemPayload,
+  type GalaxyActionState,
+} from "./components/GalaxyView";
 import { PlanetDetail } from "./components/PlanetDetail";
 import { TopBar } from "./components/TopBar";
 import { NavBar, type Page } from "./components/NavBar";
@@ -4070,7 +4074,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         return response.json();
       })
       .then((payload) => {
-        const systemPlanet = planetsFromSystemResponse(payload)
+        const systemPlanet = rememberGalaxySystemPayload(apiBaseUrl, homeCoords.galaxy, homeCoords.system, payload)
           .find((item) => item.position === homeCoords.position);
         const basePlanet = systemPlanet ?? (settlementPlanet ? planetFromSettlementPlanet(settlementPlanet) : undefined);
         const mergedPlanet = basePlanet && settlementPlanet
