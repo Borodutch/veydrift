@@ -98,7 +98,7 @@ describe("playable chain refresh", () => {
     expect(shouldRefreshMissionActionStateForPage("mission-control")).toBe(true);
     expect(shouldRefreshMissionActionStateForPage("raid-target-finder")).toBe(true);
     expect(shouldRefreshMissionActionStateForPage("shipyard")).toBe(false);
-    expect(shouldRefreshMissionActionStateForPage("overview")).toBe(false);
+    expect(shouldRefreshMissionActionStateForPage("overview")).toBe(true);
   });
 
   test("does not create browser-side gameplay read providers for transaction preflights", async () => {
@@ -146,16 +146,28 @@ describe("playable chain refresh", () => {
     expect(source).not.toContain("void refreshOnChainState(undefined, { force: true });");
   });
 
-  test("keeps attack mission confirmation open until receipt confirmation and indexing settle", async () => {
+  test("keeps mission confirmation open until receipt confirmation and indexing settle", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
     expect(source).toContain("): Promise<boolean> => {\n    let completed = false;");
     expect(source).toContain("await confirmSubmittedTransaction(txHash);");
     expect(source).toContain("await waitForMissionLaunchState(loadMissionLaunchSnapshot, txHash");
     expect(source).toContain("setGalaxyAction({ status: \"success\", label: `${label} confirmed.` });\n        completed = true;");
-    expect(source).toContain("if (completed) closeMissionCreation();");
+    expect(source).toContain("const closeMissionCreationWhenComplete = (transaction: Promise<boolean>) => {");
+    expect(source).toContain("if (await transaction) closeMissionCreation();");
+    expect(source).toContain("closeMissionCreationWhenComplete(runGalaxyTransaction(\"Colony mission\"");
+    expect(source).toContain("closeMissionCreationWhenComplete(runGalaxyTransaction(\"Missile attack\"");
+    expect(source).toContain("closeMissionCreationWhenComplete(runGalaxyTransaction(\"Stationed defense\"");
+    expect(source).toContain("closeMissionCreationWhenComplete(runMission());");
+    expect(source).toContain("const closeAcsDefendWhenComplete = (transaction: Promise<boolean>) => {");
+    expect(source).toContain("if (await transaction) setPendingAcsDefend(null);");
     expect(source).toContain("if (completed) closeJoinAttack();");
     expect(source).not.toContain("setPendingGalaxyMission(null);\n    setPendingJoinAttack(null);\n    setPendingAcsDefend(null);\n    if (action.kind === \"attack\"");
+    expect(source).not.toContain("closeMissionCreation();\n      void runGalaxyTransaction(\"Colony mission\"");
+    expect(source).not.toContain("closeMissionCreation();\n      void runGalaxyTransaction(\"Missile attack\"");
+    expect(source).not.toContain("closeMissionCreation();\n      void runGalaxyTransaction(\"Stationed defense\"");
+    expect(source).not.toContain("closeMissionCreation();\n    void runMission();");
+    expect(source).not.toContain("setPendingAcsDefend(null);\n    const driveLevels");
     expect(source).not.toContain("setPendingJoinAttack(null);\n    setPendingAcsDefend(null);\n    const driveLevels");
   });
 });
