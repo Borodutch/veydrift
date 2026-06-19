@@ -28,10 +28,10 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
 
     constructor() VeydriftResourceReserves(address(0)) {}
 
-    /// @notice Lazy fleet reconcile, combat leg (VEY-KANEO-468 Phase 2b). Self-only via the facade
-    ///         gate. Resolves every due Attack/Harvest mission `player` owns (attacker or targeted
-    ///         defender) whose battle randomness is committed, so combat lands on the player's next
-    ///         mutating call — no keeper/resolve tx.
+    /// @notice Lazy fleet reconcile, direct mission leg (VEY-590). Self-only via the facade gate.
+    ///         Resolves every due Transport/Deploy/Attack/Harvest mission `player` owns (attacker or
+    ///         targeted defender) whose battle randomness is committed, so arrivals land on the
+    ///         player's next mutating call — no keeper/resolve tx.
     /// @dev Iterates a memory snapshot of the player's tracked mission ids, so the swap-and-pop
     ///      untrack inside `resolveFleetMission` cannot disturb iteration. Each resolve is wrapped in
     ///      try/catch: a `PendingRandomness` revert (seed not yet committed) is swallowed, leaving the
@@ -45,7 +45,9 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
             FleetMission storage mission = _fleetMissions[missionIds[index]];
             if (
                 mission.status == FleetMissionStatus.Outbound
-                    && (mission.missionType == FleetMissionType.Attack
+                    && (mission.missionType == FleetMissionType.Transport
+                        || mission.missionType == FleetMissionType.Deploy
+                        || mission.missionType == FleetMissionType.Attack
                         || mission.missionType == FleetMissionType.Harvest)
                     && nowTimestamp >= mission.arrivalAt
             ) {

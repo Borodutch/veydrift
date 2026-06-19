@@ -5959,6 +5959,90 @@ contract VeydriftGameTest is Test {
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
     }
 
+    function testFleetLaunchLazilyResolvesReadyCombatArrivalBeforePendingGate() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setTechnologyLevel(player, Technology.Computer, 1);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 2);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+        _setResources(targetPlanetId, 10_000, 4_000, 3_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 firstMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(firstMissionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(firstMissionId, 77);
+
+        vm.prank(player);
+        uint256 secondMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        (VeydriftGameStorage.FleetMissionStatus firstStatus,,,) = _fleetMission(firstMissionId);
+        (VeydriftGameStorage.FleetMissionStatus secondStatus,,,) = _fleetMission(secondMissionId);
+        assertEq(uint8(firstStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+        assertEq(uint8(secondStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(game.activeFleetMissionCount(player), 2);
+    }
+
+    function testFleetLaunchLazilyResolvesReadyDeployArrivalBeforeSlotGate() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 2, 10, 4);
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
+        _setTechnologyLevel(player, Technology.CombustionDrive, 2);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        uint256 targetPlanetId = _createResolvedColony(player, originPlanetId, 220);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 2);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 deployMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Deploy,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(deployMissionId);
+        vm.warp(arrivalAt);
+
+        vm.prank(player);
+        uint256 transportMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        (VeydriftGameStorage.FleetMissionStatus deployStatus,,,) = _fleetMission(deployMissionId);
+        (VeydriftGameStorage.FleetMissionStatus transportStatus,,,) =
+            _fleetMission(transportMissionId);
+        assertEq(uint8(deployStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        assertEq(uint8(transportStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(game.activeFleetMissionCount(player), 1);
+    }
+
     /// @notice Lazy combat settlement must not leak the randomness-engine revert to the caller. When
     ///         the battle seed is still pending, the mission remains Outbound and the pre-existing
     ///         pending-mission gate remains the user-visible blocker.

@@ -1221,6 +1221,7 @@ export class SettlementIndexer {
       mission.status === "Outbound"
         && (mission.missionType === "Attack" || mission.missionType === "Harvest")
         && Number(mission.arrivalAt) <= asOfSeconds
+        && mission.needsResolution !== true
         && (mission.originPlanetId === planetId || mission.targetPlanetId === planetId)
         && !resolvedBattleMissionIds.has(mission.missionId)
     ).sort((left, right) => Number(left.arrivalAt) - Number(right.arrivalAt));
@@ -1239,11 +1240,10 @@ export class SettlementIndexer {
 
   pendingFleetSlotSettlementMissionsForWallet(wallet: `0x${string}`, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
     const walletLower = wallet.toLowerCase();
-    return this.indexedFleetSlotCountMissions()
+    return this.indexedFleetMissionReferenceIndex().active
       .filter((mission) =>
         mission.owner.toLowerCase() === walletLower
-        && isActiveFleetMissionStatus(mission.status)
-        && fleetSlotSettlementDue(mission, asOfSeconds)
+        && fleetSlotSettlementBlocksLaunch(mission, asOfSeconds)
       )
       .sort((left, right) => fleetSlotSettlementDueAt(left) - fleetSlotSettlementDueAt(right));
   }
@@ -1365,8 +1365,12 @@ export class SettlementIndexer {
 
   fleetSlots(wallet: `0x${string}`): ShipyardState["fleetSlots"] {
     const walletLower = wallet.toLowerCase();
-    const active = this.indexedFleetSlotCountMissions()
-      .filter((mission) => mission.owner.toLowerCase() === walletLower && isActiveFleetMissionStatus(mission.status))
+    const asOfSeconds = nowSeconds();
+    const active = this.indexedFleetMissionReferenceIndex().active
+      .filter((mission) =>
+        mission.owner.toLowerCase() === walletLower
+        && !fleetSlotFreedByLazyLaunchSettlement(mission, asOfSeconds)
+      )
       .length;
     const technologyLevels = this.technologyLevels(wallet);
 
@@ -5475,13 +5479,6 @@ export class SettlementIndexer {
     return this.indexedFleetMissionReferenceIndex().summaries;
   }
 
-  private indexedFleetSlotCountMissions(): FleetMissionSummary[] {
-    // Fleet slots must mirror the contract's activeFleetMissionCount. Mission views can project
-    // elapsed Returning/Recalled legs as Returned for UX, but the contract does not free that slot
-    // until a settlement transaction emits the terminal event.
-    return this.mergeCanonicalFleetMissions(this.decodedMissionLogs().eventMissions);
-  }
-
   private indexedFleetMissionReferenceIndex(): {
     source: FleetMissionSummary[];
     summaries: FleetMissionSummary[];
@@ -6188,6 +6185,21 @@ function fleetSlotSettlementDue(mission: FleetMissionSummary, asOfSeconds: numbe
   return fleetSlotSettlementDueAt(mission) <= asOfSeconds;
 }
 
+function fleetSlotSettlementBlocksLaunch(mission: FleetMissionSummary, asOfSeconds: number): boolean {
+  if (!isActiveFleetMissionStatus(mission.status) || !fleetSlotSettlementDue(mission, asOfSeconds)) return false;
+  return !fleetSlotFreedByLazyLaunchSettlement(mission, asOfSeconds);
+}
+
+function fleetSlotFreedByLazyLaunchSettlement(mission: FleetMissionSummary, asOfSeconds: number): boolean {
+  if (!fleetSlotSettlementDue(mission, asOfSeconds)) return false;
+  if (mission.status === "Returning" || mission.status === "Recalled") return true;
+  return (
+    mission.status === "Outbound"
+    && mission.needsResolution === true
+    && lazyLaunchSettleableOutboundMissionTypes.has(mission.missionType)
+  );
+}
+
 function fleetSlotSettlementDueAt(mission: FleetMissionSummary): number {
   if (mission.status === "Returning" || mission.status === "Recalled") return Number(mission.returnAt);
   if (mission.status === "Outbound") {
@@ -6196,6 +6208,8 @@ function fleetSlotSettlementDueAt(mission: FleetMissionSummary): number {
   }
   return Number.POSITIVE_INFINITY;
 }
+
+const lazyLaunchSettleableOutboundMissionTypes = new Set(["Transport", "Deploy", "Attack", "Harvest"]);
 
 function projectedFleetRecallCost(fuelCost: string): string {
   const fuel = BigInt(fuelCost);
