@@ -108,6 +108,7 @@ import {
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
   waitForAllianceApplicationCleared,
+  waitForAllianceProfileState,
   waitForMissionLaunchState,
   waitForRenamedWalletPlanet,
   type AllianceApplicationExpectation,
@@ -5153,21 +5154,25 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
   const handleUpdateAllianceProfile = useCallback((tag: string, name: string, description: string) => {
-    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+    if (!provider || !account || !apiBaseUrl || !allianceContract || !allianceState?.membership.allianceId) {
       setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
       return;
     }
 
+    const allianceId = allianceState.membership.allianceId;
     void runAllianceTransaction("Alliance profile update", () => sendAllianceProfileTransaction(
       provider,
       account,
       allianceContract,
-      allianceState.membership.allianceId,
+      allianceId,
       tag,
       name,
       description,
+    ), () => waitForAllianceProfileState(
+      async () => fetchAllianceState(apiBaseUrl, account),
+      { allianceId, tag, name, description },
     ));
-  }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+  }, [account, apiBaseUrl, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
   const handleAcceptAllianceInvite = useCallback((allianceId: string) => {
     if (!provider || !account || !apiBaseUrl || !allianceContract) {
