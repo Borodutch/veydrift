@@ -275,6 +275,44 @@ describe("LogBackfillSweep", () => {
     expect(sweep.snapshot().lastSweepError).toContain("503");
   });
 
+  test("reconciles already-tracked due attacks even when log backfill fails", async () => {
+    const calls: string[] = [];
+    const keeper = makeKeeper(() => 1_000);
+    keeper.recordLaunched({ missionId: "8", missionType: MissionType.Attack, arrivalAt: 900, returnAt: 1_500 });
+    expect(keeper.snapshot().awaitingArrivalCount).toBe(1);
+
+    const transport: JsonRpcTransport = {
+      request: async <T>(method: string): Promise<T> => {
+        calls.push(method);
+        if (method === "eth_blockNumber") {
+          return "0x100" as T;
+        }
+        if (method === "eth_getLogs") {
+          throw new Error("PublicNode backfill failed");
+        }
+        if (method === "eth_call") {
+          return fleetMissionResult({
+            status: FleetMissionStatus.Returning,
+            missionType: MissionType.Attack,
+            arrivalAt: 900n,
+            returnAt: 1_500n
+          }) as T;
+        }
+        return "0x0" as T;
+      }
+    };
+    const sweep = new LogBackfillSweep(transport, gameContract, keeper, { logger: silentLogger });
+
+    await sweep.sweep();
+
+    expect(calls).toContain("eth_call");
+    expect(sweep.snapshot().lastSweepError).toContain("PublicNode backfill failed");
+    const snap = keeper.snapshot();
+    expect(snap.awaitingArrivalCount).toBe(0);
+    expect(snap.awaitingReturnCount).toBe(1);
+    expect(snap.pendingMissionIds).toEqual(["8"]);
+  });
+
   test("deep backfill splits a wide window into contiguous chunks covering the full range", async () => {
     const keeper = makeKeeper(() => 10_000);
     const ranges: Array<{ from: bigint; to: bigint }> = [];

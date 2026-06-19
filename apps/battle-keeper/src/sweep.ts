@@ -98,12 +98,14 @@ export class LogBackfillSweep {
    * `maxRangeBlocks` chunks because nodes cap a single `eth_getLogs` span.
    */
   async sweep(lookbackOverride?: bigint): Promise<void> {
+    const errors: string[] = [];
+    const pendingBefore = this.keeper.snapshot().pendingCount;
+    let pendingAfterLogs = pendingBefore;
     try {
       const latest = BigInt(await this.transport.request<string>("eth_blockNumber", []));
       const lookback = lookbackOverride ?? this.lookbackBlocks;
       const fromBlock = latest > lookback ? latest - lookback : 0n;
 
-      const pendingBefore = this.keeper.snapshot().pendingCount;
       for (let start = fromBlock; start <= latest; start += this.maxRangeBlocks + 1n) {
         const end = start + this.maxRangeBlocks > latest ? latest : start + this.maxRangeBlocks;
         const logs = await this.transport.request<RawLog[]>("eth_getLogs", [
@@ -119,26 +121,34 @@ export class LogBackfillSweep {
         }
       }
 
-      const pendingAfterLogs = this.keeper.snapshot().pendingCount;
-      await this.reconcilePendingStatuses();
-
-      const pendingAfterStatusReconcile = this.keeper.snapshot().pendingCount;
-      const recovered = Math.max(0, pendingAfterLogs - pendingBefore);
-      const pruned = Math.max(0, pendingAfterLogs - pendingAfterStatusReconcile);
-      this.recoveredLaunches += recovered;
-      this.prunedPendingMissions += pruned;
-      this.sweepCount += 1;
-      this.lastSweepAt = new Date().toISOString();
-      this.lastSweepError = null;
-      if (recovered > 0) {
-        this.logger?.warn("[sweep] recovered missions missed by WS feed", { recovered });
-      }
-      if (pruned > 0) {
-        this.logger?.warn("[sweep] pruned stale pending missions by on-chain status", { pruned });
-      }
+      pendingAfterLogs = this.keeper.snapshot().pendingCount;
     } catch (error) {
-      this.lastSweepError = error instanceof Error ? error.message : String(error);
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(message);
       this.logger?.error("[sweep] backfill failed", error);
+    }
+
+    try {
+      await this.reconcilePendingStatuses();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(message);
+      this.logger?.error("[sweep] pending status reconcile failed", error);
+    }
+
+    const pendingAfterStatusReconcile = this.keeper.snapshot().pendingCount;
+    const recovered = Math.max(0, pendingAfterLogs - pendingBefore);
+    const pruned = Math.max(0, pendingAfterLogs - pendingAfterStatusReconcile);
+    this.recoveredLaunches += recovered;
+    this.prunedPendingMissions += pruned;
+    this.sweepCount += 1;
+    this.lastSweepAt = new Date().toISOString();
+    this.lastSweepError = errors.length > 0 ? errors.join("; ") : null;
+    if (recovered > 0) {
+      this.logger?.warn("[sweep] recovered missions missed by WS feed", { recovered });
+    }
+    if (pruned > 0) {
+      this.logger?.warn("[sweep] pruned stale pending missions by on-chain status", { pruned });
     }
   }
 
