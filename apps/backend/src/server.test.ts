@@ -1576,6 +1576,69 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("refreshes warmed shipyard and defense API caches after unit-count logs are indexed", async () => {
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xhomeplanet",
+      blockNumber: "100"
+    });
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xship-count-before",
+      logIndex: "0x0",
+      removed: false,
+      topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(5n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xdefense-count-before",
+      logIndex: "0x1",
+      removed: false,
+      topics: [planetDefenseCountChangedTopic, topic(7n), topic(1n)],
+      data: abiWords(3n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      enableResponseCache: true,
+      indexer
+    });
+
+    const warmShipyard = await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`));
+    const warmShipyardBody = await warmShipyard.json() as ShipyardState;
+    expect(warmShipyardBody.ships.find((ship) => ship.id === 0)?.count).toBe(5);
+    const warmDefenses = await handler(new Request(`http://localhost/wallet/${player}/defenses?planetId=7`));
+    const warmDefensesBody = await warmDefenses.json() as DefenseState;
+    expect(warmDefensesBody.defenses.find((defense) => defense.id === 1)?.count).toBe(3);
+
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xship-count-after",
+      logIndex: "0x0",
+      removed: false,
+      topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xdefense-count-after",
+      logIndex: "0x1",
+      removed: false,
+      topics: [planetDefenseCountChangedTopic, topic(7n), topic(1n)],
+      data: abiWords(4n)
+    });
+
+    const freshShipyard = await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`));
+    const freshShipyardBody = await freshShipyard.json() as ShipyardState;
+    expect(freshShipyardBody.ships.find((ship) => ship.id === 0)?.count).toBe(0);
+    const freshDefenses = await handler(new Request(`http://localhost/wallet/${player}/defenses?planetId=7`));
+    const freshDefensesBody = await freshDefenses.json() as DefenseState;
+    expect(freshDefensesBody.defenses.find((defense) => defense.id === 1)?.count).toBe(4);
+  });
+
   test("refreshes reader-worker cached mission detail after another process indexes resolved attack logs", async () => {
     const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
     const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";

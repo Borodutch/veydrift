@@ -8,6 +8,7 @@
     "build": "tsc --project tsconfig.json",
     "check": "tsc --project tsconfig.json",
     "dev": "bun --watch src/index.ts",
+    "fleet-defense:parity": "bun src/fleetDefenseParityGuard.ts",
     "index:replay": "bun src/replayIndexer.ts",
     "index:seed-current": "bun src/replayIndexer.ts --current-state-seed --current-state-concurrency 25",
     "index:sync": "bun src/replayIndexer.ts --canonical-sync",
