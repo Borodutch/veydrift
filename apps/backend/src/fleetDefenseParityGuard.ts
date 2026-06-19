@@ -21,59 +21,78 @@ const options = parseArgs(process.argv.slice(2));
 const apiUrl = trimSlash(options["api-url"] ?? process.env.VEYDRIFT_API_URL ?? "https://api-test.veydrift.com");
 const rpcUrl = options["rpc-url"] ?? process.env.VEYDRIFT_RPC_URL ?? process.env.BASE_SEPOLIA_RPC_URL ?? "https://sepolia.base.org";
 const warmupPasses = parsePositiveInt(options["warmup-passes"], 2);
-const gameAddress = await resolveGameAddress();
-const rawState = await fetchJson<DebugFleetDefenseState>(`${apiUrl}/debug/fleet-defense-state`);
-const rawCounts = rawState.counts ?? [];
-const chainCounts = await readChainCounts(gameAddress, rawCounts);
-const apiCounts = await readApiCounts(rawCounts, warmupPasses);
-const report = compareFleetDefenseParity(chainCounts, rawCounts, apiCounts);
-const artifact = {
-  ...report,
-  apiUrl,
-  rpcUrl: redactUrl(rpcUrl),
-  gameAddress,
-  checkedPlanets: new Set(rawCounts.map((count) => count.planetId)).size,
-  checkedUnits: {
-    chain: chainCounts.length,
-    raw: rawCounts.length,
-    api: apiCounts.length
-  },
-  indexer: rawState.indexer ?? null,
-  repairGate: report.summary.raw_db_mismatch > 0
-    ? {
-        reason: "raw indexed DB unit counts diverge from on-chain shipCount/defenseCount",
-        backendTestCommand: "cd apps/backend && bun run index:seed-current",
-        rerunCommand: "cd apps/backend && bun run fleet-defense:parity -- --api-url https://api-test.veydrift.com --out /Users/borodutch/.openclaw/workspace/artifacts/veydrift_fleet_defense_parity_<timestamp>.json"
-      }
-    : null
-};
+const apiTimeoutMs = parsePositiveInt(options["api-timeout-ms"], 15_000);
+const rpcTimeoutMs = parsePositiveInt(options["rpc-timeout-ms"], 20_000);
 
-const output = `${JSON.stringify(artifact, null, 2)}\n`;
-if (options.out) {
-  writeFileSync(options.out, output);
-} else {
-  process.stdout.write(output);
+try {
+  await main();
+} catch (error) {
+  const artifact = {
+    checkedAt: new Date().toISOString(),
+    ok: false,
+    apiUrl,
+    rpcUrl: redactUrl(rpcUrl),
+    failure: {
+      kind: "guard_execution_failed",
+      message: error instanceof Error ? error.message : String(error)
+    },
+    repairGate: null
+  };
+  writeArtifact(artifact);
+  console.error(`fleet/defense parity guard failed before comparison: ${artifact.failure.message}`);
+  process.exit(1);
 }
 
-if (!artifact.ok) {
-  for (const item of artifact.discrepancies.slice(0, 25)) {
-    console.error(
-      `${item.kind}: planet ${item.planetId} ${item.unitKind} ${item.unitId} (${item.unitName}) chain=${item.chain} raw=${item.raw ?? "missing"} api=${item.api ?? "missing"} owner=${item.owner}`
-    );
+async function main(): Promise<void> {
+  const gameAddress = await resolveGameAddress();
+  const rawState = await fetchJson<DebugFleetDefenseState>(`${apiUrl}/debug/fleet-defense-state`, apiTimeoutMs);
+  const rawCounts = rawState.counts ?? [];
+  const chainCounts = await readChainCounts(gameAddress, rawCounts);
+  const apiCounts = await readApiCounts(rawCounts, warmupPasses);
+  const report = compareFleetDefenseParity(chainCounts, rawCounts, apiCounts);
+  const artifact = {
+    ...report,
+    apiUrl,
+    rpcUrl: redactUrl(rpcUrl),
+    gameAddress,
+    checkedPlanets: new Set(rawCounts.map((count) => count.planetId)).size,
+    checkedUnits: {
+      chain: chainCounts.length,
+      raw: rawCounts.length,
+      api: apiCounts.length
+    },
+    indexer: rawState.indexer ?? null,
+    repairGate: report.summary.raw_db_mismatch > 0
+      ? {
+          reason: "raw indexed DB unit counts diverge from on-chain shipCount/defenseCount",
+          backendTestCommand: "cd apps/backend && bun run index:seed-current",
+          rerunCommand: "cd apps/backend && bun run fleet-defense:parity -- --api-url https://api-test.veydrift.com --out /Users/borodutch/.openclaw/workspace/artifacts/veydrift_fleet_defense_parity_<timestamp>.json"
+        }
+      : null
+  };
+
+  writeArtifact(artifact);
+
+  if (!artifact.ok) {
+    for (const item of artifact.discrepancies.slice(0, 25)) {
+      console.error(
+        `${item.kind}: planet ${item.planetId} ${item.unitKind} ${item.unitId} (${item.unitName}) chain=${item.chain} raw=${item.raw ?? "missing"} api=${item.api ?? "missing"} owner=${item.owner}`
+      );
+    }
+    if (artifact.repairGate) {
+      console.error(`raw_db_mismatch repair gate: ${artifact.repairGate.backendTestCommand}; then rerun parity guard.`);
+    }
+    if (artifact.discrepancies.length > 25) {
+      console.error(`...${artifact.discrepancies.length - 25} more discrepancies`);
+    }
+    process.exit(1);
   }
-  if (artifact.repairGate) {
-    console.error(`raw_db_mismatch repair gate: ${artifact.repairGate.backendTestCommand}; then rerun parity guard.`);
-  }
-  if (artifact.discrepancies.length > 25) {
-    console.error(`...${artifact.discrepancies.length - 25} more discrepancies`);
-  }
-  process.exit(1);
 }
 
 async function resolveGameAddress(): Promise<Address> {
   const explicit = options.game ?? process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS ?? process.env.VEYDRIFT_CONTRACT_ADDRESS;
   if (explicit) return normalizeAddress(explicit, "game");
-  const runtime = await fetchJson<Record<string, unknown>>(`${apiUrl}/runtime-config`);
+  const runtime = await fetchJson<Record<string, unknown>>(`${apiUrl}/runtime-config`, apiTimeoutMs);
   return normalizeAddress(
     typeof runtime.gameContractAddress === "string" ? runtime.gameContractAddress : runtime.contractAddress,
     "runtime game"
@@ -90,8 +109,8 @@ async function readApiCounts(rawCounts: readonly FleetDefenseUnitCount[], warmup
     let shipyard: ShipyardState | null = null;
     let defenses: DefenseState | null = null;
     for (let pass = 0; pass < warmups; pass += 1) {
-      shipyard = await fetchJson<ShipyardState>(`${apiUrl}/wallet/${encodedWallet}/shipyard?planetId=${encodedPlanet}`);
-      defenses = await fetchJson<DefenseState>(`${apiUrl}/wallet/${encodedWallet}/defenses?planetId=${encodedPlanet}`);
+      shipyard = await fetchJson<ShipyardState>(`${apiUrl}/wallet/${encodedWallet}/shipyard?planetId=${encodedPlanet}`, apiTimeoutMs);
+      defenses = await fetchJson<DefenseState>(`${apiUrl}/wallet/${encodedWallet}/defenses?planetId=${encodedPlanet}`, apiTimeoutMs);
     }
     for (const ship of shipyard?.ships ?? []) {
       counts.push({
@@ -156,7 +175,7 @@ async function readChainCounts(gameAddress: Address, rawCounts: readonly FleetDe
 }
 
 async function rpcBatch(body: Array<Record<string, unknown>>): Promise<Array<{ error?: { message?: string }; id: number; result: string }>> {
-  const response = await fetch(rpcUrl, {
+  const response = await fetchWithTimeout(rpcUrl, rpcTimeoutMs, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body)
@@ -167,8 +186,8 @@ async function rpcBatch(body: Array<Record<string, unknown>>): Promise<Array<{ e
   return json;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, { headers: { accept: "application/json" } });
+async function fetchJson<T>(url: string, timeoutMs: number): Promise<T> {
+  const response = await fetchWithTimeout(url, timeoutMs, { headers: { accept: "application/json" } });
   const text = await response.text();
   let body: unknown;
   try {
@@ -178,6 +197,30 @@ async function fetchJson<T>(url: string): Promise<T> {
   }
   if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}: ${text.slice(0, 500)}`);
   return body as T;
+}
+
+async function fetchWithTimeout(url: string, timeoutMs: number, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`${url} timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function writeArtifact(artifact: unknown): void {
+  const output = `${JSON.stringify(artifact, null, 2)}\n`;
+  if (options.out) {
+    writeFileSync(options.out, output);
+  } else {
+    process.stdout.write(output);
+  }
 }
 
 function planetsFromRawCounts(rawCounts: readonly FleetDefenseUnitCount[]): Map<string, { owner: Address; planetId: string }> {
@@ -243,7 +286,7 @@ function parseArgs(args: string[]): Record<string, string | undefined> {
 function usage(message?: string): never {
   if (message) console.error(message);
   console.error(
-    "Usage: bun apps/backend/src/fleetDefenseParityGuard.ts [--api-url <url>] [--rpc-url <url>] [--game <address>] [--warmup-passes <n>] [--rpc-batch-size <n>] [--out <file>]"
+    "Usage: bun apps/backend/src/fleetDefenseParityGuard.ts [--api-url <url>] [--rpc-url <url>] [--game <address>] [--warmup-passes <n>] [--rpc-batch-size <n>] [--api-timeout-ms <n>] [--rpc-timeout-ms <n>] [--out <file>]"
   );
   process.exit(message ? 1 : 0);
 }
