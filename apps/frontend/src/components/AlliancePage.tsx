@@ -53,6 +53,7 @@ interface AlliancePageProps {
   error?: string | undefined;
   loading: boolean;
   selectedAllianceId?: string | null | undefined;
+  transactionUnavailableReason?: string | undefined;
   onAcceptInvite: (allianceId: string) => void;
   onApproveJoinRequest: (playerAddress: string) => void;
   onCancelJoinRequest: (allianceId: string) => void;
@@ -79,6 +80,7 @@ export function AlliancePage({
   error,
   loading,
   selectedAllianceId,
+  transactionUnavailableReason,
   onAcceptInvite,
   onApproveJoinRequest,
   onCancelJoinRequest,
@@ -185,6 +187,7 @@ export function AlliancePage({
       {allianceState?.allianceAvailable === false ? (
         <Notice>{allianceState.unavailableReason ?? "Alliance contract is not configured."}</Notice>
       ) : null}
+      {!canTransact && transactionUnavailableReason ? <Notice>{transactionUnavailableReason}</Notice> : null}
       {actionState.status !== "idle" ? <Notice tone={actionState.status === "error" ? "error" : "info"}>{actionState.label}</Notice> : null}
 
       {initialLoading ? (

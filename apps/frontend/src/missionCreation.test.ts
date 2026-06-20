@@ -723,6 +723,24 @@ describe("mission creation", () => {
     })).toBe(blocker);
   });
 
+  test("shows transaction sync as the primary mission-compose blocker", () => {
+    const blocker = "Ship production: syncing indexed state...";
+
+    expect(missionDraftBlocker({
+      action: attackAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      cargoTotal: 0,
+      fuelCost: 0,
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 1,
+      resources: { metal: 0, crystal: 0, deuterium: 1_000 },
+      selectedShipCount: 1,
+      submitBlocker: blocker,
+      totalCargoCapacity: 50,
+    })).toBe(blocker);
+  });
+
   test("blocks non-Galaxy station-defense launches at the same Computer-tech fleet-slot cap", () => {
     const blocked = missionDraftBlocker({
       action: defenseHoldAction,

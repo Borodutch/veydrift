@@ -39,6 +39,7 @@ interface DefensePageProps {
   productionRates?: Resources | undefined;
   selectedDefenseKey?: DefenseKey | undefined;
   spendableResources?: Resources | undefined;
+  transactionUnavailableReason?: string | undefined;
 }
 
 const groupLabels = {
@@ -77,6 +78,7 @@ export function DefensePage({
   productionRates,
   selectedDefenseKey,
   spendableResources,
+  transactionUnavailableReason,
 }: DefensePageProps) {
   const [quantities, setQuantities] = useState<Record<string, ProductionQuantityInput>>({});
   const [localSelectedKey, setLocalSelectedKey] = useState<DefenseKey>("rocketLauncher");
@@ -119,6 +121,7 @@ export function DefensePage({
             queue,
             resources: spendableResources ?? resources,
             productionRates,
+            transactionUnavailableReason,
           })}
           now={now}
           onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
@@ -196,6 +199,7 @@ export function defenseProductionItems({
   queue,
   resources,
   productionRates,
+  transactionUnavailableReason,
 }: {
   actionPending: boolean;
   canTransact: boolean;
@@ -205,6 +209,7 @@ export function defenseProductionItems({
   queue?: ChainDefenseState["queue"] | undefined;
   resources: Resources | undefined;
   productionRates?: Resources | undefined;
+  transactionUnavailableReason?: string | undefined;
 }): ProductionCatalogItem<DefenseKey>[] {
   return defenseCatalog.map((defense) => {
     const chainDefense = defenseState?.defenses.find((item) => item.id === defense.id);
@@ -232,6 +237,7 @@ export function defenseProductionItems({
       resources,
       totalCost,
       productionRates,
+      transactionUnavailableReason,
     });
     const disabled = Boolean(blockedReason) || actionPending;
     const queued = queuedDefenseCount(defense.id, queue);
@@ -363,6 +369,7 @@ function getBlockedReason({
   resources,
   totalCost,
   productionRates,
+  transactionUnavailableReason,
 }: {
   affordable: boolean;
   canTransact: boolean;
@@ -373,8 +380,9 @@ function getBlockedReason({
   resources: Resources | undefined;
   totalCost?: Resources | undefined;
   productionRates?: Resources | undefined;
+  transactionUnavailableReason?: string | undefined;
 }): string | undefined {
-  if (!canTransact) return "Wallet or game contract unavailable";
+  if (!canTransact) return transactionUnavailableReason ?? "Wallet or game contract unavailable";
   if (!defenseState) return "Waiting for chain state";
   if (defenseState.productionAvailable === false) return "Defense production unavailable";
   if (!hasPlanet) return "No game planet";

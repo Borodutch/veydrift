@@ -21,6 +21,7 @@ interface MoonPageProps {
   onJumpGate?: ((destinationPlanetId: string, ships?: Partial<MissionShips>) => void) | undefined;
   onRefresh?: (() => void) | undefined;
   onStartBuilding?: ((buildingId: number, label: string) => void) | undefined;
+  transactionUnavailableReason?: string | undefined;
 }
 
 export function MoonPage({
@@ -32,6 +33,7 @@ export function MoonPage({
   onJumpGate,
   onRefresh,
   onStartBuilding,
+  transactionUnavailableReason,
 }: MoonPageProps) {
   const moon = moonState?.moon;
   const hasMoon = Boolean(moon?.exists);
@@ -60,6 +62,7 @@ export function MoonPage({
             moonState={moonState}
             onJumpGate={onJumpGate}
             onStartBuilding={onStartBuilding}
+            transactionUnavailableReason={transactionUnavailableReason}
           />
         </>
       ) : loading ? (
@@ -135,6 +138,7 @@ function MoonSystemsPanel({
   moonState,
   onJumpGate,
   onStartBuilding,
+  transactionUnavailableReason,
 }: {
   action?: MoonPageProps["action"];
   canTransact?: boolean | undefined;
@@ -142,6 +146,7 @@ function MoonSystemsPanel({
   moonState?: ChainMoonState | null | undefined;
   onJumpGate?: MoonPageProps["onJumpGate"];
   onStartBuilding?: MoonPageProps["onStartBuilding"];
+  transactionUnavailableReason?: string | undefined;
 }) {
   const [jumpDestination, setJumpDestination] = useState("");
   const [jumpSmallCargo, setJumpSmallCargo] = useState("");
@@ -162,6 +167,11 @@ function MoonSystemsPanel({
       </section>
 
       <section className="rounded-md border border-white/10 bg-[#101624] p-4">
+        {!canTransact && transactionUnavailableReason ? (
+          <p className="mb-3 rounded border border-cyan-300/20 bg-cyan-300/10 px-2 py-1.5 text-xs text-cyan-100">
+            {transactionUnavailableReason}
+          </p>
+        ) : null}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-white">Moon Structures</h3>
@@ -187,6 +197,7 @@ function MoonSystemsPanel({
                   className="mt-3 h-8 w-full rounded border border-cyan-200/20 bg-cyan-200/10 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
                   disabled={!canTransact || pending || moonState?.queue?.active}
                   onClick={() => onStartBuilding(building.id, building.label)}
+                  title={!canTransact ? transactionUnavailableReason : undefined}
                   type="button"
                 >
                   Upgrade
@@ -226,6 +237,7 @@ function MoonSystemsPanel({
               className="h-9 rounded border border-cyan-200/20 bg-cyan-200/10 px-3 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={!canTransact || pending || !onJumpGate || !jumpDestinationReady || !jumpCargoValid}
               onClick={() => jumpCargoValid ? onJumpGate?.(jumpDestination.trim(), jumpShips) : undefined}
+              title={!canTransact ? transactionUnavailableReason : undefined}
               type="button"
             >
               Jump

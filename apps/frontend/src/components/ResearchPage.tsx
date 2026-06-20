@@ -83,6 +83,7 @@ interface ResearchPageProps {
   spendableResources?: Resources | undefined;
   settledState: PlayableState;
   state: PlayableState;
+  transactionUnavailableReason?: string | undefined;
   useLocalStateFallback?: boolean | undefined;
 }
 
@@ -101,6 +102,7 @@ export function ResearchPage({
   selectedResearchKey,
   spendableResources,
   settledState,
+  transactionUnavailableReason,
   useLocalStateFallback = false,
 }: ResearchPageProps) {
   const [localSelectedKey, setLocalSelectedKey] = useState<ResearchKey>("energy");
@@ -169,6 +171,7 @@ export function ResearchPage({
                     researchState,
                     spendableResources,
                     state: viewState,
+                    transactionUnavailableReason,
                   });
                   return (
                     <InspectCatalogTile
@@ -206,6 +209,7 @@ export function ResearchPage({
             productionRates={productionRates}
             spendableResources={spendableResources}
             state={viewState}
+            transactionUnavailableReason={transactionUnavailableReason}
           />
         )}
         detailPanelRef={detailPanelRef}
@@ -365,6 +369,7 @@ function ResearchDetailPanel({
   productionRates,
   spendableResources,
   state,
+  transactionUnavailableReason,
 }: {
   actionPending: boolean;
   actionPendingLabel?: string | undefined;
@@ -380,6 +385,7 @@ function ResearchDetailPanel({
   productionRates?: Resources | undefined;
   spendableResources?: Resources | undefined;
   state: PlayableState;
+  transactionUnavailableReason?: string | undefined;
 }) {
   const status = researchActionStatus({
     actionPending,
@@ -395,6 +401,7 @@ function ResearchDetailPanel({
     researchState,
     spendableResources,
     state,
+    transactionUnavailableReason,
   });
   const requirementStates = getResearchRequirementStates(state, research.key);
   const effectRows = researchEffectRows(state, research.key, {
@@ -895,6 +902,7 @@ export function researchActionStatus({
   researchState,
   spendableResources,
   state,
+  transactionUnavailableReason,
 }: {
   actionPending: boolean;
   actionPendingLabel?: string | undefined;
@@ -909,6 +917,7 @@ export function researchActionStatus({
   researchState: ChainResearchState | null;
   spendableResources?: Resources | undefined;
   state: PlayableState;
+  transactionUnavailableReason?: string | undefined;
 }) {
   const cost = chainCost;
   const currentLevel = state.research[key];
@@ -941,7 +950,7 @@ export function researchActionStatus({
           : !researchState.homePlanetId
             ? "No VeydriftGame home planet"
             : !canTransact
-              ? "Wallet or game contract unavailable"
+              ? transactionUnavailableReason ?? "Wallet or game contract unavailable"
               : activeReady
                 ? `Completing Level ${targetLevel}`
               : active

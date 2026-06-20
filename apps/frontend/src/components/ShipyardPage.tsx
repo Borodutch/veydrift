@@ -43,6 +43,7 @@ interface ShipyardPageProps {
   selectedShipKey?: ShipKey | undefined;
   shipyardState: ChainShipyardState | null;
   spendableResources?: Resources | undefined;
+  transactionUnavailableReason?: string | undefined;
 }
 
 const groupLabels = {
@@ -81,6 +82,7 @@ export function ShipyardPage({
   selectedShipKey,
   shipyardState,
   spendableResources,
+  transactionUnavailableReason,
 }: ShipyardPageProps) {
   const [quantities, setQuantities] = useState<Record<string, ProductionQuantityInput>>({});
   const [localSelectedKey, setLocalSelectedKey] = useState<ShipKey>("smallCargo");
@@ -125,6 +127,7 @@ export function ShipyardPage({
             shipyardLevel,
             shipyardState,
             productionRates,
+            transactionUnavailableReason,
           })}
           now={now}
           onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
@@ -216,6 +219,7 @@ export function shipProductionItems({
   shipyardLevel,
   shipyardState,
   productionRates,
+  transactionUnavailableReason,
 }: {
   actionPending: boolean;
   canTransact: boolean;
@@ -226,6 +230,7 @@ export function shipProductionItems({
   shipyardLevel: number;
   shipyardState: ChainShipyardState | null;
   productionRates?: Resources | undefined;
+  transactionUnavailableReason?: string | undefined;
 }): ProductionCatalogItem<ShipKey>[] {
   // Build only from the buildable subset so expedition-only ships (Pathfinder) are
   // hidden from the shipyard. `shipCatalog` is still used elsewhere for queue label
@@ -260,6 +265,7 @@ export function shipProductionItems({
       shipyardState,
       totalCost,
       productionRates,
+      transactionUnavailableReason,
     });
     const disabled = Boolean(blockedReason) || actionPending;
     const combatStats = shipCombatStats(ship);
@@ -440,6 +446,7 @@ export function getBlockedReason({
   shipyardState,
   totalCost,
   productionRates,
+  transactionUnavailableReason,
 }: {
   affordable: boolean;
   canTransact: boolean;
@@ -450,8 +457,9 @@ export function getBlockedReason({
   shipyardState?: ChainShipyardState | null | undefined;
   totalCost?: Resources | undefined;
   productionRates?: Resources | undefined;
+  transactionUnavailableReason?: string | undefined;
 }): string | undefined {
-  if (!canTransact) return "Wallet or game contract unavailable";
+  if (!canTransact) return transactionUnavailableReason ?? "Wallet or game contract unavailable";
   if (!shipyardState) return "Waiting for chain state";
   if (shipyardState.productionAvailable === false) return "Ship production unavailable";
   if (shipUnavailable) return "Ship unavailable on current deployment";

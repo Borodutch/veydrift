@@ -436,6 +436,30 @@ describe("Research page load-error display", () => {
     });
   });
 
+  test("uses transaction sync copy instead of wallet unavailable copy when shared action gate is busy", () => {
+    const status = researchActionStatus({
+      actionPending: false,
+      canTransact: false,
+      chainCost: { metal: 0, crystal: 1_600, deuterium: 800 },
+      error: undefined,
+      key: "energy",
+      loading: false,
+      now: 1_700_000_119_000,
+      researchState: researchState({
+        technologyLevels: { "0": 1 },
+      }),
+      state: researchViewState({
+        readyAt: 1_700_000_120_000,
+      }),
+      transactionUnavailableReason: "Ship production: syncing indexed state...",
+    });
+
+    expect(status).toMatchObject({
+      disabled: true,
+      reason: "Ship production: syncing indexed state...",
+    });
+  });
+
   test("keeps active research disabled when display queue normalization is incomplete", () => {
     const state = createInitialPlayableState(10_000);
     const status = researchActionStatus({

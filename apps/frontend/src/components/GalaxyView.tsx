@@ -142,6 +142,7 @@ interface Props {
   onToggleWatchPlanet?: ((planetId: string, watched: boolean) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
   onNavigate: (galaxy: number, system: number) => void;
+  transactionUnavailableReason?: string | undefined;
   watchedPlanetIds?: readonly string[] | undefined;
   watchBusyPlanetId?: string | undefined;
 }
@@ -163,6 +164,7 @@ export function GalaxyView({
   onToggleWatchPlanet,
   onSelectPlanet,
   onNavigate,
+  transactionUnavailableReason,
   watchedPlanetIds = [],
   watchBusyPlanetId,
 }: Props) {
@@ -416,6 +418,11 @@ export function GalaxyView({
             {actionState.label}
           </div>
         ) : null}
+        {transactionUnavailableReason ? (
+          <div className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
+            {transactionUnavailableReason}
+          </div>
+        ) : null}
 
         <div className="grid gap-1.5">
           {showInitialGalaxyLoader ? <GalaxyRowsSkeleton /> : null}
@@ -468,6 +475,7 @@ export function GalaxyView({
                   defenseState={defenseState}
                   shipyardState={shipyardState}
                   system={system}
+                  transactionUnavailableReason={transactionUnavailableReason}
                   watchedPlanetIds={watchedPlanetIds}
                   watchBusyPlanetId={watchBusyPlanetId}
                 />
@@ -716,6 +724,7 @@ function GalaxySlot({
   onSelectAlliance,
   onSelectPlayer,
   onToggleWatchPlanet,
+  transactionUnavailableReason,
   watchedPlanetIds,
   watchBusyPlanetId,
 }: {
@@ -736,6 +745,7 @@ function GalaxySlot({
   onSelectAlliance: ((allianceId: string) => void) | undefined;
   onSelectPlayer: ((wallet: string) => void) | undefined;
   onToggleWatchPlanet: ((planetId: string, watched: boolean) => void) | undefined;
+  transactionUnavailableReason: string | undefined;
   watchedPlanetIds: readonly string[];
   watchBusyPlanetId: string | undefined;
 }) {
@@ -777,7 +787,8 @@ function GalaxySlot({
         </div>
         <GalaxyActionButtons
           actions={actions}
-          busy={actionState.status === "pending"}
+          busy={actionState.status === "pending" || Boolean(transactionUnavailableReason)}
+          busyReason={transactionUnavailableReason}
           coords={coords}
           onAction={onAction}
           planet={undefined}
@@ -811,7 +822,8 @@ function GalaxySlot({
       actionSlot={(
         <GalaxyActionButtons
           actions={actions}
-          busy={actionState.status === "pending"}
+          busy={actionState.status === "pending" || Boolean(transactionUnavailableReason)}
+          busyReason={transactionUnavailableReason}
           coords={coords}
           onAction={onAction}
           planet={planet}
@@ -837,12 +849,14 @@ function GalaxySlot({
 export function GalaxyActionButtons({
   actions,
   busy,
+  busyReason,
   coords,
   onAction,
   planet,
 }: {
   actions: GalaxyAction[];
   busy: boolean;
+  busyReason?: string | undefined;
   coords: Coordinates;
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   planet: Planet | undefined;
@@ -852,7 +866,7 @@ export function GalaxyActionButtons({
       {actions.map((action) => (
         <button
           className={`rounded border px-2 py-1 text-xs font-medium transition ${
-            action.enabled
+            action.enabled && !busy
               ? "border-signal/30 bg-signal/10 text-signal hover:bg-signal/20"
               : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
           }`}
@@ -861,7 +875,7 @@ export function GalaxyActionButtons({
           onClick={() => {
             if (action.enabled) onAction?.(action, planet, coords);
           }}
-          title={action.enabled ? action.label : action.reason}
+          title={busyReason ?? (action.enabled ? action.label : action.reason)}
           type="button"
         >
           {action.label}

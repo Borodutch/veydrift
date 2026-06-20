@@ -61,6 +61,8 @@ import {
   shipyardStateWithMissionLaunchBlocker,
   shipCompletionPlanetIdFor,
   topBarEnergyFor,
+  transactionUnavailableReasonFor,
+  clearRecoveredWalletContractUnavailableAction,
   walletCurrentResourcesFor,
   walletQueuesForManagedPlanet,
   walletSettlementForManagedPlanet,
@@ -613,6 +615,61 @@ describe("Playable MVP app display helpers", () => {
       defaultLabel: "Upgrade Level 2",
       statusDisabled: true,
     })).toBe("Upgrade Level 2");
+  });
+
+  test("uses transaction sync copy instead of stale wallet unavailable copy while actions are gated", () => {
+    expect(transactionUnavailableReasonFor({
+      activeActionLabel: "Ship production: syncing indexed state...",
+      inputsAvailable: true,
+      transactionPending: true,
+      unavailableReason: "Wallet or game contract unavailable",
+    })).toBe("Ship production: syncing indexed state...");
+
+    expect(transactionUnavailableReasonFor({
+      inputsAvailable: true,
+      transactionPending: true,
+      unavailableReason: "Wallet or game contract unavailable",
+    })).toBe("Transaction is syncing indexed state. Wait for it to finish before starting another action.");
+
+    expect(transactionUnavailableReasonFor({
+      inputsAvailable: false,
+      transactionPending: true,
+      unavailableReason: "Wallet or game contract unavailable",
+    })).toBe("Wallet or game contract unavailable");
+
+    expect(transactionUnavailableReasonFor({
+      inputsAvailable: true,
+      transactionPending: false,
+      unavailableReason: "Wallet or game contract unavailable",
+    })).toBeUndefined();
+  });
+
+  test("clears recovered wallet/contract unavailable action errors without hiding real failures", () => {
+    expect(clearRecoveredWalletContractUnavailableAction({
+      status: "error",
+      label: "Wallet, game contract, or home planet is unavailable.",
+    }, true)).toEqual({ status: "idle" });
+
+    expect(clearRecoveredWalletContractUnavailableAction({
+      status: "error",
+      label: "Wallet, game contract, or resource token is unavailable.",
+    }, true)).toEqual({ status: "idle" });
+
+    expect(clearRecoveredWalletContractUnavailableAction({
+      status: "error",
+      label: "Wallet, game contract, or home planet is unavailable.",
+    }, false)).toEqual({
+      status: "error",
+      label: "Wallet, game contract, or home planet is unavailable.",
+    });
+
+    expect(clearRecoveredWalletContractUnavailableAction({
+      status: "error",
+      label: "Ship production failed: The game contract rejected this transaction.",
+    }, true)).toEqual({
+      status: "error",
+      label: "Ship production failed: The game contract rejected this transaction.",
+    });
   });
 
   test("keeps terminal infrastructure action notices visible", () => {

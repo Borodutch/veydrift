@@ -88,6 +88,7 @@ interface MissionControlPageProps {
   reportMissionId?: string | undefined;
   reportUrlForMission?: ((missionId: string) => string) | undefined;
   planetArchetypesByCoordinate?: ReadonlyMap<string, PlanetType> | undefined;
+  transactionUnavailableReason?: string | undefined;
   walletPlanets?: ManagedPlanetResponse[] | undefined;
 }
 
@@ -120,6 +121,7 @@ export function MissionControlPage({
   planetArchetypesByCoordinate = EMPTY_PLANET_ARCHETYPE_LOOKUP,
   reportMissionId,
   reportUrlForMission,
+  transactionUnavailableReason,
   walletPlanets = [],
 }: MissionControlPageProps) {
   const incoming = fleetVisibility?.incoming ?? [];
@@ -240,6 +242,7 @@ export function MissionControlPage({
             onOpenReport={onOpenReport}
             onRecall={onRecall}
             planetLookup={planetLookup}
+            transactionUnavailableReason={transactionUnavailableReason}
             wallet={walletAddress}
             walletPlanetIds={walletPlanetIds}
           />
@@ -578,11 +581,13 @@ export function missionLifecycleActions({
   context,
   mission,
   now,
+  transactionUnavailableReason,
 }: {
   canTransact: boolean;
   context: ActiveMissionContext;
   mission: FleetMissionSummary;
   now: number;
+  transactionUnavailableReason?: string | undefined;
 }): MissionLifecycleAction[] {
   const actions: MissionLifecycleAction[] = [];
   const due = isMissionDue(mission, now);
@@ -600,7 +605,7 @@ export function missionLifecycleActions({
       enabled: canTransact && recallable,
       kind: "recall",
       label: "Recall fleet",
-      reason: recallable ? walletReason(canTransact) : "The recall cutoff has passed (within 60s of arrival).",
+      reason: recallable ? walletReason(canTransact, transactionUnavailableReason) : "The recall cutoff has passed (within 60s of arrival).",
     });
   }
 
@@ -615,7 +620,7 @@ export function missionLifecycleActions({
       enabled: canTransact && !due,
       kind: "counterplay",
       label: "Counterplay",
-      reason: due ? "Mission is already due for resolution." : walletReason(canTransact),
+      reason: due ? "Mission is already due for resolution." : walletReason(canTransact, transactionUnavailableReason),
     });
   }
 
@@ -624,7 +629,7 @@ export function missionLifecycleActions({
       enabled: canTransact && !due,
       kind: "joinAttack",
       label: "Join attack",
-      reason: due ? "Mission is already due for resolution." : walletReason(canTransact),
+      reason: due ? "Mission is already due for resolution." : walletReason(canTransact, transactionUnavailableReason),
     });
   }
 
@@ -667,6 +672,7 @@ function ActiveMissionSection({
   onOpenReport,
   onRecall,
   planetLookup,
+  transactionUnavailableReason,
   wallet,
   walletPlanetIds,
 }: {
@@ -683,6 +689,7 @@ function ActiveMissionSection({
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
+  transactionUnavailableReason?: string | undefined;
   wallet?: string | undefined;
   walletPlanetIds: ReadonlySet<string>;
 }) {
@@ -697,6 +704,7 @@ function ActiveMissionSection({
     onOpenReport,
     onRecall,
     planetLookup,
+    transactionUnavailableReason,
     wallet,
     walletPlanetIds,
   };
@@ -741,6 +749,7 @@ function ActiveMissionList({
   onRecall,
   planetLookup,
   rows,
+  transactionUnavailableReason,
   wallet,
   walletPlanetIds,
 }: {
@@ -755,6 +764,7 @@ function ActiveMissionList({
   onRecall: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   rows: ActiveMissionRow[];
+  transactionUnavailableReason?: string | undefined;
   wallet?: string | undefined;
   walletPlanetIds: ReadonlySet<string>;
 }) {
@@ -796,6 +806,7 @@ function ActiveMissionList({
               onOpenReport={onOpenReport}
               onRecall={onRecall}
               planetLookup={planetLookup}
+              transactionUnavailableReason={transactionUnavailableReason}
               wallet={wallet}
               walletPlanetIds={walletPlanetIds}
             />
@@ -819,6 +830,7 @@ function MissionRow({
   onOpenReport,
   onRecall,
   planetLookup,
+  transactionUnavailableReason,
   wallet,
   walletPlanetIds,
 }: {
@@ -833,11 +845,12 @@ function MissionRow({
   onOpenReport: (missionId: string) => void;
   onRecall: (missionId: string) => void;
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
+  transactionUnavailableReason?: string | undefined;
   wallet?: string | undefined;
   walletPlanetIds: ReadonlySet<string>;
 }) {
   // VEY-397#11: only surface Join when it is actionable.
-  const actions = missionLifecycleActions({ canTransact, context, mission, now })
+  const actions = missionLifecycleActions({ canTransact, context, mission, now, transactionUnavailableReason })
     .filter((action) => action.kind !== "joinAttack" || action.enabled);
   const missionDirection = resolveMissionDirection({ context, mission, wallet, walletPlanetIds });
   const origin = missionEndpoint(mission, "origin", planetLookup);
@@ -2223,8 +2236,8 @@ function missionTypeTone(missionType: string): string {
 }
 
 
-function walletReason(canTransact: boolean): string | undefined {
-  return canTransact ? undefined : "Wallet or mission actions unavailable.";
+function walletReason(canTransact: boolean, transactionUnavailableReason?: string | undefined): string | undefined {
+  return canTransact ? undefined : transactionUnavailableReason ?? "Wallet or mission actions unavailable.";
 }
 
 function formatCargo(cargo: FleetMissionSummary["cargo"]): string {

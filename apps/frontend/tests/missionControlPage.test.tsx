@@ -66,6 +66,23 @@ describe("MissionControlPage", () => {
     ]);
   });
 
+  test("uses transaction sync copy for disabled mission lifecycle actions", () => {
+    const actions = missionLifecycleActions({
+      canTransact: false,
+      context: "incoming",
+      mission: mission({ arrivalAt: "1770000300", missionId: "6", missionType: "Attack", status: "Outbound" }),
+      now: 1_770_000_100_000,
+      transactionUnavailableReason: "Ship production: syncing indexed state...",
+    });
+
+    expect(actions).toEqual([{
+      enabled: false,
+      kind: "counterplay",
+      label: "Counterplay",
+      reason: "Ship production: syncing indexed state...",
+    }]);
+  });
+
   // VEY-KANEO-424: recall is only valid more than the 60s contract cutoff before arrival. Inside that
   // window the fleet is still Outbound and not yet due, so the Recall button is offered but disabled.
   test("disables Recall once an outbound fleet is within the 60s recall cutoff", () => {
