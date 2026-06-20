@@ -6569,6 +6569,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const topBar = (
     <TopBar
       caps={caps}
+      crawlerProduction={infrastructureChainState?.crawlerProduction}
       energy={topBarEnergy}
       isWalletConnected={isWalletConnected}
       queue={isWalletConnected ? undefined : settledState.queue}
