@@ -552,6 +552,14 @@ export type ChainInfrastructureState = {
   // projecting `resources` itself (VEY-KANEO-465).
   resourcesAsOfNow?: OnChainResources | null;
   productionPerHour: OnChainResources | null;
+  crawlerProduction?: {
+    total: number;
+    effective: number;
+    maxEffective: number;
+    boostBps: string;
+    capped: boolean;
+    productionIncreasePerHour: OnChainResources;
+  } | null;
   energyBalance: OnChainEnergyBalance | null;
   storageCaps: OnChainResources | null;
   protectedResources?: OnChainResources | null;

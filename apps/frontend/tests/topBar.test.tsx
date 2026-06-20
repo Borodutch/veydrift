@@ -58,7 +58,7 @@ describe("TopBar", () => {
     const energyDetails = elementNodes(topBar).find((item) => item.type === "details");
     const panelText = visibleText(energyDetails);
 
-    expect(energyInfo?.props?.title).toBe("Energy explanation");
+    expect(energyInfo?.props?.title).toBe("Resources explanation");
     expect(energyInfo?.props?.["aria-label"]).toContain("100 produced / 125 consumed");
     expect(energyInfo?.props?.["aria-label"]).toContain("Shortage 25");
     expect(energyInfo?.props?.["aria-label"]).toContain("Production in total: 100");
@@ -77,6 +77,70 @@ describe("TopBar", () => {
     expect(panelText).not.toContain("By Fusion Generator");
     expect(panelText).not.toContain("By Solar Satellites");
     expect(panelText).toContain("Insufficient energy reduces mine output to 80%");
+  });
+
+  test("shows zero crawler effect in the resources info popup without implying a bonus", () => {
+    const topBar = renderTopBar({
+      crawlerProduction: {
+        total: 0,
+        effective: 0,
+        maxEffective: 240,
+        boostBps: "0",
+        capped: false,
+        productionIncreasePerHour: { metal: 0, crystal: 0, deuterium: 0 },
+      },
+    });
+    const energyInfo = elementNodes(topBar).find(
+      (item) => item.type === "summary"
+        && typeof item.props?.["aria-label"] === "string"
+        && item.props["aria-label"].includes("Crawler boost")
+    );
+    const panelText = visibleText(elementNodes(topBar).find((item) => item.type === "details"));
+
+    expect(energyInfo?.props?.["aria-label"]).toContain("Crawler boost +0%");
+    expect(panelText).toContain("Crawler boost +0%");
+    expect(panelText).toContain("Crawlers 0 / 0 effective");
+    expect(panelText).toContain("No crawlers are boosting this planet yet.");
+  });
+
+  test("shows active crawler bonus and per-resource impact in the resources info popup", () => {
+    const topBar = renderTopBar({
+      crawlerProduction: {
+        total: 12,
+        effective: 12,
+        maxEffective: 240,
+        boostBps: "24",
+        capped: false,
+        productionIncreasePerHour: { metal: 18, crystal: 7, deuterium: 3 },
+      },
+    });
+    const panelText = visibleText(elementNodes(topBar).find((item) => item.type === "details"));
+
+    expect(panelText).toContain("Crawler boost +0.24%");
+    expect(panelText).toContain("Crawlers 12 / 12 effective");
+    expect(panelText).toContain("Effective cap 240");
+    expect(panelText).toContain("Metal impact +18/h");
+    expect(panelText).toContain("Crystal impact +7/h");
+    expect(panelText).toContain("Deuterium impact +3/h");
+  });
+
+  test("explains capped crawlers in the resources info popup", () => {
+    const topBar = renderTopBar({
+      crawlerProduction: {
+        total: 100,
+        effective: 24,
+        maxEffective: 24,
+        boostBps: "48",
+        capped: true,
+        productionIncreasePerHour: { metal: 8, crystal: 3, deuterium: 1 },
+      },
+    });
+    const panelText = visibleText(elementNodes(topBar).find((item) => item.type === "details"));
+
+    expect(panelText).toContain("Crawler boost +0.48%");
+    expect(panelText).toContain("Crawlers 24 / 100 effective");
+    expect(panelText).toContain("Effective cap 24");
+    expect(panelText).toContain("Extra crawlers above the effective cap are idle until mine levels increase.");
   });
 
   test("vertically centers M/C/D/E values and spaces the energy info icon", () => {

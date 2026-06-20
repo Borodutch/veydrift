@@ -14,6 +14,7 @@ interface TopBarProps {
   resources?: Resources | undefined;
   rates: Resources;
   caps: Resources;
+  crawlerProduction?: CrawlerProductionInfo | null | undefined;
   resourceStatus: ChainLoadStatus;
   queue?: QueueItem | undefined;
   researchQueue?: QueueItem | undefined;
@@ -23,10 +24,24 @@ interface TopBarProps {
   energy?: EnergyBalance | undefined;
 }
 
+type CrawlerProductionInfo = {
+  total: number;
+  effective: number;
+  maxEffective: number;
+  boostBps: string;
+  capped: boolean;
+  productionIncreasePerHour: {
+    metal: number | string;
+    crystal: number | string;
+    deuterium: number | string;
+  };
+};
+
 export function TopBar({
   resources,
   rates,
   caps,
+  crawlerProduction,
   resourceStatus,
   queue,
   researchQueue,
@@ -78,6 +93,7 @@ export function TopBar({
                   produced={energy.produced}
                   required={energy.required}
                   scaleBps={energy.scaleBps}
+                  crawlerProduction={crawlerProduction}
                   sources={energy.sources}
                 />
               )}
@@ -177,11 +193,13 @@ function EnergyPip({
   produced,
   required,
   scaleBps,
+  crawlerProduction,
   sources,
 }: {
   produced: number;
   required: number;
   scaleBps: number;
+  crawlerProduction?: CrawlerProductionInfo | null | undefined;
   sources?: EnergyBalance["sources"] | undefined;
 }) {
   const current = produced - required;
@@ -189,6 +207,9 @@ function EnergyPip({
   const showShortageFactor = current < 0 && required > 0 && scaleBps < BPS;
   const productionPercent = Math.floor((scaleBps * 100) / BPS);
   const energyExplanation = energyExplanationTitle({ produced, required, scaleBps, sources });
+  const popupExplanation = crawlerProduction
+    ? `${energyExplanation} ${crawlerExplanationTitle(crawlerProduction)}`
+    : energyExplanation;
 
   return (
     <div
@@ -215,9 +236,9 @@ function EnergyPip({
         )}
         <details className="group relative ml-0.5 inline-flex shrink-0 sm:ml-1">
           <summary
-            aria-label={energyExplanation}
+            aria-label={popupExplanation}
             className="inline-grid h-5 w-5 cursor-pointer list-none place-items-center rounded border border-white/10 bg-white/[0.04] text-slate-400 transition hover:border-cyan-300/40 hover:bg-cyan-300/10 hover:text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/60 [&::-webkit-details-marker]:hidden"
-            title="Energy explanation"
+            title="Resources explanation"
           >
             <Info aria-hidden="true" size={12} strokeWidth={2.25} />
           </summary>
@@ -248,6 +269,35 @@ function EnergyPip({
                 </dd>
               </dl>
             )}
+            {crawlerProduction && (
+              <dl className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-t border-white/10 pt-2 text-[11px] leading-4">
+                <dt className="text-slate-500">Crawler boost</dt>
+                <dd className="text-right font-semibold text-slate-100">{formatCrawlerBoost(crawlerProduction.boostBps)}</dd>
+                <dt className="text-slate-500">Crawlers</dt>
+                <dd className="text-right font-semibold text-slate-100">
+                  {format(crawlerProduction.effective)} / {format(crawlerProduction.total)} effective
+                </dd>
+                <dt className="text-slate-500">Effective cap</dt>
+                <dd className={crawlerProduction.capped ? "text-right font-semibold text-amber-200" : "text-right font-semibold text-slate-100"}>
+                  {format(crawlerProduction.maxEffective)}
+                </dd>
+                <dt className="text-slate-500">Metal impact</dt>
+                <dd className="text-right font-semibold text-slate-100">{formatCrawlerImpact(crawlerProduction.productionIncreasePerHour.metal)}</dd>
+                <dt className="text-slate-500">Crystal impact</dt>
+                <dd className="text-right font-semibold text-slate-100">{formatCrawlerImpact(crawlerProduction.productionIncreasePerHour.crystal)}</dd>
+                <dt className="text-slate-500">Deuterium impact</dt>
+                <dd className="text-right font-semibold text-slate-100">{formatCrawlerImpact(crawlerProduction.productionIncreasePerHour.deuterium)}</dd>
+              </dl>
+            )}
+            {crawlerProduction && (
+              <p className={`mt-2 text-[11px] leading-4 ${crawlerProduction.capped ? "text-amber-200" : "text-slate-400"}`}>
+                {crawlerProduction.total <= 0
+                  ? "No crawlers are boosting this planet yet."
+                  : crawlerProduction.capped
+                  ? "Extra crawlers above the effective cap are idle until mine levels increase."
+                  : "Only effective crawlers contribute to mine production."}
+              </p>
+            )}
             <p className={`mt-2 text-[11px] leading-4 ${showShortageFactor ? "text-red-200" : "text-slate-400"}`}>
               {showShortageFactor
                 ? `Insufficient energy reduces mine output to ${productionPercent}% until you add more energy production or reduce consumption.`
@@ -268,6 +318,35 @@ function formatCompact(value: number): string {
   const rounded = Math.floor(value);
   if (Math.abs(rounded) < 10_000) return format(rounded);
   return compactFormatter.format(rounded);
+}
+
+function formatCrawlerBoost(boostBps: string): string {
+  const bps = Number(boostBps);
+  if (!Number.isFinite(bps) || bps <= 0) return "+0%";
+  return `+${(bps / 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`;
+}
+
+function formatCrawlerImpact(value: number | string): string {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return "0/h";
+  return `+${format(numeric)}/h`;
+}
+
+function crawlerExplanationTitle(crawler: CrawlerProductionInfo): string {
+  const details = [
+    `Crawler boost ${formatCrawlerBoost(crawler.boostBps)}.`,
+    `${format(crawler.effective)} of ${format(crawler.total)} crawlers effective.`,
+    `Effective cap ${format(crawler.maxEffective)}.`,
+    `Impact: ${formatCrawlerImpact(crawler.productionIncreasePerHour.metal)} metal, ${formatCrawlerImpact(crawler.productionIncreasePerHour.crystal)} crystal, ${formatCrawlerImpact(crawler.productionIncreasePerHour.deuterium)} deuterium.`,
+  ];
+  if (crawler.total <= 0) {
+    details.push("No crawlers are boosting this planet yet.");
+  } else if (crawler.capped) {
+    details.push("Extra crawlers above the effective cap are idle until mine levels increase.");
+  } else {
+    details.push("Only effective crawlers contribute to mine production.");
+  }
+  return details.join(" ");
 }
 
 function resourceTitle(label: string, value: number, rate: number | undefined, cap: number | undefined): string {
