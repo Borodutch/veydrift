@@ -1784,6 +1784,57 @@ describe("SettlementIndexer", () => {
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(4);
   });
 
+  test("credits legacy returned non-combat fleet ships when the return tx lacks absolute ship-count logs (VEY-KANEO-604)", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xbuild-sc",
+      logIndex: "0x0",
+      topics: [shipCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(4n, 4n)
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch-legacy",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(604n), addressTopic(player), topic(0n)],
+      data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlaunch-legacy",
+      logIndex: "0x1",
+      topics: [fleetMissionShipsTopic, topic(604n)],
+      data: abiWords(3n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+    });
+
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(1);
+
+    indexer.applyLog({
+      blockNumber: "0x95",
+      transactionHash: "0xreturn-legacy",
+      logIndex: "0x0",
+      topics: [fleetMissionReturnExposedTopic, topic(604n), addressTopic(player), topic(4n)],
+      data: abiWords(7n, 99n, 1770002400n, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x95",
+      transactionHash: "0xreturn-legacy",
+      logIndex: "0x1",
+      topics: [fleetMissionReturnedTopic, topic(604n), addressTopic(player), topic(7n)],
+      data: "0x"
+    });
+
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(4);
+  });
+
   test("projects elapsed returning missions as returned while future returns stay active", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
