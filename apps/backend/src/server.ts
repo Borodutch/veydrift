@@ -6,6 +6,7 @@ import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigPr
 import {
   assertAddress,
   attackBlockReasonLabel,
+  transportBlockReasonLabel,
   type AllianceIdentity,
   type AllianceState,
   type AttackBlockReason,
@@ -3437,6 +3438,12 @@ function indexedAttackProtectionResponse(
       : bashingLimited
         ? "bashing_limit"
         : "none";
+  const transportBlockReason = attackerKey === defenderKey
+    ? "own_planet"
+    : sameAlliance
+      ? "same_alliance"
+      : "not_allied";
+  const transportAllowed = transportBlockReason === "own_planet" || transportBlockReason === "same_alliance";
 
   const body: AttackProtectionStatus & {
     source: typeof indexedSource;
@@ -3450,6 +3457,9 @@ function indexedAttackProtectionResponse(
     defenderHonorStatus: "neutral",
     plunderBps: scoreProtected ? 0 : 5000,
     defenderInactive,
+    transportAllowed,
+    transportBlockReason,
+    transportBlockReasonLabel: transportBlockReasonLabel(transportBlockReason),
     ...(atWar ? { atWar: true } : {}),
     ...(defenderAlliance ? { targetAlliance: defenderAlliance } : {}),
     source: indexedSource

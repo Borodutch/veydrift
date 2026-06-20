@@ -21,6 +21,9 @@ export type GalaxyAttackProtectionStatus = {
   blockedReason: "none" | "bashing_limit" | "score_protection" | "same_alliance";
   blockedReasonLabel: string | null;
   atWar?: boolean;
+  transportAllowed?: boolean;
+  transportBlockReason?: "none" | "own_planet" | "same_alliance" | "not_allied";
+  transportBlockReasonLabel?: string | null;
 };
 
 export type MissionShipKey =
@@ -121,6 +124,9 @@ export function galaxyActionsForSlot({
   // already surfaces this through the attack guard (you cannot attack an ally), so reuse that signal
   // rather than re-deriving alliance membership here.
   const isAllyTarget = attackProtection?.blockedReason === "same_alliance";
+  const isTransportTarget = isOwnTarget
+    || attackProtection?.transportAllowed === true
+    || (attackProtection?.transportAllowed === undefined && isAllyTarget);
 
   if (!isOccupied) {
     return [
@@ -164,20 +170,8 @@ export function galaxyActionsForSlot({
     return [
       enabledOrDisabled({
         blocker: cargoBlocker,
-        enabled: {
-          enabled: true,
-          kind: "transport",
-          label: "Transport",
-          mode: "mission",
-          mission: "transport",
-          ships: cargoShips,
-        },
-        disabled: {
-          kind: "transport",
-          label: "Transport",
-          mode: "mission",
-          mission: "transport",
-        },
+        enabled: transportAction(cargoShips),
+        disabled: transportDisabledAction(),
       }),
       enabledOrDisabled({
         blocker: cargoBlocker,
@@ -201,9 +195,17 @@ export function galaxyActionsForSlot({
   }
 
   const attackBlocker = commonBlocker ?? attackProtectionBlocker(attackProtection) ?? firstAvailableFleetShipBlocker(shipyardState);
+  const transportBlocker = commonBlocker ?? firstAvailableCargoShipBlocker(shipyardState);
   const missileBlocker = commonBlocker ?? interplanetaryMissileBlocker(defenseState);
 
   return [
+    ...(isTransportTarget ? [
+      enabledOrDisabled({
+        blocker: transportBlocker,
+        enabled: transportAction(firstAvailableCargoShips(shipyardState)),
+        disabled: transportDisabledAction(),
+      }),
+    ] : []),
     ...(isAllyTarget ? [defenseHoldAction(commonBlocker, shipyardState)] : []),
     enabledOrDisabled({
       blocker: attackBlocker,
@@ -258,6 +260,26 @@ export function galaxyActionsForSlot({
       }),
     },
   ];
+}
+
+function transportAction(ships: MissionShips): Extract<GalaxyAction, { enabled: true }> {
+  return {
+    enabled: true,
+    kind: "transport",
+    label: "Transport",
+    mode: "mission",
+    mission: "transport",
+    ships,
+  };
+}
+
+function transportDisabledAction(): Omit<Extract<GalaxyAction, { enabled: false }>, "enabled" | "reason"> {
+  return {
+    kind: "transport",
+    label: "Transport",
+    mode: "mission",
+    mission: "transport",
+  };
 }
 
 export function missionTypeId(mission: GalaxyMissionKind): number {
