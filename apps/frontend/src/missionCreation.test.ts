@@ -7,6 +7,7 @@ import {
   initialMissionShips,
   LootRatioControls,
   lootRatioFromUpToAmount,
+  missionConfirmButtonLabel,
   missionDraftBlocker,
   missionShipOptions,
   missionTimingSummary,
@@ -189,6 +190,17 @@ describe("mission creation", () => {
     expect(text).toContain("Veydrift [VEY]");
     expect(text).toContain("#9");
     expect(images.some((image) => image.props?.src === "/assets/game/style-pass/generated/planets/hot-desert.webp")).toBe(true);
+  });
+
+  test("keeps attack confirm visibly pending while transaction and indexing settle", () => {
+    expect(missionConfirmButtonLabel({ actionPendingLabel: "Attack mission: syncing indexed state..." }))
+      .toBe("Attack mission: syncing indexed state...");
+    expect(missionConfirmButtonLabel({ joinAttackMode: true })).toBe("Join Attack");
+    expect(missionConfirmButtonLabel({ acsDefendMode: true })).toBe("Coordinate defense");
+    expect(missionCreationSource).toContain("actionPendingLabel?: string | undefined;");
+    expect(missionCreationSource).toContain("disabled={Boolean(blockedReason) || actionPending}");
+    expect(missionCreationSource).toContain("missionConfirmButtonLabel({");
+    expect(missionCreationSource).toContain("if (actionPendingLabel) return actionPendingLabel;");
   });
 
   test("renders ship quantity rows with image assets, keyboard input, / N availability, and steppers", () => {

@@ -6807,6 +6807,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         <MissionCreationPage
           action={pendingGalaxyMission.action}
           actionPending={galaxyAction.status === "pending"}
+          actionPendingLabel={galaxyAction.status === "pending" ? galaxyAction.label : undefined}
           attackerCombatTechLevels={attackerCombatTechLevels}
           coords={pendingGalaxyMission.coords}
           defenseHoldContext={pendingGalaxyMission.action.kind === "defenseHold"
@@ -6831,6 +6832,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         <MissionCreationPage
           action={{ enabled: true, kind: "attack", label: "Join attack", mode: "mission", mission: "attack", ships: emptyMissionShips() }}
           actionPending={galaxyAction.status === "pending"}
+          actionPendingLabel={galaxyAction.status === "pending" ? galaxyAction.label : undefined}
           attackerCombatTechLevels={attackerCombatTechLevels}
           coords={pendingJoinAttack.coords}
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
@@ -6854,6 +6856,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           acsDefendMode
           action={{ enabled: true, kind: "acsDefend", label: "Group defend", mode: "mission", mission: "acsDefend", ships: emptyMissionShips() }}
           actionPending={galaxyAction.status === "pending"}
+          actionPendingLabel={galaxyAction.status === "pending" ? galaxyAction.label : undefined}
           attackerCombatTechLevels={attackerCombatTechLevels}
           coords={pendingAcsDefend.coords}
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}

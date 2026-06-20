@@ -186,6 +186,7 @@ export function MissionCreationPage({
   acsDefendMode = false,
   action,
   actionPending,
+  actionPendingLabel,
   coords,
   defenseHoldContext,
   defenseHoldMode = false,
@@ -209,6 +210,7 @@ export function MissionCreationPage({
   acsDefendMode?: boolean | undefined;
   action: EnabledGalaxyAction;
   actionPending: boolean;
+  actionPendingLabel?: string | undefined;
   coords: Coordinates;
   // VEY-KANEO-440: render a proactive DefenseHold compose — adds a player-chosen hold-duration selector
   // and a travel + holding-fuel + Alliance Depot preview, stationing the fleet at the target planet.
@@ -595,7 +597,7 @@ export function MissionCreationPage({
             </p>
           ) : null}
           <button
-            className="mt-1 h-10 rounded border border-signal/35 bg-signal/15 px-3 text-sm font-semibold text-signal transition hover:bg-signal/25 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
+            className="mt-1 min-h-10 rounded border border-signal/35 bg-signal/15 px-3 py-2 text-sm font-semibold leading-snug text-signal transition hover:bg-signal/25 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
             disabled={Boolean(blockedReason) || actionPending}
             onClick={() => onConfirm({
               speedPercent,
@@ -608,12 +610,35 @@ export function MissionCreationPage({
             })}
             type="button"
           >
-            {joinAttackMode ? "Join Attack" : acsDefendMode ? "Coordinate defense" : defenseHoldMode ? "Station defense" : "Confirm Mission"}
+            {missionConfirmButtonLabel({
+              acsDefendMode,
+              actionPendingLabel,
+              defenseHoldMode,
+              joinAttackMode,
+            })}
           </button>
         </aside>
       </div>
     </section>
   );
+}
+
+export function missionConfirmButtonLabel({
+  acsDefendMode = false,
+  actionPendingLabel,
+  defenseHoldMode = false,
+  joinAttackMode = false,
+}: {
+  acsDefendMode?: boolean | undefined;
+  actionPendingLabel?: string | undefined;
+  defenseHoldMode?: boolean | undefined;
+  joinAttackMode?: boolean | undefined;
+}): string {
+  if (actionPendingLabel) return actionPendingLabel;
+  if (joinAttackMode) return "Join Attack";
+  if (acsDefendMode) return "Coordinate defense";
+  if (defenseHoldMode) return "Station defense";
+  return "Confirm Mission";
 }
 
 function MissionFormSection({
