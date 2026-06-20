@@ -57,6 +57,40 @@ describe("Moon page helpers", () => {
     expect(text).not.toContain("No moon in orbit");
   });
 
+  test("passes transaction sync copy into loaded moon systems while actions are gated", () => {
+    const page = MoonPage({
+      canTransact: false,
+      loading: false,
+      moonState: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        moon: {
+          exists: true,
+          planetId: "7",
+          owner: "0x1111111111111111111111111111111111111111",
+          fields: 3,
+          diameterKm: 8774,
+          createdAt: "1770000000",
+          jumpGateReadyAt: "0",
+        },
+        buildings: [{
+          id: 0,
+          key: "lunarBase",
+          label: "Lunar Base",
+          level: 1,
+          cost: { metal: "20000", crystal: "40000", deuterium: "20000" },
+        }],
+        queue: null,
+      },
+      onRefresh: () => undefined,
+      transactionUnavailableReason: "Ship production: syncing indexed state...",
+    });
+    const systemsPanel = componentNodes(page).find((node) => typeof node.type === "function" && node.type.name === "MoonSystemsPanel");
+
+    expect(systemsPanel?.props?.canTransact).toBe(false);
+    expect(systemsPanel?.props?.transactionUnavailableReason).toBe("Ship production: syncing indexed state...");
+  });
+
   test("renders indexed-not-ready Moon state without the telemetry loader", () => {
     const page = MoonPage({
       loading: false,

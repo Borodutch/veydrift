@@ -161,6 +161,12 @@ describe("playable chain refresh", () => {
 
     expect(source).toContain("const gameTransactionInputsAvailable = Boolean(provider && account && gameContract)");
     expect(source).toContain("const canSubmitGameTransaction = gameTransactionInputsAvailable && !transactionActionPending");
+    expect(source).toContain("const allianceTransactionUnavailableReason = transactionUnavailableReasonFor({");
+    expect(source).toContain("const moonTransactionUnavailableReason = transactionUnavailableReasonFor({");
+    expect(source).toContain("setRiftAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));");
+    expect(source).toContain("transactionUnavailableReason={gameTransactionUnavailableReason}");
+    expect(source).toContain("transactionUnavailableReason={allianceTransactionUnavailableReason}");
+    expect(source).toContain("transactionUnavailableReason={moonTransactionUnavailableReason}");
     expect(source).toContain("await Promise.allSettled([\n            refreshShipyardState(),");
     expect(source).toContain("await Promise.allSettled([\n          refreshRiftState(),");
     expect(source).toContain("await refreshOnChainState(undefined, { force: true });");

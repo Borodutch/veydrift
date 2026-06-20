@@ -267,12 +267,14 @@ export function AllianceInspectPage({
   onRefresh,
   onSetRole,
   onTransferOwnership,
+  transactionUnavailableReason,
 }: {
   actionBusy: boolean;
   allianceId: string;
   allianceState: ChainAllianceState | null;
   canTransact: boolean;
   disabled: boolean;
+  transactionUnavailableReason?: string | undefined;
   onApproveJoinRequest: (playerAddress: string) => void;
   onBack: () => void;
   onDismissJoinRequest: (playerAddress: string) => void;
@@ -326,6 +328,7 @@ export function AllianceInspectPage({
     >
       {!allianceState ? <InspectPanelSkeleton label="Loading alliance" /> : null}
       {allianceState && !alliance ? <Notice tone="error">Alliance details are not indexed for this id yet.</Notice> : null}
+      {!canTransact && transactionUnavailableReason ? <Notice>{transactionUnavailableReason}</Notice> : null}
       {alliance ? (
         <div className="grid gap-4">
           <Panel title={isCurrentAlliance ? "My Alliance" : "Alliance"}>

@@ -652,6 +652,11 @@ describe("Playable MVP app display helpers", () => {
 
     expect(clearRecoveredWalletContractUnavailableAction({
       status: "error",
+      label: "Wallet, game contract, or resource token is unavailable.",
+    }, true)).toEqual({ status: "idle" });
+
+    expect(clearRecoveredWalletContractUnavailableAction({
+      status: "error",
       label: "Wallet, game contract, or home planet is unavailable.",
     }, false)).toEqual({
       status: "error",

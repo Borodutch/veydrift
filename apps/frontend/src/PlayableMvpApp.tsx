@@ -1597,6 +1597,8 @@ export function isWalletContractUnavailableActionLabel(label: string): boolean {
     || /wallet.*mission actions unavailable/i.test(label)
     || /alliance contract unavailable/i.test(label)
     || /wallet.*moon contract.*unavailable/i.test(label)
+    || /wallet.*game contract.*resource token.*unavailable/i.test(label)
+    || /wallet.*game contract.*withdrawal resource.*unavailable/i.test(label)
   );
 }
 
@@ -3375,20 +3377,21 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setShipyardAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
     setGalaxyAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
     setResearchAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
+    setRiftAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
     setMissionAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
     setPlanetManagementAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
     setPlanetRenameAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
-  }, [gameActionInputsAvailable]);
+  }, [gameActionInputsAvailable, transactionActionPending]);
 
   useEffect(() => {
     if (!allianceActionInputsAvailable) return;
     setAllianceAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
-  }, [allianceActionInputsAvailable]);
+  }, [allianceActionInputsAvailable, transactionActionPending]);
 
   useEffect(() => {
     if (!moonActionInputsAvailable) return;
     setMoonAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
-  }, [moonActionInputsAvailable]);
+  }, [moonActionInputsAvailable, transactionActionPending]);
 
   const confirmSubmittedTransaction = useCallback(async (txHash: string) => {
     if (!provider) {
@@ -6703,6 +6706,18 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     transactionPending: transactionActionPending,
     unavailableReason: "Wallet or game contract unavailable",
   });
+  const allianceTransactionUnavailableReason = transactionUnavailableReasonFor({
+    activeActionLabel: pendingActionLabel(allianceAction),
+    inputsAvailable: allianceTransactionInputsAvailable,
+    transactionPending: transactionActionPending,
+    unavailableReason: "Alliance contract unavailable.",
+  });
+  const moonTransactionUnavailableReason = transactionUnavailableReasonFor({
+    activeActionLabel: pendingActionLabel(moonAction),
+    inputsAvailable: moonTransactionInputsAvailable,
+    transactionPending: transactionActionPending,
+    unavailableReason: "Wallet or moon contract unavailable.",
+  });
   const canSubmitGameTransaction = gameTransactionInputsAvailable && !transactionActionPending;
   const canSubmitAllianceTransaction = allianceTransactionInputsAvailable && !transactionActionPending;
   const canSubmitMoonTransaction = moonTransactionInputsAvailable && !transactionActionPending;
@@ -6929,6 +6944,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           starterPlanet={selectedManagedPlanet?.isHomePlanet ?? activePlanetId === onChainSettlement?.homePlanetId}
           settledState={infrastructureState}
           state={state}
+          transactionUnavailableReason={gameTransactionUnavailableReason}
         />
       );
     }
@@ -6944,6 +6960,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onJumpGate={handleJumpGate}
           onRefresh={moonSection.refresh ?? refreshInfrastructureState}
           onStartBuilding={handleStartMoonBuilding}
+          transactionUnavailableReason={moonTransactionUnavailableReason}
         />
       );
     }
@@ -6979,6 +6996,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           planetArchetypesByCoordinate={missionPlanetArchetypesByCoordinate}
           reportMissionId={missionReportId ?? undefined}
           reportUrlForMission={missionReportUrlForMission}
+          transactionUnavailableReason={gameTransactionUnavailableReason}
           walletPlanets={walletPlanets}
         />
       );
@@ -7040,6 +7058,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           error={allianceError}
           loading={allianceLoading}
           selectedAllianceId={selectedAllianceId}
+          transactionUnavailableReason={allianceTransactionUnavailableReason}
           onAcceptInvite={handleAcceptAllianceInvite}
           onApproveJoinRequest={handleApproveAllianceJoinRequest}
           onCancelJoinRequest={handleCancelAllianceJoinRequest}
@@ -7068,6 +7087,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           allianceState={allianceState}
           canTransact={canSubmitAllianceTransaction}
           disabled={allianceLoading}
+          transactionUnavailableReason={allianceTransactionUnavailableReason}
           onApproveJoinRequest={handleApproveAllianceJoinRequest}
           onBack={() => handleNavigate("alliance")}
           onDismissJoinRequest={handleDismissAllianceJoinRequest}
@@ -7134,6 +7154,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onRefresh={riftSection.refresh ?? refreshRiftState}
           onRequestWithdrawal={handleRequestRiftWithdrawal}
           riftState={riftState}
+          transactionUnavailableReason={gameTransactionUnavailableReason}
         />
       );
     }

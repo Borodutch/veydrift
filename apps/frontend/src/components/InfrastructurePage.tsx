@@ -93,6 +93,7 @@ interface InfrastructurePageProps {
   starterPlanet?: boolean | undefined;
   state: PlayableState;
   settledState: PlayableState;
+  transactionUnavailableReason?: string | undefined;
   now?: number | undefined;
   onUpgrade: (key: BuildingKey) => void;
 }
@@ -116,6 +117,7 @@ export function InfrastructurePage({
   spendableResources,
   starterPlanet = false,
   settledState,
+  transactionUnavailableReason,
   onUpgrade,
 }: InfrastructurePageProps) {
   const [localSelectedKey, setLocalSelectedKey] = useState<BuildingKey>("metalMine");
@@ -200,7 +202,7 @@ export function InfrastructurePage({
           <BuildingDetailPanel
             actionNotice={actionNoticeForBuilding(actionNotice, selectedBuilding.key)}
             actionPendingLabel={actionPendingLabel}
-            actionUnavailableReason={actionUnavailableReason}
+            actionUnavailableReason={transactionUnavailableReason ?? actionUnavailableReason}
             building={selectedBuilding}
             chainCost={chainCosts?.[selectedBuilding.key]}
             chainDuration={chainDurations?.[selectedBuilding.key]}

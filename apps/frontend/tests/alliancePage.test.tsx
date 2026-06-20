@@ -45,6 +45,13 @@ describe("AlliancePage loading display", () => {
     expect(inspectPagesSource).not.toContain('<button className="icon-button" disabled={actionBusy} onClick={onRefresh}');
   });
 
+  test("surfaces transaction sync copy on alliance pages while shared actions are gated", () => {
+    expect(alliancePageSource).toContain("transactionUnavailableReason?: string | undefined;");
+    expect(alliancePageSource).toContain("{!canTransact && transactionUnavailableReason ? <Notice>{transactionUnavailableReason}</Notice> : null}");
+    expect(inspectPagesSource).toContain("transactionUnavailableReason?: string | undefined;");
+    expect(inspectPagesSource).toContain("{!canTransact && transactionUnavailableReason ? <Notice>{transactionUnavailableReason}</Notice> : null}");
+  });
+
   test("uses the shared loader for initial alliance state loading", () => {
     expect(shouldShowAllianceInitialLoader({
       allianceState: null,

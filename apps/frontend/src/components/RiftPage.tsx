@@ -28,6 +28,7 @@ interface RiftPageProps {
   onRefresh: () => void;
   onRequestWithdrawal: (resource: RiftResourceState, amount: string) => void;
   riftState: ChainRiftState | null;
+  transactionUnavailableReason?: string | undefined;
 }
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
@@ -46,6 +47,7 @@ export function RiftPage({
   onRefresh,
   onRequestWithdrawal,
   riftState,
+  transactionUnavailableReason,
 }: RiftPageProps) {
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const locked = !riftState?.riftAvailable || !riftState.unlocked;
@@ -74,6 +76,11 @@ export function RiftPage({
           {actionState.label}
         </Notice>
       )}
+      {!canTransact && transactionUnavailableReason ? (
+        <Notice tone="info">
+          {transactionUnavailableReason}
+        </Notice>
+      ) : null}
 
       {initialLoading ? (
         <RiftSkeleton />
@@ -121,12 +128,14 @@ export function RiftPage({
                       actionLabel="Approve"
                       amount={depositAmount}
                       disabled={!tokenReady || !depositAmount}
+                      disabledReason={!canTransact ? transactionUnavailableReason : !resource.tokenAddress ? "Token address is not configured for this resource yet." : undefined}
                       inputLabel={`Deposit ${resource.label}`}
                       onAction={() => onApprove(resource, depositAmount)}
                       onChange={(value) => updateAmount(resource.key, "deposit", value)}
                       placeholder="0.00"
                       secondaryAction={{
                         disabled: !tokenReady || !depositAmount,
+                        disabledReason: !canTransact ? transactionUnavailableReason : !resource.tokenAddress ? "Token address is not configured for this resource yet." : undefined,
                         label: "Deposit",
                         onClick: () => onDeposit(resource, depositAmount),
                       }}
@@ -135,6 +144,7 @@ export function RiftPage({
                       actionLabel="Request withdrawal"
                       amount={withdrawAmount}
                       disabled={!canTransact || !withdrawAmount}
+                      disabledReason={!canTransact ? transactionUnavailableReason : undefined}
                       inputLabel={`Withdraw ${resource.label}`}
                       onAction={() => onRequestWithdrawal(resource, withdrawAmount)}
                       onChange={(value) => updateAmount(resource.key, "withdraw", value)}
@@ -153,9 +163,11 @@ export function RiftPage({
           </div>
 
           <WithdrawalQueue
+            canTransact={canTransact}
             now={now}
             onFinish={onFinishWithdrawal}
             pendingWithdrawals={riftState.pendingWithdrawals}
+            transactionUnavailableReason={transactionUnavailableReason}
           />
         </>
       )}
@@ -208,13 +220,17 @@ function LockedRiftState({
 }
 
 function WithdrawalQueue({
+  canTransact,
   now,
   onFinish,
   pendingWithdrawals,
+  transactionUnavailableReason,
 }: {
+  canTransact: boolean;
   now: number;
   onFinish: (withdrawal: PendingWithdrawal) => void;
   pendingWithdrawals: PendingWithdrawal[];
+  transactionUnavailableReason?: string | undefined;
 }) {
   if (pendingWithdrawals.length === 0) {
     return (
@@ -249,8 +265,9 @@ function WithdrawalQueue({
               </p>
               <button
                 className="mt-4 inline-flex h-9 w-full items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-                disabled={!ready}
+                disabled={!ready || !canTransact}
                 onClick={() => onFinish(withdrawal)}
+                title={!canTransact ? transactionUnavailableReason : undefined}
                 type="button"
               >
                 Finish withdrawal
@@ -267,6 +284,7 @@ function AmountControl({
   actionLabel,
   amount,
   disabled,
+  disabledReason,
   inputLabel,
   onAction,
   onChange,
@@ -276,11 +294,12 @@ function AmountControl({
   actionLabel: string;
   amount: string;
   disabled: boolean;
+  disabledReason?: string | undefined;
   inputLabel: string;
   onAction: () => void;
   onChange: (value: string) => void;
   placeholder: string;
-  secondaryAction?: { disabled: boolean; label: string; onClick: () => void } | undefined;
+  secondaryAction?: { disabled: boolean; disabledReason?: string | undefined; label: string; onClick: () => void } | undefined;
 }) {
   return (
     <div className="grid gap-2">
@@ -300,6 +319,7 @@ function AmountControl({
             className="inline-flex h-9 items-center justify-center rounded border border-white/10 bg-white/5 px-3 text-sm font-medium text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:text-slate-500"
             disabled={disabled}
             onClick={onAction}
+            title={disabled ? disabledReason : undefined}
             type="button"
           >
             {actionLabel}
@@ -309,6 +329,7 @@ function AmountControl({
               className="inline-flex h-9 items-center justify-center rounded border border-cyan-300/30 bg-cyan-300/10 px-3 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
               disabled={secondaryAction.disabled}
               onClick={secondaryAction.onClick}
+              title={secondaryAction.disabled ? secondaryAction.disabledReason : undefined}
               type="button"
             >
               {secondaryAction.label}
