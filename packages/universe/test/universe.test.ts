@@ -6,7 +6,8 @@ import {
   isPlanetSlotPopulated,
   listPopulatedPlanetSlots,
   listSlotProfiles,
-  parsePlanetSlot
+  parsePlanetSlot,
+  solarSatelliteEnergy
 } from "../src";
 
 const seed = "veydrift-mainnet-preview";
@@ -64,6 +65,12 @@ describe("deterministic universe generation", () => {
       );
       expect(planet.minTemperatureC).toBe(planet.maxTemperatureC - 40);
     }
+  });
+
+  test("clamps Solar Satellite energy per unit to the canonical bounds", () => {
+    expect(solarSatelliteEnergy(-200)).toBe(1);
+    expect(solarSatelliteEnergy(80)).toBe(36);
+    expect(solarSatelliteEnergy(400)).toBe(65);
   });
 
   test("makes inner planets hotter and middle slots larger than outer slots", () => {

@@ -477,7 +477,7 @@ function deuteriumFormulaBps(maxTemperatureC: number): number {
   return 12_800 - 20 * maxTemperatureC;
 }
 
-function solarSatelliteEnergy(maxTemperatureC: number): number {
+export function solarSatelliteEnergy(maxTemperatureC: number): number {
   return Math.max(1, Math.min(65, Math.floor((maxTemperatureC + 140) / 6)));
 }
 

@@ -472,7 +472,7 @@ describe("tester universe display data", () => {
       "Metal: 100%",
       "Crystal: 100%",
       "Deuterium: 100%",
-      "Solar satellite: 25 E",
+      "Solar satellite: 22 E",
     ]);
 
     const copy = [
@@ -482,6 +482,50 @@ describe("tester universe display data", () => {
       ...publicProductionRows(planet).map((row) => row.value),
     ].join(" ");
     expect(copy).not.toMatch(/\b(indexed|indexer|backend|universe data|OGame|ogame)\b/i);
+  });
+
+  test("planet detail uses canonical Solar Satellite E/Sat temperature", () => {
+    const [reportedColdPlanet, coldPlanet, hotPlanet] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [
+        {
+          fields: 211,
+          galaxy: 8,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
+          position: 11,
+          system: 490,
+          temperature: -59,
+        },
+        {
+          fields: 211,
+          galaxy: 2,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
+          position: 14,
+          system: 44,
+          temperature: -200,
+        },
+        {
+          fields: 211,
+          galaxy: 2,
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
+          position: 1,
+          system: 44,
+          temperature: 400,
+        },
+      ],
+    });
+
+    expect(publicPlanetDataRows(reportedColdPlanet).map((row) => `${row.label}: ${row.value}`)).toContain("Temperature: -79°C to -39°C");
+    expect(publicProductionRows(reportedColdPlanet).map((row) => `${row.label}: ${row.value}`)).toContain("Solar satellite: 13 E");
+    expect(publicProductionRows(coldPlanet).map((row) => `${row.label}: ${row.value}`)).toContain("Solar satellite: 1 E");
+    expect(publicProductionRows(hotPlanet).map((row) => `${row.label}: ${row.value}`)).toContain("Solar satellite: 65 E");
   });
 
   test("keeps loaded planet detail visible during same-coordinate background refreshes", () => {

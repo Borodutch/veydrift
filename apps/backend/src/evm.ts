@@ -1,3 +1,4 @@
+import { solarSatelliteEnergy } from "@veydrift/universe";
 import type { BackendConfig } from "./config";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import { usedFieldsFromBuildingRows } from "./readModels";
@@ -5412,10 +5413,6 @@ function decodeSignedWord(word: string): bigint {
 
 function decodeBoolWord(word: string): boolean {
   return decodeUintWord(word) !== 0n;
-}
-
-function solarSatelliteEnergy(maxTemperature: number): number {
-  return Math.max(1, Math.min(65, Math.floor((maxTemperature + 140) / 6)));
 }
 
 function decodeAddressWord(word: string): Address {

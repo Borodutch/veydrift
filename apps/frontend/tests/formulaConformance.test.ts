@@ -62,7 +62,9 @@ describe("canonical Veydrift formula conformance", () => {
       crystal: 0,
       deuterium: 0,
     });
+    expect(solarSatelliteEnergy(-200)).toBe(1);
     expect(solarSatelliteEnergy(80)).toBe(36);
+    expect(solarSatelliteEnergy(400)).toBe(65);
     expect(energyBalance({ ...buildings, solarPlant: 0 }, 0, 3, { ...profile, maxTemperature: 80 })).toEqual({
       deuteriumConsumed: 0,
       produced: 108,

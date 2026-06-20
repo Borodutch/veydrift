@@ -1634,7 +1634,7 @@ function projectedResourceSnapshot(
   const energyTechnologyLevel = publicResearchLevel(target, "energy");
   const solarSatelliteCount = target?.publicState?.fleet?.find((row) => row.id === 9)?.count ?? 0;
   const productionProfile = {
-    ...(target?.temperature.max != null ? { maxTemperature: target.temperature.max } : {}),
+    ...(target ? { maxTemperature: canonicalPlanetTemperature(target.temperature) } : {}),
     metalMultiplierBps: target?.metalMultiplierBps ?? 10_000,
     crystalMultiplierBps: target?.crystalMultiplierBps ?? 10_000,
     deuteriumMultiplierBps: target?.deuteriumMultiplierBps ?? 10_000,
@@ -1646,6 +1646,10 @@ function projectedResourceSnapshot(
     resources: projected,
     detail: "Arrival projection uses public building/resource preview math and assumes no spending, transport, or combat changes before arrival.",
   };
+}
+
+function canonicalPlanetTemperature(temperature: Planet["temperature"]): number {
+  return Math.floor((temperature.min + temperature.max) / 2);
 }
 
 function publicProductionProjection(

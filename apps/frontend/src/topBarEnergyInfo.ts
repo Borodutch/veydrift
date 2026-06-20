@@ -2,11 +2,13 @@ const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const BPS = 10_000;
 
 export function energyExplanationTitle({
+  context,
   produced,
   required,
   scaleBps,
   sources,
 }: {
+  context?: string | undefined;
   produced: number;
   required: number;
   scaleBps: number;
@@ -26,10 +28,11 @@ export function energyExplanationTitle({
     : `Surplus ${format(current)}`;
   const details = [
     "Energy powers mines.",
+    context ? `Context: ${context}.` : undefined,
     "Solar Plant and Solar Satellites produce it; mines consume it.",
     `${format(produced)} produced / ${format(required)} consumed.`,
     status,
-  ];
+  ].filter((detail): detail is string => Boolean(detail));
 
   if (sources) {
     details.push(
