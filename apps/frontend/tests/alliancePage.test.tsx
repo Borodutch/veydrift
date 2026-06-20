@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   allianceDirectoryPageSize,
+  allianceDirectoryWarActionState,
   allianceRefreshButtonState,
   allianceRosterPageSize,
   allianceExitActionState,
@@ -350,6 +351,51 @@ describe("AlliancePage loading display", () => {
     expect(alliancePageSource).not.toContain('<Panel title="Other Alliances">');
     expect(alliancePageSource).not.toContain('filter((alliance) => alliance.allianceId !== currentAllianceId)');
     expect(alliancePageSource).not.toContain("Alliance Details");
+  });
+
+  test("moves declare war to owner-only alliance directory rows", () => {
+    const activeWarAllianceIds = new Set(["9"]);
+
+    expect(allianceDirectoryWarActionState({
+      activeWarAllianceIds,
+      allianceId: "8",
+      canDeclareWar: true,
+      currentAllianceId: "7",
+    })).toEqual({
+      atWar: false,
+      canDeclare: true,
+    });
+    expect(allianceDirectoryWarActionState({
+      activeWarAllianceIds,
+      allianceId: "8",
+      canDeclareWar: false,
+      currentAllianceId: "7",
+    })).toEqual({
+      atWar: false,
+      canDeclare: false,
+    });
+    expect(allianceDirectoryWarActionState({
+      activeWarAllianceIds,
+      allianceId: "7",
+      canDeclareWar: true,
+      currentAllianceId: "7",
+    })).toEqual({
+      atWar: false,
+      canDeclare: false,
+    });
+    expect(allianceDirectoryWarActionState({
+      activeWarAllianceIds,
+      allianceId: "9",
+      canDeclareWar: true,
+      currentAllianceId: "7",
+    })).toEqual({
+      atWar: true,
+      canDeclare: false,
+    });
+    expect(alliancePageSource).toContain("<DirectorySection");
+    expect(alliancePageSource).toContain("Declare War");
+    expect(alliancePageSource).not.toContain('<span className="text-xs uppercase tracking-[0.14em] text-slate-500">Declare War</span>');
+    expect(alliancePageSource).not.toContain("<option value=\"\">Select alliance</option>");
   });
 
   test("removes alliance inspect labeling from the dedicated alliance route", () => {
