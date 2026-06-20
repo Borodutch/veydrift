@@ -59,10 +59,17 @@ const jsonHeaders = {
   "content-type": "application/json; charset=utf-8"
 } as const;
 
+const defaultCorsOrigin = "https://test.veydrift.com";
+const canonicalCorsOrigins = [
+  defaultCorsOrigin,
+  "https://veydrift.com"
+] as const;
+
 const corsHeaders = {
   "access-control-allow-headers": "content-type",
   "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
-  "access-control-allow-origin": process.env.VEYDRIFT_ALLOWED_ORIGIN ?? "https://test.veydrift.com",
+  "access-control-allow-origin": defaultCorsOrigin,
+  "vary": "Origin",
   ...jsonHeaders
 } as const;
 
@@ -232,7 +239,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   );
   const prewarmResponseCache = dependencies.prewarmResponseCache ?? enableResponseCache;
 
-  const handleRequest = async (request: Request): Promise<Response> => {
+  const routeRequest = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
 
     if (request.method === "OPTIONS") {
@@ -1077,13 +1084,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const cacheKey = cacheableJsonRequestKey(request, url, indexer);
       const cached = responseCache.get(cacheKey);
       if (cached && cached.expiresAt > Date.now()) {
-        return cachedJsonResponse(cached);
+        return withRequestCors(request, cachedJsonResponse(cached));
       }
 
       const inflight = inflightResponseCache.get(cacheKey);
       if (inflight) {
         const coalesced = await inflight;
-        if (coalesced) return cachedJsonResponse(coalesced);
+        if (coalesced) return withRequestCors(request, cachedJsonResponse(coalesced));
       }
 
       let resolveInflight: (cached: CachedJsonResponse | null) => void;
@@ -1091,7 +1098,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         resolveInflight = resolve;
       }));
 
-      const response = await handleRequest(request);
+      const response = await routeRequest(request);
       if (response.status === 200 && jsonContentType(response.headers.get("content-type"))) {
         const body = await response.clone().arrayBuffer();
         const headers: Array<[string, string]> = [];
@@ -1107,14 +1114,14 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         pruneResponseCache(responseCache);
         resolveInflight!(cachedResponse);
         inflightResponseCache.delete(cacheKey);
-        return cachedJsonResponse(cachedResponse);
+        return withRequestCors(request, cachedJsonResponse(cachedResponse));
       }
       resolveInflight!(null);
       inflightResponseCache.delete(cacheKey);
-      return response;
+      return withRequestCors(request, response);
     }
 
-    return handleRequest(request);
+    return withRequestCors(request, await routeRequest(request));
   };
 
   prewarmHotResponseCache(serveWithResponseCache, indexer, prewarmResponseCache);
@@ -1146,6 +1153,47 @@ export function deriveLogBackfiller(
     };
   }
   return undefined;
+}
+
+function withRequestCors(request: Request, response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set("access-control-allow-origin", allowedCorsOrigin(request));
+  appendVaryHeader(headers, "Origin");
+  return new Response(response.body, {
+    headers,
+    status: response.status,
+    statusText: response.statusText
+  });
+}
+
+function allowedCorsOrigin(request: Request): string {
+  const origin = request.headers.get("origin");
+  if (origin && allowedCorsOrigins().has(origin)) return origin;
+  return defaultCorsOrigin;
+}
+
+function allowedCorsOrigins(): Set<string> {
+  return new Set([
+    ...canonicalCorsOrigins,
+    ...parseCorsOrigins(process.env.VEYDRIFT_ALLOWED_ORIGIN)
+  ]);
+}
+
+function parseCorsOrigins(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+}
+
+function appendVaryHeader(headers: Headers, value: string): void {
+  const current = headers.get("vary");
+  if (!current) {
+    headers.set("vary", value);
+    return;
+  }
+  if (current.split(",").some((item) => item.trim().toLowerCase() === value.toLowerCase())) return;
+  headers.set("vary", `${current}, ${value}`);
 }
 
 function isIndexableChainReader(

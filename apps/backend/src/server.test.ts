@@ -7130,6 +7130,41 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("reflects the public landing origin for CORS requests", async () => {
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: {} as ChainReader
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10", {
+      headers: {
+        origin: "https://veydrift.com"
+      }
+    }));
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://veydrift.com");
+    expect(response.headers.get("vary")).toContain("Origin");
+  });
+
+  test("reflects the public landing origin for CORS preflight requests", async () => {
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: {} as ChainReader
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10", {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://veydrift.com"
+      }
+    }));
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://veydrift.com");
+    expect(response.headers.get("access-control-allow-methods")).toBe("GET,POST,DELETE,OPTIONS");
+  });
+
   test("serves deterministic systems around a center coordinate", async () => {
     const response = await createRequestHandler({
       config: configuredTestConfig,
