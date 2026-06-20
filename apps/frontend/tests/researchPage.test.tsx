@@ -621,7 +621,7 @@ describe("Research page load-error display", () => {
       tileStatus: "ShortResources",
     });
     expect(researchCatalogTitleTone(insufficientResources)).toBe("muted");
-    expect(researchCatalogStatusText(insufficientResources)).toBe("Need resources");
+    expect(researchCatalogStatusText(insufficientResources)).toBe("");
   });
 
   test("marks Shielding short on crystal when prerequisites are met but resourcesAsOfNow cannot pay (VEY-KANEO-596)", () => {
@@ -665,7 +665,7 @@ describe("Research page load-error display", () => {
       tileStatus: "ShortResources",
     });
     expect(researchCatalogTitleTone(status)).toBe("muted");
-    expect(researchCatalogStatusText(status)).toBe("Need resources");
+    expect(researchCatalogStatusText(status)).toBe("");
   });
 
   test("keeps detailed short-resource reasons in the selected details panel, not selector cards (VEY-KANEO-599)", () => {
@@ -702,7 +702,7 @@ describe("Research page load-error display", () => {
     });
 
     expect(status.reason).toBe("Requires 65 more Crystal");
-    expect(researchCatalogStatusText(status)).toBe("Need resources");
+    expect(researchCatalogStatusText(status)).toBe("");
     expect(researchCatalogStatusText(status)).not.toContain("65");
 
     const detailReason = ResearchActionReasonNotice({
