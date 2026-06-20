@@ -189,6 +189,8 @@ describe("playable chain refresh", () => {
     expect(source).toContain("const closeAcsDefendWhenComplete = (transaction: Promise<boolean>) => {");
     expect(source).toContain("if (await transaction) setPendingAcsDefend(null);");
     expect(source).toContain("if (completed) closeJoinAttack();");
+    expect(source.match(/actionPendingLabel=\{galaxyAction\.status === "pending" \? galaxyAction\.label : undefined\}/g) ?? [])
+      .toHaveLength(3);
     expect(source).not.toContain("setPendingGalaxyMission(null);\n    setPendingJoinAttack(null);\n    setPendingAcsDefend(null);\n    if (action.kind === \"attack\"");
     expect(source).not.toContain("closeMissionCreation();\n      void runGalaxyTransaction(\"Colony mission\"");
     expect(source).not.toContain("closeMissionCreation();\n      void runGalaxyTransaction(\"Missile attack\"");
