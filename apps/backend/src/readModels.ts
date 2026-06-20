@@ -1,3 +1,4 @@
+import { solarSatelliteEnergy } from "@veydrift/universe";
 import { calculateHighscore, type HighscoreEntry, type HighscoreInput } from "./highscores";
 import type {
   DefenseState,
@@ -466,10 +467,6 @@ function fusionReactorEnergyProduction(level: number, energyTechnologyLevel: num
 function fusionReactorDeuteriumConsumption(level: number): number {
   if (level === 0) return 0;
   return Math.ceil((10 * level * (11 ** level)) / (10 ** level));
-}
-
-function solarSatelliteEnergy(maxTemperature: number): number {
-  return Math.max(1, Math.min(65, Math.floor((maxTemperature + 140) / 6)));
 }
 
 function storageCap(level: number): number {

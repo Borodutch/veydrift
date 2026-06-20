@@ -33,4 +33,13 @@ describe("top bar energy info", () => {
       },
     })).toContain("Production in total: 96. Solar Plant: 44. Fusion Generator: 16 from 11 DEUT/h. Solar Satellites: 36 from 3 satellites (12 E/Sat).");
   });
+
+  test("includes active planet context when provided", () => {
+    expect(energyExplanationTitle({
+      context: "Selected player planet [8:490:11]",
+      produced: 96,
+      required: 120,
+      scaleBps: 8_000,
+    })).toContain("Context: Selected player planet [8:490:11].");
+  });
 });

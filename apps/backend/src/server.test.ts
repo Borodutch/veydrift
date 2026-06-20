@@ -5511,6 +5511,26 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("derives indexed infrastructure Solar Satellite E/Sat with canonical bounds", () => {
+    const buildings: InfrastructureState["buildings"] = [
+      { id: 0, level: 1, cost: { metal: "120", crystal: "30", deuterium: "0" } },
+    ];
+    const ships: ShipyardState["ships"] = [
+      { id: 9, count: 3, cost: { metal: "0", crystal: "2000", deuterium: "500" } },
+    ];
+
+    expect(deriveInfrastructureFields({ ...planet, temperature: -200 }, buildings, ships, {}).energyBalance?.sources).toMatchObject({
+      solarSatellites: "3",
+      solarSatelliteCount: 3,
+      solarSatelliteEnergy: "1",
+    });
+    expect(deriveInfrastructureFields({ ...planet, temperature: 400 }, buildings, ships, {}).energyBalance?.sources).toMatchObject({
+      solarSatellites: "195",
+      solarSatelliteCount: 3,
+      solarSatelliteEnergy: "65",
+    });
+  });
+
   test("serves indexed shipyard research and rift state without chain reader calls when warm", async () => {
     const chainReader = new MockChainReader();
     chainReader.getShipyardState = async () => {

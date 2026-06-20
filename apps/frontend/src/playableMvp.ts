@@ -1,3 +1,4 @@
+import { solarSatelliteEnergy as universeSolarSatelliteEnergy } from "@veydrift/universe";
 import { defenseAssetByKey, researchAssetByKey, shipAssetByKey } from "./gameAssets";
 
 export type Resources = {
@@ -2071,9 +2072,7 @@ export function fusionReactorDeuteriumConsumption(level: number): number {
   return Math.ceil((10 * level * (11 ** level)) / (10 ** level));
 }
 
-export function solarSatelliteEnergy(maxTemperature: number): number {
-  return Math.max(1, Math.min(65, Math.floor((maxTemperature + 140) / 6)));
-}
+export const solarSatelliteEnergy = universeSolarSatelliteEnergy;
 
 function scaleByFactor(value: number, exponent: number, numerator: number, denominator: number): number {
   return Math.floor((value * (numerator ** exponent)) / (denominator ** exponent));

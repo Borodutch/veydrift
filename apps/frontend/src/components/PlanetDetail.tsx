@@ -5,7 +5,7 @@ import { galaxyActionsForSlot, type GalaxyAction } from "../galaxyActions";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress, type ChainDefenseState, type ChainShipyardState } from "../walletFlow";
 import { isImageReady } from "../imageLoadState";
-import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog } from "../playableMvp";
+import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog, solarSatelliteEnergy } from "../playableMvp";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { GalaxyActionButtons, type AttackProtectionStatus, type GalaxyActionState, formatAttackBlockReason } from "./GalaxyView";
 import { OptimizedImage } from "./OptimizedImage";
@@ -579,8 +579,8 @@ export function publicProductionRows(planet: Planet): ProductionMetricRow[] {
     },
     {
       label: "Solar satellite",
-      value: formatSolarSatelliteEnergy(planet.temperature.max),
-      fillPercent: solarSatelliteFillPercent(planet.temperature.max),
+      value: formatSolarSatelliteEnergy(planetSolarSatelliteTemperature(planet.temperature)),
+      fillPercent: solarSatelliteFillPercent(planetSolarSatelliteTemperature(planet.temperature)),
       color: "bg-ember",
     },
   ];
@@ -635,12 +635,12 @@ function formatSolarSatelliteEnergy(maxTemperature: number): string {
   return `${solarSatelliteEnergy(maxTemperature).toLocaleString()} E`;
 }
 
-function solarSatelliteEnergy(maxTemperature: number): number {
-  return Math.max(0, Math.floor((maxTemperature + 140) / 6));
-}
-
 function solarSatelliteFillPercent(maxTemperature: number): number {
   return Math.min(100, Math.max(0, solarSatelliteEnergy(maxTemperature) / 50 * 100));
+}
+
+function planetSolarSatelliteTemperature(temperature: Planet["temperature"]): number {
+  return Math.floor((temperature.min + temperature.max) / 2);
 }
 
 function debrisFieldLabel(planet: Planet): string {

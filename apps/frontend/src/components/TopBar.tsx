@@ -75,6 +75,7 @@ export function TopBar({
               />
               {shouldShowTopBarEnergy(energy) && (
                 <EnergyPip
+                  context={coordinates ? `Selected player planet [${coordinates}]` : "Selected player planet"}
                   produced={energy.produced}
                   required={energy.required}
                   scaleBps={energy.scaleBps}
@@ -174,11 +175,13 @@ function ResourcePip({
 }
 
 function EnergyPip({
+  context,
   produced,
   required,
   scaleBps,
   sources,
 }: {
+  context: string;
   produced: number;
   required: number;
   scaleBps: number;
@@ -188,7 +191,7 @@ function EnergyPip({
   const tone = current < 0 ? "text-red-300" : "text-lime-300";
   const showShortageFactor = current < 0 && required > 0 && scaleBps < BPS;
   const productionPercent = Math.floor((scaleBps * 100) / BPS);
-  const energyExplanation = energyExplanationTitle({ produced, required, scaleBps, sources });
+  const energyExplanation = energyExplanationTitle({ context, produced, required, scaleBps, sources });
 
   return (
     <div
@@ -223,6 +226,7 @@ function EnergyPip({
           </summary>
           <div className="fixed left-2 right-2 top-12 z-50 whitespace-normal rounded border border-cyan-300/25 bg-[#111827] p-3 text-left text-xs leading-5 text-slate-300 shadow-2xl shadow-black/50 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-72">
             <div className="font-semibold text-cyan-100">Energy</div>
+            <div className="mt-1 font-mono text-[11px] leading-4 text-cyan-200">{context}</div>
             <p className="mt-1">
               Energy powers mines. Solar Plant and Solar Satellites produce it; mines consume it.
             </p>
