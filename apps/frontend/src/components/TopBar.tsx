@@ -92,6 +92,7 @@ export function TopBar({
                 <EnergyPip
                   context={coordinates ? `Selected player planet [${coordinates}]` : "Selected player planet"}
                   produced={energy.produced}
+                  rates={rates}
                   required={energy.required}
                   scaleBps={energy.scaleBps}
                   crawlerProduction={crawlerProduction}
@@ -193,6 +194,7 @@ function ResourcePip({
 function EnergyPip({
   context,
   produced,
+  rates,
   required,
   scaleBps,
   crawlerProduction,
@@ -200,6 +202,7 @@ function EnergyPip({
 }: {
   context: string;
   produced: number;
+  rates: Resources;
   required: number;
   scaleBps: number;
   crawlerProduction?: CrawlerProductionInfo | null | undefined;
@@ -210,9 +213,7 @@ function EnergyPip({
   const showShortageFactor = current < 0 && required > 0 && scaleBps < BPS;
   const productionPercent = Math.floor((scaleBps * 100) / BPS);
   const energyExplanation = energyExplanationTitle({ context, produced, required, scaleBps, sources });
-  const popupExplanation = crawlerProduction
-    ? `${energyExplanation} ${crawlerExplanationTitle(crawlerProduction)}`
-    : energyExplanation;
+  const popupExplanation = `${energyExplanation} ${crawlerExplanationTitle(crawlerProduction)}`;
 
   return (
     <div
@@ -246,11 +247,20 @@ function EnergyPip({
             <Info aria-hidden="true" size={12} strokeWidth={2.25} />
           </summary>
           <div className="fixed left-2 right-2 top-12 z-50 whitespace-normal rounded border border-cyan-300/25 bg-[#111827] p-3 text-left text-xs leading-5 text-slate-300 shadow-2xl shadow-black/50 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-72">
-            <div className="font-semibold text-cyan-100">Energy</div>
+            <div className="font-semibold text-cyan-100">Resources</div>
             <div className="mt-1 font-mono text-[11px] leading-4 text-cyan-200">{context}</div>
             <p className="mt-1">
-              Energy powers mines. Solar Plant and Solar Satellites produce it; mines consume it.
+              Mines produce resources. Energy powers mines, and crawlers can boost mine output.
             </p>
+            <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-4">
+              <dt className="text-slate-500">Metal production</dt>
+              <dd className="text-right font-semibold text-slate-100">{formatRate(rates.metal)}</dd>
+              <dt className="text-slate-500">Crystal production</dt>
+              <dd className="text-right font-semibold text-slate-100">{formatRate(rates.crystal)}</dd>
+              <dt className="text-slate-500">Deuterium production</dt>
+              <dd className="text-right font-semibold text-slate-100">{formatRate(rates.deuterium)}</dd>
+            </dl>
+            <div className="mt-2 border-t border-white/10 pt-2 font-semibold text-cyan-100">Energy</div>
             <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] leading-4">
               <dt className="text-slate-500">Produced</dt>
               <dd className="text-right font-semibold text-slate-100">{format(produced)}</dd>
@@ -273,35 +283,7 @@ function EnergyPip({
                 </dd>
               </dl>
             )}
-            {crawlerProduction && (
-              <dl className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-t border-white/10 pt-2 text-[11px] leading-4">
-                <dt className="text-slate-500">Crawler boost</dt>
-                <dd className="text-right font-semibold text-slate-100">{formatCrawlerBoost(crawlerProduction.boostBps)}</dd>
-                <dt className="text-slate-500">Crawlers</dt>
-                <dd className="text-right font-semibold text-slate-100">
-                  {format(crawlerProduction.effective)} / {format(crawlerProduction.total)} effective
-                </dd>
-                <dt className="text-slate-500">Effective cap</dt>
-                <dd className={crawlerProduction.capped ? "text-right font-semibold text-amber-200" : "text-right font-semibold text-slate-100"}>
-                  {format(crawlerProduction.maxEffective)}
-                </dd>
-                <dt className="text-slate-500">Metal impact</dt>
-                <dd className="text-right font-semibold text-slate-100">{formatCrawlerImpact(crawlerProduction.productionIncreasePerHour.metal)}</dd>
-                <dt className="text-slate-500">Crystal impact</dt>
-                <dd className="text-right font-semibold text-slate-100">{formatCrawlerImpact(crawlerProduction.productionIncreasePerHour.crystal)}</dd>
-                <dt className="text-slate-500">Deuterium impact</dt>
-                <dd className="text-right font-semibold text-slate-100">{formatCrawlerImpact(crawlerProduction.productionIncreasePerHour.deuterium)}</dd>
-              </dl>
-            )}
-            {crawlerProduction && (
-              <p className={`mt-2 text-[11px] leading-4 ${crawlerProduction.capped ? "text-amber-200" : "text-slate-400"}`}>
-                {crawlerProduction.total <= 0
-                  ? "No crawlers are boosting this planet yet."
-                  : crawlerProduction.capped
-                  ? "Extra crawlers above the effective cap are idle until mine levels increase."
-                  : "Only effective crawlers contribute to mine production."}
-              </p>
-            )}
+            <CrawlerProductionDetails crawlerProduction={crawlerProduction} />
             <p className={`mt-2 text-[11px] leading-4 ${showShortageFactor ? "text-red-200" : "text-slate-400"}`}>
               {showShortageFactor
                 ? `Insufficient energy reduces mine output to ${productionPercent}% until you add more energy production or reduce consumption.`
@@ -311,6 +293,64 @@ function EnergyPip({
         </details>
       </span>
     </div>
+  );
+}
+
+function CrawlerProductionDetails({
+  crawlerProduction,
+}: {
+  crawlerProduction?: CrawlerProductionInfo | null | undefined;
+}) {
+  if (!crawlerProduction) {
+    return (
+      <>
+        <dl className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-t border-white/10 pt-2 text-[11px] leading-4">
+          <dt className="text-slate-500">Crawler boost</dt>
+          <dd className="text-right font-semibold text-slate-100">Syncing</dd>
+          <dt className="text-slate-500">Crawlers</dt>
+          <dd className="text-right font-semibold text-slate-100">Waiting for production model</dd>
+          <dt className="text-slate-500">Metal impact</dt>
+          <dd className="text-right font-semibold text-slate-100">Syncing</dd>
+          <dt className="text-slate-500">Crystal impact</dt>
+          <dd className="text-right font-semibold text-slate-100">Syncing</dd>
+          <dt className="text-slate-500">Deuterium impact</dt>
+          <dd className="text-right font-semibold text-slate-100">Syncing</dd>
+        </dl>
+        <p className="mt-2 text-[11px] leading-4 text-slate-400">
+          Crawler production details are syncing from the backend production model.
+        </p>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <dl className="mt-2 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 border-t border-white/10 pt-2 text-[11px] leading-4">
+        <dt className="text-slate-500">Crawler boost</dt>
+        <dd className="text-right font-semibold text-slate-100">{formatCrawlerBoost(crawlerProduction.boostBps)}</dd>
+        <dt className="text-slate-500">Crawlers</dt>
+        <dd className="text-right font-semibold text-slate-100">
+          {format(crawlerProduction.effective)} / {format(crawlerProduction.total)} effective
+        </dd>
+        <dt className="text-slate-500">Effective cap</dt>
+        <dd className={crawlerProduction.capped ? "text-right font-semibold text-amber-200" : "text-right font-semibold text-slate-100"}>
+          {format(crawlerProduction.maxEffective)}
+        </dd>
+        <dt className="text-slate-500">Metal impact</dt>
+        <dd className="text-right font-semibold text-slate-100">{formatCrawlerImpact(crawlerProduction.productionIncreasePerHour.metal)}</dd>
+        <dt className="text-slate-500">Crystal impact</dt>
+        <dd className="text-right font-semibold text-slate-100">{formatCrawlerImpact(crawlerProduction.productionIncreasePerHour.crystal)}</dd>
+        <dt className="text-slate-500">Deuterium impact</dt>
+        <dd className="text-right font-semibold text-slate-100">{formatCrawlerImpact(crawlerProduction.productionIncreasePerHour.deuterium)}</dd>
+      </dl>
+      <p className={`mt-2 text-[11px] leading-4 ${crawlerProduction.capped ? "text-amber-200" : "text-slate-400"}`}>
+        {crawlerProduction.total <= 0
+          ? "No crawlers are boosting this planet yet."
+          : crawlerProduction.capped
+          ? "Extra crawlers above the effective cap are idle until mine levels increase."
+          : "Only effective crawlers contribute to mine production."}
+      </p>
+    </>
   );
 }
 
@@ -333,10 +373,18 @@ function formatCrawlerBoost(boostBps: string): string {
 function formatCrawlerImpact(value: number | string): string {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric <= 0) return "0/h";
-  return `+${format(numeric)}/h`;
+  return formatRate(numeric);
 }
 
-function crawlerExplanationTitle(crawler: CrawlerProductionInfo): string {
+function formatRate(value: number): string {
+  return `+${format(value)}/h`;
+}
+
+function crawlerExplanationTitle(crawler: CrawlerProductionInfo | null | undefined): string {
+  if (!crawler) {
+    return "Crawler production details are syncing from the backend production model.";
+  }
+
   const details = [
     `Crawler boost ${formatCrawlerBoost(crawler.boostBps)}.`,
     `${format(crawler.effective)} of ${format(crawler.total)} crawlers effective.`,

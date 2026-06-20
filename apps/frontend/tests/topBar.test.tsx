@@ -66,8 +66,11 @@ describe("TopBar", () => {
     expect(energyInfo?.props?.["aria-label"]).toContain("Fusion Generator: 20 from 11 DEUT/h");
     expect(energyInfo?.props?.["aria-label"]).toContain("Solar Satellites: 40 from 2 satellites (20 E/Sat)");
     expect(energyInfo?.props?.["aria-label"]).toContain("Mine output is reduced to 80%");
-    expect(panelText).toContain("Solar Plant and Solar Satellites produce it");
+    expect(panelText).toContain("Mines produce resources");
     expect(panelText).toContain("Selected player planet");
+    expect(panelText).toContain("Metal production +77/h");
+    expect(panelText).toContain("Crystal production +29/h");
+    expect(panelText).toContain("Deuterium production +14/h");
     expect(panelText).toContain("Produced 100");
     expect(panelText).toContain("Consumed 125");
     expect(panelText).toContain("Balance -25");
@@ -79,6 +82,21 @@ describe("TopBar", () => {
     expect(panelText).not.toContain("By Fusion Generator");
     expect(panelText).not.toContain("By Solar Satellites");
     expect(panelText).toContain("Insufficient energy reduces mine output to 80%");
+  });
+
+  test("keeps crawler production visible while backend crawler metadata is syncing", () => {
+    const topBar = renderTopBar({ crawlerProduction: undefined });
+    const energyInfo = elementNodes(topBar).find(
+      (item) => item.type === "summary"
+        && typeof item.props?.["aria-label"] === "string"
+        && item.props["aria-label"].includes("Crawler production details are syncing")
+    );
+    const panelText = visibleText(elementNodes(topBar).find((item) => item.type === "details"));
+
+    expect(energyInfo?.props?.["aria-label"]).toContain("Crawler production details are syncing from the backend production model.");
+    expect(panelText).toContain("Crawler boost Syncing");
+    expect(panelText).toContain("Crawlers Waiting for production model");
+    expect(panelText).toContain("Crawler production details are syncing from the backend production model.");
   });
 
   test("labels energy popup values with the active player planet coordinates", () => {
