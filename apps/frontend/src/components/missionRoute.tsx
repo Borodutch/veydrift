@@ -108,7 +108,7 @@ export function MissionRouteCell({
 // alongside it. Width is capped so long planet names truncate instead of squeezing the arrow.
 function RouteEndpoint({ align, endpoint, nav }: { align: "left" | "right"; endpoint: MissionEndpoint; nav: RouteNavigation }) {
   return (
-    <div className={`flex min-w-0 max-w-[7rem] items-center gap-2 sm:max-w-[11rem] ${align === "right" ? "flex-row-reverse text-right" : ""}`}>
+    <div className={`flex min-w-0 max-w-[7.5rem] items-center gap-2 sm:max-w-[11rem] ${align === "right" ? "flex-row-reverse text-right" : ""}`}>
       <EndpointPlanetImage endpoint={endpoint} />
       <div className="min-w-0">
         <EndpointName endpoint={endpoint} nav={nav} />
