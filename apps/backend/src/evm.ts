@@ -596,6 +596,15 @@ export type ShipyardState = {
   queue: QueueState | null;
 };
 
+export type CrawlerProductionEffect = {
+  total: number;
+  effective: number;
+  maxEffective: number;
+  boostBps: string;
+  capped: boolean;
+  productionIncreasePerHour: Resources;
+};
+
 export type DefenseState = {
   wallet: Address;
   homePlanetId: string | null;
@@ -636,6 +645,7 @@ export type InfrastructureState = {
   // Accrued-to-now projection of `resources` (VEY-KANEO-464).
   resourcesAsOfNow?: Resources | null;
   productionPerHour: Resources | null;
+  crawlerProduction?: CrawlerProductionEffect | null;
   energyBalance: EnergyBalance | null;
   storageCaps: Resources | null;
   protectedResources: Resources | null;

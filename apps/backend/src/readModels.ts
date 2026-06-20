@@ -36,6 +36,9 @@ type BuildingKey =
   | "interdimensionalRiftStabilizer";
 
 const BPS = 10_000;
+const CRAWLER_BOOST_BPS_PER_UNIT = 2;
+const CRAWLER_MAX_PER_MINE_LEVEL = 8;
+const CRAWLER_MAX_BOOST_BPS = 5_000;
 const RAID_PROTECTED_STORAGE_BPS = 0;
 // Share of (unprotected) resources an attacker can actually haul away in a raid.
 // Mirrors the on-chain default plunder rate (plunderBps = 5000 = 50%, see
@@ -257,12 +260,15 @@ export function deriveInfrastructureFields(
   buildings: InfrastructureState["buildings"],
   ships: ShipyardState["ships"],
   technologyLevels: Record<string, number>
-): Pick<InfrastructureState, "energyBalance" | "productionPerHour" | "protectedResources" | "raidableResources" | "storageCaps"> {
+): Pick<InfrastructureState, "crawlerProduction" | "energyBalance" | "productionPerHour" | "protectedResources" | "raidableResources" | "storageCaps"> {
   const levels = buildingLevels(buildings);
   const solarSatelliteCount = ships.find((ship) => ship.id === 9)?.count ?? 0;
+  const crawlerCount = ships.find((ship) => ship.id === 15)?.count ?? 0;
   const energy = energyBalance(levels, solarSatelliteCount, planet.temperature, technologyLevels["0"] ?? 0);
   const caps = storageCaps(levels);
   const protectedResources = scaleResources(caps, RAID_PROTECTED_STORAGE_BPS);
+  const productionWithoutCrawlers = productionPerHour(levels, planet, energy, 0);
+  const productionWithCrawlers = productionPerHour(levels, planet, energy, crawlerCount);
 
   return {
     energyBalance: {
@@ -278,7 +284,8 @@ export function deriveInfrastructureFields(
         solarSatelliteEnergy: energy.sources.solarSatelliteEnergy.toString()
       }
     },
-    productionPerHour: productionPerHour(levels, planet, energy),
+    crawlerProduction: crawlerProductionEffect(levels, crawlerCount, productionWithoutCrawlers, productionWithCrawlers),
+    productionPerHour: productionWithCrawlers,
     protectedResources,
     raidableResources: scaleResources(
       subtractResources(planet.resources, protectedResources),
@@ -381,18 +388,53 @@ function researchCost(id: number, currentLevel: number): NumericResources {
 function productionPerHour(
   buildings: Record<BuildingKey, number>,
   planet: PlanetState,
-  energy: { deuteriumConsumed: number; scaleBps: number }
+  energy: { deuteriumConsumed: number; scaleBps: number },
+  crawlerCount = 0
 ): Resources {
   const metal = scaleByBps(scaledLevelValue(30, buildings.metalMine), planet.metalMultiplierBps);
   const crystal = scaleByBps(scaledLevelValue(20, buildings.crystalMine), planet.crystalMultiplierBps);
-  const deuteriumCapacity = scaleByBps(scaledLevelValue(10, buildings.deuteriumSynthesizer), planet.deuteriumMultiplierBps);
+  let deuteriumCapacity = scaleByBps(scaledLevelValue(10, buildings.deuteriumSynthesizer), planet.deuteriumMultiplierBps);
+  const crawlerBoostBps = crawlerProductionBoostBps(crawlerCount, buildings);
+  const boostedMetal = scaleByBps(metal, BPS + crawlerBoostBps);
+  const boostedCrystal = scaleByBps(crystal, BPS + crawlerBoostBps);
+  deuteriumCapacity = scaleByBps(deuteriumCapacity, BPS + crawlerBoostBps);
   const deuterium = Math.max(0, deuteriumCapacity - energy.deuteriumConsumed);
 
   return toResources({
-    metal: scaleByBps(metal, energy.scaleBps),
-    crystal: scaleByBps(crystal, energy.scaleBps),
+    metal: scaleByBps(boostedMetal, energy.scaleBps),
+    crystal: scaleByBps(boostedCrystal, energy.scaleBps),
     deuterium: scaleByBps(deuterium, energy.scaleBps)
   });
+}
+
+function crawlerProductionEffect(
+  buildings: Record<BuildingKey, number>,
+  crawlerCount: number,
+  productionWithoutCrawlers: Resources,
+  productionWithCrawlers: Resources
+): NonNullable<InfrastructureState["crawlerProduction"]> {
+  const maxEffective = Math.min(
+    CRAWLER_MAX_BOOST_BPS / CRAWLER_BOOST_BPS_PER_UNIT,
+    (buildings.metalMine + buildings.crystalMine + buildings.deuteriumSynthesizer) * CRAWLER_MAX_PER_MINE_LEVEL
+  );
+  const effective = Math.min(crawlerCount, maxEffective);
+  const boostBps = crawlerProductionBoostBps(crawlerCount, buildings);
+
+  return {
+    total: crawlerCount,
+    effective,
+    maxEffective,
+    boostBps: boostBps.toString(),
+    capped: crawlerCount > 0 && crawlerCount > effective,
+    productionIncreasePerHour: subtractResources(productionWithCrawlers, productionWithoutCrawlers)
+  };
+}
+
+function crawlerProductionBoostBps(crawlerCount: number, buildings: Record<BuildingKey, number>): number {
+  if (crawlerCount <= 0) return 0;
+  const maxEffective = (buildings.metalMine + buildings.crystalMine + buildings.deuteriumSynthesizer) * CRAWLER_MAX_PER_MINE_LEVEL;
+  const effective = Math.min(crawlerCount, maxEffective);
+  return Math.min(CRAWLER_MAX_BOOST_BPS, effective * CRAWLER_BOOST_BPS_PER_UNIT);
 }
 
 function energyBalance(

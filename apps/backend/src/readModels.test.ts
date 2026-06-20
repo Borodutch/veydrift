@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import type { PlanetState } from "./evm";
 
 import {
   buildingDurationSeconds,
   deriveBuildingRows,
   deriveDefenseRows,
+  deriveInfrastructureFields,
   deriveShipRows,
   deriveTechnologyRows,
   researchDurationSeconds,
@@ -98,3 +100,91 @@ describe("derive*Rows expose predicted durations (VEY-KANEO-472)", () => {
     );
   });
 });
+
+const crawlerTestPlanet: PlanetState = {
+  planetId: "1",
+  owner: "0x0000000000000000000000000000000000000001",
+  name: null,
+  galaxy: 1,
+  system: 1,
+  position: 1,
+  fields: 200,
+  temperature: 50,
+  metalMultiplierBps: 10_000,
+  crystalMultiplierBps: 10_000,
+  deuteriumMultiplierBps: 10_000,
+  lastSettledAt: "0",
+  resources: { metal: "0", crystal: "0", deuterium: "0" }
+};
+
+describe("deriveInfrastructureFields crawler production", () => {
+  test("reports zero crawler effect without production impact", () => {
+    const fields = deriveInfrastructureFields(
+      crawlerTestPlanet,
+      poweredMineRows(),
+      deriveShipRows(() => 0),
+      {}
+    );
+
+    expect(fields.crawlerProduction).toEqual({
+      total: 0,
+      effective: 0,
+      maxEffective: 240,
+      boostBps: "0",
+      capped: false,
+      productionIncreasePerHour: { metal: "0", crystal: "0", deuterium: "0" }
+    });
+  });
+
+  test("applies active crawler bonus to canonical production", () => {
+    const withoutCrawlers = deriveInfrastructureFields(
+      crawlerTestPlanet,
+      poweredMineRows(),
+      deriveShipRows(() => 0),
+      {}
+    );
+    const withCrawlers = deriveInfrastructureFields(
+      crawlerTestPlanet,
+      poweredMineRows(),
+      deriveShipRows((id) => (id === 15 ? 12 : 0)),
+      {}
+    );
+
+    expect(withCrawlers.crawlerProduction).toMatchObject({
+      total: 12,
+      effective: 12,
+      maxEffective: 240,
+      boostBps: "24",
+      capped: false
+    });
+    expect(Number(withCrawlers.productionPerHour?.metal)).toBeGreaterThan(Number(withoutCrawlers.productionPerHour?.metal));
+    expect(Number(withCrawlers.crawlerProduction?.productionIncreasePerHour.metal)).toBe(
+      Number(withCrawlers.productionPerHour?.metal) - Number(withoutCrawlers.productionPerHour?.metal)
+    );
+  });
+
+  test("caps effective crawlers by combined mine level", () => {
+    const fields = deriveInfrastructureFields(
+      crawlerTestPlanet,
+      deriveBuildingRows((id) => (id === 0 || id === 1 || id === 2 || id === 3 ? 1 : 0)),
+      deriveShipRows((id) => (id === 15 ? 100 : 0)),
+      {}
+    );
+
+    expect(fields.crawlerProduction).toMatchObject({
+      total: 100,
+      effective: 24,
+      maxEffective: 24,
+      boostBps: "48",
+      capped: true
+    });
+  });
+});
+
+function poweredMineRows() {
+  return deriveBuildingRows((id) => {
+    if (id === 0 || id === 1 || id === 2) return 10;
+    if (id === 3) return 30;
+    return 0;
+  });
+}
