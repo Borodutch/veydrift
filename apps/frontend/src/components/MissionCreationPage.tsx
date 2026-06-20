@@ -199,6 +199,7 @@ export function MissionCreationPage({
   originLabel,
   resources,
   shipyardState,
+  submitBlocker,
   target,
 }: {
   // VEY-KANEO-440: render the picker for an ACS Defend ("Group defend") counterplay. Like a normal
@@ -227,6 +228,7 @@ export function MissionCreationPage({
   originLabel?: string | undefined;
   resources?: MissionResourceSnapshot | undefined;
   shipyardState: ChainShipyardState | null;
+  submitBlocker?: string | undefined;
   target: Planet | undefined;
 }) {
   const [speedPercent, setSpeedPercent] = useState(DEFAULT_MISSION_SPEED_PERCENT);
@@ -330,6 +332,7 @@ export function MissionCreationPage({
     resources,
     selectedShipCount,
     staleShipQuantityBlocker,
+    submitBlocker,
     totalCargoCapacity,
   });
 
@@ -645,6 +648,7 @@ export function missionDraftBlocker({
   resources,
   selectedShipCount,
   staleShipQuantityBlocker,
+  submitBlocker,
   totalCargoCapacity,
 }: {
   // VEY-KANEO-440: true when an ACS Defend fleet is too slow to reach the defended planet before the
@@ -664,8 +668,10 @@ export function missionDraftBlocker({
   resources: MissionResourceSnapshot | undefined;
   selectedShipCount: number;
   staleShipQuantityBlocker?: string | undefined;
+  submitBlocker?: string | undefined;
   totalCargoCapacity: number;
 }): string | undefined {
+  if (submitBlocker) return submitBlocker;
   if (!originCoords) return "Active origin planet is unavailable.";
   // Interplanetary missiles do not occupy fleet slots, so they skip the fleet-slot gate below.
   if (action.mode === "missile") return quantity > 0 ? undefined : "Choose at least one missile.";

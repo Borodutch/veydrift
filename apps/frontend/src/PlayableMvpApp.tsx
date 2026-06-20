@@ -347,6 +347,8 @@ const MISSION_RESOLUTION_REFRESH_BUFFER_MS = 1_500;
 // VEY-KANEO-539: production queues need the same tightened post-ETA read so visible construction
 // state reconciles at completion time instead of waiting for the next broad poll or a manual reload.
 const PRODUCTION_QUEUE_COMPLETION_REFRESH_BUFFER_MS = 1_500;
+export const previousMissionIndexingBlockerLabel = "Waiting for previous mission to index.";
+export const previousMissionTransactionBlockerLabel = "Waiting for previous mission transaction.";
 
 type RefreshFreshnessGate = { current: number };
 export type ResourceSnapshotFreshness = {
@@ -793,6 +795,49 @@ export function shipyardStateForMissionActions({
     technologyLevels: {},
     ships: [],
     queue: null,
+  };
+}
+
+export function missionLaunchSubmitBlocker({
+  actionState,
+  pendingMissionLaunchCount,
+}: {
+  actionState: Pick<GalaxyActionState, "status">;
+  pendingMissionLaunchCount: number;
+}): string | undefined {
+  if (pendingMissionLaunchCount > 0) return previousMissionIndexingBlockerLabel;
+  if (actionState.status === "pending") return previousMissionTransactionBlockerLabel;
+  return undefined;
+}
+
+export function shipyardStateWithMissionLaunchBlocker({
+  account,
+  activePlanetId,
+  blocker,
+  homePlanetId,
+  shipyardState,
+}: {
+  account: string | undefined;
+  activePlanetId: string | undefined;
+  blocker: string | undefined;
+  homePlanetId: string | null | undefined;
+  shipyardState: ChainShipyardState | null;
+}): ChainShipyardState | null {
+  if (!blocker) return shipyardState;
+  return {
+    ...(shipyardState ?? {
+      wallet: account ?? "",
+      homePlanetId: homePlanetId ?? null,
+      planetId: activePlanetId ?? homePlanetId ?? null,
+      resources: null,
+      shipyardLevel: 0,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: [],
+      queue: null,
+    }),
+    fleetLaunchAvailable: false,
+    fleetLaunchUnavailableReason: blocker,
   };
 }
 
@@ -2777,16 +2822,27 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
     return fallbackHomeCoords;
   }, [fallbackHomeCoords, onChainSettlement?.planet]);
-  const missionActionShipyardState = useMemo(() => shipyardStateForMissionActions({
+  const missionLaunchBlocker = missionLaunchSubmitBlocker({
+    actionState: galaxyAction,
+    pendingMissionLaunchCount: pendingMissionLaunches.length,
+  });
+  const missionActionShipyardState = useMemo(() => shipyardStateWithMissionLaunchBlocker({
     account,
     activePlanetId,
+    blocker: missionLaunchBlocker,
     homePlanetId: onChainSettlement?.homePlanetId,
-    shipyardError,
-    shipyardLoading,
-    shipyardState,
+    shipyardState: shipyardStateForMissionActions({
+      account,
+      activePlanetId,
+      homePlanetId: onChainSettlement?.homePlanetId,
+      shipyardError,
+      shipyardLoading,
+      shipyardState,
+    }),
   }), [
     account,
     activePlanetId,
+    missionLaunchBlocker,
     onChainSettlement?.homePlanetId,
     shipyardError,
     shipyardLoading,
@@ -6658,6 +6714,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           originLabel={pendingMissionOriginLabel}
           resources={pendingMissionOriginResources}
           shipyardState={shipyardState}
+          submitBlocker={missionLaunchBlocker}
           target={pendingGalaxyMission.target}
         />
       );
@@ -6678,6 +6735,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           originLabel={selectedManagedPlanet?.name ?? homePlanetIdentity?.name}
           resources={originMissionResources}
           shipyardState={shipyardState}
+          submitBlocker={missionLaunchBlocker}
           target={undefined}
         />
       );
@@ -6699,6 +6757,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           originLabel={selectedManagedPlanet?.name ?? homePlanetIdentity?.name}
           resources={originMissionResources}
           shipyardState={shipyardState}
+          submitBlocker={missionLaunchBlocker}
           target={undefined}
         />
       );

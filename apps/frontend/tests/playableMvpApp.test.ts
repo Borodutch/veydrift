@@ -38,6 +38,7 @@ import {
   preserveActiveResearchState,
   planetHasIncomingAttack,
   planetScopedFleetVisibility,
+  previousMissionIndexingBlockerLabel,
   resourceSnapshotFreshnessForInfrastructure,
   resourceSnapshotFreshnessForSettlement,
   refreshedInfrastructureUnavailableReasonFor,
@@ -57,6 +58,7 @@ import {
   nextProductionQueueCompletionEventMs,
   shouldApplyResourceSnapshot,
   shipyardStateForMissionActions,
+  shipyardStateWithMissionLaunchBlocker,
   shipCompletionPlanetIdFor,
   topBarEnergyFor,
   walletCurrentResourcesFor,
@@ -460,6 +462,25 @@ describe("Playable MVP app display helpers", () => {
       shipyardLoading: true,
       shipyardState: null,
     })).toBeNull();
+  });
+
+  test("turns previous mission indexing into a mission-action blocker", () => {
+    const state = shipyardStateWithMissionLaunchBlocker({
+      account: "0x1111111111111111111111111111111111111111",
+      activePlanetId: "8",
+      blocker: previousMissionIndexingBlockerLabel,
+      homePlanetId: "7",
+      shipyardState: null,
+    });
+
+    expect(state).toMatchObject({
+      wallet: "0x1111111111111111111111111111111111111111",
+      homePlanetId: "7",
+      planetId: "8",
+      fleetLaunchAvailable: false,
+      fleetLaunchUnavailableReason: previousMissionIndexingBlockerLabel,
+      ships: [],
+    });
   });
 
   test("blocks backend-refetched mission manifests that exceed available ship inventory", () => {

@@ -705,6 +705,24 @@ describe("mission creation", () => {
     })).toBe("Fleet slot state is waiting for mission settlement.");
   });
 
+  test("shows previous-mission indexing as the primary launch blocker", () => {
+    const blocker = "Waiting for previous mission to index.";
+
+    expect(missionDraftBlocker({
+      action: attackAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      cargoTotal: 0,
+      fuelCost: 0,
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 1,
+      resources: { metal: 0, crystal: 0, deuterium: 1_000 },
+      selectedShipCount: 1,
+      submitBlocker: blocker,
+      totalCargoCapacity: 50,
+    })).toBe(blocker);
+  });
+
   test("blocks non-Galaxy station-defense launches at the same Computer-tech fleet-slot cap", () => {
     const blocked = missionDraftBlocker({
       action: defenseHoldAction,

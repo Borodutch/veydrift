@@ -3,6 +3,9 @@ import {
   beginRefreshRequest,
   canApplyRefreshRequest,
   markFreshStateWrite,
+  missionLaunchSubmitBlocker,
+  previousMissionIndexingBlockerLabel,
+  previousMissionTransactionBlockerLabel,
   recordedResourceSnapshotFreshness,
   resourceSnapshotFreshnessForInfrastructure,
   resourceSnapshotFreshnessForSettlement,
@@ -99,6 +102,23 @@ describe("playable chain refresh", () => {
     expect(shouldRefreshMissionActionStateForPage("raid-target-finder")).toBe(true);
     expect(shouldRefreshMissionActionStateForPage("shipyard")).toBe(false);
     expect(shouldRefreshMissionActionStateForPage("overview")).toBe(true);
+  });
+
+  test("blocks follow-up mission submits while a previous mission is settling", () => {
+    expect(missionLaunchSubmitBlocker({
+      actionState: { status: "idle" },
+      pendingMissionLaunchCount: 0,
+    })).toBeUndefined();
+
+    expect(missionLaunchSubmitBlocker({
+      actionState: { status: "pending" },
+      pendingMissionLaunchCount: 0,
+    })).toBe(previousMissionTransactionBlockerLabel);
+
+    expect(missionLaunchSubmitBlocker({
+      actionState: { status: "success" },
+      pendingMissionLaunchCount: 1,
+    })).toBe(previousMissionIndexingBlockerLabel);
   });
 
   test("does not create browser-side gameplay read providers for transaction preflights", async () => {
