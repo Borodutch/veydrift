@@ -2867,14 +2867,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
     return fallbackHomeCoords;
   }, [fallbackHomeCoords, onChainSettlement?.planet]);
-  const missionLaunchBlocker = missionLaunchSubmitBlocker({
+  const missionLaunchStateBlocker = missionLaunchSubmitBlocker({
     actionState: galaxyAction,
     pendingMissionLaunchCount: pendingMissionLaunches.length,
   });
   const missionActionShipyardState = useMemo(() => shipyardStateWithMissionLaunchBlocker({
     account,
     activePlanetId,
-    blocker: missionLaunchBlocker,
+    blocker: missionLaunchStateBlocker,
     homePlanetId: onChainSettlement?.homePlanetId,
     shipyardState: shipyardStateForMissionActions({
       account,
@@ -2887,7 +2887,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }), [
     account,
     activePlanetId,
-    missionLaunchBlocker,
+    missionLaunchStateBlocker,
     onChainSettlement?.homePlanetId,
     shipyardError,
     shipyardLoading,
@@ -6722,6 +6722,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const canSubmitAllianceTransaction = allianceTransactionInputsAvailable && !transactionActionPending;
   const canSubmitMoonTransaction = moonTransactionInputsAvailable && !transactionActionPending;
   const canSubmitProfileMutation = Boolean(provider && account && apiBaseUrl) && !transactionActionPending;
+  const missionLaunchBlocker = gameTransactionUnavailableReason ?? missionLaunchStateBlocker;
   const activePlanetSections = planetSectionAccessForPlanet(planetSectionStore, activePlanetId, {
     settlementState: () => refreshOnChainState(),
     queuesState: () => refreshOnChainState(),
@@ -6887,6 +6888,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}
           onSelectPlanet={handleSelectPlanet}
           system={galaxyNav.system}
+          transactionUnavailableReason={gameTransactionUnavailableReason}
           watchedPlanetIds={watchedPlanets?.watchedPlanetIds ?? []}
           watchBusyPlanetId={watchBusyPlanetId}
         />
@@ -6907,6 +6909,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onAction={handleGalaxyAction}
           onBack={handlePlanetDetailBack}
           shipyardState={missionActionShipyardState}
+          transactionUnavailableReason={gameTransactionUnavailableReason}
         />
       );
     }

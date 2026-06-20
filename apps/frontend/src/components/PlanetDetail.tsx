@@ -23,6 +23,7 @@ interface Props {
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onBack: () => void;
   shipyardState?: ChainShipyardState | null | undefined;
+  transactionUnavailableReason?: string | undefined;
 }
 
 export type PlanetRecordRow = {
@@ -69,6 +70,7 @@ export function PlanetDetail({
   onAction,
   onBack,
   shipyardState = null,
+  transactionUnavailableReason,
 }: Props) {
   const trustedHomePlanet = useMemo(
     () => sameCoordinates(homeCoords, coords) && homePlanet
@@ -308,13 +310,19 @@ export function PlanetDetail({
               </div>
               <PlanetMissionControls
                 actions={missionActions}
-                busy={actionState.status === "pending"}
+                busy={actionState.status === "pending" || Boolean(transactionUnavailableReason)}
                 coords={{ galaxy: planet.galaxy, system: planet.system, position: planet.position }}
                 onAction={onAction}
                 planet={planet}
+                transactionUnavailableReason={transactionUnavailableReason}
               />
             </div>
             <PlanetActionStatus actionState={actionState} />
+            {transactionUnavailableReason ? (
+              <div className="mt-3 rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
+                {transactionUnavailableReason}
+              </div>
+            ) : null}
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -418,12 +426,14 @@ function PlanetMissionControls({
   coords,
   onAction,
   planet,
+  transactionUnavailableReason,
 }: {
   actions: GalaxyAction[];
   busy: boolean;
   coords: Coordinates;
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   planet: Planet | undefined;
+  transactionUnavailableReason?: string | undefined;
 }) {
   if (actions.length === 0) return null;
 
@@ -432,6 +442,7 @@ function PlanetMissionControls({
       <GalaxyActionButtons
         actions={actions}
         busy={busy}
+        busyReason={transactionUnavailableReason}
         coords={coords}
         onAction={onAction}
         planet={planet}
