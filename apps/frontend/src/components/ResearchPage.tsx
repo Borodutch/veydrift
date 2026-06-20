@@ -1004,7 +1004,6 @@ export function researchCatalogStatusText(
   status: Pick<ReturnType<typeof researchActionStatus>, "tileStatus">,
 ): string {
   if (status.tileStatus === "Active") return "Active";
-  if (status.tileStatus === "ShortResources") return "Need resources";
   return "";
 }
 
