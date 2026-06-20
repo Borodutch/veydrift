@@ -4116,16 +4116,10 @@ export class SettlementIndexer {
 
     const decoded = this.decodedMissionLogs();
     const mission = decoded.eventMissions.find((candidate) => candidate.missionId === missionId);
-    if (!mission || !this.canCreditReturnedMissionShips(mission, decoded.battleReports)) return;
+    if (!mission || mission.status !== "Returned") return;
 
-    const mutations: LegacyUnitMutation[] = [];
-    for (const [shipKey, value] of Object.entries(mission.ships)) {
-      const shipId = shipKeyToId(shipKey);
-      const quantity = Number(value);
-      if (shipId === null || !Number.isFinite(quantity) || quantity <= 0) continue;
-      if (this.hasReturnSettlementUnitCountChanged(log, "ship", mission.originPlanetId, shipId)) continue;
-      mutations.push({ kind: "ship", planetId: mission.originPlanetId, itemId: shipId, delta: quantity });
-    }
+    const mutations = this.returnedFleetCreditMutations(mission, decoded.battleReports)
+      .filter((mutation) => !this.hasReturnSettlementUnitCountChanged(log, "ship", mutation.planetId, mutation.itemId));
     this.applyLegacyUnitMutationsOnce(`legacy:fleet-return:${missionId}`, mutations, log);
   }
 
@@ -4142,23 +4136,53 @@ export class SettlementIndexer {
     ));
   }
 
-  private canCreditReturnedMissionShips(
+  private returnedFleetCreditMutations(
     mission: FleetMissionSummary,
     battleReports: readonly BattleReport[]
-  ): boolean {
-    if (mission.status !== "Returned") return false;
-    if (mission.recallCost !== null) return true;
-    if (legacyReturnCreditableMissionTypes.has(mission.missionType)) return true;
+  ): LegacyUnitMutation[] {
+    const launched = this.launchedShipMutations(mission);
+    if (launched.length === 0) return [];
+
+    if (mission.recallCost !== null || legacyReturnCreditableMissionTypes.has(mission.missionType)) return launched;
 
     if (mission.missionType !== "Attack" && mission.missionType !== "AcsAttack" && mission.missionType !== "Intercept") {
-      return false;
+      return [];
     }
 
     const report = battleReports.find((candidate) => (
       candidate.missionId === mission.missionId
       || (mission.attackGroupId !== null && candidate.missionId === mission.attackGroupId)
     ));
-    return Boolean(report && isZeroResources(report.attackerLosses));
+    if (!report) return [];
+    if (isZeroResources(report.attackerLosses)) return launched;
+
+    const candidates: BattleLossCandidate[] = launched.flatMap((mutation) => {
+      const cost = shipCostForLegacyLoss(mutation.itemId);
+      return cost ? [{ kind: "ship", planetId: mutation.planetId, itemId: mutation.itemId, max: mutation.delta, cost }] : [];
+    });
+    const losses = uniqueLossSolution(candidates, report.attackerLosses);
+    if (!losses) return [];
+
+    const destroyedByShipId = new Map<number, number>();
+    for (const loss of losses) {
+      destroyedByShipId.set(loss.candidate.itemId, (destroyedByShipId.get(loss.candidate.itemId) ?? 0) + loss.destroyed);
+    }
+
+    return launched.flatMap((mutation) => {
+      const survivors = mutation.delta - (destroyedByShipId.get(mutation.itemId) ?? 0);
+      return survivors > 0 ? [{ ...mutation, delta: survivors }] : [];
+    });
+  }
+
+  private launchedShipMutations(mission: FleetMissionSummary): LegacyUnitMutation[] {
+    const mutations: LegacyUnitMutation[] = [];
+    for (const [shipKey, value] of Object.entries(mission.ships)) {
+      const shipId = shipKeyToId(shipKey);
+      const quantity = Number(value);
+      if (shipId === null || !Number.isFinite(quantity) || quantity <= 0) continue;
+      mutations.push({ kind: "ship", planetId: mission.originPlanetId, itemId: shipId, delta: quantity });
+    }
+    return mutations;
   }
 
   private applyInterplanetaryMissileAttackCompatibilityEvent(event: InterplanetaryMissileAttackEvent): void {
