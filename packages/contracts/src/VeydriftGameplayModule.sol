@@ -21,13 +21,6 @@ interface IVeydriftCounterplayAllianceSystem {
     ) external view returns (bool canCoordinate, uint128 netHoldingFuelCost, uint128 depotSupport);
 }
 
-interface IVeydriftAttackProtectionAllianceSystem {
-    function attackProtectionFlags(address attacker, address defender)
-        external
-        view
-        returns (uint256);
-}
-
 interface IVeydriftAttackTargetQueueSettler {
     function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external;
 }
@@ -174,10 +167,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
         if (
-            missionType == FleetMissionType.MissileAttack
-                || missionType == FleetMissionType.AcsAttack
-                || missionType == FleetMissionType.Colonize
-                || missionType == FleetMissionType.DefenseHold
+            missionType == FleetMissionType.Colonize
+                || uint8(missionType) > uint8(FleetMissionType.Intercept)
         ) {
             // DefenseHold (OGame-style ACS Defend) is launched via the planet-management module.
             revert InvalidMissionType(missionType);
@@ -201,7 +192,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         }
         _requireMissionShips(originPlanetId, ships);
 
-        if (missionType == FleetMissionType.Transport || missionType == FleetMissionType.Deploy) {
+        if (missionType == FleetMissionType.Transport) {
+            _requireTransportTarget(targetPlanetId);
+        }
+        if (missionType == FleetMissionType.Deploy) {
             _requirePlanetOwner(targetPlanetId);
         }
 
@@ -303,6 +297,17 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
 
     function _enforceAttackProtection(address attacker, uint256 targetPlanetId) private view {
         if (_planets[targetPlanetId].owner == attacker) revert SelfAttack();
+        AttackBlockReason reason = _attackBlockReason(attacker, targetPlanetId);
+        if (reason == AttackBlockReason.BashingLimit) revert AttackBashingLimitReached();
+        if (reason == AttackBlockReason.ScoreProtection) revert AttackScoreProtection();
+        if (reason == AttackBlockReason.SameAlliance) revert SameAllianceAttack();
+    }
+
+    function _attackBlockReason(address attacker, uint256 targetPlanetId)
+        private
+        view
+        returns (AttackBlockReason reason)
+    {
         (bool ok, bytes memory data) = address(this)
             .staticcall(
                 abi.encodeWithSelector(ATTACK_PROTECTION_STATUS_SELECTOR, attacker, targetPlanetId)
@@ -312,11 +317,16 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
                 revert(add(data, 32), mload(data))
             }
         }
-        if (data.length < 32) return;
-        (AttackBlockReason reason,,) = abi.decode(data, (AttackBlockReason, uint8, uint16));
-        if (reason == AttackBlockReason.BashingLimit) revert AttackBashingLimitReached();
-        if (reason == AttackBlockReason.ScoreProtection) revert AttackScoreProtection();
-        if (reason == AttackBlockReason.SameAlliance) revert SameAllianceAttack();
+        if (data.length < 32) return AttackBlockReason.None;
+        (reason,,) = abi.decode(data, (AttackBlockReason, uint8, uint16));
+    }
+
+    function _requireTransportTarget(uint256 targetPlanetId) private view {
+        if (_planets[targetPlanetId].owner == msg.sender) return;
+        if (_attackBlockReason(msg.sender, targetPlanetId) == AttackBlockReason.SameAlliance) {
+            return;
+        }
+        revert NotPlanetOwner();
     }
 
     function _joinAttackMission(

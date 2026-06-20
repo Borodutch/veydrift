@@ -824,6 +824,9 @@ export type AttackProtectionStatus = {
   defenderHonorStatus?: "neutral" | "honorable" | "bandit";
   plunderBps?: number;
   defenderInactive?: boolean;
+  transportAllowed?: boolean;
+  transportBlockReason?: "none" | "own_planet" | "same_alliance" | "not_allied";
+  transportBlockReasonLabel?: string | null;
 };
 
 export type HighscorePlanet = {
@@ -1206,7 +1209,7 @@ const contractRevertReasons: Record<string, string> = {
   "0x400d5197": "You cannot attack your own planet.",
   "0xbb3f9d15": "Choose a target planet that is different from the origin planet.",
   "0x9a3d4eb9": "The selected target planet no longer exists. Refresh galaxy state and choose a target again.",
-  "0xab2bcfd3": "This wallet does not own the selected origin planet. Refresh planets and retry.",
+  "0xab2bcfd3": "This wallet does not own the selected origin planet, or this transport target is not one of your planets or an alliance member's planet. Refresh planets and retry.",
   "0x524f409b": "Select at least one valid ship for this mission.",
   "0x13b7fff2": "This position is already occupied. Refresh Galaxy state and choose an empty slot.",
   "0x179a0545": "Choose a valid colonization slot within galaxy 1-9, system 1-499, position 1-15.",

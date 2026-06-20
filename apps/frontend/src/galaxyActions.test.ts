@@ -120,7 +120,7 @@ describe("galaxyActions", () => {
     ]);
   });
 
-  test("offers proactive Defend on a same-alliance member's planet but not on a hostile planet", () => {
+  test("offers transport and proactive Defend on a same-alliance member's planet but not on a hostile planet", () => {
     const allyPlanet = planet({
       ownerId: "0x3333333333333333333333333333333333333333",
       alliance: { allianceId: "5", tag: "ALLY", name: "Allies" },
@@ -136,18 +136,55 @@ describe("galaxyActions", () => {
       planet: allyPlanet,
       shipyardState: shipyardState([{ id: 1, count: 3 }]),
     });
+    const allyTransport = allyActions.find((action) => action.kind === "transport");
     const allyDefend = allyActions.find((action) => action.kind === "defenseHold");
-    expect(allyActions[0]).toMatchObject({ kind: "defenseHold", enabled: true, label: "Defend" });
+    expect(allyActions[0]).toMatchObject({ kind: "transport", enabled: false, label: "Transport" });
+    expect(allyTransport).toMatchObject({
+      enabled: false,
+      reason: "Requires a cargo-capable ship on your home planet.",
+    });
+    expect(allyActions[1]).toMatchObject({ kind: "defenseHold", enabled: true, label: "Defend" });
     expect(allyDefend).toMatchObject({ enabled: true, mission: "defenseHold", ships: { lightFighter: 1 } });
 
-    const hostileDefend = galaxyActionsForSlot({
+    const hostileActions = galaxyActionsForSlot({
       account,
       attackProtection: { allowed: true, blockedReason: "none", blockedReasonLabel: null },
       homePlanetId: "7",
       planet: planet(),
       shipyardState: shipyardState([{ id: 1, count: 3 }]),
-    }).find((action) => action.kind === "defenseHold");
+    });
+    const hostileDefend = hostileActions.find((action) => action.kind === "defenseHold");
+    const hostileTransport = hostileActions.find((action) => action.kind === "transport");
     expect(hostileDefend).toBeUndefined();
+    expect(hostileTransport).toBeUndefined();
+  });
+
+  test("enables transport to a same-alliance member's planet when a cargo ship is available", () => {
+    const allyActions = galaxyActionsForSlot({
+      account,
+      attackProtection: {
+        allowed: false,
+        blockedReason: "same_alliance",
+        blockedReasonLabel: "Attack blocked: target belongs to your alliance.",
+        transportAllowed: true,
+        transportBlockReason: "same_alliance",
+        transportBlockReasonLabel: null,
+      },
+      homePlanetId: "7",
+      planet: planet({
+        ownerId: "0x3333333333333333333333333333333333333333",
+        alliance: { allianceId: "5", tag: "ALLY", name: "Allies" },
+      }),
+      shipyardState: shipyardState([{ id: 0, count: 2 }]),
+    });
+
+    expect(allyActions[0]).toMatchObject({
+      kind: "transport",
+      enabled: true,
+      mission: "transport",
+      ships: { smallCargo: 1 },
+    });
+    expect(allyActions.map((action) => action.kind)).not.toContain("deploy");
   });
 
   test("surfaces a disabled, explained Defend on the home/launch planet so it stays discoverable", () => {

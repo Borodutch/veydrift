@@ -108,6 +108,9 @@ export type AttackProtectionStatus = {
   defenderHonorStatus?: "neutral" | "honorable" | "bandit";
   plunderBps?: number;
   defenderInactive?: boolean;
+  transportAllowed?: boolean;
+  transportBlockReason?: "none" | "own_planet" | "same_alliance" | "not_allied";
+  transportBlockReasonLabel?: string | null;
   atWar?: boolean;
   targetAlliance?: {
     allianceId: string;

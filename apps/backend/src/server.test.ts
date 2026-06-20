@@ -2886,7 +2886,15 @@ describe("Veydrift backend", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toMatchObject({ allowed: true, blockedReason: "none", blockedReasonLabel: null });
+    expect(body).toMatchObject({
+      allowed: true,
+      blockedReason: "none",
+      blockedReasonLabel: null,
+      transportAllowed: false,
+      transportBlockReason: "not_allied",
+      transportBlockReasonLabel:
+        "Transport blocked: target must be one of your planets or an alliance member's planet."
+    });
   });
 
   test("indexed attack protection score-protects low-score targets using raw contract score near the 5x boundary (VEY-KANEO-489)", async () => {
@@ -3063,7 +3071,10 @@ describe("Veydrift backend", () => {
     expect(body).toMatchObject({
       allowed: false,
       blockedReason: "same_alliance",
-      blockedReasonLabel: "Attack blocked: target belongs to your alliance."
+      blockedReasonLabel: "Attack blocked: target belongs to your alliance.",
+      transportAllowed: true,
+      transportBlockReason: "same_alliance",
+      transportBlockReasonLabel: null
     });
   });
 

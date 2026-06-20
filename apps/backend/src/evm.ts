@@ -861,6 +861,7 @@ export type AllianceDiplomacySnapshot = {
 };
 
 export type AttackBlockReason = "none" | "bashing_limit" | "score_protection" | "same_alliance";
+export type TransportBlockReason = "none" | "own_planet" | "same_alliance" | "not_allied";
 export type AttackRelation = "peer" | "stronger" | "weaker";
 export type HonorStatus = "neutral" | "honorable" | "bandit";
 
@@ -874,6 +875,9 @@ export type AttackProtectionStatus = {
   defenderHonorStatus: HonorStatus;
   plunderBps: number;
   defenderInactive: boolean;
+  transportAllowed?: boolean;
+  transportBlockReason?: TransportBlockReason;
+  transportBlockReasonLabel?: string | null;
   atWar?: boolean;
   targetAlliance?: AllianceIdentity | null;
 };
@@ -5519,6 +5523,13 @@ export function attackBlockReasonLabel(reason: AttackBlockReason): string | null
   }
   if (reason === "same_alliance") {
     return "Attack blocked: target belongs to your alliance.";
+  }
+  return null;
+}
+
+export function transportBlockReasonLabel(reason: TransportBlockReason): string | null {
+  if (reason === "not_allied") {
+    return "Transport blocked: target must be one of your planets or an alliance member's planet.";
   }
   return null;
 }
