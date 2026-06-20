@@ -351,6 +351,8 @@ export type ApplyLogResult = {
 // reading the whole universe in one Promise.all truncated responses and failed the reconcile
 // (VEY-KANEO-461). 25 keeps the reconcile completing without making it serial-slow.
 const CANONICAL_READ_PLANET_CHUNK = 25;
+const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
+const legacyReturnCreditableMissionTypes = new Set(["Transport", "Deploy", "Colonize", "Harvest", "AcsDefend", "DefenseHold"]);
 
 
 export class SettlementIndexer {
@@ -4102,7 +4104,61 @@ export class SettlementIndexer {
         this.applyLegacyUnitMutationsOnce(mutationKey, mutations, log);
       }
     }
+    if (isFleetMissionReturnedLog(log)) {
+      this.applyReturnedFleetCompatibilityEvent(log);
+    }
     this.replayFleetMissionRowsFromEventLogs();
+  }
+
+  private applyReturnedFleetCompatibilityEvent(log: IndexedRpcLog): void {
+    const missionId = fleetMissionLogMissionId(log);
+    if (!missionId) return;
+
+    const decoded = this.decodedMissionLogs();
+    const mission = decoded.eventMissions.find((candidate) => candidate.missionId === missionId);
+    if (!mission || !this.canCreditReturnedMissionShips(mission, decoded.battleReports)) return;
+
+    const mutations: LegacyUnitMutation[] = [];
+    for (const [shipKey, value] of Object.entries(mission.ships)) {
+      const shipId = shipKeyToId(shipKey);
+      const quantity = Number(value);
+      if (shipId === null || !Number.isFinite(quantity) || quantity <= 0) continue;
+      if (this.hasReturnSettlementUnitCountChanged(log, "ship", mission.originPlanetId, shipId)) continue;
+      mutations.push({ kind: "ship", planetId: mission.originPlanetId, itemId: shipId, delta: quantity });
+    }
+    this.applyLegacyUnitMutationsOnce(`legacy:fleet-return:${missionId}`, mutations, log);
+  }
+
+  private hasReturnSettlementUnitCountChanged(
+    log: IndexedRpcLog,
+    kind: "ship" | "defense",
+    planetId: string,
+    itemId: number
+  ): boolean {
+    if (this.hasTransactionUnitCountChanged(log.transactionHash, kind, planetId, itemId)) return true;
+    return this.indexedLogsForBlock(log.blockNumber).some((candidate) => (
+      compareRpcLogPosition(candidate, log) <= 0
+      && this.isUnitCountChangedFor(candidate, kind, planetId, itemId)
+    ));
+  }
+
+  private canCreditReturnedMissionShips(
+    mission: FleetMissionSummary,
+    battleReports: readonly BattleReport[]
+  ): boolean {
+    if (mission.status !== "Returned") return false;
+    if (mission.recallCost !== null) return true;
+    if (legacyReturnCreditableMissionTypes.has(mission.missionType)) return true;
+
+    if (mission.missionType !== "Attack" && mission.missionType !== "AcsAttack" && mission.missionType !== "Intercept") {
+      return false;
+    }
+
+    const report = battleReports.find((candidate) => (
+      candidate.missionId === mission.missionId
+      || (mission.attackGroupId !== null && candidate.missionId === mission.attackGroupId)
+    ));
+    return Boolean(report && isZeroResources(report.attackerLosses));
   }
 
   private applyInterplanetaryMissileAttackCompatibilityEvent(event: InterplanetaryMissileAttackEvent): void {
@@ -4688,23 +4744,41 @@ export class SettlementIndexer {
     return sortedEventRows(rows);
   }
 
+  private indexedLogsForBlock(blockNumber: string): IndexedRpcLog[] {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE removed = 0 AND block_number = ?
+    `).all(blockNumberToDecimal(blockNumber)) as EventRow[];
+    return sortedEventRows(rows);
+  }
+
   private hasTransactionUnitCountChanged(
     transactionHash: string,
     kind: "ship" | "defense",
     planetId?: string,
     itemId?: number
   ): boolean {
-    return this.indexedLogsForTransaction(transactionHash).some((txLog) => {
-      if (kind === "ship" && isShipCountChangedLog(txLog)) {
-        const event = decodeShipCountChangedLog(txLog);
-        return (planetId === undefined || event.planetId === planetId) && (itemId === undefined || event.shipId === itemId);
-      }
-      if (kind === "defense" && isDefenseCountChangedLog(txLog)) {
-        const event = decodeDefenseCountChangedLog(txLog);
-        return (planetId === undefined || event.planetId === planetId) && (itemId === undefined || event.defenseId === itemId);
-      }
-      return false;
-    });
+    return this.indexedLogsForTransaction(transactionHash).some((txLog) =>
+      this.isUnitCountChangedFor(txLog, kind, planetId, itemId)
+    );
+  }
+
+  private isUnitCountChangedFor(
+    log: IndexedRpcLog,
+    kind: "ship" | "defense",
+    planetId?: string,
+    itemId?: number
+  ): boolean {
+    if (kind === "ship" && isShipCountChangedLog(log)) {
+      const event = decodeShipCountChangedLog(log);
+      return (planetId === undefined || event.planetId === planetId) && (itemId === undefined || event.shipId === itemId);
+    }
+    if (kind === "defense" && isDefenseCountChangedLog(log)) {
+      const event = decodeDefenseCountChangedLog(log);
+      return (planetId === undefined || event.planetId === planetId) && (itemId === undefined || event.defenseId === itemId);
+    }
+    return false;
   }
 
   private hasLegacyUnitMutation(mutationKey: string): boolean {
@@ -6781,6 +6855,18 @@ function defenseCostForLegacyLoss(defenseId: number): Resources | null {
 }
 
 function battleLogMissionId(log: RpcLog): string | null {
+  try {
+    return BigInt(log.topics[1] ?? "0x0").toString();
+  } catch {
+    return null;
+  }
+}
+
+function isFleetMissionReturnedLog(log: RpcLog): boolean {
+  return log.topics[0] === fleetMissionReturnedTopic;
+}
+
+function fleetMissionLogMissionId(log: RpcLog): string | null {
   try {
     return BigInt(log.topics[1] ?? "0x0").toString();
   } catch {
