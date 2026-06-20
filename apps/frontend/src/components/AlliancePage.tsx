@@ -106,7 +106,6 @@ export function AlliancePage({
   const [inviteFormOpen, setInviteFormOpen] = useState(false);
   const [activeAllianceId, setActiveAllianceId] = useState<string | null>(selectedAllianceId ?? null);
   const [selectedPlayer, setSelectedPlayer] = useState<string | null>(null);
-  const [warTargetAllianceId, setWarTargetAllianceId] = useState("");
   const [playerProfile, setPlayerProfile] = useState<PlayerProfileState>({ status: "idle" });
 
   const profile = allianceState?.profile;
@@ -196,7 +195,6 @@ export function AlliancePage({
             <MyAllianceSection
               canManageMembers={canManageMembers}
               currentAlliance={currentAlliance}
-              directory={directory}
               disabled={disabled}
               exitAction={exitAction}
               inviteAddress={inviteAddress}
@@ -229,10 +227,8 @@ export function AlliancePage({
               onSetRole={onSetRole}
               onSetTag={setTag}
               onSetDiplomacy={onSetDiplomacy}
-              onSetWarTargetAllianceId={setWarTargetAllianceId}
               onTransferOwnership={onTransferOwnership}
               onUpdateProfile={onUpdateProfile}
-              warTargetAllianceId={warTargetAllianceId}
             />
 
             {inspectedAlliance && !onOpenAlliance ? (
@@ -263,6 +259,8 @@ export function AlliancePage({
 
             <DirectorySection
               alliances={directory}
+              activeWars={allianceState?.activeWars ?? []}
+              canDeclareWar={isOwner}
               currentAllianceId={isMember ? currentAllianceId : null}
               disabled={disabled}
               pendingJoinRequests={allianceState?.pendingJoinRequests ?? []}
@@ -271,6 +269,7 @@ export function AlliancePage({
               onJoinRequest={onJoinRequest}
               onOpenAlliance={openAlliance}
               onSelectAlliance={setActiveAllianceId}
+              onSetDiplomacy={onSetDiplomacy}
             />
           </div>
 
@@ -420,7 +419,6 @@ export function canTransferAllianceOwnership(
 function MyAllianceSection({
   canManageMembers,
   currentAlliance,
-  directory,
   disabled,
   exitAction,
   inviteAddress,
@@ -453,14 +451,11 @@ function MyAllianceSection({
   onSetRole,
   onSetTag,
   onSetDiplomacy,
-  onSetWarTargetAllianceId,
   onTransferOwnership,
   onUpdateProfile,
-  warTargetAllianceId,
 }: {
   canManageMembers: boolean;
   currentAlliance: AllianceEntry | null;
-  directory: DirectoryEntry[];
   disabled: boolean;
   exitAction: { canSubmit: boolean; label: "Leave Alliance" | "Delete Alliance"; reason: string | null };
   inviteAddress: string;
@@ -493,10 +488,8 @@ function MyAllianceSection({
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
   onSetTag: (value: string) => void;
   onSetDiplomacy: (otherAllianceId: string, status: AllianceDiplomacyStatus) => void;
-  onSetWarTargetAllianceId: (value: string) => void;
   onTransferOwnership: (playerAddress: string) => void;
   onUpdateProfile: (tag: string, name: string, description: string) => void;
-  warTargetAllianceId: string;
 }) {
   if (!isMember || !currentAlliance) {
     return (
@@ -577,14 +570,9 @@ function MyAllianceSection({
 
         <WarSection
           activeWars={activeWars}
-          currentAlliance={currentAlliance}
-          directory={directory}
           disabled={disabled}
-          canDeclareWar={isOwner}
           canEndWar={canManageMembers}
-          warTargetAllianceId={warTargetAllianceId}
           onSetDiplomacy={onSetDiplomacy}
-          onSetWarTargetAllianceId={onSetWarTargetAllianceId}
         />
 
         <RosterSection
@@ -611,7 +599,9 @@ function MyAllianceSection({
 }
 
 function DirectorySection({
+  activeWars,
   alliances,
+  canDeclareWar,
   currentAllianceId,
   disabled,
   pendingJoinRequests,
@@ -620,8 +610,11 @@ function DirectorySection({
   onJoinRequest,
   onOpenAlliance,
   onSelectAlliance,
+  onSetDiplomacy,
 }: {
+  activeWars: ChainAllianceState["activeWars"];
   alliances: DirectoryEntry[];
+  canDeclareWar: boolean;
   currentAllianceId: string | null;
   disabled: boolean;
   pendingJoinRequests: ChainAllianceState["pendingJoinRequests"];
@@ -630,8 +623,10 @@ function DirectorySection({
   onJoinRequest: (allianceId: string) => void;
   onOpenAlliance?: ((allianceId: string) => void) | undefined;
   onSelectAlliance: (allianceId: string) => void;
+  onSetDiplomacy: (otherAllianceId: string, status: AllianceDiplomacyStatus) => void;
 }) {
   const pendingIds = new Set(pendingJoinRequests.map((request) => request.allianceId));
+  const activeWarIds = new Set(activeWars.map((war) => war.otherAllianceId));
   const visibleAlliances = sortedAllianceDirectory(alliances);
   const [page, setPage] = useState(1);
   const pageCount = directoryPageCount(visibleAlliances.length);
@@ -649,6 +644,12 @@ function DirectorySection({
           {pageRows.map((alliance) => {
             const pending = pendingIds.has(alliance.allianceId);
             const selected = selectedAllianceId === alliance.allianceId;
+            const warAction = allianceDirectoryWarActionState({
+              activeWarAllianceIds: activeWarIds,
+              allianceId: alliance.allianceId,
+              canDeclareWar,
+              currentAllianceId,
+            });
             return (
               <div
                 className={`grid gap-3 rounded border p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center ${
@@ -696,6 +697,21 @@ function DirectorySection({
                       {pending ? "Cancel Request" : "Request Join"}
                     </button>
                   )}
+                  {warAction.atWar ? (
+                    <span className="rounded border border-rose-300/25 bg-rose-300/[0.08] px-3 py-2 text-sm font-semibold text-rose-100">
+                      At War
+                    </span>
+                  ) : null}
+                  {warAction.canDeclare ? (
+                    <button
+                      className="rounded border border-rose-300/30 px-3 py-2 text-sm font-semibold text-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={disabled}
+                      onClick={() => onSetDiplomacy(alliance.allianceId, "war")}
+                      type="button"
+                    >
+                      Declare War
+                    </button>
+                  ) : null}
                 </div>
               </div>
             );
@@ -717,6 +733,24 @@ function DirectorySection({
   );
 }
 
+export function allianceDirectoryWarActionState({
+  activeWarAllianceIds,
+  allianceId,
+  canDeclareWar,
+  currentAllianceId,
+}: {
+  activeWarAllianceIds: ReadonlySet<string>;
+  allianceId: string;
+  canDeclareWar: boolean;
+  currentAllianceId: string | null;
+}): { atWar: boolean; canDeclare: boolean } {
+  const atWar = activeWarAllianceIds.has(allianceId);
+  return {
+    atWar,
+    canDeclare: canDeclareWar && Boolean(currentAllianceId) && currentAllianceId !== "0" && currentAllianceId !== allianceId && !atWar,
+  };
+}
+
 function PublicAllianceSection({
   alliance,
   onOpenPlayer,
@@ -733,31 +767,15 @@ function PublicAllianceSection({
 
 function WarSection({
   activeWars,
-  canDeclareWar,
   canEndWar,
-  currentAlliance,
-  directory,
   disabled,
-  warTargetAllianceId,
   onSetDiplomacy,
-  onSetWarTargetAllianceId,
 }: {
   activeWars: ChainAllianceState["activeWars"];
-  canDeclareWar: boolean;
   canEndWar: boolean;
-  currentAlliance: AllianceEntry;
-  directory: DirectoryEntry[];
   disabled: boolean;
-  warTargetAllianceId: string;
   onSetDiplomacy: (otherAllianceId: string, status: AllianceDiplomacyStatus) => void;
-  onSetWarTargetAllianceId: (value: string) => void;
 }) {
-  const activeWarIds = new Set(activeWars.map((war) => war.otherAllianceId));
-  const declareTargets = sortedAllianceDirectory(directory)
-    .filter((alliance) => alliance.allianceId !== currentAlliance.allianceId)
-    .filter((alliance) => !activeWarIds.has(alliance.allianceId));
-  const selectedTarget = declareTargets.find((alliance) => alliance.allianceId === warTargetAllianceId) ?? null;
-
   return (
     <div className="rounded border border-white/10 bg-black/20 p-3">
       <div className="flex items-center justify-between gap-2">
@@ -797,37 +815,6 @@ function WarSection({
       ) : (
         <p className="mt-2 text-sm text-slate-400">No active wars.</p>
       )}
-
-      {canDeclareWar ? (
-        <div className="mt-3 grid gap-2 border-t border-white/10 pt-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-          <label className="block">
-            <span className="text-xs uppercase tracking-[0.14em] text-slate-500">Declare War</span>
-            <select
-              className="mt-1 w-full rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300/50"
-              disabled={disabled || declareTargets.length === 0}
-              onInput={(event) => onSetWarTargetAllianceId(event.currentTarget.value)}
-              value={selectedTarget?.allianceId ?? ""}
-            >
-              <option value="">Select alliance</option>
-              {declareTargets.map((alliance) => (
-                <option key={alliance.allianceId} value={alliance.allianceId}>
-                  {alliance.tag} - {alliance.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            className="self-end rounded border border-rose-300/30 px-3 py-2 text-sm font-semibold text-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={disabled || !selectedTarget}
-            onClick={() => {
-              if (selectedTarget) onSetDiplomacy(selectedTarget.allianceId, "war");
-            }}
-            type="button"
-          >
-            Declare War
-          </button>
-        </div>
-      ) : null}
     </div>
   );
 }
