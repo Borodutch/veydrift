@@ -122,6 +122,28 @@ describe("Shipyard page display helpers", () => {
     })).toBe("Waiting for chain state");
   });
 
+  test("uses transaction sync copy while a previous action gates ship production", () => {
+    expect(getBlockedReason({
+      affordable: true,
+      canTransact: false,
+      hasPlanet: true,
+      missing: [],
+      resources: {
+        metal: 10_000,
+        crystal: 10_000,
+        deuterium: 10_000,
+      },
+      shipUnavailable: false,
+      shipyardState: shipyardState(),
+      totalCost: {
+        metal: 2_000,
+        crystal: 2_000,
+        deuterium: 0,
+      },
+      transactionUnavailableReason: "Ship production: syncing indexed state...",
+    })).toBe("Ship production: syncing indexed state...");
+  });
+
   test("appends the affordable-in ETA to the unaffordable reason when production rates are supplied (VEY-KANEO-481)", () => {
     // 500 Metal short @ 1000 Metal/h = 30m.
     expect(getBlockedReason({

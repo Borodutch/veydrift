@@ -1570,6 +1570,49 @@ function useActionNoticeAutoDismiss<State extends AutoDismissableActionState>(
   useEffect(() => scheduleActionNoticeAutoDismiss({ action, setAction }), [action, setAction]);
 }
 
+const transactionBusyUnavailableReason =
+  "Transaction is syncing indexed state. Wait for it to finish before starting another action.";
+
+export function transactionUnavailableReasonFor({
+  activeActionLabel,
+  inputsAvailable,
+  transactionPending,
+  unavailableReason,
+}: {
+  activeActionLabel?: string | undefined;
+  inputsAvailable: boolean;
+  transactionPending: boolean;
+  unavailableReason: string;
+}): string | undefined {
+  if (!inputsAvailable) return unavailableReason;
+  if (transactionPending) return activeActionLabel ?? transactionBusyUnavailableReason;
+  return undefined;
+}
+
+export function isWalletContractUnavailableActionLabel(label: string): boolean {
+  return (
+    /wallet.*game contract.*unavailable/i.test(label)
+    || /wallet or game contract (?:is )?unavailable/i.test(label)
+    || /game contract unavailable/i.test(label)
+    || /wallet.*mission actions unavailable/i.test(label)
+    || /alliance contract unavailable/i.test(label)
+    || /wallet.*moon contract.*unavailable/i.test(label)
+  );
+}
+
+export function clearRecoveredWalletContractUnavailableAction<
+  State extends { status: "idle" } | { status: string; label: string },
+>(action: State, inputsAvailable: boolean): State {
+  if (inputsAvailable && action.status === "error" && "label" in action && isWalletContractUnavailableActionLabel(action.label)) {
+    return { status: "idle" } as State;
+  }
+  return action;
+}
+
+function pendingActionLabel(...actions: Array<{ status: string; label?: string | undefined }>): string | undefined {
+  return actions.find((action) => action.status === "pending" && action.label)?.label;
+}
+
 export function displayHomeCoordinates(
   homePlanet: Coordinates | undefined,
   homeCoords: Coordinates | undefined,
@@ -3321,6 +3364,32 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const moonContract = useMemo(() => {
     return runtimeConfig.status === "ready" ? moonContractAddress(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
+  const gameActionInputsAvailable = Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId));
+  const allianceActionInputsAvailable = Boolean(provider && account && allianceContract);
+  const moonActionInputsAvailable = Boolean(provider && account && moonContract && (activePlanetId ?? onChainSettlement?.homePlanetId));
+
+  useEffect(() => {
+    if (!gameActionInputsAvailable) return;
+    setBuildingAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
+    setDefenseAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
+    setShipyardAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
+    setGalaxyAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
+    setResearchAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
+    setMissionAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
+    setPlanetManagementAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
+    setPlanetRenameAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
+  }, [gameActionInputsAvailable]);
+
+  useEffect(() => {
+    if (!allianceActionInputsAvailable) return;
+    setAllianceAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
+  }, [allianceActionInputsAvailable]);
+
+  useEffect(() => {
+    if (!moonActionInputsAvailable) return;
+    setMoonAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
+  }, [moonActionInputsAvailable]);
+
   const confirmSubmittedTransaction = useCallback(async (txHash: string) => {
     if (!provider) {
       throw new Error("Wallet provider is unavailable while confirming the transaction.");
@@ -6615,9 +6684,28 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const battleReportsShareUrl = typeof window === "undefined"
     ? ""
     : `${window.location.origin}${buildInspectPath({ kind: "page", page: "battle-reports" })}`;
-  const canSubmitGameTransaction = Boolean(provider && account && gameContract) && !transactionActionPending;
-  const canSubmitAllianceTransaction = Boolean(provider && account && allianceContract) && !transactionActionPending;
-  const canSubmitMoonTransaction = Boolean(provider && account && moonContract) && !transactionActionPending;
+  const gameTransactionInputsAvailable = Boolean(provider && account && gameContract);
+  const allianceTransactionInputsAvailable = Boolean(provider && account && allianceContract);
+  const moonTransactionInputsAvailable = Boolean(provider && account && moonContract);
+  const gameTransactionUnavailableReason = transactionUnavailableReasonFor({
+    activeActionLabel: pendingActionLabel(
+      buildingAction,
+      defenseAction,
+      shipyardAction,
+      galaxyAction,
+      researchAction,
+      riftAction,
+      planetManagementAction,
+      planetRenameAction,
+      missionAction,
+    ),
+    inputsAvailable: gameTransactionInputsAvailable,
+    transactionPending: transactionActionPending,
+    unavailableReason: "Wallet or game contract unavailable",
+  });
+  const canSubmitGameTransaction = gameTransactionInputsAvailable && !transactionActionPending;
+  const canSubmitAllianceTransaction = allianceTransactionInputsAvailable && !transactionActionPending;
+  const canSubmitMoonTransaction = moonTransactionInputsAvailable && !transactionActionPending;
   const canSubmitProfileMutation = Boolean(provider && account && apiBaseUrl) && !transactionActionPending;
   const activePlanetSections = planetSectionAccessForPlanet(planetSectionStore, activePlanetId, {
     settlementState: () => refreshOnChainState(),
@@ -6914,6 +7002,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           spendableResources={spendableResources}
           settledState={settledState}
           state={state}
+          transactionUnavailableReason={gameTransactionUnavailableReason}
           useLocalStateFallback={!isWalletConnected}
         />
       );
@@ -6936,6 +7025,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           productionRates={productionRatesForEta}
           selectedDefenseKey={selectedDefenseKey}
           spendableResources={spendableResources}
+          transactionUnavailableReason={gameTransactionUnavailableReason}
         />
       );
     }
@@ -7024,6 +7114,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           selectedShipKey={selectedShipKey}
           shipyardState={shipyardState}
           spendableResources={spendableResources}
+          transactionUnavailableReason={gameTransactionUnavailableReason}
         />
       );
     }
