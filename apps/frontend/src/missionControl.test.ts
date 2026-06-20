@@ -7,6 +7,8 @@ import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
 import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary, type FleetMissionVisibilityResponse } from "./walletFlow";
 
+const missionRouteSource = await Bun.file(new URL("./components/missionRoute.tsx", import.meta.url)).text();
+
 describe("Mission Control battle reports", () => {
   test("builds shareable report list and detail routes", () => {
     expect(parseInspectRoute("#/battle-reports")).toEqual({ kind: "page", page: "battle-reports" });
@@ -320,6 +322,12 @@ describe("Mission Control battle reports", () => {
     expect(incomingText).toContain("Incoming attack");
     expect(incomingText).toContain("Raider");
     expect(incomingText).not.toContain("Borealis");
+  });
+
+  test("keeps Incoming attacks route endpoints wide enough for normal player names", () => {
+    expect(missionRouteSource).toContain("max-w-[7.5rem]");
+    expect(missionRouteSource).toContain("sm:max-w-[11rem]");
+    expect(missionRouteSource).not.toContain("max-w-[7rem]");
   });
 
   test("VEY-KANEO-440: stationed-defense panel lists own defending fleets and allied defenders at your planets", () => {
