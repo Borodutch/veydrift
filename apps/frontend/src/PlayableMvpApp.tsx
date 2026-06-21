@@ -569,6 +569,42 @@ export function walletQueuesForManagedPlanet(
   };
 }
 
+export function selectedPlanetIdFromRoster({
+  homePlanetId,
+  planets,
+  selectedPlanetId,
+}: {
+  homePlanetId: string | null | undefined;
+  planets: readonly Pick<ManagedPlanetResponse, "isHomePlanet" | "planetId">[] | undefined;
+  selectedPlanetId: string | undefined;
+}): string | undefined {
+  if (selectedPlanetId && planets?.some((planet) => planet.planetId === selectedPlanetId)) {
+    return selectedPlanetId;
+  }
+
+  if (homePlanetId && planets?.some((planet) => planet.planetId === homePlanetId)) {
+    return homePlanetId;
+  }
+
+  return planets?.find((planet) => planet.isHomePlanet)?.planetId ?? planets?.[0]?.planetId;
+}
+
+export function selectedPlanetIdForWalletRead({
+  activePlanetId,
+  homePlanetId,
+  walletPlanets,
+}: {
+  activePlanetId: string | undefined;
+  homePlanetId: string | null | undefined;
+  walletPlanets: readonly Pick<ManagedPlanetResponse, "isHomePlanet" | "planetId">[];
+}): string | undefined {
+  return selectedPlanetIdFromRoster({
+    homePlanetId,
+    planets: walletPlanets,
+    selectedPlanetId: activePlanetId,
+  });
+}
+
 export function shouldApplyResourceSnapshot(
   current: ResourceSnapshotFreshness,
   next: ResourceSnapshotFreshness,
@@ -2077,9 +2113,23 @@ export async function loadWalletPlanetSyncSnapshot(
   apiBaseUrl: string,
   account: string,
   activePlanetId: string | undefined,
+  options: { forceHomePlanet?: boolean } = {},
+  loaders: {
+    fetchWalletOverviewSnapshot?: typeof fetchWalletOverviewSnapshot;
+    fetchWalletPlanets?: typeof fetchWalletPlanets;
+    fetchWalletQueues?: typeof fetchWalletQueues;
+    fetchFleetMissionVisibility?: typeof fetchFleetMissionVisibility;
+    fetchWalletSettlement?: typeof fetchWalletSettlement;
+  } = {},
 ): Promise<WalletPlanetSyncSnapshot> {
+  const loadOverviewSnapshot = loaders.fetchWalletOverviewSnapshot ?? fetchWalletOverviewSnapshot;
+  const loadWalletPlanets = loaders.fetchWalletPlanets ?? fetchWalletPlanets;
+  const loadWalletQueues = loaders.fetchWalletQueues ?? fetchWalletQueues;
+  const loadFleetMissionVisibility = loaders.fetchFleetMissionVisibility ?? fetchFleetMissionVisibility;
+  const loadWalletSettlement = loaders.fetchWalletSettlement ?? fetchWalletSettlement;
+  const readPlanetId = options.forceHomePlanet ? undefined : activePlanetId;
   try {
-    return await fetchWalletOverviewSnapshot(apiBaseUrl, account, activePlanetId);
+    return await loadOverviewSnapshot(apiBaseUrl, account, readPlanetId);
   } catch (error) {
     if (!isMissingOverviewSnapshotEndpoint(error)) {
       throw error;
@@ -2089,7 +2139,7 @@ export async function loadWalletPlanetSyncSnapshot(
     // rollouts can overlap without blanking Overview.
   }
 
-  const planetsResult = await settlePromise(fetchWalletPlanets(apiBaseUrl, account));
+  const planetsResult = await settlePromise(loadWalletPlanets(apiBaseUrl, account));
   const indexedSettlement = settlementFromIndexedPlanets(
     account,
     planetsResult.status === "fulfilled" ? planetsResult.value : undefined,
@@ -2098,13 +2148,13 @@ export async function loadWalletPlanetSyncSnapshot(
     const indexedQueues = playerQueuesFromIndexedPlanet(
       account,
       indexedSettlement.homePlanetId,
-      activePlanetId,
+      readPlanetId,
       planetsResult.status === "fulfilled" ? planetsResult.value : undefined,
     );
     const queuesResultPromise = indexedPlanetsExposeResearchQueue(planetsResult)
       ? Promise.resolve({ status: "fulfilled", value: indexedQueues } satisfies PromiseSettledResult<PlayerQueuesResponse>)
-      : settlePromise(fetchWalletQueues(apiBaseUrl, account, activePlanetId));
-    const visibilityResultPromise = settlePromise(fetchFleetMissionVisibility(apiBaseUrl, account, { includeArchive: false }));
+      : settlePromise(loadWalletQueues(apiBaseUrl, account, readPlanetId));
+    const visibilityResultPromise = settlePromise(loadFleetMissionVisibility(apiBaseUrl, account, { includeArchive: false }));
     const [queuesResult, visibilityResult] = await Promise.all([queuesResultPromise, visibilityResultPromise]);
     return walletPlanetSyncSnapshotFromResults(
       account,
@@ -2118,9 +2168,9 @@ export async function loadWalletPlanetSyncSnapshot(
   }
 
   const [settlementResult, queuesResult, visibilityResult] = await Promise.allSettled([
-    fetchWalletSettlement(apiBaseUrl, account),
-    fetchWalletQueues(apiBaseUrl, account, activePlanetId),
-    fetchFleetMissionVisibility(apiBaseUrl, account, { includeArchive: false }),
+    loadWalletSettlement(apiBaseUrl, account),
+    loadWalletQueues(apiBaseUrl, account, readPlanetId),
+    loadFleetMissionVisibility(apiBaseUrl, account, { includeArchive: false }),
   ]);
 
   const settlement = settlementResult.status === "fulfilled"
@@ -2587,10 +2637,15 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [watchedPlanetsPage, setWatchedPlanetsPage] = useState(1);
   const [watchBusyPlanetId, setWatchBusyPlanetId] = useState<string | undefined>();
   const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>();
+  const resolvedSelectedPlanetId = useMemo(() => selectedPlanetIdFromRoster({
+    homePlanetId: onChainSettlementState?.homePlanetId,
+    planets: walletPlanets,
+    selectedPlanetId,
+  }), [onChainSettlementState?.homePlanetId, selectedPlanetId, walletPlanets]);
   const selectedManagedPlanet = useMemo(
-    () => walletPlanets.find((item) => item.planetId === (selectedPlanetId ?? onChainSettlementState?.homePlanetId))
+    () => walletPlanets.find((item) => item.planetId === resolvedSelectedPlanetId)
       ?? walletPlanets[0],
-    [onChainSettlementState?.homePlanetId, selectedPlanetId, walletPlanets]
+    [resolvedSelectedPlanetId, walletPlanets]
   );
   const activePlanetId = selectedManagedPlanet?.planetId ?? onChainSettlementState?.homePlanetId ?? undefined;
   const [planetSectionStore, setPlanetSectionStore] = useState<PlanetSectionStore>({});
@@ -3126,6 +3181,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   useEffect(() => {
     setPlayerProfile(undefined);
     setPlanetSectionStore({});
+    setSelectedPlanetId(undefined);
+    setWalletPlanets([]);
+    setOnChainQueues(undefined);
+    setFleetVisibility(undefined);
+    setHydratedWalletSnapshotKey(undefined);
+    latestOnChainResourceSnapshot.current = { planetId: null, lastSettledAt: null };
+    latestInfrastructureResourceSnapshot.current = { planetId: null, lastSettledAt: null };
     setPlayerProfileAction({ status: "idle" });
   }, [account]);
 
@@ -3707,7 +3769,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
   }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research]);
 
-  const refreshOnChainState = useCallback(async (renameExpectation?: { planetId: string; name: string }, options: { force?: boolean } = {}) => {
+  const refreshOnChainState = useCallback(async (
+    renameExpectation?: { planetId: string; name: string },
+    options: { force?: boolean; forceHomePlanet?: boolean } = {},
+  ) => {
     const requestId = beginRefreshRequest(onChainRefreshGate);
     if (!apiBaseUrl || !account) {
       latestOnChainResourceSnapshot.current = { planetId: null, lastSettledAt: null };
@@ -3728,10 +3793,24 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return setPlanetSectionStatus(next, activePlanetId, "fleetVisibilityState", { loading: true, error: undefined });
     });
     try {
-      const loadSnapshot = () => loadWalletPlanetSyncSnapshot(apiBaseUrl, account, activePlanetId);
+      const canUseCachedWalletPlanets =
+        hydratedWalletSnapshotKey === walletSnapshotHydrationKey(apiBaseUrl, account);
+      const walletPlanetsForRead = canUseCachedWalletPlanets ? walletPlanets : [];
+      const homePlanetIdForRead = canUseCachedWalletPlanets ? onChainSettlementState?.homePlanetId : undefined;
+      const readPlanetId = selectedPlanetIdForWalletRead({
+        activePlanetId: options.forceHomePlanet || !canUseCachedWalletPlanets ? undefined : activePlanetId,
+        homePlanetId: homePlanetIdForRead,
+        walletPlanets: walletPlanetsForRead,
+      });
+      const loadSnapshot = () => loadWalletPlanetSyncSnapshot(
+        apiBaseUrl,
+        account,
+        readPlanetId,
+        options.forceHomePlanet === undefined ? {} : { forceHomePlanet: options.forceHomePlanet },
+      );
       const snapshot = renameExpectation
         ? await waitForRenamedWalletPlanet(loadSnapshot, renameExpectation)
-        : await waitForHydratedWalletPlanet(loadSnapshot, activePlanetId);
+        : await waitForHydratedWalletPlanet(loadSnapshot, readPlanetId);
       const { planetsResponse, queues, settlement, selectedPlanet, fleetVisibility } = snapshot;
       const planets = planetsResponse.planets;
       const nextSettlement = selectedPlanet
@@ -3764,8 +3843,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         nextFreshness,
       );
       setWalletPlanets(planets);
-      if (!selectedPlanetId && selectedPlanet?.planetId) {
-        setSelectedPlanetId(selectedPlanet.planetId);
+      const nextSelectedPlanetId = selectedPlanetIdFromRoster({
+        homePlanetId: nextSettlement.homePlanetId,
+        planets,
+        selectedPlanetId: options.forceHomePlanet ? undefined : selectedPlanetId,
+      });
+      if (nextSelectedPlanetId !== selectedPlanetId) {
+        setSelectedPlanetId(nextSelectedPlanetId);
       }
       applyOnChainSettlementSnapshot(nextSettlement);
       setPlayerProfile((current) => mergePlayerProfile(current, nextSettlement.player ?? planetsResponse.player));
@@ -3783,7 +3867,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         return setPlanetSectionStatus(next, activePlanetId, "fleetVisibilityState", { loading: false, error: message });
       });
     }
-  }, [account, activePlanetId, apiBaseUrl, applyOnChainSettlementSnapshot, isWalletConnected, selectedPlanetId]);
+  }, [account, activePlanetId, apiBaseUrl, applyOnChainSettlementSnapshot, hydratedWalletSnapshotKey, isWalletConnected, onChainSettlementState?.homePlanetId, selectedPlanetId, walletPlanets]);
 
   const loadMissionArchive = useCallback(async (page: number) => {
     if (!apiBaseUrl || !account) {
@@ -6009,7 +6093,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         setPlanetManagementAction({ status: "pending", label: transactionSyncingLabel("Colony abandon") });
         setSelectedPlanetId(undefined);
-        await refreshOnChainState();
+        await refreshOnChainState(undefined, { force: true, forceHomePlanet: true });
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         setPlanetManagementAction({ status: "success", label: "Colony abandoned." });
       } catch (error) {
