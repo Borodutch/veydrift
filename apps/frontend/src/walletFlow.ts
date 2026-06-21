@@ -2880,6 +2880,7 @@ export async function requestWatchedPlanetSignature(
 
 type WalletReadOptions = {
   source?: "indexed";
+  timeoutMs?: number;
 };
 
 type FleetMissionVisibilityOptions = WalletReadOptions & {
@@ -2915,7 +2916,8 @@ export async function fetchWalletOverviewSnapshot(
     apiUrl,
     wallet,
     withWalletReadOptions("overview", planetId, options),
-    "Overview snapshot"
+    "Overview snapshot",
+    options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }
   );
 }
 
@@ -2926,7 +2928,8 @@ export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string
     apiUrl,
     wallet,
     withWalletReadOptions("fleet-visibility", undefined, options, params),
-    "Fleet visibility"
+    "Fleet visibility",
+    options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }
   );
 }
 

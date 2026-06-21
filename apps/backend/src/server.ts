@@ -1793,33 +1793,14 @@ function indexedFleetVisibility(
   indexer: SettlementIndexer,
   options: { includeArchive?: boolean } = {}
 ): FleetMissionVisibility {
-  const visibility = indexer.fleetMissionVisibility(wallet);
+  const visibility = indexer.fleetMissionVisibility(
+    wallet,
+    options.includeArchive === undefined ? {} : { includeArchive: options.includeArchive }
+  );
   if (options.includeArchive === false) {
-    return {
-      ...visibility,
-      completedMissions: [],
-      battleReports: activeMissionBattleReports(visibility)
-    };
+    return visibility;
   }
   return visibility;
-}
-
-function activeMissionBattleReports(visibility: FleetMissionVisibility): FleetMissionVisibility["battleReports"] {
-  const activeMissionIds = new Set(
-    [
-      ...visibility.incoming,
-      ...visibility.outgoing,
-      ...visibility.returning,
-      ...visibility.joinableAttacks,
-    ].map((mission) => mission.missionId)
-  );
-  if (activeMissionIds.size === 0) return [];
-
-  return visibility.battleReports.filter((report) =>
-    activeMissionIds.has(report.missionId)
-      || (report.attackGroupId ? activeMissionIds.has(report.attackGroupId) : false)
-      || report.participants.some((participant) => activeMissionIds.has(participant.missionId))
-  );
 }
 
 function expectsBattleReport(mission: FleetMissionSummary): boolean {
