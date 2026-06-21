@@ -721,6 +721,10 @@ export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
   return page === "overview" || page === "galaxy" || page === "planet" || page === "mission-control" || page === "raid-target-finder";
 }
 
+export function shouldClearCachedShipyardStateForPageRefresh(page: Page): boolean {
+  return page === "shipyard";
+}
+
 // VEY-KANEO-433: Mission Control auto-polls its own data (active missions, the past-mission archives,
 // and battle reports/loot) while the player is viewing it, so a mission resolving at its destination —
 // and the resulting status flip, loot, and battle report — appears within a poll cycle instead of only
@@ -3648,7 +3652,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       });
   }, [account, apiBaseUrl]);
 
-  const refreshShipyardState = useCallback(async () => {
+  const refreshShipyardState = useCallback(async (options: { clearCachedState?: boolean } = {}) => {
     const requestId = beginRefreshRequest(shipyardRefreshGate);
     if (!apiBaseUrl || !account) {
       setShipyardState(null);
@@ -3660,6 +3664,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setShipyardLoading(true);
     setShipyardError(undefined);
     setActivePlanetSectionStatus("shipyardState", { loading: true, error: undefined });
+    if (options.clearCachedState) {
+      setShipyardState(null);
+    }
     try {
       const next = await fetchShipyardState(apiBaseUrl, account, activePlanetId);
       if (!canApplyRefreshRequest(shipyardRefreshGate, requestId)) return next;
@@ -4892,7 +4899,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   useEffect(() => {
     if (!pageStateHydrationReady) return;
-    if (page === "shipyard" || shouldRefreshMissionActionStateForPage(page)) {
+    if (shouldClearCachedShipyardStateForPageRefresh(page)) {
+      refreshShipyardState({ clearCachedState: true });
+    } else if (shouldRefreshMissionActionStateForPage(page)) {
       refreshShipyardState();
     }
   }, [page, pageStateHydrationReady, refreshShipyardState]);
