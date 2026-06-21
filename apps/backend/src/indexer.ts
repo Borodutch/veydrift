@@ -1302,8 +1302,12 @@ export class SettlementIndexer {
   }
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
+    const completedQuantities = this.completedQueueQuantities(`ship:${planetId}`);
     return deriveShipRows(
-      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
+      (id) => (
+        this.indexedLevel("contract_ship_counts", "ship_id", planetId, id)
+        + (completedQuantities.get(id) ?? 0)
+      ),
       this.planet(planetId)?.temperature,
       durationLevels
     );
@@ -1332,21 +1336,18 @@ export class SettlementIndexer {
     );
   }
 
-  // Ships physically present at the planet and therefore launchable right now — the value the contract
-  // returns from `shipCount(planetId, ship)`. Post the VeydriftGame events upgrade this is identical to
-  // `shipRows`: the contract emits PlanetShipCountChanged on EVERY ship-count mutation (the single sink
-  // `_setPlanetShipCount` emits it, and launch debits, return credits, and combat losses all route
-  // through it), so `contract_ship_counts` is now the authoritative at-planet roster for every mission
-  // type — attack/transport/colonize/deploy/acs-defend. The indexer applies those events directly
-  // (applyShipCountChangedEvent), so a fleet that has departed is already debited and a fleet that
-  // returned (minus combat losses) is already credited, with no departed-ships projection or reconcile
-  // needed. Builds emit ShipCompleted, also applied. (VEY-KANEO-461)
-  availableShipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
-    return deriveShipRows(
-      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
-      this.planet(planetId)?.temperature,
-      durationLevels
+  private contractDefenseRows(planetId: string): DefenseState["defenses"] {
+    return deriveDefenseRows(
+      (id) => this.indexedLevel("contract_defense_counts", "defense_id", planetId, id)
     );
+  }
+
+  // Ships launchable from the UI now include due-but-not-yet-mutated shipyard output. The upgraded
+  // contract lazily reconciles the same queue before launch checks, so this served projection matches
+  // what the next mutating action can use. Departed/returned/combat counts still come from absolute
+  // PlanetShipCountChanged events in the contract table.
+  availableShipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
+    return this.shipRows(planetId, durationLevels);
   }
 
   // NOTE: the combat-triggered bounded per-planet canonical reconcile (planetReconcileBlock /
@@ -1359,8 +1360,12 @@ export class SettlementIndexer {
   // already integrate authoritatively from the event stream.
 
   defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
+    const completedQuantities = this.completedQueueQuantities(`defense:${planetId}`);
     return deriveDefenseRows(
-      (id) => this.indexedLevel("contract_defense_counts", "defense_id", planetId, id),
+      (id) => (
+        this.indexedLevel("contract_defense_counts", "defense_id", planetId, id)
+        + (completedQuantities.get(id) ?? 0)
+      ),
       durationLevels
     );
   }
@@ -1413,6 +1418,16 @@ export class SettlementIndexer {
     return settleQueueAsOfNow(this.queueState(queueKeyValue), nowSec);
   }
 
+  private completedQueueQuantities(queueKeyValue: string): Map<number, number> {
+    const quantities = new Map<number, number>();
+    for (const queue of this.queueSettlement(queueKeyValue).completed) {
+      if (typeof queue.itemId === "number" && typeof queue.quantity === "number") {
+        quantities.set(queue.itemId, (quantities.get(queue.itemId) ?? 0) + queue.quantity);
+      }
+    }
+    return quantities;
+  }
+
   private moonBuildingLevelAsOfNow(planetId: string, buildingId: number): number {
     // Moon buildings serve the contract-authoritative table directly, like planet buildings.
     return this.indexedLevel("contract_moon_building_levels", "moon_building_id", planetId, buildingId);
@@ -1436,8 +1451,8 @@ export class SettlementIndexer {
       planetCount: ownedPlanets.length,
       planets: ownedPlanets.map((planet) => ({
         buildings: this.contractInfrastructureRows(planet.planetId).map(({ id, level }) => ({ id, level })),
-        defenses: this.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
-        ships: this.shipRows(planet.planetId).map(({ id, count }) => ({ id, count }))
+        defenses: this.contractDefenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
+        ships: this.contractShipRows(planet.planetId).map(({ id, count }) => ({ id, count }))
       })),
       technologies: deriveTechnologyRows((id) => contractTechnologies[String(id)] ?? 0)
         .map(({ id, level }) => ({ id, level }))
@@ -4622,9 +4637,9 @@ export class SettlementIndexer {
 
     const derived = deriveInfrastructureFields(
       planet,
-      this.infrastructureRows(planet.planetId),
-      this.shipRows(planet.planetId),
-      this.technologyLevels(planet.owner)
+      this.contractInfrastructureRows(planet.planetId),
+      this.contractShipRows(planet.planetId),
+      this.contractTechnologyLevels(planet.owner)
     );
     return resourcesWithClaimableAccrual(
       planet.resources,
