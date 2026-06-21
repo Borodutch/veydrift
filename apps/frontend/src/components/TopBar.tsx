@@ -19,7 +19,6 @@ interface TopBarProps {
   queue?: QueueItem | undefined;
   researchQueue?: QueueItem | undefined;
   account?: string | undefined;
-  coordinates?: string | undefined;
   isWalletConnected: boolean;
   energy?: EnergyBalance | undefined;
 }
@@ -46,7 +45,6 @@ export function TopBar({
   queue,
   researchQueue,
   account,
-  coordinates,
   energy,
   isWalletConnected,
 }: TopBarProps) {
@@ -90,7 +88,7 @@ export function TopBar({
               />
               {shouldShowTopBarEnergy(energy) && (
                 <EnergyPip
-                  context={coordinates ? `Selected player planet [${coordinates}]` : "Selected player planet"}
+                  context="Selected player planet"
                   produced={energy.produced}
                   rates={rates}
                   required={energy.required}
