@@ -83,6 +83,13 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         IVeydriftCombatArrivalSettler(address(this)).settleDuePlayerCombatArrivals(player);
     }
 
+    /// @notice Full per-planet action reconcile for delegatecall modules. Applies due building
+    ///         construction, resources, research, ship, and defense queues through the main facade.
+    function _settleActionPlanet(uint256 planetId) internal {
+        IVeydriftUnitQueueSettler(address(this))
+            .completeAttackTargetSnapshotQueues(planetId, type(uint64).max);
+    }
+
     /// @dev Applies a player's research level once a settle observes its queue elapsed by `cutoffAt`.
     ///      Research is single-queue/player-scoped with no backlog, so one application suffices. This
     ///      is the body of the (now redundant) `finishResearch` entrypoint, generalized to a cutoff so
