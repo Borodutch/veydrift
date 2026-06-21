@@ -1871,6 +1871,10 @@ export class SettlementIndexer {
 
   private async drainTargetedHealQueue(): Promise<void> {
     if (!this.chainReader.getCanonicalPlanetState) return;
+    const totalStats: CurrentStateHealStats = {
+      planetsScanned: 0,
+      shipMismatches: 0
+    };
 
     while (this.targetedHealPlanetIds.size > 0) {
       const planetIds = [...this.targetedHealPlanetIds].slice(0, CANONICAL_READ_PLANET_CHUNK);
@@ -1880,7 +1884,18 @@ export class SettlementIndexer {
       const planets = planetIds
         .map((planetId) => this.planet(planetId))
         .filter((planet): planet is SettledPlanetEvent => planet !== null);
-      await this.healCurrentCanonicalPlanets(planets, CANONICAL_READ_PLANET_CHUNK);
+      const stats = await this.healCurrentCanonicalPlanets(planets, CANONICAL_READ_PLANET_CHUNK);
+      totalStats.planetsScanned += stats.planetsScanned;
+      totalStats.shipMismatches += stats.shipMismatches;
+    }
+
+    if (totalStats.planetsScanned > 0) {
+      await this.runHealWrite("targeted current-state heal metadata", () => {
+        this.setMetadata("lastCurrentStateHealAt", new Date().toISOString());
+        this.setMetadata("lastCurrentStateHealPlanetsScanned", totalStats.planetsScanned.toString());
+        this.setMetadata("lastCurrentStateHealShipMismatches", totalStats.shipMismatches.toString());
+        this.touch();
+      });
     }
   }
 

@@ -14,6 +14,7 @@ const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57d
 const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
+const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 
 function topicWord(value: bigint): string {
   return `0x${value.toString(16).padStart(64, "0")}`;
@@ -330,6 +331,74 @@ describe("ChainSyncService (polling)", () => {
     await service.poll();
 
     expect(healCalls).toEqual([["12", "23"]]);
+    service.stop();
+  });
+
+  test("awaits targeted canonical ship-count heals for returned fleets before completing the poll", async () => {
+    let canonicalReads = 0;
+    const indexer = new SettlementIndexer(
+      {
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; },
+        async getCanonicalPlanetState(planetId: bigint) {
+          canonicalReads += 1;
+          expect(planetId).toBe(83n);
+          return {
+            planetId: "83",
+            resources: { metal: "0", crystal: "0", deuterium: "0" },
+            buildings: [],
+            defenses: [],
+            ships: [
+              { id: 0, count: 34, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+              { id: 1, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+              { id: 4, count: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+              { id: 5, count: 5, cost: { metal: "0", crystal: "0", deuterium: "0" } }
+            ],
+            queues: {
+              building: null,
+              defense: null,
+              ship: null
+            }
+          };
+        }
+      },
+      100n
+    );
+    const logs: TestLog[] = [
+      planetStartedLog("0x180", 83n, "0xplanet83"),
+      {
+        blockNumber: "0x180",
+        transactionHash: "0xstale-zero",
+        logIndex: "0x1",
+        topics: [planetShipCountChangedTopic, topicWord(83n), topicWord(0n)],
+        data: abiWords(0n)
+      },
+      {
+        blockNumber: "0x181",
+        transactionHash: "0xreturn83",
+        logIndex: "0x0",
+        topics: [fleetMissionReturnedTopic, topicWord(2582n), ownerTopic(player), topicWord(83n)],
+        data: "0x"
+      }
+    ];
+    const backfiller = new MockBackfiller(0x181n, () => logs);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(canonicalReads).toBe(1);
+    expect(indexer.shipRows("83").filter((ship) => ship.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
+      { id: 0, count: 34 },
+      { id: 1, count: 1 },
+      { id: 4, count: 3 },
+      { id: 5, count: 5 }
+    ]);
+    expect(indexer.snapshot()).toMatchObject({
+      lastCurrentStateHealPlanetsScanned: 1,
+      lastCurrentStateHealShipMismatches: 4
+    });
+    expect(service.snapshot().latestSyncedBlock).toBe(String(0x181n));
     service.stop();
   });
 
