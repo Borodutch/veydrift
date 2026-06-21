@@ -19,7 +19,7 @@ describe("resolveWorkerCount", () => {
   });
 
   test("floors fractional CPU counts and never returns less than 1", () => {
-    expect(resolveWorkerCount({}, 4.9)).toBe(4);
+    expect(resolveWorkerCount({}, 4.9)).toBe(DEFAULT_MAX_WORKER_COUNT);
     expect(resolveWorkerCount({}, 0)).toBe(1);
     expect(resolveWorkerCount({}, Number.NaN)).toBe(1);
   });
@@ -82,7 +82,7 @@ describe("resolveWorkerAssignment", () => {
   test("an unrecognized role env is treated as the supervisor", () => {
     expect(resolveWorkerAssignment({ [WORKER_ROLE_ENV]: "bogus" }, 4)).toEqual({
       kind: "supervisor",
-      workerCount: 4
+      workerCount: DEFAULT_MAX_WORKER_COUNT
     });
   });
 });
