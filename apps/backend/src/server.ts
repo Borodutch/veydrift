@@ -238,7 +238,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     && !dependencies.indexer
     && !dependencies.randomnessCommitter
   );
-  const prewarmResponseCache = dependencies.prewarmResponseCache ?? enableResponseCache;
+  const prewarmResponseCache = dependencies.prewarmResponseCache ?? false;
 
   const routeRequest = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);

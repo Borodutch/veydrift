@@ -121,8 +121,8 @@ describe("backend config", () => {
       VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
     });
     expect(defaults.problems).toEqual([]);
-    // ~2 Base blocks: low live-event latency, cheap on the single self-hosted node.
-    expect(defaults.config.pollIntervalMs).toBe(4_000);
+    // Fast live-event latency while staying cheap on the single self-hosted node.
+    expect(defaults.config.pollIntervalMs).toBe(1_000);
 
     const overridden = loadBackendConfig({
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
@@ -139,7 +139,7 @@ describe("backend config", () => {
     });
     expect(invalid.problems.some((problem) => problem.field === "VEYDRIFT_POLL_INTERVAL_MS")).toBe(true);
     // Falls back to the default rather than a bad value.
-    expect(invalid.config.pollIntervalMs).toBe(4_000);
+    expect(invalid.config.pollIntervalMs).toBe(1_000);
   });
 
   test("enables the public mission resolver only for test deployments with a resolver address", () => {
