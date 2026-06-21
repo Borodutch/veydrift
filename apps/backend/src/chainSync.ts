@@ -149,14 +149,39 @@ export class ChainSyncService {
     };
   }
 
-  eventStream(): ReadableStream<Uint8Array> {
+  eventStream(signal?: AbortSignal): ReadableStream<Uint8Array> {
     const encoder = new TextEncoder();
     const encode = (event: string, data: unknown) =>
       encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     let removeListener: (() => void) | undefined;
+    let removeAbortListener: (() => void) | undefined;
+    let closed = false;
 
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
+        const cleanup = () => {
+          if (closed) return;
+          closed = true;
+          removeListener?.();
+          removeListener = undefined;
+          removeAbortListener?.();
+          removeAbortListener = undefined;
+          try {
+            controller.close();
+          } catch {
+            // The browser/client may already have torn the stream down.
+          }
+        };
+
+        if (signal) {
+          if (signal.aborted) {
+            cleanup();
+            return;
+          }
+          signal.addEventListener("abort", cleanup, { once: true });
+          removeAbortListener = () => signal.removeEventListener("abort", cleanup);
+        }
+
         controller.enqueue(encode("sync-status", this.snapshot()));
         removeListener = this.addListener((event) => {
           try {
@@ -164,13 +189,16 @@ export class ChainSyncService {
               encode(event.kind, event.kind === "sync-status" ? this.snapshot() : event)
             );
           } catch {
-            removeListener?.();
-            removeListener = undefined;
+            cleanup();
           }
         });
       },
       cancel: () => {
         removeListener?.();
+        removeListener = undefined;
+        removeAbortListener?.();
+        removeAbortListener = undefined;
+        closed = true;
       }
     });
   }

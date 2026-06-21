@@ -125,6 +125,14 @@ export function createForwardingFetch(
       : await request.arrayBuffer();
 
     const abortController = new AbortController();
+    const abortForwardedRequest = () => {
+      abortController.abort();
+    };
+    if (request.signal?.aborted) {
+      abortForwardedRequest();
+    } else {
+      request.signal?.addEventListener("abort", abortForwardedRequest, { once: true });
+    }
     let upstream: Response;
     try {
       upstream = await fetchImpl(target, {
@@ -135,6 +143,7 @@ export function createForwardingFetch(
         ...(body && body.byteLength > 0 ? { body } : {})
       });
     } catch {
+      request.signal?.removeEventListener("abort", abortForwardedRequest);
       return Response.json(
         {
           error: "writer_unavailable",
@@ -150,7 +159,9 @@ export function createForwardingFetch(
     const responseHeaders = new Headers(upstream.headers);
     responseHeaders.delete("content-length");
     responseHeaders.delete("content-encoding");
-    return new Response(forwardedResponseBody(upstream.body, abortController), {
+    return new Response(forwardedResponseBody(upstream.body, abortController, () => {
+      request.signal?.removeEventListener("abort", abortForwardedRequest);
+    }), {
       status: upstream.status,
       statusText: upstream.statusText,
       headers: responseHeaders
@@ -160,9 +171,13 @@ export function createForwardingFetch(
 
 function forwardedResponseBody(
   upstreamBody: ReadableStream<Uint8Array> | null,
-  abortController: AbortController
+  abortController: AbortController,
+  cleanup: () => void
 ): ReadableStream<Uint8Array> | null {
-  if (!upstreamBody) return null;
+  if (!upstreamBody) {
+    cleanup();
+    return null;
+  }
 
   const reader = upstreamBody.getReader();
   return new ReadableStream<Uint8Array>({
@@ -170,16 +185,19 @@ function forwardedResponseBody(
       try {
         const { done, value } = await reader.read();
         if (done) {
+          cleanup();
           controller.close();
           return;
         }
         controller.enqueue(value);
       } catch (error) {
+        cleanup();
         controller.error(error);
         abortController.abort();
       }
     },
     async cancel(reason) {
+      cleanup();
       abortController.abort();
       try {
         await reader.cancel(reason);

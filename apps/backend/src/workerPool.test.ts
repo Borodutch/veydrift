@@ -218,6 +218,39 @@ describe("createForwardingFetch", () => {
     expect(upstreamCanceled).toBe(true);
   });
 
+  test("aborts the writer SSE request when the original browser request aborts", async () => {
+    let fetchAborted = false;
+    const fetchImpl = (async (_input: string | URL, init?: RequestInit) => {
+      init?.signal?.addEventListener("abort", () => {
+        fetchAborted = true;
+      });
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("event: sync-status\n\n"));
+          }
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        }
+      );
+    }) as unknown as typeof fetch;
+
+    const local = async () => new Response("reader-has-no-chain-sync", { status: 503 });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+    const abortController = new AbortController();
+
+    const response = await handler(new Request("http://localhost/chain/events", {
+      signal: abortController.signal
+    }));
+    expect(response.status).toBe(200);
+
+    abortController.abort();
+
+    expect(fetchAborted).toBe(true);
+  });
+
   test("does not try to consume a body when forwarding bodyless writer-only reads", async () => {
     const fetchImpl = (async () =>
       new Response("event: sync-status\n\n", {
