@@ -6563,6 +6563,29 @@ describe("SettlementIndexer", () => {
     expect(third.entries).toEqual(indexer.highscoreEntriesForOwners(indexer.settledPlanetsByOwner()));
   });
 
+  test("keeps the indexed highscore cache version stable for mission-only events", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    const indexedVersionBefore = indexer.indexedStateCacheVersion();
+    const responseVersionBefore = indexer.responseCacheVersion();
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xmission-only",
+      logIndex: "0x0",
+      topics: [fleetMissionReturnExposedTopic, topic(50n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 100n, 300n, 0n, 0n, 0n)
+    });
+
+    expect(indexer.indexedStateCacheVersion()).toBe(indexedVersionBefore);
+    expect(indexer.responseCacheVersion()).not.toBe(responseVersionBefore);
+  });
+
   test("keeps projected elapsed building and research queues out of bulk highscore leaderboard scores", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

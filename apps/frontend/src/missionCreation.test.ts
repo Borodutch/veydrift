@@ -224,6 +224,7 @@ describe("mission creation", () => {
     expect(missionConfirmButtonLabel({ acsDefendMode: true })).toBe("Coordinate defense");
     expect(missionCreationSource).toContain("actionPendingLabel?: string | undefined;");
     expect(missionCreationSource).toContain("disabled={Boolean(blockedReason) || actionPending}");
+    expect(missionCreationSource).toContain("const visibleBlockedReason = actionPending ? undefined : blockedReason;");
     expect(missionCreationSource).toContain("missionConfirmButtonLabel({");
     expect(missionCreationSource).toContain("if (actionPendingLabel) return actionPendingLabel;");
   });

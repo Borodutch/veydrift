@@ -337,6 +337,7 @@ export function MissionCreationPage({
     submitBlocker,
     totalCargoCapacity,
   });
+  const visibleBlockedReason = actionPending ? undefined : blockedReason;
 
   const maxCargoResources = {
     metal: Math.max(0, Math.trunc(resources?.metal ?? 0)),
@@ -594,9 +595,9 @@ export function MissionCreationPage({
               ) : null}
             </>
           ) : null}
-          {blockedReason ? (
+          {visibleBlockedReason ? (
             <p className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
-              {blockedReason}
+              {visibleBlockedReason}
             </p>
           ) : null}
           <button

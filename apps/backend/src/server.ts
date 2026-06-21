@@ -1245,8 +1245,13 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
 }
 
 function cacheableJsonRequestKey(request: Request, url: URL, indexer: SettlementIndexer | undefined): string {
-  const indexerVersion = indexer ? indexer.responseCacheVersion() : "none";
+  const indexerVersion = indexer ? cacheableJsonRequestVersion(url, indexer) : "none";
   return `${request.method} ${url.pathname}${url.search} indexer=${indexerVersion}`;
+}
+
+function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): string {
+  if (url.pathname === "/highscores") return indexer.indexedStateCacheVersion();
+  return indexer.responseCacheVersion();
 }
 
 function cachedJsonResponse(cached: CachedJsonResponse): Response {
