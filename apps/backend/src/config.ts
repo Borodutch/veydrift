@@ -117,10 +117,10 @@ const defaultLogChunkSpan = 90_000n;
 // and the boot-time recovery retries) but generous enough for the full contract-read seed to finish.
 const defaultRebuildDeadlineMs = 1_800_000;
 // Chain-sync HTTP poll cadence. Each tick resolves head (eth_blockNumber) and ingests the new block
-// range through the indexer. 4s (~2 Base blocks) keeps live-event latency low while staying cheap on
-// the single self-hosted node — an empty range is one eth_getLogs over a few-hundred-block window.
+// range through the indexer. 1s keeps post-transaction UI latency low while staying cheap on the
+// single self-hosted node — an empty range is one small eth_getLogs over the latest block window.
 // Operators can tune it via VEYDRIFT_POLL_INTERVAL_MS.
-const defaultPollIntervalMs = 4_000;
+const defaultPollIntervalMs = 1_000;
 const defaultCurrentStateHealConcurrency = 25;
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 const privateKeyPattern = /^0x[a-fA-F0-9]{64}$/;

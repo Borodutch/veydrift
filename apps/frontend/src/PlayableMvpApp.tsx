@@ -1651,6 +1651,14 @@ export function clearRecoveredWalletContractUnavailableAction<
   return action;
 }
 
+function keepGlobalReadStateDuringTransaction(current: ChainLoadStatus): ChainLoadStatus {
+  return current === "ready" ? "ready" : current;
+}
+
+function globalReadStatusAfterTransactionRefreshFailure(current: ChainLoadStatus): ChainLoadStatus {
+  return current === "ready" ? "ready" : "error";
+}
+
 function pendingActionLabel(...actions: Array<{ status: string; label?: string | undefined }>): string | undefined {
   return actions.find((action) => action.status === "pending" && action.label)?.label;
 }
@@ -4061,7 +4069,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return true;
     }
 
-    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setOnChainStatus(keepGlobalReadStateDuringTransaction);
     setInfrastructureLoading(true);
     setInfrastructureError(undefined);
 
@@ -4119,7 +4127,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       }
 
       setOnChainError(message);
-      setOnChainStatus("error");
+      setOnChainStatus(globalReadStatusAfterTransactionRefreshFailure);
       setInfrastructureError(message);
       throw error;
     } finally {
@@ -4139,7 +4147,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setOnChainStatus(keepGlobalReadStateDuringTransaction);
     setDefenseLoading(true);
     setDefenseError(undefined);
 
@@ -4166,7 +4174,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
       const message = error instanceof Error ? error.message : "Failed to load started defense production state.";
       setOnChainError(message);
-      setOnChainStatus("error");
+      setOnChainStatus(globalReadStatusAfterTransactionRefreshFailure);
       setDefenseError(message);
       throw error;
     } finally {
@@ -4186,7 +4194,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setOnChainStatus(keepGlobalReadStateDuringTransaction);
     setShipyardLoading(true);
     setShipyardError(undefined);
 
@@ -4213,7 +4221,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
       const message = error instanceof Error ? error.message : "Failed to load started ship production state.";
       setOnChainError(message);
-      setOnChainStatus("error");
+      setOnChainStatus(globalReadStatusAfterTransactionRefreshFailure);
       setShipyardError(message);
       throw error;
     } finally {
@@ -4233,7 +4241,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setOnChainStatus(keepGlobalReadStateDuringTransaction);
     setResearchLoading(true);
     setResearchError(undefined);
 
@@ -4260,7 +4268,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
       const message = error instanceof Error ? error.message : "Failed to load started research state.";
       setOnChainError(message);
-      setOnChainStatus("error");
+      setOnChainStatus(globalReadStatusAfterTransactionRefreshFailure);
       setResearchError(message);
       throw error;
     } finally {
@@ -4280,7 +4288,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     const requestId = beginRefreshRequest(infrastructureRefreshGate);
-    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setOnChainStatus(keepGlobalReadStateDuringTransaction);
     setInfrastructureLoading(true);
     setInfrastructureError(undefined);
 
@@ -4314,7 +4322,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load started building state.";
       setOnChainError(message);
-      setOnChainStatus("error");
+      setOnChainStatus(globalReadStatusAfterTransactionRefreshFailure);
       setInfrastructureError(message);
       throw error;
     } finally {
@@ -4334,7 +4342,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setOnChainStatus(keepGlobalReadStateDuringTransaction);
     setResearchLoading(true);
     setResearchError(undefined);
 
@@ -4361,7 +4369,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
       const message = error instanceof Error ? error.message : "Failed to load finished research state.";
       setOnChainError(message);
-      setOnChainStatus("error");
+      setOnChainStatus(globalReadStatusAfterTransactionRefreshFailure);
       setResearchError(message);
       throw error;
     } finally {
