@@ -1161,6 +1161,10 @@ export function walletRequestErrorMessage(error: unknown): string {
 
 const INSUFFICIENT_RESOURCES_REVERT_SELECTOR = "0x2ab0f96f";
 const INSUFFICIENT_SHIPS_REVERT_SELECTOR = "0x705f508b";
+const MISSING_DEPENDENCY_REVERT_SELECTOR = "0xb8f7e9ba";
+const QUEUE_ACTIVE_REVERT_SELECTOR = "0xcc9beebc";
+const QUEUE_INACTIVE_REVERT_SELECTOR = "0x63b016a9";
+const LEVEL_TOO_HIGH_REVERT_SELECTOR = "0x1aca3780";
 export const INSUFFICIENT_RESOURCES_SPEND_MESSAGE =
   "You don't have enough resources for this action. Your spendable balance may still be catching up with recent spending — refresh resources and try again once you can cover the cost.";
 
@@ -1269,8 +1273,51 @@ function revertUintArg(error: unknown, index: number): bigint | undefined {
   return BigInt(`0x${word}`);
 }
 
+function revertBytes32StringArg(error: unknown, index: number): string | undefined {
+  const data = errorData(error);
+  if (typeof data !== "string") return undefined;
+  const wordStart = 10 + index * 64;
+  const word = data.slice(wordStart, wordStart + 64);
+  if (!/^[a-fA-F0-9]{64}$/.test(word)) return undefined;
+  const bytes = word.match(/.{1,2}/g)?.map((byte) => Number.parseInt(byte, 16)) ?? [];
+  const trimmed = bytes.filter((byte) => byte !== 0);
+  if (trimmed.length === 0) return undefined;
+  return new TextDecoder().decode(new Uint8Array(trimmed)).trim() || undefined;
+}
+
+function dependencyLabel(dependency: string | undefined): string {
+  if (!dependency) return "A prerequisite";
+
+  const parts = dependency.split("_");
+  const level = parts.at(-1);
+  const subjectParts = level && /^\d+$/.test(level) ? parts.slice(0, -1) : parts;
+  const subject = subjectParts.join(" ");
+  const readableSubject = subject
+    ? subject.toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())
+    : "Prerequisite";
+
+  return level && /^\d+$/.test(level) ? `${readableSubject} ${level}` : dependency.replace(/_/g, " ");
+}
+
 function contractRevertReason(error: unknown, context?: FleetMissionRevertContext): string | undefined {
   const selector = revertSelector(error);
+  if (selector === MISSING_DEPENDENCY_REVERT_SELECTOR) {
+    const dependency = revertBytes32StringArg(error, 0);
+    return `${dependencyLabel(dependency)} is required before this action can be started. Finish or refresh prerequisite queues, then retry.`;
+  }
+
+  if (selector === QUEUE_ACTIVE_REVERT_SELECTOR) {
+    return "Another queue is already active. Finish or wait for the current queue to clear, then retry.";
+  }
+
+  if (selector === QUEUE_INACTIVE_REVERT_SELECTOR) {
+    return "There is no active queue to finish. Refresh game state and retry.";
+  }
+
+  if (selector === LEVEL_TOO_HIGH_REVERT_SELECTOR) {
+    return "This level is already at the maximum allowed by the contract.";
+  }
+
   if (selector === INSUFFICIENT_SHIPS_REVERT_SELECTOR) {
     const shipId = revertUintArg(error, 0);
     if (shipId === COLONY_SHIP_ID || isColonizeMissionContext(context)) {

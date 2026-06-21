@@ -4117,15 +4117,20 @@ describe("Veydrift backend", () => {
         metal: "5064",
         crystal: "4900",
         deuterium: "4800"
-      },
-      // readyAt is in the past, so the elapsed entry is no longer an active construction on public
-      // all-players state either, and the served building rows project the same as-of-now completion.
-      queues: {
-        building: null
       }
     });
+    // The queue is ready but not finalized on-chain. Public state must keep serving the committed
+    // contract level and expose the active queue until the completion event lands.
+    expect(occupiedPlanet.publicState.queues.building).toEqual(expect.objectContaining({
+      itemId: 0,
+      targetLevel: 2
+    }));
+    expect(occupiedPlanet.publicState.queues.research).toEqual(expect.objectContaining({
+      itemId: 0,
+      targetLevel: 2
+    }));
     expect(occupiedPlanet.publicState.buildings).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, level: 2 })
+      expect.objectContaining({ id: 0, level: 1 })
     ]));
     expect(occupiedPlanet.publicState.fleet).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 0, count: 2 }),
@@ -4143,7 +4148,7 @@ describe("Veydrift backend", () => {
       })
     ]);
     expect(occupiedPlanet.publicState.research).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, level: 2 })
+      expect.objectContaining({ id: 0, level: 1 })
     ]));
     expect(system.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
     expect(chainReader.rebuildCalls).toBe(1);
@@ -4656,7 +4661,7 @@ describe("Veydrift backend", () => {
     expect(infrastructureBody.raidableResources.metal).toBe("2532");
   });
 
-  test("resourcesAsOfNow uses raw contract production while elapsed building queues are only effective UI state (VEY-KANEO-546)", async () => {
+  test("resourcesAsOfNow and served buildings ignore elapsed queues until completion events land (VEY-KANEO-546)", async () => {
     const chainReader = new MockChainReader();
     chainReader.getInfrastructureState = async () => {
       throw new Error("resource projection must not call live infrastructure state");
@@ -4706,21 +4711,25 @@ describe("Veydrift backend", () => {
       rawRows.ships,
       rawRows.technologyLevels
     ).productionPerHour;
-    const effectiveRate = deriveInfrastructureFields(
+    const servedRate = deriveInfrastructureFields(
       { ...planet, lastSettledAt: startTs.toString() },
       indexer.infrastructureRows(planet.planetId),
       indexer.shipRows(planet.planetId),
       indexer.technologyLevels(player)
     ).productionPerHour;
-    if (!rawRate || !effectiveRate) throw new Error("expected derivable production rates");
+    if (!rawRate || !servedRate) throw new Error("expected derivable production rates");
     const elapsed = Math.floor(Date.now() / 1_000) - startTs;
     const rawProjectedMetal = Number(planet.resources.metal) + Math.floor((Number(rawRate.metal) * elapsed) / 3_600);
-    const effectiveProjectedMetal = Number(planet.resources.metal) + Math.floor((Number(effectiveRate.metal) * elapsed) / 3_600);
 
-    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(10);
+    expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(1);
     expect(rawRows.buildings.find((building) => building.id === 0)?.level).toBe(1);
+    expect(servedRate.metal).toBe(rawRate.metal);
     expect(infrastructureBody.resourcesAsOfNow.metal).toBe(rawProjectedMetal.toString());
-    expect(Number(infrastructureBody.resourcesAsOfNow.metal)).toBeLessThan(effectiveProjectedMetal);
+    expect(infrastructureBody.buildings.find((building: { id: number }) => building.id === 0)?.level).toBe(1);
+    expect(infrastructureBody.queue).toEqual(expect.objectContaining({
+      itemId: 0,
+      targetLevel: 10
+    }));
   });
 
   test("returned loot resource credit updates every wallet current-resource feeder (VEY-KANEO-517)", async () => {
@@ -5222,16 +5231,21 @@ describe("Veydrift backend", () => {
       crystal: "2070",
       deuterium: "2370"
     });
-    // Lazy on-chain reconciliation (VEY-KANEO-468): these fixture queues all have elapsed readyAts,
-    // so they settle as-of-now and pop — no active queue remains (their levels/counts are projected
-    // into the planet's building/defense/ship/research state). The point of this test is the
-    // resource deductions from the spends, asserted above.
+    // Building/research queues remain active until completion events mutate contract state. Unit
+    // queues retain the old as-of-now visibility behavior in this narrow fixture; the point of this
+    // test is still the resource deductions from the spends, asserted above.
     expect(planetsBody.planets[0].queues).toMatchObject({
-      building: null,
+      building: expect.objectContaining({
+        itemId: 3,
+        targetLevel: 12
+      }),
       defense: null,
       ship: null
     });
-    expect(planetsBody.queues.research).toBeNull();
+    expect(planetsBody.queues.research).toEqual(expect.objectContaining({
+      itemId: 9,
+      targetLevel: 1
+    }));
   });
 
   test("does not rebuild a cold planet index during wallet settlement requests", async () => {
@@ -5436,11 +5450,11 @@ describe("Veydrift backend", () => {
 
     expect(queuesResponse.status).toBe(200);
     expect(queuesResponse.headers.get("x-veydrift-index-state")).toBe("stale");
-    // Lazy on-chain reconciliation (VEY-KANEO-468): readyAt is in the past, so the queue is settled
-    // as-of-now and popped — there is no active construction left, and the building level is
-    // projected up (asserted via the infrastructure rows below). Previously this lingered as an
-    // active "complete: true" queue (the stale-"Ready" bug).
-    expect(queuesBody.building).toBeNull();
+    // Ready-but-unfinalized building queues remain visible until the contract emits completion.
+    expect(queuesBody.building).toEqual(expect.objectContaining({
+      itemId: 5,
+      targetLevel: 1
+    }));
     expect(infrastructureResponse.status).toBe(200);
     expect(infrastructureResponse.headers.get("x-veydrift-index-state")).toBe("stale");
     expect(infrastructureBody).toMatchObject({
@@ -5481,9 +5495,11 @@ describe("Veydrift backend", () => {
         crystal: "4780",
         deuterium: "4740"
       },
-      // Lazy on-chain reconciliation (VEY-KANEO-468): the elapsed building has settled as-of-now,
-      // so there is no active construction (the level is projected up in `buildings` above).
-      queue: null
+      // The elapsed building remains active until BuildingCompleted updates the committed level.
+      queue: expect.objectContaining({
+        itemId: 5,
+        targetLevel: 1
+      })
     });
 
     indexer.applyLog({
@@ -5708,14 +5724,17 @@ describe("Veydrift backend", () => {
         expect.objectContaining({ id: 9, energyPerUnit: "22" })
       ])
     });
-    // The elapsed research queue no longer occupies the active slot, and served technology rows
-    // project the as-of-now completed target before ResearchCompleted.
+    // The elapsed research queue remains active and served technology rows stay at the committed
+    // contract level until ResearchCompleted is indexed.
     expect(research).toMatchObject({
       source: "contract-state-indexer",
-      queue: null
+      queue: expect.objectContaining({
+        itemId: 4,
+        targetLevel: 2
+      })
     });
     expect(research.technologies).toEqual(
-      expect.arrayContaining([expect.objectContaining({ id: 4, level: 2 })])
+      expect.arrayContaining([expect.objectContaining({ id: 4, level: 0 })])
     );
     // Personal state endpoints expose accrued resourcesAsOfNow (VEY-KANEO-464). This
     // fixture has no mines (zero production), so the projection equals canonical
@@ -5849,13 +5868,15 @@ describe("Veydrift backend", () => {
       buildings: expect.arrayContaining([
         expect.objectContaining({
           id: 0,
-          level: 2
+          level: 1
         })
-      ]),
-      // Lazy on-chain reconciliation projects the elapsed build to level 2 and removes it from
-      // the active queue before a BuildingCompleted log is indexed.
-      queue: null
+      ])
     });
+    // Ready-but-unfinalized queues remain visible, and levels stay contract-authoritative.
+    expect(body.queue).toEqual(expect.objectContaining({
+      itemId: 0,
+      targetLevel: 2
+    }));
   });
 
   test("keeps indexed infrastructure globally healthy while selected planet resources warm", async () => {
@@ -6500,12 +6521,12 @@ describe("Veydrift backend", () => {
         }
       ],
       planetCount: 1,
-      // Unit queues are not committed fleet/defense state until their completion event lands.
+      // Unit/building/research queues are not committed state until their completion event lands.
       score: {
-        total: "8097",
+        total: "8095",
         economy: "8080",
-        research: "3",
-        researchLevels: "2",
+        research: "1",
+        researchLevels: "1",
         military: "14",
         fleet: "8",
         fleetCount: "2",
@@ -7087,10 +7108,10 @@ describe("Veydrift backend", () => {
       homePlanetId: planet.planetId,
       planetCount: 1,
       score: {
-        total: "8097",
+        total: "8095",
         economy: "8080",
-        research: "3",
-        researchLevels: "2",
+        research: "1",
+        researchLevels: "1",
         military: "14",
         fleet: "8",
         fleetCount: "2",

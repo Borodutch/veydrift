@@ -715,11 +715,10 @@ describe("SettlementIndexer", () => {
     }
   });
 
-  test("projects elapsed building queues into as-of-now infrastructure rows before completion logs", () => {
-    // A crystal-storage upgrade whose build timer has elapsed by wall-clock raises the backend
-    // storage cap as-of-now. Current contract lazy settlement completes due construction inside
-    // _settleResources, so read models must match the same as-of-now state even before a
-    // BuildingCompleted log is indexed.
+  test("keeps elapsed building queues visible until completion logs update building levels", () => {
+    // A crystal-storage upgrade whose build timer has elapsed by wall-clock is still active in
+    // contract storage until a transaction finalizes it and emits BuildingCompleted. Read models
+    // must mirror that committed state instead of projecting the elapsed queue as completed.
     // Both timestamps sit before the suite's mocked clock (2026-01-01), so the queued upgrade's
     // build timer has already elapsed by wall-clock and would be optimistically completed.
     const startTs = 1_767_000_000;
@@ -753,19 +752,22 @@ describe("SettlementIndexer", () => {
     });
 
     const rows = indexer.infrastructureRows(planet.planetId);
-    // Storage level is projected from the elapsed queue...
-    expect(rows.find((building) => building.id === 8)?.level).toBe(2);
-    // ...so the derived storage cap matches the as-of-now level-2 40,000.
+    expect(rows.find((building) => building.id === 8)?.level).toBe(1);
+    expect(indexer.playerQueues(player, planet.planetId).building).toMatchObject({
+      active: true,
+      itemId: 8,
+      targetLevel: 2
+    });
     const caps = deriveInfrastructureFields(
       { ...planet, lastSettledAt: startTs.toString() },
       rows,
       deriveShipRows(() => 0),
       {}
     ).storageCaps;
-    expect(caps?.crystal).toBe("40000");
+    expect(caps?.crystal).toBe("20000");
 
-    // A non-storage building (metal mine, id 0) under the identical elapsed-queue setup is also
-    // projected from the elapsed targetLevel.
+    // A non-storage building (metal mine, id 0) under the identical elapsed-queue setup also stays
+    // pinned to the last committed level until the completion event arrives.
     const mineIndexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -787,8 +789,7 @@ describe("SettlementIndexer", () => {
       topics: [buildingStartedTopic, topic(7n), topic(0n)],
       data: abiWords(8n, BigInt(elapsedReadyAt), 0n, 0n, 0n)
     });
-    // Served level advances as-of-now before a BuildingCompleted log arrives.
-    expect(mineIndexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(8);
+    expect(mineIndexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(4);
     // The later completion log is monotonic and does not double-advance the level.
     mineIndexer.applyLog({
       blockNumber: "0x82",
@@ -2927,7 +2928,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.playerQueues(player, planet.planetId)).toMatchObject({
       ship: null,
       defense: null,
-      research: null
+      research: expect.objectContaining({ active: true, itemId: 4, targetLevel: 2 })
     });
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)).toMatchObject({
       id: 0,
@@ -2941,7 +2942,7 @@ describe("SettlementIndexer", () => {
       id: 1,
       count: 8
     });
-    expect(indexer.technologyLevels(player)).toMatchObject({ "4": 2 });
+    expect(indexer.technologyLevels(player)).not.toHaveProperty("4");
   });
 
   test("indexes moon creation and moon building queues", () => {
@@ -6563,7 +6564,7 @@ describe("SettlementIndexer", () => {
     expect(third.entries).toEqual(indexer.highscoreEntriesForOwners(indexer.settledPlanetsByOwner()));
   });
 
-  test("projects elapsed queues into bulk highscore leaderboard scores", () => {
+  test("keeps elapsed building and research queues out of bulk highscore leaderboard scores", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -6605,17 +6606,17 @@ describe("SettlementIndexer", () => {
     const directWalletEntry = indexer.highscoreForWallet(player);
 
     expect(indexer.playerQueues(player, planet.planetId)).toMatchObject({
-      building: null,
+      building: expect.objectContaining({ active: true, itemId: 0, targetLevel: 1 }),
       defense: null,
       ship: null,
-      research: null
+      research: expect.objectContaining({ active: true, itemId: 4, targetLevel: 1 })
     });
     expect(leaderboardEntry.score).toEqual(directWalletEntry.score);
     expect(leaderboardEntry.totalUserScore).toBe(directWalletEntry.totalUserScore);
-    expect(BigInt(leaderboardEntry.score.total) > 0n).toBe(true);
+    expect(leaderboardEntry.score.total).toBe("0");
   });
 
-  test("expires cached highscore leaderboard when a queue becomes due as of now", () => {
+  test("keeps cached highscore leaderboard stable when a queue merely becomes due as of now", () => {
     const originalNow = new Date("2026-01-01T00:00:00Z");
     setSystemTime(originalNow);
     try {
@@ -6641,9 +6642,9 @@ describe("SettlementIndexer", () => {
       setSystemTime(new Date(Number(readyAt + 1n) * 1_000));
 
       const after = indexer.highscoreLeaderboard();
-      expect(after).not.toBe(before);
+      expect(after).toBe(before);
       expect(after.entries[0]?.score).toEqual(indexer.highscoreForWallet(player).score);
-      expect(BigInt(after.entries[0]?.score.economy ?? "0") > 0n).toBe(true);
+      expect(after.entries[0]?.score.economy).toBe("0");
     } finally {
       setSystemTime(new Date("2026-01-01T00:00:00Z"));
     }

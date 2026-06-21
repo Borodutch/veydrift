@@ -378,12 +378,10 @@ export class SettlementIndexer {
   private missionReadModelDbVersion: string | null = null;
   private battleReportReadModelDbVersion: string | null = null;
   // Memoized full highscore leaderboard (every owner's score + their planets). The leaderboard is a
-  // function of indexed state plus request-time lazy-completion projection. It is valid until the next
-  // touch() or until the next active queue readyAt can change projected levels/counts.
+  // function of indexed contract-mirror state and is valid until the next event-listener mutation.
   private leaderboardCache:
     | {
       generation: number;
-      asOfNowValidUntilSec: number;
       planetsByOwner: Map<string, SettledPlanetEvent[]>;
       entries: HighscoreEntry[];
     }
@@ -1267,23 +1265,7 @@ export class SettlementIndexer {
   }
 
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
-    const completedBuildingLevels = new Map<number, number>();
-    for (const completed of this.queueSettlement(`building:${planetId}`).completed) {
-      if (typeof completed.itemId !== "number" || typeof completed.targetLevel !== "number") continue;
-      completedBuildingLevels.set(
-        completed.itemId,
-        Math.max(completedBuildingLevels.get(completed.itemId) ?? 0, completed.targetLevel)
-      );
-    }
-
-    // Lazy on-chain reconciliation: the active building queue already disappears as-of-now once
-    // readyAt has elapsed, so served building rows must apply the same elapsed entries. Otherwise
-    // derived energy, production, storage, tactical summaries, and build requirements are computed
-    // from a half-settled state: queue null, but level still pinned to the last indexed completion.
-    return deriveBuildingRows((id) => Math.max(
-      this.indexedLevel("contract_building_levels", "building_id", planetId, id),
-      completedBuildingLevels.get(id) ?? 0
-    ));
+    return deriveBuildingRows((id) => this.indexedLevel("contract_building_levels", "building_id", planetId, id));
   }
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
@@ -1351,20 +1333,7 @@ export class SettlementIndexer {
   }
 
   technologyLevels(wallet: `0x${string}`): Record<string, number> {
-    const rows = this.db.query(`
-      SELECT technology_id AS id, level AS value
-      FROM contract_technology_levels
-      WHERE owner = lower(?)
-      ORDER BY technology_id ASC
-    `).all(wallet) as LevelRow[];
-
-    const levels = Object.fromEntries(rows.map((row) => [String(row.id), row.value]));
-    for (const completed of this.queueSettlement(`research:${wallet.toLowerCase()}`).completed) {
-      if (typeof completed.itemId !== "number" || typeof completed.targetLevel !== "number") continue;
-      const key = String(completed.itemId);
-      levels[key] = Math.max(levels[key] ?? 0, completed.targetLevel);
-    }
-    return levels;
+    return this.contractTechnologyLevels(wallet);
   }
 
   private contractTechnologyLevels(wallet: `0x${string}`): Record<string, number> {
@@ -1404,44 +1373,8 @@ export class SettlementIndexer {
     return settleQueueAsOfNow(this.queueState(queueKeyValue), nowSec);
   }
 
-  private projectedQueueLevelRows(rows: readonly LevelRow[] | undefined, queueKeyValue: string, nowSec: number): LevelRow[] {
-    const levels = new Map((rows ?? []).map((row) => [row.id, row.value]));
-    for (const completed of this.queueSettlement(queueKeyValue, nowSec).completed) {
-      if (typeof completed.itemId !== "number" || typeof completed.targetLevel !== "number") continue;
-      levels.set(completed.itemId, Math.max(levels.get(completed.itemId) ?? 0, completed.targetLevel));
-    }
-    return sortedLevelRows(levels);
-  }
-
-  private nextHighscoreProjectionInvalidationSec(
-    planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
-    nowSec: number
-  ): number {
-    let next = Number.POSITIVE_INFINITY;
-    for (const [owner, planets] of planetsByOwner) {
-      next = Math.min(next, this.nextQueueProjectionInvalidationSec(`research:${owner.toLowerCase()}`, nowSec));
-      for (const planet of planets) {
-        next = Math.min(
-          next,
-          this.nextQueueProjectionInvalidationSec(`building:${planet.planetId}`, nowSec),
-          this.nextQueueProjectionInvalidationSec(`defense:${planet.planetId}`, nowSec),
-          this.nextQueueProjectionInvalidationSec(`ship:${planet.planetId}`, nowSec)
-        );
-      }
-    }
-    return next;
-  }
-
-  private nextQueueProjectionInvalidationSec(queueKeyValue: string, nowSec: number): number {
-    const readyAt = this.queueSettlement(queueKeyValue, nowSec).queue?.readyAt;
-    const readyAtSec = readyAt === undefined || readyAt === null ? Number.POSITIVE_INFINITY : Number(readyAt);
-    if (!Number.isFinite(readyAtSec) || readyAtSec <= 0) return Number.POSITIVE_INFINITY;
-    return readyAtSec <= nowSec ? nowSec : readyAtSec;
-  }
-
   private moonBuildingLevelAsOfNow(planetId: string, buildingId: number): number {
-    // Moon buildings still serve the contract-authoritative table directly; the lazy infrastructure
-    // projection above only applies to planet building queues covered by the current contract path.
+    // Moon buildings serve the contract-authoritative table directly, like planet buildings.
     return this.indexedLevel("contract_moon_building_levels", "moon_building_id", planetId, buildingId);
   }
 
@@ -1469,7 +1402,7 @@ export class SettlementIndexer {
     });
   }
 
-  highscoreEntriesForOwners(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>, nowSec = nowSeconds()): HighscoreEntry[] {
+  highscoreEntriesForOwners(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): HighscoreEntry[] {
     const ownersAndPlanets = [...planetsByOwner.entries()];
     if (ownersAndPlanets.length === 0) return [];
 
@@ -1487,12 +1420,12 @@ export class SettlementIndexer {
         homePlanetId: homePlanet?.planetId ?? null,
         planetCount: planets.length,
         planets: planets.map((planet) => ({
-          buildings: levelRows(this.projectedQueueLevelRows(buildingsByPlanet.get(planet.planetId), `building:${planet.planetId}`, nowSec)),
+          buildings: levelRows(buildingsByPlanet.get(planet.planetId)),
           moonBuildings: levelRows(moonBuildingsByPlanet.get(planet.planetId)),
           defenses: countRows(defensesByPlanet.get(planet.planetId)),
           ships: countRows(shipsByPlanet.get(planet.planetId))
         })),
-        technologies: levelRows(this.projectedQueueLevelRows(technologiesByOwner.get(owner.toLowerCase()), `research:${owner.toLowerCase()}`, nowSec))
+        technologies: levelRows(technologiesByOwner.get(owner.toLowerCase()))
       });
     });
   }
@@ -1501,19 +1434,16 @@ export class SettlementIndexer {
   // scores depend only on integrated (completed) state, so the same result is valid for every
   // request until the next touch() — turning the rankings / raid-finder hot path from an
   // O(all-planets) recompute per request into an O(1) lookup between block integrations
-  // (VEY-KANEO-467). The accrual-to-now projection still runs per request, but only for the
-  // bounded set of planets visible on the requested page (see rankedHighscorePlanets).
+  // (VEY-KANEO-467).
   highscoreLeaderboard(): { planetsByOwner: Map<string, SettledPlanetEvent[]>; entries: HighscoreEntry[] } {
-    const nowSec = nowSeconds();
     const cached = this.leaderboardCache;
-    if (cached && cached.generation === this.stateGeneration && nowSec < cached.asOfNowValidUntilSec) {
+    if (cached && cached.generation === this.stateGeneration) {
       return cached;
     }
     const planetsByOwner = this.settledPlanetsByOwner();
-    const entries = this.highscoreEntriesForOwners(planetsByOwner, nowSec);
+    const entries = this.highscoreEntriesForOwners(planetsByOwner);
     this.leaderboardCache = {
       generation: this.stateGeneration,
-      asOfNowValidUntilSec: this.nextHighscoreProjectionInvalidationSec(planetsByOwner, nowSec),
       planetsByOwner,
       entries
     };
@@ -1578,13 +1508,8 @@ export class SettlementIndexer {
     return rowsByOwner;
   }
 
-  // Lazy on-chain reconciliation (VEY-KANEO-468): the active queue must reflect the as-of-now
-  // SETTLED state, not just flag the head "complete". `settleQueueAsOfNow` (via queueSettlement)
-  // pops every elapsed active/backlog entry and returns the next genuinely-in-progress queue (or
-  // null when all have settled), matching the derived levels/counts (infrastructureRows / shipRows
-  // / defenseRows / technologyLevels), which already apply the same completed entries. Flag-only
-  // `withQueueAsOfNow` left a finished item lingering in the "active" slot as "Ready".
   planetQueue(planetId: string, kind: "building" | "defense" | "ship"): QueueState | null {
+    if (kind === "building") return this.queueState(`${kind}:${planetId}`);
     return this.queueSettlement(`${kind}:${planetId}`).queue;
   }
 
@@ -1593,7 +1518,7 @@ export class SettlementIndexer {
   }
 
   researchQueue(wallet: `0x${string}`): QueueState | null {
-    return this.queueSettlement(`research:${wallet.toLowerCase()}`).queue;
+    return this.queueState(`research:${wallet.toLowerCase()}`);
   }
 
   moonState(wallet: `0x${string}`, planetId: string | null): MoonState {
@@ -6673,12 +6598,6 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
     result.push(items.slice(index, index + size));
   }
   return result;
-}
-
-function sortedLevelRows(rowsById: ReadonlyMap<number, number>): LevelRow[] {
-  return [...rowsById.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([id, value]) => ({ id, value }));
 }
 
 function levelRows(rows: readonly LevelRow[] | undefined): Array<{ id: number; level: number }> {
