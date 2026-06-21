@@ -6502,6 +6502,40 @@ describe("Veydrift backend", () => {
     expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
   });
 
+  test("keeps cached highscores stable across mission-only read-model changes", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const originalHighscoreLeaderboard = indexer.highscoreLeaderboard.bind(indexer);
+    let highscoreLeaderboardCalls = 0;
+    indexer.highscoreLeaderboard = () => {
+      highscoreLeaderboardCalls += 1;
+      return originalHighscoreLeaderboard();
+    };
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      enableResponseCache: true,
+      indexer,
+      prewarmResponseCache: false
+    });
+    const request = new Request("http://localhost/highscores?category=total&page=1&pageSize=10");
+
+    expect((await handler(request.clone())).status).toBe(200);
+    expect(highscoreLeaderboardCalls).toBe(1);
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xmission-only",
+      logIndex: "0x0",
+      topics: [fleetMissionReturnExposedTopic, topic(50n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 100n, 300n, 0n, 0n, 0n)
+    });
+
+    expect((await handler(request.clone())).status).toBe(200);
+    expect(highscoreLeaderboardCalls).toBe(1);
+  });
+
   test("accrues production into highscore raidable loot so it matches the public planet read (VEY-KANEO-454)", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);

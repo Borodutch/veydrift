@@ -1516,8 +1516,11 @@ export class SettlementIndexer {
   responseCacheVersion(): string {
     // Reader workers do not receive the writer worker's in-memory `stateGeneration`, so route-level
     // caches must include a token persisted into the shared WAL database.
-    const indexedStateVersion = this.metadata(indexedStateVersionMetadataKey) ?? this.stateGeneration.toString();
-    return `${indexedStateVersion}:${this.currentMissionReadModelDbVersion()}`;
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}`;
+  }
+
+  indexedStateCacheVersion(): string {
+    return this.metadata(indexedStateVersionMetadataKey) ?? this.stateGeneration.toString();
   }
 
   checkpointWal(mode: "PASSIVE" | "TRUNCATE" = "PASSIVE"): Array<{ busy: number; log: number; checkpointed: number }> {
@@ -1764,13 +1767,15 @@ export class SettlementIndexer {
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isFleetMissionLog(log)) {
-      this.applyFleetMissionCompatibilityEvent(log);
-      this.touch();
+      if (this.applyFleetMissionCompatibilityEvent(log) > 0) {
+        this.touch();
+      }
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isBattleReportLog(log)) {
-      this.applyBattleCompatibilityEvent(log);
-      this.touch();
+      if (this.applyBattleCompatibilityEvent(log) > 0) {
+        this.touch();
+      }
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isMoonChanceReportLog(log)) {
@@ -4073,7 +4078,8 @@ export class SettlementIndexer {
     this.touch();
   }
 
-  private applyFleetMissionCompatibilityEvent(log: IndexedRpcLog): void {
+  private applyFleetMissionCompatibilityEvent(log: IndexedRpcLog): number {
+    let mutationsApplied = 0;
     const txLogs = this.indexedLogsForTransaction(log.transactionHash);
     const missions = decodeCompleteFleetMissionLogs(txLogs);
     for (const mission of missions) {
@@ -4087,13 +4093,14 @@ export class SettlementIndexer {
           if (this.hasTransactionUnitCountChanged(log.transactionHash, "ship", mission.originPlanetId, shipId)) continue;
           mutations.push({ kind: "ship", planetId: mission.originPlanetId, itemId: shipId, delta: -quantity });
         }
-        this.applyLegacyUnitMutationsOnce(mutationKey, mutations, log);
+        mutationsApplied += this.applyLegacyUnitMutationsOnce(mutationKey, mutations, log);
       }
     }
     if (isFleetMissionReturnedLog(log)) {
-      this.applyReturnedFleetCompatibilityEvent(log);
+      mutationsApplied += this.applyReturnedFleetCompatibilityEvent(log);
     }
     this.replayFleetMissionRowsFromEventLogs();
+    return mutationsApplied;
   }
 
   private applyReturnedFleetCompatibilityEvent(log: IndexedRpcLog): number {
@@ -4228,19 +4235,19 @@ export class SettlementIndexer {
     );
   }
 
-  private applyBattleCompatibilityEvent(log: IndexedRpcLog): void {
+  private applyBattleCompatibilityEvent(log: IndexedRpcLog): number {
     const missionId = battleLogMissionId(log);
-    if (!missionId) return;
+    if (!missionId) return 0;
     const mutationKey = `legacy:battle:${missionId}`;
-    if (this.hasLegacyUnitMutation(mutationKey)) return;
+    if (this.hasLegacyUnitMutation(mutationKey)) return 0;
     const battleLogs = this.indexedLogsForTransaction(log.transactionHash)
       .filter((candidate) => isBattleReportLog(candidate) && battleLogMissionId(candidate) === missionId);
     const report = decodeBattleReportLogs(battleLogs, missionId);
-    if (!report || isZeroResources(report.defenderLosses)) return;
+    if (!report || isZeroResources(report.defenderLosses)) return 0;
 
     const mutations = this.solvePlanetBattleLossMutations(report);
-    if (!mutations) return;
-    this.applyLegacyUnitMutationsOnce(mutationKey, this.filterLegacyMutationsWithoutExactCountEvent(mutations, log.transactionHash), log);
+    if (!mutations) return 0;
+    return this.applyLegacyUnitMutationsOnce(mutationKey, this.filterLegacyMutationsWithoutExactCountEvent(mutations, log.transactionHash), log);
   }
 
   private applyGuardedBattleCompatibilityEvent(
