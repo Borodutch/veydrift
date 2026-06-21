@@ -7,7 +7,7 @@ aptPkgs = ["libstdc++6", "fontconfig", "fonts-dejavu-core"]
 cmds = ["NODE_ENV=development bun install --frozen-lockfile && cd apps/frontend && NODE_ENV=development bun install --frozen-lockfile --force && rm -rf /root/.cache/nix"]
 
 [phases.build]
-cmds = ["cd apps/frontend && node scripts/generate-image-variants.mjs && ../../node_modules/.bin/vite build --mode settlement && rm -rf /root/.bun/install/cache /tmp/*"]
+cmds = ["cd apps/frontend && bun run build:test && rm -rf /root/.bun/install/cache /tmp/*"]
 
 [start]
 cmd = "cd apps/frontend && bun run serve"
