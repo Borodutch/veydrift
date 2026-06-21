@@ -135,11 +135,6 @@ export function TopBar({
             <TelegramIcon className="h-3.5 w-3.5" />
             <span className="sr-only lg:not-sr-only">Telegram</span>
           </a>
-          {coordinates && (
-            <span className="inline-flex h-6 items-center whitespace-nowrap font-mono text-xs leading-none text-slate-400">
-              {coordinates}
-            </span>
-          )}
           {isWalletConnected && account && (
             <span className="inline-flex h-6 max-w-[7.25rem] items-center truncate font-mono text-xs leading-none text-slate-400">
               {shortAddress(account)}

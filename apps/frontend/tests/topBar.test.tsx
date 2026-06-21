@@ -112,6 +112,14 @@ describe("TopBar", () => {
     expect(visibleText(energyDetails)).toContain("Selected player planet [8:490:11]");
   });
 
+  test("does not duplicate selected planet coordinates as standalone header text", () => {
+    const topBar = renderTopBar({ coordinates: "8:490:11" });
+    const standaloneCoordinate = elementNodes(topBar).find((item) => item.props?.children === "8:490:11");
+
+    expect(standaloneCoordinate).toBeUndefined();
+    expect(visibleText(elementNodes(topBar).find((item) => item.type === "details"))).toContain("Selected player planet [8:490:11]");
+  });
+
   test("shows zero crawler effect in the resources info popup without implying a bonus", () => {
     const topBar = renderTopBar({
       crawlerProduction: {
