@@ -1233,16 +1233,14 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (url.pathname === "/health") return 10_000;
   if (url.pathname === "/debug/indexer") return 2_000;
   if (url.pathname === "/highscores") return 300_000;
-  if (url.pathname === "/missions") return 60_000;
-  if (url.pathname.match(/^\/mission\/[^/]+$/)) return 60_000;
+  // Wallet, fleet, and mission-control payloads are contract-state mirrors. Do not let a worker-local
+  // response cache outlive the event listener's latest mutation; these endpoints are backed by SQLite
+  // read models and should be cheap enough to serve fresh.
+  if (url.pathname.startsWith("/wallet/")) return 0;
+  if (url.pathname === "/missions") return 0;
+  if (url.pathname.match(/^\/mission\/[^/]+$/)) return 0;
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return 30_000;
   if (url.pathname === "/universe/systems") return 30_000;
-  if (url.pathname.match(/^\/wallet\/[^/]+\/(?:overview|fleet-visibility|missions)$/)) {
-    return 60_000;
-  }
-  if (url.pathname.match(/^\/wallet\/[^/]+\/(?:settlement|planets|queues|infrastructure|moon|shipyard|defenses|research|rift|highscore)$/)) {
-    return 10_000;
-  }
   return 0;
 }
 
