@@ -5215,6 +5215,88 @@ describe("SettlementIndexer", () => {
     expect(indexer.shipRows("99").find((ship) => ship.id === 2)?.count).toBe(3);
   });
 
+  test("current-state seed detects and heals stale ship counts from canonical rows (VEY-KANEO-605)", async () => {
+    const zionOwner = "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee" as Address;
+    const zionPlanet: SettledPlanetEvent = {
+      ...planet,
+      owner: zionOwner,
+      planetId: "1",
+      name: "New Zion",
+      galaxy: 6,
+      system: 9,
+      position: 1
+    };
+    const rawState: CanonicalPlanetChainState = {
+      planetId: "1",
+      resources: zionPlanet.resources,
+      buildings: deriveBuildingRows(() => 0),
+      defenses: deriveDefenseRows(() => 0),
+      ships: deriveShipRows((id) => {
+        if (id === 0) return 9;
+        if (id === 1) return 16;
+        if (id === 2) return 1;
+        if (id === 5) return 10;
+        if (id === 9) return 2;
+        return 0;
+      }),
+      queues: {
+        building: null,
+        defense: null,
+        ship: null
+      }
+    };
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return [zionPlanet]; },
+      async getCanonicalPlanetState(planetId) {
+        expect(planetId).toBe(1n);
+        return rawState;
+      },
+      async getBlockNumber() { return 0x200n; },
+      async listContractLogs() { return []; },
+      async listDebrisFieldEvents() { throw new Error("event backfill should not run"); },
+      async listMoonChanceReportEvents() { throw new Error("event backfill should not run"); },
+      async listSettledPlanetEvents() { throw new Error("settled event scan should not run"); }
+    }, 100n);
+
+    indexer.applyEvent(zionPlanet);
+    indexer.applyLog({
+      blockNumber: "0x1f0",
+      transactionHash: "0xstale-small-cargo",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(1n), topic(0n)],
+      data: abiWords(23n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x1f1",
+      transactionHash: "0xstale-light-fighter",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(1n), topic(1n)],
+      data: abiWords(18n)
+    });
+
+    expect(indexer.shipRows("1").find((ship) => ship.id === 0)?.count).toBe(23);
+    expect(indexer.shipRows("1").find((ship) => ship.id === 1)?.count).toBe(18);
+
+    await expect(indexer.seedCurrentCanonicalState({ planetConcurrency: 25 })).resolves.toMatchObject({
+      indexedPlanets: 1,
+      lastCurrentStateHealPlanetsScanned: 1,
+      lastCurrentStateHealShipMismatches: 5,
+      lastReconciledBlock: "512",
+      lastReconciliationError: null
+    });
+
+    expect(indexer.shipRows("1").find((ship) => ship.id === 0)?.count).toBe(9);
+    expect(indexer.availableShipRows("1").find((ship) => ship.id === 0)?.count).toBe(9);
+    expect(indexer.shipRows("1").find((ship) => ship.id === 1)?.count).toBe(16);
+    expect(indexer.shipRows("1").filter((ship) => ship.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
+      { id: 0, count: 9 },
+      { id: 1, count: 16 },
+      { id: 2, count: 1 },
+      { id: 5, count: 10 },
+      { id: 9, count: 2 }
+    ]);
+  });
+
   test("stored planet events do not overwrite canonical current-state identity", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },

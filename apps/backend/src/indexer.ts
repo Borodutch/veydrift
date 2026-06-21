@@ -126,7 +126,9 @@ export type IndexerSnapshot = {
   fromBlock: string;
   lastRebuiltAt: string | null;
   lastCurrentStateHealAt: string | null;
+  lastCurrentStateHealPlanetsScanned: number | null;
   lastCurrentStateHealRunId: string | null;
+  lastCurrentStateHealShipMismatches: number | null;
   lastReconciledAt: string | null;
   lastReconciledBlock: string | null;
   lastReconciliationError: string | null;
@@ -169,6 +171,11 @@ export type SettlementIndexerOptions = {
 
 type CountRow = {
   count: number;
+};
+
+type CurrentStateHealStats = {
+  planetsScanned: number;
+  shipMismatches: number;
 };
 
 type MetadataRow = {
@@ -516,7 +523,9 @@ export class SettlementIndexer {
       fromBlock: this.fromBlock.toString(),
       lastRebuiltAt: this.metadata("lastRebuiltAt"),
       lastCurrentStateHealAt: this.metadata("lastCurrentStateHealAt"),
+      lastCurrentStateHealPlanetsScanned: metadataNumber(this.metadata("lastCurrentStateHealPlanetsScanned")),
       lastCurrentStateHealRunId: this.metadata("lastCurrentStateHealRunId"),
+      lastCurrentStateHealShipMismatches: metadataNumber(this.metadata("lastCurrentStateHealShipMismatches")),
       lastReconciledAt,
       lastReconciledBlock,
       lastReconciliationError,
@@ -2032,7 +2041,7 @@ export class SettlementIndexer {
     const overlapFromBlock = nextBlockOrBase(before.latestIndexedBlock, this.fromBlock);
     const planetEvents = await this.chainReader.listCurrentPlanets();
     const latestBlock = this.chainReader.getBlockNumber ? (await this.chainReader.getBlockNumber()).toString() : null;
-    await this.withCanonicalQueueSnapshotBlock(latestBlock, () => this.healCurrentCanonicalPlanets(
+    const healStats = await this.withCanonicalQueueSnapshotBlock(latestBlock, () => this.healCurrentCanonicalPlanets(
       planetEvents,
       options.planetConcurrency ?? CANONICAL_READ_PLANET_CHUNK
     ));
@@ -2068,6 +2077,9 @@ export class SettlementIndexer {
       this.applyAllianceInviteSnapshot(allianceInvites);
       this.applyAllianceDiplomacySnapshot(allianceDiplomacy);
       this.recordSuccessfulAllianceReconciliation();
+      this.setMetadata("lastCurrentStateHealAt", new Date().toISOString());
+      this.setMetadata("lastCurrentStateHealPlanetsScanned", healStats.planetsScanned.toString());
+      this.setMetadata("lastCurrentStateHealShipMismatches", healStats.shipMismatches.toString());
       this.touch();
       this.recordSuccessfulReconciliation(latestBlock);
     });
@@ -2099,12 +2111,16 @@ export class SettlementIndexer {
   private async healCurrentCanonicalPlanets(
     planets: SettledPlanetEvent[],
     planetConcurrency: number
-  ): Promise<void> {
+  ): Promise<CurrentStateHealStats> {
     const readPlanet = this.chainReader.getCanonicalPlanetState;
     if (!readPlanet) {
       throw new Error("current-state seed is unavailable: chain reader cannot read raw canonical planet state");
     }
     const chunkSize = Math.max(1, Math.floor(planetConcurrency));
+    const stats: CurrentStateHealStats = {
+      planetsScanned: 0,
+      shipMismatches: 0
+    };
 
     for (const planetChunk of chunks(planets, chunkSize)) {
       const rows = await Promise.all(
@@ -2114,6 +2130,8 @@ export class SettlementIndexer {
         const planet = planetChunk[index];
         const row = rows[index];
         if (!planet || !row) continue;
+        stats.planetsScanned += 1;
+        stats.shipMismatches += this.countCanonicalShipMismatches(row);
         await this.healPlanetIdentity(planet);
         await this.healPlanetResources(row);
         await this.healPlanetBuildings(row);
@@ -2122,6 +2140,7 @@ export class SettlementIndexer {
         await this.healPlanetQueues(row);
       }
     }
+    return stats;
   }
 
   private async healCurrentCanonicalOwnerState(owners: Address[], ownerConcurrency: number): Promise<void> {
@@ -3256,6 +3275,16 @@ export class SettlementIndexer {
       }
       this.touch();
     });
+  }
+
+  private countCanonicalShipMismatches(row: CanonicalPlanetChainState): number {
+    let mismatches = 0;
+    for (const ship of row.ships) {
+      if (this.indexedLevel("contract_ship_counts", "ship_id", row.planetId, ship.id) !== ship.count) {
+        mismatches += 1;
+      }
+    }
+    return mismatches;
   }
 
   private async healPlanetDefenses(row: CanonicalPlanetChainState): Promise<void> {
@@ -7053,6 +7082,12 @@ function safeBlockNumber(value: string | null): bigint {
   } catch {
     return 0n;
   }
+}
+
+function metadataNumber(value: string | null): number | null {
+  if (value === null) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
 function nextBlockOrBase(value: string | null, base: bigint): bigint {
