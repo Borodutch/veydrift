@@ -340,6 +340,7 @@ const buildingWalletConfirmationLabel = (label: string) =>
     ? "Building completion: confirm the game-state update in your wallet; token balance changes are not expected."
     : `${label}: unlock your wallet if needed, then confirm in your wallet.`;
 const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
+const CHAIN_EVENT_REFRESH_DEBOUNCE_MS = 1_000;
 const BUILDING_COMPLETION_AUTO_REFRESH_BUFFER_MS = 1_500;
 // VEY-KANEO-433: after an active mission's ETA passes, wait a short beat before the tightened Mission
 // Control refresh so the backend indexer has settled the arrival/resolution before we re-read it.
@@ -4455,15 +4456,37 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     const events = new window.EventSource(`${apiBaseUrl.replace(/\/+$/, "")}/chain/events`);
-    const refreshFromChainEvent = () => {
-      void refreshOnChainState();
-      refreshInfrastructureState();
-      if (page === "shipyard" || shouldRefreshMissionActionStateForPage(page)) refreshShipyardState();
-      if (page === "defenses" || shouldRefreshMissionActionStateForPage(page)) refreshDefenseState();
-      if (shouldRefreshAllianceStateForPage(page)) refreshAllianceState();
-      if (page === "research") refreshResearchState();
-      if (page === "rift") refreshRiftState();
-      if (page === "moon") refreshInfrastructureState();
+    let refreshTimer: number | undefined;
+    let refreshInFlight = false;
+    let refreshQueued = false;
+
+    const runChainEventRefresh = () => {
+      refreshInFlight = true;
+      refreshQueued = false;
+      const refreshes: Array<Promise<unknown>> = [
+        refreshOnChainState(),
+        refreshInfrastructureState(),
+      ];
+      if (page === "shipyard" || shouldRefreshMissionActionStateForPage(page)) refreshes.push(refreshShipyardState());
+      if (page === "defenses" || shouldRefreshMissionActionStateForPage(page)) refreshes.push(refreshDefenseState());
+      if (shouldRefreshAllianceStateForPage(page)) refreshes.push(Promise.resolve(refreshAllianceState()));
+      if (page === "research") refreshes.push(refreshResearchState());
+      if (page === "rift") refreshes.push(refreshRiftState());
+      if (page === "moon") refreshes.push(refreshInfrastructureState());
+
+      void Promise.allSettled(refreshes).finally(() => {
+        refreshInFlight = false;
+        if (refreshQueued) scheduleChainEventRefresh();
+      });
+    };
+
+    const scheduleChainEventRefresh = () => {
+      refreshQueued = true;
+      if (refreshTimer !== undefined || refreshInFlight) return;
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = undefined;
+        runChainEventRefresh();
+      }, CHAIN_EVENT_REFRESH_DEBOUNCE_MS);
     };
     const updateSyncStatus = (event: MessageEvent) => {
       try {
@@ -4478,11 +4501,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       }
     };
 
-    events.addEventListener("chain-event", refreshFromChainEvent);
+    events.addEventListener("chain-event", scheduleChainEventRefresh);
     events.addEventListener("sync-status", updateSyncStatus);
     events.onerror = () => setChainSyncHealthy(false);
 
-    return () => events.close();
+    return () => {
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+      events.close();
+    };
   }, [
     account,
     apiBaseUrl,
