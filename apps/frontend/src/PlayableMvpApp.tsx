@@ -638,33 +638,13 @@ export function recordedResourceSnapshotFreshness(
 }
 
 export function infrastructureStateForRefreshApplication({
-  applyResourceState,
-  current,
   next,
 }: {
   applyResourceState: boolean;
   current: ChainInfrastructureState | null;
   next: ChainInfrastructureState;
 }): ChainInfrastructureState {
-  if (applyResourceState || !current) return next;
-
-  const currentPlanetId = current.planetId ?? current.homePlanetId ?? null;
-  const nextPlanetId = next.planetId ?? next.homePlanetId ?? null;
-  if (currentPlanetId && nextPlanetId && currentPlanetId !== nextPlanetId) return next;
-
-  const settledAt = current.planetLastSettledAt ?? next.planetLastSettledAt;
-  const preserved = {
-    ...next,
-    resources: current.resources,
-    ...(settledAt === undefined ? {} : { planetLastSettledAt: settledAt }),
-  };
-
-  if (current.resourcesAsOfNow !== undefined) {
-    return { ...preserved, resourcesAsOfNow: current.resourcesAsOfNow };
-  }
-
-  const { resourcesAsOfNow: _droppedStaleResourcesAsOfNow, ...withoutStaleAsOfNow } = preserved;
-  return withoutStaleAsOfNow;
+  return next;
 }
 
 export function buildingCompletionAutoRefreshDelayMs(
@@ -693,24 +673,19 @@ export function walletCurrentResourcesFor({
   );
 }
 
-// Authoritative on-chain construction queues + fleet visibility are not resource
-// snapshots, so they must apply even when the resource anti-snapback gate rejects
-// an equal/older settlement read (e.g. after a building completes with no fresh
-// spend to settle). Only the resource/settlement state stays behind the gate. The
-// request-ordering gate still guards against out-of-order responses upstream.
+// Successful backend reads are authoritative. The request-ordering gate still
+// guards against out-of-order responses upstream.
 export function planOnChainRefresh(
   current: ResourceSnapshotFreshness,
   next: ResourceSnapshotFreshness,
   options: { force?: boolean } = {},
 ): OnChainRefreshPlan {
+  void current;
+  void next;
+  void options;
   return {
     applyQueues: true,
-    // An explicit post-action refetch (force) is a deliberate, request-ordered read taken AFTER a
-    // confirmed spend, so it must apply even when the backend momentarily returns an equal/older
-    // lastSettledAt (indexer lag, or the spend not yet reflected). Otherwise the anti-snapback gate
-    // suppresses it and the top-bar resources stay frozen until a full page reload (VEY-KANEO-484).
-    // Periodic polls keep the gate, preserving the single poll-only store invariant (VEY-KANEO-430).
-    applyResourceState: options.force === true || shouldApplyResourceSnapshot(current, next),
+    applyResourceState: true,
   };
 }
 
@@ -3496,13 +3471,15 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    setInfrastructureLoading(true);
-    setMoonLoading(true);
+    const shouldShowInfrastructureLoading = !infrastructureChainState;
+    const shouldShowMoonLoading = !moonState;
+    setInfrastructureLoading(shouldShowInfrastructureLoading);
+    setMoonLoading(shouldShowMoonLoading);
     setInfrastructureError(undefined);
     setMoonError(undefined);
     setPlanetSectionStore((current) => {
-      let next = setPlanetSectionStatus(current, activePlanetId, "infrastructureChainState", { loading: true, error: undefined });
-      next = setPlanetSectionStatus(next, activePlanetId, "moonState", { loading: true, error: undefined });
+      let next = setPlanetSectionStatus(current, activePlanetId, "infrastructureChainState", { loading: shouldShowInfrastructureLoading, error: undefined });
+      next = setPlanetSectionStatus(next, activePlanetId, "moonState", { loading: shouldShowMoonLoading, error: undefined });
       return next;
     });
     try {
@@ -3514,15 +3491,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       if (infrastructureResult.status === "fulfilled") {
         const nextInfrastructure = infrastructureResult.value;
         const nextFreshness = resourceSnapshotFreshnessForInfrastructure(nextInfrastructure);
-        const applyResourceState = shouldApplyResourceSnapshot(latestInfrastructureResourceSnapshot.current, nextFreshness);
-        if (applyResourceState) {
-          latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
-            latestInfrastructureResourceSnapshot.current,
-            nextFreshness,
-          );
-        }
+        latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
+          latestInfrastructureResourceSnapshot.current,
+          nextFreshness,
+        );
         setInfrastructureChainState((current) => infrastructureStateForRefreshApplication({
-          applyResourceState,
+          applyResourceState: true,
           current,
           next: nextInfrastructure,
         }));
@@ -3556,7 +3530,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setMoonLoading(false);
       }
     }
-  }, [account, activePlanetId, apiBaseUrl]);
+  }, [account, activePlanetId, apiBaseUrl, infrastructureChainState, moonState]);
 
   const refreshLiveInfrastructureState = useCallback(async () => {
     const requestId = beginRefreshRequest(infrastructureRefreshGate);
@@ -3567,22 +3541,20 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return null;
     }
 
-    setInfrastructureLoading(true);
+    const shouldShowInfrastructureLoading = !infrastructureChainState;
+    setInfrastructureLoading(shouldShowInfrastructureLoading);
     setInfrastructureError(undefined);
-    setActivePlanetSectionStatus("infrastructureChainState", { loading: true, error: undefined });
+    setActivePlanetSectionStatus("infrastructureChainState", { loading: shouldShowInfrastructureLoading, error: undefined });
     try {
       const nextInfrastructure = await fetchInfrastructureState(apiBaseUrl, account, activePlanetId);
       if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) return nextInfrastructure;
       const nextFreshness = resourceSnapshotFreshnessForInfrastructure(nextInfrastructure);
-      const applyResourceState = shouldApplyResourceSnapshot(latestInfrastructureResourceSnapshot.current, nextFreshness);
-      if (applyResourceState) {
-        latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
-          latestInfrastructureResourceSnapshot.current,
-          nextFreshness,
-        );
-      }
+      latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
+        latestInfrastructureResourceSnapshot.current,
+        nextFreshness,
+      );
       setInfrastructureChainState((current) => infrastructureStateForRefreshApplication({
-        applyResourceState,
+        applyResourceState: true,
         current,
         next: nextInfrastructure,
       }));
@@ -3604,7 +3576,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setInfrastructureLoading(false);
       }
     }
-  }, [account, activePlanetId, apiBaseUrl]);
+  }, [account, activePlanetId, apiBaseUrl, infrastructureChainState]);
 
   const refreshDefenseState = useCallback(async () => {
     const requestId = beginRefreshRequest(defenseRefreshGate);
@@ -3722,10 +3694,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     try {
       const next = await fetchResearchState(apiBaseUrl, account, activePlanetId);
       if (!canApplyRefreshRequest(researchRefreshGate, requestId)) return next;
-      setResearchState((current) => {
-        const preserved = preserveActiveResearchState(current, next);
-        return researchStateWithFallbackQueue(preserved, onChainQueues?.research) ?? preserved;
-      });
+      setResearchState(next);
       setActivePlanetSectionStatus("researchState", {
         loading: false,
         error: undefined,
@@ -3745,7 +3714,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setResearchLoading(false);
       }
     }
-  }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research, researchState]);
+  }, [account, activePlanetId, apiBaseUrl, researchState]);
 
   const refreshRiftState = useCallback(async () => {
     const requestId = beginRefreshRequest(riftRefreshGate);
@@ -3841,12 +3810,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       }
       const nextFreshness = resourceSnapshotFreshnessForSettlement(nextSettlement);
       const plan = planOnChainRefresh(latestOnChainResourceSnapshot.current, nextFreshness, options);
-      // Construction queues + fleet visibility are authoritative and not resource
-      // snapshots, so apply them regardless of the resource anti-snapback gate.
-      // This is what lets the Overview Buildings card clear a completed build
-      // queue on the periodic poll without waiting for a manual page reload.
+      // Successful wallet sync reads are authoritative for queues and fleet visibility.
       if (plan.applyQueues) {
-        setOnChainQueues((current) => preserveActiveResearchQueue(current, queues, { now: Date.now() }));
+        setOnChainQueues(queues);
         setFleetVisibility(fleetVisibility);
         setOnChainError(undefined);
         setOnChainStatus("ready");
@@ -4788,10 +4754,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
     return settledState.queue?.kind === "building" ? settledState.queue : undefined;
   }, [activeBuildingQueue, now, settledState.queue]);
-  const effectiveResearchState = useMemo(
-    () => researchStateWithFallbackQueue(researchState, onChainQueues?.research),
-    [onChainQueues?.research, researchState],
-  );
+  const effectiveResearchState = researchState;
 
   useEffect(() => {
     if (!apiBaseUrl || !account || !pageStateHydrationReady) {
