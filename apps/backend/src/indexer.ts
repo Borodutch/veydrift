@@ -1066,7 +1066,7 @@ export class SettlementIndexer {
     };
   }
 
-  fleetMissionVisibility(wallet: `0x${string}`): FleetMissionVisibility {
+  fleetMissionVisibility(wallet: `0x${string}`, options: { includeArchive?: boolean } = {}): FleetMissionVisibility {
     const settlement = this.walletSettlement(wallet);
     const walletLower = wallet.toLowerCase();
     const ownedPlanetIds = new Set(
@@ -1075,7 +1075,6 @@ export class SettlementIndexer {
         .map((planet) => planet.planetId)
     );
     const summaries = this.indexedFleetMissionSummariesWithPlanetReferences();
-    const battleReports = this.indexedBattleReports();
     // VEY-KANEO-456: index every mission by id so an incoming attack can resolve the allied AcsDefend
     // fleets stationed against it (linked by `counterplayDefenderMissionIds`) into per-defender detail
     // for the Stationed defenses panel. `nowSeconds` drives the lazy as-of-now reconciliation that hides
@@ -1103,27 +1102,52 @@ export class SettlementIndexer {
       ? this.syntheticStationedDefenseAttack(wallet, ownedPlanetIds, nowSeconds)
       : null;
 
+    const visibleIncoming = syntheticIncoming ? [syntheticIncoming, ...incoming] : incoming;
+    const outgoing = summaries.filter((mission) =>
+      isVisibleActiveFleetMission(mission)
+      && mission.owner.toLowerCase() === walletLower
+      && mission.status === "Outbound"
+    );
+    const returning = summaries.filter((mission) =>
+      isVisibleActiveFleetMission(mission)
+      && mission.owner.toLowerCase() === walletLower
+      && (mission.status === "Returning" || mission.status === "Recalled")
+    );
+    const joinableAttacks = summaries.filter((mission) =>
+      isVisibleActiveFleetMission(mission)
+      && mission.owner.toLowerCase() !== walletLower
+      && !ownedPlanetIds.has(mission.targetPlanetId)
+      && mission.missionType === "Attack"
+      && mission.status === "Outbound"
+    );
+
+    if (options.includeArchive === false) {
+      const activeMissions = [
+        ...visibleIncoming,
+        ...outgoing,
+        ...returning,
+        ...joinableAttacks
+      ];
+      return {
+        wallet,
+        homePlanetId: settlement.homePlanetId,
+        incoming: visibleIncoming,
+        outgoing,
+        returning,
+        joinableAttacks,
+        completedMissions: [],
+        battleReports: this.indexedBattleReportsForMissions(activeMissions)
+      };
+    }
+
+    const battleReports = this.indexedBattleReports();
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
-      incoming: syntheticIncoming ? [syntheticIncoming, ...incoming] : incoming,
-      outgoing: summaries.filter((mission) =>
-        isVisibleActiveFleetMission(mission)
-        && mission.owner.toLowerCase() === walletLower
-        && mission.status === "Outbound"
-      ),
-      returning: summaries.filter((mission) =>
-        isVisibleActiveFleetMission(mission)
-        && mission.owner.toLowerCase() === walletLower
-        && (mission.status === "Returning" || mission.status === "Recalled")
-      ),
-      joinableAttacks: summaries.filter((mission) =>
-        isVisibleActiveFleetMission(mission)
-        && mission.owner.toLowerCase() !== walletLower
-        && !ownedPlanetIds.has(mission.targetPlanetId)
-        && mission.missionType === "Attack"
-        && mission.status === "Outbound"
-      ),
+      incoming: visibleIncoming,
+      outgoing,
+      returning,
+      joinableAttacks,
       completedMissions: summaries
         .filter((mission) => isVisibleCompletedMission(mission, walletLower, ownedPlanetIds))
         .sort(compareFleetMissionsNewestFirst),
@@ -5777,6 +5801,35 @@ export class SettlementIndexer {
       cached.battleReports = reports;
     }
     return reports;
+  }
+
+  private indexedBattleReportsForMissions(missions: readonly FleetMissionSummary[]): BattleReport[] {
+    if (missions.length === 0) return [];
+
+    const missionIds = new Set<string>();
+    for (const mission of missions) {
+      missionIds.add(mission.missionId);
+      if (mission.attackGroupId) missionIds.add(mission.attackGroupId);
+      for (const joinedMissionId of mission.joinedAttackMissionIds ?? []) {
+        missionIds.add(joinedMissionId);
+      }
+    }
+
+    this.currentBattleReportReadModelDbVersion();
+    const summaries = this.indexedFleetMissionSummaries();
+    const matchingReports = this.decodedMissionLogs().battleReports.filter((report) =>
+      missionIds.has(report.missionId)
+        || (report.attackGroupId !== null && missionIds.has(report.attackGroupId))
+        || report.participants.some((participant) => missionIds.has(participant.missionId))
+    );
+    if (matchingReports.length === 0) return [];
+
+    const reportsWithParticipants = attachAttackGroupParticipants(matchingReports, summaries);
+    const defenderSnapshots = this.battleTimeDefenderSnapshots(reportsWithParticipants);
+    return reportsWithParticipants.map((report) => ({
+      ...report,
+      defenderSnapshot: defenderSnapshots.get(report.missionId) ?? null
+    }));
   }
 
   private battleTimeDefenderSnapshots(reports: BattleReport[]): Map<string, BattleReportDefenderSnapshot> {

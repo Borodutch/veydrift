@@ -2091,6 +2091,9 @@ function driveLevelsFromTechnologyLevels(levels: Record<string, number> | undefi
 // The contract recomputes the real subsidy on launch, so an unknown level (no public state) previews
 // as 0 rather than blocking.
 const ALLIANCE_DEPOT_BUILDING_ID = 13;
+const INITIAL_OVERVIEW_SNAPSHOT_TIMEOUT_MS = 2_500;
+const INITIAL_FLEET_VISIBILITY_TIMEOUT_MS = 1_200;
+
 function allianceDepotLevelFromPlanet(planet: Planet | undefined): number {
   const buildings = planet?.publicState?.buildings;
   if (!buildings) return 0;
@@ -2118,14 +2121,16 @@ export async function loadWalletPlanetSyncSnapshot(
   const loadWalletSettlement = loaders.fetchWalletSettlement ?? fetchWalletSettlement;
   const readPlanetId = options.forceHomePlanet ? undefined : activePlanetId;
   try {
-    return await loadOverviewSnapshot(apiBaseUrl, account, readPlanetId);
+    return await loadOverviewSnapshot(apiBaseUrl, account, readPlanetId, {
+      timeoutMs: INITIAL_OVERVIEW_SNAPSHOT_TIMEOUT_MS,
+    });
   } catch (error) {
-    if (!isMissingOverviewSnapshotEndpoint(error)) {
+    if (!isRecoverableOverviewSnapshotError(error)) {
       throw error;
     }
-    // Older backends do not expose the combined DB-backed overview snapshot yet.
-    // Fall back to the previous indexed fan-out path so deployed frontend/backend
-    // rollouts can overlap without blanking Overview.
+    // The overview snapshot is a fast-path optimization. Older backends may not expose it, and
+    // mission visibility inside it can be briefly slow; hydrate critical planet state below instead
+    // of leaving first paint blocked on noncritical mission data.
   }
 
   const planetsResult = await settlePromise(loadWalletPlanets(apiBaseUrl, account));
@@ -2143,7 +2148,10 @@ export async function loadWalletPlanetSyncSnapshot(
     const queuesResultPromise = indexedPlanetsExposeResearchQueue(planetsResult)
       ? Promise.resolve({ status: "fulfilled", value: indexedQueues } satisfies PromiseSettledResult<PlayerQueuesResponse>)
       : settlePromise(loadWalletQueues(apiBaseUrl, account, readPlanetId));
-    const visibilityResultPromise = settlePromise(loadFleetMissionVisibility(apiBaseUrl, account, { includeArchive: false }));
+    const visibilityResultPromise = settlePromise(loadFleetMissionVisibility(apiBaseUrl, account, {
+      includeArchive: false,
+      timeoutMs: INITIAL_FLEET_VISIBILITY_TIMEOUT_MS,
+    }));
     const [queuesResult, visibilityResult] = await Promise.all([queuesResultPromise, visibilityResultPromise]);
     return walletPlanetSyncSnapshotFromResults(
       account,
@@ -2159,7 +2167,10 @@ export async function loadWalletPlanetSyncSnapshot(
   const [settlementResult, queuesResult, visibilityResult] = await Promise.allSettled([
     loadWalletSettlement(apiBaseUrl, account),
     loadWalletQueues(apiBaseUrl, account, readPlanetId),
-    loadFleetMissionVisibility(apiBaseUrl, account, { includeArchive: false }),
+    loadFleetMissionVisibility(apiBaseUrl, account, {
+      includeArchive: false,
+      timeoutMs: INITIAL_FLEET_VISIBILITY_TIMEOUT_MS,
+    }),
   ]);
 
   const settlement = settlementResult.status === "fulfilled"
@@ -2210,8 +2221,11 @@ function settlePromise<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>>
   );
 }
 
-function isMissingOverviewSnapshotEndpoint(error: unknown): boolean {
-  return error instanceof Error && /Overview snapshot API failed: 404\b/.test(error.message);
+function isRecoverableOverviewSnapshotError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /Overview snapshot API failed: 404\b/.test(error.message)
+    || /Timed out reading overview snapshot from the game API/i.test(error.message)
+    || /Game servers are unavailable while loading overview snapshot/i.test(error.message);
 }
 
 function settlementFromIndexedPlanets(
