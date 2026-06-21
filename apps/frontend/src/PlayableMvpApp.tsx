@@ -4431,6 +4431,27 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     refreshInfrastructureState();
   }, [pageStateHydrationReady, refreshInfrastructureState]);
 
+  const chainEventRefreshRef = useRef({
+    page,
+    refreshAllianceState,
+    refreshDefenseState,
+    refreshInfrastructureState,
+    refreshOnChainState,
+    refreshResearchState,
+    refreshRiftState,
+    refreshShipyardState,
+  });
+  chainEventRefreshRef.current = {
+    page,
+    refreshAllianceState,
+    refreshDefenseState,
+    refreshInfrastructureState,
+    refreshOnChainState,
+    refreshResearchState,
+    refreshRiftState,
+    refreshShipyardState,
+  };
+
   useEffect(() => {
     if (!apiBaseUrl || !account || typeof window.EventSource === "undefined") {
       setChainSyncHealthy(false);
@@ -4443,18 +4464,28 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     let refreshQueued = false;
 
     const runChainEventRefresh = () => {
+      const {
+        page: currentPage,
+        refreshAllianceState: refreshAllianceStateFromEvent,
+        refreshDefenseState: refreshDefenseStateFromEvent,
+        refreshInfrastructureState: refreshInfrastructureStateFromEvent,
+        refreshOnChainState: refreshOnChainStateFromEvent,
+        refreshResearchState: refreshResearchStateFromEvent,
+        refreshRiftState: refreshRiftStateFromEvent,
+        refreshShipyardState: refreshShipyardStateFromEvent,
+      } = chainEventRefreshRef.current;
       refreshInFlight = true;
       refreshQueued = false;
       const refreshes: Array<Promise<unknown>> = [
-        refreshOnChainState(),
-        refreshInfrastructureState(),
+        refreshOnChainStateFromEvent(),
+        refreshInfrastructureStateFromEvent(),
       ];
-      if (page === "shipyard" || shouldRefreshMissionActionStateForPage(page)) refreshes.push(refreshShipyardState());
-      if (page === "defenses" || shouldRefreshMissionActionStateForPage(page)) refreshes.push(refreshDefenseState());
-      if (shouldRefreshAllianceStateForPage(page)) refreshes.push(Promise.resolve(refreshAllianceState()));
-      if (page === "research") refreshes.push(refreshResearchState());
-      if (page === "rift") refreshes.push(refreshRiftState());
-      if (page === "moon") refreshes.push(refreshInfrastructureState());
+      if (currentPage === "shipyard" || shouldRefreshMissionActionStateForPage(currentPage)) refreshes.push(refreshShipyardStateFromEvent());
+      if (currentPage === "defenses" || shouldRefreshMissionActionStateForPage(currentPage)) refreshes.push(refreshDefenseStateFromEvent());
+      if (shouldRefreshAllianceStateForPage(currentPage)) refreshes.push(Promise.resolve(refreshAllianceStateFromEvent()));
+      if (currentPage === "research") refreshes.push(refreshResearchStateFromEvent());
+      if (currentPage === "rift") refreshes.push(refreshRiftStateFromEvent());
+      if (currentPage === "moon") refreshes.push(refreshInfrastructureStateFromEvent());
 
       void Promise.allSettled(refreshes).finally(() => {
         refreshInFlight = false;
@@ -4494,14 +4525,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [
     account,
     apiBaseUrl,
-    page,
-    refreshDefenseState,
-    refreshAllianceState,
-    refreshInfrastructureState,
-    refreshOnChainState,
-    refreshResearchState,
-    refreshRiftState,
-    refreshShipyardState,
   ]);
 
   useEffect(() => {
