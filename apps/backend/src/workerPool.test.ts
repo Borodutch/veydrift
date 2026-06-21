@@ -182,6 +182,42 @@ describe("createForwardingFetch", () => {
     await expect(response.text()).resolves.toBe("event: sync-status\n\n");
   });
 
+  test("aborts the writer SSE request when the client cancels the forwarded stream", async () => {
+    let upstreamCanceled = false;
+    let fetchAborted = false;
+    const fetchImpl = (async (_input: string | URL, init?: RequestInit) => {
+      init?.signal?.addEventListener("abort", () => {
+        fetchAborted = true;
+      });
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("event: sync-status\n\n"));
+          },
+          cancel() {
+            upstreamCanceled = true;
+          }
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        }
+      );
+    }) as unknown as typeof fetch;
+
+    const local = async () => new Response("reader-has-no-chain-sync", { status: 503 });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    const response = await handler(new Request("http://localhost/chain/events"));
+    const reader = response.body?.getReader();
+    expect(reader).toBeDefined();
+    await expect(reader!.read()).resolves.toMatchObject({ done: false });
+    await reader!.cancel("client navigated away");
+
+    expect(fetchAborted).toBe(true);
+    expect(upstreamCanceled).toBe(true);
+  });
+
   test("does not try to consume a body when forwarding bodyless writer-only reads", async () => {
     const fetchImpl = (async () =>
       new Response("event: sync-status\n\n", {

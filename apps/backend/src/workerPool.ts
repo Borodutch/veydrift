@@ -124,12 +124,14 @@ export function createForwardingFetch(
       ? undefined
       : await request.arrayBuffer();
 
+    const abortController = new AbortController();
     let upstream: Response;
     try {
       upstream = await fetchImpl(target, {
         method: request.method,
         headers,
         redirect: "manual",
+        signal: abortController.signal,
         ...(body && body.byteLength > 0 ? { body } : {})
       });
     } catch {
@@ -148,10 +150,42 @@ export function createForwardingFetch(
     const responseHeaders = new Headers(upstream.headers);
     responseHeaders.delete("content-length");
     responseHeaders.delete("content-encoding");
-    return new Response(upstream.body, {
+    return new Response(forwardedResponseBody(upstream.body, abortController), {
       status: upstream.status,
       statusText: upstream.statusText,
       headers: responseHeaders
     });
   };
+}
+
+function forwardedResponseBody(
+  upstreamBody: ReadableStream<Uint8Array> | null,
+  abortController: AbortController
+): ReadableStream<Uint8Array> | null {
+  if (!upstreamBody) return null;
+
+  const reader = upstreamBody.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(value);
+      } catch (error) {
+        controller.error(error);
+        abortController.abort();
+      }
+    },
+    async cancel(reason) {
+      abortController.abort();
+      try {
+        await reader.cancel(reason);
+      } catch {
+        // The upstream may already be closed by the abort; cancellation is best-effort.
+      }
+    }
+  });
 }
