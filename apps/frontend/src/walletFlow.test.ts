@@ -95,6 +95,14 @@ function customErrorData(selector: string, args: Array<number | bigint> = []): s
   return selector + args.map((value) => BigInt(value).toString(16).padStart(64, "0")).join("");
 }
 
+function bytes32StringErrorData(selector: string, value: string): string {
+  const encoded = [...new TextEncoder().encode(value)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .padEnd(64, "0");
+  return selector + encoded;
+}
+
 describe("walletFlow", () => {
   test("classifies Base Sepolia chain ids", () => {
     expect(isBaseSepoliaChain("0x14a34")).toBe(true);
@@ -1413,6 +1421,10 @@ describe("walletFlow", () => {
       .toContain("colony limit");
     expect(walletRequestErrorMessage({ message: "execution reverted", data: "0x57aab7e3" }))
       .toContain("Computer");
+    expect(walletRequestErrorMessage({ message: "execution reverted", data: bytes32StringErrorData("0xb8f7e9ba", "RESEARCH_LAB_6") }))
+      .toContain("Research Lab 6 is required");
+    expect(walletRequestErrorMessage({ message: "execution reverted", data: "0xcc9beebc" }))
+      .toContain("Another queue is already active");
     expect(walletRequestErrorMessage(new Error("execution reverted"))).not.toContain("indexed spendable balance");
     expect(walletRequestErrorMessage(new Error("execution reverted"))).not.toContain("reconnect your wallet");
     expect(walletRequestErrorMessage(new Error("Timed out reading wallet accounts from the wallet after 10 seconds."))).toContain(
