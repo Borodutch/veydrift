@@ -159,9 +159,14 @@ export class ChainSyncService {
       start: (controller) => {
         controller.enqueue(encode("sync-status", this.snapshot()));
         removeListener = this.addListener((event) => {
-          controller.enqueue(
-            encode(event.kind, event.kind === "sync-status" ? this.snapshot() : event)
-          );
+          try {
+            controller.enqueue(
+              encode(event.kind, event.kind === "sync-status" ? this.snapshot() : event)
+            );
+          } catch {
+            removeListener?.();
+            removeListener = undefined;
+          }
         });
       },
       cancel: () => {
