@@ -56,6 +56,8 @@ import {
   missionOriginResources,
   missionShipInventoryBlocker,
   nextProductionQueueCompletionEventMs,
+  selectedPlanetIdForWalletRead,
+  selectedPlanetIdFromRoster,
   shouldApplyResourceSnapshot,
   shipyardStateForMissionActions,
   shipyardStateWithMissionLaunchBlocker,
@@ -74,7 +76,7 @@ import {
 } from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
 import type { RaidTarget } from "../src/raidTargetFinder";
-import type { ChainDefenseState, ChainInfrastructureState, ChainResearchState, ChainShipyardState, FleetMissionSummary, PlayerQueuesResponse, QueueStateResponse } from "../src/walletFlow";
+import type { ChainDefenseState, ChainInfrastructureState, ChainResearchState, ChainShipyardState, FleetMissionSummary, PlayerQueuesResponse, QueueStateResponse, WalletPlanetsResponse, WalletSettlementResponse } from "../src/walletFlow";
 
 describe("Playable MVP app display helpers", () => {
   const buildingFinishStateReadFailureLabel =
@@ -232,6 +234,64 @@ describe("Playable MVP app display helpers", () => {
 
     expect(canApplyRefreshRequest(gate, oldPlanetRequest)).toBe(false);
     expect(canApplyRefreshRequest(gate, newPlanetRequest)).toBe(true);
+  });
+
+  test("falls back to a live owned planet when the selected planet id is stale", () => {
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const home = indexedPlanet(wallet);
+    const colony = {
+      ...indexedPlanet(wallet),
+      planetId: "8",
+      isHomePlanet: false,
+    };
+
+    expect(selectedPlanetIdFromRoster({
+      homePlanetId: home.planetId,
+      planets: [home, colony],
+      selectedPlanetId: "999",
+    })).toBe("7");
+
+    expect(selectedPlanetIdForWalletRead({
+      activePlanetId: "999",
+      homePlanetId: home.planetId,
+      walletPlanets: [home, colony],
+    })).toBe("7");
+
+    expect(selectedPlanetIdForWalletRead({
+      activePlanetId: undefined,
+      homePlanetId: undefined,
+      walletPlanets: [],
+    })).toBeUndefined();
+  });
+
+  test("omits the selected planet id for forced home-planet sync snapshots", async () => {
+    const requestedPlanetIds: Array<string | undefined> = [];
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const home = indexedPlanet(wallet);
+    const response = walletPlanetsResponse(wallet, [home]);
+
+    const snapshot = await loadWalletPlanetSyncSnapshot(
+      "https://api.test",
+      wallet,
+      "999",
+      { forceHomePlanet: true },
+      {
+        fetchWalletOverviewSnapshot: async (_apiUrl, _account, planetId) => {
+          requestedPlanetIds.push(planetId);
+          return {
+            settlement: walletSettlementForManagedPlanet(walletSettlementResponse(wallet), home)!,
+            planetsResponse: response,
+            queues: playerQueues({ homePlanetId: home.planetId }),
+            fleetVisibility: emptyFleetVisibilityFixture(wallet, home.planetId),
+          };
+        },
+      },
+    );
+
+    expect(requestedPlanetIds).toEqual([undefined]);
+    expect(snapshot.settlement.homePlanetId).toBe("7");
+    expect(snapshot.settlement.planet?.planetId).toBe("7");
+    expect(snapshot.planetsResponse.planets.map((planet) => planet.planetId)).toEqual(["7"]);
   });
 
   test("scopes Overview fleet rows to the selected planet", () => {
@@ -3094,6 +3154,26 @@ function indexedPlanet(wallet: string) {
       building: null,
       defense: null,
       ship: null,
+    },
+  };
+}
+
+function walletSettlementResponse(wallet: string): WalletSettlementResponse {
+  return {
+    wallet,
+    hasFirstPlanet: true,
+    homePlanetId: "7",
+    planet: indexedPlanet(wallet),
+  };
+}
+
+function walletPlanetsResponse(wallet: string, planets: ReturnType<typeof indexedPlanet>[]): WalletPlanetsResponse {
+  return {
+    wallet,
+    homePlanetId: planets.find((planet) => planet.isHomePlanet)?.planetId ?? planets[0]?.planetId ?? null,
+    planets,
+    queues: {
+      research: null,
     },
   };
 }
