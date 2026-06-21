@@ -58,6 +58,8 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
+        _settleResources(originPlanetId);
+        _settleResources(targetPlanetId);
 
         uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
             _technologyLevels[msg.sender][Technology.Computer]
@@ -70,7 +72,6 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         if (capacity == 0) revert InvalidQuantity();
         _requireMissionShips(originPlanetId, ships);
 
-        _settleResources(originPlanetId);
         uint256 travelDistance = _planetDistance(originPlanetId, targetPlanetId);
         uint128 fuelCost = _toUint128(
             _ogameMissionFuelCost(msg.sender, ships, travelDistance, speedPercent, slowestSpeed)
@@ -330,25 +331,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
     }
 
     function _settleResources(uint256 planetId) private {
-        uint64 currentTime = _currentTimestamp();
-        Planet storage planetRef = _planets[planetId];
-        if (currentTime > planetRef.lastSettledAt) {
-            uint256 elapsed = uint256(currentTime) - planetRef.lastSettledAt;
-            (uint256 metalPerHour, uint256 crystalPerHour, uint256 deutPerHour) =
-                _productionPerHour(planetId);
-            Resources memory produced = Resources({
-                metal: _toUint128((metalPerHour * elapsed) / 1 hours),
-                crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
-                deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
-            });
-            (, Resources memory added) =
-                _cappedResourceIncrease(planetId, planetRef.resources, produced);
-            added = _reserveLimitedIncrease(added);
-            _increaseInternalResources(added);
-            planetRef.resources = _add(planetRef.resources, added);
-            planetRef.lastSettledAt = currentTime;
-        }
-        _settleDuePlanet(planetId);
+        _settleActionPlanet(planetId);
     }
 
     function _productionPerHour(uint256 planetId)

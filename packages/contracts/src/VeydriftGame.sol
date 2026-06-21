@@ -157,9 +157,13 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToColonizationModule();
     }
 
-    function completeAttackTargetSnapshotQueues(uint256, uint64) external {
+    function completeAttackTargetSnapshotQueues(uint256 planetId, uint64 cutoffAt) external {
         if (msg.sender != address(this)) revert Unauthorized(msg.sender);
-        _delegateToColonizationModule();
+        if (cutoffAt == type(uint64).max) {
+            _settleResources(planetId);
+        } else {
+            _delegateToColonizationModule();
+        }
     }
 
     function settleDuePlayerColonizeArrivals(address) external {
