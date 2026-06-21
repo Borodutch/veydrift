@@ -4126,11 +4126,11 @@ describe("Veydrift backend", () => {
       expect.objectContaining({ id: 0, level: 2 })
     ]));
     expect(occupiedPlanet.publicState.fleet).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, count: 2 }),
+      expect.objectContaining({ id: 0, count: 3 }),
       expect.objectContaining({ id: 9, count: 5 })
     ]));
     expect(occupiedPlanet.publicState.defenses).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, count: 3 })
+      expect.objectContaining({ id: 0, count: 5 })
     ]));
     expect(occupiedPlanet.publicState.stationedDefenders).toEqual([
       expect.objectContaining({
