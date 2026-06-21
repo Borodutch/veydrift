@@ -330,7 +330,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         return unavailableResponse(loaded.problems);
       }
 
-      return new Response(chainSync.eventStream(), {
+      return new Response(chainSync.eventStream(request.signal), {
         headers: {
           ...corsHeaders,
           "cache-control": "no-cache",

@@ -103,6 +103,18 @@ function planetStartedLog(block: string, planetId: bigint, tx: string): RpcLog {
 }
 
 describe("ChainSyncService (polling)", () => {
+  test("closes an event stream when the request signal aborts", async () => {
+    const service = new ChainSyncService(config, makeIndexer());
+    const abortController = new AbortController();
+    const reader = service.eventStream(abortController.signal).getReader();
+
+    await expect(reader.read()).resolves.toMatchObject({ done: false });
+    abortController.abort();
+
+    await expect(reader.read()).resolves.toMatchObject({ done: true });
+    service.stop();
+  });
+
   test("replays from configured base on the first poll, then ingests only new ranges", async () => {
     const indexer = makeIndexer();
     const seeded = planetStartedLog("0x191", 7n, "0xseed");
