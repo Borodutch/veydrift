@@ -1961,6 +1961,8 @@ export class SettlementIndexer {
           latestAbsoluteUnitTotals,
           log
         );
+      } else if (isFleetMissionReturnedLog(log)) {
+        appliedMutations += this.applyReturnedFleetCompatibilityEvent(log);
       } else if (isBattleReportLog(log)) {
         appliedMutations += this.applyGuardedBattleCompatibilityEvent(log, latestAbsoluteUnitTotals);
       }
@@ -4110,17 +4112,17 @@ export class SettlementIndexer {
     this.replayFleetMissionRowsFromEventLogs();
   }
 
-  private applyReturnedFleetCompatibilityEvent(log: IndexedRpcLog): void {
+  private applyReturnedFleetCompatibilityEvent(log: IndexedRpcLog): number {
     const missionId = fleetMissionLogMissionId(log);
-    if (!missionId) return;
+    if (!missionId) return 0;
 
     const decoded = this.decodedMissionLogs();
     const mission = decoded.eventMissions.find((candidate) => candidate.missionId === missionId);
-    if (!mission || mission.status !== "Returned") return;
+    if (!mission || mission.status !== "Returned") return 0;
 
     const mutations = this.returnedFleetCreditMutations(mission, decoded.battleReports)
       .filter((mutation) => !this.hasReturnSettlementUnitCountChanged(log, "ship", mutation.planetId, mutation.itemId));
-    this.applyLegacyUnitMutationsOnce(`legacy:fleet-return:${missionId}`, mutations, log);
+    return this.applyLegacyUnitMutationsOnce(`legacy:fleet-return:${missionId}`, mutations, log);
   }
 
   private hasReturnSettlementUnitCountChanged(

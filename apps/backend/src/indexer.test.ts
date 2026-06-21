@@ -1900,6 +1900,75 @@ describe("SettlementIndexer", () => {
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(3);
   });
 
+  test("legacy mutation replay repairs stored returned-fleet logs that predate the return-credit fix (VEY-KANEO-604)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    const chainReader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+
+    try {
+      const writer = new SettlementIndexer(chainReader, 100n, { databasePath });
+      writer.applyEvent(planet);
+
+      writer.applyLog({
+        blockNumber: "0x83",
+        transactionHash: "0xbuild-replay-sc",
+        logIndex: "0x0",
+        topics: [shipCompletedTopic, topic(7n), topic(0n)],
+        data: abiWords(4n, 4n)
+      });
+      writer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xlaunch-replay-legacy",
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(606n), addressTopic(player), topic(0n)],
+        data: abiWords(7n, 99n, 1770001200n, 1770002400n, 0n)
+      });
+      writer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xlaunch-replay-legacy",
+        logIndex: "0x1",
+        topics: [fleetMissionShipsTopic, topic(606n)],
+        data: abiWords(3n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n)
+      });
+      writer.applyLog({
+        blockNumber: "0x95",
+        transactionHash: "0xreturn-replay-legacy",
+        logIndex: "0x0",
+        topics: [fleetMissionReturnExposedTopic, topic(606n), addressTopic(player), topic(4n)],
+        data: abiWords(7n, 99n, 1770002400n, 0n, 0n, 0n)
+      });
+      writer.applyLog({
+        blockNumber: "0x95",
+        transactionHash: "0xreturn-replay-legacy",
+        logIndex: "0x1",
+        topics: [fleetMissionReturnedTopic, topic(606n), addressTopic(player), topic(7n)],
+        data: "0x"
+      });
+
+      const staleDb = new Database(databasePath);
+      staleDb.query("DELETE FROM indexed_legacy_unit_mutations WHERE mutation_key = ?").run("legacy:fleet-return:606");
+      staleDb.query(`
+        UPDATE contract_ship_counts
+        SET count = 1
+        WHERE planet_id = ? AND ship_id = 0
+      `).run(planet.planetId);
+      staleDb.close();
+
+      const reader = new SettlementIndexer(chainReader, 100n, { databasePath, runStartupBackfill: false });
+      expect(reader.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(1);
+
+      reader.applyLegacyUnitMutationsFromEventLogs();
+
+      expect(reader.availableShipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(4);
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("projects elapsed returning missions as returned while future returns stay active", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
