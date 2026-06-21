@@ -392,17 +392,20 @@ export function MissionCreationPage({
               targetFleetUnits={targetFleetUnits}
             />
           ) : (
-            <>
-              <TargetIntelCard coords={coords} target={target} />
-              {destinationIntelVisible ? (
-                <DestinationIntelPanel
-                  resourceIntel={resourceIntel}
-                  stationedDefenderUnits={stationedDefenderUnits}
-                  targetDefenseUnits={targetDefenseUnits}
-                  targetFleetUnits={targetFleetUnits}
-                />
-              ) : null}
-            </>
+            <NonAttackMissionIntelPanel
+              action={action}
+              cargoCapacity={cargoCapacity}
+              cargoSupported={cargoSupported}
+              coords={coords}
+              destinationIntelVisible={destinationIntelVisible}
+              holdDepotLevel={holdDepotLevel}
+              holdingBreakdown={holdingBreakdown}
+              resourceIntel={resourceIntel}
+              stationedDefenderUnits={stationedDefenderUnits}
+              target={target}
+              targetDefenseUnits={targetDefenseUnits}
+              targetFleetUnits={targetFleetUnits}
+            />
           )}
 
           {stationedDefenderRows.length > 0 ? (
@@ -1147,6 +1150,141 @@ export function AttackIntelPanel({
   );
 }
 
+export function NonAttackMissionIntelPanel({
+  action,
+  cargoCapacity,
+  cargoSupported,
+  coords,
+  destinationIntelVisible,
+  holdDepotLevel,
+  holdingBreakdown,
+  resourceIntel,
+  stationedDefenderUnits,
+  target,
+  targetDefenseUnits,
+  targetFleetUnits,
+}: {
+  action: EnabledGalaxyAction;
+  cargoCapacity: number;
+  cargoSupported: boolean;
+  coords: Coordinates;
+  destinationIntelVisible: boolean;
+  holdDepotLevel: number;
+  holdingBreakdown: AcsDefendFuelBreakdown | null;
+  resourceIntel: TargetResourceIntel;
+  stationedDefenderUnits: UnitItem[];
+  target: Planet | undefined;
+  targetDefenseUnits: UnitItem[];
+  targetFleetUnits: UnitItem[];
+}) {
+  return (
+    <section className="overflow-hidden rounded-lg border border-white/10 bg-[#101624] shadow-sm shadow-black/10">
+      <div className="grid divide-y divide-white/10 xl:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] xl:divide-x xl:divide-y-0">
+        <TargetDecisionTable coords={coords} target={target} />
+        <MissionPlanContent
+          action={action}
+          cargoCapacity={cargoCapacity}
+          cargoSupported={cargoSupported}
+          holdDepotLevel={holdDepotLevel}
+          holdingBreakdown={holdingBreakdown}
+        />
+      </div>
+      {destinationIntelVisible ? (
+        <div className="grid divide-y divide-white/10 border-t border-white/10 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)] xl:divide-x xl:divide-y-0">
+          <ResourceIntelTable resourceIntel={resourceIntel} />
+          <ForceIntelTable
+            stationedDefenderUnits={stationedDefenderUnits}
+            targetDefenseUnits={targetDefenseUnits}
+            targetFleetUnits={targetFleetUnits}
+          />
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function MissionPlanContent({
+  action,
+  cargoCapacity,
+  cargoSupported,
+  holdDepotLevel,
+  holdingBreakdown,
+}: {
+  action: EnabledGalaxyAction;
+  cargoCapacity: number;
+  cargoSupported: boolean;
+  holdDepotLevel: number;
+  holdingBreakdown: AcsDefendFuelBreakdown | null;
+}) {
+  return (
+    <div className="grid content-start gap-2 bg-signal/[0.04] p-3">
+      <div className="min-w-0">
+        <span className="text-[11px] font-semibold uppercase text-slate-500">Mission</span>
+        <p className="truncate text-base font-semibold text-white">{missionPlanTitle(action)}</p>
+      </div>
+      <p className="text-xs text-slate-500">{missionPlanDetail(action)}</p>
+      <div className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
+        <CompactFactRow label="Target rule" value={missionTargetRule(action)} />
+        <CompactFactRow label="Cargo" value={missionCargoRule(action, cargoSupported, cargoCapacity)} />
+        <CompactFactRow label="Timing" value={missionTimingRule(action, Boolean(holdingBreakdown))} />
+        {holdingBreakdown ? (
+          <>
+            <CompactFactRow label="Hold fuel" value={`${holdingBreakdown.netHoldingFuel.toLocaleString()} D net`} />
+            <CompactFactRow label="Depot" value={holdDepotLevel > 0 ? `Level ${holdDepotLevel.toLocaleString()} support` : "No support"} />
+          </>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function missionPlanTitle(action: EnabledGalaxyAction): string {
+  if (action.kind === "transport") return "Transport run";
+  if (action.kind === "harvest") return "Debris sweep";
+  if (action.kind === "defenseHold" || action.kind === "acsDefend") return "Station defense";
+  if (action.kind === "deploy") return "Deploy fleet";
+  if (action.kind === "colonize") return "Colonize slot";
+  if (action.kind === "missileAttack") return "Missile strike";
+  return `${action.label} mission`;
+}
+
+function missionPlanDetail(action: EnabledGalaxyAction): string {
+  if (action.kind === "transport") return "Send cargo to an owned or allied planet while the fleet returns home.";
+  if (action.kind === "harvest") return "Send recyclers to collect the debris field, reserving cargo room for fuel first.";
+  if (action.kind === "defenseHold" || action.kind === "acsDefend") return "Station a fleet at the target planet for a defensive hold, then bring it home.";
+  if (action.kind === "deploy") return "Move ships and loaded resources to another owned planet.";
+  if (action.kind === "colonize") return "Send a colony ship to claim an empty coordinate.";
+  if (action.kind === "missileAttack") return "Launch interplanetary missiles at the selected defense target.";
+  return "Configure fleet, timing, validation, and launch from the same mission flow.";
+}
+
+function missionTargetRule(action: EnabledGalaxyAction): string {
+  if (action.kind === "transport") return "Own or alliance planet";
+  if (action.kind === "harvest") return "Debris field target";
+  if (action.kind === "defenseHold" || action.kind === "acsDefend") return "Own or alliance planet";
+  if (action.kind === "deploy") return "Own planets only";
+  if (action.kind === "colonize") return "Empty coordinate";
+  if (action.kind === "missileAttack") return "Occupied planet";
+  return "Valid target required";
+}
+
+function missionCargoRule(action: EnabledGalaxyAction, cargoSupported: boolean, cargoCapacity: number): string {
+  if (cargoSupported) return `Manual load / ${cargoCapacity.toLocaleString()} capacity`;
+  if (action.kind === "harvest") return "Recycler holds for debris";
+  if (action.kind === "defenseHold" || action.kind === "acsDefend") return "Fuel and hold reserve";
+  if (action.kind === "colonize") return "Colony ship only";
+  if (action.kind === "missileAttack") return "No fleet cargo";
+  return "No cargo input";
+}
+
+function missionTimingRule(action: EnabledGalaxyAction, hasHoldingBreakdown: boolean): string {
+  if (hasHoldingBreakdown) return "Arrive, hold, return";
+  if (action.kind === "deploy") return "One-way arrival";
+  if (action.kind === "colonize") return "Arrival settlement";
+  if (action.kind === "missileAttack") return "Instant launch";
+  return "Round trip";
+}
+
 export function AttackOutcomePanel({
   battleForecast,
   lootableAtArrival,
@@ -1276,7 +1414,7 @@ function ResourceIntelTable({
   maxLootForecast,
   resourceIntel,
 }: {
-  maxLootForecast: MissionResourceSnapshot;
+  maxLootForecast?: MissionResourceSnapshot | undefined;
   resourceIntel: TargetResourceIntel;
 }) {
   return (
@@ -1287,7 +1425,7 @@ function ResourceIntelTable({
         <ResourceTableRow label="Arrival" resources={resourceIntel.projectedArrival} />
         <ResourceTableRow label="Loot now" resources={resourceIntel.currentLootable} />
         <ResourceTableRow label="Loot arr." resources={resourceIntel.projectedArrivalLootable} />
-        <ResourceTableRow label="Max carry" resources={maxLootForecast} tone="signal" />
+        {maxLootForecast ? <ResourceTableRow label="Max carry" resources={maxLootForecast} tone="signal" /> : null}
       </div>
     </div>
   );
