@@ -449,7 +449,7 @@ longer blocks the others (VEY-KANEO-466).
 Tuning env vars:
 
 ```text
-VEYDRIFT_WORKER_COUNT=<N>          # override the worker count (default: min(host CPU count, 4); set 1
+VEYDRIFT_WORKER_COUNT=<N>          # override the worker count (default: min(host CPU count, 2); set 1
                                   # to force the original single-process behavior).
 VEYDRIFT_WRITER_INTERNAL_PORT=<P> # override the writer's private loopback write listener (default
                                   # PORT+1); only relevant when the pool has more than one worker.
