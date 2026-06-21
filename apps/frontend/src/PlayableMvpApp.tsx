@@ -1659,6 +1659,11 @@ function globalReadStatusAfterTransactionRefreshFailure(current: ChainLoadStatus
   return current === "ready" ? "ready" : "error";
 }
 
+function globalReadStatusDuringRefresh(current: ChainLoadStatus, hasUsableState: boolean): ChainLoadStatus {
+  if (current === "ready" || hasUsableState) return "ready";
+  return "loading";
+}
+
 function pendingActionLabel(...actions: Array<{ status: string; label?: string | undefined }>): string | undefined {
   return actions.find((action) => action.status === "pending" && action.label)?.label;
 }
@@ -3709,9 +3714,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return null;
     }
 
-    setResearchLoading(true);
+    const shouldShowBlockingLoading = !researchState;
+    setResearchLoading(shouldShowBlockingLoading);
     setResearchError(undefined);
-    setActivePlanetSectionStatus("researchState", { loading: true, error: undefined });
+    setActivePlanetSectionStatus("researchState", { loading: shouldShowBlockingLoading, error: undefined });
     try {
       const next = await fetchResearchState(apiBaseUrl, account, activePlanetId);
       if (!canApplyRefreshRequest(researchRefreshGate, requestId)) return next;
@@ -3738,7 +3744,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setResearchLoading(false);
       }
     }
-  }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research]);
+  }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research, researchState]);
 
   const refreshRiftState = useCallback(async () => {
     const requestId = beginRefreshRequest(riftRefreshGate);
@@ -3794,7 +3800,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    const hasUsableOnChainState = Boolean(onChainSettlementState || walletPlanets.length > 0 || onChainQueues);
+    setOnChainStatus((current) => globalReadStatusDuringRefresh(current, hasUsableOnChainState));
     setPlanetSectionStore((current) => {
       let next = setPlanetSectionStatus(current, activePlanetId, "settlementState", { loading: true, error: undefined });
       next = setPlanetSectionStatus(next, activePlanetId, "queuesState", { loading: true, error: undefined });
@@ -3868,14 +3875,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       }
       const message = error instanceof Error ? error.message : "Failed to load live game state";
       setOnChainError(message);
-      setOnChainStatus("error");
+      setOnChainStatus((current) => hasUsableOnChainState && current !== "local" ? current : "error");
       setPlanetSectionStore((current) => {
         let next = setPlanetSectionStatus(current, activePlanetId, "settlementState", { loading: false, error: message });
         next = setPlanetSectionStatus(next, activePlanetId, "queuesState", { loading: false, error: message });
         return setPlanetSectionStatus(next, activePlanetId, "fleetVisibilityState", { loading: false, error: message });
       });
     }
-  }, [account, activePlanetId, apiBaseUrl, applyOnChainSettlementSnapshot, hydratedWalletSnapshotKey, isWalletConnected, onChainSettlementState?.homePlanetId, selectedPlanetId, walletPlanets]);
+  }, [account, activePlanetId, apiBaseUrl, applyOnChainSettlementSnapshot, hydratedWalletSnapshotKey, isWalletConnected, onChainQueues, onChainSettlementState, onChainSettlementState?.homePlanetId, selectedPlanetId, walletPlanets]);
 
   const loadMissionArchive = useCallback(async (page: number) => {
     if (!apiBaseUrl || !account) {
@@ -4242,7 +4249,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     setOnChainStatus(keepGlobalReadStateDuringTransaction);
-    setResearchLoading(true);
+    setResearchLoading(false);
     setResearchError(undefined);
 
     try {
@@ -4343,7 +4350,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     setOnChainStatus(keepGlobalReadStateDuringTransaction);
-    setResearchLoading(true);
+    setResearchLoading(false);
     setResearchError(undefined);
 
     try {
