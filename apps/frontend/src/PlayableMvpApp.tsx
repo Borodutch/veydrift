@@ -6737,7 +6737,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       crawlerProduction={infrastructureChainState?.crawlerProduction}
       energy={topBarEnergy}
       isWalletConnected={isWalletConnected}
-      coordinates={activePlanetCoords ? `${activePlanetCoords.galaxy}:${activePlanetCoords.system}:${activePlanetCoords.position}` : homeCoordinateLabel}
       queue={isWalletConnected ? undefined : settledState.queue}
       rates={rates}
       resourceStatus={isWalletConnected && !walletPlanetHydrated && onChainStatus !== "error" ? "loading" : isWalletConnected ? onChainStatus : "local"}
