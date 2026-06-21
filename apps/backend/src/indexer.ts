@@ -1289,7 +1289,17 @@ export class SettlementIndexer {
   }
 
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
-    return deriveBuildingRows((id) => this.indexedLevel("contract_building_levels", "building_id", planetId, id));
+    const completedLevels = new Map<number, number>();
+    for (const queue of this.queueSettlement(`building:${planetId}`).completed) {
+      if (typeof queue.itemId === "number" && typeof queue.targetLevel === "number") {
+        completedLevels.set(queue.itemId, Math.max(completedLevels.get(queue.itemId) ?? 0, queue.targetLevel));
+      }
+    }
+
+    return deriveBuildingRows((id) => Math.max(
+      this.indexedLevel("contract_building_levels", "building_id", planetId, id),
+      completedLevels.get(id) ?? 0
+    ));
   }
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
@@ -1357,7 +1367,14 @@ export class SettlementIndexer {
   }
 
   technologyLevels(wallet: `0x${string}`): Record<string, number> {
-    return this.contractTechnologyLevels(wallet);
+    const levels = this.contractTechnologyLevels(wallet);
+    for (const queue of this.queueSettlement(`research:${wallet.toLowerCase()}`).completed) {
+      if (typeof queue.itemId === "number" && typeof queue.targetLevel === "number") {
+        const key = String(queue.itemId);
+        levels[key] = Math.max(levels[key] ?? 0, queue.targetLevel);
+      }
+    }
+    return levels;
   }
 
   private contractTechnologyLevels(wallet: `0x${string}`): Record<string, number> {
@@ -1412,17 +1429,19 @@ export class SettlementIndexer {
         "SELECT event_json FROM indexed_planets WHERE owner = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
         wallet
       ));
+    const contractTechnologies = this.contractTechnologyLevels(wallet);
 
     return calculateIndexedHighscore({
       wallet,
       homePlanetId: settlement.homePlanetId,
       planetCount: ownedPlanets.length,
       planets: ownedPlanets.map((planet) => ({
-        buildings: this.infrastructureRows(planet.planetId).map(({ id, level }) => ({ id, level })),
+        buildings: this.contractInfrastructureRows(planet.planetId).map(({ id, level }) => ({ id, level })),
         defenses: this.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
         ships: this.shipRows(planet.planetId).map(({ id, count }) => ({ id, count }))
       })),
-      technologies: this.technologyRows(wallet).map(({ id, level }) => ({ id, level }))
+      technologies: deriveTechnologyRows((id) => contractTechnologies[String(id)] ?? 0)
+        .map(({ id, level }) => ({ id, level }))
     });
   }
 
@@ -1533,7 +1552,6 @@ export class SettlementIndexer {
   }
 
   planetQueue(planetId: string, kind: "building" | "defense" | "ship"): QueueState | null {
-    if (kind === "building") return this.queueState(`${kind}:${planetId}`);
     return this.queueSettlement(`${kind}:${planetId}`).queue;
   }
 
@@ -1542,7 +1560,7 @@ export class SettlementIndexer {
   }
 
   researchQueue(wallet: `0x${string}`): QueueState | null {
-    return this.queueState(`research:${wallet.toLowerCase()}`);
+    return this.queueSettlement(`research:${wallet.toLowerCase()}`).queue;
   }
 
   moonState(wallet: `0x${string}`, planetId: string | null): MoonState {
