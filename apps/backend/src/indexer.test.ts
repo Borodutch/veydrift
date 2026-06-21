@@ -2881,7 +2881,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.fleetSlots(player)).toEqual({ active: 5, limit: 5 });
   });
 
-  test("projects elapsed production queues into served rows before completion events", () => {
+  test("does not project elapsed unit queues into served counts before completion events", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -2890,15 +2890,29 @@ describe("SettlementIndexer", () => {
     indexer.applyEvent(planet);
     indexer.applyLog({
       blockNumber: "0x83",
-      transactionHash: "0xready-ship",
+      transactionHash: "0xship-count",
       logIndex: "0x0",
-      topics: [shipQueuedTopic, topic(7n), topic(3n)],
-      data: abiWords(2n, 1767225500n, 2000n, 1000n, 0n)
+      topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(9n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xready-ship",
+      logIndex: "0x1",
+      topics: [shipQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(14n, 1767225500n, 2000n, 1000n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xdefense-count",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(7n), topic(1n)],
+      data: abiWords(8n)
     });
     indexer.applyLog({
       blockNumber: "0x84",
       transactionHash: "0xready-defense",
-      logIndex: "0x0",
+      logIndex: "0x1",
       topics: [defenseQueuedTopic, topic(7n), topic(1n)],
       data: abiWords(5n, 1767225500n, 4000n, 2000n, 0n)
     });
@@ -2915,17 +2929,17 @@ describe("SettlementIndexer", () => {
       defense: null,
       research: null
     });
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 3)).toMatchObject({
-      id: 3,
-      count: 2
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)).toMatchObject({
+      id: 0,
+      count: 9
     });
-    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 3)).toMatchObject({
-      id: 3,
-      count: 2
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)).toMatchObject({
+      id: 0,
+      count: 9
     });
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)).toMatchObject({
       id: 1,
-      count: 5
+      count: 8
     });
     expect(indexer.technologyLevels(player)).toMatchObject({ "4": 2 });
   });
@@ -5382,7 +5396,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.defenseRows(planet.planetId).find((row) => row.id === 1)?.count).toBe(4);
   });
 
-  test("current-state seed ignores older replayed defense backlog events behind canonical counts", async () => {
+  test("current-state seed ignores older replayed and uncompleted defense queue rows behind canonical counts", async () => {
     const rawState: CanonicalPlanetChainState = {
       planetId: planet.planetId,
       resources: planet.resources,
@@ -5448,7 +5462,7 @@ describe("SettlementIndexer", () => {
 
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(9);
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)?.count).toBe(12);
-    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(2);
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(0);
     expect(indexer.playerQueues(player, planet.planetId).defense).toBeNull();
 
     await expect(indexer.seedCurrentCanonicalState({ planetConcurrency: 25 })).resolves.toMatchObject({
@@ -5656,27 +5670,25 @@ describe("SettlementIndexer", () => {
     expect(indexer.shipRows("24").filter((ship) => ship.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
       { id: 0, count: 5 },
       { id: 1, count: 3 },
-      { id: 3, count: 1 },
       { id: 5, count: 2 },
       { id: 9, count: 4 }
     ]);
     expect(indexer.defenseRows("146").filter((defense) => defense.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
-      { id: 0, count: 17 },
-      { id: 1, count: 10 }
+      { id: 0, count: 17 }
     ]);
 
     const shalexScore = indexer.highscoreForWallet(shalex);
-    expect(shalexScore.score.fleetCount).toBe("15");
-    expect(shalexScore.score.fleet).toBe("102");
+    expect(shalexScore.score.fleetCount).toBe("14");
+    expect(shalexScore.score.fleet).toBe("62");
     const nosealsScore = indexer.highscoreForWallet(noseals);
-    expect(nosealsScore.score.defense).toBe("54");
+    expect(nosealsScore.score.defense).toBe("34");
 
     const leaderboard = indexer.highscoreLeaderboard().entries;
     expect(leaderboard.find((entry) => entry.wallet === shalex)?.score).toMatchObject({
-      fleet: "102",
-      fleetCount: "15"
+      fleet: "62",
+      fleetCount: "14"
     });
-    expect(leaderboard.find((entry) => entry.wallet === noseals)?.score.defense).toBe("54");
+    expect(leaderboard.find((entry) => entry.wallet === noseals)?.score.defense).toBe("34");
   });
 
   test("newer fleet mission events win over seeded canonical mission rows", async () => {

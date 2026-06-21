@@ -4127,11 +4127,11 @@ describe("Veydrift backend", () => {
       expect.objectContaining({ id: 0, level: 2 })
     ]));
     expect(occupiedPlanet.publicState.fleet).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, count: 3 }),
+      expect.objectContaining({ id: 0, count: 2 }),
       expect.objectContaining({ id: 9, count: 5 })
     ]));
     expect(occupiedPlanet.publicState.defenses).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, count: 5 })
+      expect.objectContaining({ id: 0, count: 3 })
     ]));
     expect(occupiedPlanet.publicState.stationedDefenders).toEqual([
       expect.objectContaining({
@@ -6428,17 +6428,16 @@ describe("Veydrift backend", () => {
         }
       ],
       planetCount: 1,
-      // The mock reader's active queues have readyAt before this suite's fixed clock, so highscore
-      // rankings include the same request-time lazy-completion projection as detail reads.
+      // Unit queues are not committed fleet/defense state until their completion event lands.
       score: {
-        total: "8105",
+        total: "8097",
         economy: "8080",
         research: "3",
         researchLevels: "2",
-        military: "22",
-        fleet: "12",
-        fleetCount: "3",
-        defense: "10"
+        military: "14",
+        fleet: "8",
+        fleetCount: "2",
+        defense: "6"
       }
     });
     expect(body.source).toBe("contract-state-indexer");
@@ -7016,14 +7015,14 @@ describe("Veydrift backend", () => {
       homePlanetId: planet.planetId,
       planetCount: 1,
       score: {
-        total: "8105",
+        total: "8097",
         economy: "8080",
         research: "3",
         researchLevels: "2",
-        military: "22",
-        fleet: "12",
-        fleetCount: "3",
-        defense: "10"
+        military: "14",
+        fleet: "8",
+        fleetCount: "2",
+        defense: "6"
       }
     });
   });
