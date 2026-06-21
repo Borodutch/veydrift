@@ -2120,17 +2120,19 @@ export async function loadWalletPlanetSyncSnapshot(
   const loadFleetMissionVisibility = loaders.fetchFleetMissionVisibility ?? fetchFleetMissionVisibility;
   const loadWalletSettlement = loaders.fetchWalletSettlement ?? fetchWalletSettlement;
   const readPlanetId = options.forceHomePlanet ? undefined : activePlanetId;
-  try {
-    return await loadOverviewSnapshot(apiBaseUrl, account, readPlanetId, {
-      timeoutMs: INITIAL_OVERVIEW_SNAPSHOT_TIMEOUT_MS,
-    });
-  } catch (error) {
-    if (!isRecoverableOverviewSnapshotError(error)) {
-      throw error;
+  if (readPlanetId !== undefined) {
+    try {
+      return await loadOverviewSnapshot(apiBaseUrl, account, readPlanetId, {
+        timeoutMs: INITIAL_OVERVIEW_SNAPSHOT_TIMEOUT_MS,
+      });
+    } catch (error) {
+      if (!isRecoverableOverviewSnapshotError(error)) {
+        throw error;
+      }
+      // The overview snapshot is a fast-path optimization. Older backends may not expose it, and
+      // mission visibility inside it can be briefly slow; hydrate critical planet state below instead
+      // of leaving first paint blocked on noncritical mission data.
     }
-    // The overview snapshot is a fast-path optimization. Older backends may not expose it, and
-    // mission visibility inside it can be briefly slow; hydrate critical planet state below instead
-    // of leaving first paint blocked on noncritical mission data.
   }
 
   const planetsResult = await settlePromise(loadWalletPlanets(apiBaseUrl, account));
