@@ -207,7 +207,7 @@ export class ChainSyncService {
 
       const fromBlock = this.cursor < 0n ? 0n : this.cursor + 1n;
       const logs = await backfiller.listContractLogs(fromBlock, head);
-      const { applied, lastHash } = this.applyLogs(logs, applyLog);
+      const { applied, lastHash } = await this.applyLogs(logs, applyLog);
       // Advance the cursor to the scanned head ONLY after a clean ingest — a throw skips this and the
       // next pass retries the same range. Events are absolute-state SETs + txHash:logIndex deduped, so
       // the retried overlap is idempotent.
@@ -236,10 +236,10 @@ export class ChainSyncService {
     }
   }
 
-  private applyLogs(
+  private async applyLogs(
     logs: RpcLog[],
     applyLog: NonNullable<SettlementIndexer["applyLog"]>
-  ): { applied: number; lastHash: string | undefined } {
+  ): Promise<{ applied: number; lastHash: string | undefined }> {
     let applied = 0;
     let lastHash: string | undefined;
     for (const log of sortRpcLogs(logs)) {
@@ -253,7 +253,7 @@ export class ChainSyncService {
           this.lastEventAt = new Date().toISOString();
           applied += 1;
           lastHash = log.transactionHash;
-          this.queueTargetedCanonicalHeal(log);
+          await this.queueTargetedCanonicalHeal(log);
         }
         if (result.removed) {
           // A reorg-removed log. The contract re-emits the canonical post-state on the new chain, and
@@ -269,10 +269,10 @@ export class ChainSyncService {
     return { applied, lastHash };
   }
 
-  private queueTargetedCanonicalHeal(log: RpcLog): void {
+  private async queueTargetedCanonicalHeal(log: RpcLog): Promise<void> {
     const planetIds = canonicalHealPlanetIdsForLog(log);
     if (planetIds.length === 0) return;
-    void this.indexer?.healCanonicalPlanets?.(planetIds);
+    await this.indexer?.healCanonicalPlanets?.(planetIds);
   }
 
   private markConnected(): void {
