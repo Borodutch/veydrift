@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { createHmac } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5062,6 +5063,77 @@ describe("Veydrift backend", () => {
 
       const fresh = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`))).json();
       expect(fresh.ships).toContainEqual(expect.objectContaining({ id: 0, count: 0 }));
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  test("serves fresh mission-critical unit endpoints even when cache version is unchanged", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-server-unit-cache-"));
+    const databasePath = join(dir, "index.sqlite");
+    const chainReader = new MockChainReader();
+    chainReader.getShipyardState = (async () => {
+      throw new Error("shipyard page must be served from the indexed DB, never a live eth_call");
+    }) as ChainReader["getShipyardState"];
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("unit endpoints should not rebuild from chain");
+    };
+
+    try {
+      const writerIndexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock, { databasePath });
+      writerIndexer.applyEvent({
+        ...planet,
+        eventName: "PlanetStarted",
+        transactionHash: "0xabc",
+        blockNumber: "123"
+      });
+      writerIndexer.applyLog({
+        blockNumber: "0x7d",
+        transactionHash: "0xship-warm",
+        logIndex: "0x0",
+        topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+        data: abiWords(5n)
+      });
+      writerIndexer.applyLog({
+        blockNumber: "0x7d",
+        transactionHash: "0xdefense-warm",
+        logIndex: "0x1",
+        topics: [planetDefenseCountChangedTopic, topic(7n), topic(1n)],
+        data: abiWords(3n)
+      });
+
+      const readerIndexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock, {
+        databasePath,
+        runStartupBackfill: false
+      });
+      const handler = createRequestHandler({
+        config: { ...configuredTestConfig, indexDbPath: databasePath },
+        chainReader,
+        enableResponseCache: true,
+        indexer: readerIndexer,
+        prewarmResponseCache: false,
+        role: "reader"
+      });
+
+      const warmedShipyard = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`))).json();
+      expect(warmedShipyard.ships).toContainEqual(expect.objectContaining({ id: 0, count: 5 }));
+      const warmedDefenses = await (await handler(new Request(`http://localhost/wallet/${player}/defenses?planetId=7`))).json();
+      expect(warmedDefenses.defenses).toContainEqual(expect.objectContaining({ id: 1, count: 3 }));
+
+      const db = new Database(databasePath);
+      try {
+        // Simulate another worker applying the canonical event mutation while this reader's persisted
+        // version token stays unchanged. These endpoints must still avoid worker-local response cache.
+        db.query("UPDATE contract_ship_counts SET count = 0 WHERE planet_id = '7' AND ship_id = 0").run();
+        db.query("UPDATE contract_defense_counts SET count = 4 WHERE planet_id = '7' AND defense_id = 1").run();
+      } finally {
+        db.close();
+      }
+
+      const freshShipyard = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`))).json();
+      expect(freshShipyard.ships).toContainEqual(expect.objectContaining({ id: 0, count: 0 }));
+      const freshDefenses = await (await handler(new Request(`http://localhost/wallet/${player}/defenses?planetId=7`))).json();
+      expect(freshDefenses.defenses).toContainEqual(expect.objectContaining({ id: 1, count: 4 }));
     } finally {
       rmSync(dir, { force: true, recursive: true });
     }
