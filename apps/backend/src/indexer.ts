@@ -2645,9 +2645,9 @@ export class SettlementIndexer {
     this.ensureColumn("player_profiles", "description", "TEXT");
     this.ensureColumn("contract_production_queues", "backlog_json", "TEXT");
     this.ensureColumn("contract_planet_resources", "log_index", "TEXT NOT NULL DEFAULT '0x0'");
-    this.backfillMissionEventLogs();
-    this.backfillUnitCountEventLogs();
     if (runStartupBackfill) {
+      this.backfillMissionEventLogs();
+      this.backfillUnitCountEventLogs();
       this.backfillCanonicalTables();
       this.replayFleetMissionRowsFromEventLogs();
     }
