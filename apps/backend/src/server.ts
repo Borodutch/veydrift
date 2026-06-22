@@ -161,6 +161,8 @@ export type ServerDependencies = {
   enableResponseCache?: boolean;
   // Test seam for disabling asynchronous production cache prewarming while exercising the response cache.
   prewarmResponseCache?: boolean;
+  // Test seam for request access logging. Production construction enables it by default.
+  logRequests?: boolean;
   sharedResponseCache?: SharedResponseCache | null;
 };
 
@@ -257,6 +259,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const readRateLimits = new Map<string, { count: number; resetAt: number }>();
   const galaxySystemCache = new Map<string, GalaxySystemCacheEntry>();
   const enableResponseCache = dependencies.enableResponseCache ?? (
+    !dependencies.chainReader
+    && !dependencies.chainSync
+    && !dependencies.config
+    && !dependencies.indexer
+    && !dependencies.randomnessCommitter
+  );
+  const logRequests = dependencies.logRequests ?? (
     !dependencies.chainReader
     && !dependencies.chainSync
     && !dependencies.config
@@ -1222,7 +1231,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   };
 
   prewarmHotResponseCache(serveWithResponseCache, indexer, prewarmResponseCache, prewarmStartDelayMs());
-  return serveWithResponseCache;
+  return logRequests ? requestLoggingHandler(serveWithResponseCache, workerRole) : serveWithResponseCache;
 }
 
 /**
@@ -1261,6 +1270,43 @@ function withRequestCors(request: Request, response: Response): Response {
     status: response.status,
     statusText: response.statusText
   });
+}
+
+function requestLoggingHandler(
+  serve: (request: Request) => Promise<Response>,
+  workerRole: WorkerRole
+): (request: Request) => Promise<Response> {
+  return async (request: Request): Promise<Response> => {
+    const startedAt = performance.now();
+    const url = new URL(request.url);
+    try {
+      const response = await serve(request);
+      logApiRequest(request, url, workerRole, response.status, performance.now() - startedAt);
+      return response;
+    } catch (error) {
+      logApiRequest(request, url, workerRole, 500, performance.now() - startedAt, error);
+      throw error;
+    }
+  };
+}
+
+function logApiRequest(
+  request: Request,
+  url: URL,
+  workerRole: WorkerRole,
+  status: number,
+  durationMs: number,
+  error?: unknown
+): void {
+  const entry = {
+    durationMs: Math.round(durationMs),
+    method: request.method,
+    path: `${url.pathname}${url.search}`,
+    status,
+    workerRole,
+    ...(error ? { error: reasonText(error) } : {})
+  };
+  console.info("veydrift-api-request", JSON.stringify(entry));
 }
 
 function allowedCorsOrigin(request: Request): string {

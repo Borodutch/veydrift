@@ -916,6 +916,56 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("logs every backend request with response time metadata", async () => {
+    const originalInfo = console.info;
+    const logs: unknown[][] = [];
+    console.info = (...args: unknown[]) => {
+      logs.push(args);
+    };
+    try {
+      const chainSync = {
+        start() {},
+        snapshot() {
+          return {
+            connected: true,
+            subscribedToHeads: true,
+            subscribedToLogs: true
+          };
+        }
+      } as unknown as import("./chainSync").ChainSyncService;
+      const loggedHandler = createRequestHandler({
+        chainReader: new MockChainReader(),
+        chainSync,
+        config: configuredTestConfig,
+        logRequests: true
+      });
+
+      const response = await loggedHandler(new Request("http://localhost/runtime-config?source=test"));
+
+      expect(response.status).toBe(200);
+      expect(logs).toHaveLength(1);
+      const log = logs[0];
+      expect(log).toBeDefined();
+      expect(log![0]).toBe("veydrift-api-request");
+      const entry = JSON.parse(String(log![1])) as {
+        durationMs: number;
+        method: string;
+        path: string;
+        status: number;
+        workerRole: string;
+      };
+      expect(entry).toMatchObject({
+        method: "GET",
+        path: "/runtime-config?source=test",
+        status: 200,
+        workerRole: "writer"
+      });
+      expect(entry.durationMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      console.info = originalInfo;
+    }
+  });
+
   test("does not touch the indexer snapshot on reader health checks", async () => {
     const indexer = {
       snapshot() {
