@@ -1268,6 +1268,8 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
   if (url.pathname === "/debug/indexer") return ttlCacheBucket(2_000);
   if (url.pathname === "/highscores") return ttlCacheBucket(300_000);
   if (url.pathname === "/raid-finder/debris") return ttlCacheBucket(30_000);
+  if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return ttlCacheBucket(30_000);
+  if (url.pathname === "/universe/systems") return ttlCacheBucket(30_000);
   return indexer.responseCacheVersion();
 }
 
