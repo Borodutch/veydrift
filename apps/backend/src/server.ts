@@ -1319,8 +1319,13 @@ function refreshBusyResponse(): Response {
 }
 
 function shouldDeferCacheMissRefresh(request: Request, url: URL): boolean {
-  if (!requestClientKey(request)) return false;
+  if (!isExternalReadRequest(request, url)) return false;
   return url.pathname !== "/health" && url.pathname !== "/debug/indexer";
+}
+
+function isExternalReadRequest(request: Request, url: URL): boolean {
+  if (requestClientKey(request)) return true;
+  return url.hostname !== "localhost" && url.hostname !== "127.0.0.1";
 }
 
 function isRateLimitedReadPath(pathname: string): boolean {
