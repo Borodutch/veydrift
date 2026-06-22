@@ -977,6 +977,58 @@ describe("Veydrift backend", () => {
     expect(snapshots).toBe(1);
   });
 
+  test("does not turn a stale shared-cache lock into a long health wait", async () => {
+    let waitDeadlineMs: number | undefined;
+    let snapshots = 0;
+    const sharedResponseCache = {
+      get() {
+        return null;
+      },
+      tryAcquireRefresh() {
+        return false;
+      },
+      async waitForFresh(_cacheKey: string, deadlineMs?: number) {
+        waitDeadlineMs = deadlineMs;
+        return null;
+      },
+      set() {},
+      releaseRefresh() {}
+    } as unknown as import("./sharedResponseCache").SharedResponseCache;
+    const chainSync = {
+      start() {},
+      snapshot() {
+        return {
+          connected: true,
+          subscribedToHeads: true,
+          subscribedToLogs: true
+        };
+      }
+    } as unknown as import("./chainSync").ChainSyncService;
+    const indexer = {
+      snapshot() {
+        snapshots += 1;
+        return {
+          indexedState: "healthy",
+          safeToServeIndexedState: true
+        };
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      chainSync,
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer,
+      sharedResponseCache
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+
+    expect(response.status).toBe(200);
+    expect(waitDeadlineMs).toBe(750);
+    expect(snapshots).toBe(1);
+  });
+
   test("returns public runtime config", async () => {
     const response = await handler(new Request("http://localhost/runtime-config"));
     const body = await response.json();
