@@ -1072,50 +1072,70 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   };
 
   const serveWithResponseCache = async (request: Request): Promise<Response> => {
-    const url = new URL(request.url);
-    const cacheTtlMs = enableResponseCache ? cacheableJsonRequestTtlMs(request, url) : 0;
-    if (cacheTtlMs > 0) {
-      const cacheKey = cacheableJsonRequestKey(request, url, indexer);
-      const cached = responseCache.get(cacheKey);
-      if (cached && cached.expiresAt > Date.now()) {
-        return withRequestCors(request, cachedJsonResponse(cached));
-      }
-
-      const inflight = inflightResponseCache.get(cacheKey);
-      if (inflight) {
-        const coalesced = await inflight;
-        if (coalesced) return withRequestCors(request, cachedJsonResponse(coalesced));
-      }
-
-      let resolveInflight: (cached: CachedJsonResponse | null) => void;
-      inflightResponseCache.set(cacheKey, new Promise((resolve) => {
-        resolveInflight = resolve;
-      }));
-
-      const response = await routeRequest(request);
-      if (response.status === 200 && jsonContentType(response.headers.get("content-type"))) {
-        const body = await response.clone().arrayBuffer();
-        const headers: Array<[string, string]> = [];
-        response.headers.forEach((value, key) => headers.push([key, value]));
-        const cachedResponse = {
-          body,
-          expiresAt: Date.now() + cacheTtlMs,
-          headers,
-          status: response.status,
-          statusText: response.statusText
-        };
-        responseCache.set(cacheKey, cachedResponse);
-        pruneResponseCache(responseCache);
-        resolveInflight!(cachedResponse);
-        inflightResponseCache.delete(cacheKey);
-        return withRequestCors(request, cachedJsonResponse(cachedResponse));
-      }
-      resolveInflight!(null);
-      inflightResponseCache.delete(cacheKey);
-      return withRequestCors(request, response);
+    if (request.signal.aborted) {
+      return new Response(null, { status: 499, statusText: "Client Closed Request" });
     }
 
-    return withRequestCors(request, await routeRequest(request));
+    let removeAbortListener: (() => void) | undefined;
+    const aborted = new Promise<Response>((resolve) => {
+      const onAbort = () => {
+        resolve(new Response(null, { status: 499, statusText: "Client Closed Request" }));
+      };
+      request.signal.addEventListener("abort", onAbort, { once: true });
+      removeAbortListener = () => request.signal.removeEventListener("abort", onAbort);
+    });
+    const serve = async (): Promise<Response> => {
+      const url = new URL(request.url);
+      const cacheTtlMs = enableResponseCache ? cacheableJsonRequestTtlMs(request, url) : 0;
+      if (cacheTtlMs > 0) {
+        const cacheKey = cacheableJsonRequestKey(request, url, indexer);
+        const cached = responseCache.get(cacheKey);
+        if (cached && cached.expiresAt > Date.now()) {
+          return withRequestCors(request, cachedJsonResponse(cached));
+        }
+
+        const inflight = inflightResponseCache.get(cacheKey);
+        if (inflight) {
+          const coalesced = await inflight;
+          if (coalesced) return withRequestCors(request, cachedJsonResponse(coalesced));
+        }
+
+        let resolveInflight: (cached: CachedJsonResponse | null) => void;
+        inflightResponseCache.set(cacheKey, new Promise((resolve) => {
+          resolveInflight = resolve;
+        }));
+
+        const response = await routeRequest(request);
+        if (response.status === 200 && jsonContentType(response.headers.get("content-type"))) {
+          const body = await response.clone().arrayBuffer();
+          const headers: Array<[string, string]> = [];
+          response.headers.forEach((value, key) => headers.push([key, value]));
+          const cachedResponse = {
+            body,
+            expiresAt: Date.now() + cacheTtlMs,
+            headers,
+            status: response.status,
+            statusText: response.statusText
+          };
+          responseCache.set(cacheKey, cachedResponse);
+          pruneResponseCache(responseCache);
+          resolveInflight!(cachedResponse);
+          inflightResponseCache.delete(cacheKey);
+          return withRequestCors(request, cachedJsonResponse(cachedResponse));
+        }
+        resolveInflight!(null);
+        inflightResponseCache.delete(cacheKey);
+        return withRequestCors(request, response);
+      }
+
+      return withRequestCors(request, await routeRequest(request));
+    };
+
+    try {
+      return await Promise.race([serve(), aborted]);
+    } finally {
+      removeAbortListener?.();
+    }
   };
 
   prewarmHotResponseCache(serveWithResponseCache, indexer, prewarmResponseCache);
