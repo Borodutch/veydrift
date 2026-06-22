@@ -6547,6 +6547,42 @@ describe("Veydrift backend", () => {
     expect(highscoreLeaderboardCalls).toBe(1);
   });
 
+  test("sends public browser cache headers for cached public API reads", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      enableResponseCache: true,
+      indexer,
+      prewarmResponseCache: false
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?category=total&page=1&pageSize=10"));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=300, stale-while-revalidate=300");
+  });
+
+  test("sends private browser cache headers for cached wallet API reads", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      enableResponseCache: true,
+      indexer,
+      prewarmResponseCache: false
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/overview`));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, max-age=15, stale-while-revalidate=15");
+  });
+
   test("accrues production into highscore raidable loot so it matches the public planet read (VEY-KANEO-454)", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
