@@ -226,6 +226,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const responseCache = new Map<string, CachedJsonResponse>();
   const inflightResponseCache = new Map<string, Promise<CachedJsonResponse | null>>();
   const readRateLimits = new Map<string, { count: number; resetAt: number }>();
+  let activeCacheMissRefreshes = 0;
   const galaxySystemCache = new Map<string, GalaxySystemCacheEntry>();
   const enableResponseCache = dependencies.enableResponseCache ?? (
     !dependencies.chainReader
@@ -1116,19 +1117,25 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
         const inflight = inflightResponseCache.get(cacheKey);
         if (inflight) {
-          const coalesced = await inflight;
-          if (coalesced) return withRequestCors(request, cachedJsonResponse(request, coalesced));
+          return withRequestCors(request, refreshBusyResponse());
         }
 
         const rateLimited = readRateLimitResponse(request, url, readRateLimits);
         if (rateLimited) return withRequestCors(request, rateLimited);
+        if (activeCacheMissRefreshes > 0 && requestClientKey(request)) {
+          return withRequestCors(request, refreshBusyResponse());
+        }
 
         let resolveInflight: (cached: CachedJsonResponse | null) => void;
         inflightResponseCache.set(cacheKey, new Promise((resolve) => {
           resolveInflight = resolve;
         }));
 
-        const refreshed = await refreshCachedJsonResponse(request, url, routeRequest, responseCache, cacheKey, cacheTtlMs);
+        activeCacheMissRefreshes += 1;
+        const refreshed = await refreshCachedJsonResponse(request, url, routeRequest, responseCache, cacheKey, cacheTtlMs)
+          .finally(() => {
+            activeCacheMissRefreshes = Math.max(0, activeCacheMissRefreshes - 1);
+          });
         if (refreshed.cached) {
           resolveInflight!(refreshed.cached);
           inflightResponseCache.delete(cacheKey);
@@ -1274,6 +1281,22 @@ function readRateLimitResponse(
       headers: {
         ...corsHeaders,
         "retry-after": String(Math.ceil((current.resetAt - now) / 1_000))
+      },
+      status: 429
+    }
+  );
+}
+
+function refreshBusyResponse(): Response {
+  return Response.json(
+    {
+      error: "refresh_busy",
+      message: "The game API is refreshing this read. Please retry shortly."
+    },
+    {
+      headers: {
+        ...corsHeaders,
+        "retry-after": "1"
       },
       status: 429
     }
