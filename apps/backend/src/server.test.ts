@@ -90,14 +90,25 @@ const allianceJoinedTopic = "0x966912f1fd05e1765f8d822e0db01e534676a830ea4b161fc
 const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
 
 function expectedBackendGitSha(): string | null {
-  return process.env.GIT_SHA?.trim()
-    || process.env.SOURCE_VERSION?.trim()
-    || process.env.RAILWAY_GIT_COMMIT_SHA?.trim()
+  return process.env.SOURCE_VERSION?.trim()
     || process.env.EASYPANEL_GIT_SHA?.trim()
+    || process.env.RAILWAY_GIT_COMMIT_SHA?.trim()
     || process.env.GITHUB_SHA?.trim()
     || process.env.COMMIT_SHA?.trim()
     || process.env.VEYDRIFT_DEPLOYMENT_COMMIT?.trim()
+    || process.env.GIT_SHA?.trim()
     || null;
+}
+
+function expectedBackendGitShaSource(): string | null {
+  if (process.env.SOURCE_VERSION?.trim()) return "SOURCE_VERSION";
+  if (process.env.EASYPANEL_GIT_SHA?.trim()) return "EASYPANEL_GIT_SHA";
+  if (process.env.RAILWAY_GIT_COMMIT_SHA?.trim()) return "RAILWAY_GIT_COMMIT_SHA";
+  if (process.env.GITHUB_SHA?.trim()) return "GITHUB_SHA";
+  if (process.env.COMMIT_SHA?.trim()) return "COMMIT_SHA";
+  if (process.env.VEYDRIFT_DEPLOYMENT_COMMIT?.trim()) return "VEYDRIFT_DEPLOYMENT_COMMIT";
+  if (process.env.GIT_SHA?.trim()) return "GIT_SHA";
+  return null;
 }
 
 const planet: PlanetState = {
@@ -781,7 +792,8 @@ describe("Veydrift backend", () => {
       configured: false,
       backend: {
         build: {
-          gitSha: expectedBackendGitSha()
+          gitSha: expectedBackendGitSha(),
+          gitShaSource: expectedBackendGitShaSource()
         },
         worker: {
           count: Math.max(1, Math.min(Math.floor(navigator.hardwareConcurrency), 2)),
@@ -901,7 +913,8 @@ describe("Veydrift backend", () => {
       allianceContractAddress: null,
       backend: {
         build: {
-          gitSha: expectedBackendGitSha()
+          gitSha: expectedBackendGitSha(),
+          gitShaSource: expectedBackendGitShaSource()
         },
         worker: {
           count: Math.max(1, Math.min(Math.floor(navigator.hardwareConcurrency), 2)),
@@ -937,6 +950,35 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
   });
 
+  test("prefers provider build SHA metadata over stale generic GIT_SHA", async () => {
+    const previousGitSha = process.env.GIT_SHA;
+    const previousSourceVersion = process.env.SOURCE_VERSION;
+    process.env.GIT_SHA = "stale-generic-sha";
+    process.env.SOURCE_VERSION = "provider-source-sha";
+
+    try {
+      const response = await createRequestHandler()(new Request("http://localhost/runtime-config"));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.backend.build).toEqual({
+        gitSha: "provider-source-sha",
+        gitShaSource: "SOURCE_VERSION"
+      });
+    } finally {
+      if (previousGitSha === undefined) {
+        delete process.env.GIT_SHA;
+      } else {
+        process.env.GIT_SHA = previousGitSha;
+      }
+      if (previousSourceVersion === undefined) {
+        delete process.env.SOURCE_VERSION;
+      } else {
+        process.env.SOURCE_VERSION = previousSourceVersion;
+      }
+    }
+  });
+
   test("does not rate-limit runtime config bootstrap reads", async () => {
     const responses = [];
     for (let index = 0; index < 6; index += 1) {
@@ -946,6 +988,27 @@ describe("Veydrift backend", () => {
     }
 
     expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200, 200, 200]);
+  });
+
+  test("serves concurrent external cold cache misses without refresh_busy responses", async () => {
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer: testIndexer(),
+      prewarmResponseCache: false
+    });
+    const headers = { "x-forwarded-for": "203.0.113.42", accept: "application/json" };
+
+    const responses = await Promise.all([
+      handler(new Request("https://api-test.veydrift.com/highscores?limit=10", { headers })),
+      handler(new Request("https://api-test.veydrift.com/universe/galaxies/1/systems/1", { headers })),
+      handler(new Request("https://api-test.veydrift.com/missions?status=active", { headers }))
+    ]);
+    const bodies = await Promise.all(responses.map((response) => response.json()));
+
+    expect(responses.map((response) => response.status)).not.toContain(429);
+    expect(bodies.map((body) => body.error)).not.toContain("refresh_busy");
   });
 
   test("publishes split settlement and game contracts in runtime config", async () => {
@@ -1064,7 +1127,8 @@ describe("Veydrift backend", () => {
             apiUrl: "https://api-test.veydrift.com",
             backend: {
               build: {
-                gitSha: expectedBackendGitSha()
+                gitSha: expectedBackendGitSha(),
+                gitShaSource: expectedBackendGitShaSource()
               },
               worker: {
                 count: Math.max(1, Math.min(Math.floor(navigator.hardwareConcurrency), 2)),

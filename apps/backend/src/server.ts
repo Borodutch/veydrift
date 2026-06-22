@@ -126,6 +126,7 @@ type RuntimeConfig = {
 type BackendDeploymentMetadata = {
   build: {
     gitSha: string | null;
+    gitShaSource: string | null;
   };
   worker: {
     count: number;
@@ -248,7 +249,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const inflightResponseCache = new Map<string, Promise<CachedJsonResponse | null>>();
   const readRateLimits = new Map<string, { count: number; resetAt: number }>();
   const cachedReadRateLimits = new Map<string, { count: number; resetAt: number }>();
-  let activeCacheMissRefreshes = 0;
   const galaxySystemCache = new Map<string, GalaxySystemCacheEntry>();
   const enableResponseCache = dependencies.enableResponseCache ?? (
     !dependencies.chainReader
@@ -1148,40 +1148,21 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
         const inflight = inflightResponseCache.get(cacheKey);
         if (inflight) {
-          return withRequestCors(request, refreshBusyResponse());
+          const refreshed = await inflight;
+          if (refreshed) {
+            return withRequestCors(request, cachedJsonResponse(request, refreshed));
+          }
         }
 
         const rateLimited = readRateLimitResponse(request, url, readRateLimits);
         if (rateLimited) return withRequestCors(request, rateLimited);
-        if (shouldDeferCacheMissRefresh(request, url)) {
-          let resolveDeferred: (cached: CachedJsonResponse | null) => void;
-          inflightResponseCache.set(cacheKey, new Promise((resolve) => {
-            resolveDeferred = resolve;
-          }));
-          activeCacheMissRefreshes += 1;
-          void refreshCachedJsonResponse(request, url, routeRequest, responseCache, cacheKey, cacheTtlMs)
-            .then((refreshed) => resolveDeferred!(refreshed.cached))
-            .catch(() => resolveDeferred!(null))
-            .finally(() => {
-              activeCacheMissRefreshes = Math.max(0, activeCacheMissRefreshes - 1);
-              inflightResponseCache.delete(cacheKey);
-            });
-          return withRequestCors(request, refreshBusyResponse());
-        }
-        if (activeCacheMissRefreshes > 0 && requestClientKey(request)) {
-          return withRequestCors(request, refreshBusyResponse());
-        }
 
         let resolveInflight: (cached: CachedJsonResponse | null) => void;
         inflightResponseCache.set(cacheKey, new Promise((resolve) => {
           resolveInflight = resolve;
         }));
 
-        activeCacheMissRefreshes += 1;
-        const refreshed = await refreshCachedJsonResponse(request, url, routeRequest, responseCache, cacheKey, cacheTtlMs)
-          .finally(() => {
-            activeCacheMissRefreshes = Math.max(0, activeCacheMissRefreshes - 1);
-          });
+        const refreshed = await refreshCachedJsonResponse(request, url, routeRequest, responseCache, cacheKey, cacheTtlMs);
         if (refreshed.cached) {
           resolveInflight!(refreshed.cached);
           inflightResponseCache.delete(cacheKey);
@@ -1351,38 +1332,6 @@ function limitedReadResponse(
       status: 429
     }
   );
-}
-
-function refreshBusyResponse(): Response {
-  return Response.json(
-    {
-      error: "refresh_busy",
-      message: "The game API is refreshing this read. Please retry shortly."
-    },
-    {
-      headers: {
-        ...corsHeaders,
-        "retry-after": "1"
-      },
-      status: 429
-    }
-  );
-}
-
-function shouldDeferCacheMissRefresh(request: Request, url: URL): boolean {
-  if (!isExternalReadRequest(request, url)) return false;
-  return url.pathname !== "/health" && url.pathname !== "/debug/indexer";
-}
-
-function isExternalReadRequest(request: Request, url: URL): boolean {
-  if (requestClientKey(request)) return true;
-  const requestHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? url.host;
-  return !isLoopbackRequestHost(requestHost);
-}
-
-function isLoopbackRequestHost(host: string): boolean {
-  const hostname = host.split(":")[0]?.toLowerCase() ?? "";
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
 function isRateLimitedReadPath(pathname: string): boolean {
@@ -2898,18 +2847,9 @@ function envWorkerRole(): WorkerRole {
 
 function backendDeploymentMetadata(role: WorkerRole): BackendDeploymentMetadata {
   const parsedIndex = Number.parseInt(process.env[WORKER_INDEX_ENV] ?? (role === "writer" ? "0" : ""), 10);
+  const build = backendBuildMetadata(process.env);
   return {
-    build: {
-      gitSha:
-        process.env.GIT_SHA?.trim()
-        || process.env.SOURCE_VERSION?.trim()
-        || process.env.RAILWAY_GIT_COMMIT_SHA?.trim()
-        || process.env.EASYPANEL_GIT_SHA?.trim()
-        || process.env.GITHUB_SHA?.trim()
-        || process.env.COMMIT_SHA?.trim()
-        || process.env.VEYDRIFT_DEPLOYMENT_COMMIT?.trim()
-        || null
-    },
+    build,
     worker: {
       count: resolveWorkerCount(process.env, navigator.hardwareConcurrency),
       defaultMaxWorkerCount: DEFAULT_MAX_WORKER_COUNT,
@@ -2917,6 +2857,24 @@ function backendDeploymentMetadata(role: WorkerRole): BackendDeploymentMetadata 
       role
     }
   };
+}
+
+function backendBuildMetadata(env: NodeJS.ProcessEnv): BackendDeploymentMetadata["build"] {
+  for (const [source, value] of [
+    ["SOURCE_VERSION", env.SOURCE_VERSION],
+    ["EASYPANEL_GIT_SHA", env.EASYPANEL_GIT_SHA],
+    ["RAILWAY_GIT_COMMIT_SHA", env.RAILWAY_GIT_COMMIT_SHA],
+    ["GITHUB_SHA", env.GITHUB_SHA],
+    ["COMMIT_SHA", env.COMMIT_SHA],
+    ["VEYDRIFT_DEPLOYMENT_COMMIT", env.VEYDRIFT_DEPLOYMENT_COMMIT],
+    ["GIT_SHA", env.GIT_SHA]
+  ] as const) {
+    const trimmed = value?.trim();
+    if (trimmed) {
+      return { gitSha: trimmed, gitShaSource: source };
+    }
+  }
+  return { gitSha: null, gitShaSource: null };
 }
 
 function universeContractAddress(config: BackendConfig): `0x${string}` {
