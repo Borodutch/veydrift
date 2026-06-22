@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { planOnChainRefresh, shouldRefreshAllianceStateForPage } from "./PlayableMvpApp";
+import {
+  planOnChainRefresh,
+  shouldClearCachedShipyardStateForPageRefresh,
+  shouldRefreshAllianceStateForPage,
+} from "./PlayableMvpApp";
 
 describe("planOnChainRefresh", () => {
   test("always applies authoritative queues + fleet visibility", () => {
@@ -16,14 +20,12 @@ describe("planOnChainRefresh", () => {
     expect(fresh.applyQueues).toBe(true);
   });
 
-  test("keeps resource state behind the anti-snapback gate for older reads", () => {
+  test("applies resource state for older reads because backend snapshots are authoritative", () => {
     const plan = planOnChainRefresh(
       { planetId: "7", lastSettledAt: "200" },
       { planetId: "7", lastSettledAt: "100" },
     );
-    // The completion poll can report an older settlement than the last spend,
-    // but the cleared building queue must still apply.
-    expect(plan.applyResourceState).toBe(false);
+    expect(plan.applyResourceState).toBe(true);
     expect(plan.applyQueues).toBe(true);
   });
 
@@ -71,17 +73,31 @@ describe("planOnChainRefresh", () => {
     expect(plan.applyQueues).toBe(true);
   });
 
-  test("without force, periodic polls keep the anti-snapback gate for older reads", () => {
+  test("without force, periodic polls still apply backend snapshots for older reads", () => {
     const plan = planOnChainRefresh(
       { planetId: "7", lastSettledAt: "200" },
       { planetId: "7", lastSettledAt: "100" },
     );
-    expect(plan.applyResourceState).toBe(false);
+    expect(plan.applyResourceState).toBe(true);
   });
 });
 
 describe("shouldRefreshAllianceStateForPage", () => {
   test("loads alliance membership for Raid Finder before the Alliance tab is opened", () => {
     expect(shouldRefreshAllianceStateForPage("raid-target-finder")).toBe(true);
+  });
+});
+
+describe("shouldClearCachedShipyardStateForPageRefresh", () => {
+  test("forces mission-action pages to replace stale shipyard inventory before rendering launch controls", () => {
+    expect(shouldClearCachedShipyardStateForPageRefresh("shipyard")).toBe(true);
+    expect(shouldClearCachedShipyardStateForPageRefresh("raid-target-finder")).toBe(true);
+    expect(shouldClearCachedShipyardStateForPageRefresh("mission-control")).toBe(true);
+    expect(shouldClearCachedShipyardStateForPageRefresh("galaxy")).toBe(true);
+  });
+
+  test("does not clear cached shipyard inventory on unrelated pages", () => {
+    expect(shouldClearCachedShipyardStateForPageRefresh("research")).toBe(false);
+    expect(shouldClearCachedShipyardStateForPageRefresh("alliance")).toBe(false);
   });
 });
