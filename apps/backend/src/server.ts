@@ -1237,6 +1237,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     try {
       return await Promise.race([serve(), aborted]);
+    } catch (error) {
+      return withRequestCors(request, errorResponse(error, isSqliteBusyError(error) ? 503 : 500));
     } finally {
       removeAbortListener?.();
     }
@@ -3980,11 +3982,20 @@ function reasonText(error: unknown): string {
 function statusForError(error: unknown, fallback: number): number {
   if (!(error instanceof Error)) return fallback;
 
+  if (isSqliteBusyError(error)) return 503;
   if (isLiveWalletReadTimeout(error)) return 503;
   if (isRateLimitedRpcError(error)) return 503;
   if (isUpstreamRpcError(error)) return 502;
 
   return fallback;
+}
+
+function isSqliteBusyError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes("database is locked")
+    || message.includes("sqlite_busy")
+    || message.includes("sqlite_locked");
 }
 
 function isLiveWalletReadTimeout(error: Error): boolean {

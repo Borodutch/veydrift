@@ -6629,7 +6629,7 @@ function openIndexerDatabase(databasePath: string, readOnly = false): Database {
     mkdirSync(dirname(databasePath), { recursive: true });
   }
   const database = new Database(databasePath, readOnly ? { readonly: true } : undefined);
-  database.exec("PRAGMA busy_timeout = 10000;");
+  database.exec(`PRAGMA busy_timeout = ${readOnly ? 25 : 10000};`);
   if (readOnly) {
     database.exec("PRAGMA query_only = ON;");
     return database;
