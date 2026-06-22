@@ -7374,6 +7374,7 @@ describe("Veydrift backend", () => {
       enableResponseCache: true,
       prewarmResponseCache: false
     });
+    expect((await handler(new Request("http://localhost/universe/systems?galaxy=2&center=44&radius=1"))).status).toBe(200);
 
     for (let index = 0; index < 8; index += 1) {
       const response = await handler(new Request("http://localhost/universe/systems?galaxy=2&center=44&radius=1", {
