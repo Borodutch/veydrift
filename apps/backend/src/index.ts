@@ -108,12 +108,18 @@ function superviseWorkers(workerCount: number): void {
     spawnChild(index);
   }
 
+  // Keep the supervisor event loop alive. Bun child-process handles are not a reliable liveness
+  // anchor in all container/runtime combinations, and if the supervisor exits cleanly Swarm treats the
+  // task as "Complete" and tears down the worker children.
+  const keepAlive = setInterval(() => {}, 60 * 60 * 1_000);
+
   // Forward the supervisor's shutdown to the workers so they never outlive it as orphaned port
   // listeners. installCrashDiagnostics() turns SIGTERM/SIGINT into process.exit(0) (and an uncaught
   // exception into process.exit(1)); the "exit" event fires synchronously for all of those paths, so
   // killing the workers here covers every catchable shutdown. (SIGKILL is uncatchable; container
   // teardown reaps the workers in that case.)
   process.on("exit", () => {
+    clearInterval(keepAlive);
     shuttingDown = true;
     for (const child of children.values()) {
       child.kill();
