@@ -258,28 +258,27 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const inflightResponseCache = new Map<string, Promise<CachedJsonResponse | null>>();
   const readRateLimits = new Map<string, { count: number; resetAt: number }>();
   const galaxySystemCache = new Map<string, GalaxySystemCacheEntry>();
-  const enableResponseCache = dependencies.enableResponseCache ?? (
+  const usesProductionDependencies = (
     !dependencies.chainReader
     && !dependencies.chainSync
     && !dependencies.config
     && !dependencies.indexer
     && !dependencies.randomnessCommitter
   );
+  const enableResponseCache = dependencies.enableResponseCache ?? usesProductionDependencies;
   const logRequests = dependencies.logRequests ?? (
-    !dependencies.chainReader
-    && !dependencies.chainSync
-    && !dependencies.config
-    && !dependencies.indexer
-    && !dependencies.randomnessCommitter
+    usesProductionDependencies
   );
   const sharedResponseCache = dependencies.sharedResponseCache !== undefined
     ? dependencies.sharedResponseCache
     : enableResponseCache && loaded.problems.length === 0
       ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
       : null;
-  // Prewarming walks broad indexed read surfaces and can monopolize reader workers during deploy/startup.
-  // Keep it opt-in so bootstrap endpoints stay available while the shared/on-demand cache warms naturally.
-  const prewarmResponseCache = dependencies.prewarmResponseCache ?? false;
+  // Prewarming walks broad indexed read surfaces. Run it only on the private writer by default so public
+  // readers are available immediately while the writer fills the shared cache in the background.
+  const prewarmResponseCache = dependencies.prewarmResponseCache ?? (
+    usesProductionDependencies && isWriter && enableResponseCache
+  );
 
   const routeRequest = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -1140,6 +1139,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const cacheTtlMs = enableResponseCache ? cacheableJsonRequestTtlMs(request, url) : 0;
       if (cacheTtlMs > 0) {
         const cacheKey = cacheableJsonRequestKey(request, url, indexer);
+        const staleCacheKey = cacheableJsonRequestStaleKey(request, url);
         const cached = responseCache.get(cacheKey);
         const now = Date.now();
         if (cached && cached.expiresAt > now) {
@@ -1157,7 +1157,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
               resolveRefresh = resolve;
             });
             inflightResponseCache.set(cacheKey, refresh);
-            void refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedResponseCache, cacheKey, cacheTtlMs)
+            void refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedResponseCache, cacheKey, cacheTtlMs, staleCacheKey)
               .then((refreshed) => resolveRefresh!(refreshed.cached))
               .catch(() => resolveRefresh!(null))
               .finally(() => {
@@ -1171,11 +1171,23 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         if (sharedCache && sharedStale) {
           responseCache.set(cacheKey, sharedStale);
           if (sharedCache.tryAcquireRefresh(cacheKey)) {
-            void refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedCache, cacheKey, cacheTtlMs)
+            void refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedCache, cacheKey, cacheTtlMs, staleCacheKey)
               .catch(() => null)
               .finally(() => sharedCache.releaseRefresh(cacheKey));
           }
           return withRequestCors(request, cachedJsonResponse(request, sharedStale));
+        }
+        const sharedVersionlessStale = staleCacheKey !== cacheKey
+          ? sharedCache?.get(staleCacheKey, now, true)
+          : null;
+        if (sharedCache && sharedVersionlessStale) {
+          responseCache.set(cacheKey, sharedVersionlessStale);
+          if (sharedCache.tryAcquireRefresh(cacheKey)) {
+            void refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedCache, cacheKey, cacheTtlMs, staleCacheKey)
+              .catch(() => null)
+              .finally(() => sharedCache.releaseRefresh(cacheKey));
+          }
+          return withRequestCors(request, cachedJsonResponse(request, sharedVersionlessStale));
         }
 
         const inflight = inflightResponseCache.get(cacheKey);
@@ -1204,7 +1216,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         }));
 
         try {
-          const refreshed = await refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedResponseCache, cacheKey, cacheTtlMs);
+          const refreshed = await refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedResponseCache, cacheKey, cacheTtlMs, staleCacheKey);
           if (refreshed.cached) {
             resolveInflight!(refreshed.cached);
             inflightResponseCache.delete(cacheKey);
@@ -1469,7 +1481,8 @@ async function refreshCachedJsonResponse(
   responseCache: Map<string, CachedJsonResponse>,
   sharedResponseCache: SharedResponseCache | null | undefined,
   cacheKey: string,
-  cacheTtlMs: number
+  cacheTtlMs: number,
+  staleCacheKey = cacheKey
 ): Promise<CachedJsonRefreshResult> {
   const response = await routeRequest(request);
   if (response.status !== 200 || !jsonContentType(response.headers.get("content-type"))) {
@@ -1490,6 +1503,9 @@ async function refreshCachedJsonResponse(
   };
   responseCache.set(cacheKey, cached);
   sharedResponseCache?.set(cacheKey, cached, cached.expiresAt + staleCachedJsonWindowMs);
+  if (staleCacheKey !== cacheKey) {
+    sharedResponseCache?.set(staleCacheKey, cached, cached.expiresAt + staleCachedJsonWindowMs);
+  }
   pruneResponseCache(responseCache);
   return { cached };
 }
@@ -1525,6 +1541,10 @@ function cacheableWalletSnapshotPath(pathname: string): boolean {
 function cacheableJsonRequestKey(request: Request, url: URL, indexer: SettlementIndexer | undefined): string {
   const indexerVersion = indexer ? cacheableJsonRequestVersion(url, indexer) : "none";
   return `${request.method} ${url.pathname}${url.search} indexer=${indexerVersion}`;
+}
+
+function cacheableJsonRequestStaleKey(request: Request, url: URL): string {
+  return `${request.method} ${url.pathname}${url.search} indexer=stale`;
 }
 
 function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): string {
@@ -1653,6 +1673,7 @@ function hotResponseCachePaths(indexer: SettlementIndexer): string[] {
   for (const [wallet, planets] of indexer.settledPlanetsByOwner()) {
     const encodedWallet = encodeURIComponent(wallet);
     paths.add(`/wallet/${encodedWallet}/fleet-visibility`);
+    paths.add(`/wallet/${encodedWallet}/fleet-visibility?archive=none`);
     paths.add(`/wallet/${encodedWallet}/missions?status=completed&page=1&pageSize=25`);
     paths.add(`/wallet/${encodedWallet}/settlement`);
     paths.add(`/wallet/${encodedWallet}/planets`);
