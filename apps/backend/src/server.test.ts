@@ -36,6 +36,7 @@ import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { watchedPlanetMessage } from "./playerProfiles";
 import { deriveInfrastructureFields } from "./readModels";
 import { createRequestHandler, deriveLogBackfiller, shouldRecoverFailedReconciliation } from "./server";
+import { DEFAULT_MAX_WORKER_COUNT } from "./workerPool";
 
 setSystemTime(new Date(1_770_007_680_000));
 afterAll(() => setSystemTime());
@@ -109,6 +110,10 @@ function expectedBackendGitShaSource(): string | null {
   if (process.env.VEYDRIFT_DEPLOYMENT_COMMIT?.trim()) return "VEYDRIFT_DEPLOYMENT_COMMIT";
   if (process.env.GIT_SHA?.trim()) return "GIT_SHA";
   return null;
+}
+
+function expectedBackendWorkerCount(): number {
+  return Math.max(1, Math.min(Math.floor(navigator.hardwareConcurrency), DEFAULT_MAX_WORKER_COUNT));
 }
 
 const planet: PlanetState = {
@@ -796,8 +801,8 @@ describe("Veydrift backend", () => {
           gitShaSource: expectedBackendGitShaSource()
         },
         worker: {
-          count: Math.max(1, Math.min(Math.floor(navigator.hardwareConcurrency), 2)),
-          defaultMaxWorkerCount: 2,
+          count: expectedBackendWorkerCount(),
+          defaultMaxWorkerCount: DEFAULT_MAX_WORKER_COUNT,
           index: 0,
           role: "writer"
         }
@@ -917,8 +922,8 @@ describe("Veydrift backend", () => {
           gitShaSource: expectedBackendGitShaSource()
         },
         worker: {
-          count: Math.max(1, Math.min(Math.floor(navigator.hardwareConcurrency), 2)),
-          defaultMaxWorkerCount: 2,
+          count: expectedBackendWorkerCount(),
+          defaultMaxWorkerCount: DEFAULT_MAX_WORKER_COUNT,
           index: 0,
           role: "writer"
         }
@@ -1131,8 +1136,8 @@ describe("Veydrift backend", () => {
                 gitShaSource: expectedBackendGitShaSource()
               },
               worker: {
-                count: Math.max(1, Math.min(Math.floor(navigator.hardwareConcurrency), 2)),
-                defaultMaxWorkerCount: 2,
+                count: expectedBackendWorkerCount(),
+                defaultMaxWorkerCount: DEFAULT_MAX_WORKER_COUNT,
                 index: 0,
                 role: "writer"
               }

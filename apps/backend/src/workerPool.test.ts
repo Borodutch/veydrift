@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   createForwardingFetch,
   DEFAULT_MAX_WORKER_COUNT,
-  MAX_WORKER_COUNT_ENV,
   resolveWorkerAssignment,
   resolveWorkerCount,
   resolveWriterInternalPort,
@@ -25,12 +24,10 @@ describe("resolveWorkerCount", () => {
     expect(resolveWorkerCount({}, Number.NaN)).toBe(1);
   });
 
-  test("caps a positive integer override at the default max unless the max cap is raised", () => {
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "3" }, 16)).toBe(DEFAULT_MAX_WORKER_COUNT);
+  test("honors a positive integer override even above the default cap", () => {
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "3" }, 16)).toBe(3);
     expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "1" }, 16)).toBe(1);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "12" }, 16)).toBe(DEFAULT_MAX_WORKER_COUNT);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "3", [MAX_WORKER_COUNT_ENV]: "3" }, 16)).toBe(3);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "12", [MAX_WORKER_COUNT_ENV]: "12" }, 16)).toBe(12);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "12" }, 16)).toBe(12);
   });
 
   test("ignores blank or invalid overrides and falls back to the capped default", () => {
@@ -202,24 +199,49 @@ describe("createForwardingFetch", () => {
     await expect(response.json()).resolves.toMatchObject({ ok: true });
   });
 
-  test("forwards runtime-config bootstrap reads to the writer", async () => {
+  test("serves runtime-config bootstrap reads locally on readers", async () => {
     const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
     const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
       calls.push({ url: String(input), body: init?.body });
-      return Response.json({
-        apiUrl: "https://api-test.veydrift.com",
-        chainId: 84532
-      });
+      return Response.json({ error: "writer should not receive runtime-config" }, { status: 503 });
     }) as unknown as typeof fetch;
 
-    const local = async () => new Response("reader-starved", { status: 503 });
+    const local = async () => Response.json({
+      backend: { worker: { role: "reader" } },
+      apiUrl: "https://api-test.veydrift.com",
+      chainId: 84532
+    });
     const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
 
     const response = await handler(new Request("http://localhost/runtime-config"));
 
-    expect(calls).toEqual([{ url: "http://127.0.0.1:4001/runtime-config", body: undefined }]);
+    expect(calls).toEqual([]);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
+      backend: { worker: { role: "reader" } },
+      apiUrl: "https://api-test.veydrift.com",
+      chainId: 84532
+    });
+  });
+
+  test("keeps runtime-config local when the writer is busy", async () => {
+    const fetchImpl = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60_000));
+      return Response.json({ error: "late writer response" }, { status: 503 });
+    }) as unknown as typeof fetch;
+
+    const local = async () => Response.json({
+      backend: { worker: { role: "reader" } },
+      apiUrl: "https://api-test.veydrift.com",
+      chainId: 84532
+    });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    const response = await handler(new Request("http://localhost/runtime-config"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      backend: { worker: { role: "reader" } },
       apiUrl: "https://api-test.veydrift.com",
       chainId: 84532
     });
