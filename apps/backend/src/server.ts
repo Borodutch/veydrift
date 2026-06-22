@@ -55,7 +55,14 @@ import {
 } from "./playerProfiles";
 import { deriveInfrastructureFields, isCombatShipId } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
-import type { WorkerRole } from "./workerPool";
+import {
+  DEFAULT_MAX_WORKER_COUNT,
+  resolveWorkerCount,
+  WORKER_COUNT_ENV,
+  WORKER_INDEX_ENV,
+  WORKER_ROLE_ENV,
+  type WorkerRole
+} from "./workerPool";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8"
@@ -90,6 +97,7 @@ type HealthPayload = {
 type RuntimeConfig = {
   allianceContractAddress: string | null;
   apiUrl: string;
+  backend: BackendDeploymentMetadata;
   chainId: number;
   contractAddress: string | null;
   featureSupport: {
@@ -113,6 +121,18 @@ type RuntimeConfig = {
     metal: string | null;
   };
   rpcProvider: "alchemy" | "unknown";
+};
+
+type BackendDeploymentMetadata = {
+  build: {
+    gitSha: string | null;
+  };
+  worker: {
+    count: number;
+    defaultMaxWorkerCount: number;
+    index: number | null;
+    role: WorkerRole;
+  };
 };
 
 export type ServerDependencies = {
@@ -144,7 +164,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   // serve from the shared WAL database and must not start any background loop (VEY-KANEO-466). Tests
   // that inject services bypass this entirely. Default is "writer" so single-process and test setups
   // keep their current behavior.
-  const isWriter = (dependencies.role ?? "writer") !== "reader";
+  const workerRole = dependencies.role ?? envWorkerRole();
+  const isWriter = workerRole !== "reader";
   const loaded = dependencies.config ? { config: dependencies.config, problems: dependencies.configProblems ?? [] } : loadBackendConfig();
   const rawChainReader =
     dependencies.chainReader ??
@@ -257,6 +278,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           ok: readiness.ready,
           service: "veydrift-backend",
           configured: loaded.problems.length === 0,
+          backend: backendDeploymentMetadata(workerRole),
           chain: safeConfigSummary(loaded.config),
           readiness,
           chainSync: chainSyncSnapshot,
@@ -273,7 +295,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "GET" && url.pathname === "/runtime-config") {
-      return Response.json(getRuntimeConfig(), {
+      return Response.json(getRuntimeConfig(workerRole), {
         headers: corsHeaders
       });
     }
@@ -1045,7 +1067,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "POST" && url.pathname === "/graphql") {
-      return handleGraphQLRequest(request);
+      return handleGraphQLRequest(request, workerRole);
     }
 
     if (request.method === "GET" && url.pathname === "/graphql") {
@@ -1055,7 +1077,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             service: {
               name: "Veydrift",
               status: loaded.problems.length === 0 ? "ready" : "configuration-required",
-              runtime: getRuntimeConfig()
+              runtime: getRuntimeConfig(workerRole)
             }
           }
         },
@@ -1091,6 +1113,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     });
     const serve = async (): Promise<Response> => {
       const url = new URL(request.url);
+      if (isBootstrapReadPath(url.pathname)) {
+        return withRequestCors(request, await routeRequest(request));
+      }
+
       const cacheTtlMs = enableResponseCache ? cacheableJsonRequestTtlMs(request, url) : 0;
       if (cacheTtlMs > 0) {
         const cacheKey = cacheableJsonRequestKey(request, url, indexer);
@@ -1363,10 +1389,13 @@ function isRateLimitedReadPath(pathname: string): boolean {
   return pathname === "/chain/events"
     || pathname === "/missions"
     || pathname === "/highscores"
-    || pathname === "/runtime-config"
     || pathname.startsWith("/wallet/")
     || pathname.startsWith("/universe/")
     || pathname.startsWith("/raid-finder/");
+}
+
+function isBootstrapReadPath(pathname: string): boolean {
+  return pathname === "/health" || pathname === "/runtime-config";
 }
 
 function requestClientKey(request: Request): string | null {
@@ -1561,7 +1590,6 @@ function prewarmHotResponseCache(
 function hotResponseCachePaths(indexer: SettlementIndexer): string[] {
   const paths = new Set<string>([
     "/health",
-    "/runtime-config",
     "/highscores?page=1&pageSize=250",
     "/missions?status=active",
     "/missions?status=completed&page=1&pageSize=25"
@@ -2813,7 +2841,7 @@ function moonChanceStatus(report: MoonChanceReportEvent): string {
   return report.moonCreated ? "created" : "not_created";
 }
 
-function getRuntimeConfig(): RuntimeConfig {
+function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConfig {
   const apiUrl = process.env.VEYDRIFT_PUBLIC_API_URL ?? "https://api-test.veydrift.com";
   const graphqlUrl = process.env.VEYDRIFT_PUBLIC_GRAPHQL_URL ?? `${apiUrl}/graphql`;
   const rpcUrl = process.env.VEYDRIFT_RPC_URL ?? "";
@@ -2837,6 +2865,7 @@ function getRuntimeConfig(): RuntimeConfig {
   return {
     allianceContractAddress,
     apiUrl,
+    backend: backendDeploymentMetadata(workerRole),
     chainId: Number.parseInt(process.env.VEYDRIFT_CHAIN_ID ?? "84532", 10),
     contractAddress,
     featureSupport: {
@@ -2860,6 +2889,33 @@ function getRuntimeConfig(): RuntimeConfig {
     randomnessEngineAddress,
     resourceTokenAddresses,
     rpcProvider: rpcUrl.includes("alchemy") ? "alchemy" : "unknown"
+  };
+}
+
+function envWorkerRole(): WorkerRole {
+  return process.env[WORKER_ROLE_ENV] === "reader" ? "reader" : "writer";
+}
+
+function backendDeploymentMetadata(role: WorkerRole): BackendDeploymentMetadata {
+  const parsedIndex = Number.parseInt(process.env[WORKER_INDEX_ENV] ?? (role === "writer" ? "0" : ""), 10);
+  return {
+    build: {
+      gitSha:
+        process.env.GIT_SHA?.trim()
+        || process.env.SOURCE_VERSION?.trim()
+        || process.env.RAILWAY_GIT_COMMIT_SHA?.trim()
+        || process.env.EASYPANEL_GIT_SHA?.trim()
+        || process.env.GITHUB_SHA?.trim()
+        || process.env.COMMIT_SHA?.trim()
+        || process.env.VEYDRIFT_DEPLOYMENT_COMMIT?.trim()
+        || null
+    },
+    worker: {
+      count: resolveWorkerCount(process.env, navigator.hardwareConcurrency),
+      defaultMaxWorkerCount: DEFAULT_MAX_WORKER_COUNT,
+      index: Number.isFinite(parsedIndex) ? parsedIndex : null,
+      role
+    }
   };
 }
 
@@ -3928,7 +3984,7 @@ function badRequest(message: string): Response {
   );
 }
 
-async function handleGraphQLRequest(request: Request): Promise<Response> {
+async function handleGraphQLRequest(request: Request, workerRole: WorkerRole): Promise<Response> {
   let payload: GraphQLPayload;
 
   try {
@@ -3971,7 +4027,7 @@ async function handleGraphQLRequest(request: Request): Promise<Response> {
         service: {
           name: "Veydrift",
           status: "playable-test",
-          runtime: getRuntimeConfig()
+          runtime: getRuntimeConfig(workerRole)
         }
       }
     },

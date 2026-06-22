@@ -182,6 +182,46 @@ describe("createForwardingFetch", () => {
     await expect(response.text()).resolves.toBe("event: sync-status\n\n");
   });
 
+  test("forwards health readiness reads to the writer", async () => {
+    const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
+    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: init?.body });
+      return Response.json({ ok: true, readiness: { ready: true } });
+    }) as unknown as typeof fetch;
+
+    const local = async () => new Response("reader-health", { status: 503 });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    const response = await handler(new Request("http://localhost/health"));
+
+    expect(calls).toEqual([{ url: "http://127.0.0.1:4001/health", body: undefined }]);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ ok: true });
+  });
+
+  test("forwards runtime-config bootstrap reads to the writer", async () => {
+    const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
+    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: init?.body });
+      return Response.json({
+        apiUrl: "https://api-test.veydrift.com",
+        chainId: 84532
+      });
+    }) as unknown as typeof fetch;
+
+    const local = async () => new Response("reader-starved", { status: 503 });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    const response = await handler(new Request("http://localhost/runtime-config"));
+
+    expect(calls).toEqual([{ url: "http://127.0.0.1:4001/runtime-config", body: undefined }]);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      apiUrl: "https://api-test.veydrift.com",
+      chainId: 84532
+    });
+  });
+
   test("aborts the writer SSE request when the client cancels the forwarded stream", async () => {
     let upstreamCanceled = false;
     let fetchAborted = false;

@@ -88,6 +88,18 @@ const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425
 const allianceJoinRequestedTopic = "0x57dc0d6d966259dfce732817e0ad98a199174482159ce86fec64334a407ed2b5";
 const allianceJoinedTopic = "0x966912f1fd05e1765f8d822e0db01e534676a830ea4b161fc254f4e63f0324eb";
 const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
+
+function expectedBackendGitSha(): string | null {
+  return process.env.GIT_SHA?.trim()
+    || process.env.SOURCE_VERSION?.trim()
+    || process.env.RAILWAY_GIT_COMMIT_SHA?.trim()
+    || process.env.EASYPANEL_GIT_SHA?.trim()
+    || process.env.GITHUB_SHA?.trim()
+    || process.env.COMMIT_SHA?.trim()
+    || process.env.VEYDRIFT_DEPLOYMENT_COMMIT?.trim()
+    || null;
+}
+
 const planet: PlanetState = {
   planetId: "7",
   owner: player,
@@ -767,6 +779,17 @@ describe("Veydrift backend", () => {
         qaSyntheticStationedDefenders: false
       },
       configured: false,
+      backend: {
+        build: {
+          gitSha: expectedBackendGitSha()
+        },
+        worker: {
+          count: Math.max(1, Math.min(Math.floor(navigator.hardwareConcurrency), 2)),
+          defaultMaxWorkerCount: 2,
+          index: 0,
+          role: "writer"
+        }
+      },
       readiness: {
         ready: false,
         configurationReady: false,
@@ -871,10 +894,22 @@ describe("Veydrift backend", () => {
 
   test("returns public runtime config", async () => {
     const response = await handler(new Request("http://localhost/runtime-config"));
+    const body = await response.json();
 
-    await expect(response.json()).resolves.toEqual({
+    expect(body).toEqual({
       apiUrl: "https://api-test.veydrift.com",
       allianceContractAddress: null,
+      backend: {
+        build: {
+          gitSha: expectedBackendGitSha()
+        },
+        worker: {
+          count: Math.max(1, Math.min(Math.floor(navigator.hardwareConcurrency), 2)),
+          defaultMaxWorkerCount: 2,
+          index: 0,
+          role: "writer"
+        }
+      },
       chainId: 84532,
       contractAddress: null,
       featureSupport: {
@@ -900,6 +935,17 @@ describe("Veydrift backend", () => {
       rpcProvider: "unknown"
     });
     expect(response.status).toBe(200);
+  });
+
+  test("does not rate-limit runtime config bootstrap reads", async () => {
+    const responses = [];
+    for (let index = 0; index < 6; index += 1) {
+      responses.push(await handler(new Request("https://api-test.veydrift.com/runtime-config", {
+        headers: { "x-forwarded-for": "203.0.113.10" }
+      })));
+    }
+
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200, 200, 200]);
   });
 
   test("publishes split settlement and game contracts in runtime config", async () => {
@@ -1016,6 +1062,17 @@ describe("Veydrift backend", () => {
           runtime: {
             allianceContractAddress: null,
             apiUrl: "https://api-test.veydrift.com",
+            backend: {
+              build: {
+                gitSha: expectedBackendGitSha()
+              },
+              worker: {
+                count: Math.max(1, Math.min(Math.floor(navigator.hardwareConcurrency), 2)),
+                defaultMaxWorkerCount: 2,
+                index: 0,
+                role: "writer"
+              }
+            },
             chainId: 84532,
             contractAddress: null,
             featureSupport: {
