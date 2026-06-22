@@ -7803,6 +7803,50 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     expect(body.randomnessCommitter).not.toBeNull();
     expect(body.indexer).not.toBeNull();
   });
+
+  test("writer boot skips expensive startup materialized backfill", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-server-boot-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+
+    try {
+      const writer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, { databasePath });
+      writer.applyEvent({
+        ...planet,
+        eventName: "PlanetStarted",
+        transactionHash: "0xbootbackfill",
+        blockNumber: "100"
+      });
+      expect(writer.walletSettlement(player)).toMatchObject({
+        hasFirstPlanet: true,
+        homePlanetId: planet.planetId
+      });
+
+      const database = new Database(databasePath);
+      database.query("DELETE FROM contract_players").run();
+      database.query("DELETE FROM contract_planets").run();
+      database.query("DELETE FROM contract_planet_resources").run();
+      database.close();
+
+      const handler = createRequestHandler({
+        chainReader: new MockChainReader(),
+        config: {
+          ...configuredTestConfig,
+          indexDbPath: databasePath
+        }
+      });
+
+      const response = await handler(new Request(`http://localhost/wallet/${player}/settlement`));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        hasFirstPlanet: false,
+        homePlanetId: null
+      });
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
 });
 
 describe("shouldRecoverFailedReconciliation (VEY-KANEO-461)", () => {

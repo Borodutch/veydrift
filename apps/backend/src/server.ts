@@ -193,9 +193,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       // boot-time recovery retries, instead of an indefinite silent reconciliation_in_progress.
       ...(loaded.config.rebuildDeadlineMs ? { rebuildDeadlineMs: loaded.config.rebuildDeadlineMs } : {}),
       readOnly: !isWriter,
-      // The shared SQLite materialized-state repair is a startup write pass. In the worker pool it must
-      // run once in the writer, not once per reader, or deploy boot can turn into an event-replay stampede.
-      runStartupBackfill: isWriter
+      // Startup should only create/upgrade schema. Historical materialized-state repair can scan large
+      // persisted event tables, so keep it on explicit operator replay/sync commands instead of blocking
+      // backend boot and starving trivial endpoints such as /runtime-config.
+      runStartupBackfill: false
     }) : undefined);
   const logBackfiller = deriveLogBackfiller(indexerChainReader);
   const chainSync =
