@@ -1109,8 +1109,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const response = await routeRequest(request);
         if (response.status === 200 && jsonContentType(response.headers.get("content-type"))) {
           const body = await response.clone().arrayBuffer();
+          const responseHeaders = new Headers(response.headers);
+          responseHeaders.set("cache-control", clientCacheControlHeader(url, cacheTtlMs));
           const headers: Array<[string, string]> = [];
-          response.headers.forEach((value, key) => headers.push([key, value]));
+          responseHeaders.forEach((value, key) => headers.push([key, value]));
           const cachedResponse = {
             body,
             expiresAt: Date.now() + cacheTtlMs,
@@ -1289,6 +1291,12 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return ttlCacheBucket(30_000);
   if (url.pathname === "/universe/systems") return ttlCacheBucket(30_000);
   return indexer.responseCacheVersion();
+}
+
+function clientCacheControlHeader(url: URL, ttlMs: number): string {
+  const seconds = Math.max(1, Math.floor(ttlMs / 1_000));
+  const scope = url.pathname.startsWith("/wallet/") ? "private" : "public";
+  return `${scope}, max-age=${seconds}, stale-while-revalidate=${seconds}`;
 }
 
 function ttlCacheBucket(ttlMs: number): string {
