@@ -148,6 +148,7 @@ const indexedStateVersionMetadataKey = "indexedStateVersion";
 export type SettlementIndexerOptions = {
   database?: Database;
   databasePath?: string;
+  readOnly?: boolean;
   // Multi-process API workers share one SQLite DB. The writer is the only process that should run
   // startup materialized-state repair/backfill; readers only need the schema and current rows.
   runStartupBackfill?: boolean;
@@ -487,11 +488,13 @@ export class SettlementIndexer {
     private readonly fromBlock: bigint,
     options: SettlementIndexerOptions = {}
   ) {
-    this.db = options.database ?? openIndexerDatabase(options.databasePath ?? ":memory:");
+    this.db = options.database ?? openIndexerDatabase(options.databasePath ?? ":memory:", options.readOnly ?? false);
     this.qaSyntheticStationedDefenders = options.qaSyntheticStationedDefenders ?? false;
     this.randomnessEngineConfigured = options.randomnessEngineConfigured ?? false;
     this.rebuildDeadlineMs = options.rebuildDeadlineMs && options.rebuildDeadlineMs > 0 ? options.rebuildDeadlineMs : 0;
-    this.migrate(options.runStartupBackfill ?? true);
+    if (!options.readOnly) {
+      this.migrate(options.runStartupBackfill ?? true);
+    }
   }
 
   // VEY-KANEO-471: see SettlementIndexerOptions. Read once in fleetMissionVisibility.
@@ -6626,12 +6629,16 @@ function isStoredFleetMissionSummary(value: unknown): value is FleetMissionSumma
     && mission.needsResolution !== undefined;
 }
 
-function openIndexerDatabase(databasePath: string): Database {
+function openIndexerDatabase(databasePath: string, readOnly = false): Database {
   if (databasePath !== ":memory:") {
     mkdirSync(dirname(databasePath), { recursive: true });
   }
-  const database = new Database(databasePath);
+  const database = new Database(databasePath, readOnly ? { readonly: true } : undefined);
   database.exec("PRAGMA busy_timeout = 10000;");
+  if (readOnly) {
+    database.exec("PRAGMA query_only = ON;");
+    return database;
+  }
   if (databasePath !== ":memory:") {
     // Read-concurrency tuning for the API's read-heavy traffic (VEY-KANEO-467):
     // - WAL lets readers run without blocking the background event-integration writer.
