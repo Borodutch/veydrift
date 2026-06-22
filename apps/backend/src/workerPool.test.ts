@@ -323,17 +323,15 @@ describe("createForwardingFetch", () => {
     await expect(response.json()).resolves.toEqual({ ok: true, backend: { worker: { role: "reader" } } });
   });
 
-  test("forwards indexed gameplay reads to the writer without initializing the local reader handler", async () => {
+  test("serves indexed gameplay reads locally on reader workers", async () => {
     const calls: string[] = [];
     const fetchImpl = (async (input: string | URL) => {
       calls.push(String(input));
       return Response.json({ ok: true });
     }) as unknown as typeof fetch;
 
-    let localInitialized = false;
     const local = async () => {
-      localInitialized = true;
-      return Response.json({ error: "reader handler should not initialize" }, { status: 503 });
+      return Response.json({ ok: true, worker: "reader" });
     };
     const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
 
@@ -347,13 +345,7 @@ describe("createForwardingFetch", () => {
       expect(response.status).toBe(200);
     }
 
-    expect(localInitialized).toBe(false);
-    expect(calls).toEqual([
-      "http://127.0.0.1:4001/highscores?limit=10",
-      "http://127.0.0.1:4001/universe/galaxies/6/systems/9",
-      "http://127.0.0.1:4001/wallet/0x1111111111111111111111111111111111111111/infrastructure",
-      "http://127.0.0.1:4001/raid-finder/debris"
-    ]);
+    expect(calls).toEqual([]);
   });
 
   test("keeps runtime-config local when the writer is busy", async () => {
@@ -402,7 +394,7 @@ describe("createForwardingFetch", () => {
     });
   });
 
-  test("keeps bootstrap reads local while an indexed read is waiting on the writer", async () => {
+  test("keeps bootstrap reads local while a writer-owned read is waiting on the writer", async () => {
     let releaseWriter!: () => void;
     const writerReady = new Promise<void>((resolve) => {
       releaseWriter = resolve;
@@ -421,7 +413,7 @@ describe("createForwardingFetch", () => {
     };
     const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl, bootstrap);
 
-    const indexedRead = handler(new Request("http://localhost/highscores?limit=10"));
+    const indexedRead = handler(new Request("http://localhost/chain/events"));
     await Promise.resolve();
 
     const runtime = await handler(new Request("http://localhost/runtime-config"));
