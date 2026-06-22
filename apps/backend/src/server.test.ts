@@ -7363,7 +7363,7 @@ describe("Veydrift backend", () => {
     expect(body.systems).toHaveLength(17);
   });
 
-  test("serves cache hits before applying runaway refresh limits", async () => {
+  test("serves normal cache hits while capping runaway repeated cached reads", async () => {
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader: new MockChainReader(),
@@ -7372,7 +7372,7 @@ describe("Veydrift backend", () => {
     });
     expect((await handler(new Request("http://localhost/universe/systems?galaxy=2&center=44&radius=1"))).status).toBe(200);
 
-    for (let index = 0; index < 8; index += 1) {
+    for (let index = 0; index < 4; index += 1) {
       const response = await handler(new Request("http://localhost/universe/systems?galaxy=2&center=44&radius=1", {
         headers: {
           "x-forwarded-for": "203.0.113.9"
@@ -7381,6 +7381,12 @@ describe("Veydrift backend", () => {
       expect(response.status).toBe(200);
       await response.arrayBuffer();
     }
+    const rateLimited = await handler(new Request("http://localhost/universe/systems?galaxy=2&center=44&radius=1", {
+      headers: {
+        "x-forwarded-for": "203.0.113.9"
+      }
+    }));
+    expect(rateLimited.status).toBe(429);
   });
 
   test("returns deterministic universe system data", async () => {

@@ -1263,7 +1263,7 @@ function isIndexableChainReader(
 
 const readRateLimitWindowMs = 10_000;
 const readRateLimitMaxRequests = 4;
-const cachedReadRateLimitMaxRequests = 60;
+const cachedReadRateLimitMaxRequests = 4;
 const staleCachedJsonWindowMs = 300_000;
 
 function readRateLimitResponse(
@@ -1279,14 +1279,15 @@ function cachedReadRateLimitResponse(
   url: URL,
   limits: Map<string, { count: number; resetAt: number }>
 ): Response | null {
-  return limitedReadResponse(request, url, limits, cachedReadRateLimitMaxRequests);
+  return limitedReadResponse(request, url, limits, cachedReadRateLimitMaxRequests, "route");
 }
 
 function limitedReadResponse(
   request: Request,
   url: URL,
   limits: Map<string, { count: number; resetAt: number }>,
-  maxRequests: number
+  maxRequests: number,
+  scope: "client" | "route" = "client"
 ): Response | null {
   if (request.method !== "GET") return null;
   if (url.pathname === "/health" || url.pathname === "/debug/indexer") return null;
@@ -1300,8 +1301,9 @@ function limitedReadResponse(
     }
   }
 
-  const key = requestClientKey(request);
-  if (!key) return null;
+  const clientKey = requestClientKey(request);
+  if (!clientKey) return null;
+  const key = scope === "route" ? `${clientKey} ${url.pathname}${url.search}` : clientKey;
   const current = limits.get(key);
   if (!current || current.resetAt <= now) {
     limits.set(key, { count: 1, resetAt: now + readRateLimitWindowMs });
