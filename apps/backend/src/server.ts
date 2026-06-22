@@ -1229,7 +1229,7 @@ function isIndexableChainReader(
 }
 
 const readRateLimitWindowMs = 10_000;
-const readRateLimitMaxRequests = 80;
+const readRateLimitMaxRequests = 10;
 
 function readRateLimitResponse(
   request: Request,
