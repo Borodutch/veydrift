@@ -105,14 +105,14 @@ describe("playable chain refresh", () => {
     expect(shouldRefreshMissionActionStateForPage("overview")).toBe(true);
   });
 
-  test("clears cached shipyard counts only for direct Shipyard page refreshes", async () => {
+  test("clears cached shipyard counts before rendering fleet-action surfaces", async () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
     expect(shouldClearCachedShipyardStateForPageRefresh("shipyard")).toBe(true);
-    expect(shouldClearCachedShipyardStateForPageRefresh("galaxy")).toBe(false);
-    expect(shouldClearCachedShipyardStateForPageRefresh("mission-control")).toBe(false);
+    expect(shouldClearCachedShipyardStateForPageRefresh("galaxy")).toBe(true);
+    expect(shouldClearCachedShipyardStateForPageRefresh("mission-control")).toBe(true);
+    expect(shouldClearCachedShipyardStateForPageRefresh("raid-target-finder")).toBe(true);
     expect(source).toContain("refreshShipyardState({ clearCachedState: true });");
-    expect(source).toContain("} else if (shouldRefreshMissionActionStateForPage(page)) {\n      refreshShipyardState();");
   });
 
   test("blocks follow-up mission submits while a previous mission is settling", () => {

@@ -698,7 +698,7 @@ export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
 }
 
 export function shouldClearCachedShipyardStateForPageRefresh(page: Page): boolean {
-  return page === "shipyard";
+  return page === "shipyard" || shouldRefreshMissionActionStateForPage(page);
 }
 
 // VEY-KANEO-433: Mission Control auto-polls its own data (active missions, the past-mission archives,
