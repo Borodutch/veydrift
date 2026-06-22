@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   BASE_SEPOLIA,
+  __clearGameApiReadPoolForTests,
   assertWalletUnlocked,
   decodeBoolResult,
   decodeColonizationTargetId,
@@ -87,6 +88,10 @@ import {
   type Eip1193Provider
 } from "./walletFlow";
 import { GAME_UNAVAILABLE_MESSAGE } from "./gameUnavailable";
+
+afterEach(() => {
+  __clearGameApiReadPoolForTests();
+});
 
 const account = "0x1111111111111111111111111111111111111111";
 const contract = "0x2222222222222222222222222222222222222222";
@@ -1986,7 +1991,7 @@ describe("walletFlow", () => {
     });
   });
 
-  test("fetches dynamic wallet state without browser cache", async () => {
+  test("fetches dynamic wallet state without browser cache and pools duplicate burst reads", async () => {
     const originalFetch = globalThis.fetch;
     const calls: Array<{ url: string; init: { cache: RequestCache | undefined; headers: HeadersInit | undefined; signal: boolean } }> = [];
 
@@ -2039,14 +2044,6 @@ describe("walletFlow", () => {
         },
       },
       {
-        url: `https://api.example.test/wallet/${account}/settlement`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
         url: `https://api.example.test/wallet/${account}/planets`,
         init: {
           cache: "no-store",
@@ -2079,22 +2076,6 @@ describe("walletFlow", () => {
         },
       },
       {
-        url: `https://api.example.test/wallet/${account}/infrastructure`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/moon?planetId=7`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
         url: `https://api.example.test/wallet/${account}/moon?planetId=7`,
         init: {
           cache: "no-store",
@@ -2104,14 +2085,6 @@ describe("walletFlow", () => {
       },
       {
         url: `https://api.example.test/wallet/${account}/moon`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/research?planetId=7`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
@@ -2144,14 +2117,6 @@ describe("walletFlow", () => {
       },
       {
         url: `https://api.example.test/wallet/${account}/missions?status=completed&page=2&pageSize=25`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/shipyard?planetId=4`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },

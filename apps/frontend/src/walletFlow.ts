@@ -41,6 +41,10 @@ export const WALLET_ACCOUNT_UNAVAILABLE_MESSAGE = "Wallet account is unavailable
 export const WALLET_CONNECTION_REJECTED_MESSAGE = "Wallet connection was rejected. Reconnect your wallet, then retry.";
 export const WALLET_ACCOUNT_MISMATCH_MESSAGE = "The selected wallet account changed. Reconnect the active wallet, then retry.";
 
+const GAME_API_RECENT_READ_TTL_MS = 750;
+const gameApiInflightReads = new Map<string, Promise<unknown>>();
+const gameApiRecentReads = new Map<string, { expiresAt: number; value: unknown }>();
+
 export type SettlementConfig = {
   address?: string;
   legacyAddress?: string;
@@ -2947,9 +2951,10 @@ export async function fetchFleetMissionArchive(
 }
 
 export async function fetchGlobalActiveMissions(apiUrl: string): Promise<GlobalActiveMissionsResponse> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/missions?status=active`);
-  if (!response.ok) throw new Error(await apiErrorMessage(response, "Active missions"));
-  return response.json() as Promise<GlobalActiveMissionsResponse>;
+  return fetchGameApiJson<GlobalActiveMissionsResponse>(
+    `${apiUrl.replace(/\/+$/, "")}/missions?status=active`,
+    "Active missions"
+  );
 }
 
 export async function fetchGlobalMissionArchive(
@@ -2960,21 +2965,24 @@ export async function fetchGlobalMissionArchive(
   params.set("status", "completed");
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/missions?${params.toString()}`);
-  if (!response.ok) throw new Error(await apiErrorMessage(response, "Mission archive"));
-  return response.json() as Promise<GlobalMissionArchiveResponse>;
+  return fetchGameApiJson<GlobalMissionArchiveResponse>(
+    `${apiUrl.replace(/\/+$/, "")}/missions?${params.toString()}`,
+    "Mission archive"
+  );
 }
 
 export async function fetchMission(apiUrl: string, missionId: string): Promise<MissionDetailResponse> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/mission/${encodeURIComponent(missionId)}`);
-  if (!response.ok) throw new Error(await apiErrorMessage(response, "Mission"));
-  return response.json() as Promise<MissionDetailResponse>;
+  return fetchGameApiJson<MissionDetailResponse>(
+    `${apiUrl.replace(/\/+$/, "")}/mission/${encodeURIComponent(missionId)}`,
+    "Mission"
+  );
 }
 
 export async function fetchBattleReports(apiUrl: string): Promise<BattleReport[]> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/battle-reports`);
-  if (!response.ok) throw new Error(await apiErrorMessage(response, "Battle reports"));
-  return response.json() as Promise<BattleReport[]>;
+  return fetchGameApiJson<BattleReport[]>(
+    `${apiUrl.replace(/\/+$/, "")}/battle-reports`,
+    "Battle reports"
+  );
 }
 
 export async function fetchInfrastructureState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainInfrastructureState> {
@@ -3212,9 +3220,10 @@ function highscoreNetworkFailureMessage(error: unknown): string {
 }
 
 export async function fetchSystemData(apiUrl: string, galaxy: number, system: number): Promise<unknown> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}`);
-  if (!response.ok) throw new Error(`System API failed: ${response.status}`);
-  return response.json();
+  const url = `${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}`;
+  return fetchGameApiJson<unknown>(url, "System", {
+    httpErrorMessage: async (response) => `System API failed: ${response.status}`
+  });
 }
 
 function delay(ms: number): Promise<void> {
@@ -3231,6 +3240,59 @@ async function fetchWalletJson<T>(
   options: { timeoutMs?: number } = {}
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? WALLET_API_READ_TIMEOUT_MS;
+  const url = `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`;
+  return fetchGameApiJson<T>(url, label, {
+    cache: "no-store",
+    timeoutMs,
+    networkFailureMessage: (error) => walletApiNetworkFailureMessage(label, error)
+  });
+}
+
+async function fetchGameApiJson<T>(
+  url: string,
+  label: string,
+  options: {
+    cache?: RequestCache;
+    httpErrorMessage?: (response: Response) => Promise<string>;
+    networkFailureMessage?: (error: unknown) => string;
+    timeoutMs?: number;
+  } = {}
+): Promise<T> {
+  const cacheKey = `GET ${url}`;
+  const now = Date.now();
+  const recent = gameApiRecentReads.get(cacheKey);
+  if (recent && recent.expiresAt > now) return recent.value as T;
+  if (recent) gameApiRecentReads.delete(cacheKey);
+
+  const inflight = gameApiInflightReads.get(cacheKey);
+  if (inflight) return inflight as Promise<T>;
+
+  const request = fetchGameApiJsonUnpooled<T>(url, label, options);
+  gameApiInflightReads.set(cacheKey, request);
+  try {
+    const value = await request;
+    gameApiRecentReads.set(cacheKey, {
+      expiresAt: Date.now() + GAME_API_RECENT_READ_TTL_MS,
+      value
+    });
+    pruneRecentGameApiReads();
+    return value;
+  } finally {
+    gameApiInflightReads.delete(cacheKey);
+  }
+}
+
+async function fetchGameApiJsonUnpooled<T>(
+  url: string,
+  label: string,
+  options: {
+    cache?: RequestCache;
+    httpErrorMessage?: (response: Response) => Promise<string>;
+    networkFailureMessage?: (error: unknown) => string;
+    timeoutMs?: number;
+  }
+): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? WALLET_API_READ_TIMEOUT_MS;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     controller.abort(new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(timeoutMs / 1_000)} seconds.`));
@@ -3238,8 +3300,8 @@ async function fetchWalletJson<T>(
 
   let response: Response;
   try {
-    response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`, {
-      cache: "no-store",
+    response = await fetch(url, {
+      ...(options.cache !== undefined ? { cache: options.cache } : {}),
       headers: { accept: "application/json" },
       signal: controller.signal,
     });
@@ -3249,15 +3311,30 @@ async function fetchWalletJson<T>(
         ? controller.signal.reason
         : new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(timeoutMs / 1_000)} seconds.`);
     }
-    throw new Error(walletApiNetworkFailureMessage(label, error));
+    throw new Error(options.networkFailureMessage?.(error) ?? walletApiNetworkFailureMessage(label, error));
   } finally {
     clearTimeout(timeoutId);
   }
 
   if (!response.ok) {
-    throw new Error(await apiErrorMessage(response, label));
+    throw new Error(options.httpErrorMessage ? await options.httpErrorMessage(response) : await apiErrorMessage(response, label));
   }
   return response.json() as Promise<T>;
+}
+
+function pruneRecentGameApiReads(): void {
+  if (gameApiRecentReads.size <= 256) return;
+  const now = Date.now();
+  for (const [key, value] of gameApiRecentReads) {
+    if (value.expiresAt <= now || gameApiRecentReads.size > 256) {
+      gameApiRecentReads.delete(key);
+    }
+  }
+}
+
+export function __clearGameApiReadPoolForTests(): void {
+  gameApiInflightReads.clear();
+  gameApiRecentReads.clear();
 }
 
 async function mutateWatchedPlanet(
