@@ -1203,7 +1203,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
         const ownsSharedRefresh = sharedResponseCache?.tryAcquireRefresh(cacheKey) ?? false;
         if (sharedResponseCache && !ownsSharedRefresh) {
-          const refreshed = await sharedResponseCache.waitForFresh(cacheKey, sharedRefreshWaitMs);
+          const refreshed = sharedResponseCache.get(cacheKey);
           if (refreshed) {
             responseCache.set(cacheKey, refreshed);
             return withRequestCors(request, cachedJsonResponse(request, refreshed));
@@ -1367,7 +1367,6 @@ function isIndexableChainReader(
 const readRateLimitWindowMs = 10_000;
 const readRateLimitMaxRequests = 40;
 const staleCachedJsonWindowMs = 300_000;
-const sharedRefreshWaitMs = 750;
 
 function readRateLimitResponse(
   request: Request,
