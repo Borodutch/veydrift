@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   createForwardingFetch,
+  createRequestLoggingFetch,
   DEFAULT_MAX_WORKER_COUNT,
   resolveWorkerAssignment,
   resolveWorkerCount,
@@ -249,6 +250,50 @@ describe("createForwardingFetch", () => {
     expect(calls).toEqual([]);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ backend: { worker: { role: "reader" } } });
+  });
+
+  test("logs runtime-config bootstrap responses at the reader boundary", async () => {
+    const originalInfo = console.info;
+    const logs: unknown[][] = [];
+    console.info = (...args: unknown[]) => {
+      logs.push(args);
+    };
+    try {
+      const local = async () => Response.json({ error: "reader handler should not initialize" }, { status: 503 });
+      const bootstrap = (request: Request) => {
+        return new URL(request.url).pathname === "/runtime-config"
+          ? Response.json({ backend: { worker: { role: "reader" } } })
+          : undefined;
+      };
+      const handler = createRequestLoggingFetch(
+        createForwardingFetch(local, "http://127.0.0.1:4001", fetch, bootstrap),
+        "reader"
+      );
+
+      const response = await handler(new Request("http://localhost/runtime-config?source=test"));
+
+      expect(response.status).toBe(200);
+      expect(logs).toHaveLength(1);
+      const log = logs[0];
+      expect(log).toBeDefined();
+      expect(log![0]).toBe("veydrift-api-request");
+      const entry = JSON.parse(String(log![1])) as {
+        durationMs: number;
+        method: string;
+        path: string;
+        status: number;
+        workerRole: string;
+      };
+      expect(entry).toMatchObject({
+        method: "GET",
+        path: "/runtime-config?source=test",
+        status: 200,
+        workerRole: "reader"
+      });
+      expect(entry.durationMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      console.info = originalInfo;
+    }
   });
 
   test("keeps runtime-config local when the writer is busy", async () => {

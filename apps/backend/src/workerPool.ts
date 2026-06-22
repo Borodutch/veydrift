@@ -175,6 +175,43 @@ export function createForwardingFetch(
   };
 }
 
+export function createRequestLoggingFetch(
+  fetchHandler: (request: Request) => Promise<Response>,
+  workerRole: WorkerRole
+): (request: Request) => Promise<Response> {
+  return async (request: Request): Promise<Response> => {
+    const startedAt = performance.now();
+    const url = new URL(request.url);
+    try {
+      const response = await fetchHandler(request);
+      logBackendRequest(request, url, workerRole, response.status, performance.now() - startedAt);
+      return response;
+    } catch (error) {
+      logBackendRequest(request, url, workerRole, 500, performance.now() - startedAt, error);
+      throw error;
+    }
+  };
+}
+
+function logBackendRequest(
+  request: Request,
+  url: URL,
+  workerRole: WorkerRole,
+  status: number,
+  durationMs: number,
+  error?: unknown
+): void {
+  const entry = {
+    durationMs: Math.round(durationMs),
+    method: request.method,
+    path: `${url.pathname}${url.search}`,
+    status,
+    workerRole,
+    ...(error ? { error: error instanceof Error ? error.message : String(error) } : {})
+  };
+  console.info("veydrift-api-request", JSON.stringify(entry));
+}
+
 function forwardedResponseBody(
   upstreamBody: ReadableStream<Uint8Array> | null,
   abortController: AbortController,

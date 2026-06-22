@@ -2,6 +2,7 @@ import { installCrashDiagnostics } from "./crashDiagnostics";
 import { createRequestHandler, runtimeConfigResponse } from "./server";
 import {
   createForwardingFetch,
+  createRequestLoggingFetch,
   resolveWorkerAssignment,
   resolveWriterInternalPort,
   roleForIndex,
@@ -29,7 +30,7 @@ const idleTimeout = Number.parseInt(process.env.VEYDRIFT_HTTP_IDLE_TIMEOUT_SECON
 // and the only holder of the live chain-sync stream.
 function serveWorker(role: WorkerRole, index: number, writerInternalPort?: number): void {
   if (role === "writer" && writerInternalPort !== undefined) {
-    const handler = createRequestHandler({ role });
+    const handler = createRequestHandler({ role, logRequests: false });
     Bun.serve({
       idleTimeout,
       port: writerInternalPort,
@@ -46,7 +47,7 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
   if (role === "reader" && writerInternalPort !== undefined) {
     let handler: ReturnType<typeof createRequestHandler> | undefined;
     const localReaderHandler = async (request: Request): Promise<Response> => {
-      handler ??= createRequestHandler({ role });
+      handler ??= createRequestHandler({ role, logRequests: false });
       return handler(request);
     };
     const localBootstrapHandler = (request: Request): Response | undefined => {
@@ -60,11 +61,14 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
       idleTimeout,
       port,
       reusePort: true,
-      fetch: createForwardingFetch(
-        localReaderHandler,
-        `http://127.0.0.1:${writerInternalPort}`,
-        fetch,
-        localBootstrapHandler
+      fetch: createRequestLoggingFetch(
+        createForwardingFetch(
+          localReaderHandler,
+          `http://127.0.0.1:${writerInternalPort}`,
+          fetch,
+          localBootstrapHandler
+        ),
+        role
       )
     });
     console.log(
@@ -74,7 +78,7 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
     return;
   }
 
-  const handler = createRequestHandler({ role });
+  const handler = createRequestLoggingFetch(createRequestHandler({ role, logRequests: false }), role);
   Bun.serve({
     idleTimeout,
     port,
