@@ -26,7 +26,7 @@ export class SharedResponseCache {
     this.db = new Database(databasePath);
     this.db.exec("PRAGMA journal_mode = WAL;");
     this.db.exec("PRAGMA synchronous = NORMAL;");
-    this.db.exec("PRAGMA busy_timeout = 2000;");
+    this.db.exec("PRAGMA busy_timeout = 25;");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS response_cache (
         cache_key TEXT PRIMARY KEY,
@@ -49,13 +49,13 @@ export class SharedResponseCache {
   }
 
   get(cacheKey: string, now = Date.now(), includeStale = false): SharedCachedJsonResponse | null {
-    const row = this.db.query(`
-      SELECT status, status_text, headers_json, body, expires_at
-      FROM response_cache
-      WHERE cache_key = ?
-        AND ${includeStale ? "stale_expires_at" : "expires_at"} > ?
-      LIMIT 1
-    `).get(cacheKey, now) as CacheRow | null;
+    const row = this.runCacheOperation(() => this.db.query(`
+        SELECT status, status_text, headers_json, body, expires_at
+        FROM response_cache
+        WHERE cache_key = ?
+          AND ${includeStale ? "stale_expires_at" : "expires_at"} > ?
+        LIMIT 1
+      `).get(cacheKey, now) as CacheRow | null, null);
     if (!row) return null;
 
     return {
@@ -68,41 +68,48 @@ export class SharedResponseCache {
   }
 
   set(cacheKey: string, cached: SharedCachedJsonResponse, staleExpiresAt: number, now = Date.now()): void {
-    this.db.query(`
-      INSERT INTO response_cache (cache_key, status, status_text, headers_json, body, expires_at, stale_expires_at, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(cache_key) DO UPDATE SET
-        status = excluded.status,
-        status_text = excluded.status_text,
-        headers_json = excluded.headers_json,
-        body = excluded.body,
-        expires_at = excluded.expires_at,
-        stale_expires_at = excluded.stale_expires_at,
-        created_at = excluded.created_at
-    `).run(
-      cacheKey,
-      cached.status,
-      cached.statusText,
-      JSON.stringify(cached.headers),
-      new Uint8Array(cached.body),
-      cached.expiresAt,
-      staleExpiresAt,
-      now
-    );
+    this.runCacheOperation(() => {
+      this.db.query(`
+        INSERT INTO response_cache (cache_key, status, status_text, headers_json, body, expires_at, stale_expires_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(cache_key) DO UPDATE SET
+          status = excluded.status,
+          status_text = excluded.status_text,
+          headers_json = excluded.headers_json,
+          body = excluded.body,
+          expires_at = excluded.expires_at,
+          stale_expires_at = excluded.stale_expires_at,
+          created_at = excluded.created_at
+      `).run(
+        cacheKey,
+        cached.status,
+        cached.statusText,
+        JSON.stringify(cached.headers),
+        new Uint8Array(cached.body),
+        cached.expiresAt,
+        staleExpiresAt,
+        now
+      );
+    });
     this.prune(now);
   }
 
   tryAcquireRefresh(cacheKey: string, ttlMs = 15_000, now = Date.now()): boolean {
-    this.db.query("DELETE FROM response_cache_locks WHERE expires_at <= ?").run(now);
-    const result = this.db.query(`
-      INSERT OR IGNORE INTO response_cache_locks (cache_key, expires_at)
-      VALUES (?, ?)
-    `).run(cacheKey, now + ttlMs) as { changes?: number };
+    const result = this.runCacheOperation(() => {
+      this.db.query("DELETE FROM response_cache_locks WHERE expires_at <= ?").run(now);
+      return this.db.query(`
+        INSERT OR IGNORE INTO response_cache_locks (cache_key, expires_at)
+        VALUES (?, ?)
+      `).run(cacheKey, now + ttlMs) as { changes?: number };
+    }, null);
+    if (!result) return false;
     return (result.changes ?? 0) > 0;
   }
 
   releaseRefresh(cacheKey: string): void {
-    this.db.query("DELETE FROM response_cache_locks WHERE cache_key = ?").run(cacheKey);
+    this.runCacheOperation(() => {
+      this.db.query("DELETE FROM response_cache_locks WHERE cache_key = ?").run(cacheKey);
+    });
   }
 
   async waitForFresh(cacheKey: string, deadlineMs = 8_000): Promise<SharedCachedJsonResponse | null> {
@@ -116,7 +123,20 @@ export class SharedResponseCache {
   }
 
   private prune(now = Date.now()): void {
-    this.db.query("DELETE FROM response_cache WHERE stale_expires_at <= ?").run(now);
+    this.runCacheOperation(() => {
+      this.db.query("DELETE FROM response_cache WHERE stale_expires_at <= ?").run(now);
+    });
+  }
+
+  private runCacheOperation<T>(operation: () => T, fallback: T): T;
+  private runCacheOperation(operation: () => void): void;
+  private runCacheOperation<T>(operation: () => T, fallback?: T): T | void {
+    try {
+      return operation();
+    } catch (error) {
+      if (isSqliteBusyError(error)) return fallback;
+      throw error;
+    }
   }
 }
 
@@ -133,4 +153,9 @@ function arrayBufferFromBytes(bytes: Uint8Array): ArrayBuffer {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isSqliteBusyError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("SQLITE_BUSY") || message.includes("database is locked");
 }
