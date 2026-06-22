@@ -1285,7 +1285,7 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
   if (url.pathname === "/highscores") return ttlCacheBucket(300_000);
   if (url.pathname === "/raid-finder/debris") return ttlCacheBucket(30_000);
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return indexer.missionResponseCacheVersion();
-  if (url.pathname === "/missions") return indexer.missionResponseCacheVersion();
+  if (url.pathname === "/missions") return ttlCacheBucket(30_000);
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return indexer.missionResponseCacheVersion();
   if (cacheableWalletSnapshotPath(url.pathname)) return ttlCacheBucket(15_000);
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return ttlCacheBucket(30_000);
