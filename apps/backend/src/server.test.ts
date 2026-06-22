@@ -1123,6 +1123,27 @@ describe("Veydrift backend", () => {
     expect(staleKeyUsed).toBe(true);
   });
 
+  test("returns quickly when indexed SQLite reads are busy", async () => {
+    const chainSync = {
+      start() {},
+      snapshot() {
+        throw new Error("database is locked");
+      }
+    } as unknown as import("./chainSync").ChainSyncService;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      chainSync,
+      config: configuredTestConfig,
+      enableResponseCache: false
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.error).toBe("database is locked");
+  });
+
   test("returns public runtime config", async () => {
     const response = await handler(new Request("http://localhost/runtime-config"));
     const body = await response.json();
