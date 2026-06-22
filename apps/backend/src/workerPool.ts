@@ -19,9 +19,8 @@
 export const WORKER_ROLE_ENV = "VEYDRIFT_WORKER_ROLE";
 export const WORKER_INDEX_ENV = "VEYDRIFT_WORKER_INDEX";
 export const WORKER_COUNT_ENV = "VEYDRIFT_WORKER_COUNT";
-export const MAX_WORKER_COUNT_ENV = "VEYDRIFT_MAX_WORKER_COUNT";
 export const WRITER_INTERNAL_PORT_ENV = "VEYDRIFT_WRITER_INTERNAL_PORT";
-export const DEFAULT_MAX_WORKER_COUNT = 2;
+export const DEFAULT_MAX_WORKER_COUNT = 10;
 
 export type WorkerRole = "writer" | "reader";
 
@@ -33,10 +32,7 @@ const WRITER_ONLY_READ_PATHS = new Set([
   // Health/readiness must observe the writer's chain-sync/indexer state and must not queue behind
   // reader-local cache refreshes.
   "/health",
-  "/chain/events",
-  // App bootstrap config is environment-derived and must stay available even when indexed reader
-  // workers are saturated by DB-heavy API reads.
-  "/runtime-config"
+  "/chain/events"
 ]);
 const BODYLESS_METHODS = new Set(["GET", "HEAD"]);
 
@@ -48,37 +44,26 @@ export type WorkerAssignment =
   | { kind: "supervisor"; workerCount: number }
   | { kind: "worker"; role: WorkerRole; index: number };
 
-// Resolve how many worker processes to run. `VEYDRIFT_WORKER_COUNT` is a target
-// override (useful for tests, constrained containers, or pinning a single-process
-// deployment), but it is still capped by code so a stale deploy env cannot put
-// api-test back on a 10-reader stampede. Raise `VEYDRIFT_MAX_WORKER_COUNT`
-// deliberately if an operator really needs a larger pool.
+// Resolve how many worker processes to run. `VEYDRIFT_WORKER_COUNT` is an
+// explicit override (useful for tests, constrained containers, or pinning a
+// single-process deployment). Without an override, keep the pool bounded to a
+// deliberate default so auto-sizing does not unexpectedly spawn one reader per
+// host CPU. The result is always at least 1 so the backend can boot on a
+// single-core host.
 export function resolveWorkerCount(
   env: Record<string, string | undefined>,
   hardwareConcurrency: number
 ): number {
-  const maxWorkerCount = resolveMaxWorkerCount(env);
   const override = env[WORKER_COUNT_ENV];
-  if (override !== undefined && override.trim() !== "") {
-    const parsed = Number.parseInt(override, 10);
-    if (Number.isFinite(parsed) && parsed >= 1) {
-      return Math.max(1, Math.min(parsed, maxWorkerCount));
-    }
-  }
-
-  const cpus = Number.isFinite(hardwareConcurrency) ? Math.floor(hardwareConcurrency) : 1;
-  return Math.max(1, Math.min(cpus, maxWorkerCount));
-}
-
-function resolveMaxWorkerCount(env: Record<string, string | undefined>): number {
-  const override = env[MAX_WORKER_COUNT_ENV];
   if (override !== undefined && override.trim() !== "") {
     const parsed = Number.parseInt(override, 10);
     if (Number.isFinite(parsed) && parsed >= 1) {
       return parsed;
     }
   }
-  return DEFAULT_MAX_WORKER_COUNT;
+
+  const cpus = Number.isFinite(hardwareConcurrency) ? Math.floor(hardwareConcurrency) : 1;
+  return Math.max(1, Math.min(cpus, DEFAULT_MAX_WORKER_COUNT));
 }
 
 // The first worker is the single writer; every other worker is a reader.
