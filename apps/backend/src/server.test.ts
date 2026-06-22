@@ -786,6 +786,16 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(503);
   });
 
+  test("returns immediately for requests already aborted by the client", async () => {
+    const controller = new AbortController();
+    const request = new Request("http://localhost/health", { signal: controller.signal });
+    controller.abort();
+
+    const response = await handler(request);
+
+    expect(response.status).toBe(499);
+  });
+
   test("requires websocket head and log subscriptions for ready chain sync health", async () => {
     const chainSync = {
       start() {},
