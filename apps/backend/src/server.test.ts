@@ -4,6 +4,7 @@ import { createHmac } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { privateKeyToAccount } from "viem/accounts";
 import { resolveWsRpcUrl, type BackendConfig } from "./config";
 import type {
@@ -7313,6 +7314,28 @@ describe("Veydrift backend", () => {
       position: 8,
       key: "2:44:8"
     });
+  });
+
+  test("gzips cached JSON responses when the client accepts gzip", async () => {
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      enableResponseCache: true,
+      prewarmResponseCache: false
+    });
+
+    const response = await handler(new Request("http://localhost/universe/systems?galaxy=2&center=44&radius=8", {
+      headers: {
+        "accept-encoding": "gzip"
+      }
+    }));
+    const decoded = gunzipSync(new Uint8Array(await response.arrayBuffer())).toString("utf8");
+    const body = JSON.parse(decoded);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-encoding")).toBe("gzip");
+    expect(response.headers.get("vary")).toContain("Accept-Encoding");
+    expect(body.systems).toHaveLength(17);
   });
 
   test("returns deterministic universe system data", async () => {
