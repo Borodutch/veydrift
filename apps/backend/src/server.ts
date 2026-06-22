@@ -1373,7 +1373,7 @@ function isRateLimitedReadPath(pathname: string): boolean {
 }
 
 function isBootstrapReadPath(pathname: string): boolean {
-  return pathname === "/health" || pathname === "/runtime-config";
+  return pathname === "/runtime-config";
 }
 
 function requestClientKey(request: Request): string | null {

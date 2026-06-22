@@ -942,6 +942,41 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("coalesces concurrent health reads through the response cache", async () => {
+    let snapshots = 0;
+    const chainSync = {
+      start() {},
+      snapshot() {
+        return {
+          connected: true,
+          subscribedToHeads: true,
+          subscribedToLogs: true
+        };
+      }
+    } as unknown as import("./chainSync").ChainSyncService;
+    const indexer = {
+      snapshot() {
+        snapshots += 1;
+        return {
+          indexedState: "healthy",
+          safeToServeIndexedState: true
+        };
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      chainSync,
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer
+    });
+
+    const responses = await Promise.all(Array.from({ length: 10 }, () => handler(new Request("http://localhost/health"))));
+
+    expect(responses.every((response) => response.status === 200)).toBe(true);
+    expect(snapshots).toBe(1);
+  });
+
   test("returns public runtime config", async () => {
     const response = await handler(new Request("http://localhost/runtime-config"));
     const body = await response.json();
