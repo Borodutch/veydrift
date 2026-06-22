@@ -444,14 +444,16 @@ export class SettlementIndexer {
       refs: Map<string, FleetMissionPlanetReference | null>;
     }
     | null = null;
-  private canonicalActiveMissionCache:
-    | {
+  private canonicalActiveMissionCache = new Map<
+    string,
+    {
       missionGeneration: number;
       stateVersion: string;
       asOfSeconds: number;
+      includeOverduePendingRandomness: boolean;
       missions: FleetMissionSummary[];
     }
-    | null = null;
+  >();
   private canonicalCompletedMissionCache:
     | {
       missionGeneration: number;
@@ -1299,9 +1301,10 @@ export class SettlementIndexer {
 
   dueUnresolvedFleetMissionsForPlanet(planetId: string, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
     const resolvedBattleMissionIds = this.resolvedBattleMissionIds();
-    // Use the full mission set, not the public active feed: over-due attacks awaiting randomness are
-    // hidden from active report/intel surfaces, but they still block planet actions until settled.
-    return this.indexedFleetMissionReferenceIndex().summaries.filter((mission) =>
+    // Include over-due attacks awaiting randomness: they are hidden from active report/intel surfaces,
+    // but still block planet actions until settled. Keep this on canonical rows so infrastructure reads
+    // do not cold-decode the full historical mission log.
+    return this.activeFleetMissionsFromCanonicalRows({ includeOverduePendingRandomness: true }).filter((mission) =>
       mission.status === "Outbound"
         && (mission.missionType === "Attack" || mission.missionType === "Harvest")
         && Number(mission.arrivalAt) <= asOfSeconds
@@ -1459,7 +1462,7 @@ export class SettlementIndexer {
   fleetSlots(wallet: `0x${string}`): ShipyardState["fleetSlots"] {
     const walletLower = wallet.toLowerCase();
     const asOfSeconds = nowSeconds();
-    const active = this.indexedFleetMissionReferenceIndex().active
+    const active = this.activeFleetMissionsFromCanonicalRows()
       .filter((mission) =>
         mission.owner.toLowerCase() === walletLower
         && !fleetSlotFreedByLazyLaunchSettlement(mission, asOfSeconds)
@@ -5326,7 +5329,7 @@ export class SettlementIndexer {
     this.battleReportsByMissionIdCache = null;
     this.fulfilledRandomnessRequestIdsCache = null;
     this.missionReferenceCache = null;
-    this.canonicalActiveMissionCache = null;
+    this.canonicalActiveMissionCache.clear();
     this.canonicalCompletedMissionCache = null;
     this.attackLaunchSecondsCache.clear();
   }
@@ -5342,7 +5345,7 @@ export class SettlementIndexer {
       this.battleReportsByMissionIdCache = null;
       this.fulfilledRandomnessRequestIdsCache = null;
       this.missionReferenceCache = null;
-      this.canonicalActiveMissionCache = null;
+      this.canonicalActiveMissionCache.clear();
       this.canonicalCompletedMissionCache = null;
       this.attackLaunchSecondsCache.clear();
     }
@@ -5713,16 +5716,19 @@ export class SettlementIndexer {
     return next;
   }
 
-  private activeFleetMissionsFromCanonicalRows(): FleetMissionSummary[] {
+  private activeFleetMissionsFromCanonicalRows(options: { includeOverduePendingRandomness?: boolean } = {}): FleetMissionSummary[] {
     this.currentMissionReadModelDbVersion();
     const stateVersion = this.indexedStateCacheVersion();
     const asOfSeconds = Math.floor(nowSeconds() / 10) * 10;
-    const cached = this.canonicalActiveMissionCache;
+    const includeOverduePendingRandomness = options.includeOverduePendingRandomness === true;
+    const cacheKey = includeOverduePendingRandomness ? "with-overdue-pending-randomness" : "visible";
+    const cached = this.canonicalActiveMissionCache.get(cacheKey);
     if (
       cached
       && cached.missionGeneration === this.missionGeneration
       && cached.stateVersion === stateVersion
       && cached.asOfSeconds === asOfSeconds
+      && cached.includeOverduePendingRandomness === includeOverduePendingRandomness
     ) {
       return cached.missions;
     }
@@ -5760,14 +5766,16 @@ export class SettlementIndexer {
           stateVersion
         );
       })
-      .filter(isVisibleActiveFleetMission)
+      .filter(includeOverduePendingRandomness ? isActiveFleetMissionStatusForSummary : isVisibleActiveFleetMission)
       .sort(compareFleetMissionsActiveSoonestFirst);
-    this.canonicalActiveMissionCache = {
+    const next = {
       missionGeneration: this.missionGeneration,
       stateVersion,
       asOfSeconds,
+      includeOverduePendingRandomness,
       missions
     };
+    this.canonicalActiveMissionCache.set(cacheKey, next);
     return missions;
   }
 
@@ -6636,6 +6644,10 @@ function fleetMissionStatusId(label: string): number | null {
 
 function isActiveFleetMissionStatus(status: string): boolean {
   return status === "Outbound" || status === "Returning" || status === "Recalled";
+}
+
+function isActiveFleetMissionStatusForSummary(mission: FleetMissionSummary): boolean {
+  return isActiveFleetMissionStatus(mission.status);
 }
 
 function isVisibleActiveFleetMission(mission: FleetMissionSummary): boolean {
