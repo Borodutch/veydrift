@@ -1325,7 +1325,13 @@ function shouldDeferCacheMissRefresh(request: Request, url: URL): boolean {
 
 function isExternalReadRequest(request: Request, url: URL): boolean {
   if (requestClientKey(request)) return true;
-  return url.hostname !== "localhost" && url.hostname !== "127.0.0.1";
+  const requestHost = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? url.host;
+  return !isLoopbackRequestHost(requestHost);
+}
+
+function isLoopbackRequestHost(host: string): boolean {
+  const hostname = host.split(":")[0]?.toLowerCase() ?? "";
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
 function isRateLimitedReadPath(pathname: string): boolean {

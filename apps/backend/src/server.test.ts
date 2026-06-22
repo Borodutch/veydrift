@@ -1293,7 +1293,7 @@ describe("Veydrift backend", () => {
     ]);
   });
 
-  test("embeds matching battle reports into completed attack archive rows before pagination", async () => {
+  test("serves completed attack archive rows without rebuilding battle reports", async () => {
     const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
     const chainReader = new class extends MockChainReader {
       override async getFleetMissionVisibility(): Promise<never> {
@@ -1341,13 +1341,9 @@ describe("Veydrift backend", () => {
       mission: {
         missionId: "77",
         status: "Returned"
-      },
-      report: {
-        missionId: "77",
-        outcome: "AttackerWin",
-        loot: { metal: "75", crystal: "25", deuterium: "0" }
       }
     });
+    expect(body.rows[0].report).toBeUndefined();
   });
 
   test("keeps global completed mission archive independent from battle report decoding", async () => {
