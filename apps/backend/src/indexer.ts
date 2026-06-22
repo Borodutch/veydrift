@@ -504,9 +504,9 @@ export class SettlementIndexer {
     {
       missionGeneration: number;
       stateVersion: string;
-      asOfSeconds: number;
       includeOverduePendingRandomness: boolean;
-      missions: FleetMissionSummary[];
+      fulfilledRandomnessRequestIds: ReadonlySet<string> | null;
+      baseMissions: FleetMissionSummary[];
     }
   >();
   private canonicalCompletedMissionCache:
@@ -1404,7 +1404,7 @@ export class SettlementIndexer {
 
   pendingFleetSlotSettlementMissionsForWallet(wallet: `0x${string}`, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
     const walletLower = wallet.toLowerCase();
-    return this.indexedFleetMissionReferenceIndex().active
+    return this.activeFleetMissionsFromCanonicalRows({ includeOverduePendingRandomness: true })
       .filter((mission) =>
         mission.owner.toLowerCase() === walletLower
         && fleetSlotSettlementBlocksLaunch(mission, asOfSeconds)
@@ -5807,7 +5807,7 @@ export class SettlementIndexer {
   private activeFleetMissionsFromCanonicalRows(options: { includeOverduePendingRandomness?: boolean } = {}): FleetMissionSummary[] {
     this.currentMissionReadModelDbVersion();
     const stateVersion = this.indexedStateCacheVersion();
-    const asOfSeconds = Math.floor(nowSeconds() / 10) * 10;
+    const asOfSeconds = nowSeconds();
     const includeOverduePendingRandomness = options.includeOverduePendingRandomness === true;
     const cacheKey = includeOverduePendingRandomness ? "with-overdue-pending-randomness" : "visible";
     const cached = this.canonicalActiveMissionCache.get(cacheKey);
@@ -5815,10 +5815,9 @@ export class SettlementIndexer {
       cached
       && cached.missionGeneration === this.missionGeneration
       && cached.stateVersion === stateVersion
-      && cached.asOfSeconds === asOfSeconds
       && cached.includeOverduePendingRandomness === includeOverduePendingRandomness
     ) {
-      return cached.missions;
+      return this.activeFleetMissionsAsOf(cached.baseMissions, asOfSeconds, includeOverduePendingRandomness, cached.fulfilledRandomnessRequestIds);
     }
 
     const rows = this.db.query(`
@@ -5827,7 +5826,7 @@ export class SettlementIndexer {
       WHERE status_id IN (1, 2, 5)
       ORDER BY CAST(arrival_at AS INTEGER) ASC
     `).all() as ContractFleetMissionRow[];
-    const baseMissions = rows.map((row) => this.canonicalFleetMissionSummary(row));
+    const baseMissions = rows.map((row) => this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion));
     const needsGate = this.randomnessEngineConfigured && baseMissions.some(
       (mission) =>
         missionBattleRandomnessRequestId(mission) !== null
@@ -5835,8 +5834,24 @@ export class SettlementIndexer {
         && Number(mission.arrivalAt) <= asOfSeconds
     );
     const fulfilledRandomnessRequestIds = needsGate ? this.fulfilledRandomnessRequestIds() : null;
+    const next = {
+      missionGeneration: this.missionGeneration,
+      stateVersion,
+      includeOverduePendingRandomness,
+      fulfilledRandomnessRequestIds,
+      baseMissions
+    };
+    this.canonicalActiveMissionCache.set(cacheKey, next);
+    return this.activeFleetMissionsAsOf(baseMissions, asOfSeconds, includeOverduePendingRandomness, fulfilledRandomnessRequestIds);
+  }
 
-    const missions = baseMissions
+  private activeFleetMissionsAsOf(
+    baseMissions: readonly FleetMissionSummary[],
+    asOfSeconds: number,
+    includeOverduePendingRandomness: boolean,
+    fulfilledRandomnessRequestIds: ReadonlySet<string> | null
+  ): FleetMissionSummary[] {
+    return baseMissions
       .map((mission) => {
         const status = (
           (mission.status === "Returning" || mission.status === "Recalled")
@@ -5849,22 +5864,13 @@ export class SettlementIndexer {
           status,
           needsResolution: fleetMissionNeedsResolution({ ...mission, status }, asOfSeconds, fulfilledRandomnessRequestIds)
         };
-        return this.withFleetMissionPlanetReferences(
+        return withMissionAsOfNow(
           withFleetMissionResolutionBlocker(resolvedMission, asOfSeconds, fulfilledRandomnessRequestIds),
-          stateVersion
+          asOfSeconds
         );
       })
       .filter(includeOverduePendingRandomness ? isActiveFleetMissionStatusForSummary : isVisibleActiveFleetMission)
       .sort(compareFleetMissionsActiveSoonestFirst);
-    const next = {
-      missionGeneration: this.missionGeneration,
-      stateVersion,
-      asOfSeconds,
-      includeOverduePendingRandomness,
-      missions
-    };
-    this.canonicalActiveMissionCache.set(cacheKey, next);
-    return missions;
   }
 
   completedFleetMissionsFromCanonicalRows(): FleetMissionSummary[] {
