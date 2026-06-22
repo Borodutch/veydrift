@@ -526,7 +526,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         assertAddress(wallet);
         if (!indexer || !hasWarmPlanetIndex(indexer)) return indexedReadNotReadyResponse("watched planets", indexer, indexedReadLookup(url, wallet));
         return indexedJsonResponse(
-          await watchedPlanetsResponse(indexer, wallet, url, loaded.config),
+          watchedPlanetsResponse(indexer, wallet, url, loaded.config),
           indexer.snapshot()
         );
       } catch (error) {
@@ -600,7 +600,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/queues$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "player queues", indexedPlayerQueues);
+        return indexedWalletStateResponse(url, indexer, "player queues", indexedPlayerQueues);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -609,7 +609,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) {
       try {
         const includeArchive = url.searchParams.get("archive") === "full" || url.searchParams.get("archive") === "true";
-        return await indexedWalletStateResponse(url, indexer, "fleet visibility", (wallet, settlement, planet, detail, indexer) =>
+        return indexedWalletStateResponse(url, indexer, "fleet visibility", (wallet, settlement, planet, detail, indexer) =>
           indexedFleetVisibility(wallet, settlement, planet, detail, indexer, { includeArchive }), {
           includeSelectedPlanet: false
         });
@@ -620,7 +620,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "mission archive", (wallet, _settlement, _planet, _detail, indexer) =>
+        return indexedWalletStateResponse(url, indexer, "mission archive", (wallet, _settlement, _planet, _detail, indexer) =>
           indexedMissionArchive(wallet, url, indexer), {
           includeSelectedPlanet: false
         });
@@ -750,7 +750,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/infrastructure$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "infrastructure", indexedInfrastructureState);
+        return indexedWalletStateResponse(url, indexer, "infrastructure", indexedInfrastructureState);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -762,7 +762,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
-        const indexed = await indexedWarmResponse(indexer, wallet, planetId, "moon", indexedMoonState);
+        const indexed = indexedWarmResponse(indexer, wallet, planetId, "moon", indexedMoonState);
         if (indexed) {
           return moonTimedResponse(indexed, readStartedAt);
         }
@@ -774,7 +774,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/shipyard$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "shipyard", indexedShipyardState);
+        return indexedWalletStateResponse(url, indexer, "shipyard", indexedShipyardState);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -782,7 +782,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/defenses$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "defenses", indexedDefenseState);
+        return indexedWalletStateResponse(url, indexer, "defenses", indexedDefenseState);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -790,7 +790,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/research$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "research", indexedResearchState);
+        return indexedWalletStateResponse(url, indexer, "research", indexedResearchState);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -836,7 +836,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/rift$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "rift", indexedRiftState);
+        return indexedWalletStateResponse(url, indexer, "rift", indexedRiftState);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -978,7 +978,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const system = Number.parseInt(parts[5] ?? "", 10);
       let payload;
       try {
-        payload = await cachedGalaxySystemPayload(
+        payload = cachedGalaxySystemPayload(
           galaxySystemCache,
           {
             chainId: loaded.config.chainId,
@@ -1010,7 +1010,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             galaxy,
             center,
             radius,
-            systems: await Promise.all(Array.from({ length: to - from + 1 }, async (_, index) => {
+            systems: Array.from({ length: to - from + 1 }, (_, index) => {
               const system = from + index;
               return cachedGalaxySystemPayload(
                 galaxySystemCache,
@@ -1022,7 +1022,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
                   indexer
                 }
               );
-            }))
+            })
           },
           {
             headers: corsHeaders
@@ -1819,16 +1819,16 @@ type IndexedWarmBuilder<T extends object> = (
   indexer: SettlementIndexer
 ) => T;
 
-async function indexedWalletStateResponse<T extends object>(
+function indexedWalletStateResponse<T extends object>(
   url: URL,
   indexer: SettlementIndexer | undefined,
   surface: string,
   build: IndexedWarmBuilder<T>,
   options: { includeSelectedPlanet?: boolean } = {}
-): Promise<Response> {
+): Response {
   const wallet = walletAddressFromPath(url);
   const planetId = options.includeSelectedPlanet === false ? undefined : selectedPlanetId(url);
-  const indexed = await indexedWarmResponse(indexer, wallet, planetId, surface, build);
+  const indexed = indexedWarmResponse(indexer, wallet, planetId, surface, build);
   return indexed ?? indexedReadNotReadyResponse(surface, indexer, indexedReadLookup(url, wallet));
 }
 
@@ -1846,13 +1846,13 @@ function indexedReadLookup(url: URL, wallet: `0x${string}`): IndexedReadLookupCo
   };
 }
 
-async function indexedWarmResponse<T extends object>(
+function indexedWarmResponse<T extends object>(
   indexer: SettlementIndexer | undefined,
   wallet: `0x${string}`,
   selectedPlanetId: bigint | undefined,
   surface: string,
   build: IndexedWarmBuilder<T>
-): Promise<Response | null> {
+): Response | null {
   if (!indexer) return null;
 
   if (!hasWarmPlanetIndex(indexer)) return null;
@@ -2005,19 +2005,19 @@ function indexedWalletPlanets(
   };
 }
 
-async function watchedPlanetsResponse(
+function watchedPlanetsResponse(
   indexer: SettlementIndexer,
   wallet: `0x${string}`,
   url: URL,
   config: BackendConfig
-): Promise<{
+): {
   wallet: `0x${string}`;
   watchedPlanetIds: string[];
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
   planets: GalaxySystemPayload["planets"];
   detail: string;
   stale: boolean;
-}> {
+} {
   const page = positiveIntegerQuery(url, "page", 1, 1_000_000);
   const pageSize = positiveIntegerQuery(url, "pageSize", 25, 100);
   const watched = indexer.watchedPlanets(wallet, page, pageSize);
@@ -2563,7 +2563,7 @@ type GalaxySystemCacheEntry = {
   payload: GalaxySystemPayload;
 };
 
-async function cachedGalaxySystemPayload(
+function cachedGalaxySystemPayload(
   cache: Map<string, GalaxySystemCacheEntry>,
   input: {
     chainId: number;
@@ -2572,7 +2572,7 @@ async function cachedGalaxySystemPayload(
     system: number;
     indexer: SettlementIndexer | undefined;
   }
-): Promise<GalaxySystemPayload> {
+): GalaxySystemPayload {
   const indexerVersion = input.indexer?.stateVersion() ?? 0;
   const projectionBucket = input.indexer ? Math.floor(Date.now() / 5_000) : 0;
   const cacheKey = [
@@ -2590,7 +2590,7 @@ async function cachedGalaxySystemPayload(
     return cached.payload;
   }
 
-  const payload = await galaxySystemPayload(input);
+  const payload = galaxySystemPayload(input);
   cache.set(cacheKey, {
     indexerVersion,
     projectionBucket,
@@ -2600,7 +2600,7 @@ async function cachedGalaxySystemPayload(
   return payload;
 }
 
-async function galaxySystemPayload({
+function galaxySystemPayload({
   chainId,
   settlementContractAddress,
   galaxy,
@@ -2612,7 +2612,7 @@ async function galaxySystemPayload({
   galaxy: number;
   system: number;
   indexer: SettlementIndexer | undefined;
-}): Promise<GalaxySystemPayload> {
+}): GalaxySystemPayload {
   const baseSnapshot = systemSnapshot(
     chainId,
     settlementContractAddress,
@@ -2637,7 +2637,7 @@ async function galaxySystemPayload({
       report
     ])
   );
-  const allianceIntel = await allianceIntelForOccupiedPlanets(
+  const allianceIntel = allianceIntelForOccupiedPlanets(
     Array.from(occupied.values()),
     indexer
   );
@@ -2855,10 +2855,10 @@ function resourceWithClaimableAccrual(
   return Math.floor(currentValue + Math.min(produced, remainingCapacity)).toString();
 }
 
-async function allianceIntelForOccupiedPlanets(
+function allianceIntelForOccupiedPlanets(
   planets: readonly SettledPlanetEvent[],
   indexer: SettlementIndexer | undefined
-): Promise<Map<string, AllianceIdentity>> {
+): Map<string, AllianceIdentity> {
   return allianceIntelForPlayers(planets.map((planet) => planet.owner), indexer);
 }
 
