@@ -225,6 +225,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
   const responseCache = new Map<string, CachedJsonResponse>();
   const inflightResponseCache = new Map<string, Promise<CachedJsonResponse | null>>();
+  const readRateLimits = new Map<string, { count: number; resetAt: number }>();
   const galaxySystemCache = new Map<string, GalaxySystemCacheEntry>();
   const enableResponseCache = dependencies.enableResponseCache ?? (
     !dependencies.chainReader
@@ -1088,6 +1089,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     });
     const serve = async (): Promise<Response> => {
       const url = new URL(request.url);
+      const rateLimited = readRateLimitResponse(request, url, readRateLimits);
+      if (rateLimited) return withRequestCors(request, rateLimited);
       const cacheTtlMs = enableResponseCache ? cacheableJsonRequestTtlMs(request, url) : 0;
       if (cacheTtlMs > 0) {
         const cacheKey = cacheableJsonRequestKey(request, url, indexer);
@@ -1223,6 +1226,66 @@ function isIndexableChainReader(
       && typeof chainReader.listMoonChanceReportEvents === "function"
       && typeof chainReader.listSettledPlanetEvents === "function"
   );
+}
+
+const readRateLimitWindowMs = 10_000;
+const readRateLimitMaxRequests = 80;
+
+function readRateLimitResponse(
+  request: Request,
+  url: URL,
+  limits: Map<string, { count: number; resetAt: number }>
+): Response | null {
+  if (request.method !== "GET") return null;
+  if (url.pathname === "/health" || url.pathname === "/debug/indexer") return null;
+  if (!isRateLimitedReadPath(url.pathname)) return null;
+
+  const now = Date.now();
+  if (limits.size > 2_048) {
+    for (const [key, value] of limits) {
+      if (value.resetAt <= now) limits.delete(key);
+      if (limits.size <= 2_048) break;
+    }
+  }
+
+  const key = requestClientKey(request);
+  const current = limits.get(key);
+  if (!current || current.resetAt <= now) {
+    limits.set(key, { count: 1, resetAt: now + readRateLimitWindowMs });
+    return null;
+  }
+  current.count += 1;
+  if (current.count <= readRateLimitMaxRequests) return null;
+
+  return Response.json(
+    {
+      error: "rate_limited",
+      message: "Too many refresh requests. Please wait a moment and retry."
+    },
+    {
+      headers: {
+        ...corsHeaders,
+        "retry-after": String(Math.ceil((current.resetAt - now) / 1_000))
+      },
+      status: 429
+    }
+  );
+}
+
+function isRateLimitedReadPath(pathname: string): boolean {
+  return pathname === "/chain/events"
+    || pathname === "/missions"
+    || pathname === "/highscores"
+    || pathname === "/runtime-config"
+    || pathname.startsWith("/wallet/")
+    || pathname.startsWith("/universe/")
+    || pathname.startsWith("/raid-finder/");
+}
+
+function requestClientKey(request: Request): string {
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  const realIp = request.headers.get("x-real-ip")?.trim();
+  return forwarded || realIp || "unknown";
 }
 
 // Predicate kept for diagnostics/tests: true when a warm DB inherited a recorded reconcile failure
