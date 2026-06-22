@@ -1240,7 +1240,7 @@ export class SettlementIndexer {
 
   // Every active mission across the universe (all players), for the Mission Control "All" active tab.
   allActiveFleetMissions(): FleetMissionSummary[] {
-    return this.indexedFleetMissionReferenceIndex().active;
+    return this.activeFleetMissionsFromCanonicalRows();
   }
 
   // Every completed mission across the universe (all players), newest-first, for the past "All" tab.
@@ -1249,7 +1249,7 @@ export class SettlementIndexer {
   }
 
   activeFleetMissionsForTarget(planetId: string): FleetMissionSummary[] {
-    return this.indexedFleetMissionReferenceIndex().activeByTarget.get(planetId) ?? [];
+    return this.activeFleetMissionsFromCanonicalRows().filter((mission) => mission.targetPlanetId === planetId);
   }
 
   dueUnresolvedFleetMissionsForPlanet(planetId: string, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
@@ -3488,7 +3488,8 @@ export class SettlementIndexer {
     `).get(mission.missionId) as EventRow | null;
     if (existing) {
       const marker = parseJson<{ source?: string }>(existing.event_json, {});
-      if (marker.source !== "indexed_mission_event_logs") return 0;
+      const baselineBlock = safeBigInt(this.metadata("lastReconciledBlock"), 0n);
+      if (marker.source !== "indexed_mission_event_logs" && safeBigInt(mission.blockNumber, 0n) <= baselineBlock) return 0;
     }
 
     const eventJson = JSON.stringify({
@@ -5610,6 +5611,44 @@ export class SettlementIndexer {
     const next = { source, summaries, byId, active, completed, activeByTarget };
     this.missionReferenceCache = next;
     return next;
+  }
+
+  private activeFleetMissionsFromCanonicalRows(): FleetMissionSummary[] {
+    const rows = this.db.query(`
+      SELECT *
+      FROM contract_fleet_missions
+      WHERE status_id IN (1, 2, 5)
+      ORDER BY CAST(arrival_at AS INTEGER) ASC
+    `).all() as ContractFleetMissionRow[];
+    const asOfSeconds = nowSeconds();
+    const baseMissions = rows.map((row) => this.canonicalFleetMissionSummary(row));
+    const needsGate = this.randomnessEngineConfigured && baseMissions.some(
+      (mission) =>
+        missionBattleRandomnessRequestId(mission) !== null
+        && mission.status === "Outbound"
+        && Number(mission.arrivalAt) <= asOfSeconds
+    );
+    const fulfilledRandomnessRequestIds = needsGate ? this.fulfilledRandomnessRequestIds() : null;
+
+    return baseMissions
+      .map((mission) => {
+        const status = (
+          (mission.status === "Returning" || mission.status === "Recalled")
+          && Number(mission.returnAt) <= asOfSeconds
+        )
+          ? "Returned"
+          : mission.status;
+        const resolvedMission = {
+          ...mission,
+          status,
+          needsResolution: fleetMissionNeedsResolution({ ...mission, status }, asOfSeconds, fulfilledRandomnessRequestIds)
+        };
+        return this.withFleetMissionPlanetReferences(
+          withFleetMissionResolutionBlocker(resolvedMission, asOfSeconds, fulfilledRandomnessRequestIds)
+        );
+      })
+      .filter(isVisibleActiveFleetMission)
+      .sort(compareFleetMissionsActiveSoonestFirst);
   }
 
   private decodedMissionLogs(): {
