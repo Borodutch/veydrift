@@ -20,7 +20,7 @@ export const WORKER_ROLE_ENV = "VEYDRIFT_WORKER_ROLE";
 export const WORKER_INDEX_ENV = "VEYDRIFT_WORKER_INDEX";
 export const WORKER_COUNT_ENV = "VEYDRIFT_WORKER_COUNT";
 export const WRITER_INTERNAL_PORT_ENV = "VEYDRIFT_WRITER_INTERNAL_PORT";
-export const DEFAULT_MAX_WORKER_COUNT = 10;
+export const DEFAULT_MAX_WORKER_COUNT = 2;
 
 export type WorkerRole = "writer" | "reader";
 
@@ -28,7 +28,15 @@ export type WorkerRole = "writer" | "reader";
 // single writer so all DB writes — and the writer's in-memory indexer bookkeeping (e.g. the bounded
 // fleet-mission reconcile queue drained after applyLog) — happen on exactly one process.
 const READ_ONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
-const WRITER_ONLY_READ_PATHS = new Set(["/chain/events"]);
+const WRITER_ONLY_READ_PATHS = new Set([
+  // Health/readiness must observe the writer's chain-sync/indexer state and must not queue behind
+  // reader-local cache refreshes.
+  "/health",
+  "/chain/events",
+  // App bootstrap config is environment-derived and must stay available even when indexed reader
+  // workers are saturated by DB-heavy API reads.
+  "/runtime-config"
+]);
 const BODYLESS_METHODS = new Set(["GET", "HEAD"]);
 
 // Request headers that must not be copied verbatim when re-issuing a forwarded request: the body is

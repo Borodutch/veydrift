@@ -5,6 +5,7 @@ import {
   resolveWorkerAssignment,
   resolveWriterInternalPort,
   roleForIndex,
+  WORKER_COUNT_ENV,
   WORKER_INDEX_ENV,
   WORKER_ROLE_ENV,
   WRITER_INTERNAL_PORT_ENV,
@@ -87,6 +88,7 @@ function superviseWorkers(workerCount: number): void {
       cmd: ["bun", import.meta.path],
       env: {
         ...process.env,
+        [WORKER_COUNT_ENV]: String(workerCount),
         [WORKER_ROLE_ENV]: role,
         [WORKER_INDEX_ENV]: String(index),
         [WRITER_INTERNAL_PORT_ENV]: String(writerInternalPort)
