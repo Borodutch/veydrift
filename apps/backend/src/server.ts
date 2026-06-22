@@ -1955,7 +1955,11 @@ function globalMissionArchiveRows(indexer: SettlementIndexer): FleetMissionArchi
   const cached = globalMissionArchiveRowsCache.get(indexer);
   if (cached && cached.stateVersion === stateVersion && cached.expiresAt > Date.now()) return cached.rows;
 
-  const rows = chronologicalMissionArchiveRows(indexer.allCompletedFleetMissions(), indexer.battleReports());
+  const completedMissions = indexer.completedFleetMissionsFromCanonicalRows();
+  const rows = chronologicalMissionArchiveRows(
+    completedMissions.length > 0 ? completedMissions : indexer.allCompletedFleetMissions(),
+    indexer.battleReports()
+  );
   globalMissionArchiveRowsCache.set(indexer, {
     expiresAt: Date.now() + 60_000,
     stateVersion,
