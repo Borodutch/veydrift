@@ -29,9 +29,7 @@ export type WorkerRole = "writer" | "reader";
 // fleet-mission reconcile queue drained after applyLog) — happen on exactly one process.
 const READ_ONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const WRITER_ONLY_READ_PATHS = new Set([
-  // Health/readiness must observe the writer's chain-sync/indexer state and must not queue behind
-  // reader-local cache refreshes.
-  "/health",
+  // The live chain event stream is owned by the writer's chain-sync subscription.
   "/chain/events"
 ]);
 const BODYLESS_METHODS = new Set(["GET", "HEAD"]);

@@ -146,6 +146,7 @@ async function checkRuntimeConfigStress(noisyEndpoints) {
   const runtimeLatencies = runtimeSamples.map((sample) => sample.ms).sort((left, right) => left - right);
   const runtimeP95Ms = percentile(runtimeLatencies, 95);
   const badRuntimeSamples = runtimeSamples.filter((sample) => !sample.ok || sample.status === 429 || sample.timedOut);
+  const badNoisySamples = noisySamples.filter((sample) => !sample.ok || sample.status === 429 || sample.timedOut);
   evidence.push({
     name: "runtime-config-stress",
     endpoint: "/runtime-config",
@@ -158,6 +159,7 @@ async function checkRuntimeConfigStress(noisyEndpoints) {
   });
 
   expect(badRuntimeSamples.length === 0, "runtime-config stress returned non-2xx, 429, or timed out");
+  expect(badNoisySamples.length === 0, "runtime-config noisy stress endpoints returned non-2xx, 429, or timed out");
   expect(runtimeP95Ms <= runtimeStressP95Ms, `runtime-config stress p95 ${runtimeP95Ms}ms exceeded ${runtimeStressP95Ms}ms`);
 }
 

@@ -1016,6 +1016,26 @@ describe("Veydrift backend", () => {
     expect(bodies.map((body) => body.error)).not.toContain("refresh_busy");
   });
 
+  test("does not rate-limit warm cached public reads during repeated stress probes", async () => {
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer: testIndexer(),
+      prewarmResponseCache: false
+    });
+    const headers = { "x-forwarded-for": "203.0.113.43", accept: "application/json" };
+
+    const warmup = await handler(new Request("https://api-test.veydrift.com/universe/systems?galaxy=2&center=44&radius=1", { headers }));
+    const responses = [];
+    for (let index = 0; index < 6; index += 1) {
+      responses.push(await handler(new Request("https://api-test.veydrift.com/universe/systems?galaxy=2&center=44&radius=1", { headers })));
+    }
+
+    expect(warmup.status).toBe(200);
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200, 200, 200]);
+  });
+
   test("publishes split settlement and game contracts in runtime config", async () => {
     const previousGameAddress = process.env.VEYDRIFT_CONTRACT_ADDRESS;
     const previousGameOverrideAddress = process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS;
@@ -7489,7 +7509,7 @@ describe("Veydrift backend", () => {
     expect(body.systems).toHaveLength(17);
   });
 
-  test("serves normal cache hits while capping runaway repeated cached reads", async () => {
+  test("serves repeated cached reads without spending the cold-read rate limit budget", async () => {
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader: new MockChainReader(),
@@ -7512,7 +7532,7 @@ describe("Veydrift backend", () => {
         "x-forwarded-for": "203.0.113.9"
       }
     }));
-    expect(rateLimited.status).toBe(429);
+    expect(rateLimited.status).toBe(200);
   });
 
   test("rate-limits repeated reads per route without starving shipyard inventory refreshes", async () => {
