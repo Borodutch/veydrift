@@ -427,6 +427,27 @@ export class SettlementIndexer {
       activeByTarget: Map<string, FleetMissionSummary[]>;
     }
     | null = null;
+  private fleetMissionPlanetReferenceCache:
+    | {
+      stateVersion: string;
+      refs: Map<string, FleetMissionPlanetReference | null>;
+    }
+    | null = null;
+  private canonicalActiveMissionCache:
+    | {
+      missionGeneration: number;
+      stateVersion: string;
+      asOfSeconds: number;
+      missions: FleetMissionSummary[];
+    }
+    | null = null;
+  private canonicalCompletedMissionCache:
+    | {
+      missionGeneration: number;
+      stateVersion: string;
+      missions: FleetMissionSummary[];
+    }
+    | null = null;
   private attackLaunchSecondsCache = new Map<string, { missionGeneration: number; launchesByTarget: Map<string, number[]> }>();
   private snapshotCache:
     | {
@@ -5259,6 +5280,8 @@ export class SettlementIndexer {
     this.decodedBattleReportCache = null;
     this.fulfilledRandomnessRequestIdsCache = null;
     this.missionReferenceCache = null;
+    this.canonicalActiveMissionCache = null;
+    this.canonicalCompletedMissionCache = null;
     this.attackLaunchSecondsCache.clear();
   }
 
@@ -5272,6 +5295,8 @@ export class SettlementIndexer {
       this.decodedBattleReportCache = null;
       this.fulfilledRandomnessRequestIdsCache = null;
       this.missionReferenceCache = null;
+      this.canonicalActiveMissionCache = null;
+      this.canonicalCompletedMissionCache = null;
       this.attackLaunchSecondsCache.clear();
     }
     return version;
@@ -5619,7 +5644,8 @@ export class SettlementIndexer {
       return cached;
     }
 
-    const summaries = source.map((mission) => this.withFleetMissionPlanetReferences(mission));
+    const stateVersion = this.indexedStateCacheVersion();
+    const summaries = source.map((mission) => this.withFleetMissionPlanetReferences(mission, stateVersion));
     const byId = new Map(summaries.map((mission) => [mission.missionId, mission]));
     const active = summaries
       .filter(isVisibleActiveFleetMission)
@@ -5640,13 +5666,25 @@ export class SettlementIndexer {
   }
 
   private activeFleetMissionsFromCanonicalRows(): FleetMissionSummary[] {
+    this.currentMissionReadModelDbVersion();
+    const stateVersion = this.indexedStateCacheVersion();
+    const asOfSeconds = Math.floor(nowSeconds() / 10) * 10;
+    const cached = this.canonicalActiveMissionCache;
+    if (
+      cached
+      && cached.missionGeneration === this.missionGeneration
+      && cached.stateVersion === stateVersion
+      && cached.asOfSeconds === asOfSeconds
+    ) {
+      return cached.missions;
+    }
+
     const rows = this.db.query(`
       SELECT *
       FROM contract_fleet_missions
       WHERE status_id IN (1, 2, 5)
       ORDER BY CAST(arrival_at AS INTEGER) ASC
     `).all() as ContractFleetMissionRow[];
-    const asOfSeconds = nowSeconds();
     const baseMissions = rows.map((row) => this.canonicalFleetMissionSummary(row));
     const needsGate = this.randomnessEngineConfigured && baseMissions.some(
       (mission) =>
@@ -5656,7 +5694,7 @@ export class SettlementIndexer {
     );
     const fulfilledRandomnessRequestIds = needsGate ? this.fulfilledRandomnessRequestIds() : null;
 
-    return baseMissions
+    const missions = baseMissions
       .map((mission) => {
         const status = (
           (mission.status === "Returning" || mission.status === "Recalled")
@@ -5670,14 +5708,33 @@ export class SettlementIndexer {
           needsResolution: fleetMissionNeedsResolution({ ...mission, status }, asOfSeconds, fulfilledRandomnessRequestIds)
         };
         return this.withFleetMissionPlanetReferences(
-          withFleetMissionResolutionBlocker(resolvedMission, asOfSeconds, fulfilledRandomnessRequestIds)
+          withFleetMissionResolutionBlocker(resolvedMission, asOfSeconds, fulfilledRandomnessRequestIds),
+          stateVersion
         );
       })
       .filter(isVisibleActiveFleetMission)
       .sort(compareFleetMissionsActiveSoonestFirst);
+    this.canonicalActiveMissionCache = {
+      missionGeneration: this.missionGeneration,
+      stateVersion,
+      asOfSeconds,
+      missions
+    };
+    return missions;
   }
 
   completedFleetMissionsFromCanonicalRows(): FleetMissionSummary[] {
+    this.currentMissionReadModelDbVersion();
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.canonicalCompletedMissionCache;
+    if (
+      cached
+      && cached.missionGeneration === this.missionGeneration
+      && cached.stateVersion === stateVersion
+    ) {
+      return cached.missions;
+    }
+
     const rows = this.db.query(`
       SELECT *
       FROM contract_fleet_missions
@@ -5685,9 +5742,15 @@ export class SettlementIndexer {
       ORDER BY CAST(return_at AS INTEGER) DESC, CAST(arrival_at AS INTEGER) DESC, CAST(mission_id AS INTEGER) DESC
     `).all() as ContractFleetMissionRow[];
 
-    return rows
-      .map((row) => this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row)))
+    const missions = rows
+      .map((row) => this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion))
       .sort(compareFleetMissionsNewestFirst);
+    this.canonicalCompletedMissionCache = {
+      missionGeneration: this.missionGeneration,
+      stateVersion,
+      missions
+    };
+    return missions;
   }
 
   private decodedMissionLogs(): {
@@ -6204,18 +6267,33 @@ export class SettlementIndexer {
     );
   }
 
-  private withFleetMissionPlanetReferences(mission: FleetMissionSummary): FleetMissionSummary {
+  private withFleetMissionPlanetReferences(mission: FleetMissionSummary, stateVersion = this.indexedStateCacheVersion()): FleetMissionSummary {
     return withMissionAsOfNow(
       {
         ...mission,
-        originPlanet: this.fleetMissionPlanetReference(mission.originPlanetId),
-        targetPlanet: this.fleetMissionPlanetReference(mission.targetPlanetId)
+        originPlanet: this.fleetMissionPlanetReference(mission.originPlanetId, stateVersion),
+        targetPlanet: this.fleetMissionPlanetReference(mission.targetPlanetId, stateVersion)
       },
       nowSeconds()
     );
   }
 
-  private fleetMissionPlanetReference(planetId: string): FleetMissionPlanetReference | null {
+  private fleetMissionPlanetReference(planetId: string, stateVersion = this.indexedStateCacheVersion()): FleetMissionPlanetReference | null {
+    if (!this.fleetMissionPlanetReferenceCache || this.fleetMissionPlanetReferenceCache.stateVersion !== stateVersion) {
+      this.fleetMissionPlanetReferenceCache = {
+        stateVersion,
+        refs: new Map()
+      };
+    }
+    if (this.fleetMissionPlanetReferenceCache.refs.has(planetId)) {
+      return this.fleetMissionPlanetReferenceCache.refs.get(planetId) ?? null;
+    }
+    const ref = this.fleetMissionPlanetReferenceUncached(planetId);
+    this.fleetMissionPlanetReferenceCache.refs.set(planetId, ref);
+    return ref;
+  }
+
+  private fleetMissionPlanetReferenceUncached(planetId: string): FleetMissionPlanetReference | null {
     const planet = this.planet(planetId);
     if (!planet) return null;
     return {
@@ -6230,8 +6308,18 @@ export class SettlementIndexer {
       archetype: planetArchetypeForTemperature(planet.temperature),
       // VEY-KANEO-440: surface the Alliance Depot level (building id 13) so the ACS Defend compose UX
       // can preview how much holding fuel the defended planet's depot subsidizes.
-      allianceDepotLevel: this.infrastructureRows(planet.planetId).find((building) => building.id === 13)?.level ?? 0
+      allianceDepotLevel: this.projectedBuildingLevel(planet.planetId, 13)
     };
+  }
+
+  private projectedBuildingLevel(planetId: string, buildingId: number): number {
+    let level = this.indexedLevel("contract_building_levels", "building_id", planetId, buildingId);
+    for (const queue of this.queueSettlement(`building:${planetId}`).completed) {
+      if (queue.itemId === buildingId && typeof queue.targetLevel === "number") {
+        level = Math.max(level, queue.targetLevel);
+      }
+    }
+    return level;
   }
 
   private count(table:
