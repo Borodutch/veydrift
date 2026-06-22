@@ -1424,7 +1424,7 @@ describe("Veydrift backend", () => {
     expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200, 200, 200]);
   });
 
-  test("does not prewarm broad indexed reads for injected test handlers unless enabled", async () => {
+  test("does not prewarm broad indexed reads on reader workers by default", async () => {
     const indexer = testIndexer();
     let prewarmCalls = 0;
     indexer.allActiveFleetMissions = () => {
