@@ -35,7 +35,7 @@ import { VeydriftGameReader, riftRequirements } from "./evm";
 import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { watchedPlanetMessage } from "./playerProfiles";
 import { deriveInfrastructureFields } from "./readModels";
-import { createRequestHandler, deriveLogBackfiller, shouldRecoverFailedReconciliation } from "./server";
+import { createRequestHandler, deriveLogBackfiller, runtimeConfigResponse, shouldRecoverFailedReconciliation } from "./server";
 import { DEFAULT_MAX_WORKER_COUNT } from "./workerPool";
 
 setSystemTime(new Date(1_770_007_680_000));
@@ -1070,6 +1070,16 @@ describe("Veydrift backend", () => {
       rpcProvider: "unknown"
     });
     expect(response.status).toBe(200);
+  });
+
+  test("builds reader runtime config without request handler dependencies", async () => {
+    const response = runtimeConfigResponse("reader");
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+    expect(body.backend.worker.role).toBe("reader");
+    expect(body.apiUrl).toBe("https://api-test.veydrift.com");
   });
 
   test("prefers provider build SHA metadata over stale generic GIT_SHA", async () => {

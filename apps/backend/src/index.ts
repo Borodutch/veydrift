@@ -1,5 +1,5 @@
 import { installCrashDiagnostics } from "./crashDiagnostics";
-import { createRequestHandler } from "./server";
+import { createRequestHandler, runtimeConfigResponse } from "./server";
 import {
   createForwardingFetch,
   resolveWorkerAssignment,
@@ -28,9 +28,8 @@ const idleTimeout = Number.parseInt(process.env.VEYDRIFT_HTTP_IDLE_TIMEOUT_SECON
 // mutating request and the SSE stream there so the writer remains the sole mutator of the SQLite index
 // and the only holder of the live chain-sync stream.
 function serveWorker(role: WorkerRole, index: number, writerInternalPort?: number): void {
-  const handler = createRequestHandler({ role });
-
   if (role === "writer" && writerInternalPort !== undefined) {
+    const handler = createRequestHandler({ role });
     Bun.serve({
       idleTimeout,
       port: writerInternalPort,
@@ -45,11 +44,28 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
   }
 
   if (role === "reader" && writerInternalPort !== undefined) {
+    let handler: ReturnType<typeof createRequestHandler> | undefined;
+    const localReaderHandler = async (request: Request): Promise<Response> => {
+      handler ??= createRequestHandler({ role });
+      return handler(request);
+    };
+    const localBootstrapHandler = (request: Request): Response | undefined => {
+      const url = new URL(request.url);
+      return request.method === "GET" && url.pathname === "/runtime-config"
+        ? runtimeConfigResponse(role)
+        : undefined;
+    };
+
     Bun.serve({
       idleTimeout,
       port,
       reusePort: true,
-      fetch: createForwardingFetch(handler, `http://127.0.0.1:${writerInternalPort}`)
+      fetch: createForwardingFetch(
+        localReaderHandler,
+        `http://127.0.0.1:${writerInternalPort}`,
+        fetch,
+        localBootstrapHandler
+      )
     });
     console.log(
       `Veydrift backend worker ${index} (reader) listening on http://localhost:${port} [reusePort]; ` +
@@ -58,6 +74,7 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
     return;
   }
 
+  const handler = createRequestHandler({ role });
   Bun.serve({
     idleTimeout,
     port,
