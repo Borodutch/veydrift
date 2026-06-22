@@ -1226,6 +1226,7 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (url.pathname === "/health") return 10_000;
   if (url.pathname === "/debug/indexer") return 2_000;
   if (url.pathname === "/highscores") return 300_000;
+  if (url.pathname === "/raid-finder/debris") return 30_000;
   // Wallet, fleet, and mission-control payloads are contract-state mirrors. Do not let a worker-local
   // response cache outlive the event listener's latest mutation; these endpoints are backed by SQLite
   // read models and should be cheap enough to serve fresh.
@@ -1243,8 +1244,15 @@ function cacheableJsonRequestKey(request: Request, url: URL, indexer: Settlement
 }
 
 function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): string {
-  if (url.pathname === "/highscores") return indexer.indexedStateCacheVersion();
+  if (url.pathname === "/health") return ttlCacheBucket(10_000);
+  if (url.pathname === "/debug/indexer") return ttlCacheBucket(2_000);
+  if (url.pathname === "/highscores") return ttlCacheBucket(300_000);
+  if (url.pathname === "/raid-finder/debris") return ttlCacheBucket(30_000);
   return indexer.responseCacheVersion();
+}
+
+function ttlCacheBucket(ttlMs: number): string {
+  return `ttl:${Math.floor(Date.now() / ttlMs)}`;
 }
 
 function cachedJsonResponse(cached: CachedJsonResponse): Response {
