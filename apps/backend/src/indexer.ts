@@ -403,6 +403,13 @@ export class SettlementIndexer {
       battleReports: BattleReport[];
     }
     | null = null;
+  private decodedBattleReportCache:
+    | {
+      missionGeneration: number;
+      battleReportGeneration: number;
+      battleReports: BattleReport[];
+    }
+    | null = null;
   private fulfilledRandomnessRequestIdsCache:
     | {
       missionGeneration: number;
@@ -1079,7 +1086,10 @@ export class SettlementIndexer {
         .filter((planet) => planet.owner.toLowerCase() === walletLower)
         .map((planet) => planet.planetId)
     );
-    const summaries = this.indexedFleetMissionSummariesWithPlanetReferences();
+    const includeArchive = options.includeArchive !== false;
+    const summaries = includeArchive
+      ? this.indexedFleetMissionSummariesWithPlanetReferences()
+      : this.activeFleetMissionsFromCanonicalRows();
     // VEY-KANEO-456: index every mission by id so an incoming attack can resolve the allied AcsDefend
     // fleets stationed against it (linked by `counterplayDefenderMissionIds`) into per-defender detail
     // for the Stationed defenses panel. `nowSeconds` drives the lazy as-of-now reconciliation that hides
@@ -1126,7 +1136,7 @@ export class SettlementIndexer {
       && mission.status === "Outbound"
     );
 
-    if (options.includeArchive === false) {
+    if (!includeArchive) {
       const activeMissions = [
         ...visibleIncoming,
         ...outgoing,
@@ -5246,6 +5256,7 @@ export class SettlementIndexer {
     this.missionReadModelDbVersion = this.advanceMissionReadModelDbVersion();
     this.missionReadModelCache = null;
     this.decodedMissionLogCache = null;
+    this.decodedBattleReportCache = null;
     this.fulfilledRandomnessRequestIdsCache = null;
     this.missionReferenceCache = null;
     this.attackLaunchSecondsCache.clear();
@@ -5258,6 +5269,7 @@ export class SettlementIndexer {
       this.missionGeneration += 1;
       this.missionReadModelCache = null;
       this.decodedMissionLogCache = null;
+      this.decodedBattleReportCache = null;
       this.fulfilledRandomnessRequestIdsCache = null;
       this.missionReferenceCache = null;
       this.attackLaunchSecondsCache.clear();
@@ -5288,6 +5300,7 @@ export class SettlementIndexer {
           battleReports: null
         };
       }
+      this.decodedBattleReportCache = null;
     }
     return version;
   }
@@ -5313,6 +5326,7 @@ export class SettlementIndexer {
         battleReports: null
       };
     }
+    this.decodedBattleReportCache = null;
   }
 
   private recordLog(eventId: string, log: IndexedRpcLog): boolean {
@@ -5663,6 +5677,19 @@ export class SettlementIndexer {
       .sort(compareFleetMissionsActiveSoonestFirst);
   }
 
+  completedFleetMissionsFromCanonicalRows(): FleetMissionSummary[] {
+    const rows = this.db.query(`
+      SELECT *
+      FROM contract_fleet_missions
+      WHERE status_id IN (3, 4)
+      ORDER BY CAST(return_at AS INTEGER) DESC, CAST(arrival_at AS INTEGER) DESC, CAST(mission_id AS INTEGER) DESC
+    `).all() as ContractFleetMissionRow[];
+
+    return rows
+      .map((row) => this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row)))
+      .sort(compareFleetMissionsNewestFirst);
+  }
+
   private decodedMissionLogs(): {
     eventMissions: FleetMissionSummary[];
     fulfilledRandomnessRequestIds: ReadonlySet<string>;
@@ -5706,6 +5733,33 @@ export class SettlementIndexer {
     };
     this.decodedMissionLogCache = next;
     return next;
+  }
+
+  private decodedBattleReportsOnly(): BattleReport[] {
+    this.currentMissionReadModelDbVersion();
+    this.currentBattleReportReadModelDbVersion();
+    const cached = this.decodedBattleReportCache;
+    if (
+      cached
+      && cached.missionGeneration === this.missionGeneration
+      && cached.battleReportGeneration === this.battleReportGeneration
+    ) {
+      return cached.battleReports;
+    }
+
+    const battleRows = this.db.query(`
+      SELECT event_json
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'battle'
+      ORDER BY CAST(block_number AS INTEGER) ASC
+    `).all() as EventRow[];
+    const battleReports = decodeBattleReports(sortedEventRows(battleRows));
+    this.decodedBattleReportCache = {
+      missionGeneration: this.missionGeneration,
+      battleReportGeneration: this.battleReportGeneration,
+      battleReports
+    };
+    return battleReports;
   }
 
   private mergeCanonicalFleetMissions(eventMissions: FleetMissionSummary[]): FleetMissionSummary[] {
@@ -5893,7 +5947,7 @@ export class SettlementIndexer {
     // and each joiner's resulting return-leg cargo). Solo attacks come back with a single participant.
     // The defender snapshot is reconstructed from historical absolute ship/defense count events before
     // the battle report log, so the UI can show battle-time units without substituting current defenses.
-    const reportsWithParticipants = attachAttackGroupParticipants(this.decodedMissionLogs().battleReports, summaries);
+    const reportsWithParticipants = attachAttackGroupParticipants(this.decodedBattleReportsOnly(), summaries);
     const defenderSnapshots = this.battleTimeDefenderSnapshots(reportsWithParticipants);
     const reports = reportsWithParticipants.map((report) => ({
       ...report,
@@ -5918,15 +5972,14 @@ export class SettlementIndexer {
       }
     }
 
-    this.currentBattleReportReadModelDbVersion();
-    const summaries = this.indexedFleetMissionSummaries();
-    const matchingReports = this.decodedMissionLogs().battleReports.filter((report) =>
+    const matchingReports = this.decodedBattleReportsOnly().filter((report) =>
       missionIds.has(report.missionId)
         || (report.attackGroupId !== null && missionIds.has(report.attackGroupId))
         || report.participants.some((participant) => missionIds.has(participant.missionId))
     );
     if (matchingReports.length === 0) return [];
 
+    const summaries = this.indexedFleetMissionSummaries();
     const reportsWithParticipants = attachAttackGroupParticipants(matchingReports, summaries);
     const defenderSnapshots = this.battleTimeDefenderSnapshots(reportsWithParticipants);
     return reportsWithParticipants.map((report) => ({
