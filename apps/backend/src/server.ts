@@ -56,6 +56,7 @@ import {
 } from "./playerProfiles";
 import { deriveInfrastructureFields, isCombatShipId } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
+import { responseCachePath, SharedResponseCache } from "./sharedResponseCache";
 import {
   DEFAULT_MAX_WORKER_COUNT,
   resolveWorkerCount,
@@ -160,6 +161,7 @@ export type ServerDependencies = {
   enableResponseCache?: boolean;
   // Test seam for disabling asynchronous production cache prewarming while exercising the response cache.
   prewarmResponseCache?: boolean;
+  sharedResponseCache?: SharedResponseCache | null;
 };
 
 const defaultUniverseSeed = "veydrift-mainnet-preview";
@@ -261,7 +263,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     && !dependencies.indexer
     && !dependencies.randomnessCommitter
   );
-  const prewarmResponseCache = dependencies.prewarmResponseCache ?? false;
+  const sharedResponseCache = dependencies.sharedResponseCache !== undefined
+    ? dependencies.sharedResponseCache
+    : enableResponseCache && loaded.problems.length === 0
+      ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
+      : null;
+  const prewarmResponseCache = dependencies.prewarmResponseCache ?? (enableResponseCache && workerRole === "reader");
 
   const routeRequest = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -1129,6 +1136,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         if (cached && cached.expiresAt > now) {
           return withRequestCors(request, cachedJsonResponse(request, cached));
         }
+        const sharedCached = sharedResponseCache?.get(cacheKey, now);
+        if (sharedCached) {
+          responseCache.set(cacheKey, sharedCached);
+          return withRequestCors(request, cachedJsonResponse(request, sharedCached));
+        }
         if (cached && cached.expiresAt + staleCachedJsonWindowMs > now) {
           if (!inflightResponseCache.has(cacheKey)) {
             let resolveRefresh: (cached: CachedJsonResponse | null) => void;
@@ -1136,7 +1148,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
               resolveRefresh = resolve;
             });
             inflightResponseCache.set(cacheKey, refresh);
-            void refreshCachedJsonResponse(request, url, routeRequest, responseCache, cacheKey, cacheTtlMs)
+            void refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedResponseCache, cacheKey, cacheTtlMs)
               .then((refreshed) => resolveRefresh!(refreshed.cached))
               .catch(() => resolveRefresh!(null))
               .finally(() => {
@@ -1144,6 +1156,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
               });
           }
           return withRequestCors(request, cachedJsonResponse(request, cached));
+        }
+        const sharedCache = sharedResponseCache;
+        const sharedStale = sharedCache?.get(cacheKey, now, true);
+        if (sharedCache && sharedStale) {
+          responseCache.set(cacheKey, sharedStale);
+          if (sharedCache.tryAcquireRefresh(cacheKey)) {
+            void refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedCache, cacheKey, cacheTtlMs)
+              .catch(() => null)
+              .finally(() => sharedCache.releaseRefresh(cacheKey));
+          }
+          return withRequestCors(request, cachedJsonResponse(request, sharedStale));
         }
 
         const inflight = inflightResponseCache.get(cacheKey);
@@ -1157,20 +1180,33 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const rateLimited = readRateLimitResponse(request, url, readRateLimits);
         if (rateLimited) return withRequestCors(request, rateLimited);
 
+        const ownsSharedRefresh = sharedResponseCache?.tryAcquireRefresh(cacheKey) ?? false;
+        if (sharedResponseCache && !ownsSharedRefresh) {
+          const refreshed = await sharedResponseCache.waitForFresh(cacheKey);
+          if (refreshed) {
+            responseCache.set(cacheKey, refreshed);
+            return withRequestCors(request, cachedJsonResponse(request, refreshed));
+          }
+        }
+
         let resolveInflight: (cached: CachedJsonResponse | null) => void;
         inflightResponseCache.set(cacheKey, new Promise((resolve) => {
           resolveInflight = resolve;
         }));
 
-        const refreshed = await refreshCachedJsonResponse(request, url, routeRequest, responseCache, cacheKey, cacheTtlMs);
-        if (refreshed.cached) {
-          resolveInflight!(refreshed.cached);
+        try {
+          const refreshed = await refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedResponseCache, cacheKey, cacheTtlMs);
+          if (refreshed.cached) {
+            resolveInflight!(refreshed.cached);
+            inflightResponseCache.delete(cacheKey);
+            return withRequestCors(request, cachedJsonResponse(request, refreshed.cached));
+          }
+          resolveInflight!(null);
           inflightResponseCache.delete(cacheKey);
-          return withRequestCors(request, cachedJsonResponse(request, refreshed.cached));
+          return withRequestCors(request, refreshed.response);
+        } finally {
+          if (ownsSharedRefresh) sharedResponseCache?.releaseRefresh(cacheKey);
         }
-        resolveInflight!(null);
-        inflightResponseCache.delete(cacheKey);
-        return withRequestCors(request, refreshed.response);
       }
 
       const rateLimited = readRateLimitResponse(request, url, readRateLimits);
@@ -1185,7 +1221,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
   };
 
-  prewarmHotResponseCache(serveWithResponseCache, indexer, prewarmResponseCache);
+  prewarmHotResponseCache(serveWithResponseCache, indexer, prewarmResponseCache, prewarmStartDelayMs());
   return serveWithResponseCache;
 }
 
@@ -1269,7 +1305,7 @@ function isIndexableChainReader(
 }
 
 const readRateLimitWindowMs = 10_000;
-const readRateLimitMaxRequests = 4;
+const readRateLimitMaxRequests = 40;
 const staleCachedJsonWindowMs = 300_000;
 
 function readRateLimitResponse(
@@ -1344,6 +1380,17 @@ function requestClientKey(request: Request): string | null {
   return forwarded || realIp || null;
 }
 
+function sharedResponseCacheForIndex(indexDbPath: string): SharedResponseCache | null {
+  const path = responseCachePath(indexDbPath);
+  if (!path) return null;
+  try {
+    return new SharedResponseCache(path);
+  } catch (error) {
+    console.warn("Veydrift shared response cache unavailable", reasonText(error));
+    return null;
+  }
+}
+
 // Predicate kept for diagnostics/tests: true when a warm DB inherited a recorded reconcile failure
 // (lastReconciliationError set, not currently reconciling). The backend no longer auto-runs canonical
 // reconcile at startup; recovery is an explicit operator action or event-log replay.
@@ -1373,6 +1420,7 @@ async function refreshCachedJsonResponse(
   url: URL,
   routeRequest: (request: Request) => Promise<Response>,
   responseCache: Map<string, CachedJsonResponse>,
+  sharedResponseCache: SharedResponseCache | null | undefined,
   cacheKey: string,
   cacheTtlMs: number
 ): Promise<CachedJsonRefreshResult> {
@@ -1394,6 +1442,7 @@ async function refreshCachedJsonResponse(
     statusText: response.statusText
   };
   responseCache.set(cacheKey, cached);
+  sharedResponseCache?.set(cacheKey, cached, cached.expiresAt + staleCachedJsonWindowMs);
   pruneResponseCache(responseCache);
   return { cached };
 }
@@ -1411,10 +1460,8 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (url.pathname === "/missions") return 300_000;
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return 30_000;
   if (cacheableWalletSnapshotPath(url.pathname)) return 15_000;
-  // Wallet, fleet, and remaining planet payloads are contract-state mirrors. Do not let a worker-local
-  // response cache outlive the event listener's latest mutation; these endpoints are backed by SQLite
-  // read models and should be cheap enough to serve fresh.
-  if (url.pathname.startsWith("/wallet/")) return 0;
+  if (url.pathname.match(/^\/wallet\/[^/]+\/(?:shipyard|defenses)$/)) return 0;
+  if (url.pathname.startsWith("/wallet/")) return 5_000;
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return 30_000;
   if (url.pathname === "/universe/systems") return 30_000;
   return 0;
@@ -1441,7 +1488,7 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return indexer.missionResponseCacheVersion();
   if (url.pathname === "/missions") return "ttl";
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return indexer.missionResponseCacheVersion();
-  if (cacheableWalletSnapshotPath(url.pathname)) return "ttl";
+  if (cacheableWalletSnapshotPath(url.pathname)) return indexer.responseCacheVersion();
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return "ttl";
   if (url.pathname === "/universe/systems") return "ttl";
   return indexer.responseCacheVersion();
@@ -1499,21 +1546,21 @@ function pruneResponseCache(cache: Map<string, CachedJsonResponse>): void {
 function prewarmHotResponseCache(
   serve: (request: Request) => Promise<Response>,
   indexer: SettlementIndexer | undefined,
-  enabled: boolean
+  enabled: boolean,
+  startDelayMs = 0
 ): void {
   if (!enabled || !indexer) return;
 
-  let paths: string[] = [];
-  try {
-    indexer.allActiveFleetMissions();
-    globalMissionArchiveRows(indexer);
-    paths = hotResponseCachePaths(indexer);
-  } catch {
-    // Best-effort only. A cold/stale index should not make worker startup fail.
-  }
-
   const timer = setTimeout(() => {
     void (async () => {
+      let paths: string[] = [];
+      try {
+        indexer.allActiveFleetMissions();
+        globalMissionArchiveRows(indexer);
+        paths = hotResponseCachePaths(indexer);
+      } catch {
+        // Best-effort only. A cold/stale index should not make worker startup fail.
+      }
       for (const path of paths) {
         try {
           const response = await serve(new Request(`http://localhost${path}`));
@@ -1521,10 +1568,21 @@ function prewarmHotResponseCache(
         } catch {
           // Best-effort only. A cold/stale index should not make worker startup fail.
         }
+        await delay(0);
       }
     })();
-  }, 0);
+  }, startDelayMs);
   timer.unref?.();
+}
+
+function prewarmStartDelayMs(): number {
+  const parsedIndex = Number.parseInt(process.env[WORKER_INDEX_ENV] ?? "0", 10);
+  const index = Number.isFinite(parsedIndex) ? Math.max(0, parsedIndex) : 0;
+  return 500 + index * 250;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function hotResponseCachePaths(indexer: SettlementIndexer): string[] {

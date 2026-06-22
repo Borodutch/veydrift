@@ -7594,7 +7594,7 @@ describe("Veydrift backend", () => {
     });
     const headers = { "x-forwarded-for": "203.0.113.10" };
 
-    for (let index = 0; index < 4; index += 1) {
+    for (let index = 0; index < 40; index += 1) {
       await handler(new Request(`http://localhost/wallet/${player}/overview?planetId=7`, { headers }));
     }
 
