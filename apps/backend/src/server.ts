@@ -268,6 +268,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     : enableResponseCache && loaded.problems.length === 0
       ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
       : null;
+  // Prewarming walks broad indexed read surfaces and can monopolize reader workers during deploy/startup.
+  // Keep it opt-in so bootstrap endpoints stay available while the shared/on-demand cache warms naturally.
   const prewarmResponseCache = dependencies.prewarmResponseCache ?? false;
 
   const routeRequest = async (request: Request): Promise<Response> => {
@@ -1587,7 +1589,6 @@ function delay(ms: number): Promise<void> {
 
 function hotResponseCachePaths(indexer: SettlementIndexer): string[] {
   const paths = new Set<string>([
-    "/health",
     "/highscores?page=1&pageSize=250",
     "/missions?status=active",
     "/missions?status=completed&page=1&pageSize=25"

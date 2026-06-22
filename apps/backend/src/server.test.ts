@@ -1048,6 +1048,27 @@ describe("Veydrift backend", () => {
     expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200, 200, 200]);
   });
 
+  test("does not prewarm broad indexed reads on reader workers by default", async () => {
+    const indexer = testIndexer();
+    let prewarmCalls = 0;
+    indexer.allActiveFleetMissions = () => {
+      prewarmCalls += 1;
+      return [];
+    };
+
+    createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer,
+      role: "reader"
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 800));
+
+    expect(prewarmCalls).toBe(0);
+  });
+
   test("serves concurrent external cold cache misses without refresh_busy responses", async () => {
     const handler = createRequestHandler({
       chainReader: new MockChainReader(),
