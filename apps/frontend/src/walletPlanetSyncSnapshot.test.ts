@@ -85,6 +85,40 @@ describe("loadWalletPlanetSyncSnapshot", () => {
     expect(result.planetsResponse.planets).toHaveLength(1);
   });
 
+  test("forces wallet planet roster reads for settled-planet chain events", async () => {
+    let overviewCalled = false;
+    let planetsCalled = false;
+    const result = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, "7", { forceWalletPlanets: true }, {
+      fetchWalletOverviewSnapshot: async () => {
+        overviewCalled = true;
+        throw new Error("overview should not be called");
+      },
+      fetchWalletPlanets: async () => {
+        planetsCalled = true;
+        return {
+          wallet,
+          homePlanetId: "7",
+          planets: [planet(), { ...planet(), planetId: "8", isHomePlanet: false, coordinates: "2:44:10", position: 10 }],
+        } as any;
+      },
+      fetchWalletQueues: async () => queues() as any,
+      fetchFleetMissionVisibility: async () => ({
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      } as any),
+    });
+
+    expect(overviewCalled).toBe(false);
+    expect(planetsCalled).toBe(true);
+    expect(result.planetsResponse.planets.map((entry) => entry.planetId)).toEqual(["7", "8"]);
+  });
+
   test("hydrates critical planet state when the overview fast path and fleet visibility stall", async () => {
     const result = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, "7", {}, {
       fetchWalletOverviewSnapshot: async (_apiUrl, _account, _planetId, options) => {

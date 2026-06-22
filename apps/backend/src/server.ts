@@ -204,13 +204,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         console.error("Veydrift current-state heal failed", error);
       });
   }
-  if (cacheReader) {
-    chainSync?.addListener((event) => {
-      if (event.kind === "chain-event") {
-        cacheReader.clear();
-      }
-    });
-  }
   if (isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
     const checkpointWal = () => {
       try {

@@ -1,5 +1,5 @@
 import type { BackendConfig } from "./config";
-import { canonicalHealPlanetIdsForLog } from "./evm";
+import { canonicalHealPlanetIdsForLog, isSettledPlanetLog } from "./evm";
 import type { RpcLog } from "./evm";
 import type { SettlementIndexer } from "./indexer";
 
@@ -44,6 +44,7 @@ export type ChainSyncEvent = {
   blockNumber: string | null;
   kind: "chain-event" | "sync-status";
   transactionHash?: string;
+  walletPlanetsChanged?: boolean;
 };
 
 type ChainSyncListener = (event: ChainSyncEvent) => void;
@@ -240,7 +241,7 @@ export class ChainSyncService {
 
       const fromBlock = this.cursor < 0n ? 0n : this.cursor + 1n;
       const logs = await backfiller.listContractLogs(fromBlock, head);
-      const { applied, lastHash } = await this.applyLogs(logs, applyLog);
+      const { applied, lastHash, walletPlanetsChanged } = await this.applyLogs(logs, applyLog);
       // Advance the cursor to the scanned head ONLY after a clean ingest — a throw skips this and the
       // next pass retries the same range. Events are absolute-state SETs + txHash:logIndex deduped, so
       // the retried overlap is idempotent.
@@ -250,7 +251,8 @@ export class ChainSyncService {
         this.notify({
           kind: "chain-event",
           blockNumber: this.latestSyncedBlock,
-          ...(lastHash ? { transactionHash: lastHash } : {})
+          ...(lastHash ? { transactionHash: lastHash } : {}),
+          ...(walletPlanetsChanged ? { walletPlanetsChanged } : {})
         });
       }
       this.clearRecoveredHeadStall();
@@ -272,9 +274,10 @@ export class ChainSyncService {
   private async applyLogs(
     logs: RpcLog[],
     applyLog: NonNullable<SettlementIndexer["applyLog"]>
-  ): Promise<{ applied: number; lastHash: string | undefined }> {
+  ): Promise<{ applied: number; lastHash: string | undefined; walletPlanetsChanged: boolean }> {
     let applied = 0;
     let lastHash: string | undefined;
+    let walletPlanetsChanged = false;
     for (const log of sortRpcLogs(logs)) {
       if (!isRpcLog(log)) continue;
       const block = BigInt(log.blockNumber);
@@ -286,6 +289,7 @@ export class ChainSyncService {
           this.lastEventAt = new Date().toISOString();
           applied += 1;
           lastHash = log.transactionHash;
+          walletPlanetsChanged ||= isSettledPlanetLog(log);
           await this.queueTargetedCanonicalHeal(log);
         }
         if (result.removed) {
@@ -299,7 +303,7 @@ export class ChainSyncService {
         throw error;
       }
     }
-    return { applied, lastHash };
+    return { applied, lastHash, walletPlanetsChanged };
   }
 
   private async queueTargetedCanonicalHeal(log: RpcLog): Promise<void> {

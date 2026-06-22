@@ -2105,7 +2105,7 @@ export async function loadWalletPlanetSyncSnapshot(
   apiBaseUrl: string,
   account: string,
   activePlanetId: string | undefined,
-  options: { forceHomePlanet?: boolean } = {},
+  options: { forceHomePlanet?: boolean; forceWalletPlanets?: boolean } = {},
   loaders: {
     fetchWalletOverviewSnapshot?: typeof fetchWalletOverviewSnapshot;
     fetchWalletPlanets?: typeof fetchWalletPlanets;
@@ -2119,7 +2119,7 @@ export async function loadWalletPlanetSyncSnapshot(
   const loadWalletQueues = loaders.fetchWalletQueues ?? fetchWalletQueues;
   const loadFleetMissionVisibility = loaders.fetchFleetMissionVisibility ?? fetchFleetMissionVisibility;
   const loadWalletSettlement = loaders.fetchWalletSettlement ?? fetchWalletSettlement;
-  const readPlanetId = options.forceHomePlanet ? undefined : activePlanetId;
+  const readPlanetId = options.forceHomePlanet || options.forceWalletPlanets ? undefined : activePlanetId;
   if (readPlanetId !== undefined) {
     try {
       return await loadOverviewSnapshot(apiBaseUrl, account, readPlanetId, {
@@ -2562,6 +2562,16 @@ function emptyFleetVisibility(wallet: string, homePlanetId: string | null): Flee
     completedMissions: [],
     battleReports: [],
   };
+}
+
+function chainEventWalletPlanetsChanged(event: MessageEvent | undefined): boolean {
+  if (!event) return false;
+  try {
+    const payload = JSON.parse(event.data) as { walletPlanetsChanged?: boolean };
+    return payload.walletPlanetsChanged === true;
+  } catch {
+    return false;
+  }
 }
 
 function initialInspectPageState(): {
@@ -3771,7 +3781,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   const refreshOnChainState = useCallback(async (
     renameExpectation?: { planetId: string; name: string },
-    options: { force?: boolean; forceHomePlanet?: boolean } = {},
+    options: { force?: boolean; forceHomePlanet?: boolean; forceWalletPlanets?: boolean } = {},
   ) => {
     const requestId = beginRefreshRequest(onChainRefreshGate);
     if (!apiBaseUrl || !account) {
@@ -3799,7 +3809,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       const walletPlanetsForRead = canUseCachedWalletPlanets ? walletPlanets : [];
       const homePlanetIdForRead = canUseCachedWalletPlanets ? onChainSettlementState?.homePlanetId : undefined;
       const readPlanetId = selectedPlanetIdForWalletRead({
-        activePlanetId: options.forceHomePlanet || !canUseCachedWalletPlanets ? undefined : activePlanetId,
+        activePlanetId: options.forceHomePlanet || options.forceWalletPlanets || !canUseCachedWalletPlanets ? undefined : activePlanetId,
         homePlanetId: homePlanetIdForRead,
         walletPlanets: walletPlanetsForRead,
       });
@@ -3807,7 +3817,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         apiBaseUrl,
         account,
         readPlanetId,
-        options.forceHomePlanet === undefined ? {} : { forceHomePlanet: options.forceHomePlanet },
+        {
+          ...(options.forceHomePlanet === undefined ? {} : { forceHomePlanet: options.forceHomePlanet }),
+          ...(options.forceWalletPlanets === undefined ? {} : { forceWalletPlanets: options.forceWalletPlanets }),
+        },
       );
       const snapshot = renameExpectation
         ? await waitForRenamedWalletPlanet(loadSnapshot, renameExpectation)
@@ -4462,6 +4475,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     let refreshTimer: number | undefined;
     let refreshInFlight = false;
     let refreshQueued = false;
+    let forceWalletPlanetsRefreshQueued = false;
 
     const runChainEventRefresh = () => {
       const {
@@ -4474,10 +4488,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         refreshRiftState: refreshRiftStateFromEvent,
         refreshShipyardState: refreshShipyardStateFromEvent,
       } = chainEventRefreshRef.current;
+      const forceWalletPlanetsRefresh = forceWalletPlanetsRefreshQueued;
       refreshInFlight = true;
       refreshQueued = false;
+      forceWalletPlanetsRefreshQueued = false;
       const refreshes: Array<Promise<unknown>> = [
-        refreshOnChainStateFromEvent(),
+        refreshOnChainStateFromEvent(undefined, forceWalletPlanetsRefresh
+          ? { force: true, forceWalletPlanets: true }
+          : undefined),
         refreshInfrastructureStateFromEvent(),
       ];
       if (currentPage === "shipyard" || shouldRefreshMissionActionStateForPage(currentPage)) refreshes.push(refreshShipyardStateFromEvent());
@@ -4493,7 +4511,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       });
     };
 
-    const scheduleChainEventRefresh = () => {
+    const scheduleChainEventRefresh = (event?: MessageEvent) => {
+      forceWalletPlanetsRefreshQueued ||= chainEventWalletPlanetsChanged(event);
       refreshQueued = true;
       if (refreshTimer !== undefined || refreshInFlight) return;
       refreshTimer = window.setTimeout(() => {
