@@ -1254,6 +1254,7 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return 2_000;
   if (url.pathname === "/missions") return 2_000;
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return 2_000;
+  if (cacheableWalletSnapshotPath(url.pathname)) return 15_000;
   // Wallet, fleet, and remaining planet payloads are contract-state mirrors. Do not let a worker-local
   // response cache outlive the event listener's latest mutation; these endpoints are backed by SQLite
   // read models and should be cheap enough to serve fresh.
@@ -1261,6 +1262,14 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return 30_000;
   if (url.pathname === "/universe/systems") return 30_000;
   return 0;
+}
+
+function cacheableWalletSnapshotPath(pathname: string): boolean {
+  if (!pathname.startsWith("/wallet/")) return false;
+  if (pathname.match(/^\/wallet\/[^/]+\/(?:shipyard|defenses)(?:$|\?)/)) return false;
+  return Boolean(pathname.match(
+    /^\/wallet\/[^/]+\/(?:overview|infrastructure|moon|planets|settlement|queues|research|rift|alliance|profile|highscore|fleet-visibility|attack-protection)$/
+  ));
 }
 
 function cacheableJsonRequestKey(request: Request, url: URL, indexer: SettlementIndexer | undefined): string {
