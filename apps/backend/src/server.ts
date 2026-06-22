@@ -1251,9 +1251,9 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (url.pathname === "/raid-finder/debris") return 30_000;
   // Mission-control reads are backed by the mission read-model version in responseCacheVersion(), so
   // they stay fresh across indexed mission events while still coalescing repeated UI refreshes.
-  if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return 2_000;
-  if (url.pathname === "/missions") return 2_000;
-  if (url.pathname.match(/^\/mission\/[^/]+$/)) return 2_000;
+  if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return 30_000;
+  if (url.pathname === "/missions") return 30_000;
+  if (url.pathname.match(/^\/mission\/[^/]+$/)) return 30_000;
   if (cacheableWalletSnapshotPath(url.pathname)) return 15_000;
   // Wallet, fleet, and remaining planet payloads are contract-state mirrors. Do not let a worker-local
   // response cache outlive the event listener's latest mutation; these endpoints are backed by SQLite
