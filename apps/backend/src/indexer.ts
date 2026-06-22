@@ -113,6 +113,32 @@ export type IndexedDebrisTarget = IndexedDebrisFieldEvent & {
 };
 export type IndexedMoonChanceReportEvent = MoonChanceReportEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
 
+type SettledPlanetIndexCache = {
+  stateVersion: string;
+  planets: SettledPlanetEvent[];
+  byId: Map<string, SettledPlanetEvent>;
+  byOwner: Map<string, SettledPlanetEvent[]>;
+  bySystem: Map<string, SettledPlanetEvent[]>;
+};
+
+type TargetedSettledPlanetCache = {
+  stateVersion: string;
+  byId: Map<string, SettledPlanetEvent | null>;
+  byOwner: Map<string, SettledPlanetEvent[]>;
+  bySystem: Map<string, SettledPlanetEvent[]>;
+};
+
+type PlanetEventResourceRow = {
+  event_json: string;
+  metal: string | null;
+  crystal: string | null;
+  deuterium: string | null;
+  last_settled_at: string | null;
+  transaction_hash: string | null;
+  block_number: string | null;
+  log_index: string | null;
+};
+
 export type IndexerSnapshot = {
   allianceReconciledAt: string | null;
   allianceStaleReason: string | null;
@@ -462,14 +488,9 @@ export class SettlementIndexer {
     }
     | null = null;
   private settledPlanetIndexCache:
-    | {
-      stateVersion: string;
-      planets: SettledPlanetEvent[];
-      byId: Map<string, SettledPlanetEvent>;
-      byOwner: Map<string, SettledPlanetEvent[]>;
-      bySystem: Map<string, SettledPlanetEvent[]>;
-    }
+    | SettledPlanetIndexCache
     | null = null;
+  private targetedSettledPlanetCache: TargetedSettledPlanetCache | null = null;
   private resolvedBattleMissionIdsCache:
     | {
       missionGeneration: number;
@@ -613,7 +634,10 @@ export class SettlementIndexer {
   }
 
   settledPlanetsInSystem(galaxy: number, system: number): SettledPlanetEvent[] {
-    return [...(this.settledPlanetIndex().bySystem.get(systemCacheKey(galaxy, system)) ?? [])];
+    const cached = this.currentSettledPlanetIndexCache();
+    if (cached) return [...(cached.bySystem.get(systemCacheKey(galaxy, system)) ?? [])];
+
+    return [...this.targetedSettledPlanetsInSystem(galaxy, system)];
   }
 
   debrisFieldsInSystem(galaxy: number, system: number): IndexedDebrisFieldEvent[] {
@@ -716,7 +740,10 @@ export class SettlementIndexer {
   }
 
   planet(planetId: string): SettledPlanetEvent | null {
-    return this.settledPlanetIndex().byId.get(planetId) ?? null;
+    const cached = this.currentSettledPlanetIndexCache();
+    if (cached) return cached.byId.get(planetId) ?? null;
+
+    return this.targetedSettledPlanetById(planetId);
   }
 
   hasPendingPlanetResources(planetId: string): boolean {
@@ -1068,7 +1095,7 @@ export class SettlementIndexer {
   }
 
   walletSettlement(wallet: `0x${string}`): { wallet: `0x${string}`; hasFirstPlanet: boolean; homePlanetId: string | null; planet: SettledPlanetEvent | null; contractKind: "game" } {
-    const planets = this.settledPlanetIndex().byOwner.get(wallet.toLowerCase()) ?? [];
+    const planets = this.settledPlanetsForOwner(wallet);
     const planet = planets.find((item) => item.eventName === "PlanetStarted") ?? planets[0] ?? null;
 
     return {
@@ -1082,7 +1109,7 @@ export class SettlementIndexer {
 
   walletPlanets(wallet: `0x${string}`): WalletPlanets {
     const settlement = this.walletSettlement(wallet);
-    const planets = (this.settledPlanetIndex().byOwner.get(wallet.toLowerCase()) ?? []).map((planet) => indexedManagedPlanet(
+    const planets = this.settledPlanetsForOwner(wallet).map((planet) => indexedManagedPlanet(
       planet,
       settlement.homePlanetId,
       this.infrastructureRows(planet.planetId),
@@ -1118,8 +1145,7 @@ export class SettlementIndexer {
     const settlement = this.walletSettlement(wallet);
     const walletLower = wallet.toLowerCase();
     const ownedPlanetIds = new Set(
-      this.settledPlanets()
-        .filter((planet) => planet.owner.toLowerCase() === walletLower)
+      this.settledPlanetsForOwner(wallet)
         .map((planet) => planet.planetId)
     );
     const includeArchive = options.includeArchive !== false;
@@ -1219,8 +1245,7 @@ export class SettlementIndexer {
     const settlement = this.walletSettlement(wallet);
     const walletLower = wallet.toLowerCase();
     const ownedPlanetIds = new Set(
-      this.settledPlanets()
-        .filter((planet) => planet.owner.toLowerCase() === walletLower)
+      this.settledPlanetsForOwner(wallet)
         .map((planet) => planet.planetId)
     );
     const completedMissions = this.completedFleetMissionsFromCanonicalRows()
@@ -6437,13 +6462,13 @@ export class SettlementIndexer {
     return (this.db.query(sql).all(...params) as EventRow[]).map((row) => parseEvent<T>(row.event_json));
   }
 
-  private settledPlanetIndex(): {
-    stateVersion: string;
-    planets: SettledPlanetEvent[];
-    byId: Map<string, SettledPlanetEvent>;
-    byOwner: Map<string, SettledPlanetEvent[]>;
-    bySystem: Map<string, SettledPlanetEvent[]>;
-  } {
+  private currentSettledPlanetIndexCache(): SettledPlanetIndexCache | null {
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.settledPlanetIndexCache;
+    return cached && cached.stateVersion === stateVersion ? cached : null;
+  }
+
+  private settledPlanetIndex(): SettledPlanetIndexCache {
     const stateVersion = this.indexedStateCacheVersion();
     const cached = this.settledPlanetIndexCache;
     if (cached && cached.stateVersion === stateVersion) return cached;
@@ -6479,6 +6504,118 @@ export class SettlementIndexer {
 
   private planetsFromRows(sql: string, ...params: SQLQueryBindings[]): SettledPlanetEvent[] {
     return this.rows<SettledPlanetEvent>(sql, ...params).map((planet) => this.withResourceSnapshot(planet));
+  }
+
+  private settledPlanetsForOwner(wallet: `0x${string}`): SettledPlanetEvent[] {
+    const normalizedWallet = wallet.toLowerCase();
+    const cachedIndex = this.currentSettledPlanetIndexCache();
+    if (cachedIndex) return [...(cachedIndex.byOwner.get(normalizedWallet) ?? [])];
+
+    const targeted = this.targetedSettledPlanetCacheForCurrentVersion();
+    const cached = targeted.byOwner.get(normalizedWallet);
+    if (cached) return [...cached];
+
+    const planets = this.planetRowsWithResources(`
+      SELECT
+        planet.event_json,
+        resources.metal,
+        resources.crystal,
+        resources.deuterium,
+        resources.last_settled_at,
+        resources.transaction_hash,
+        resources.block_number,
+        resources.log_index
+      FROM contract_planets planet
+      LEFT JOIN contract_planet_resources resources ON resources.planet_id = planet.planet_id
+      WHERE planet.owner = lower(?)
+      ORDER BY CAST(planet.planet_id AS INTEGER) ASC
+    `, normalizedWallet);
+    targeted.byOwner.set(normalizedWallet, planets);
+    for (const planet of planets) targeted.byId.set(planet.planetId, planet);
+    return [...planets];
+  }
+
+  private targetedSettledPlanetsInSystem(galaxy: number, system: number): SettledPlanetEvent[] {
+    const key = systemCacheKey(galaxy, system);
+    const targeted = this.targetedSettledPlanetCacheForCurrentVersion();
+    const cached = targeted.bySystem.get(key);
+    if (cached) return [...cached];
+
+    const planets = this.planetRowsWithResources(`
+      SELECT
+        planet.event_json,
+        resources.metal,
+        resources.crystal,
+        resources.deuterium,
+        resources.last_settled_at,
+        resources.transaction_hash,
+        resources.block_number,
+        resources.log_index
+      FROM contract_planets planet
+      LEFT JOIN contract_planet_resources resources ON resources.planet_id = planet.planet_id
+      WHERE planet.galaxy = ? AND planet.system_number = ?
+      ORDER BY planet.position ASC
+    `, galaxy, system);
+    targeted.bySystem.set(key, planets);
+    for (const planet of planets) targeted.byId.set(planet.planetId, planet);
+    return [...planets];
+  }
+
+  private targetedSettledPlanetById(planetId: string): SettledPlanetEvent | null {
+    const targeted = this.targetedSettledPlanetCacheForCurrentVersion();
+    if (targeted.byId.has(planetId)) return targeted.byId.get(planetId) ?? null;
+
+    const [planet = null] = this.planetRowsWithResources(`
+      SELECT
+        planet.event_json,
+        resources.metal,
+        resources.crystal,
+        resources.deuterium,
+        resources.last_settled_at,
+        resources.transaction_hash,
+        resources.block_number,
+        resources.log_index
+      FROM contract_planets planet
+      LEFT JOIN contract_planet_resources resources ON resources.planet_id = planet.planet_id
+      WHERE planet.planet_id = ?
+      LIMIT 1
+    `, planetId);
+    targeted.byId.set(planetId, planet);
+    return planet;
+  }
+
+  private targetedSettledPlanetCacheForCurrentVersion(): TargetedSettledPlanetCache {
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.targetedSettledPlanetCache;
+    if (cached && cached.stateVersion === stateVersion) return cached;
+
+    const next: TargetedSettledPlanetCache = {
+      stateVersion,
+      byId: new Map(),
+      byOwner: new Map(),
+      bySystem: new Map()
+    };
+    this.targetedSettledPlanetCache = next;
+    return next;
+  }
+
+  private planetRowsWithResources(sql: string, ...params: SQLQueryBindings[]): SettledPlanetEvent[] {
+    const rows = this.db.query(sql).all(...params) as PlanetEventResourceRow[];
+    return rows.map((row) => this.withResourceSnapshotRow(
+      parseEvent<SettledPlanetEvent>(row.event_json),
+      row.metal === null || row.crystal === null || row.deuterium === null || row.last_settled_at === null
+        || row.transaction_hash === null || row.block_number === null || row.log_index === null
+        ? null
+        : {
+          metal: row.metal,
+          crystal: row.crystal,
+          deuterium: row.deuterium,
+          last_settled_at: row.last_settled_at,
+          transaction_hash: row.transaction_hash,
+          block_number: row.block_number,
+          log_index: row.log_index
+        }
+    ));
   }
 
   private blockingStaleReason({
