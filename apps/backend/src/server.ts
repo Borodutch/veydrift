@@ -1271,7 +1271,7 @@ function readRateLimitResponse(
   url: URL,
   limits: Map<string, { count: number; resetAt: number }>
 ): Response | null {
-  return limitedReadResponse(request, url, limits, readRateLimitMaxRequests);
+  return limitedReadResponse(request, url, limits, readRateLimitMaxRequests, "route");
 }
 
 function cachedReadRateLimitResponse(

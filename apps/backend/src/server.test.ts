@@ -7389,6 +7389,30 @@ describe("Veydrift backend", () => {
     expect(rateLimited.status).toBe(429);
   });
 
+  test("rate-limits repeated reads per route without starving shipyard inventory refreshes", async () => {
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      enableResponseCache: false,
+      prewarmResponseCache: false
+    });
+    const headers = { "x-forwarded-for": "203.0.113.10" };
+
+    for (let index = 0; index < 4; index += 1) {
+      await handler(new Request(`http://localhost/wallet/${player}/overview?planetId=7`, { headers }));
+    }
+
+    const repeatedOverview = await handler(
+      new Request(`http://localhost/wallet/${player}/overview?planetId=7`, { headers })
+    );
+    const shipyardRefresh = await handler(
+      new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`, { headers })
+    );
+
+    expect(repeatedOverview.status).toBe(429);
+    expect(shipyardRefresh.status).not.toBe(429);
+  });
+
   test("returns deterministic universe system data", async () => {
     const response = await handler(
       new Request("http://localhost/universe/system?galaxyId=0&systemId=1")
