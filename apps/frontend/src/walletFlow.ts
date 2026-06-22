@@ -42,7 +42,7 @@ export const WALLET_CONNECTION_REJECTED_MESSAGE = "Wallet connection was rejecte
 export const WALLET_ACCOUNT_MISMATCH_MESSAGE = "The selected wallet account changed. Reconnect the active wallet, then retry.";
 
 const GAME_API_RECENT_READ_TTL_MS = 750;
-const GAME_API_MAX_CONCURRENT_READS = 6;
+const GAME_API_MAX_CONCURRENT_READS = 3;
 const gameApiInflightReads = new Map<string, Promise<unknown>>();
 const gameApiRecentReads = new Map<string, { expiresAt: number; value: unknown }>();
 let gameApiActiveReads = 0;
@@ -3340,9 +3340,12 @@ async function acquireGameApiReadSlot(): Promise<() => void> {
 }
 
 function releaseGameApiReadSlot(): void {
-  gameApiActiveReads = Math.max(0, gameApiActiveReads - 1);
   const next = gameApiReadQueue.shift();
-  if (next) next();
+  if (next) {
+    next();
+    return;
+  }
+  gameApiActiveReads = Math.max(0, gameApiActiveReads - 1);
 }
 
 function pruneRecentGameApiReads(): void {

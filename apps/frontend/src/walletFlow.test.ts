@@ -2188,7 +2188,7 @@ describe("walletFlow", () => {
     }
 
     expect(calls).toBe(10);
-    expect(maxActive).toBeLessThanOrEqual(6);
+    expect(maxActive).toBeLessThanOrEqual(3);
   });
 
   test("includes backend wallet API validation messages in shipyard errors", async () => {
