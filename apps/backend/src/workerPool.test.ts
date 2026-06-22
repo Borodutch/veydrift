@@ -296,6 +296,33 @@ describe("createForwardingFetch", () => {
     }
   });
 
+  test("serves health bootstrap reads before initializing the local reader handler", async () => {
+    const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
+    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: init?.body });
+      return Response.json({ error: "writer should not receive health" }, { status: 503 });
+    }) as unknown as typeof fetch;
+
+    let localInitialized = false;
+    const local = async () => {
+      localInitialized = true;
+      return Response.json({ error: "reader handler should not initialize" }, { status: 503 });
+    };
+    const bootstrap = (request: Request) => {
+      return new URL(request.url).pathname === "/health"
+        ? Response.json({ ok: true, backend: { worker: { role: "reader" } } })
+        : undefined;
+    };
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl, bootstrap);
+
+    const response = await handler(new Request("http://localhost/health"));
+
+    expect(localInitialized).toBe(false);
+    expect(calls).toEqual([]);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true, backend: { worker: { role: "reader" } } });
+  });
+
   test("keeps runtime-config local when the writer is busy", async () => {
     const fetchImpl = (async () => {
       await new Promise((resolve) => setTimeout(resolve, 60_000));
