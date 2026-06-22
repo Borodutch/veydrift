@@ -1123,6 +1123,37 @@ describe("Veydrift backend", () => {
     expect(staleKeyUsed).toBe(true);
   });
 
+  test("does not wait on stale shared-cache locks for cold indexed reads", async () => {
+    let waitCalled = false;
+    const sharedResponseCache = {
+      get() {
+        return null;
+      },
+      tryAcquireRefresh() {
+        return false;
+      },
+      async waitForFresh() {
+        waitCalled = true;
+        return null;
+      },
+      set() {},
+      releaseRefresh() {}
+    } as unknown as import("./sharedResponseCache").SharedResponseCache;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer: testIndexer(),
+      prewarmResponseCache: false,
+      sharedResponseCache
+    });
+
+    const response = await handler(new Request("http://localhost/universe/galaxies/1/systems/1"));
+
+    expect(response.status).toBe(200);
+    expect(waitCalled).toBe(false);
+  });
+
   test("keeps health off the response-cache path", async () => {
     let sharedCacheRead = false;
     const sharedResponseCache = {
