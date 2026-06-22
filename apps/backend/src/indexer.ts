@@ -414,6 +414,13 @@ export class SettlementIndexer {
       battleReports: BattleReport[];
     }
     | null = null;
+  private battleReportsByMissionIdCache:
+    | {
+      missionGeneration: number;
+      battleReportGeneration: number;
+      reportsByMissionId: Map<string, BattleReport[]>;
+    }
+    | null = null;
   private fulfilledRandomnessRequestIdsCache:
     | {
       missionGeneration: number;
@@ -5316,6 +5323,7 @@ export class SettlementIndexer {
     this.missionReadModelCache = null;
     this.decodedMissionLogCache = null;
     this.decodedBattleReportCache = null;
+    this.battleReportsByMissionIdCache = null;
     this.fulfilledRandomnessRequestIdsCache = null;
     this.missionReferenceCache = null;
     this.canonicalActiveMissionCache = null;
@@ -5331,6 +5339,7 @@ export class SettlementIndexer {
       this.missionReadModelCache = null;
       this.decodedMissionLogCache = null;
       this.decodedBattleReportCache = null;
+      this.battleReportsByMissionIdCache = null;
       this.fulfilledRandomnessRequestIdsCache = null;
       this.missionReferenceCache = null;
       this.canonicalActiveMissionCache = null;
@@ -5364,6 +5373,7 @@ export class SettlementIndexer {
         };
       }
       this.decodedBattleReportCache = null;
+      this.battleReportsByMissionIdCache = null;
     }
     return version;
   }
@@ -6073,11 +6083,14 @@ export class SettlementIndexer {
       }
     }
 
-    const matchingReports = this.decodedBattleReportsOnly().filter((report) =>
-      missionIds.has(report.missionId)
-        || (report.attackGroupId !== null && missionIds.has(report.attackGroupId))
-        || report.participants.some((participant) => missionIds.has(participant.missionId))
-    );
+    const reportsByMissionId = this.battleReportsByMissionId();
+    const matchingReportsById = new Map<string, BattleReport>();
+    for (const missionId of missionIds) {
+      for (const report of reportsByMissionId.get(missionId) ?? []) {
+        matchingReportsById.set(report.missionId, report);
+      }
+    }
+    const matchingReports = [...matchingReportsById.values()];
     if (matchingReports.length === 0) return [];
 
     const summaries = this.indexedFleetMissionSummaries();
@@ -6087,6 +6100,39 @@ export class SettlementIndexer {
       ...report,
       defenderSnapshot: defenderSnapshots.get(report.missionId) ?? null
     }));
+  }
+
+  private battleReportsByMissionId(): Map<string, BattleReport[]> {
+    this.currentBattleReportReadModelDbVersion();
+    const cached = this.battleReportsByMissionIdCache;
+    if (
+      cached
+      && cached.missionGeneration === this.missionGeneration
+      && cached.battleReportGeneration === this.battleReportGeneration
+    ) {
+      return cached.reportsByMissionId;
+    }
+
+    const reportsByMissionId = new Map<string, BattleReport[]>();
+    const add = (missionId: string | null | undefined, report: BattleReport) => {
+      if (!missionId) return;
+      const reports = reportsByMissionId.get(missionId);
+      if (reports) reports.push(report);
+      else reportsByMissionId.set(missionId, [report]);
+    };
+    for (const report of this.decodedBattleReportsOnly()) {
+      add(report.missionId, report);
+      add(report.attackGroupId, report);
+      for (const participant of report.participants) {
+        add(participant.missionId, report);
+      }
+    }
+    this.battleReportsByMissionIdCache = {
+      missionGeneration: this.missionGeneration,
+      battleReportGeneration: this.battleReportGeneration,
+      reportsByMissionId
+    };
+    return reportsByMissionId;
   }
 
   private battleTimeDefenderSnapshots(reports: BattleReport[]): Map<string, BattleReportDefenderSnapshot> {
