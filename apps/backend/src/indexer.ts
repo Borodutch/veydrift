@@ -362,6 +362,9 @@ const CANONICAL_READ_PLANET_CHUNK = 25;
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const legacyReturnCreditableMissionTypes = new Set(["Transport", "Deploy", "Colonize", "Harvest", "AcsDefend", "DefenseHold"]);
 
+function systemCacheKey(galaxy: number, system: number): string {
+  return `${galaxy}:${system}`;
+}
 
 export class SettlementIndexer {
   private readonly db: Database;
@@ -447,6 +450,22 @@ export class SettlementIndexer {
       missionGeneration: number;
       stateVersion: string;
       missions: FleetMissionSummary[];
+    }
+    | null = null;
+  private settledPlanetIndexCache:
+    | {
+      stateVersion: string;
+      planets: SettledPlanetEvent[];
+      byId: Map<string, SettledPlanetEvent>;
+      byOwner: Map<string, SettledPlanetEvent[]>;
+      bySystem: Map<string, SettledPlanetEvent[]>;
+    }
+    | null = null;
+  private resolvedBattleMissionIdsCache:
+    | {
+      missionGeneration: number;
+      battleReportGeneration: number;
+      missionIds: ReadonlySet<string>;
     }
     | null = null;
   private attackLaunchSecondsCache = new Map<string, { missionGeneration: number; launchesByTarget: Map<string, number[]> }>();
@@ -585,11 +604,7 @@ export class SettlementIndexer {
   }
 
   settledPlanetsInSystem(galaxy: number, system: number): SettledPlanetEvent[] {
-    return this.planetsFromRows(
-      "SELECT event_json FROM contract_planets WHERE galaxy = ? AND system_number = ? ORDER BY position ASC",
-      galaxy,
-      system
-    );
+    return [...(this.settledPlanetIndex().bySystem.get(systemCacheKey(galaxy, system)) ?? [])];
   }
 
   debrisFieldsInSystem(galaxy: number, system: number): IndexedDebrisFieldEvent[] {
@@ -659,16 +674,11 @@ export class SettlementIndexer {
   }
 
   settledPlanets(): SettledPlanetEvent[] {
-    return this.planetsFromRows("SELECT event_json FROM contract_planets ORDER BY CAST(planet_id AS INTEGER) ASC");
+    return [...this.settledPlanetIndex().planets];
   }
 
   settledPlanetsByOwner(): Map<string, SettledPlanetEvent[]> {
-    const planetsByOwner = new Map<string, SettledPlanetEvent[]>();
-    for (const planet of this.settledPlanets()) {
-      const owner = planet.owner.toLowerCase();
-      planetsByOwner.set(owner, [...(planetsByOwner.get(owner) ?? []), planet]);
-    }
-    return planetsByOwner;
+    return new Map([...this.settledPlanetIndex().byOwner].map(([owner, planets]) => [owner, [...planets]]));
   }
 
   fleetDefenseRawCounts(): FleetDefenseUnitCount[] {
@@ -697,8 +707,7 @@ export class SettlementIndexer {
   }
 
   planet(planetId: string): SettledPlanetEvent | null {
-    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
-    return row ? this.withResourceSnapshot(parseEvent<SettledPlanetEvent>(row.event_json)) : null;
+    return this.settledPlanetIndex().byId.get(planetId) ?? null;
   }
 
   hasPendingPlanetResources(planetId: string): boolean {
@@ -1050,10 +1059,7 @@ export class SettlementIndexer {
   }
 
   walletSettlement(wallet: `0x${string}`): { wallet: `0x${string}`; hasFirstPlanet: boolean; homePlanetId: string | null; planet: SettledPlanetEvent | null; contractKind: "game" } {
-    const planets = this.planetsFromRows(
-      "SELECT event_json FROM contract_planets WHERE owner = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
-      wallet
-    );
+    const planets = this.settledPlanetIndex().byOwner.get(wallet.toLowerCase()) ?? [];
     const planet = planets.find((item) => item.eventName === "PlanetStarted") ?? planets[0] ?? null;
 
     return {
@@ -1067,10 +1073,7 @@ export class SettlementIndexer {
 
   walletPlanets(wallet: `0x${string}`): WalletPlanets {
     const settlement = this.walletSettlement(wallet);
-    const planets = this.planetsFromRows(
-      "SELECT event_json FROM contract_planets WHERE owner = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
-      wallet
-    ).map((planet) => indexedManagedPlanet(
+    const planets = (this.settledPlanetIndex().byOwner.get(wallet.toLowerCase()) ?? []).map((planet) => indexedManagedPlanet(
       planet,
       settlement.homePlanetId,
       this.infrastructureRows(planet.planetId),
@@ -1302,13 +1305,26 @@ export class SettlementIndexer {
   }
 
   private resolvedBattleMissionIds(): ReadonlySet<string> {
+    const cached = this.resolvedBattleMissionIdsCache;
+    if (
+      cached
+      && cached.missionGeneration === this.missionGeneration
+      && cached.battleReportGeneration === this.battleReportGeneration
+    ) {
+      return cached.missionIds;
+    }
     const missionIds = new Set<string>();
-    for (const report of this.indexedBattleReports()) {
+    for (const report of this.decodedBattleReportsOnly()) {
       missionIds.add(report.missionId);
       for (const participant of report.participants) {
         missionIds.add(participant.missionId);
       }
     }
+    this.resolvedBattleMissionIdsCache = {
+      missionGeneration: this.missionGeneration,
+      battleReportGeneration: this.battleReportGeneration,
+      missionIds
+    };
     return missionIds;
   }
 
@@ -3877,6 +3893,10 @@ export class SettlementIndexer {
 
   private withResourceSnapshot(planet: SettledPlanetEvent): SettledPlanetEvent {
     const resources = this.planetResourceSnapshot(planet.planetId);
+    return this.withResourceSnapshotRow(planet, resources);
+  }
+
+  private withResourceSnapshotRow(planet: SettledPlanetEvent, resources: PlanetResourceRow | null): SettledPlanetEvent {
     return resources ? {
       ...planet,
       blockNumber: resources.block_number,
@@ -6361,6 +6381,46 @@ export class SettlementIndexer {
 
   private rows<T>(sql: string, ...params: SQLQueryBindings[]): T[] {
     return (this.db.query(sql).all(...params) as EventRow[]).map((row) => parseEvent<T>(row.event_json));
+  }
+
+  private settledPlanetIndex(): {
+    stateVersion: string;
+    planets: SettledPlanetEvent[];
+    byId: Map<string, SettledPlanetEvent>;
+    byOwner: Map<string, SettledPlanetEvent[]>;
+    bySystem: Map<string, SettledPlanetEvent[]>;
+  } {
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.settledPlanetIndexCache;
+    if (cached && cached.stateVersion === stateVersion) return cached;
+
+    const planetRows = this.db.query(`
+      SELECT planet_id, event_json
+      FROM contract_planets
+      ORDER BY CAST(planet_id AS INTEGER) ASC
+    `).all() as Array<EventRow & { planet_id: string }>;
+    const resourceRows = this.db.query(`
+      SELECT planet_id, metal, crystal, deuterium, last_settled_at, transaction_hash, block_number, log_index
+      FROM contract_planet_resources
+    `).all() as Array<PlanetResourceRow & { planet_id: string }>;
+    const resourcesByPlanet = new Map(resourceRows.map((row) => [row.planet_id, row]));
+    const planets = planetRows.map((row) => this.withResourceSnapshotRow(
+      parseEvent<SettledPlanetEvent>(row.event_json),
+      resourcesByPlanet.get(row.planet_id) ?? null
+    ));
+    const byId = new Map<string, SettledPlanetEvent>();
+    const byOwner = new Map<string, SettledPlanetEvent[]>();
+    const bySystem = new Map<string, SettledPlanetEvent[]>();
+    for (const planet of planets) {
+      byId.set(planet.planetId, planet);
+      const owner = planet.owner.toLowerCase();
+      byOwner.set(owner, [...(byOwner.get(owner) ?? []), planet]);
+      const systemKey = systemCacheKey(planet.galaxy, planet.system);
+      bySystem.set(systemKey, [...(bySystem.get(systemKey) ?? []), planet]);
+    }
+    const next = { stateVersion, planets, byId, byOwner, bySystem };
+    this.settledPlanetIndexCache = next;
+    return next;
   }
 
   private planetsFromRows(sql: string, ...params: SQLQueryBindings[]): SettledPlanetEvent[] {
