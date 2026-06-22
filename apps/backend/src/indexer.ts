@@ -139,6 +139,26 @@ type PlanetEventResourceRow = {
   log_index: string | null;
 };
 
+type IndexedLevelsByIdCache = {
+  stateVersion: string;
+  values: Map<string, Map<number, number>>;
+};
+
+type QueueStateCache = {
+  stateVersion: string;
+  values: Map<string, QueueState | null>;
+};
+
+type TechnologyLevelsCache = {
+  stateVersion: string;
+  values: Map<string, Record<string, number>>;
+};
+
+type AllianceIntelCache = {
+  stateVersion: string;
+  values: Map<string, Map<string, AllianceIdentity>>;
+};
+
 export type IndexerSnapshot = {
   allianceReconciledAt: string | null;
   allianceStaleReason: string | null;
@@ -392,6 +412,15 @@ function systemCacheKey(galaxy: number, system: number): string {
   return `${galaxy}:${system}`;
 }
 
+function cloneQueueState(queue: QueueState | null): QueueState | null {
+  if (!queue) return null;
+  return {
+    ...queue,
+    cost: { ...queue.cost },
+    ...(queue.backlog ? { backlog: queue.backlog.map((entry) => cloneQueueState(entry)!) } : {})
+  };
+}
+
 export class SettlementIndexer {
   private readonly db: Database;
   private planetRebuildPromise: Promise<IndexerSnapshot> | null = null;
@@ -491,6 +520,10 @@ export class SettlementIndexer {
     | SettledPlanetIndexCache
     | null = null;
   private targetedSettledPlanetCache: TargetedSettledPlanetCache | null = null;
+  private indexedLevelsByIdCache: IndexedLevelsByIdCache | null = null;
+  private queueStateCache: QueueStateCache | null = null;
+  private technologyLevelsCache: TechnologyLevelsCache | null = null;
+  private allianceIntelCache: AllianceIntelCache | null = null;
   private resolvedBattleMissionIdsCache:
     | {
       missionGeneration: number;
@@ -897,6 +930,10 @@ export class SettlementIndexer {
   allianceIntelForPlayers(wallets: readonly string[]): Map<string, AllianceIdentity> {
     const uniqueWallets = [...new Set(wallets.map((wallet) => wallet.toLowerCase()))];
     if (uniqueWallets.length === 0) return new Map();
+    const cache = this.allianceIntelCacheForCurrentVersion();
+    const cacheKey = [...uniqueWallets].sort().join(",");
+    const cached = cache.values.get(cacheKey);
+    if (cached) return new Map(cached);
 
     const rows = this.db.query(`
       SELECT member.wallet, alliance.alliance_id, alliance.tag, alliance.name
@@ -905,7 +942,7 @@ export class SettlementIndexer {
       WHERE alliance.active = 1 AND member.wallet IN (${uniqueWallets.map(() => "?").join(",")})
     `).all(...uniqueWallets) as Array<{ wallet: string; alliance_id: string; tag: string; name: string }>;
 
-    return new Map(rows.map((row) => [
+    const intel = new Map(rows.map((row) => [
       row.wallet.toLowerCase(),
       {
         allianceId: row.alliance_id,
@@ -913,6 +950,8 @@ export class SettlementIndexer {
         name: row.name
       }
     ]));
+    cache.values.set(cacheKey, intel);
+    return new Map(intel);
   }
 
   allianceRelationship(allianceId: string | null | undefined, otherAllianceId: string | null | undefined): ReturnType<typeof diplomacyStatusName> {
@@ -1474,6 +1513,11 @@ export class SettlementIndexer {
   }
 
   private contractTechnologyLevels(wallet: `0x${string}`): Record<string, number> {
+    const normalizedWallet = wallet.toLowerCase();
+    const cache = this.technologyLevelsCacheForCurrentVersion();
+    const cached = cache.values.get(normalizedWallet);
+    if (cached) return { ...cached };
+
     const rows = this.db.query(`
       SELECT technology_id AS id, level AS value
       FROM contract_technology_levels
@@ -1481,7 +1525,9 @@ export class SettlementIndexer {
       ORDER BY technology_id ASC
     `).all(wallet) as LevelRow[];
 
-    return Object.fromEntries(rows.map((row) => [String(row.id), row.value]));
+    const levels = Object.fromEntries(rows.map((row) => [String(row.id), row.value]));
+    cache.values.set(normalizedWallet, levels);
+    return { ...levels };
   }
 
   fleetSlots(wallet: `0x${string}`): ShipyardState["fleetSlots"] {
@@ -4758,6 +4804,9 @@ export class SettlementIndexer {
   }
 
   private queueState(queueKeyValue: string): QueueState | null {
+    const cache = this.queueStateCacheForCurrentVersion();
+    if (cache.values.has(queueKeyValue)) return cloneQueueState(cache.values.get(queueKeyValue) ?? null);
+
     if (queueKeyValue.startsWith("moon-building:")) {
       const row = this.db.query(`
         SELECT planet_id, moon_building_id, target_level, ready_at, metal_cost, crystal_cost, deuterium_cost, event_json
@@ -4765,7 +4814,7 @@ export class SettlementIndexer {
         WHERE planet_id = ?
       `).get(queueKeyValue.slice("moon-building:".length)) as MoonBuildingQueueRow | null;
       if (row) {
-        return {
+        const queue = {
           active: true,
           kind: "moon-building",
           itemId: row.moon_building_id,
@@ -4777,6 +4826,8 @@ export class SettlementIndexer {
             deuterium: row.deuterium_cost
           }
         };
+        cache.values.set(queueKeyValue, queue);
+        return cloneQueueState(queue);
       }
     }
 
@@ -4785,7 +4836,10 @@ export class SettlementIndexer {
       FROM contract_production_queues
       WHERE queue_key = ?
     `).get(queueKeyValue) as QueueRow | null;
-    if (!row) return null;
+    if (!row) {
+      cache.values.set(queueKeyValue, null);
+      return null;
+    }
 
     const queue = this.productionQueueFromRow(row);
     if (row.backlog_json) {
@@ -4795,7 +4849,8 @@ export class SettlementIndexer {
         queue.backlog = sanitizedBacklog;
       }
     }
-    return queue;
+    cache.values.set(queueKeyValue, queue);
+    return cloneQueueState(queue);
   }
 
   private productionQueueFromRow(row: QueueRow): QueueState {
@@ -5024,12 +5079,20 @@ export class SettlementIndexer {
     valueColumn: "count" | "level",
     planetId: string
   ): Map<number, number> {
+    const cacheable = !table.endsWith("_ship_counts") && !table.endsWith("_defense_counts");
+    const cache = cacheable ? this.indexedLevelsByIdCacheForCurrentVersion() : null;
+    const cacheKey = `${table}:${idColumn}:${valueColumn}:${planetId}`;
+    const cached = cache?.values.get(cacheKey);
+    if (cached) return new Map(cached);
+
     const rows = this.db.query(`
       SELECT ${idColumn} AS id, ${valueColumn} AS value
       FROM ${table}
       WHERE planet_id = ?
     `).all(planetId) as Array<{ id: number; value: number }>;
-    return new Map(rows.map((row) => [row.id, row.value]));
+    const levels = new Map(rows.map((row) => [row.id, row.value]));
+    cache?.values.set(cacheKey, levels);
+    return new Map(levels);
   }
 
   private upsertIndexedLevel(
@@ -6596,6 +6659,58 @@ export class SettlementIndexer {
       bySystem: new Map()
     };
     this.targetedSettledPlanetCache = next;
+    return next;
+  }
+
+  private indexedLevelsByIdCacheForCurrentVersion(): IndexedLevelsByIdCache {
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.indexedLevelsByIdCache;
+    if (cached && cached.stateVersion === stateVersion) return cached;
+
+    const next: IndexedLevelsByIdCache = {
+      stateVersion,
+      values: new Map()
+    };
+    this.indexedLevelsByIdCache = next;
+    return next;
+  }
+
+  private queueStateCacheForCurrentVersion(): QueueStateCache {
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.queueStateCache;
+    if (cached && cached.stateVersion === stateVersion) return cached;
+
+    const next: QueueStateCache = {
+      stateVersion,
+      values: new Map()
+    };
+    this.queueStateCache = next;
+    return next;
+  }
+
+  private technologyLevelsCacheForCurrentVersion(): TechnologyLevelsCache {
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.technologyLevelsCache;
+    if (cached && cached.stateVersion === stateVersion) return cached;
+
+    const next: TechnologyLevelsCache = {
+      stateVersion,
+      values: new Map()
+    };
+    this.technologyLevelsCache = next;
+    return next;
+  }
+
+  private allianceIntelCacheForCurrentVersion(): AllianceIntelCache {
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.allianceIntelCache;
+    if (cached && cached.stateVersion === stateVersion) return cached;
+
+    const next: AllianceIntelCache = {
+      stateVersion,
+      values: new Map()
+    };
+    this.allianceIntelCache = next;
     return next;
   }
 
