@@ -268,7 +268,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     : enableResponseCache && loaded.problems.length === 0
       ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
       : null;
-  const prewarmResponseCache = dependencies.prewarmResponseCache ?? (enableResponseCache && workerRole === "reader");
+  const prewarmResponseCache = dependencies.prewarmResponseCache ?? false;
 
   const routeRequest = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
