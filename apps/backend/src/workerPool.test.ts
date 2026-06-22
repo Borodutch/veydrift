@@ -15,11 +15,11 @@ import {
 describe("resolveWorkerCount", () => {
   test("uses the host CPU count up to the default memory-bounded cap when no override is set", () => {
     expect(resolveWorkerCount({}, 2)).toBe(2);
-    expect(resolveWorkerCount({}, 8)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({}, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
   });
 
   test("floors fractional CPU counts and never returns less than 1", () => {
-    expect(resolveWorkerCount({}, 4.9)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({}, 12.9)).toBe(DEFAULT_MAX_WORKER_COUNT);
     expect(resolveWorkerCount({}, 0)).toBe(1);
     expect(resolveWorkerCount({}, Number.NaN)).toBe(1);
   });
@@ -31,11 +31,11 @@ describe("resolveWorkerCount", () => {
   });
 
   test("ignores blank or invalid overrides and falls back to the capped default", () => {
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "" }, 6)).toBe(DEFAULT_MAX_WORKER_COUNT);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "   " }, 8)).toBe(DEFAULT_MAX_WORKER_COUNT);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "0" }, 8)).toBe(DEFAULT_MAX_WORKER_COUNT);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "-2" }, 8)).toBe(DEFAULT_MAX_WORKER_COUNT);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "abc" }, 8)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "   " }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "0" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "-2" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "abc" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
   });
 });
 
@@ -49,7 +49,7 @@ describe("roleForIndex", () => {
 
 describe("resolveWorkerAssignment", () => {
   test("a process without a role env is the supervisor sized to the pool", () => {
-    expect(resolveWorkerAssignment({}, 8)).toEqual({ kind: "supervisor", workerCount: DEFAULT_MAX_WORKER_COUNT });
+    expect(resolveWorkerAssignment({}, 12)).toEqual({ kind: "supervisor", workerCount: DEFAULT_MAX_WORKER_COUNT });
     expect(resolveWorkerAssignment({ [WORKER_COUNT_ENV]: "2" }, 16)).toEqual({
       kind: "supervisor",
       workerCount: 2
@@ -80,7 +80,7 @@ describe("resolveWorkerAssignment", () => {
   });
 
   test("an unrecognized role env is treated as the supervisor", () => {
-    expect(resolveWorkerAssignment({ [WORKER_ROLE_ENV]: "bogus" }, 4)).toEqual({
+    expect(resolveWorkerAssignment({ [WORKER_ROLE_ENV]: "bogus" }, 12)).toEqual({
       kind: "supervisor",
       workerCount: DEFAULT_MAX_WORKER_COUNT
     });

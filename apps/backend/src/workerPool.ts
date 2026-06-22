@@ -20,7 +20,7 @@ export const WORKER_ROLE_ENV = "VEYDRIFT_WORKER_ROLE";
 export const WORKER_INDEX_ENV = "VEYDRIFT_WORKER_INDEX";
 export const WORKER_COUNT_ENV = "VEYDRIFT_WORKER_COUNT";
 export const WRITER_INTERNAL_PORT_ENV = "VEYDRIFT_WRITER_INTERNAL_PORT";
-export const DEFAULT_MAX_WORKER_COUNT = 4;
+export const DEFAULT_MAX_WORKER_COUNT = 10;
 
 export type WorkerRole = "writer" | "reader";
 
