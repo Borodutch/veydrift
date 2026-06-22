@@ -274,10 +274,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     : enableResponseCache && loaded.problems.length === 0
       ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
       : null;
-  // Prewarming walks broad indexed read surfaces after startup. Run it on every production worker so
-  // SO_REUSEPORT/HTTP2-pinned reader traffic does not keep hitting local cold caches after deploy.
+  // Prewarming walks broad indexed read surfaces. Keep it on the private writer by default so public
+  // readers do not block their event loops while building broad route caches.
   const prewarmResponseCache = dependencies.prewarmResponseCache ?? (
-    usesProductionDependencies && enableResponseCache
+    usesProductionDependencies && isWriter && enableResponseCache
   );
 
   const routeRequest = async (request: Request): Promise<Response> => {
