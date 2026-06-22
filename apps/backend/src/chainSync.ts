@@ -309,7 +309,7 @@ export class ChainSyncService {
   private async queueTargetedCanonicalHeal(log: RpcLog): Promise<void> {
     const planetIds = canonicalHealPlanetIdsForLog(log);
     if (planetIds.length === 0) return;
-    await this.indexer?.healCanonicalPlanets?.(planetIds);
+    void this.indexer?.healCanonicalPlanets?.(planetIds);
   }
 
   private markConnected(): void {

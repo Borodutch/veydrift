@@ -4767,8 +4767,6 @@ export function canonicalHealPlanetIdsForLog(log: RpcLog): string[] {
   try {
     if (topic === attackBattleResolvedTopic || topic === combatDebrisSignaledTopic) {
       addTopic(topic === attackBattleResolvedTopic ? 3 : 2);
-    } else if (topic === fleetMissionLaunchedTopic) {
-      addDataWord(0);
     } else if (topic === fleetMissionReturnExposedTopic) {
       addDataWord(0);
       addDataWord(1);

@@ -28,6 +28,15 @@ function ownerTopic(address: string): string {
   return `0x${address.slice(2).padStart(64, "0")}`;
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  if (!predicate()) throw new Error("Timed out waiting for condition");
+}
+
 // eth_getLogs responses carry logIndex at runtime even though the RpcLog type doesn't declare it
 // (applyLog dedups on txHash:logIndex). Widen the test log type so fixtures can set it explicitly.
 type TestLog = RpcLog & { logIndex?: string };
@@ -366,7 +375,7 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
-  test("awaits targeted canonical ship-count heals for returned fleets before completing the poll", async () => {
+  test("queues targeted canonical ship-count heals for returned fleets without blocking the poll", async () => {
     let canonicalReads = 0;
     const indexer = new SettlementIndexer(
       {
@@ -419,6 +428,7 @@ describe("ChainSyncService (polling)", () => {
 
     await service.poll();
 
+    await waitFor(() => indexer.shipRows("83").some((ship) => ship.count > 0));
     expect(canonicalReads).toBe(1);
     expect(indexer.shipRows("83").filter((ship) => ship.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
       { id: 0, count: 34 },
