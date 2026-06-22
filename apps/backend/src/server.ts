@@ -274,10 +274,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     : enableResponseCache && loaded.problems.length === 0
       ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
       : null;
-  // Prewarming walks broad indexed read surfaces. Run it only on the private writer by default so public
-  // readers are available immediately while the writer fills the shared cache in the background.
+  // Prewarming walks broad indexed read surfaces after startup. Run it on every production worker so
+  // SO_REUSEPORT/HTTP2-pinned reader traffic does not keep hitting local cold caches after deploy.
   const prewarmResponseCache = dependencies.prewarmResponseCache ?? (
-    usesProductionDependencies && isWriter && enableResponseCache
+    usesProductionDependencies && enableResponseCache
   );
 
   const routeRequest = async (request: Request): Promise<Response> => {
@@ -2558,8 +2558,7 @@ type GalaxySystemPayload = Omit<SystemSnapshot, "planets"> & {
 };
 
 type GalaxySystemCacheEntry = {
-  indexerVersion: number;
-  projectionBucket: number;
+  indexerVersion: string;
   payload: GalaxySystemPayload;
 };
 
@@ -2573,8 +2572,7 @@ function cachedGalaxySystemPayload(
     indexer: SettlementIndexer | undefined;
   }
 ): GalaxySystemPayload {
-  const indexerVersion = input.indexer?.stateVersion() ?? 0;
-  const projectionBucket = input.indexer ? Math.floor(Date.now() / 5_000) : 0;
+  const indexerVersion = input.indexer?.responseCacheVersion() ?? "none";
   const cacheKey = [
     input.chainId,
     input.settlementContractAddress.toLowerCase(),
@@ -2585,7 +2583,6 @@ function cachedGalaxySystemPayload(
   if (
     cached
     && cached.indexerVersion === indexerVersion
-    && cached.projectionBucket === projectionBucket
   ) {
     return cached.payload;
   }
@@ -2593,7 +2590,6 @@ function cachedGalaxySystemPayload(
   const payload = galaxySystemPayload(input);
   cache.set(cacheKey, {
     indexerVersion,
-    projectionBucket,
     payload
   });
   pruneGalaxySystemCache(cache);
