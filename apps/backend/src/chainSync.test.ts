@@ -115,6 +115,26 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
+  test("marks chain events that change the wallet planet roster", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x181n, () => [{
+      ...planetStartedLog("0x181", 7n, "0xplanet"),
+      logIndex: "0x0"
+    }]);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+    const reader = service.eventStream().getReader();
+
+    await expect(reader.read()).resolves.toMatchObject({ done: false });
+    await service.poll();
+    const event = await reader.read();
+    const text = new TextDecoder().decode(event.value);
+
+    expect(text).toContain("event: chain-event");
+    expect(text).toContain("\"walletPlanetsChanged\":true");
+    await reader.cancel();
+    service.stop();
+  });
+
   test("replays from configured base on the first poll, then ingests only new ranges", async () => {
     const indexer = makeIndexer();
     const seeded = planetStartedLog("0x191", 7n, "0xseed");
