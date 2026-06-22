@@ -2891,6 +2891,30 @@ export function runtimeConfigResponse(workerRole: WorkerRole = envWorkerRole()):
   });
 }
 
+export function readerBootstrapHealthResponse(workerRole: WorkerRole = envWorkerRole()): Response {
+  const loaded = loadBackendConfig();
+  const readiness = backendReadiness(loaded.problems, null, null);
+  return Response.json(
+    {
+      ok: readiness.ready,
+      service: "veydrift-backend",
+      configured: loaded.problems.length === 0,
+      backend: backendDeploymentMetadata(workerRole),
+      chain: safeConfigSummary(loaded.config),
+      readiness,
+      chainSync: null,
+      missionResolution: null,
+      randomnessCommitter: null,
+      indexer: null,
+      rpc: null
+    } satisfies HealthPayload & Record<string, unknown>,
+    {
+      headers: corsHeaders,
+      status: readiness.ready ? 200 : 503
+    }
+  );
+}
+
 function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConfig {
   const apiUrl = process.env.VEYDRIFT_PUBLIC_API_URL ?? "https://api-test.veydrift.com";
   const graphqlUrl = process.env.VEYDRIFT_PUBLIC_GRAPHQL_URL ?? `${apiUrl}/graphql`;
@@ -2969,8 +2993,7 @@ function backendBuildMetadata(env: NodeJS.ProcessEnv): BackendDeploymentMetadata
     ["GITHUB_SHA", env.GITHUB_SHA],
     ["COMMIT_SHA", env.COMMIT_SHA],
     ["VEYDRIFT_BUILD_GIT_SHA", env.VEYDRIFT_BUILD_GIT_SHA],
-    ["VEYDRIFT_BUILD_ARTIFACT", buildArtifactSha],
-    ["GIT_SHA", env.GIT_SHA]
+    ["VEYDRIFT_BUILD_ARTIFACT", buildArtifactSha]
   ] as const) {
     const trimmed = value?.trim();
     if (trimmed) {

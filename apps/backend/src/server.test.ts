@@ -35,7 +35,7 @@ import { VeydriftGameReader, riftRequirements } from "./evm";
 import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { watchedPlanetMessage } from "./playerProfiles";
 import { deriveInfrastructureFields } from "./readModels";
-import { createRequestHandler, deriveLogBackfiller, runtimeConfigResponse, shouldRecoverFailedReconciliation } from "./server";
+import { createRequestHandler, deriveLogBackfiller, readerBootstrapHealthResponse, runtimeConfigResponse, shouldRecoverFailedReconciliation } from "./server";
 import { DEFAULT_MAX_WORKER_COUNT } from "./workerPool";
 
 setSystemTime(new Date(1_770_007_680_000));
@@ -97,7 +97,6 @@ function expectedBackendGitSha(): string | null {
     || process.env.GITHUB_SHA?.trim()
     || process.env.COMMIT_SHA?.trim()
     || process.env.VEYDRIFT_BUILD_GIT_SHA?.trim()
-    || process.env.GIT_SHA?.trim()
     || null;
 }
 
@@ -108,7 +107,6 @@ function expectedBackendGitShaSource(): string | null {
   if (process.env.GITHUB_SHA?.trim()) return "GITHUB_SHA";
   if (process.env.COMMIT_SHA?.trim()) return "COMMIT_SHA";
   if (process.env.VEYDRIFT_BUILD_GIT_SHA?.trim()) return "VEYDRIFT_BUILD_GIT_SHA";
-  if (process.env.GIT_SHA?.trim()) return "GIT_SHA";
   return null;
 }
 
@@ -1132,6 +1130,23 @@ describe("Veydrift backend", () => {
     expect(body.apiUrl).toBe("https://api-test.veydrift.com");
   });
 
+  test("builds reader health without request handler dependencies", async () => {
+    const response = readerBootstrapHealthResponse("reader");
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+    expect(body.backend.worker.role).toBe("reader");
+    expect(body.indexer).toBeNull();
+    expect(body.rpc).toBeNull();
+    expect(body.readiness).toMatchObject({
+      ready: false,
+      configurationReady: false,
+      indexedState: null,
+      safeToServeIndexedState: null
+    });
+  });
+
   test("prefers provider build SHA metadata over stale generic GIT_SHA", async () => {
     const previousGitSha = process.env.GIT_SHA;
     const previousSourceVersion = process.env.SOURCE_VERSION;
@@ -1207,6 +1222,47 @@ describe("Veydrift backend", () => {
       } else {
         process.env.VEYDRIFT_DEPLOYMENT_TIMESTAMP = previousDeploymentTimestamp;
       }
+    }
+  });
+
+  test("ignores stale generic GIT_SHA metadata without a provider or build artifact SHA", async () => {
+    const previousGitSha = process.env.GIT_SHA;
+    const previousBuildGitSha = process.env.VEYDRIFT_BUILD_GIT_SHA;
+    const previousSourceVersion = process.env.SOURCE_VERSION;
+    const previousEasypanelGitSha = process.env.EASYPANEL_GIT_SHA;
+    const previousRailwayGitCommitSha = process.env.RAILWAY_GIT_COMMIT_SHA;
+    const previousGithubSha = process.env.GITHUB_SHA;
+    const previousCommitSha = process.env.COMMIT_SHA;
+    process.env.GIT_SHA = "stale-generic-sha";
+    delete process.env.VEYDRIFT_BUILD_GIT_SHA;
+    delete process.env.SOURCE_VERSION;
+    delete process.env.EASYPANEL_GIT_SHA;
+    delete process.env.RAILWAY_GIT_COMMIT_SHA;
+    delete process.env.GITHUB_SHA;
+    delete process.env.COMMIT_SHA;
+
+    try {
+      const response = await createRequestHandler()(new Request("http://localhost/runtime-config"));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.backend.build.gitSha).toBeNull();
+      expect(body.backend.build.gitShaSource).toBeNull();
+    } finally {
+      if (previousGitSha === undefined) delete process.env.GIT_SHA;
+      else process.env.GIT_SHA = previousGitSha;
+      if (previousBuildGitSha === undefined) delete process.env.VEYDRIFT_BUILD_GIT_SHA;
+      else process.env.VEYDRIFT_BUILD_GIT_SHA = previousBuildGitSha;
+      if (previousSourceVersion === undefined) delete process.env.SOURCE_VERSION;
+      else process.env.SOURCE_VERSION = previousSourceVersion;
+      if (previousEasypanelGitSha === undefined) delete process.env.EASYPANEL_GIT_SHA;
+      else process.env.EASYPANEL_GIT_SHA = previousEasypanelGitSha;
+      if (previousRailwayGitCommitSha === undefined) delete process.env.RAILWAY_GIT_COMMIT_SHA;
+      else process.env.RAILWAY_GIT_COMMIT_SHA = previousRailwayGitCommitSha;
+      if (previousGithubSha === undefined) delete process.env.GITHUB_SHA;
+      else process.env.GITHUB_SHA = previousGithubSha;
+      if (previousCommitSha === undefined) delete process.env.COMMIT_SHA;
+      else process.env.COMMIT_SHA = previousCommitSha;
     }
   });
 

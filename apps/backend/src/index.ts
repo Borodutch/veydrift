@@ -1,5 +1,5 @@
 import { installCrashDiagnostics } from "./crashDiagnostics";
-import { createRequestHandler, runtimeConfigResponse } from "./server";
+import { createRequestHandler, readerBootstrapHealthResponse, runtimeConfigResponse } from "./server";
 import {
   createForwardingFetch,
   createRequestLoggingFetch,
@@ -52,9 +52,10 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
     };
     const localBootstrapHandler = (request: Request): Response | undefined => {
       const url = new URL(request.url);
-      return request.method === "GET" && url.pathname === "/runtime-config"
-        ? runtimeConfigResponse(role)
-        : undefined;
+      if (request.method !== "GET") return undefined;
+      if (url.pathname === "/runtime-config") return runtimeConfigResponse(role);
+      if (url.pathname === "/health") return readerBootstrapHealthResponse(role);
+      return undefined;
     };
 
     Bun.serve({
