@@ -1525,6 +1525,10 @@ export class SettlementIndexer {
     return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}`;
   }
 
+  missionResponseCacheVersion(): string {
+    return this.currentMissionReadModelDbVersion();
+  }
+
   indexedStateCacheVersion(): string {
     return this.metadata(indexedStateVersionMetadataKey) ?? this.stateGeneration.toString();
   }
