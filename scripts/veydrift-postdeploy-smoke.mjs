@@ -8,6 +8,7 @@ const manifest = options.manifest ? readManifest(options.manifest) : null;
 const runtimeStressRounds = positiveIntegerOption(options["runtime-stress-rounds"] ?? "12", "runtime-stress-rounds");
 const runtimeStressP95Ms = positiveIntegerOption(options["runtime-stress-p95-ms"] ?? "500", "runtime-stress-p95-ms");
 const runtimeStressTimeoutMs = positiveIntegerOption(options["runtime-stress-timeout-ms"] ?? "6000", "runtime-stress-timeout-ms");
+const requestTimeoutMs = positiveIntegerOption(options["timeout-ms"] ?? String(runtimeStressTimeoutMs), "timeout-ms");
 const failures = [];
 const evidence = [];
 let walletHomePlanetId = null;
@@ -113,22 +114,23 @@ async function checkWallet(name, endpoint, validate) {
 }
 
 async function checkJson(name, endpoint, validate) {
-  try {
-    const response = await fetch(`${apiUrl}${endpoint}`, { headers: { accept: "application/json" } });
-    const text = await response.text();
-    let body;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      fail(`${name} did not return JSON: HTTP ${response.status}`);
-      return;
-    }
-    evidence.push({ name, endpoint, status: response.status, keys: Object.keys(body).sort() });
-    expect(response.ok, `${name} returned HTTP ${response.status}`);
-    validate(body);
-  } catch (error) {
-    fail(`${name} request failed: ${error instanceof Error ? error.message : String(error)}`);
+  const sample = await timedJson(endpoint, requestTimeoutMs);
+  evidence.push({
+    name,
+    endpoint,
+    status: sample.status,
+    ms: sample.ms,
+    timedOut: sample.timedOut,
+    ...(sample.body && typeof sample.body === "object" ? { keys: Object.keys(sample.body).sort() } : {}),
+    ...(sample.error ? { error: sample.error } : {})
+  });
+  if (!sample.ok) {
+    fail(sample.timedOut
+      ? `${name} timed out after ${requestTimeoutMs}ms`
+      : `${name} request failed: ${sample.error ?? `HTTP ${sample.status ?? "unknown"}`}`);
+    return;
   }
+  validate(sample.body);
 }
 
 async function checkRuntimeConfigStress(noisyEndpoints) {
@@ -195,6 +197,7 @@ async function timedJson(endpoint, timeoutMs) {
       ok: response.ok,
       status: response.status,
       ms: Date.now() - started,
+      body,
       error: body?.error ?? undefined,
       timedOut: false
     };
@@ -206,6 +209,7 @@ async function timedJson(endpoint, timeoutMs) {
       ok: false,
       status: null,
       ms: Date.now() - started,
+      body: null,
       error: message,
       timedOut: normalizedMessage.includes("abort")
     };
@@ -273,7 +277,7 @@ function readManifest(path) {
 function usage(message) {
   console.error(
     `${message}\nUsage: node scripts/veydrift-postdeploy-smoke.mjs [--manifest <file>] ` +
-      `[--api-url <url>] [--wallet <0x...>] [--runtime-stress-rounds 12] ` +
+      `[--api-url <url>] [--wallet <0x...>] [--timeout-ms 6000] [--runtime-stress-rounds 12] ` +
       `[--runtime-stress-p95-ms 500] [--runtime-stress-timeout-ms 6000]`
   );
   process.exit(1);

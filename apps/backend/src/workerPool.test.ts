@@ -119,7 +119,7 @@ describe("createForwardingFetch", () => {
     const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
 
     for (const method of ["GET", "HEAD", "OPTIONS"]) {
-      const response = await handler(new Request("http://localhost/missions", { method }));
+      const response = await handler(new Request("http://localhost/debug/config", { method }));
       expect(response.status).toBe(200);
     }
     expect(forwarded).toBe(false);
@@ -323,6 +323,39 @@ describe("createForwardingFetch", () => {
     await expect(response.json()).resolves.toEqual({ ok: true, backend: { worker: { role: "reader" } } });
   });
 
+  test("forwards indexed gameplay reads to the writer without initializing the local reader handler", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (input: string | URL) => {
+      calls.push(String(input));
+      return Response.json({ ok: true });
+    }) as unknown as typeof fetch;
+
+    let localInitialized = false;
+    const local = async () => {
+      localInitialized = true;
+      return Response.json({ error: "reader handler should not initialize" }, { status: 503 });
+    };
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    for (const path of [
+      "/highscores?limit=10",
+      "/universe/galaxies/6/systems/9",
+      "/wallet/0x1111111111111111111111111111111111111111/infrastructure",
+      "/raid-finder/debris"
+    ]) {
+      const response = await handler(new Request(`http://localhost${path}`));
+      expect(response.status).toBe(200);
+    }
+
+    expect(localInitialized).toBe(false);
+    expect(calls).toEqual([
+      "http://127.0.0.1:4001/highscores?limit=10",
+      "http://127.0.0.1:4001/universe/galaxies/6/systems/9",
+      "http://127.0.0.1:4001/wallet/0x1111111111111111111111111111111111111111/infrastructure",
+      "http://127.0.0.1:4001/raid-finder/debris"
+    ]);
+  });
+
   test("keeps runtime-config local when the writer is busy", async () => {
     const fetchImpl = (async () => {
       await new Promise((resolve) => setTimeout(resolve, 60_000));
@@ -367,6 +400,40 @@ describe("createForwardingFetch", () => {
       backend: { worker: { role: "reader" } },
       readiness: { ready: true }
     });
+  });
+
+  test("keeps bootstrap reads local while an indexed read is waiting on the writer", async () => {
+    let releaseWriter!: () => void;
+    const writerReady = new Promise<void>((resolve) => {
+      releaseWriter = resolve;
+    });
+    const fetchImpl = (async () => {
+      await writerReady;
+      return Response.json({ rankings: {} });
+    }) as unknown as typeof fetch;
+
+    const local = async () => Response.json({ error: "reader handler should not initialize" }, { status: 503 });
+    const bootstrap = (request: Request) => {
+      const pathname = new URL(request.url).pathname;
+      if (pathname === "/runtime-config") return Response.json({ backend: { worker: { role: "reader" } } });
+      if (pathname === "/health") return Response.json({ ok: true, backend: { worker: { role: "reader" } } });
+      return undefined;
+    };
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl, bootstrap);
+
+    const indexedRead = handler(new Request("http://localhost/highscores?limit=10"));
+    await Promise.resolve();
+
+    const runtime = await handler(new Request("http://localhost/runtime-config"));
+    const health = await handler(new Request("http://localhost/health"));
+
+    expect(runtime.status).toBe(200);
+    expect(health.status).toBe(200);
+    await expect(runtime.json()).resolves.toMatchObject({ backend: { worker: { role: "reader" } } });
+    await expect(health.json()).resolves.toMatchObject({ ok: true, backend: { worker: { role: "reader" } } });
+
+    releaseWriter();
+    await expect(indexedRead.then((response) => response.json())).resolves.toEqual({ rankings: {} });
   });
 
   test("aborts the writer SSE request when the client cancels the forwarded stream", async () => {
