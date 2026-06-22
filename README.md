@@ -333,6 +333,12 @@ Build command: cd apps/backend && bun run build && rm -rf /root/.bun/install/cac
 Start command: cd apps/backend && bun run start
 ```
 
+The committed `apps/backend/nixpacks.test.toml` build command also writes
+`.veydrift-backend-build-sha` from `git rev-parse HEAD`. The backend reads that
+artifact for `backend.build.gitSha` so `/runtime-config` identifies the actual
+source image even when contract deployment manifest variables such as
+`VEYDRIFT_DEPLOYMENT_COMMIT` point at an older contract redeploy commit.
+
 Configure it with:
 
 ```text
