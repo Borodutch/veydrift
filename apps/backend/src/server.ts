@@ -1089,13 +1089,28 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     });
     const serve = async (): Promise<Response> => {
       const url = new URL(request.url);
-      const rateLimited = readRateLimitResponse(request, url, readRateLimits);
-      if (rateLimited) return withRequestCors(request, rateLimited);
       const cacheTtlMs = enableResponseCache ? cacheableJsonRequestTtlMs(request, url) : 0;
       if (cacheTtlMs > 0) {
         const cacheKey = cacheableJsonRequestKey(request, url, indexer);
         const cached = responseCache.get(cacheKey);
-        if (cached && cached.expiresAt > Date.now()) {
+        const now = Date.now();
+        if (cached && cached.expiresAt > now) {
+          return withRequestCors(request, cachedJsonResponse(request, cached));
+        }
+        if (cached && cached.expiresAt + staleCachedJsonWindowMs > now) {
+          if (!inflightResponseCache.has(cacheKey)) {
+            let resolveRefresh: (cached: CachedJsonResponse | null) => void;
+            const refresh = new Promise<CachedJsonResponse | null>((resolve) => {
+              resolveRefresh = resolve;
+            });
+            inflightResponseCache.set(cacheKey, refresh);
+            void refreshCachedJsonResponse(request, url, routeRequest, responseCache, cacheKey, cacheTtlMs)
+              .then((refreshed) => resolveRefresh!(refreshed.cached))
+              .catch(() => resolveRefresh!(null))
+              .finally(() => {
+                inflightResponseCache.delete(cacheKey);
+              });
+          }
           return withRequestCors(request, cachedJsonResponse(request, cached));
         }
 
@@ -1105,36 +1120,27 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           if (coalesced) return withRequestCors(request, cachedJsonResponse(request, coalesced));
         }
 
+        const rateLimited = readRateLimitResponse(request, url, readRateLimits);
+        if (rateLimited) return withRequestCors(request, rateLimited);
+
         let resolveInflight: (cached: CachedJsonResponse | null) => void;
         inflightResponseCache.set(cacheKey, new Promise((resolve) => {
           resolveInflight = resolve;
         }));
 
-        const response = await routeRequest(request);
-        if (response.status === 200 && jsonContentType(response.headers.get("content-type"))) {
-          const body = await response.clone().arrayBuffer();
-          const responseHeaders = new Headers(response.headers);
-          responseHeaders.set("cache-control", clientCacheControlHeader(url, cacheTtlMs));
-          const headers: Array<[string, string]> = [];
-          responseHeaders.forEach((value, key) => headers.push([key, value]));
-          const cachedResponse = {
-            body,
-            expiresAt: Date.now() + cacheTtlMs,
-            headers,
-            status: response.status,
-            statusText: response.statusText
-          };
-          responseCache.set(cacheKey, cachedResponse);
-          pruneResponseCache(responseCache);
-          resolveInflight!(cachedResponse);
+        const refreshed = await refreshCachedJsonResponse(request, url, routeRequest, responseCache, cacheKey, cacheTtlMs);
+        if (refreshed.cached) {
+          resolveInflight!(refreshed.cached);
           inflightResponseCache.delete(cacheKey);
-          return withRequestCors(request, cachedJsonResponse(request, cachedResponse));
+          return withRequestCors(request, cachedJsonResponse(request, refreshed.cached));
         }
         resolveInflight!(null);
         inflightResponseCache.delete(cacheKey);
-        return withRequestCors(request, response);
+        return withRequestCors(request, refreshed.response);
       }
 
+      const rateLimited = readRateLimitResponse(request, url, readRateLimits);
+      if (rateLimited) return withRequestCors(request, rateLimited);
       return withRequestCors(request, await routeRequest(request));
     };
 
@@ -1229,7 +1235,8 @@ function isIndexableChainReader(
 }
 
 const readRateLimitWindowMs = 10_000;
-const readRateLimitMaxRequests = 10;
+const readRateLimitMaxRequests = 4;
+const staleCachedJsonWindowMs = 300_000;
 
 function readRateLimitResponse(
   request: Request,
@@ -1249,6 +1256,7 @@ function readRateLimitResponse(
   }
 
   const key = requestClientKey(request);
+  if (!key) return null;
   const current = limits.get(key);
   if (!current || current.resetAt <= now) {
     limits.set(key, { count: 1, resetAt: now + readRateLimitWindowMs });
@@ -1282,10 +1290,10 @@ function isRateLimitedReadPath(pathname: string): boolean {
     || pathname.startsWith("/raid-finder/");
 }
 
-function requestClientKey(request: Request): string {
+function requestClientKey(request: Request): string | null {
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   const realIp = request.headers.get("x-real-ip")?.trim();
-  return forwarded || realIp || "unknown";
+  return forwarded || realIp || null;
 }
 
 // Predicate kept for diagnostics/tests: true when a warm DB inherited a recorded reconcile failure
@@ -1307,6 +1315,40 @@ type CachedJsonResponse = {
   status: number;
   statusText: string;
 };
+
+type CachedJsonRefreshResult =
+  | { cached: CachedJsonResponse; response?: never }
+  | { cached: null; response: Response };
+
+async function refreshCachedJsonResponse(
+  request: Request,
+  url: URL,
+  routeRequest: (request: Request) => Promise<Response>,
+  responseCache: Map<string, CachedJsonResponse>,
+  cacheKey: string,
+  cacheTtlMs: number
+): Promise<CachedJsonRefreshResult> {
+  const response = await routeRequest(request);
+  if (response.status !== 200 || !jsonContentType(response.headers.get("content-type"))) {
+    return { cached: null, response };
+  }
+
+  const body = await response.clone().arrayBuffer();
+  const responseHeaders = new Headers(response.headers);
+  responseHeaders.set("cache-control", clientCacheControlHeader(url, cacheTtlMs));
+  const headers: Array<[string, string]> = [];
+  responseHeaders.forEach((value, key) => headers.push([key, value]));
+  const cached = {
+    body,
+    expiresAt: Date.now() + cacheTtlMs,
+    headers,
+    status: response.status,
+    statusText: response.statusText
+  };
+  responseCache.set(cacheKey, cached);
+  pruneResponseCache(responseCache);
+  return { cached };
+}
 
 function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (request.method !== "GET") return 0;
@@ -1344,16 +1386,16 @@ function cacheableJsonRequestKey(request: Request, url: URL, indexer: Settlement
 }
 
 function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): string {
-  if (url.pathname === "/health") return ttlCacheBucket(10_000);
-  if (url.pathname === "/debug/indexer") return ttlCacheBucket(2_000);
-  if (url.pathname === "/highscores") return ttlCacheBucket(300_000);
-  if (url.pathname === "/raid-finder/debris") return ttlCacheBucket(30_000);
+  if (url.pathname === "/health") return "ttl";
+  if (url.pathname === "/debug/indexer") return "ttl";
+  if (url.pathname === "/highscores") return "ttl";
+  if (url.pathname === "/raid-finder/debris") return "ttl";
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return indexer.missionResponseCacheVersion();
-  if (url.pathname === "/missions") return ttlCacheBucket(300_000);
+  if (url.pathname === "/missions") return "ttl";
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return indexer.missionResponseCacheVersion();
-  if (cacheableWalletSnapshotPath(url.pathname)) return ttlCacheBucket(15_000);
-  if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return ttlCacheBucket(30_000);
-  if (url.pathname === "/universe/systems") return ttlCacheBucket(30_000);
+  if (cacheableWalletSnapshotPath(url.pathname)) return "ttl";
+  if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return "ttl";
+  if (url.pathname === "/universe/systems") return "ttl";
   return indexer.responseCacheVersion();
 }
 
@@ -1361,10 +1403,6 @@ function clientCacheControlHeader(url: URL, ttlMs: number): string {
   const seconds = Math.max(1, Math.floor(ttlMs / 1_000));
   const scope = url.pathname.startsWith("/wallet/") ? "private" : "public";
   return `${scope}, max-age=${seconds}, stale-while-revalidate=${seconds}`;
-}
-
-function ttlCacheBucket(ttlMs: number): string {
-  return `ttl:${Math.floor(Date.now() / ttlMs)}`;
 }
 
 function cachedJsonResponse(request: Request, cached: CachedJsonResponse): Response {

@@ -7374,6 +7374,25 @@ describe("Veydrift backend", () => {
     expect(body.systems).toHaveLength(17);
   });
 
+  test("serves cache hits before applying runaway refresh limits", async () => {
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      enableResponseCache: true,
+      prewarmResponseCache: false
+    });
+
+    for (let index = 0; index < 8; index += 1) {
+      const response = await handler(new Request("http://localhost/universe/systems?galaxy=2&center=44&radius=1", {
+        headers: {
+          "x-forwarded-for": "203.0.113.9"
+        }
+      }));
+      expect(response.status).toBe(200);
+      await response.arrayBuffer();
+    }
+  });
+
   test("returns deterministic universe system data", async () => {
     const response = await handler(
       new Request("http://localhost/universe/system?galaxyId=0&systemId=1")
