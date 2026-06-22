@@ -1254,7 +1254,7 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   // Mission-control reads are backed by the mission read-model version in responseCacheVersion(), so
   // they stay fresh across indexed mission events while still coalescing repeated UI refreshes.
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return 30_000;
-  if (url.pathname === "/missions") return 30_000;
+  if (url.pathname === "/missions") return 300_000;
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return 30_000;
   if (cacheableWalletSnapshotPath(url.pathname)) return 15_000;
   // Wallet, fleet, and remaining planet payloads are contract-state mirrors. Do not let a worker-local
@@ -1285,7 +1285,7 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
   if (url.pathname === "/highscores") return ttlCacheBucket(300_000);
   if (url.pathname === "/raid-finder/debris") return ttlCacheBucket(30_000);
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return indexer.missionResponseCacheVersion();
-  if (url.pathname === "/missions") return ttlCacheBucket(30_000);
+  if (url.pathname === "/missions") return ttlCacheBucket(300_000);
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return indexer.missionResponseCacheVersion();
   if (cacheableWalletSnapshotPath(url.pathname)) return ttlCacheBucket(15_000);
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return ttlCacheBucket(30_000);
