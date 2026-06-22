@@ -182,19 +182,19 @@ describe("createForwardingFetch", () => {
     await expect(response.text()).resolves.toBe("event: sync-status\n\n");
   });
 
-  test("forwards health readiness reads to the writer", async () => {
+  test("serves health readiness reads locally on readers", async () => {
     const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
     const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
       calls.push({ url: String(input), body: init?.body });
-      return Response.json({ ok: true, readiness: { ready: true } });
+      return Response.json({ error: "writer should not receive health" }, { status: 503 });
     }) as unknown as typeof fetch;
 
-    const local = async () => new Response("reader-health", { status: 503 });
+    const local = async () => Response.json({ ok: true, readiness: { ready: true } });
     const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
 
     const response = await handler(new Request("http://localhost/health"));
 
-    expect(calls).toEqual([{ url: "http://127.0.0.1:4001/health", body: undefined }]);
+    expect(calls).toEqual([]);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ ok: true });
   });
@@ -244,6 +244,29 @@ describe("createForwardingFetch", () => {
       backend: { worker: { role: "reader" } },
       apiUrl: "https://api-test.veydrift.com",
       chainId: 84532
+    });
+  });
+
+  test("keeps health local when the writer is busy", async () => {
+    const fetchImpl = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60_000));
+      return Response.json({ error: "late writer response" }, { status: 503 });
+    }) as unknown as typeof fetch;
+
+    const local = async () => Response.json({
+      ok: true,
+      backend: { worker: { role: "reader" } },
+      readiness: { ready: true }
+    });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    const response = await handler(new Request("http://localhost/health"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      backend: { worker: { role: "reader" } },
+      readiness: { ready: true }
     });
   });
 

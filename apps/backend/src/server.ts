@@ -249,7 +249,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const responseCache = new Map<string, CachedJsonResponse>();
   const inflightResponseCache = new Map<string, Promise<CachedJsonResponse | null>>();
   const readRateLimits = new Map<string, { count: number; resetAt: number }>();
-  const cachedReadRateLimits = new Map<string, { count: number; resetAt: number }>();
   const galaxySystemCache = new Map<string, GalaxySystemCacheEntry>();
   const enableResponseCache = dependencies.enableResponseCache ?? (
     !dependencies.chainReader
@@ -1124,13 +1123,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const cached = responseCache.get(cacheKey);
         const now = Date.now();
         if (cached && cached.expiresAt > now) {
-          const cachedRateLimited = cachedReadRateLimitResponse(request, url, cachedReadRateLimits);
-          if (cachedRateLimited) return withRequestCors(request, cachedRateLimited);
           return withRequestCors(request, cachedJsonResponse(request, cached));
         }
         if (cached && cached.expiresAt + staleCachedJsonWindowMs > now) {
-          const cachedRateLimited = cachedReadRateLimitResponse(request, url, cachedReadRateLimits);
-          if (cachedRateLimited) return withRequestCors(request, cachedRateLimited);
           if (!inflightResponseCache.has(cacheKey)) {
             let resolveRefresh: (cached: CachedJsonResponse | null) => void;
             const refresh = new Promise<CachedJsonResponse | null>((resolve) => {
@@ -1271,7 +1266,6 @@ function isIndexableChainReader(
 
 const readRateLimitWindowMs = 10_000;
 const readRateLimitMaxRequests = 4;
-const cachedReadRateLimitMaxRequests = 4;
 const staleCachedJsonWindowMs = 300_000;
 
 function readRateLimitResponse(
@@ -1280,14 +1274,6 @@ function readRateLimitResponse(
   limits: Map<string, { count: number; resetAt: number }>
 ): Response | null {
   return limitedReadResponse(request, url, limits, readRateLimitMaxRequests, "route");
-}
-
-function cachedReadRateLimitResponse(
-  request: Request,
-  url: URL,
-  limits: Map<string, { count: number; resetAt: number }>
-): Response | null {
-  return limitedReadResponse(request, url, limits, cachedReadRateLimitMaxRequests, "route");
 }
 
 function limitedReadResponse(
