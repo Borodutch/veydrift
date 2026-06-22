@@ -7,7 +7,7 @@ COPY package.json bun.lockb tsconfig.base.json ./
 COPY apps apps
 COPY packages packages
 
-RUN printf "%s" "$GIT_SHA" > .veydrift-backend-build-sha
+RUN printf "%s" "$GIT_SHA" | tee .veydrift-backend-build-sha apps/backend/.veydrift-backend-build-sha >/dev/null
 RUN bun install --frozen-lockfile
 
 WORKDIR /app/apps/backend
