@@ -32,19 +32,8 @@ const WRITER_ONLY_READ_PATHS = new Set([
   // The live chain event stream is owned by the writer's chain-sync subscription.
   "/chain/events"
 ]);
-const WRITER_PREFERRED_READ_PATHS = new Set([
-  "/highscores",
-  "/missions"
-]);
-const WRITER_PREFERRED_READ_PREFIXES = [
-  "/alliance/",
-  "/battle-report/",
-  "/mission/",
-  "/planets/",
-  "/raid-finder/",
-  "/universe/",
-  "/wallet/"
-];
+const WRITER_PREFERRED_READ_PATHS = new Set<string>();
+const WRITER_PREFERRED_READ_PREFIXES: string[] = [];
 const BODYLESS_METHODS = new Set(["GET", "HEAD"]);
 
 // Request headers that must not be copied verbatim when re-issuing a forwarded request: the body is
@@ -116,10 +105,10 @@ export function resolveWriterInternalPort(
   return mainPort + 1;
 }
 
-// Wrap a reader's request handler so it serves bootstrap reads locally, forwards expensive indexed reads
-// to the writer, and forwards every mutating request to the single writer's loopback listener at
-// `writerOrigin` (e.g. "http://127.0.0.1:4001"). This keeps public reader event loops available for
-// /health and /runtime-config even when cold indexed reads are slow or queued (VEY-KANEO-620).
+// Wrap a reader's request handler so it serves read-only traffic locally and forwards only writes plus
+// writer-owned streams to the single writer's loopback listener at `writerOrigin`
+// (e.g. "http://127.0.0.1:4001"). Keeping indexed GETs on readers preserves the 9-reader capacity for
+// normal gameplay bursts while writer-only paths remain deterministic.
 export function createForwardingFetch(
   localHandler: (request: Request) => Promise<Response>,
   writerOrigin: string,
