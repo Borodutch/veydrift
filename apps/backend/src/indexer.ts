@@ -1211,21 +1211,16 @@ export class SettlementIndexer {
         .filter((planet) => planet.owner.toLowerCase() === walletLower)
         .map((planet) => planet.planetId)
     );
-    const completedMissions = this.indexedFleetMissionSummariesWithPlanetReferences()
+    const completedMissions = this.completedFleetMissionsFromCanonicalRows()
       .filter((mission) => isVisibleCompletedMission(mission, walletLower, ownedPlanetIds))
       .sort(compareFleetMissionsNewestFirst);
-    const battleReports = this.indexedBattleReports().filter((report) =>
-      report.attacker.toLowerCase() === walletLower
-        || ownedPlanetIds.has(report.targetPlanetId)
-        || report.participants.some((participant) => participant.address.toLowerCase() === walletLower)
-    );
 
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
       ownedPlanetIds,
       completedMissions,
-      battleReports
+      battleReports: []
     };
   }
 
