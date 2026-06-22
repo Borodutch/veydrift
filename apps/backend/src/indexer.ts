@@ -1329,18 +1329,20 @@ export class SettlementIndexer {
         completedLevels.set(queue.itemId, Math.max(completedLevels.get(queue.itemId) ?? 0, queue.targetLevel));
       }
     }
+    const levels = this.indexedLevelsById("contract_building_levels", "building_id", "level", planetId);
 
     return deriveBuildingRows((id) => Math.max(
-      this.indexedLevel("contract_building_levels", "building_id", planetId, id),
+      levels.get(id) ?? 0,
       completedLevels.get(id) ?? 0
     ));
   }
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
     const completedQuantities = this.completedQueueQuantities(`ship:${planetId}`);
+    const counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId);
     return deriveShipRows(
       (id) => (
-        this.indexedLevel("contract_ship_counts", "ship_id", planetId, id)
+        (counts.get(id) ?? 0)
         + (completedQuantities.get(id) ?? 0)
       ),
       this.planet(planetId)?.temperature,
@@ -1361,19 +1363,22 @@ export class SettlementIndexer {
   }
 
   private contractInfrastructureRows(planetId: string): InfrastructureState["buildings"] {
-    return deriveBuildingRows((id) => this.indexedLevel("contract_building_levels", "building_id", planetId, id));
+    const levels = this.indexedLevelsById("contract_building_levels", "building_id", "level", planetId);
+    return deriveBuildingRows((id) => levels.get(id) ?? 0);
   }
 
   private contractShipRows(planetId: string): ShipyardState["ships"] {
+    const counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId);
     return deriveShipRows(
-      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
+      (id) => counts.get(id) ?? 0,
       this.planet(planetId)?.temperature
     );
   }
 
   private contractDefenseRows(planetId: string): DefenseState["defenses"] {
+    const counts = this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId);
     return deriveDefenseRows(
-      (id) => this.indexedLevel("contract_defense_counts", "defense_id", planetId, id)
+      (id) => counts.get(id) ?? 0
     );
   }
 
@@ -1396,9 +1401,10 @@ export class SettlementIndexer {
 
   defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
     const completedQuantities = this.completedQueueQuantities(`defense:${planetId}`);
+    const counts = this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId);
     return deriveDefenseRows(
       (id) => (
-        this.indexedLevel("contract_defense_counts", "defense_id", planetId, id)
+        (counts.get(id) ?? 0)
         + (completedQuantities.get(id) ?? 0)
       ),
       durationLevels
@@ -4955,6 +4961,20 @@ export class SettlementIndexer {
       WHERE planet_id = ? AND ${idColumn} = ?
     `).get(planetId, itemId) as { value: number } | null;
     return row?.value ?? 0;
+  }
+
+  private indexedLevelsById(
+    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
+    idColumn: string,
+    valueColumn: "count" | "level",
+    planetId: string
+  ): Map<number, number> {
+    const rows = this.db.query(`
+      SELECT ${idColumn} AS id, ${valueColumn} AS value
+      FROM ${table}
+      WHERE planet_id = ?
+    `).all(planetId) as Array<{ id: number; value: number }>;
+    return new Map(rows.map((row) => [row.id, row.value]));
   }
 
   private upsertIndexedLevel(
