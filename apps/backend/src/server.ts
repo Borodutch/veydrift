@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { gzipSync } from "node:zlib";
 import { generateSystem } from "@veydrift/universe";
 import { CachedChainReader } from "./cachedReader";
 import { ChainSyncService } from "./chainSync";
@@ -1091,13 +1092,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const cacheKey = cacheableJsonRequestKey(request, url, indexer);
         const cached = responseCache.get(cacheKey);
         if (cached && cached.expiresAt > Date.now()) {
-          return withRequestCors(request, cachedJsonResponse(cached));
+          return withRequestCors(request, cachedJsonResponse(request, cached));
         }
 
         const inflight = inflightResponseCache.get(cacheKey);
         if (inflight) {
           const coalesced = await inflight;
-          if (coalesced) return withRequestCors(request, cachedJsonResponse(coalesced));
+          if (coalesced) return withRequestCors(request, cachedJsonResponse(request, coalesced));
         }
 
         let resolveInflight: (cached: CachedJsonResponse | null) => void;
@@ -1121,7 +1122,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           pruneResponseCache(responseCache);
           resolveInflight!(cachedResponse);
           inflightResponseCache.delete(cacheKey);
-          return withRequestCors(request, cachedJsonResponse(cachedResponse));
+          return withRequestCors(request, cachedJsonResponse(request, cachedResponse));
         }
         resolveInflight!(null);
         inflightResponseCache.delete(cacheKey);
@@ -1235,6 +1236,7 @@ export function shouldRecoverFailedReconciliation(
 type CachedJsonResponse = {
   body: ArrayBuffer;
   expiresAt: number;
+  gzipBody?: ArrayBuffer;
   headers: Array<[string, string]>;
   status: number;
   statusText: string;
@@ -1277,12 +1279,33 @@ function ttlCacheBucket(ttlMs: number): string {
   return `ttl:${Math.floor(Date.now() / ttlMs)}`;
 }
 
-function cachedJsonResponse(cached: CachedJsonResponse): Response {
-  return new Response(cached.body.slice(0), {
-    headers: cached.headers,
+function cachedJsonResponse(request: Request, cached: CachedJsonResponse): Response {
+  const headers = new Headers(cached.headers);
+  const shouldGzip = cached.body.byteLength > 2_048 && requestAcceptsGzip(request) && !headers.has("content-encoding");
+  const body = shouldGzip ? cachedGzipBody(cached) : cached.body.slice(0);
+
+  if (shouldGzip) {
+    headers.set("content-encoding", "gzip");
+    headers.set("content-length", String(body.byteLength));
+    appendVaryHeader(headers, "Accept-Encoding");
+  }
+
+  return new Response(body, {
+    headers,
     status: cached.status,
     statusText: cached.statusText
   });
+}
+
+function requestAcceptsGzip(request: Request): boolean {
+  return /\bgzip\b/i.test(request.headers.get("accept-encoding") ?? "");
+}
+
+function cachedGzipBody(cached: CachedJsonResponse): ArrayBuffer {
+  if (cached.gzipBody) return cached.gzipBody.slice(0);
+  const compressed = gzipSync(new Uint8Array(cached.body));
+  cached.gzipBody = compressed.buffer.slice(compressed.byteOffset, compressed.byteOffset + compressed.byteLength);
+  return cached.gzipBody.slice(0);
 }
 
 function jsonContentType(value: string | null): boolean {
