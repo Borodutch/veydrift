@@ -284,7 +284,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname === "/health") {
       const chainSyncSnapshot = chainSync?.snapshot() ?? null;
-      const indexerSnapshot = indexer?.snapshot() ?? null;
+      const indexerSnapshot = isWriter ? (indexer?.snapshot() ?? null) : null;
       const readiness = backendReadiness(loaded.problems, chainSyncSnapshot, indexerSnapshot);
       return Response.json(
         {
