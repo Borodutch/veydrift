@@ -990,7 +990,7 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("coalesces concurrent health reads through the response cache", async () => {
+  test("keeps concurrent health reads off the response cache", async () => {
     let snapshots = 0;
     const chainSync = {
       start() {},
@@ -1022,10 +1022,10 @@ describe("Veydrift backend", () => {
     const responses = await Promise.all(Array.from({ length: 10 }, () => handler(new Request("http://localhost/health"))));
 
     expect(responses.every((response) => response.status === 200)).toBe(true);
-    expect(snapshots).toBe(1);
+    expect(snapshots).toBe(10);
   });
 
-  test("does not turn a stale shared-cache lock into a long health wait", async () => {
+  test("does not wait on stale shared-cache locks for health", async () => {
     let waitDeadlineMs: number | undefined;
     let snapshots = 0;
     const sharedResponseCache = {
@@ -1073,7 +1073,7 @@ describe("Veydrift backend", () => {
     const response = await handler(new Request("http://localhost/health"));
 
     expect(response.status).toBe(200);
-    expect(waitDeadlineMs).toBe(750);
+    expect(waitDeadlineMs).toBeUndefined();
     expect(snapshots).toBe(1);
   });
 
@@ -1104,7 +1104,7 @@ describe("Veydrift backend", () => {
     const chainSync = {
       start() {},
       snapshot() {
-        throw new Error("stale cache should avoid recomputing the health route");
+        throw new Error("stale cache should avoid recomputing the cold route");
       }
     } as unknown as import("./chainSync").ChainSyncService;
     const handler = createRequestHandler({
@@ -1115,12 +1115,61 @@ describe("Veydrift backend", () => {
       sharedResponseCache
     });
 
-    const response = await handler(new Request("http://localhost/health"));
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
     expect(body).toEqual({ stale: true });
     expect(staleKeyUsed).toBe(true);
+  });
+
+  test("keeps health off the response-cache path", async () => {
+    let sharedCacheRead = false;
+    const sharedResponseCache = {
+      get() {
+        sharedCacheRead = true;
+        return null;
+      },
+      tryAcquireRefresh() {
+        throw new Error("health should not acquire shared refresh locks");
+      },
+      async waitForFresh() {
+        throw new Error("health should not wait for shared refreshes");
+      },
+      set() {
+        throw new Error("health should not write shared cache entries");
+      },
+      releaseRefresh() {}
+    } as unknown as import("./sharedResponseCache").SharedResponseCache;
+    const chainSync = {
+      start() {},
+      snapshot() {
+        return { connected: true, subscribedToHeads: true, subscribedToLogs: true };
+      }
+    } as unknown as import("./chainSync").ChainSyncService;
+    const indexer = {
+      snapshot() {
+        return {
+          indexedState: "healthy",
+          safeToServeIndexedState: true
+        };
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      chainSync,
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer,
+      sharedResponseCache
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(sharedCacheRead).toBe(false);
   });
 
   test("returns quickly when indexed SQLite reads are busy", async () => {
