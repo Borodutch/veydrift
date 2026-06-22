@@ -308,9 +308,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "GET" && url.pathname === "/runtime-config") {
-      return Response.json(getRuntimeConfig(workerRole), {
-        headers: corsHeaders
-      });
+      return runtimeConfigResponse(workerRole);
     }
 
     if (request.method === "GET" && url.pathname === "/raid-finder/debris") {
@@ -2839,6 +2837,12 @@ function moonChanceStatus(report: MoonChanceReportEvent): string {
   if (report.eventName === "MoonDestructionFinalized") return report.moonDestroyed ? "moon_destroyed" : "moon_survived";
   if (report.eventName === "MoonChanceSkippedExistingMoon") return "existing_moon_skipped";
   return report.moonCreated ? "created" : "not_created";
+}
+
+export function runtimeConfigResponse(workerRole: WorkerRole = envWorkerRole()): Response {
+  return Response.json(getRuntimeConfig(workerRole), {
+    headers: corsHeaders
+  });
 }
 
 function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConfig {

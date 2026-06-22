@@ -110,11 +110,14 @@ export function resolveWriterInternalPort(
 export function createForwardingFetch(
   localHandler: (request: Request) => Promise<Response>,
   writerOrigin: string,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  localBootstrapHandler?: (request: Request) => Response | Promise<Response> | undefined
 ): (request: Request) => Promise<Response> {
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     if (READ_ONLY_METHODS.has(request.method) && !WRITER_ONLY_READ_PATHS.has(url.pathname)) {
+      const bootstrapResponse = await localBootstrapHandler?.(request);
+      if (bootstrapResponse) return bootstrapResponse;
       return localHandler(request);
     }
 
