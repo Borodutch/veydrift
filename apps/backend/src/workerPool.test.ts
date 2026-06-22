@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   createForwardingFetch,
   DEFAULT_MAX_WORKER_COUNT,
+  MAX_WORKER_COUNT_ENV,
   resolveWorkerAssignment,
   resolveWorkerCount,
   resolveWriterInternalPort,
@@ -24,10 +25,12 @@ describe("resolveWorkerCount", () => {
     expect(resolveWorkerCount({}, Number.NaN)).toBe(1);
   });
 
-  test("honors a positive integer override even above the default cap", () => {
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "3" }, 16)).toBe(3);
+  test("caps a positive integer override at the default max unless the max cap is raised", () => {
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "3" }, 16)).toBe(DEFAULT_MAX_WORKER_COUNT);
     expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "1" }, 16)).toBe(1);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "12" }, 16)).toBe(12);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "12" }, 16)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "3", [MAX_WORKER_COUNT_ENV]: "3" }, 16)).toBe(3);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "12", [MAX_WORKER_COUNT_ENV]: "12" }, 16)).toBe(12);
   });
 
   test("ignores blank or invalid overrides and falls back to the capped default", () => {
