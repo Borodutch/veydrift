@@ -403,6 +403,12 @@ export class SettlementIndexer {
       battleReports: BattleReport[];
     }
     | null = null;
+  private fulfilledRandomnessRequestIdsCache:
+    | {
+      missionGeneration: number;
+      requestIds: ReadonlySet<string>;
+    }
+    | null = null;
   private battleReportGeneration = 0;
   private missionReferenceCache:
     | {
@@ -5236,6 +5242,7 @@ export class SettlementIndexer {
     this.missionReadModelDbVersion = this.advanceMissionReadModelDbVersion();
     this.missionReadModelCache = null;
     this.decodedMissionLogCache = null;
+    this.fulfilledRandomnessRequestIdsCache = null;
     this.missionReferenceCache = null;
     this.attackLaunchSecondsCache.clear();
   }
@@ -5247,6 +5254,7 @@ export class SettlementIndexer {
       this.missionGeneration += 1;
       this.missionReadModelCache = null;
       this.decodedMissionLogCache = null;
+      this.fulfilledRandomnessRequestIdsCache = null;
       this.missionReferenceCache = null;
       this.attackLaunchSecondsCache.clear();
     }
@@ -5794,7 +5802,27 @@ export class SettlementIndexer {
   // VEY-KANEO-479: request ids the RandomnessEngine has fulfilled, read from the ingested
   // RandomnessFulfilled logs.
   private fulfilledRandomnessRequestIds(): ReadonlySet<string> {
-    return this.decodedMissionLogs().fulfilledRandomnessRequestIds;
+    this.currentMissionReadModelDbVersion();
+    const cached = this.fulfilledRandomnessRequestIdsCache;
+    if (cached && cached.missionGeneration === this.missionGeneration) {
+      return cached.requestIds;
+    }
+
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'randomness'
+      ORDER BY CAST(block_number AS INTEGER) ASC
+    `).all() as EventRow[];
+    const requestIds = new Set<string>();
+    for (const log of sortedEventRows(rows)) {
+      requestIds.add(decodeRandomnessFulfilledRequestId(log));
+    }
+    this.fulfilledRandomnessRequestIdsCache = {
+      missionGeneration: this.missionGeneration,
+      requestIds
+    };
+    return requestIds;
   }
 
   // VEY-KANEO-489: replay every Attack `attacker` has launched, grouped by target planet, as ascending
