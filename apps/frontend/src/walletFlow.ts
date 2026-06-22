@@ -42,8 +42,11 @@ export const WALLET_CONNECTION_REJECTED_MESSAGE = "Wallet connection was rejecte
 export const WALLET_ACCOUNT_MISMATCH_MESSAGE = "The selected wallet account changed. Reconnect the active wallet, then retry.";
 
 const GAME_API_RECENT_READ_TTL_MS = 750;
+const GAME_API_MAX_CONCURRENT_READS = 6;
 const gameApiInflightReads = new Map<string, Promise<unknown>>();
 const gameApiRecentReads = new Map<string, { expiresAt: number; value: unknown }>();
+let gameApiActiveReads = 0;
+const gameApiReadQueue: Array<() => void> = [];
 
 export type SettlementConfig = {
   address?: string;
@@ -3292,6 +3295,7 @@ async function fetchGameApiJsonUnpooled<T>(
     timeoutMs?: number;
   }
 ): Promise<T> {
+  const releaseReadSlot = await acquireGameApiReadSlot();
   const timeoutMs = options.timeoutMs ?? WALLET_API_READ_TIMEOUT_MS;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
@@ -3314,12 +3318,31 @@ async function fetchGameApiJsonUnpooled<T>(
     throw new Error(options.networkFailureMessage?.(error) ?? walletApiNetworkFailureMessage(label, error));
   } finally {
     clearTimeout(timeoutId);
+    releaseReadSlot();
   }
 
   if (!response.ok) {
     throw new Error(options.httpErrorMessage ? await options.httpErrorMessage(response) : await apiErrorMessage(response, label));
   }
   return response.json() as Promise<T>;
+}
+
+async function acquireGameApiReadSlot(): Promise<() => void> {
+  if (gameApiActiveReads < GAME_API_MAX_CONCURRENT_READS) {
+    gameApiActiveReads += 1;
+    return releaseGameApiReadSlot;
+  }
+  await new Promise<void>((resolve) => {
+    gameApiReadQueue.push(resolve);
+  });
+  gameApiActiveReads += 1;
+  return releaseGameApiReadSlot;
+}
+
+function releaseGameApiReadSlot(): void {
+  gameApiActiveReads = Math.max(0, gameApiActiveReads - 1);
+  const next = gameApiReadQueue.shift();
+  if (next) next();
 }
 
 function pruneRecentGameApiReads(): void {
@@ -3335,6 +3358,8 @@ function pruneRecentGameApiReads(): void {
 export function __clearGameApiReadPoolForTests(): void {
   gameApiInflightReads.clear();
   gameApiRecentReads.clear();
+  gameApiActiveReads = 0;
+  gameApiReadQueue.length = 0;
 }
 
 async function mutateWatchedPlanet(

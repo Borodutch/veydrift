@@ -2151,6 +2151,46 @@ describe("walletFlow", () => {
     expect(calls.map((call) => new URL(call.url).searchParams.has("source"))).not.toContain(true);
   });
 
+  test("limits distinct game API reads while still pooling duplicate URLs", async () => {
+    const originalFetch = globalThis.fetch;
+    let active = 0;
+    let maxActive = 0;
+    let calls = 0;
+
+    globalThis.fetch = (async () => {
+      active += 1;
+      calls += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await Promise.all([
+        fetchWalletSettlement("https://api.example.test", account),
+        fetchWalletSettlement("https://api.example.test", account),
+        fetchWalletPlanets("https://api.example.test", account),
+        fetchWalletQueues("https://api.example.test", account),
+        fetchInfrastructureState("https://api.example.test", account, "1"),
+        fetchMoonState("https://api.example.test", account, "1"),
+        fetchResearchState("https://api.example.test", account, "1"),
+        fetchFleetMissionVisibility("https://api.example.test", account),
+        fetchFleetMissionVisibility("https://api.example.test", account, { includeArchive: false }),
+        fetchShipyardState("https://api.example.test", account, "1"),
+        fetchDefenseState("https://api.example.test", account, "1"),
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(calls).toBe(10);
+    expect(maxActive).toBeLessThanOrEqual(6);
+  });
+
   test("includes backend wallet API validation messages in shipyard errors", async () => {
     const originalFetch = globalThis.fetch;
 
