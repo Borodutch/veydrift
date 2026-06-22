@@ -916,6 +916,32 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("does not touch the indexer snapshot on reader health checks", async () => {
+    const indexer = {
+      snapshot() {
+        throw new Error("reader health must stay off indexed read models");
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      indexer,
+      role: "reader"
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.backend.worker.role).toBe("reader");
+    expect(body.indexer).toBeNull();
+    expect(body.readiness).toMatchObject({
+      ready: true,
+      indexedState: null,
+      safeToServeIndexedState: null
+    });
+  });
+
   test("returns public runtime config", async () => {
     const response = await handler(new Request("http://localhost/runtime-config"));
     const body = await response.json();
@@ -7874,9 +7900,13 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     expect(body.chainSync).toBeNull();
     expect(body.missionResolution).toBeNull();
     expect(body.randomnessCommitter).toBeNull();
-    // Reads are still served from the shared WAL database.
-    expect(body.indexer).not.toBeNull();
+    // Reader liveness must stay cheap; diagnostics still expose the shared WAL snapshot explicitly.
+    expect(body.indexer).toBeNull();
     expect(response.status).toBe(200);
+
+    const debugResponse = await handler(new Request("http://localhost/debug/indexer"));
+    const debugBody = await debugResponse.json();
+    expect(debugBody.indexer).not.toBeNull();
   });
 
   test("writer workers (the default) construct chain-sync and the committer", async () => {
