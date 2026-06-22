@@ -1077,6 +1077,52 @@ describe("Veydrift backend", () => {
     expect(snapshots).toBe(1);
   });
 
+  test("serves versionless shared stale reads instead of recomputing cold routes", async () => {
+    let staleKeyUsed = false;
+    const staleBody = new TextEncoder().encode(JSON.stringify({ stale: true })).buffer as ArrayBuffer;
+    const sharedResponseCache = {
+      get(cacheKey: string, _now?: number, includeStale?: boolean) {
+        if (!includeStale || !cacheKey.endsWith(" indexer=stale")) return null;
+        staleKeyUsed = true;
+        return {
+          body: staleBody,
+          expiresAt: Date.now() - 1_000,
+          headers: [["content-type", "application/json"]],
+          status: 200,
+          statusText: ""
+        };
+      },
+      tryAcquireRefresh() {
+        return false;
+      },
+      async waitForFresh() {
+        throw new Error("should not wait for a versioned refresh when versionless stale data exists");
+      },
+      set() {},
+      releaseRefresh() {}
+    } as unknown as import("./sharedResponseCache").SharedResponseCache;
+    const chainSync = {
+      start() {},
+      snapshot() {
+        throw new Error("stale cache should avoid recomputing the health route");
+      }
+    } as unknown as import("./chainSync").ChainSyncService;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      chainSync,
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      sharedResponseCache
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ stale: true });
+    expect(staleKeyUsed).toBe(true);
+  });
+
   test("returns public runtime config", async () => {
     const response = await handler(new Request("http://localhost/runtime-config"));
     const body = await response.json();
