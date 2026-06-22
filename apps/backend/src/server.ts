@@ -1122,6 +1122,21 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
         const rateLimited = readRateLimitResponse(request, url, readRateLimits);
         if (rateLimited) return withRequestCors(request, rateLimited);
+        if (shouldDeferCacheMissRefresh(request, url)) {
+          let resolveDeferred: (cached: CachedJsonResponse | null) => void;
+          inflightResponseCache.set(cacheKey, new Promise((resolve) => {
+            resolveDeferred = resolve;
+          }));
+          activeCacheMissRefreshes += 1;
+          void refreshCachedJsonResponse(request, url, routeRequest, responseCache, cacheKey, cacheTtlMs)
+            .then((refreshed) => resolveDeferred!(refreshed.cached))
+            .catch(() => resolveDeferred!(null))
+            .finally(() => {
+              activeCacheMissRefreshes = Math.max(0, activeCacheMissRefreshes - 1);
+              inflightResponseCache.delete(cacheKey);
+            });
+          return withRequestCors(request, refreshBusyResponse());
+        }
         if (activeCacheMissRefreshes > 0 && requestClientKey(request)) {
           return withRequestCors(request, refreshBusyResponse());
         }
@@ -1301,6 +1316,11 @@ function refreshBusyResponse(): Response {
       status: 429
     }
   );
+}
+
+function shouldDeferCacheMissRefresh(request: Request, url: URL): boolean {
+  if (!requestClientKey(request)) return false;
+  return url.pathname !== "/health" && url.pathname !== "/debug/indexer";
 }
 
 function isRateLimitedReadPath(pathname: string): boolean {
