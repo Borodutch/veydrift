@@ -4435,14 +4435,23 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     return () => abortController.abort();
   }, [homePlanetIdentitySyncKey]);
 
+  const initialPageRefreshRef = useRef({
+    refreshInfrastructureState,
+    refreshOnChainState,
+  });
+  initialPageRefreshRef.current = {
+    refreshInfrastructureState,
+    refreshOnChainState,
+  };
+
   useEffect(() => {
-    void refreshOnChainState();
-  }, [refreshOnChainState]);
+    void initialPageRefreshRef.current.refreshOnChainState();
+  }, [account, activePlanetId, apiBaseUrl]);
 
   useEffect(() => {
     if (!pageStateHydrationReady) return;
-    refreshInfrastructureState();
-  }, [pageStateHydrationReady, refreshInfrastructureState]);
+    void initialPageRefreshRef.current.refreshInfrastructureState();
+  }, [account, activePlanetId, apiBaseUrl, pageStateHydrationReady]);
 
   const chainEventRefreshRef = useRef({
     page,
