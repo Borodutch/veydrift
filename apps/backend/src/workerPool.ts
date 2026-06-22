@@ -32,6 +32,19 @@ const WRITER_ONLY_READ_PATHS = new Set([
   // The live chain event stream is owned by the writer's chain-sync subscription.
   "/chain/events"
 ]);
+const WRITER_PREFERRED_READ_PATHS = new Set([
+  "/highscores",
+  "/missions"
+]);
+const WRITER_PREFERRED_READ_PREFIXES = [
+  "/alliance/",
+  "/battle-report/",
+  "/mission/",
+  "/planets/",
+  "/raid-finder/",
+  "/universe/",
+  "/wallet/"
+];
 const BODYLESS_METHODS = new Set(["GET", "HEAD"]);
 
 // Request headers that must not be copied verbatim when re-issuing a forwarded request: the body is
@@ -103,10 +116,10 @@ export function resolveWriterInternalPort(
   return mainPort + 1;
 }
 
-// Wrap a reader's request handler so it serves read-only methods locally and forwards every mutating
-// request to the single writer's loopback listener at `writerOrigin` (e.g. "http://127.0.0.1:4001").
-// This keeps readers as pure WAL read-replicas: the writer is the sole mutator of the SQLite index and
-// the only holder of the in-memory indexer state, so cross-process state never diverges (VEY-KANEO-466).
+// Wrap a reader's request handler so it serves bootstrap reads locally, forwards expensive indexed reads
+// to the writer, and forwards every mutating request to the single writer's loopback listener at
+// `writerOrigin` (e.g. "http://127.0.0.1:4001"). This keeps public reader event loops available for
+// /health and /runtime-config even when cold indexed reads are slow or queued (VEY-KANEO-620).
 export function createForwardingFetch(
   localHandler: (request: Request) => Promise<Response>,
   writerOrigin: string,
@@ -118,9 +131,28 @@ export function createForwardingFetch(
     if (READ_ONLY_METHODS.has(request.method) && !WRITER_ONLY_READ_PATHS.has(url.pathname)) {
       const bootstrapResponse = await localBootstrapHandler?.(request);
       if (bootstrapResponse) return bootstrapResponse;
+      if (isWriterPreferredReadPath(request.method, url.pathname)) {
+        return forwardToWriter(request, url, writerOrigin, fetchImpl);
+      }
       return localHandler(request);
     }
 
+    return forwardToWriter(request, url, writerOrigin, fetchImpl);
+  };
+}
+
+function isWriterPreferredReadPath(method: string, pathname: string): boolean {
+  if (method !== "GET" && method !== "HEAD") return false;
+  return WRITER_PREFERRED_READ_PATHS.has(pathname)
+    || WRITER_PREFERRED_READ_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
+async function forwardToWriter(
+  request: Request,
+  url: URL,
+  writerOrigin: string,
+  fetchImpl: typeof fetch
+): Promise<Response> {
     const target = `${writerOrigin}${url.pathname}${url.search}`;
     const headers = new Headers(request.headers);
     for (const name of STRIPPED_FORWARD_REQUEST_HEADERS) {
@@ -172,7 +204,6 @@ export function createForwardingFetch(
       statusText: upstream.statusText,
       headers: responseHeaders
     });
-  };
 }
 
 export function createRequestLoggingFetch(
