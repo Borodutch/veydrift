@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { generateSystem } from "@veydrift/universe";
 import { CachedChainReader } from "./cachedReader";
@@ -125,6 +126,9 @@ type RuntimeConfig = {
 
 type BackendDeploymentMetadata = {
   build: {
+    deploymentAbiHash: string | null;
+    deploymentCommit: string | null;
+    deploymentTimestamp: string | null;
     gitSha: string | null;
     gitShaSource: string | null;
   };
@@ -2847,21 +2851,52 @@ function backendDeploymentMetadata(role: WorkerRole): BackendDeploymentMetadata 
 }
 
 function backendBuildMetadata(env: NodeJS.ProcessEnv): BackendDeploymentMetadata["build"] {
+  const buildArtifactSha = backendBuildArtifactSha();
   for (const [source, value] of [
     ["SOURCE_VERSION", env.SOURCE_VERSION],
     ["EASYPANEL_GIT_SHA", env.EASYPANEL_GIT_SHA],
     ["RAILWAY_GIT_COMMIT_SHA", env.RAILWAY_GIT_COMMIT_SHA],
     ["GITHUB_SHA", env.GITHUB_SHA],
     ["COMMIT_SHA", env.COMMIT_SHA],
-    ["VEYDRIFT_DEPLOYMENT_COMMIT", env.VEYDRIFT_DEPLOYMENT_COMMIT],
+    ["VEYDRIFT_BUILD_GIT_SHA", env.VEYDRIFT_BUILD_GIT_SHA],
+    ["VEYDRIFT_BUILD_ARTIFACT", buildArtifactSha],
     ["GIT_SHA", env.GIT_SHA]
   ] as const) {
     const trimmed = value?.trim();
     if (trimmed) {
-      return { gitSha: trimmed, gitShaSource: source };
+      return deploymentBuildMetadata(trimmed, source, env);
     }
   }
-  return { gitSha: null, gitShaSource: null };
+  return deploymentBuildMetadata(null, null, env);
+}
+
+function deploymentBuildMetadata(
+  gitSha: string | null,
+  gitShaSource: string | null,
+  env: NodeJS.ProcessEnv
+): BackendDeploymentMetadata["build"] {
+  return {
+    deploymentAbiHash: env.VEYDRIFT_DEPLOYMENT_ABI_HASH?.trim() || null,
+    deploymentCommit: env.VEYDRIFT_DEPLOYMENT_COMMIT?.trim() || null,
+    deploymentTimestamp: env.VEYDRIFT_DEPLOYMENT_TIMESTAMP?.trim() || null,
+    gitSha,
+    gitShaSource
+  };
+}
+
+function backendBuildArtifactSha(): string | null {
+  for (const path of [
+    "../../.veydrift-backend-build-sha",
+    ".veydrift-backend-build-sha"
+  ]) {
+    try {
+      const trimmed = readFileSync(path, "utf8").trim();
+      if (trimmed) return trimmed;
+    } catch {
+      // The artifact exists only in deploy images that generate it during build.
+    }
+  }
+  return null;
 }
 
 function universeContractAddress(config: BackendConfig): `0x${string}` {

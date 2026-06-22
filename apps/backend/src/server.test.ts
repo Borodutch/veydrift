@@ -96,7 +96,7 @@ function expectedBackendGitSha(): string | null {
     || process.env.RAILWAY_GIT_COMMIT_SHA?.trim()
     || process.env.GITHUB_SHA?.trim()
     || process.env.COMMIT_SHA?.trim()
-    || process.env.VEYDRIFT_DEPLOYMENT_COMMIT?.trim()
+    || process.env.VEYDRIFT_BUILD_GIT_SHA?.trim()
     || process.env.GIT_SHA?.trim()
     || null;
 }
@@ -107,9 +107,19 @@ function expectedBackendGitShaSource(): string | null {
   if (process.env.RAILWAY_GIT_COMMIT_SHA?.trim()) return "RAILWAY_GIT_COMMIT_SHA";
   if (process.env.GITHUB_SHA?.trim()) return "GITHUB_SHA";
   if (process.env.COMMIT_SHA?.trim()) return "COMMIT_SHA";
-  if (process.env.VEYDRIFT_DEPLOYMENT_COMMIT?.trim()) return "VEYDRIFT_DEPLOYMENT_COMMIT";
+  if (process.env.VEYDRIFT_BUILD_GIT_SHA?.trim()) return "VEYDRIFT_BUILD_GIT_SHA";
   if (process.env.GIT_SHA?.trim()) return "GIT_SHA";
   return null;
+}
+
+function expectedBackendBuildMetadata() {
+  return {
+    deploymentAbiHash: process.env.VEYDRIFT_DEPLOYMENT_ABI_HASH?.trim() || null,
+    deploymentCommit: process.env.VEYDRIFT_DEPLOYMENT_COMMIT?.trim() || null,
+    deploymentTimestamp: process.env.VEYDRIFT_DEPLOYMENT_TIMESTAMP?.trim() || null,
+    gitSha: expectedBackendGitSha(),
+    gitShaSource: expectedBackendGitShaSource()
+  };
 }
 
 function expectedBackendWorkerCount(): number {
@@ -796,10 +806,7 @@ describe("Veydrift backend", () => {
       },
       configured: false,
       backend: {
-        build: {
-          gitSha: expectedBackendGitSha(),
-          gitShaSource: expectedBackendGitShaSource()
-        },
+        build: expectedBackendBuildMetadata(),
         worker: {
           count: expectedBackendWorkerCount(),
           defaultMaxWorkerCount: DEFAULT_MAX_WORKER_COUNT,
@@ -917,10 +924,7 @@ describe("Veydrift backend", () => {
       apiUrl: "https://api-test.veydrift.com",
       allianceContractAddress: null,
       backend: {
-        build: {
-          gitSha: expectedBackendGitSha(),
-          gitShaSource: expectedBackendGitShaSource()
-        },
+        build: expectedBackendBuildMetadata(),
         worker: {
           count: expectedBackendWorkerCount(),
           defaultMaxWorkerCount: DEFAULT_MAX_WORKER_COUNT,
@@ -967,6 +971,9 @@ describe("Veydrift backend", () => {
 
       expect(response.status).toBe(200);
       expect(body.backend.build).toEqual({
+        deploymentAbiHash: null,
+        deploymentCommit: null,
+        deploymentTimestamp: null,
         gitSha: "provider-source-sha",
         gitShaSource: "SOURCE_VERSION"
       });
@@ -980,6 +987,52 @@ describe("Veydrift backend", () => {
         delete process.env.SOURCE_VERSION;
       } else {
         process.env.SOURCE_VERSION = previousSourceVersion;
+      }
+    }
+  });
+
+  test("does not use contract deployment manifest commit as the source build SHA", async () => {
+    const previousBuildGitSha = process.env.VEYDRIFT_BUILD_GIT_SHA;
+    const previousDeploymentCommit = process.env.VEYDRIFT_DEPLOYMENT_COMMIT;
+    const previousDeploymentAbiHash = process.env.VEYDRIFT_DEPLOYMENT_ABI_HASH;
+    const previousDeploymentTimestamp = process.env.VEYDRIFT_DEPLOYMENT_TIMESTAMP;
+    process.env.VEYDRIFT_BUILD_GIT_SHA = "current-image-sha";
+    process.env.VEYDRIFT_DEPLOYMENT_COMMIT = "old-contract-deploy-sha";
+    process.env.VEYDRIFT_DEPLOYMENT_ABI_HASH = "abi-hash";
+    process.env.VEYDRIFT_DEPLOYMENT_TIMESTAMP = "2026-06-22T17:31:10Z";
+
+    try {
+      const response = await createRequestHandler()(new Request("http://localhost/runtime-config"));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.backend.build).toMatchObject({
+        deploymentAbiHash: "abi-hash",
+        deploymentCommit: "old-contract-deploy-sha",
+        deploymentTimestamp: "2026-06-22T17:31:10Z"
+      });
+      expect(body.backend.build.gitSha).not.toBe("old-contract-deploy-sha");
+      expect(body.backend.build.gitShaSource).not.toBe("VEYDRIFT_DEPLOYMENT_COMMIT");
+    } finally {
+      if (previousBuildGitSha === undefined) {
+        delete process.env.VEYDRIFT_BUILD_GIT_SHA;
+      } else {
+        process.env.VEYDRIFT_BUILD_GIT_SHA = previousBuildGitSha;
+      }
+      if (previousDeploymentCommit === undefined) {
+        delete process.env.VEYDRIFT_DEPLOYMENT_COMMIT;
+      } else {
+        process.env.VEYDRIFT_DEPLOYMENT_COMMIT = previousDeploymentCommit;
+      }
+      if (previousDeploymentAbiHash === undefined) {
+        delete process.env.VEYDRIFT_DEPLOYMENT_ABI_HASH;
+      } else {
+        process.env.VEYDRIFT_DEPLOYMENT_ABI_HASH = previousDeploymentAbiHash;
+      }
+      if (previousDeploymentTimestamp === undefined) {
+        delete process.env.VEYDRIFT_DEPLOYMENT_TIMESTAMP;
+      } else {
+        process.env.VEYDRIFT_DEPLOYMENT_TIMESTAMP = previousDeploymentTimestamp;
       }
     }
   });
@@ -1151,10 +1204,7 @@ describe("Veydrift backend", () => {
             allianceContractAddress: null,
             apiUrl: "https://api-test.veydrift.com",
             backend: {
-              build: {
-                gitSha: expectedBackendGitSha(),
-                gitShaSource: expectedBackendGitShaSource()
-              },
+              build: expectedBackendBuildMetadata(),
               worker: {
                 count: expectedBackendWorkerCount(),
                 defaultMaxWorkerCount: DEFAULT_MAX_WORKER_COUNT,

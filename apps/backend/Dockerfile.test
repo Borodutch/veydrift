@@ -1,11 +1,13 @@
 FROM oven/bun:1.2.4-alpine
 
 WORKDIR /app
+ARG GIT_SHA=""
 
 COPY package.json bun.lockb tsconfig.base.json ./
 COPY apps apps
 COPY packages packages
 
+RUN printf "%s" "$GIT_SHA" > .veydrift-backend-build-sha
 RUN bun install --frozen-lockfile
 
 WORKDIR /app/apps/backend
