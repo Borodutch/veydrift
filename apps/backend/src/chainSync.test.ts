@@ -344,7 +344,7 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
-  test("queues origin and target canonical heals for exposed fleet returns", async () => {
+  test("does not canonical-heal ordinary return exposure logs", async () => {
     const healCalls: string[][] = [];
     const indexer = {
       applyLog: () => ({
@@ -371,11 +371,11 @@ describe("ChainSyncService (polling)", () => {
 
     await service.poll();
 
-    expect(healCalls).toEqual([["12", "23"]]);
+    expect(healCalls).toEqual([]);
     service.stop();
   });
 
-  test("queues targeted canonical ship-count heals for returned fleets without blocking the poll", async () => {
+  test("does not canonical-heal ordinary fleet-return logs", async () => {
     let canonicalReads = 0;
     const indexer = new SettlementIndexer(
       {
@@ -428,18 +428,8 @@ describe("ChainSyncService (polling)", () => {
 
     await service.poll();
 
-    await waitFor(() => indexer.shipRows("83").some((ship) => ship.count > 0));
-    expect(canonicalReads).toBe(1);
-    expect(indexer.shipRows("83").filter((ship) => ship.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
-      { id: 0, count: 34 },
-      { id: 1, count: 1 },
-      { id: 4, count: 3 },
-      { id: 5, count: 5 }
-    ]);
-    expect(indexer.snapshot()).toMatchObject({
-      lastCurrentStateHealPlanetsScanned: 1,
-      lastCurrentStateHealShipMismatches: 4
-    });
+    expect(canonicalReads).toBe(0);
+    expect(indexer.shipRows("83").filter((ship) => ship.count > 0)).toEqual([]);
     expect(service.snapshot().latestSyncedBlock).toBe(String(0x181n));
     service.stop();
   });

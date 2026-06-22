@@ -5217,11 +5217,11 @@ describe("SettlementIndexer", () => {
       lastReconciliationError: null
     });
 
-    expect(rawReads).toBe(2);
+    expect(rawReads).toBe(1);
     expect(overlapArgs).toEqual([{ fromBlock: 0x121n, toBlock: 0x123n }]);
     expect(indexer.planet(planet.planetId)?.resources).toEqual(rawState.resources);
     expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(4);
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(8);
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(10);
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(6);
     expect(indexer.shipRows("99").find((ship) => ship.id === 2)?.count).toBe(3);
   });
@@ -5369,10 +5369,10 @@ describe("SettlementIndexer", () => {
       async listContractLogs() {
         return [{
           blockNumber: "0x95",
-          transactionHash: "0xreturned",
+          transactionHash: "0xbattle",
           logIndex: "0x0",
-          topics: [fleetMissionReturnedTopic, topic(70n), addressTopic(player), topic(BigInt(planet.planetId))],
-          data: "0x"
+          topics: [attackBattleResolvedTopic, topic(70n), addressTopic(player), topic(BigInt(planet.planetId))],
+          data: abiWords(1n, 0n, 123n, 0n, 0n, 0n)
         }];
       }
     }, 100n);
