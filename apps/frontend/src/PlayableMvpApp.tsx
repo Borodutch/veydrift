@@ -339,8 +339,8 @@ const buildingWalletConfirmationLabel = (label: string) =>
   label === "Building completion"
     ? "Building completion: confirm the game-state update in your wallet; token balance changes are not expected."
     : `${label}: unlock your wallet if needed, then confirm in your wallet.`;
-const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
-const CHAIN_EVENT_REFRESH_DEBOUNCE_MS = 1_000;
+const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 30_000;
+const CHAIN_EVENT_REFRESH_DEBOUNCE_MS = 3_000;
 const BUILDING_COMPLETION_AUTO_REFRESH_BUFFER_MS = 1_500;
 // VEY-KANEO-433: after an active mission's ETA passes, wait a short beat before the tightened Mission
 // Control refresh so the backend indexer has settled the arrival/resolution before we re-read it.
