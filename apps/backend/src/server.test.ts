@@ -1350,7 +1350,7 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("refreshes global completed mission archive rows when a resolved attack report is indexed", async () => {
+  test("keeps global completed mission archive independent from battle report decoding", async () => {
     const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
@@ -1383,15 +1383,8 @@ describe("Veydrift backend", () => {
     const afterReportResponse = await handler(new Request("http://localhost/missions?status=completed&page=1&pageSize=25"));
     const afterReportBody = await afterReportResponse.json();
     expect(afterReportResponse.status).toBe(200);
-    expect(afterReportBody.rows[0]).toMatchObject({
-      kind: "mission",
-      mission: { missionId: "88" },
-      report: {
-        missionId: "88",
-        outcome: "AttackerWin",
-        loot: { metal: "75", crystal: "25", deuterium: "0" }
-      }
-    });
+    expect(afterReportBody.rows[0]).toMatchObject({ kind: "mission", mission: { missionId: "88" } });
+    expect(afterReportBody.rows[0].report).toBeUndefined();
   });
 
   test("serves universe-wide active missions from the indexed read model (all players, no wallet scope)", async () => {
