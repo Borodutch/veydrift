@@ -165,6 +165,40 @@ export function activeBuildingQueueResponse(
   return null;
 }
 
+export function optimisticStartedBuildingQueueResponse({
+  cost,
+  durationSeconds,
+  itemId,
+  now = Date.now(),
+  targetLevel,
+}: {
+  cost?: QueueStateResponse["cost"] | null | undefined;
+  durationSeconds?: number | undefined;
+  itemId: number;
+  now?: number;
+  targetLevel: number;
+}): QueueStateResponse {
+  const startedAtSeconds = Math.floor(now / 1_000);
+  const normalizedDuration = Number.isFinite(durationSeconds)
+    ? Math.max(1, Math.trunc(durationSeconds ?? 1))
+    : 60;
+
+  return {
+    active: true,
+    kind: "building",
+    itemId,
+    targetLevel,
+    startedAt: startedAtSeconds.toString(),
+    readyAt: (startedAtSeconds + normalizedDuration).toString(),
+    cost: cost ?? { metal: "0", crystal: "0", deuterium: "0" },
+    backlog: [],
+    asOfNow: {
+      secondsRemaining: normalizedDuration,
+      complete: false,
+    },
+  };
+}
+
 export function isBuildingQueueReadyToFinish(
   queue: QueueStateResponse | null | undefined,
   now = Date.now(),
