@@ -1,4 +1,5 @@
 import { buildingContractIds, type BuildingKey } from "./playableMvp";
+import type { QueueStateResponse } from "./walletFlow";
 
 export type BuildingActionState =
   | { status: "idle" }
@@ -62,4 +63,57 @@ export function buildingKeyForContractId(itemId: number | string | undefined): B
   }
 
   return undefined;
+}
+
+export type StartedBuildingQueueExpectation = {
+  itemId: number;
+  targetLevel?: number | undefined;
+};
+
+export function isStartedBuildingQueueSyncingLabel(label: string): boolean {
+  return /indexed building queue state is still syncing/i.test(label);
+}
+
+export function isStartedBuildingQueueSynced(
+  activeBuildingQueue: QueueStateResponse | null | undefined,
+  expectation: StartedBuildingQueueExpectation | undefined,
+): boolean {
+  return Boolean(
+    expectation
+      && activeBuildingQueue?.active
+      && activeBuildingQueue.itemId === expectation.itemId
+      && (
+        expectation.targetLevel === undefined
+          || (activeBuildingQueue.targetLevel ?? 0) >= expectation.targetLevel
+      ),
+  );
+}
+
+export function recoveredStartedBuildingAction({
+  action,
+  activeBuildingQueue,
+  expectation,
+}: {
+  action: BuildingActionState;
+  activeBuildingQueue: QueueStateResponse | null | undefined;
+  expectation: StartedBuildingQueueExpectation | undefined;
+}): BuildingActionState {
+  if (
+    action.status !== "error"
+      || !isStartedBuildingQueueSyncingLabel(action.label)
+      || !isStartedBuildingQueueSynced(activeBuildingQueue, expectation)
+  ) {
+    return action;
+  }
+
+  const recoveredBuildingKey = buildingKeyForContractId(expectation?.itemId);
+  if (action.buildingKey && recoveredBuildingKey && action.buildingKey !== recoveredBuildingKey) {
+    return action;
+  }
+
+  return {
+    status: "success",
+    buildingKey: recoveredBuildingKey ?? action.buildingKey,
+    label: "Building upgrade started.",
+  };
 }

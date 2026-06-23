@@ -48,6 +48,9 @@ import {
   buildingKeyForContractId,
   infrastructureActionNoticeFor,
   infrastructureDisplayActionNoticeFor,
+  isStartedBuildingQueueSyncingLabel,
+  isStartedBuildingQueueSynced,
+  recoveredStartedBuildingAction,
   type BuildingActionState,
 } from "./buildingActionNotice";
 import { buildingUpgradeStatus, formatMissingResources } from "./buildingDetails";
@@ -2861,6 +2864,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [riftError, setRiftError] = useState<string | undefined>();
   const [riftAction, setRiftAction] = useState<RiftActionState>({ status: "idle" });
   const [buildingAction, setBuildingAction] = useState<BuildingActionState>({ status: "idle" });
+  const [failedStartedBuildingExpectation, setFailedStartedBuildingExpectation] =
+    useState<StartedBuildingExpectation | undefined>();
   const [completedBuildingFinishExpectation, setCompletedBuildingFinishExpectation] =
     useState<FinishedBuildingExpectation | undefined>();
   const [failedBuildingFinishExpectation, setFailedBuildingFinishExpectation] =
@@ -4894,6 +4899,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [buildingQueue, isWalletConnected, liveOnChainResources, settledState]);
 
   useEffect(() => {
+    if (!isStartedBuildingQueueSynced(activeBuildingQueue, failedStartedBuildingExpectation)) return;
+    setFailedStartedBuildingExpectation(undefined);
+    setBuildingAction((current) => recoveredStartedBuildingAction({
+      action: current,
+      activeBuildingQueue,
+      expectation: failedStartedBuildingExpectation,
+    }));
+  }, [activeBuildingQueue, failedStartedBuildingExpectation]);
+
+  useEffect(() => {
     if (!completedBuildingFinishExpectation) return;
     if (completedBuildingFinishSyncReasonFor({
       activeBuildingQueue,
@@ -5048,7 +5063,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       const building = buildingContractIds[key];
       const label = "Building upgrade";
       let backendStateReady = false;
+      let startedExpectation: StartedBuildingExpectation | undefined;
       setBuildingAction({ status: "pending", buildingKey: key, label: "Refreshing infrastructure state" });
+      setFailedStartedBuildingExpectation(undefined);
 
       try {
         const liveInfrastructure = await refreshLiveInfrastructureState();
@@ -5087,20 +5104,26 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         setBuildingAction({ status: "pending", buildingKey: key, label: transactionSyncingLabel(label) });
         const currentLevel = liveInfrastructure?.buildings.find((row) => row.id === building)?.level ?? 0;
-        await refreshStartedBuildingState({
+        startedExpectation = {
           itemId: building,
           planetId,
           targetLevel: currentLevel + 1,
-        });
+        };
+        await refreshStartedBuildingState(startedExpectation);
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setFailedStartedBuildingExpectation(undefined);
         setBuildingAction({ status: "success", buildingKey: key, label: "Building upgrade started." });
       } catch (error) {
         console.error(error);
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        const actionLabel = backendStateReady ? spendTransactionErrorMessage(error) : buildingUpgradeActionErrorLabel(error);
+        if (startedExpectation && isStartedBuildingQueueSyncingLabel(actionLabel)) {
+          setFailedStartedBuildingExpectation(startedExpectation);
+        }
         setBuildingAction({
           status: "error",
           buildingKey: key,
-          label: backendStateReady ? spendTransactionErrorMessage(error) : buildingUpgradeActionErrorLabel(error),
+          label: actionLabel,
           ...rejectedActionAutoDismiss(error),
         });
       }
