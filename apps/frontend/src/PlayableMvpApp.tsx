@@ -90,6 +90,7 @@ import {
   energyBalanceFromChain,
   infrastructurePlayableState,
   isBuildingQueueReadyToFinish,
+  optimisticStartedBuildingQueueResponse,
   resourcesFromChain,
 } from "./chainState";
 import {
@@ -1577,6 +1578,10 @@ export type PlanetActionState = ShipyardActionState;
 type PlanetManagementActionState = PlanetActionState;
 type MissionActionState = ShipyardActionState;
 type MoonActionState = ShipyardActionState;
+type OptimisticStartedBuildingQueue = {
+  planetId: string;
+  queue: QueueStateResponse;
+};
 
 function rejectedActionAutoDismiss(error: unknown): { autoDismiss?: true } {
   return isUserRejected(error) ? { autoDismiss: true } : {};
@@ -2864,6 +2869,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [riftError, setRiftError] = useState<string | undefined>();
   const [riftAction, setRiftAction] = useState<RiftActionState>({ status: "idle" });
   const [buildingAction, setBuildingAction] = useState<BuildingActionState>({ status: "idle" });
+  const [optimisticStartedBuildingQueue, setOptimisticStartedBuildingQueue] =
+    useState<OptimisticStartedBuildingQueue | undefined>();
   const [failedStartedBuildingExpectation, setFailedStartedBuildingExpectation] =
     useState<StartedBuildingExpectation | undefined>();
   const [completedBuildingFinishExpectation, setCompletedBuildingFinishExpectation] =
@@ -4748,10 +4755,27 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     () => missionResourcesForOrigin(selectedManagedPlanet),
     [missionResourcesForOrigin, selectedManagedPlanet]
   );
-  const activeBuildingQueue = useMemo(
+  const indexedActiveBuildingQueue = useMemo(
     () => activeBuildingQueueResponse(onChainQueues, infrastructureChainState),
     [infrastructureChainState, onChainQueues],
   );
+  const activeBuildingQueue = useMemo(() => {
+    if (indexedActiveBuildingQueue) return indexedActiveBuildingQueue;
+    const optimisticQueue = optimisticStartedBuildingQueue;
+    if (!optimisticQueue || optimisticQueue.planetId !== activePlanetId) return null;
+    return optimisticQueue.queue;
+  }, [activePlanetId, indexedActiveBuildingQueue, optimisticStartedBuildingQueue]);
+  useEffect(() => {
+    if (
+      optimisticStartedBuildingQueue
+        && isStartedBuildingQueueSynced(indexedActiveBuildingQueue, {
+          itemId: optimisticStartedBuildingQueue.queue.itemId ?? -1,
+          targetLevel: optimisticStartedBuildingQueue.queue.targetLevel,
+        })
+    ) {
+      setOptimisticStartedBuildingQueue(undefined);
+    }
+  }, [indexedActiveBuildingQueue, optimisticStartedBuildingQueue]);
   useEffect(() => {
     const delayMs = buildingCompletionAutoRefreshDelayMs(activeBuildingQueue);
     if (delayMs === undefined) return;
@@ -5066,6 +5090,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       let startedExpectation: StartedBuildingExpectation | undefined;
       setBuildingAction({ status: "pending", buildingKey: key, label: "Refreshing infrastructure state" });
       setFailedStartedBuildingExpectation(undefined);
+      setOptimisticStartedBuildingQueue(undefined);
 
       try {
         const liveInfrastructure = await refreshLiveInfrastructureState();
@@ -5086,6 +5111,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         }
 
         backendStateReady = true;
+        const buildingRow = liveInfrastructure?.buildings.find((row) => row.id === building);
+        const currentLevel = buildingRow?.level ?? 0;
+        startedExpectation = {
+          itemId: building,
+          planetId,
+          targetLevel: currentLevel + 1,
+        };
         setBuildingAction({ status: "pending", buildingKey: key, label: buildingWalletConfirmationLabel(label) });
         const txHash = await sendStartBuildingUpgradeTransaction(
           provider,
@@ -5095,6 +5127,15 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           building,
         );
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setOptimisticStartedBuildingQueue({
+          planetId,
+          queue: optimisticStartedBuildingQueueResponse({
+            cost: buildingRow?.cost,
+            durationSeconds: buildingRow?.durationSeconds,
+            itemId: building,
+            targetLevel: startedExpectation.targetLevel ?? currentLevel + 1,
+          }),
+        });
         setBuildingAction({
           status: "pending",
           buildingKey: key,
@@ -5103,14 +5144,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         await confirmSubmittedTransaction(txHash);
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         setBuildingAction({ status: "pending", buildingKey: key, label: transactionSyncingLabel(label) });
-        const currentLevel = liveInfrastructure?.buildings.find((row) => row.id === building)?.level ?? 0;
-        startedExpectation = {
-          itemId: building,
-          planetId,
-          targetLevel: currentLevel + 1,
-        };
         await refreshStartedBuildingState(startedExpectation);
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setOptimisticStartedBuildingQueue(undefined);
         setFailedStartedBuildingExpectation(undefined);
         setBuildingAction({ status: "success", buildingKey: key, label: "Building upgrade started." });
       } catch (error) {
@@ -5119,6 +5155,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         const actionLabel = backendStateReady ? spendTransactionErrorMessage(error) : buildingUpgradeActionErrorLabel(error);
         if (startedExpectation && isStartedBuildingQueueSyncingLabel(actionLabel)) {
           setFailedStartedBuildingExpectation(startedExpectation);
+        } else {
+          setOptimisticStartedBuildingQueue(undefined);
         }
         setBuildingAction({
           status: "error",
