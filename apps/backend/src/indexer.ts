@@ -1305,7 +1305,7 @@ export class SettlementIndexer {
   }
 
   stationedDefendersForPlanet(planetId: string, asOfSeconds = Math.floor(Date.now() / 1_000)): StationedDefenderSummary[] {
-    return (this.indexedFleetMissionReferenceIndex().activeByTarget.get(planetId) ?? [])
+    return this.activeFleetMissionsFromCanonicalRowsForTarget(planetId, { includeOverduePendingRandomness: true })
       .filter((mission) => this.isActiveDefenseHoldForPlanet(mission, planetId, asOfSeconds))
       .map((mission) => this.stationedDefenderSummary(mission, this.defenseHoldWindowEnd(mission)))
       .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
@@ -6163,6 +6163,7 @@ export class SettlementIndexer {
         blockNumber: canonicalEventMission.blockNumber,
         launchBlockNumber: canonicalEventMission.launchBlockNumber,
         needsResolution: canonicalEventMission.needsResolution,
+        ...(canonicalEventMission.defenseHoldUntil ? { defenseHoldUntil: canonicalEventMission.defenseHoldUntil } : {}),
         ...(canonicalEventMission.randomnessRequestId ? { randomnessRequestId: canonicalEventMission.randomnessRequestId } : {})
       }
       : base;
