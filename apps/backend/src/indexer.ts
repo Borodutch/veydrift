@@ -1364,18 +1364,18 @@ export class SettlementIndexer {
   }
 
   dueUnresolvedFleetMissionsForPlanet(planetId: string, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
-    const resolvedBattleMissionIds = this.resolvedBattleMissionIds();
     // Include over-due attacks awaiting randomness: they are hidden from active report/intel surfaces,
     // but still block planet actions until settled. Keep this on canonical rows so infrastructure reads
     // do not cold-decode the full historical mission log.
-    return this.activeFleetMissionsFromCanonicalRowsForPlanetTouching(planetId, { includeOverduePendingRandomness: true }).filter((mission) =>
+    const candidates = this.activeFleetMissionsFromCanonicalRowsForPlanetTouching(planetId, { includeOverduePendingRandomness: true }).filter((mission) =>
       mission.status === "Outbound"
         && (mission.missionType === "Attack" || mission.missionType === "Harvest")
         && Number(mission.arrivalAt) <= asOfSeconds
         && mission.needsResolution !== true
         && (mission.originPlanetId === planetId || mission.targetPlanetId === planetId)
-        && !resolvedBattleMissionIds.has(mission.missionId)
     ).sort((left, right) => Number(left.arrivalAt) - Number(right.arrivalAt));
+    const resolvedBattleMissionIds = this.resolvedBattleMissionIdsForMissions(candidates.map((mission) => mission.missionId));
+    return candidates.filter((mission) => !resolvedBattleMissionIds.has(mission.missionId));
   }
 
   private resolvedBattleMissionIds(): ReadonlySet<string> {
@@ -1400,6 +1400,17 @@ export class SettlementIndexer {
       missionIds
     };
     return missionIds;
+  }
+
+  private resolvedBattleMissionIdsForMissions(missionIds: Iterable<string>): ReadonlySet<string> {
+    const resolvedMissionIds = new Set<string>();
+    for (const report of this.battleReportsForMissionIds(missionIds)) {
+      resolvedMissionIds.add(report.missionId);
+      for (const participant of report.participants) {
+        resolvedMissionIds.add(participant.missionId);
+      }
+    }
+    return resolvedMissionIds;
   }
 
   pendingFleetSlotSettlementMissionsForWallet(wallet: `0x${string}`, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
@@ -6300,11 +6311,13 @@ export class SettlementIndexer {
       }
     }
 
-    const reportsByMissionId = this.battleReportsByMissionId();
     const matchingReportsById = new Map<string, BattleReport>();
-    for (const missionId of missionIds) {
-      for (const report of reportsByMissionId.get(missionId) ?? []) {
-        matchingReportsById.set(report.missionId, report);
+    for (const report of this.battleReportsForMissionIds(missionIds)) {
+      matchingReportsById.set(report.missionId, report);
+      for (const participant of report.participants) {
+        if (missionIds.has(participant.missionId)) {
+          matchingReportsById.set(report.missionId, report);
+        }
       }
     }
     const matchingReports = [...matchingReportsById.values()];
@@ -6347,6 +6360,30 @@ export class SettlementIndexer {
       }
     }
     return summaries;
+  }
+
+  private battleReportsForMissionIds(missionIds: Iterable<string>): BattleReport[] {
+    this.currentMissionReadModelDbVersion();
+    this.currentBattleReportReadModelDbVersion();
+    const uniqueMissionIds = [...new Set([...missionIds].filter((missionId) => missionId.length > 0))].sort((left, right) => Number(left) - Number(right));
+    if (uniqueMissionIds.length === 0) return [];
+
+    const battleRows = this.db.query(`
+      SELECT event_json
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'battle'
+      ORDER BY CAST(block_number AS INTEGER) ASC
+    `).all() as EventRow[];
+    const logs = sortedEventRows(battleRows);
+    return uniqueMissionIds
+      .map((missionId) => decodeBattleReportLogs(logs, missionId))
+      .filter((report): report is BattleReport => report !== null)
+      .sort((left, right) => {
+        const leftBlock = BigInt(left.blockNumber);
+        const rightBlock = BigInt(right.blockNumber);
+        if (leftBlock === rightBlock) return 0;
+        return leftBlock < rightBlock ? 1 : -1;
+      });
   }
 
   private battleReportsByMissionId(): Map<string, BattleReport[]> {
