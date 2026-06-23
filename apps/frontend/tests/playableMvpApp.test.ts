@@ -1016,6 +1016,7 @@ describe("Playable MVP app display helpers", () => {
       planetId: "50",
       name: "Border Foundry",
       coordinates: { galaxy: 7, system: 41, position: 6 },
+      currentResources: { metal: "2440", crystal: "920", deuterium: "260" },
       raidableResources: { metal: "1200", crystal: "450", deuterium: "125" },
       loot: 1775,
       shipUnits: [{ id: 4, count: 3, power: 900 }],
@@ -1027,11 +1028,11 @@ describe("Playable MVP app display helpers", () => {
     expect(target.id).toBe("50");
     expect(target.name).toBe("Border Foundry");
     expect(target.publicState?.resources).toEqual({
-      metal: "2400",
-      crystal: "900",
-      deuterium: "250",
+      metal: "2440",
+      crystal: "920",
+      deuterium: "260",
     });
-    expect(target.resources).toMatchObject({ metal: 2400, crystal: 900, deuterium: 250 });
+    expect(target.resources).toMatchObject({ metal: 2440, crystal: 920, deuterium: 260 });
     expect(target.publicState?.fleet).toEqual([{ id: 4, count: 3 }]);
     expect(target.publicState?.defenses).toEqual([{ id: 0, count: 12 }]);
     expect(target.publicState?.research).toEqual([

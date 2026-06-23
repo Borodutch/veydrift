@@ -353,7 +353,7 @@ export function PlanetDetail({
 
         <div className="rounded-lg border border-white/10 bg-white/5 p-4 md:col-span-2">
           <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Public Resources
+            Current Public Resources
           </h3>
           <ResourceBars resources={planet.publicState?.resources} />
         </div>

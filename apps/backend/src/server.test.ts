@@ -7212,12 +7212,12 @@ describe("Veydrift backend", () => {
     expect(Number(tacticalPlanet.tactical.raidableResources.metal)).toBeGreaterThan(2500);
   });
 
-  test("Raid Target Finder loot is derived from the same accrued resources the public universe surface exposes (VEY-KANEO-454)", async () => {
+  test("public planet, universe, and Raid Target Finder resources share the same current public basis (VEY-KANEO-454/621)", async () => {
     // Cross-surface invariant for the QA report: the Raid Target Finder LOOT (highscores
-    // `raidableResources`) must be derived from the SAME accrued (capped) resources the public
-    // universe surface (`publicState.resources`) shows — not a staler stored snapshot. Both the
-    // highscores path (`rankedHighscorePlanets`) and the universe path (`publicPlanetStateRef`)
-    // run `resourcesWithClaimableAccrual` over the identical settled base, so they must agree.
+    // `raidableResources`) must be derived from the SAME accrued/current (capped) resources the
+    // public planet read (`GET /planets/{id}`) and universe surface (`publicState.resources`) show
+    // — not a staler stored snapshot. The direct planet, highscores, and universe paths all run
+    // `resourcesWithClaimableAccrual` over the identical settled base, so they must agree.
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
@@ -7251,11 +7251,14 @@ describe("Veydrift backend", () => {
       indexer
     });
 
+    const planetResponse = await handler(new Request("http://localhost/planets/7"));
+    const planetBody = await planetResponse.json();
     const universeResponse = await handler(new Request("http://localhost/universe/galaxies/2/systems/44"));
     const universeBody = await universeResponse.json();
     const publicPlanet = universeBody.planets.find((item: { position: number }) => item.position === 9);
     const publicResources = publicPlanet.publicState.resources;
-    // The public universe surface accrues production from the raw stored building rows.
+    // The public planet and universe surfaces accrue production from the raw stored building rows.
+    expect(planetBody.resources).toEqual(publicResources);
     expect(publicResources.metal).toBe("5064");
     expect(publicPlanet.publicState.productionPerHour).toEqual(expect.objectContaining({
       metal: expect.any(String),
