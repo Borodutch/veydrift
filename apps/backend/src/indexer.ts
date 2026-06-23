@@ -6309,13 +6309,43 @@ export class SettlementIndexer {
     const matchingReports = [...matchingReportsById.values()];
     if (matchingReports.length === 0) return [];
 
-    const summaries = this.indexedFleetMissionSummaries();
+    const reportMissionIds = new Set<string>(missionIds);
+    for (const report of matchingReports) {
+      reportMissionIds.add(report.missionId);
+      if (report.attackGroupId) reportMissionIds.add(report.attackGroupId);
+      for (const participant of report.participants) {
+        reportMissionIds.add(participant.missionId);
+      }
+    }
+    const summaries = this.fleetMissionSummariesFromCanonicalRowsByIds(reportMissionIds);
     const reportsWithParticipants = attachAttackGroupParticipants(matchingReports, summaries);
     const defenderSnapshots = this.battleTimeDefenderSnapshots(reportsWithParticipants);
     return reportsWithParticipants.map((report) => ({
       ...report,
       defenderSnapshot: defenderSnapshots.get(report.missionId) ?? null
     }));
+  }
+
+  private fleetMissionSummariesFromCanonicalRowsByIds(missionIds: Iterable<string>): FleetMissionSummary[] {
+    this.currentMissionReadModelDbVersion();
+    const uniqueMissionIds = [...new Set([...missionIds].filter((missionId) => missionId.length > 0))].sort((left, right) => Number(left) - Number(right));
+    if (uniqueMissionIds.length === 0) return [];
+
+    const stateVersion = this.indexedStateCacheVersion();
+    const summaries: FleetMissionSummary[] = [];
+    for (let offset = 0; offset < uniqueMissionIds.length; offset += 250) {
+      const chunk = uniqueMissionIds.slice(offset, offset + 250);
+      const rows = this.db.query(`
+        SELECT *
+        FROM contract_fleet_missions
+        WHERE mission_id IN (${chunk.map(() => "?").join(",")})
+        ORDER BY CAST(mission_id AS INTEGER) ASC
+      `).all(...chunk) as ContractFleetMissionRow[];
+      for (const row of rows) {
+        summaries.push(this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion));
+      }
+    }
+    return summaries;
   }
 
   private battleReportsByMissionId(): Map<string, BattleReport[]> {
