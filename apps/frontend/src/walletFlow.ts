@@ -3332,10 +3332,13 @@ async function acquireGameApiReadSlot(): Promise<() => void> {
     gameApiActiveReads += 1;
     return releaseGameApiReadSlot;
   }
+
+  // A queued read receives the slot that releaseGameApiReadSlot hands to it.
+  // Do not increment gameApiActiveReads after the wait, or a burst leaves the
+  // counter permanently above the limit once all actual fetches have finished.
   await new Promise<void>((resolve) => {
     gameApiReadQueue.push(resolve);
   });
-  gameApiActiveReads += 1;
   return releaseGameApiReadSlot;
 }
 

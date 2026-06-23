@@ -2183,12 +2183,20 @@ describe("walletFlow", () => {
         fetchShipyardState("https://api.example.test", account, "1"),
         fetchDefenseState("https://api.example.test", account, "1"),
       ]);
+
+      expect(calls).toBe(10);
+      expect(maxActive).toBeLessThanOrEqual(3);
+
+      const followUp = fetchResearchState("https://api.example.test", account, "2");
+      const followUpCompleted = await Promise.race([
+        followUp.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 20)),
+      ]);
+      expect(followUpCompleted).toBe(true);
+      if (followUpCompleted) await followUp;
     } finally {
       globalThis.fetch = originalFetch;
     }
-
-    expect(calls).toBe(10);
-    expect(maxActive).toBeLessThanOrEqual(3);
   });
 
   test("includes backend wallet API validation messages in shipyard errors", async () => {
