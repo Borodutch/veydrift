@@ -39,6 +39,7 @@ export type RuntimeConfigState =
   | { status: "error" };
 
 export const defaultPlayableApiUrl = "https://api-test.veydrift.com";
+export const burningChickenCoordinateBurnSelector = "0x6364233d";
 
 export function resolvePlayableApiUrl(value: string | undefined): string {
   const trimmed = value?.trim();
@@ -74,6 +75,9 @@ export type ConfiguredBurningChickenConfig = {
 export function burningChickenConfig(config: RuntimeConfig): ConfiguredBurningChickenConfig | undefined {
   const chicken = config.burningChicken;
   if (!chicken?.nftContractAddress || !chicken.burnContractAddress || !chicken.burnSelector) {
+    return undefined;
+  }
+  if (chicken.burnSelector.toLowerCase() !== burningChickenCoordinateBurnSelector) {
     return undefined;
   }
   return {
