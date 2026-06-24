@@ -1033,12 +1033,12 @@ const ERC20_SELECTORS = {
 } as const;
 const ERC721_SELECTORS = {
   balanceOf: "0x70a08231",
+  ownerOf: "0x6352211e",
   supportsInterface: "0x01ffc9a7",
   tokenOfOwnerByIndex: "0x2f745c59",
 } as const;
 const ERC721_ENUMERABLE_INTERFACE_ID = "0x780e9d63";
-export const BURNING_CHICKEN_MANUAL_TOKEN_ENTRY_MESSAGE =
-  "Automatic Chicken wallet listing is unavailable for this contract. Enter a Chicken token ID manually.";
+const BASE_BLOCKSCOUT_API_URL = "https://base.blockscout.com/api/v2";
 const REJECTED_CODES = new Set([4001, "4001", "ACTION_REJECTED", "USER_REJECTED"]);
 
 export type BurningChickenConfig = {
@@ -2116,6 +2116,15 @@ export function decodeBoolResult(hex: string): boolean {
   return decodeUintResult(hex) !== 0n;
 }
 
+function decodeAddressResult(hex: string): string {
+  const clean = hex.replace(/^0x/, "");
+  const address = clean.slice(-40);
+  if (!/^[a-fA-F0-9]{40}$/.test(address)) {
+    throw new Error("Contract address read returned an invalid address.");
+  }
+  return `0x${address}`;
+}
+
 export async function getCurrentAccounts(provider: Eip1193Provider, timeoutMs?: number): Promise<string[]> {
   return readWalletRequest<string[]>(provider, {
     method: "eth_accounts"
@@ -2668,7 +2677,7 @@ export async function fetchBurningChickens(
 
   const enumerable = await supportsBurningChickenEnumerable(config);
   if (!enumerable) {
-    throw new Error(BURNING_CHICKEN_MANUAL_TOKEN_ENTRY_MESSAGE);
+    return fetchBurningChickensFromBlockscout(account, config, balance);
   }
 
   for (let index = 0n; index < balance; index += 1n) {
@@ -2698,6 +2707,113 @@ async function supportsBurningChickenEnumerable(config: BurningChickenConfig): P
   } catch {
     return false;
   }
+}
+
+type BlockscoutNftInstance = {
+  id?: unknown;
+  metadata?: {
+    attributes?: Array<{
+      trait_type?: unknown;
+      value?: unknown;
+    }>;
+  } | null;
+  token_id?: unknown;
+};
+
+type BlockscoutNftInstancesResponse = {
+  items?: BlockscoutNftInstance[];
+  next_page_params?: Record<string, string | number | boolean | null> | null;
+};
+
+async function fetchBurningChickensFromBlockscout(
+  account: string,
+  config: BurningChickenConfig,
+  balance: bigint,
+): Promise<BurningChickenNft[]> {
+  const tokenById = new Map<string, BurningChickenNft>();
+  let params = new URLSearchParams({ holder_address_hash: account });
+
+  for (let page = 0; page < 50; page += 1) {
+    const url = `${BASE_BLOCKSCOUT_API_URL}/tokens/${encodeURIComponent(config.nftContractAddress)}/instances?${params.toString()}`;
+    const response = await fetch(url, { headers: { accept: "application/json" } });
+    if (!response.ok) {
+      throw new Error("Burning Chicken wallet lookup is temporarily unavailable.");
+    }
+
+    const body = await response.json() as BlockscoutNftInstancesResponse;
+    for (const item of body.items ?? []) {
+      const tokenId = blockscoutTokenId(item);
+      if (!tokenId || tokenById.has(tokenId)) continue;
+      tokenById.set(tokenId, {
+        level: blockscoutChickenLevel(item),
+        tokenId,
+      });
+    }
+
+    if (balance <= BigInt(tokenById.size)) break;
+    if (!body.next_page_params) break;
+    params = new URLSearchParams();
+    for (const [key, value] of Object.entries(body.next_page_params)) {
+      if (value !== null && value !== undefined) {
+        params.set(key, String(value));
+      }
+    }
+  }
+
+  const ownedChickens = await filterOwnedBurningChickens([...tokenById.values()], account, config);
+  return ownedChickens.sort((left, right) => {
+    const leftId = BigInt(left.tokenId);
+    const rightId = BigInt(right.tokenId);
+    return leftId === rightId ? 0 : leftId > rightId ? -1 : 1;
+  });
+}
+
+function blockscoutTokenId(item: BlockscoutNftInstance): string | null {
+  const value = item.id ?? item.token_id;
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
+    return String(value);
+  }
+  if (typeof value === "string" && /^\d+$/.test(value) && BigInt(value) > 0n) {
+    return value;
+  }
+  return null;
+}
+
+function blockscoutChickenLevel(item: BlockscoutNftInstance): number | null {
+  const level = item.metadata?.attributes?.find((attribute) => attribute.trait_type === "Level")?.value;
+  if (typeof level === "number" && Number.isFinite(level)) return level;
+  if (typeof level === "string" && /^\d+$/.test(level)) return Number(level);
+  return null;
+}
+
+async function filterOwnedBurningChickens(
+  chickens: BurningChickenNft[],
+  account: string,
+  config: BurningChickenConfig,
+): Promise<BurningChickenNft[]> {
+  const accountLower = account.toLowerCase();
+  const owned: BurningChickenNft[] = [];
+  const batchSize = 8;
+
+  for (let start = 0; start < chickens.length; start += batchSize) {
+    const checks = await Promise.all(chickens.slice(start, start + batchSize).map(async (chicken) => {
+      try {
+        const ownerHex = await callBaseMainnetContract(
+          config,
+          config.nftContractAddress,
+          encodeUintCall(ERC721_SELECTORS.ownerOf, chicken.tokenId),
+        );
+        return decodeAddressResult(ownerHex).toLowerCase() === accountLower ? chicken : null;
+      } catch {
+        return null;
+      }
+    }));
+    for (const chicken of checks) {
+      if (chicken) owned.push(chicken);
+    }
+  }
+
+  return owned;
 }
 
 async function fetchBurningChickenLevel(
