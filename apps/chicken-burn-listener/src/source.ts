@@ -59,11 +59,14 @@ export class ChickenBurnSource {
       startBlock: bigint;
       backfillBlocks: bigint;
       maxRangeBlocks: bigint;
+      enableTransferBurnFallback?: boolean;
       WebSocketCtor?: WebSocketConstructor;
       logger?: ListenerLogger;
     }
   ) {
-    this.topics = [burnEventTopic(burnEvent), transferBurnTopic()];
+    this.topics = options.enableTransferBurnFallback
+      ? [burnEventTopic(burnEvent), transferBurnTopic()]
+      : [burnEventTopic(burnEvent)];
   }
 
   snapshot(): SourceSnapshot {
@@ -232,7 +235,11 @@ export class ChickenBurnSource {
 
   private async handleRawLog(log: RawLog): Promise<void> {
     let event = decodeChickenBurnLog(log, this.burnEvent);
-    if (!event && log.topics[0] === transferBurnTopic()) {
+    if (
+      !event &&
+      this.options.enableTransferBurnFallback &&
+      log.topics[0] === transferBurnTopic()
+    ) {
       const tx = await this.http.request<{ input?: `0x${string}` } | null>("eth_getTransactionByHash", [
         log.transactionHash
       ]);
