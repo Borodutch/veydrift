@@ -12,6 +12,7 @@ export type ChickenBurnListenerConfig = {
   backfillIntervalMs: number;
   backfillBlocks: bigint;
   maxRangeBlocks: bigint;
+  enableTransferBurnFallback: boolean;
   port: number;
 };
 
@@ -101,6 +102,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LoadConfigResu
   const port = parsePositiveInt(env.PORT, defaultPort, "PORT", problems);
   const chickenBurnEventSignature =
     env.CHICKEN_BURN_EVENT_SIGNATURE?.trim() || defaultChickenBurnEventSignature;
+  const enableTransferBurnFallback = parseBoolean(
+    env.ENABLE_TRANSFER_BURN_FALLBACK,
+    false,
+    "ENABLE_TRANSFER_BURN_FALLBACK",
+    problems
+  );
   const stateFile = env.STATE_FILE?.trim() || defaultStateFile;
 
   if (problems.length > 0) {
@@ -122,6 +129,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LoadConfigResu
       backfillIntervalMs,
       backfillBlocks,
       maxRangeBlocks,
+      enableTransferBurnFallback,
       port
     },
     problems: []
@@ -143,6 +151,7 @@ export function safeConfigSummary(config: ChickenBurnListenerConfig): Record<str
     backfillIntervalMs: config.backfillIntervalMs,
     backfillBlocks: config.backfillBlocks.toString(),
     maxRangeBlocks: config.maxRangeBlocks.toString(),
+    enableTransferBurnFallback: config.enableTransferBurnFallback,
     port: config.port
   };
 }
@@ -219,6 +228,26 @@ function parseBigInt(
     problems.push({ field, message: `${field} must be a non-negative integer; got "${raw}".` });
     return fallback;
   }
+}
+
+function parseBoolean(
+  raw: string | undefined,
+  fallback: boolean,
+  field: string,
+  problems: ConfigProblem[]
+): boolean {
+  if (raw === undefined || raw.trim() === "") {
+    return fallback;
+  }
+  const value = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(value)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(value)) {
+    return false;
+  }
+  problems.push({ field, message: `${field} must be true or false; got "${raw}".` });
+  return fallback;
 }
 
 function redactUrl(raw: string): string {

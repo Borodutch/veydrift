@@ -17,11 +17,13 @@ describe("loadConfig", () => {
     expect(problems).toEqual([]);
     expect(config?.veydriftChainId).toBe(84532);
     expect(config?.backfillBlocks).toBe(2_000n);
+    expect(config?.enableTransferBurnFallback).toBe(false);
 
     const summary = safeConfigSummary(config!);
     expect(summary.veydriftGrantPrivateKey).toBe("[redacted]");
     expect(String(summary.baseMainnetHttpRpcUrl)).not.toContain("secret");
     expect(String(summary.baseMainnetWsRpcUrl)).not.toContain("secret");
+    expect(summary.enableTransferBurnFallback).toBe(false);
   });
 
   test("reports missing required variables", () => {
@@ -46,5 +48,25 @@ describe("loadConfig", () => {
     expect(config).toBeNull();
     expect(problems.some((problem) => problem.field === "CHICKEN_CONTRACT_ADDRESS")).toBe(true);
     expect(problems.some((problem) => problem.field === "CHICKEN_BURN_START_BLOCK")).toBe(true);
+  });
+
+  test("allows explicit Transfer-burn fallback opt-in", () => {
+    const { config, problems } = loadConfig({
+      ...validEnv,
+      ENABLE_TRANSFER_BURN_FALLBACK: "true"
+    });
+    expect(problems).toEqual([]);
+    expect(config?.enableTransferBurnFallback).toBe(true);
+  });
+
+  test("rejects malformed Transfer-burn fallback flag", () => {
+    const { config, problems } = loadConfig({
+      ...validEnv,
+      ENABLE_TRANSFER_BURN_FALLBACK: "maybe"
+    });
+    expect(config).toBeNull();
+    expect(problems.some((problem) => problem.field === "ENABLE_TRANSFER_BURN_FALLBACK")).toBe(
+      true
+    );
   });
 });
