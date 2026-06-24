@@ -364,8 +364,7 @@ VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=<Base Sepolia VeydriftCrystal ERC-20 proxy addres
 VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=<Base Sepolia VeydriftDeuterium ERC-20 proxy address>
 VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS=<Base mainnet Burning Chicken NFT address>
 VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS=<Base mainnet Burning Chicken burn contract address>
-VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR=<4-byte burn-for-moon selector, defaults to 0x6364233d>
-VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR=<4-byte level selector, defaults to 0x05c58df2>
+VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR=<4-byte burnForMoon(uint256,uint256) selector, set to 0xe1775196>
 VEYDRIFT_BASE_MAINNET_RPC_URL=<Base mainnet public or redacted provider RPC URL>
 VEYDRIFT_NETWORK_NAME=Base Sepolia
 VEYDRIFT_PUBLIC_API_URL=https://api-test.veydrift.com
@@ -388,7 +387,11 @@ The Base mainnet RPC URL is public runtime metadata for frontend reads; prefer a
 redacted/proxy provider URL if the deploy uses a paid key.
 
 The Chicken burn listener is a separate EasyPanel service in the same `veydrift`
-project. Configure it from the repository root with:
+project. Deploy this after the planet-id-only Chicken burn surface is in the
+image. The listener then consumes
+`ChickenBurned(address indexed burner,uint256 indexed tokenId,uint256 planetId)`;
+the Veydrift moon system resolves coordinates from the current Veydrift planet
+state before granting the moon. Configure it from the repository root with:
 
 ```text
 Source path: /
