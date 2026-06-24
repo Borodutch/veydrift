@@ -1,0 +1,22 @@
+{
+  "name": "@veydrift/chicken-burn-listener",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "bun@1.1.42",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "check": "tsc --project tsconfig.json",
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "viem": "^2.52.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.23",
+    "bun-types": "^1.3.14",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,8 @@
+[phases.install]
+cmds = ["bun install --frozen-lockfile"]
+
+[phases.build]
+cmds = ["cd apps/chicken-burn-listener && bun run check"]
+
+[start]
+cmd = "cd apps/chicken-burn-listener && bun run start"
