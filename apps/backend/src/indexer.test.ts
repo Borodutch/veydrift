@@ -4949,6 +4949,87 @@ describe("SettlementIndexer", () => {
     }
   });
 
+  test("one-time fleet mission state heal repairs launch-only stale active rows", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    let canonicalReads = 0;
+    const chainReader = {
+      async listCanonicalFleetMissions() {
+        canonicalReads += 1;
+        return [{
+          missionId: "4749",
+          statusId: 4,
+          missionTypeId: 0,
+          status: "Returned",
+          missionType: "Transport",
+          owner: player,
+          originPlanetId: planet.planetId,
+          targetPlanetId: "40",
+          departureAt: "43000000",
+          arrivalAt: "1767225000",
+          returnAt: "1767225500",
+          fuelCost: "70",
+          cargo: { metal: "385", crystal: "210", deuterium: "14" },
+          randomnessRequestId: null
+        } satisfies CanonicalFleetMissionSnapshot];
+      },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+    try {
+      const writer = new SettlementIndexer(chainReader, 100n, { databasePath });
+      writer.applyEvent(planet);
+      writer.applyLog({
+        blockNumber: "0x70",
+        transactionHash: "0xtransport4749",
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(4749n), addressTopic(player), topic(0n)],
+        data: abiWords(BigInt(planet.planetId), 40n, 1767225000n, 1767225500n, 0n)
+      });
+      writer.applyLog({
+        blockNumber: "0x70",
+        transactionHash: "0xtransport4749",
+        logIndex: "0x1",
+        topics: [fleetMissionCargoTopic, topic(4749n)],
+        data: abiWords(385n, 210n, 14n, 70n)
+      });
+      writer.applyLog({
+        blockNumber: "0x70",
+        transactionHash: "0xtransport4749",
+        logIndex: "0x2",
+        topics: [fleetMissionShipsTopic, topic(4749n)],
+        data: abiWords(1n, ...Array.from({ length: 13 }, () => 0n))
+      });
+
+      expect(writer.allActiveFleetMissions().map((mission) => mission.missionId)).toContain("4749");
+
+      const snapshot = await writer.startFleetMissionStateHealOnce("test-fleet-heal");
+      expect(canonicalReads).toBe(1);
+      expect(snapshot).toMatchObject({
+        currentStateOneTimeHealCompletedAt: expect.any(String),
+        lastCurrentStateHealRunId: "test-fleet-heal",
+        lastCanonicalFleetMissionSyncRows: 1,
+        lastCanonicalFleetMissionSyncUpdatedRows: expect.any(Number),
+        lastCanonicalFleetMissionSyncError: null
+      });
+
+      const reader = new SettlementIndexer(chainReader, 100n, { databasePath, runStartupBackfill: false });
+      expect(reader.allActiveFleetMissions().map((mission) => mission.missionId)).not.toContain("4749");
+      expect(reader.allCompletedFleetMissions().map((mission) => mission.missionId)).toContain("4749");
+      expect(reader.fleetMission("4749")).toMatchObject({
+        missionId: "4749",
+        status: "Returned",
+        needsResolution: false
+      });
+
+      await writer.startFleetMissionStateHealOnce("test-fleet-heal");
+      expect(canonicalReads).toBe(1);
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("canonical mission event_json supplies terminal return fields when decoded mission logs are launch-era", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");

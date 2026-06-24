@@ -283,12 +283,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     });
   }
   if (isWriter && loaded.config.currentStateHealRunId && indexer && loaded.problems.length === 0) {
-    // Explicit operator heal only. This runs inside the single writer process after chain polling starts,
-    // so event ingestion keeps moving while canonical state is healed planet-by-planet/section-by-section.
+    // Explicit operator heal only. Startup uses the narrow fleet-mission snapshot heal: it repairs the
+    // known live divergence once, then normal backend mutation remains event-listener-only.
     void indexer
-      .startCurrentStateHealOnce(loaded.config.currentStateHealRunId, {
-        planetConcurrency: loaded.config.currentStateHealConcurrency ?? 25
-      })
+      .startFleetMissionStateHealOnce(loaded.config.currentStateHealRunId)
       .catch((error) => {
         console.error("Veydrift current-state heal failed", error);
       });
