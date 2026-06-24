@@ -503,7 +503,7 @@ export class ChainSyncService {
           applied += 1;
           lastHash = log.transactionHash;
           walletPlanetsChanged ||= isSettledPlanetLog(log);
-          await this.queueTargetedCanonicalHeal(log);
+          this.queueTargetedCanonicalHeal(log);
         }
         if (result.removed) {
           // A reorg-removed log. The contract re-emits the canonical post-state on the new chain, and
@@ -521,10 +521,16 @@ export class ChainSyncService {
     return { applied, lastHash, walletPlanetsChanged };
   }
 
-  private async queueTargetedCanonicalHeal(log: RpcLog): Promise<void> {
+  private queueTargetedCanonicalHeal(log: RpcLog): void {
     const planetIds = canonicalHealPlanetIdsForLog(log);
     if (planetIds.length === 0) return;
-    void this.indexer?.healCanonicalPlanets?.(planetIds);
+    const healCanonicalPlanets = this.indexer?.healCanonicalPlanets;
+    if (!healCanonicalPlanets) return;
+    // Keep targeted canonical repairs strictly outside the live event handler. The repair itself is
+    // best-effort/background; even synchronous queue bookkeeping must not poison handler latency.
+    setTimeout(() => {
+      void healCanonicalPlanets.call(this.indexer, planetIds);
+    }, 0);
   }
 
   private markConnected(): void {
