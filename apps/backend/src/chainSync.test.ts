@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setSystemTime, test } from "bun:test";
 import { ChainSyncService } from "./chainSync";
 import type { LiveLogSubscriber } from "./chainSync";
 import type { BackendConfig } from "./config";
@@ -417,6 +417,82 @@ describe("ChainSyncService (polling)", () => {
       });
     } finally {
       console.warn = originalWarn;
+      service.stop();
+    }
+  });
+
+  test("keeps handler latency readiness window fresh without hiding cumulative slow counters", async () => {
+    const baseTime = new Date("2026-06-24T19:20:00.000Z").getTime();
+    const originalWarn = console.warn;
+    const originalLog = console.log;
+    console.warn = () => {};
+    console.log = () => {};
+    let applyCalls = 0;
+    const indexer = {
+      applyLog: (log: RpcLog) => {
+        applyCalls += 1;
+        if (log.transactionHash === "0xold-slow") {
+          setSystemTime(new Date(baseTime + 1_500));
+        } else {
+          setSystemTime(new Date(baseTime + 62_012));
+        }
+        return {
+          applied: true,
+          duplicate: false,
+          ignored: false,
+          removed: false,
+          snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
+        };
+      },
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>
+    };
+    const backfiller = new MockBackfiller(0x180n);
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService(config, indexer, {
+      liveLogSubscriber: liveLogs,
+      logBackfiller: backfiller
+    });
+
+    try {
+      service.start();
+      await waitFor(() => liveLogs.subscription !== null);
+
+      setSystemTime(new Date(baseTime));
+      liveLogs.emit([{
+        ...planetStartedLog("0x181", 7n, "0xold-slow"),
+        address: config.gameContractAddress!,
+        logIndex: "0x0"
+      }]);
+      await waitFor(() => applyCalls === 1);
+      expect(service.snapshot()).toMatchObject({
+        maxHandlerDurationMs: 1500,
+        slowHandlerCount1000Ms: 1,
+        recentHandlerDurationMs: { count: 1, p95: 1500, max: 1500 }
+      });
+
+      setSystemTime(new Date(baseTime + 62_000));
+      liveLogs.emit([{
+        ...planetStartedLog("0x182", 8n, "0xfresh-fast"),
+        address: config.gameContractAddress!,
+        logIndex: "0x0"
+      }]);
+      await waitFor(() => applyCalls === 2);
+
+      expect(service.snapshot()).toMatchObject({
+        maxHandlerDurationMs: 1500,
+        slowHandlerCount1000Ms: 1,
+        recentHandlerDurationMs: {
+          count: 1,
+          p95: 12,
+          max: 12,
+          windowMs: 60_000,
+          lastSampledAt: "2026-06-24T19:21:02.012Z"
+        }
+      });
+    } finally {
+      setSystemTime();
+      console.warn = originalWarn;
+      console.log = originalLog;
       service.stop();
     }
   });
