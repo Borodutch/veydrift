@@ -56,6 +56,8 @@ interface AlliancePageProps {
   transactionUnavailableReason?: string | undefined;
   onAcceptInvite: (allianceId: string) => void;
   onApproveJoinRequest: (playerAddress: string) => void;
+  onBatchKick: (playerAddresses: string[]) => void;
+  onBatchSetRole: (playerAddresses: string[], role: "member" | "officer") => void;
   onCancelJoinRequest: (allianceId: string) => void;
   onCreate: (tag: string, name: string, description: string) => void;
   onDismissJoinRequest: (playerAddress: string) => void;
@@ -83,6 +85,8 @@ export function AlliancePage({
   transactionUnavailableReason,
   onAcceptInvite,
   onApproveJoinRequest,
+  onBatchKick,
+  onBatchSetRole,
   onCancelJoinRequest,
   onCreate,
   onDismissJoinRequest,
@@ -215,6 +219,8 @@ export function AlliancePage({
               description={description}
               viewer={allianceState?.wallet}
               onCreate={onCreate}
+              onBatchKick={onBatchKick}
+              onBatchSetRole={onBatchSetRole}
               onInvite={onInvite}
               onKick={onKick}
               onLeaveAlliance={onLeaveAlliance}
@@ -439,6 +445,8 @@ function MyAllianceSection({
   description,
   viewer,
   onCreate,
+  onBatchKick,
+  onBatchSetRole,
   onInvite,
   onKick,
   onLeaveAlliance,
@@ -476,6 +484,8 @@ function MyAllianceSection({
   description: string;
   viewer?: string | undefined;
   onCreate: (tag: string, name: string, description: string) => void;
+  onBatchKick: (playerAddresses: string[]) => void;
+  onBatchSetRole: (playerAddresses: string[], role: "member" | "officer") => void;
   onInvite: (playerAddress: string) => void;
   onKick: (playerAddress: string) => void;
   onLeaveAlliance: () => void;
@@ -587,6 +597,8 @@ function MyAllianceSection({
           roster={roster}
           viewer={viewer}
           exitAction={exitAction}
+          onBatchKick={onBatchKick}
+          onBatchSetRole={onBatchSetRole}
           onInvite={onInvite}
           onKick={onKick}
           onLeaveAlliance={onLeaveAlliance}
@@ -1064,6 +1076,8 @@ function RosterSection({
   roster,
   viewer,
   onInvite,
+  onBatchKick,
+  onBatchSetRole,
   onKick,
   onLeaveAlliance,
   onOpenPlayer,
@@ -1081,6 +1095,8 @@ function RosterSection({
   roster: RosterGroups;
   viewer?: string | undefined;
   onInvite: (playerAddress: string) => void;
+  onBatchKick: (playerAddresses: string[]) => void;
+  onBatchSetRole: (playerAddresses: string[], role: "member" | "officer") => void;
   onKick: (playerAddress: string) => void;
   onLeaveAlliance: () => void;
   onOpenPlayer: (playerAddress: string) => void;
@@ -1101,6 +1117,8 @@ function RosterSection({
         rows={roster.all}
         title="Members"
         viewer={viewer}
+        onBatchKick={onBatchKick}
+        onBatchSetRole={onBatchSetRole}
         onInvite={onInvite}
         onKick={onKick}
         onLeaveAlliance={onLeaveAlliance}
@@ -1125,6 +1143,8 @@ function RosterList({
   title,
   viewer,
   onInvite,
+  onBatchKick,
+  onBatchSetRole,
   onKick,
   onLeaveAlliance,
   onOpenPlayer,
@@ -1143,6 +1163,8 @@ function RosterList({
   title: string;
   viewer?: string | undefined;
   onInvite: (playerAddress: string) => void;
+  onBatchKick: (playerAddresses: string[]) => void;
+  onBatchSetRole: (playerAddresses: string[], role: "member" | "officer") => void;
   onKick: (playerAddress: string) => void;
   onLeaveAlliance: () => void;
   onOpenPlayer: (playerAddress: string) => void;
@@ -1152,14 +1174,67 @@ function RosterList({
   onTransferOwnership: (playerAddress: string) => void;
 }) {
   const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const sortedRows = useMemo(() => sortedRosterMembers(rows), [rows]);
   const pageCount = rosterPageCount(sortedRows.length);
   const clampedPage = Math.min(page, pageCount);
   const visibleRows = rosterPageRows(sortedRows, clampedPage);
+  const selectableRows = useMemo(
+    () => sortedRows.filter((member) => canSelectAllianceRosterMember({ canManageMembers, isOwner, member, viewer })),
+    [canManageMembers, isOwner, sortedRows, viewer]
+  );
+  const selectedRows = useMemo(
+    () => sortedRows.filter((member) => selected.has(member.address.toLowerCase())),
+    [selected, sortedRows]
+  );
+  const visibleSelectableAddresses = useMemo(
+    () => visibleRows
+      .filter((member) => canSelectAllianceRosterMember({ canManageMembers, isOwner, member, viewer }))
+      .map((member) => member.address.toLowerCase()),
+    [canManageMembers, isOwner, visibleRows, viewer]
+  );
+  const selectedRemovableAddresses = selectedRows
+    .filter((member) => canRemoveAllianceRosterMember({ canManageMembers, isOwner, member, viewer }))
+    .map((member) => member.address);
+  const selectedPromotableAddresses = selectedRows
+    .filter((member) => isOwner && member.role === "member")
+    .map((member) => member.address);
+  const selectedDemotableAddresses = selectedRows
+    .filter((member) => isOwner && member.role === "officer")
+    .map((member) => member.address);
 
   useEffect(() => {
     setPage(1);
   }, [rows]);
+
+  useEffect(() => {
+    const valid = new Set(selectableRows.map((member) => member.address.toLowerCase()));
+    setSelected((current) => {
+      const next = new Set([...current].filter((address) => valid.has(address)));
+      return next.size === current.size ? current : next;
+    });
+  }, [selectableRows]);
+
+  function toggleSelected(address: string): void {
+    const key = address.toLowerCase();
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
+
+  function selectAddresses(addresses: string[]): void {
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const address of addresses) next.add(address.toLowerCase());
+      return next;
+    });
+  }
 
   return (
     <div className="rounded border border-white/10 bg-black/20 p-3">
@@ -1169,6 +1244,24 @@ function RosterList({
       </div>
       {sortedRows.length ? (
         <div className="mt-2 grid gap-1.5">
+          {canManageMembers ? (
+            <RosterBatchActions
+              disabled={disabled}
+              pageSelectableCount={visibleSelectableAddresses.length}
+              selectedCount={selected.size}
+              selectedDemotableCount={selectedDemotableAddresses.length}
+              selectedPromotableCount={selectedPromotableAddresses.length}
+              selectedRemovableCount={selectedRemovableAddresses.length}
+              totalSelectableCount={selectableRows.length}
+              onBatchKick={() => onBatchKick(selectedRemovableAddresses)}
+              onBatchSetRole={onBatchSetRole}
+              onClear={() => setSelected(new Set())}
+              onSelectAll={() => selectAddresses(selectableRows.map((member) => member.address))}
+              onSelectPage={() => selectAddresses(visibleSelectableAddresses)}
+              promotableAddresses={selectedPromotableAddresses}
+              demotableAddresses={selectedDemotableAddresses}
+            />
+          ) : null}
           {visibleRows.map((member) => (
             <MemberRow
               canManageMembers={canManageMembers}
@@ -1176,10 +1269,13 @@ function RosterList({
               isOwner={isOwner}
               key={member.address}
               member={member}
+              selectable={canSelectAllianceRosterMember({ canManageMembers, isOwner, member, viewer })}
+              selected={selected.has(member.address.toLowerCase())}
               viewer={viewer}
               onKick={onKick}
               onOpenPlayer={onOpenPlayer}
               onSetRole={onSetRole}
+              onToggleSelected={toggleSelected}
               onTransferOwnership={onTransferOwnership}
             />
           ))}
@@ -1313,6 +1409,162 @@ export function directoryPageRows<T>(rows: T[], page: number): T[] {
   return rows.slice(start, start + allianceDirectoryPageSize);
 }
 
+export function canSelectAllianceRosterMember({
+  canManageMembers,
+  isOwner,
+  member,
+  viewer,
+}: {
+  canManageMembers: boolean;
+  isOwner: boolean;
+  member: Pick<RosterMember, "address" | "role">;
+  viewer?: string | undefined;
+}): boolean {
+  if (!canManageMembers) return false;
+  const isViewer = viewer?.toLowerCase() === member.address.toLowerCase();
+  if (isViewer || member.role === "owner") return false;
+  if (isOwner) return member.role === "member" || member.role === "officer";
+  return member.role === "member";
+}
+
+export function canRemoveAllianceRosterMember({
+  canManageMembers,
+  isOwner,
+  member,
+  viewer,
+}: {
+  canManageMembers: boolean;
+  isOwner: boolean;
+  member: Pick<RosterMember, "address" | "role">;
+  viewer?: string | undefined;
+}): boolean {
+  if (!canSelectAllianceRosterMember({ canManageMembers, isOwner, member, viewer })) return false;
+  return member.role === "member" || (isOwner && member.role === "officer");
+}
+
+export function RosterBatchActions({
+  demotableAddresses,
+  disabled,
+  onBatchKick,
+  onBatchSetRole,
+  onClear,
+  onSelectAll,
+  onSelectPage,
+  pageSelectableCount,
+  promotableAddresses,
+  selectedCount,
+  selectedDemotableCount,
+  selectedPromotableCount,
+  selectedRemovableCount,
+  totalSelectableCount,
+}: {
+  demotableAddresses: string[];
+  disabled: boolean;
+  onBatchKick: () => void;
+  onBatchSetRole: (playerAddresses: string[], role: "member" | "officer") => void;
+  onClear: () => void;
+  onSelectAll: () => void;
+  onSelectPage: () => void;
+  pageSelectableCount: number;
+  promotableAddresses: string[];
+  selectedCount: number;
+  selectedDemotableCount: number;
+  selectedPromotableCount: number;
+  selectedRemovableCount: number;
+  totalSelectableCount: number;
+}) {
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
+
+  useEffect(() => {
+    if (selectedRemovableCount === 0) setConfirmingRemove(false);
+  }, [selectedRemovableCount]);
+
+  return (
+    <div className="rounded border border-cyan-300/20 bg-cyan-300/[0.06] p-2">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <span className="text-xs font-semibold text-cyan-100">
+          {selectedCount} selected / {totalSelectableCount} manageable
+        </span>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50"
+            disabled={disabled || pageSelectableCount === 0}
+            onClick={onSelectPage}
+            type="button"
+          >
+            Select Page
+          </button>
+          <button
+            className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50"
+            disabled={disabled || totalSelectableCount === 0}
+            onClick={onSelectAll}
+            type="button"
+          >
+            Select All
+          </button>
+          <button
+            className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50"
+            disabled={disabled || selectedCount === 0}
+            onClick={onClear}
+            type="button"
+          >
+            Clear
+          </button>
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2 border-t border-white/10 pt-2">
+        <button
+          className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50"
+          disabled={disabled || selectedPromotableCount === 0}
+          onClick={() => onBatchSetRole(promotableAddresses, "officer")}
+          type="button"
+        >
+          Make Officer ({selectedPromotableCount})
+        </button>
+        <button
+          className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100 disabled:opacity-50"
+          disabled={disabled || selectedDemotableCount === 0}
+          onClick={() => onBatchSetRole(demotableAddresses, "member")}
+          type="button"
+        >
+          Make Member ({selectedDemotableCount})
+        </button>
+        {confirmingRemove ? (
+          <>
+            <button
+              className="rounded border border-red-300/40 px-2 py-1 text-xs font-semibold text-red-100 disabled:opacity-50"
+              disabled={disabled || selectedRemovableCount === 0}
+              onClick={() => {
+                setConfirmingRemove(false);
+                onBatchKick();
+              }}
+              type="button"
+            >
+              Confirm Remove ({selectedRemovableCount})
+            </button>
+            <button
+              className="rounded border border-white/10 px-2 py-1 text-xs font-semibold text-slate-100"
+              onClick={() => setConfirmingRemove(false)}
+              type="button"
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <button
+            className="rounded border border-red-300/30 px-2 py-1 text-xs font-semibold text-red-100 disabled:opacity-50"
+            disabled={disabled || selectedRemovableCount === 0}
+            onClick={() => setConfirmingRemove(true)}
+            type="button"
+          >
+            Remove ({selectedRemovableCount})
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RosterPagination({
   onNext,
   onPrevious,
@@ -1402,20 +1654,26 @@ function MemberRow({
   disabled,
   isOwner,
   member,
+  selectable,
+  selected,
   viewer,
   onKick,
   onOpenPlayer,
   onSetRole,
+  onToggleSelected,
   onTransferOwnership,
 }: {
   canManageMembers: boolean;
   disabled: boolean;
   isOwner: boolean;
   member: RosterMember;
+  selectable: boolean;
+  selected: boolean;
   viewer?: string | undefined;
   onKick: (playerAddress: string) => void;
   onOpenPlayer: (playerAddress: string) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
+  onToggleSelected: (playerAddress: string) => void;
   onTransferOwnership: (playerAddress: string) => void;
 }) {
   const [confirmingTransfer, setConfirmingTransfer] = useState(false);
@@ -1426,7 +1684,17 @@ function MemberRow({
   const rowTone = memberRowTone(member, isViewer);
 
   return (
-    <div className={`grid gap-2 rounded border px-2 py-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center ${rowTone}`}>
+    <div className={`grid gap-2 rounded border px-2 py-2 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center ${rowTone}`}>
+      {canManageMembers ? (
+        <input
+          aria-label={`Select ${playerLabel(member.displayName, member.address)}`}
+          checked={selected}
+          className="mt-1 h-4 w-4 accent-cyan-300 md:mt-0"
+          disabled={disabled || !selectable}
+          onChange={() => onToggleSelected(member.address)}
+          type="checkbox"
+        />
+      ) : null}
       <button className="min-w-0 text-left" onClick={() => onOpenPlayer(member.address)} type="button">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {member.role === "owner" ? <Crown size={14} className="text-amber-200" /> : <UserRound size={14} className="text-slate-500" />}
