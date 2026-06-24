@@ -22,12 +22,15 @@ import {
   AllianceMemberActions,
   AllianceDescription,
   AllianceSummary,
+  RosterBatchActions,
   allianceRosterPageSize,
   allianceDisplayName,
   allianceExitActionState,
   allianceJoinRequestApprovalState,
   allianceJoinRequestDismissalState,
   buildAllianceRoster,
+  canRemoveAllianceRosterMember,
+  canSelectAllianceRosterMember,
   canTransferAllianceOwnership,
   findAllianceEntry,
   rosterPageCount,
@@ -259,6 +262,8 @@ export function AllianceInspectPage({
   disabled,
   onApproveJoinRequest,
   onBack,
+  onBatchKick,
+  onBatchSetRole,
   onDismissJoinRequest,
   onInvite,
   onKick,
@@ -277,6 +282,8 @@ export function AllianceInspectPage({
   transactionUnavailableReason?: string | undefined;
   onApproveJoinRequest: (playerAddress: string) => void;
   onBack: () => void;
+  onBatchKick: (playerAddresses: string[]) => void;
+  onBatchSetRole: (playerAddresses: string[], role: "member" | "officer") => void;
   onDismissJoinRequest: (playerAddress: string) => void;
   onInvite: (playerAddress: string) => void;
   onKick: (playerAddress: string) => void;
@@ -346,6 +353,8 @@ export function AllianceInspectPage({
                 disabled={busy}
                 isOwner={isOwner}
                 members={roster.all}
+                onBatchKick={onBatchKick}
+                onBatchSetRole={onBatchSetRole}
                 onKick={onKick}
                 onOpenPlayer={onOpenPlayer}
                 onSetRole={onSetRole}
@@ -371,6 +380,8 @@ export function AllianceInspectPage({
                 disabled
                 isOwner={false}
                 members={publicRoster.all}
+                onBatchKick={onBatchKick}
+                onBatchSetRole={onBatchSetRole}
                 onKick={onKick}
                 onOpenPlayer={onOpenPlayer}
                 onSetRole={onSetRole}
@@ -522,11 +533,25 @@ function TransferOwnershipButton({ address, disabled, onTransferOwnership }: {
   );
 }
 
-function RosterGroup({ canManageMembers, disabled, isOwner, members, onKick, onOpenPlayer, onSetRole, onTransferOwnership, viewer }: {
+function RosterGroup({
+  canManageMembers,
+  disabled,
+  isOwner,
+  members,
+  onBatchKick,
+  onBatchSetRole,
+  onKick,
+  onOpenPlayer,
+  onSetRole,
+  onTransferOwnership,
+  viewer,
+}: {
   canManageMembers: boolean;
   disabled: boolean;
   isOwner: boolean;
   members: RosterMember[];
+  onBatchKick: (playerAddresses: string[]) => void;
+  onBatchSetRole: (playerAddresses: string[], role: "member" | "officer") => void;
   onKick: (playerAddress: string) => void;
   onOpenPlayer: (wallet: string) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
@@ -534,13 +559,66 @@ function RosterGroup({ canManageMembers, disabled, isOwner, members, onKick, onO
   viewer?: string | undefined;
 }) {
   const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const pageCount = rosterPageCount(members.length);
   const clampedPage = Math.min(page, pageCount);
   const visibleMembers = rosterPageRows(members, clampedPage);
+  const selectableMembers = useMemo(
+    () => members.filter((member) => canSelectAllianceRosterMember({ canManageMembers, isOwner, member, viewer })),
+    [canManageMembers, isOwner, members, viewer]
+  );
+  const selectedMembers = useMemo(
+    () => members.filter((member) => selected.has(member.address.toLowerCase())),
+    [members, selected]
+  );
+  const visibleSelectableAddresses = useMemo(
+    () => visibleMembers
+      .filter((member) => canSelectAllianceRosterMember({ canManageMembers, isOwner, member, viewer }))
+      .map((member) => member.address.toLowerCase()),
+    [canManageMembers, isOwner, visibleMembers, viewer]
+  );
+  const selectedRemovableAddresses = selectedMembers
+    .filter((member) => canRemoveAllianceRosterMember({ canManageMembers, isOwner, member, viewer }))
+    .map((member) => member.address);
+  const selectedPromotableAddresses = selectedMembers
+    .filter((member) => isOwner && member.role === "member")
+    .map((member) => member.address);
+  const selectedDemotableAddresses = selectedMembers
+    .filter((member) => isOwner && member.role === "officer")
+    .map((member) => member.address);
 
   useEffect(() => {
     setPage(1);
   }, [members]);
+
+  useEffect(() => {
+    const valid = new Set(selectableMembers.map((member) => member.address.toLowerCase()));
+    setSelected((current) => {
+      const next = new Set([...current].filter((address) => valid.has(address)));
+      return next.size === current.size ? current : next;
+    });
+  }, [selectableMembers]);
+
+  function toggleSelected(address: string): void {
+    const key = address.toLowerCase();
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  }
+
+  function selectAddresses(addresses: string[]): void {
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const address of addresses) next.add(address.toLowerCase());
+      return next;
+    });
+  }
 
   return (
     <div className="mb-3 last:mb-0">
@@ -550,13 +628,42 @@ function RosterGroup({ canManageMembers, disabled, isOwner, members, onKick, onO
       </div>
       {members.length ? (
         <div className="grid gap-1.5">
+          {canManageMembers ? (
+            <RosterBatchActions
+              demotableAddresses={selectedDemotableAddresses}
+              disabled={disabled}
+              onBatchKick={() => onBatchKick(selectedRemovableAddresses)}
+              onBatchSetRole={onBatchSetRole}
+              onClear={() => setSelected(new Set())}
+              onSelectAll={() => selectAddresses(selectableMembers.map((member) => member.address))}
+              onSelectPage={() => selectAddresses(visibleSelectableAddresses)}
+              pageSelectableCount={visibleSelectableAddresses.length}
+              promotableAddresses={selectedPromotableAddresses}
+              selectedCount={selected.size}
+              selectedDemotableCount={selectedDemotableAddresses.length}
+              selectedPromotableCount={selectedPromotableAddresses.length}
+              selectedRemovableCount={selectedRemovableAddresses.length}
+              totalSelectableCount={selectableMembers.length}
+            />
+          ) : null}
           {visibleMembers.map((member) => {
             const isViewer = viewer?.toLowerCase() === member.address.toLowerCase();
             const canKick = canManageMembers && member.role === "member";
             const ownerCanChangeRole = isOwner && member.role !== "owner";
             const rowTone = memberRowTone(member, isViewer);
+            const selectable = canSelectAllianceRosterMember({ canManageMembers, isOwner, member, viewer });
             return (
-              <div className={`grid gap-2 rounded border px-2 py-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center ${rowTone}`} key={member.address}>
+              <div className={`grid gap-2 rounded border px-2 py-2 md:grid-cols-[auto_minmax(0,1fr)_auto] md:items-center ${rowTone}`} key={member.address}>
+                {canManageMembers ? (
+                  <input
+                    aria-label={`Select ${member.displayName?.trim() || shortAddress(member.address)}`}
+                    checked={selected.has(member.address.toLowerCase())}
+                    className="mt-1 h-4 w-4 accent-cyan-300 md:mt-0"
+                    disabled={disabled || !selectable}
+                    onChange={() => toggleSelected(member.address)}
+                    type="checkbox"
+                  />
+                ) : null}
                 <button className="min-w-0 text-left" onClick={() => onOpenPlayer(member.address)} type="button">
                   <span className="flex min-w-0 flex-wrap items-center gap-2">
                     {member.role === "owner" ? <Crown size={14} className="text-amber-200" /> : <UserRound size={14} className="text-slate-500" />}
