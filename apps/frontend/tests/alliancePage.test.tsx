@@ -8,6 +8,8 @@ import {
   allianceInviteAcceptanceState,
   allianceJoinRequestApprovalState,
   allianceJoinRequestDismissalState,
+  clampDirectoryPage,
+  clampRosterPage,
   directoryPageCount,
   directoryPageRows,
   hasAllianceMembership,
@@ -293,10 +295,23 @@ describe("AlliancePage loading display", () => {
 
     expect(allianceRosterPageSize).toBe(10);
     expect(rosterPageCount(rows.length)).toBe(13);
+    expect(clampRosterPage(3, rows.length)).toBe(3);
+    expect(clampRosterPage(99, rows.length)).toBe(13);
+    expect(clampRosterPage(0, rows.length)).toBe(1);
     expect(rosterPageRows(rows, 1)).toEqual(rows.slice(0, 10));
     expect(rosterPageRows(rows, 2)).toEqual(rows.slice(10, 20));
     expect(rosterPageRows(rows, 13)).toEqual(rows.slice(120, 121));
     expect(rosterPageRows(rows, 99)).toEqual(rows.slice(120, 121));
+  });
+
+  test("preserves alliance roster page during same-size refetches and only clamps invalid pages", () => {
+    expect(clampRosterPage(5, 118)).toBe(5);
+    expect(clampRosterPage(5, 111)).toBe(5);
+    expect(clampRosterPage(12, 111)).toBe(12);
+    expect(clampRosterPage(12, 109)).toBe(11);
+    expect(alliancePageSource).toContain("setPage((current) => clampRosterPage(current, sortedRows.length));");
+    expect(alliancePageSource).toContain("[sortedRows.length]");
+    expect(alliancePageSource).not.toContain("setPage(1);\n  }, [rows]);");
   });
 
   test("sorts alliance rosters by role group and member score before pagination", () => {
@@ -349,6 +364,8 @@ describe("AlliancePage loading display", () => {
     expect(sortedAllianceDirectory(alliances).map((alliance) => alliance.allianceId)).toEqual(["2", "3", "1", "4"]);
     expect(allianceDirectoryPageSize).toBe(10);
     expect(directoryPageCount(rows.length)).toBe(3);
+    expect(clampDirectoryPage(2, rows.length)).toBe(2);
+    expect(clampDirectoryPage(9, rows.length)).toBe(3);
     expect(directoryPageRows(rows, 1)).toEqual(rows.slice(0, 10));
     expect(directoryPageRows(rows, 3)).toEqual(rows.slice(20, 24));
   });

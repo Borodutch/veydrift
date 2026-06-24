@@ -705,13 +705,13 @@ function DirectorySection({
   const activeWarIds = new Set(activeWars.map((war) => war.otherAllianceId));
   const visibleAlliances = sortedAllianceDirectory(alliances);
   const [page, setPage] = useState(1);
+  const clampedPage = clampDirectoryPage(page, visibleAlliances.length);
   const pageCount = directoryPageCount(visibleAlliances.length);
-  const clampedPage = Math.min(page, pageCount);
   const pageRows = directoryPageRows(visibleAlliances, clampedPage);
 
   useEffect(() => {
-    setPage(1);
-  }, [alliances, currentAllianceId]);
+    setPage((current) => clampDirectoryPage(current, visibleAlliances.length));
+  }, [visibleAlliances.length]);
 
   return (
     <Panel title="Alliances">
@@ -1215,8 +1215,8 @@ function RosterList({
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const sortedRows = useMemo(() => sortedRosterMembers(rows), [rows]);
+  const clampedPage = clampRosterPage(page, sortedRows.length);
   const pageCount = rosterPageCount(sortedRows.length);
-  const clampedPage = Math.min(page, pageCount);
   const visibleRows = rosterPageRows(sortedRows, clampedPage);
   const selectableRows = useMemo(
     () => sortedRows.filter((member) => canSelectAllianceRosterMember({ canManageMembers, isOwner, member, viewer })),
@@ -1243,8 +1243,8 @@ function RosterList({
     .map((member) => member.address);
 
   useEffect(() => {
-    setPage(1);
-  }, [rows]);
+    setPage((current) => clampRosterPage(current, sortedRows.length));
+  }, [sortedRows.length]);
 
   useEffect(() => {
     const valid = new Set(selectableRows.map((member) => member.address.toLowerCase()));
@@ -1419,8 +1419,12 @@ export function rosterPageCount(total: number): number {
   return Math.max(1, Math.ceil(total / allianceRosterPageSize));
 }
 
+export function clampRosterPage(page: number, total: number): number {
+  return Math.min(Math.max(1, page), rosterPageCount(total));
+}
+
 export function rosterPageRows<T>(rows: T[], page: number): T[] {
-  const clampedPage = Math.min(Math.max(1, page), rosterPageCount(rows.length));
+  const clampedPage = clampRosterPage(page, rows.length);
   const start = (clampedPage - 1) * allianceRosterPageSize;
   return rows.slice(start, start + allianceRosterPageSize);
 }
@@ -1441,8 +1445,12 @@ export function directoryPageCount(total: number): number {
   return Math.max(1, Math.ceil(total / allianceDirectoryPageSize));
 }
 
+export function clampDirectoryPage(page: number, total: number): number {
+  return Math.min(Math.max(1, page), directoryPageCount(total));
+}
+
 export function directoryPageRows<T>(rows: T[], page: number): T[] {
-  const clampedPage = Math.min(Math.max(1, page), directoryPageCount(rows.length));
+  const clampedPage = clampDirectoryPage(page, rows.length);
   const start = (clampedPage - 1) * allianceDirectoryPageSize;
   return rows.slice(start, start + allianceDirectoryPageSize);
 }
