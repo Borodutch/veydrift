@@ -1,6 +1,6 @@
 import { decodeFunctionResult, encodeFunctionData, type Abi } from "viem";
 
-import { decodeBattleLog, subscribedTopic0, type RawLog } from "./events";
+import { decodeBattleLog, FleetMissionStatus, MissionType, subscribedTopic0, type RawLog } from "./events";
 import type { BattleKeeper, KeeperLogger } from "./keeper";
 import type { JsonRpcTransport } from "./transport";
 
@@ -162,7 +162,8 @@ export class LogBackfillSweep {
         missionId: decoded.missionId,
         missionType: decoded.missionType,
         arrivalAt: decoded.arrivalAt,
-        returnAt: decoded.returnAt
+        returnAt: decoded.returnAt,
+        randomnessRequestId: decoded.randomnessRequestId
       });
     } else if (decoded.kind === "resolved") {
       this.keeper.recordArrivalResolved({
@@ -192,7 +193,31 @@ export class LogBackfillSweep {
     for (const mission of pending) {
       const status = await this.readFleetMissionStatus(mission.missionId);
       this.keeper.reconcileMissionStatus(status);
+      if (
+        status.status === FleetMissionStatus.Outbound
+        && status.missionType === MissionType.AcsAttack
+        && status.randomnessRequestId
+        && status.randomnessRequestId !== "0"
+        && status.randomnessRequestId !== status.missionId
+      ) {
+        await this.recoverAcsAttackGroupLead(status.randomnessRequestId);
+      }
     }
+  }
+
+  private async recoverAcsAttackGroupLead(missionId: string): Promise<void> {
+    const status = await this.readFleetMissionStatus(missionId);
+    if (status.status !== FleetMissionStatus.Outbound) {
+      return;
+    }
+    this.keeper.recordLaunched({
+      missionId: status.missionId,
+      missionType: status.missionType,
+      arrivalAt: status.arrivalAt,
+      returnAt: status.returnAt,
+      randomnessRequestId: status.randomnessRequestId
+    });
+    this.keeper.reconcileMissionStatus(status);
   }
 
   private async readFleetMissionStatus(missionId: string): Promise<{
@@ -201,6 +226,7 @@ export class LogBackfillSweep {
     missionType: number;
     arrivalAt: number;
     returnAt: number;
+    randomnessRequestId: string;
   }> {
     const data = encodeFunctionData({
       abi: fleetMissionStatusAbi,
@@ -221,7 +247,8 @@ export class LogBackfillSweep {
       status: Number(decoded[0]),
       missionType: Number(decoded[1]),
       arrivalAt: Number(decoded[6]),
-      returnAt: Number(decoded[7])
+      returnAt: Number(decoded[7]),
+      randomnessRequestId: decoded[10].toString()
     };
   }
 }

@@ -27,6 +27,8 @@ export type LaunchedMission = {
   arrivalAt: number;
   /** Stored return timestamp from launch; only return-leg mission types use it for a return leg. */
   returnAt: number;
+  /** Randomness request id for normal attacks; ACS attack joiners store the main attack mission id. */
+  randomnessRequestId?: string;
 };
 
 /** A mission tracked in the pending set, currently awaiting one specific leg. */
@@ -39,6 +41,8 @@ export type PendingMission = {
   dueAt: number;
   /** Known return time (from the launch event, refined by FleetMissionResolved). */
   returnAt: number;
+  /** For ACS attack joiners, the main attack mission that must resolve first. */
+  blockedByMissionId?: string;
 };
 
 export type PendingMissionDiagnostic = {
@@ -59,6 +63,7 @@ export type MissionStatusSnapshot = {
   missionType: number;
   arrivalAt: number;
   returnAt: number;
+  randomnessRequestId?: string;
 };
 
 export type KeeperSnapshot = {
@@ -88,6 +93,7 @@ export type BattleKeeperOptions = {
   maxConcurrency?: number;
   now?: () => number;
   logger?: KeeperLogger;
+  acsJoinerRetryDelaySeconds?: number;
 };
 
 /**
@@ -117,6 +123,7 @@ export class BattleKeeper {
   private readonly maxConcurrency: number;
   private readonly now: () => number;
   private readonly logger: KeeperLogger;
+  private readonly acsJoinerRetryDelaySeconds: number;
   /** Re-entrancy guard so overlapping timers (resolve loop + sweep) never run tick() concurrently —
    * concurrent ticks would submit different missions in parallel and collide on the keeper EOA nonce. */
   private ticking = false;
@@ -142,6 +149,7 @@ export class BattleKeeper {
     this.maxConcurrency = options.maxConcurrency ?? 3;
     this.now = options.now ?? (() => Math.floor(Date.now() / 1_000));
     this.logger = options.logger ?? consoleLogger;
+    this.acsJoinerRetryDelaySeconds = options.acsJoinerRetryDelaySeconds ?? 30;
   }
 
   /** Record a launched mission into the awaiting-arrival leg. No-op for a non-resolvable type, or a
@@ -154,12 +162,14 @@ export class BattleKeeper {
     if (this.terminal.has(mission.missionId) || this.pending.has(mission.missionId)) {
       return;
     }
+    const blocker = blockedByMissionId(mission);
     this.pending.set(mission.missionId, {
       missionId: mission.missionId,
       missionType: mission.missionType,
       leg: "arrival",
       dueAt: mission.arrivalAt,
-      returnAt: mission.returnAt
+      returnAt: mission.returnAt,
+      ...(blocker ? { blockedByMissionId: blocker } : {})
     });
     this.logger.info("[keeper] queued mission (arrival)", {
       missionId: mission.missionId,
@@ -283,13 +293,15 @@ export class BattleKeeper {
 
     if (status.status === FleetMissionStatus.Outbound) {
       if (current.leg !== "arrival") {
+        const blocker = blockedByMissionId(status);
         this.clearRetryDiagnostics(status.missionId, current.leg);
         this.pending.set(status.missionId, {
           missionId: status.missionId,
           missionType: status.missionType,
           leg: "arrival",
           dueAt: status.arrivalAt,
-          returnAt: status.returnAt
+          returnAt: status.returnAt,
+          ...(blocker ? { blockedByMissionId: blocker } : {})
         });
         this.logger.warn("[keeper] corrected pending mission back to arrival from on-chain status", {
           missionId: status.missionId,
@@ -340,11 +352,23 @@ export class BattleKeeper {
     const nowSeconds = this.now();
     const due: PendingMission[] = [];
     for (const mission of this.pending.values()) {
-      if (mission.dueAt <= nowSeconds && !this.inFlight.has(mission.missionId)) {
+      if (
+        mission.dueAt <= nowSeconds
+        && !this.inFlight.has(mission.missionId)
+        && !this.hasUnresolvedArrivalBlocker(mission)
+      ) {
         due.push(mission);
       }
     }
-    return due;
+    return due.sort(compareDueMissions);
+  }
+
+  private hasUnresolvedArrivalBlocker(mission: PendingMission): boolean {
+    if (mission.leg !== "arrival" || !mission.blockedByMissionId) {
+      return false;
+    }
+    const blocker = this.pending.get(mission.blockedByMissionId);
+    return Boolean(blocker && blocker.leg === "arrival");
   }
 
   /** One resolution pass: submit the due leg for every due mission, bounded concurrency. */
@@ -396,6 +420,26 @@ export class BattleKeeper {
     this.inFlight.add(missionId);
     try {
       const hash = await this.resolver.resolveMission(missionId, leg);
+      if (leg === "arrival") {
+        if (mission.missionType === MissionType.AcsAttack && mission.blockedByMissionId) {
+          // A joined ACS attack's resolve call is a successful no-op while the main attack is still
+          // Outbound. Wait for FleetMissionResolved/FleetMissionReturnExposed or status reconcile
+          // before moving it to return, otherwise the keeper will spam failing return completions.
+          const current = this.pending.get(missionId);
+          if (current?.leg === "arrival") {
+            this.pending.set(missionId, {
+              ...current,
+              dueAt: this.now() + this.acsJoinerRetryDelaySeconds
+            });
+          }
+          this.logger.info("[keeper] ACS joiner arrival submitted; awaiting authoritative status", {
+            missionId,
+            blockedByMissionId: mission.blockedByMissionId,
+            hash
+          });
+          return;
+        }
+      }
       this.resolvedCount += 1;
       this.lastResolvedMissionId = missionId;
       this.lastResolvedAt = new Date(this.now() * 1_000).toISOString();
@@ -532,4 +576,36 @@ export class BattleKeeper {
     this.retryDiagnostics.delete(this.retryKey(missionId, "arrival"));
     this.retryDiagnostics.delete(this.retryKey(missionId, "return"));
   }
+}
+
+function blockedByMissionId(mission: {
+  missionId: string;
+  missionType: number;
+  randomnessRequestId?: string;
+}): string | undefined {
+  if (mission.missionType !== MissionType.AcsAttack) {
+    return undefined;
+  }
+  const blocker = mission.randomnessRequestId;
+  if (!blocker || blocker === "0" || blocker === mission.missionId) {
+    return undefined;
+  }
+  return blocker;
+}
+
+function compareDueMissions(a: PendingMission, b: PendingMission): number {
+  if (a.leg !== b.leg) {
+    return a.leg === "arrival" ? -1 : 1;
+  }
+  if (a.leg === "arrival" && b.leg === "arrival") {
+    const aJoiner = a.missionType === MissionType.AcsAttack ? 1 : 0;
+    const bJoiner = b.missionType === MissionType.AcsAttack ? 1 : 0;
+    if (aJoiner !== bJoiner) {
+      return aJoiner - bJoiner;
+    }
+  }
+  if (a.dueAt !== b.dueAt) {
+    return a.dueAt - b.dueAt;
+  }
+  return BigInt(a.missionId) < BigInt(b.missionId) ? -1 : BigInt(a.missionId) > BigInt(b.missionId) ? 1 : 0;
 }

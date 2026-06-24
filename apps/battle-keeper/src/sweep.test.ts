@@ -16,7 +16,13 @@ const mockResolver: MissionResolver = {
   resolveMission: async () => "0xhash"
 };
 
-function launchedLog(missionId: bigint, missionType: number, arrivalAt: bigint, returnAt: bigint): RawLog {
+function launchedLog(
+  missionId: bigint,
+  missionType: number,
+  arrivalAt: bigint,
+  returnAt: bigint,
+  randomnessRequestId = 5n
+): RawLog {
   const topics = encodeEventTopics({
     abi: battleEventsAbi,
     eventName: "FleetMissionLaunched",
@@ -30,7 +36,7 @@ function launchedLog(missionId: bigint, missionType: number, arrivalAt: bigint, 
       { name: "returnAt", type: "uint64" },
       { name: "randomnessRequestId", type: "uint256" }
     ],
-    [100n, 200n, arrivalAt, returnAt, 5n]
+    [100n, 200n, arrivalAt, returnAt, randomnessRequestId]
   );
   return { topics: topics as string[], data };
 }
@@ -109,6 +115,7 @@ function fleetMissionResult(args: {
   missionType?: number;
   arrivalAt?: bigint;
   returnAt?: bigint;
+  randomnessRequestId?: bigint;
 } = {}): `0x${string}` {
   return encodeFunctionResult({
     abi: fleetMissionStatusAbi,
@@ -124,7 +131,7 @@ function fleetMissionResult(args: {
       args.returnAt ?? 1_500n,
       0n,
       { metal: 0n, crystal: 0n, deuterium: 0n },
-      0n
+      args.randomnessRequestId ?? 0n
     ]
   });
 }
@@ -379,5 +386,47 @@ describe("LogBackfillSweep", () => {
 
     expect(keeper.snapshot().pendingCount).toBe(0);
     expect(sweep.snapshot().prunedPendingMissions).toBe(1);
+  });
+
+  test("recovers a missing ACS attack group lead from a pending joiner status", async () => {
+    const keeper = makeKeeper(() => 2_000);
+    keeper.recordLaunched({
+      missionId: "78",
+      missionType: MissionType.AcsAttack,
+      arrivalAt: 900,
+      returnAt: 1_500,
+      randomnessRequestId: "77"
+    });
+
+    const transport = new MockTransport(
+      [],
+      [
+        fleetMissionResult({
+          status: FleetMissionStatus.Outbound,
+          missionType: MissionType.AcsAttack,
+          arrivalAt: 900n,
+          returnAt: 1_500n,
+          randomnessRequestId: 77n
+        }),
+        fleetMissionResult({
+          status: FleetMissionStatus.Outbound,
+          missionType: MissionType.Attack,
+          arrivalAt: 900n,
+          returnAt: 1_500n,
+          randomnessRequestId: 42n
+        })
+      ]
+    );
+    const sweep = new LogBackfillSweep(transport, gameContract, keeper, { logger: silentLogger });
+
+    await sweep.sweep();
+
+    expect(keeper.snapshot().pendingMissionIds.sort()).toEqual(["77", "78"]);
+    const lead = keeper.pendingMissions().find((mission) => mission.missionId === "77");
+    expect(lead).toMatchObject({
+      missionType: MissionType.Attack,
+      leg: "arrival",
+      dueAt: 900
+    });
   });
 });
