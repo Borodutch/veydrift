@@ -456,10 +456,11 @@ longer blocks the others (VEY-KANEO-466).
 Tuning env vars:
 
 ```text
-VEYDRIFT_WORKER_COUNT=<N>          # override the worker count (default: min(host CPU count, 10); set 1
-                                  # to force the original single-process behavior). Explicit positive
-                                  # overrides are honored so api-test can keep a deliberate 10-worker
-                                  # pool on large hosts.
+VEYDRIFT_WORKER_COUNT=<N>          # target worker count (default: min(host CPU count, 2); set 1 to force
+                                  # the original single-process behavior). Values above 2 are clamped
+                                  # to the deploy-safe cap.
+VEYDRIFT_MAX_WORKER_COUNT=<N>      # hard deployment cap retained for legacy service configs; this can
+                                  # lower the built-in cap but cannot raise it.
 VEYDRIFT_WRITER_INTERNAL_PORT=<P> # override the writer's private loopback write listener (default
                                   # PORT+1); only relevant when the pool has more than one worker.
                                   # VEYDRIFT_WORKER_ROLE / VEYDRIFT_WORKER_INDEX are managed internally
