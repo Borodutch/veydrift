@@ -8339,6 +8339,56 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     expect(debugBody.indexer).not.toBeNull();
   });
 
+  test("reader debug indexer exposes persisted writer chain-sync diagnostics", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-reader-debug-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    try {
+      const writerIndexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, { databasePath });
+      writerIndexer.recordWriterChainSyncDiagnostics({
+        chainSync: {
+          lastPollDurationMs: 33128,
+          lastGetLogsDurationMs: 17,
+          lastGetLogsRange: { fromBlock: "43277454", toBlock: "43277454" },
+          pollBacklogBlocks: "0",
+          recentEventReceiveLagMs: { count: 100, p50: 20263, p95: 52236, max: 62933 }
+        },
+        chainSyncRpc: {
+          callsByMethod: { eth_blockNumber: 364, eth_getLogs: 190 },
+          timeouts: 0
+        }
+      });
+      const readerIndexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, {
+        databasePath,
+        readOnly: true
+      });
+      const handler = createRequestHandler({
+        chainReader: new MockChainReader(),
+        config: { ...configuredTestConfig, indexDbPath: databasePath },
+        indexer: readerIndexer,
+        role: "reader"
+      });
+
+      const response = await handler(new Request("http://localhost/debug/indexer"));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.writerDiagnostics).toMatchObject({ source: "persisted" });
+      expect(body.chainSync).toMatchObject({
+        lastPollDurationMs: 33128,
+        lastGetLogsDurationMs: 17,
+        lastGetLogsRange: { fromBlock: "43277454", toBlock: "43277454" },
+        pollBacklogBlocks: "0",
+        recentEventReceiveLagMs: { p95: 52236 }
+      });
+      expect(body.chainSyncRpc).toMatchObject({
+        callsByMethod: { eth_getLogs: 190 },
+        timeouts: 0
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("writer workers (the default) construct chain-sync and the committer", async () => {
     const indexer = new SettlementIndexer(new MockChainReader(), 100n);
     const handler = createRequestHandler({

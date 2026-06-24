@@ -4,6 +4,7 @@ import { gzipSync } from "node:zlib";
 import { generateSystem } from "@veydrift/universe";
 import { CachedChainReader } from "./cachedReader";
 import { ChainSyncService } from "./chainSync";
+import type { ChainSyncSnapshot } from "./chainSync";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
 import {
   assertAddress,
@@ -222,10 +223,19 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       runStartupBackfill: false
     }) : undefined);
   const logBackfiller = deriveLogBackfiller(logBackfillChainReader);
+  const publishWriterChainSyncDiagnostics = (snapshot: ChainSyncSnapshot) => {
+    indexer?.recordWriterChainSyncDiagnostics?.({
+      chainSync: snapshot,
+      chainSyncRpc: logBackfiller?.rpcMetrics?.() ?? null
+    });
+  };
   const chainSync =
     dependencies.chainSync ??
     (isWriter && loaded.problems.length === 0
-      ? new ChainSyncService(loaded.config, indexer, logBackfiller ? { logBackfiller } : {})
+      ? new ChainSyncService(loaded.config, indexer, {
+        ...(logBackfiller ? { logBackfiller } : {}),
+        diagnosticsPublisher: publishWriterChainSyncDiagnostics
+      })
       : undefined);
   const randomnessCommitter =
     dependencies.randomnessCommitter ??
@@ -356,12 +366,28 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "GET" && url.pathname === "/debug/indexer") {
+      const liveChainSyncSnapshot = chainSync?.snapshot() ?? null;
+      const liveChainSyncRpc = logBackfiller?.rpcMetrics?.() ?? null;
+      if (liveChainSyncSnapshot) {
+        indexer?.recordWriterChainSyncDiagnostics?.({
+          chainSync: liveChainSyncSnapshot,
+          chainSyncRpc: liveChainSyncRpc
+        });
+      }
+      const persistedWriterDiagnostics = liveChainSyncSnapshot
+        ? null
+        : indexer?.writerChainSyncDiagnostics?.() ?? null;
       return Response.json(
         {
           indexer: indexer?.snapshot() ?? null,
-          chainSync: chainSync?.snapshot() ?? null,
+          chainSync: liveChainSyncSnapshot ?? persistedWriterDiagnostics?.chainSync ?? null,
           rpc: chainReader?.rpcMetrics?.() ?? null,
-          chainSyncRpc: logBackfiller?.rpcMetrics?.() ?? null
+          chainSyncRpc: liveChainSyncSnapshot ? liveChainSyncRpc : persistedWriterDiagnostics?.chainSyncRpc ?? null,
+          writerDiagnostics: liveChainSyncSnapshot
+            ? { source: "live", updatedAt: new Date().toISOString() }
+            : persistedWriterDiagnostics
+              ? { source: "persisted", updatedAt: persistedWriterDiagnostics.updatedAt }
+              : { source: "unavailable", updatedAt: null }
         },
         {
           headers: corsHeaders
