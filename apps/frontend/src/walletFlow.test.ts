@@ -121,11 +121,14 @@ describe("walletFlow", () => {
     expect(isBaseSepoliaChain("0x1")).toBe(false);
   });
 
-  test("encodes Burning Chicken moon burns with token id and planet id", () => {
-    expect(encodeBurningChickenMoonCall("0xe1775196", "42", "7")).toBe(
-      "0xe1775196"
+  test("encodes Burning Chicken moon burns with token id, planet id, and coordinates", () => {
+    expect(encodeBurningChickenMoonCall("0x6364233d", "42", "7", { galaxy: 1, system: 44, position: 8 })).toBe(
+      "0x6364233d"
         + "2a".padStart(64, "0")
         + "7".padStart(64, "0")
+        + "1".padStart(64, "0")
+        + "2c".padStart(64, "0")
+        + "8".padStart(64, "0")
     );
   });
 
@@ -140,9 +143,9 @@ describe("walletFlow", () => {
 
     await expect(sendBurningChickenMoonTransaction(provider, account, {
       burnContractAddress: "0x3333333333333333333333333333333333333333",
-      burnSelector: "0xe1775196",
+      burnSelector: "0x6364233d",
       nftContractAddress: "0x4444444444444444444444444444444444444444",
-    }, "42", "7")).resolves.toBe("0xchicken");
+    }, "42", "7", { galaxy: 1, system: 44, position: 8 })).resolves.toBe("0xchicken");
 
     expect(requests).toEqual([
       { method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] },
@@ -151,7 +154,7 @@ describe("walletFlow", () => {
         params: [{
           from: account,
           to: "0x3333333333333333333333333333333333333333",
-          data: encodeBurningChickenMoonCall("0xe1775196", "42", "7"),
+          data: encodeBurningChickenMoonCall("0x6364233d", "42", "7", { galaxy: 1, system: 44, position: 8 }),
         }],
       },
     ]);

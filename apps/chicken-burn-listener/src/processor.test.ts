@@ -28,6 +28,9 @@ const event: ChickenBurnEvent = {
   burner: "0x2222222222222222222222222222222222222222",
   tokenId: "42",
   planetId: "7",
+  galaxy: 1,
+  system: 99,
+  position: 8,
   sourceTxHash: `0x${"1".repeat(64)}`,
   sourceLogIndex: 0,
   sourceBlockNumber: 100n
