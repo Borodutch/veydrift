@@ -2,9 +2,10 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { generateSystem } from "@veydrift/universe";
+import { createPublicClient, webSocket, type Log as ViemLog } from "viem";
 import { CachedChainReader } from "./cachedReader";
 import { ChainSyncService } from "./chainSync";
-import type { ChainSyncSnapshot } from "./chainSync";
+import type { ChainSyncSnapshot, LiveLogSubscriber } from "./chainSync";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
 import {
   assertAddress,
@@ -223,6 +224,17 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       runStartupBackfill: false
     }) : undefined);
   const logBackfiller = deriveLogBackfiller(logBackfillChainReader);
+  const usesProductionDependencies = (
+    !dependencies.chainReader
+    && !dependencies.chainSync
+    && !dependencies.config
+    && !dependencies.indexer
+    && !dependencies.randomnessCommitter
+  );
+  const liveLogSubscriber =
+    !usesProductionDependencies || !isWriter || loaded.problems.length > 0
+      ? undefined
+      : createViemLiveLogSubscriber(loaded.config);
   const publishWriterChainSyncDiagnostics = (snapshot: ChainSyncSnapshot) => {
     indexer?.recordWriterChainSyncDiagnostics?.({
       chainSync: snapshot,
@@ -234,6 +246,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     (isWriter && loaded.problems.length === 0
       ? new ChainSyncService(loaded.config, indexer, {
         ...(logBackfiller ? { logBackfiller } : {}),
+        ...(liveLogSubscriber ? { liveLogSubscriber } : {}),
         diagnosticsPublisher: publishWriterChainSyncDiagnostics
       })
       : undefined);
@@ -283,13 +296,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const inflightResponseCache = new Map<string, Promise<CachedJsonResponse | null>>();
   const readRateLimits = new Map<string, { count: number; resetAt: number }>();
   const galaxySystemCache = new Map<string, GalaxySystemCacheEntry>();
-  const usesProductionDependencies = (
-    !dependencies.chainReader
-    && !dependencies.chainSync
-    && !dependencies.config
-    && !dependencies.indexer
-    && !dependencies.randomnessCommitter
-  );
   const enableResponseCache = dependencies.enableResponseCache ?? usesProductionDependencies;
   const logRequests = dependencies.logRequests ?? (
     usesProductionDependencies
@@ -1320,6 +1326,80 @@ export function deriveLogBackfiller(
     };
   }
   return undefined;
+}
+
+export function createViemLiveLogSubscriber(config: BackendConfig): LiveLogSubscriber | undefined {
+  if (!config.wsRpcUrl) return undefined;
+
+  const client = createPublicClient({
+    transport: webSocket(config.wsRpcUrl, {
+      keepAlive: true,
+      reconnect: true,
+      retryCount: 10,
+      timeout: 10_000
+    })
+  });
+  const blockTimestampCache = new Map<string, Promise<string | undefined>>();
+
+  const timestampForBlock = (blockNumber: bigint): Promise<string | undefined> => {
+    const key = blockNumber.toString();
+    let cached = blockTimestampCache.get(key);
+    if (!cached) {
+      cached = client
+        .getBlock({ blockNumber })
+        .then((block) => block.timestamp.toString())
+        .catch((error) => {
+          console.warn("Veydrift viem websocket block timestamp lookup failed", error);
+          return undefined;
+        });
+      blockTimestampCache.set(key, cached);
+      if (blockTimestampCache.size > 256) {
+        const oldest = blockTimestampCache.keys().next().value;
+        if (oldest) blockTimestampCache.delete(oldest);
+      }
+    }
+    return cached;
+  };
+
+  return {
+    subscribe({ addresses, onError, onLogs }) {
+      return client.watchEvent({
+        address: addresses,
+        batch: false,
+        onError,
+        onLogs(logs) {
+          void Promise.all(logs.map((log) => normalizeViemLog(log, timestampForBlock)))
+            .then((normalizedLogs) => {
+              const usableLogs = normalizedLogs.filter((log): log is RpcLog => log !== null);
+              if (usableLogs.length > 0) onLogs(usableLogs);
+            })
+            .catch(onError);
+        }
+      });
+    }
+  };
+}
+
+async function normalizeViemLog(
+  log: ViemLog,
+  timestampForBlock: (blockNumber: bigint) => Promise<string | undefined>
+): Promise<RpcLog | null> {
+  if (log.blockNumber === null || log.transactionHash === null) return null;
+  const blockTimestamp = await timestampForBlock(log.blockNumber);
+  return {
+    blockNumber: toQuantity(log.blockNumber),
+    transactionHash: log.transactionHash,
+    topics: log.topics.filter((topic): topic is `0x${string}` => typeof topic === "string"),
+    data: log.data,
+    ...(log.address ? { address: log.address } : {}),
+    ...(typeof log.logIndex === "number" ? { logIndex: toQuantity(BigInt(log.logIndex)) } : {}),
+    ...(blockTimestamp ? { blockTimestamp } : {}),
+    ...(log.removed ? { removed: true } : {})
+  };
+}
+
+function toQuantity(value: bigint): `0x${string}` {
+  return `0x${value.toString(16)}`;
 }
 
 function rpcUrlsForConfig(config: BackendConfig): string[] {
