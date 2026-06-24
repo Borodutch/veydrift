@@ -189,36 +189,27 @@ describe("BattleKeeper pending tracking", () => {
     expect(snap.pendingMissionIds).toEqual(["9"]);
   });
 
-  test("an ACS attack joiner waits behind its pending main attack", async () => {
+  test("an ACS attack joiner launch queues the main attack group id instead", async () => {
     const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => 1_000, maxConcurrency: 1 });
     keeper.recordLaunched(launch("78", MissionType.AcsAttack, 900, 1_500, "77"));
     keeper.recordLaunched(launch("77", MissionType.Attack, 900, 1_500));
 
+    expect(keeper.snapshot().pendingMissionIds).toEqual(["77"]);
+
     await keeper.tick();
 
     expect(resolver.calls).toEqual(["77:arrival"]);
-    expect(keeper.snapshot().pendingMissionIds).toContain("78");
+    expect(keeper.snapshot().pendingMissionIds).not.toContain("78");
   });
 
-  test("an ACS joiner arrival submit waits for authoritative status before queueing return", async () => {
-    const { keeper, resolver } = makeKeeper(async () => "0xhash", {
-      now: () => 1_000,
-      acsJoinerRetryDelaySeconds: 60
-    });
+  test("an ACS joiner without a separate lead launch still submits only the main attack group id", async () => {
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => 1_000 });
     keeper.recordLaunched(launch("78", MissionType.AcsAttack, 900, 1_500, "77"));
 
     await keeper.tick();
 
-    expect(resolver.calls).toEqual(["78:arrival"]);
-    const pending = keeper.pendingMissions();
-    expect(pending).toEqual([
-      expect.objectContaining({
-        missionId: "78",
-        leg: "arrival",
-        dueAt: 1_060
-      })
-    ]);
-    expect(keeper.snapshot().awaitingReturnCount).toBe(0);
+    expect(resolver.calls).toEqual(["77:arrival"]);
+    expect(keeper.snapshot().pendingMissionIds).not.toContain("78");
   });
 
   test("recordReturned drops a mission from the return leg", () => {

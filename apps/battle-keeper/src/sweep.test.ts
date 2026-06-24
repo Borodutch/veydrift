@@ -388,7 +388,7 @@ describe("LogBackfillSweep", () => {
     expect(sweep.snapshot().prunedPendingMissions).toBe(1);
   });
 
-  test("recovers a missing ACS attack group lead from a pending joiner status", async () => {
+  test("canonicalizes a pending ACS joiner to the attack group lead", async () => {
     const keeper = makeKeeper(() => 2_000);
     keeper.recordLaunched({
       missionId: "78",
@@ -421,7 +421,7 @@ describe("LogBackfillSweep", () => {
 
     await sweep.sweep();
 
-    expect(keeper.snapshot().pendingMissionIds.sort()).toEqual(["77", "78"]);
+    expect(keeper.snapshot().pendingMissionIds).toEqual(["77"]);
     const lead = keeper.pendingMissions().find((mission) => mission.missionId === "77");
     expect(lead).toMatchObject({
       missionType: MissionType.Attack,

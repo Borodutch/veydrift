@@ -41,8 +41,6 @@ export type PendingMission = {
   dueAt: number;
   /** Known return time (from the launch event, refined by FleetMissionResolved). */
   returnAt: number;
-  /** For ACS attack joiners, the main attack mission that must resolve first. */
-  blockedByMissionId?: string;
 };
 
 export type PendingMissionDiagnostic = {
@@ -93,7 +91,6 @@ export type BattleKeeperOptions = {
   maxConcurrency?: number;
   now?: () => number;
   logger?: KeeperLogger;
-  acsJoinerRetryDelaySeconds?: number;
 };
 
 /**
@@ -108,7 +105,9 @@ export type BattleKeeperOptions = {
  * The keeper resolves whichever leg is due so nothing waits on a player's mutating call.
  *
  * Invariants:
- *  - Every outbound mission type is tracked for its arrival; round-trip types also get a return leg.
+ *  - Every outbound mission type is tracked for its arrival; ACS attack joiner launches are
+ *    canonicalized to the main attack group id before tracking.
+ *  - Round-trip types also get a return leg after authoritative resolve/return-exposed status.
  *  - A terminal mission (FleetMissionReturned, or arrival-resolved with no return) is never re-added.
  *  - A mission with an in-flight submission is never submitted again (idempotent / no double-submit).
  *  - A revert (arrival: randomness not ready; return: not due / wrong status) leaves the mission
@@ -123,7 +122,6 @@ export class BattleKeeper {
   private readonly maxConcurrency: number;
   private readonly now: () => number;
   private readonly logger: KeeperLogger;
-  private readonly acsJoinerRetryDelaySeconds: number;
   /** Re-entrancy guard so overlapping timers (resolve loop + sweep) never run tick() concurrently —
    * concurrent ticks would submit different missions in parallel and collide on the keeper EOA nonce. */
   private ticking = false;
@@ -149,33 +147,32 @@ export class BattleKeeper {
     this.maxConcurrency = options.maxConcurrency ?? 3;
     this.now = options.now ?? (() => Math.floor(Date.now() / 1_000));
     this.logger = options.logger ?? consoleLogger;
-    this.acsJoinerRetryDelaySeconds = options.acsJoinerRetryDelaySeconds ?? 30;
   }
 
   /** Record a launched mission into the awaiting-arrival leg. No-op for a non-resolvable type, or a
    * mission we have already settled or are already tracking (any leg). */
   recordLaunched(mission: LaunchedMission): void {
-    if (!keeperResolvableMissionTypes.has(mission.missionType)) {
+    const canonicalMission = canonicalLaunchedMission(mission);
+    if (!keeperResolvableMissionTypes.has(canonicalMission.missionType)) {
       return;
     }
-    this.knownMissionTypes.set(mission.missionId, mission.missionType);
-    if (this.terminal.has(mission.missionId) || this.pending.has(mission.missionId)) {
+    this.knownMissionTypes.set(canonicalMission.missionId, canonicalMission.missionType);
+    if (this.terminal.has(canonicalMission.missionId) || this.pending.has(canonicalMission.missionId)) {
       return;
     }
-    const blocker = blockedByMissionId(mission);
-    this.pending.set(mission.missionId, {
-      missionId: mission.missionId,
-      missionType: mission.missionType,
+    this.pending.set(canonicalMission.missionId, {
+      missionId: canonicalMission.missionId,
+      missionType: canonicalMission.missionType,
       leg: "arrival",
-      dueAt: mission.arrivalAt,
-      returnAt: mission.returnAt,
-      ...(blocker ? { blockedByMissionId: blocker } : {})
+      dueAt: canonicalMission.arrivalAt,
+      returnAt: canonicalMission.returnAt
     });
     this.logger.info("[keeper] queued mission (arrival)", {
-      missionId: mission.missionId,
-      missionType: missionTypeNames[mission.missionType] ?? mission.missionType,
-      arrivalAt: mission.arrivalAt,
-      returnAt: mission.returnAt
+      missionId: canonicalMission.missionId,
+      missionType: missionTypeNames[canonicalMission.missionType] ?? canonicalMission.missionType,
+      arrivalAt: canonicalMission.arrivalAt,
+      returnAt: canonicalMission.returnAt,
+      ...(canonicalMission.sourceMissionId ? { sourceMissionId: canonicalMission.sourceMissionId } : {})
     });
   }
 
@@ -286,6 +283,20 @@ export class BattleKeeper {
    * terminal ids (Resolved/Returned/None), corrects an arrival that already became Returning/Recalled,
    * and moves a wrongly-tracked return back to arrival if the chain still says Outbound. */
   reconcileMissionStatus(status: MissionStatusSnapshot): void {
+    if (isAcsJoiner(status)) {
+      const wasTracked = this.pending.delete(status.missionId);
+      this.inFlight.delete(status.missionId);
+      this.clearRetryDiagnostics(status.missionId);
+      this.recordLaunched(canonicalLaunchedMission(status));
+      if (wasTracked) {
+        this.logger.warn("[keeper] replaced ACS joiner pending mission with attack group lead", {
+          missionId: status.missionId,
+          attackGroupMissionId: status.randomnessRequestId
+        });
+      }
+      return;
+    }
+
     const current = this.pending.get(status.missionId);
     if (!current || this.inFlight.has(status.missionId)) {
       return;
@@ -293,15 +304,13 @@ export class BattleKeeper {
 
     if (status.status === FleetMissionStatus.Outbound) {
       if (current.leg !== "arrival") {
-        const blocker = blockedByMissionId(status);
         this.clearRetryDiagnostics(status.missionId, current.leg);
         this.pending.set(status.missionId, {
           missionId: status.missionId,
           missionType: status.missionType,
           leg: "arrival",
           dueAt: status.arrivalAt,
-          returnAt: status.returnAt,
-          ...(blocker ? { blockedByMissionId: blocker } : {})
+          returnAt: status.returnAt
         });
         this.logger.warn("[keeper] corrected pending mission back to arrival from on-chain status", {
           missionId: status.missionId,
@@ -352,23 +361,11 @@ export class BattleKeeper {
     const nowSeconds = this.now();
     const due: PendingMission[] = [];
     for (const mission of this.pending.values()) {
-      if (
-        mission.dueAt <= nowSeconds
-        && !this.inFlight.has(mission.missionId)
-        && !this.hasUnresolvedArrivalBlocker(mission)
-      ) {
+      if (mission.dueAt <= nowSeconds && !this.inFlight.has(mission.missionId)) {
         due.push(mission);
       }
     }
     return due.sort(compareDueMissions);
-  }
-
-  private hasUnresolvedArrivalBlocker(mission: PendingMission): boolean {
-    if (mission.leg !== "arrival" || !mission.blockedByMissionId) {
-      return false;
-    }
-    const blocker = this.pending.get(mission.blockedByMissionId);
-    return Boolean(blocker && blocker.leg === "arrival");
   }
 
   /** One resolution pass: submit the due leg for every due mission, bounded concurrency. */
@@ -420,26 +417,6 @@ export class BattleKeeper {
     this.inFlight.add(missionId);
     try {
       const hash = await this.resolver.resolveMission(missionId, leg);
-      if (leg === "arrival") {
-        if (mission.missionType === MissionType.AcsAttack && mission.blockedByMissionId) {
-          // A joined ACS attack's resolve call is a successful no-op while the main attack is still
-          // Outbound. Wait for FleetMissionResolved/FleetMissionReturnExposed or status reconcile
-          // before moving it to return, otherwise the keeper will spam failing return completions.
-          const current = this.pending.get(missionId);
-          if (current?.leg === "arrival") {
-            this.pending.set(missionId, {
-              ...current,
-              dueAt: this.now() + this.acsJoinerRetryDelaySeconds
-            });
-          }
-          this.logger.info("[keeper] ACS joiner arrival submitted; awaiting authoritative status", {
-            missionId,
-            blockedByMissionId: mission.blockedByMissionId,
-            hash
-          });
-          return;
-        }
-      }
       this.resolvedCount += 1;
       this.lastResolvedMissionId = missionId;
       this.lastResolvedAt = new Date(this.now() * 1_000).toISOString();
@@ -578,31 +555,40 @@ export class BattleKeeper {
   }
 }
 
-function blockedByMissionId(mission: {
+function isAcsJoiner(mission: {
   missionId: string;
   missionType: number;
   randomnessRequestId?: string;
-}): string | undefined {
+}): boolean {
   if (mission.missionType !== MissionType.AcsAttack) {
-    return undefined;
+    return false;
   }
-  const blocker = mission.randomnessRequestId;
-  if (!blocker || blocker === "0" || blocker === mission.missionId) {
-    return undefined;
+  const attackGroupMissionId = mission.randomnessRequestId;
+  return Boolean(
+    attackGroupMissionId &&
+    attackGroupMissionId !== "0" &&
+    attackGroupMissionId !== mission.missionId
+  );
+}
+
+function canonicalLaunchedMission(
+  mission: LaunchedMission | MissionStatusSnapshot
+): LaunchedMission & { sourceMissionId?: string } {
+  if (!isAcsJoiner(mission)) {
+    return mission;
   }
-  return blocker;
+  return {
+    missionId: mission.randomnessRequestId!,
+    missionType: MissionType.Attack,
+    arrivalAt: mission.arrivalAt,
+    returnAt: mission.returnAt,
+    sourceMissionId: mission.missionId
+  };
 }
 
 function compareDueMissions(a: PendingMission, b: PendingMission): number {
   if (a.leg !== b.leg) {
     return a.leg === "arrival" ? -1 : 1;
-  }
-  if (a.leg === "arrival" && b.leg === "arrival") {
-    const aJoiner = a.missionType === MissionType.AcsAttack ? 1 : 0;
-    const bJoiner = b.missionType === MissionType.AcsAttack ? 1 : 0;
-    if (aJoiner !== bJoiner) {
-      return aJoiner - bJoiner;
-    }
   }
   if (a.dueAt !== b.dueAt) {
     return a.dueAt - b.dueAt;
