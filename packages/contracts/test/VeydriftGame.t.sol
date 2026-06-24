@@ -1669,6 +1669,41 @@ contract VeydriftGameTest is Test {
         _assertLastPlanetSettledMatchesPreview(targetPlanetId);
     }
 
+    function testAttackRaidPlundersAccruedTargetResourcesAtImpact() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setBuildingLevel(targetPlanetId, Building.MetalMine, 10);
+        _setBuildingLevel(targetPlanetId, Building.SolarPlant, 20);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 2_000, 0, 10_000);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            _smallCargoManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            778
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        VeydriftGameStorage.Resources memory targetResourcesAtImpact =
+            game.previewResources(targetPlanetId);
+        assertGt(targetResourcesAtImpact.metal, 2_000);
+        _fulfillAttackBattleRandomness(missionId, 778);
+        game.resolveFleetMission(missionId);
+
+        (,,, VeydriftGameStorage.Resources memory attackCargo) = _fleetMission(missionId);
+        assertEq(attackCargo.metal, targetResourcesAtImpact.metal / 2);
+        assertEq(
+            game.planet(targetPlanetId).resources.metal,
+            targetResourcesAtImpact.metal - attackCargo.metal
+        );
+        assertEq(game.planet(targetPlanetId).lastSettledAt, arrivalAt);
+    }
+
     /// @dev Credit/loot paths (market deposit, fleet-return cargo, raid debit) intentionally do not
     ///      re-settle the planet to `block.timestamp` before emitting: the authoritative event carries
     ///      the *stored* balance plus the planet's current `lastSettledAt`, which is exactly what the
