@@ -1,7 +1,11 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { gzipSync } from "node:zlib";
 import { generateSystem } from "@veydrift/universe";
+import { createPublicClient, webSocket, type Log as ViemLog } from "viem";
 import { CachedChainReader } from "./cachedReader";
 import { ChainSyncService } from "./chainSync";
+import type { ChainSyncSnapshot, LiveLogSubscriber } from "./chainSync";
 import { loadBackendConfig, safeConfigSummary, type BackendConfig, type ConfigProblem } from "./config";
 import {
   assertAddress,
@@ -25,6 +29,7 @@ import {
   type ManagedPlanet,
   type PlanetState,
   type PlayerQueues,
+  type QueueState,
   type ResearchState,
   type Resources,
   type RiftState,
@@ -32,6 +37,7 @@ import {
   type SettledPlanetEvent,
   type ShipyardState,
   type StationedDefenderSummary,
+  HttpJsonRpcTransport,
   VeydriftGameReader
 } from "./evm";
 import { highscoreCategories, highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
@@ -55,7 +61,15 @@ import {
 } from "./playerProfiles";
 import { deriveInfrastructureFields, isCombatShipId } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
-import type { WorkerRole } from "./workerPool";
+import { responseCachePath, SharedResponseCache } from "./sharedResponseCache";
+import {
+  DEFAULT_MAX_WORKER_COUNT,
+  resolveWorkerCount,
+  WORKER_COUNT_ENV,
+  WORKER_INDEX_ENV,
+  WORKER_ROLE_ENV,
+  type WorkerRole
+} from "./workerPool";
 
 const jsonHeaders = {
   "content-type": "application/json; charset=utf-8"
@@ -90,10 +104,19 @@ type HealthPayload = {
 type RuntimeConfig = {
   allianceContractAddress: string | null;
   apiUrl: string;
+  backend: BackendDeploymentMetadata;
+  burningChicken: {
+    burnContractAddress: string | null;
+    burnSelector: string | null;
+    levelSelector: string | null;
+    nftContractAddress: string | null;
+    rpcUrl: string | null;
+  };
   chainId: number;
   contractAddress: string | null;
   featureSupport: {
     allianceConfigured: boolean;
+    chickenBurnConfigured: boolean;
     gameConfigured: boolean;
     highscoresEndpoint: boolean;
     moonConfigured: boolean;
@@ -113,6 +136,22 @@ type RuntimeConfig = {
     metal: string | null;
   };
   rpcProvider: "alchemy" | "unknown";
+};
+
+type BackendDeploymentMetadata = {
+  build: {
+    deploymentAbiHash: string | null;
+    deploymentCommit: string | null;
+    deploymentTimestamp: string | null;
+    gitSha: string | null;
+    gitShaSource: string | null;
+  };
+  worker: {
+    count: number;
+    defaultMaxWorkerCount: number;
+    index: number | null;
+    role: WorkerRole;
+  };
 };
 
 export type ServerDependencies = {
@@ -136,6 +175,9 @@ export type ServerDependencies = {
   enableResponseCache?: boolean;
   // Test seam for disabling asynchronous production cache prewarming while exercising the response cache.
   prewarmResponseCache?: boolean;
+  // Test seam for request access logging. Production construction enables it by default.
+  logRequests?: boolean;
+  sharedResponseCache?: SharedResponseCache | null;
 };
 
 const defaultUniverseSeed = "veydrift-mainnet-preview";
@@ -145,7 +187,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   // serve from the shared WAL database and must not start any background loop (VEY-KANEO-466). Tests
   // that inject services bypass this entirely. Default is "writer" so single-process and test setups
   // keep their current behavior.
-  const isWriter = (dependencies.role ?? "writer") !== "reader";
+  const workerRole = dependencies.role ?? envWorkerRole();
+  const isWriter = workerRole !== "reader";
   const loaded = dependencies.config ? { config: dependencies.config, problems: dependencies.configProblems ?? [] } : loadBackendConfig();
   const rawChainReader =
     dependencies.chainReader ??
@@ -156,7 +199,20 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     dependencies.chainReader
       ? chainReader
       : loaded.problems.length === 0
-        ? new VeydriftGameReader(loaded.config)
+        ? new VeydriftGameReader(loaded.config, undefined, { hydrateQueueStartedAt: false })
+        : undefined;
+  const logBackfillChainReader =
+    dependencies.chainReader
+      ? chainReader
+      : loaded.problems.length === 0
+        ? new VeydriftGameReader(
+          loaded.config,
+          new HttpJsonRpcTransport(rpcUrlsForConfig(loaded.config), {
+            cacheTtlMs: 0,
+            minRequestIntervalMs: 0
+          }),
+          { hydrateQueueStartedAt: false }
+        )
         : undefined;
   const indexer =
     dependencies.indexer ??
@@ -171,15 +227,38 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       // VEY-KANEO-485: bound the cold wipe->reindex chain reads so a stall surfaces a real error and the
       // boot-time recovery retries, instead of an indefinite silent reconciliation_in_progress.
       ...(loaded.config.rebuildDeadlineMs ? { rebuildDeadlineMs: loaded.config.rebuildDeadlineMs } : {}),
-      // The shared SQLite materialized-state repair is a startup write pass. In the worker pool it must
-      // run once in the writer, not once per reader, or deploy boot can turn into an event-replay stampede.
-      runStartupBackfill: isWriter
+      readOnly: !isWriter,
+      // Startup should only create/upgrade schema. Historical materialized-state repair can scan large
+      // persisted event tables, so keep it on explicit operator replay/sync commands instead of blocking
+      // backend boot and starving trivial endpoints such as /runtime-config.
+      runStartupBackfill: false
     }) : undefined);
-  const logBackfiller = deriveLogBackfiller(indexerChainReader);
+  const logBackfiller = deriveLogBackfiller(logBackfillChainReader);
+  const usesProductionDependencies = (
+    !dependencies.chainReader
+    && !dependencies.chainSync
+    && !dependencies.config
+    && !dependencies.indexer
+    && !dependencies.randomnessCommitter
+  );
+  const liveLogSubscriber =
+    !usesProductionDependencies || !isWriter || loaded.problems.length > 0
+      ? undefined
+      : createViemLiveLogSubscriber(loaded.config);
+  const publishWriterChainSyncDiagnostics = (snapshot: ChainSyncSnapshot) => {
+    indexer?.recordWriterChainSyncDiagnostics?.({
+      chainSync: snapshot,
+      chainSyncRpc: logBackfiller?.rpcMetrics?.() ?? null
+    });
+  };
   const chainSync =
     dependencies.chainSync ??
     (isWriter && loaded.problems.length === 0
-      ? new ChainSyncService(loaded.config, indexer, logBackfiller ? { logBackfiller } : {})
+      ? new ChainSyncService(loaded.config, indexer, {
+        ...(logBackfiller ? { logBackfiller } : {}),
+        ...(liveLogSubscriber ? { liveLogSubscriber } : {}),
+        diagnosticsPublisher: publishWriterChainSyncDiagnostics
+      })
       : undefined);
   const randomnessCommitter =
     dependencies.randomnessCommitter ??
@@ -212,13 +291,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         console.error("Veydrift current-state heal failed", error);
       });
   }
-  if (cacheReader) {
-    chainSync?.addListener((event) => {
-      if (event.kind === "chain-event") {
-        cacheReader.clear();
-      }
-    });
-  }
   if (isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
     const checkpointWal = () => {
       try {
@@ -238,15 +310,22 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
   const responseCache = new Map<string, CachedJsonResponse>();
   const inflightResponseCache = new Map<string, Promise<CachedJsonResponse | null>>();
+  const readRateLimits = new Map<string, { count: number; resetAt: number }>();
   const galaxySystemCache = new Map<string, GalaxySystemCacheEntry>();
-  const enableResponseCache = dependencies.enableResponseCache ?? (
-    !dependencies.chainReader
-    && !dependencies.chainSync
-    && !dependencies.config
-    && !dependencies.indexer
-    && !dependencies.randomnessCommitter
+  const enableResponseCache = dependencies.enableResponseCache ?? usesProductionDependencies;
+  const logRequests = dependencies.logRequests ?? (
+    usesProductionDependencies
   );
-  const prewarmResponseCache = dependencies.prewarmResponseCache ?? enableResponseCache;
+  const sharedResponseCache = dependencies.sharedResponseCache !== undefined
+    ? dependencies.sharedResponseCache
+    : enableResponseCache && loaded.problems.length === 0
+      ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
+      : null;
+  // Prewarming walks broad indexed read surfaces. Keep it on the private writer by default so public
+  // readers do not block their event loops while building broad route caches.
+  const prewarmResponseCache = dependencies.prewarmResponseCache ?? (
+    usesProductionDependencies && isWriter && enableResponseCache
+  );
 
   const routeRequest = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -260,20 +339,22 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname === "/health") {
       const chainSyncSnapshot = chainSync?.snapshot() ?? null;
-      const indexerSnapshot = indexer?.snapshot() ?? null;
+      const indexerSnapshot = isWriter ? (indexer?.snapshot() ?? null) : null;
       const readiness = backendReadiness(loaded.problems, chainSyncSnapshot, indexerSnapshot);
       return Response.json(
         {
           ok: readiness.ready,
           service: "veydrift-backend",
           configured: loaded.problems.length === 0,
+          backend: backendDeploymentMetadata(workerRole),
           chain: safeConfigSummary(loaded.config),
           readiness,
           chainSync: chainSyncSnapshot,
           missionResolution: missionResolution?.snapshot() ?? null,
           randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
           indexer: indexerSnapshot,
-          rpc: chainReader?.rpcMetrics?.() ?? null
+          rpc: chainReader?.rpcMetrics?.() ?? null,
+          chainSyncRpc: logBackfiller?.rpcMetrics?.() ?? null
         } satisfies HealthPayload & Record<string, unknown>,
         {
           headers: corsHeaders,
@@ -283,9 +364,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "GET" && url.pathname === "/runtime-config") {
-      return Response.json(getRuntimeConfig(), {
-        headers: corsHeaders
-      });
+      return runtimeConfigResponse(workerRole);
     }
 
     if (request.method === "GET" && url.pathname === "/raid-finder/debris") {
@@ -310,11 +389,28 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "GET" && url.pathname === "/debug/indexer") {
+      const liveChainSyncSnapshot = chainSync?.snapshot() ?? null;
+      const liveChainSyncRpc = logBackfiller?.rpcMetrics?.() ?? null;
+      if (liveChainSyncSnapshot) {
+        indexer?.recordWriterChainSyncDiagnostics?.({
+          chainSync: liveChainSyncSnapshot,
+          chainSyncRpc: liveChainSyncRpc
+        });
+      }
+      const persistedWriterDiagnostics = liveChainSyncSnapshot
+        ? null
+        : indexer?.writerChainSyncDiagnostics?.() ?? null;
       return Response.json(
         {
           indexer: indexer?.snapshot() ?? null,
-          chainSync: chainSync?.snapshot() ?? null,
-          rpc: chainReader?.rpcMetrics?.() ?? null
+          chainSync: liveChainSyncSnapshot ?? persistedWriterDiagnostics?.chainSync ?? null,
+          rpc: chainReader?.rpcMetrics?.() ?? null,
+          chainSyncRpc: liveChainSyncSnapshot ? liveChainSyncRpc : persistedWriterDiagnostics?.chainSyncRpc ?? null,
+          writerDiagnostics: liveChainSyncSnapshot
+            ? { source: "live", updatedAt: new Date().toISOString() }
+            : persistedWriterDiagnostics
+              ? { source: "persisted", updatedAt: persistedWriterDiagnostics.updatedAt }
+              : { source: "unavailable", updatedAt: null }
         },
         {
           headers: corsHeaders
@@ -339,7 +435,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         return unavailableResponse(loaded.problems);
       }
 
-      return new Response(chainSync.eventStream(), {
+      return new Response(chainSync.eventStream(request.signal), {
         headers: {
           ...corsHeaders,
           "cache-control": "no-cache",
@@ -496,7 +592,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         assertAddress(wallet);
         if (!indexer || !hasWarmPlanetIndex(indexer)) return indexedReadNotReadyResponse("watched planets", indexer, indexedReadLookup(url, wallet));
         return indexedJsonResponse(
-          await watchedPlanetsResponse(indexer, wallet, url, loaded.config),
+          watchedPlanetsResponse(indexer, wallet, url, loaded.config),
           indexer.snapshot()
         );
       } catch (error) {
@@ -570,7 +666,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/queues$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "player queues", indexedPlayerQueues);
+        return indexedWalletStateResponse(url, indexer, "player queues", indexedPlayerQueues);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -579,7 +675,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) {
       try {
         const includeArchive = url.searchParams.get("archive") === "full" || url.searchParams.get("archive") === "true";
-        return await indexedWalletStateResponse(url, indexer, "fleet visibility", (wallet, settlement, planet, detail, indexer) =>
+        return indexedWalletStateResponse(url, indexer, "fleet visibility", (wallet, settlement, planet, detail, indexer) =>
           indexedFleetVisibility(wallet, settlement, planet, detail, indexer, { includeArchive }), {
           includeSelectedPlanet: false
         });
@@ -590,7 +686,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "mission archive", (wallet, _settlement, _planet, _detail, indexer) =>
+        return indexedWalletStateResponse(url, indexer, "mission archive", (wallet, _settlement, _planet, _detail, indexer) =>
           indexedMissionArchive(wallet, url, indexer), {
           includeSelectedPlanet: false
         });
@@ -720,7 +816,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/infrastructure$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "infrastructure", indexedInfrastructureState);
+        return indexedWalletStateResponse(url, indexer, "infrastructure", indexedInfrastructureState);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -732,7 +828,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const planetId = selectedPlanetId(url);
-        const indexed = await indexedWarmResponse(indexer, wallet, planetId, "moon", indexedMoonState);
+        const indexed = indexedWarmResponse(indexer, wallet, planetId, "moon", indexedMoonState);
         if (indexed) {
           return moonTimedResponse(indexed, readStartedAt);
         }
@@ -744,7 +840,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/shipyard$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "shipyard", indexedShipyardState);
+        return indexedWalletStateResponse(url, indexer, "shipyard", indexedShipyardState);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -752,7 +848,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/defenses$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "defenses", indexedDefenseState);
+        return indexedWalletStateResponse(url, indexer, "defenses", indexedDefenseState);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -760,7 +856,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/research$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "research", indexedResearchState);
+        return indexedWalletStateResponse(url, indexer, "research", indexedResearchState);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -806,7 +902,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/rift$/)) {
       try {
-        return await indexedWalletStateResponse(url, indexer, "rift", indexedRiftState);
+        return indexedWalletStateResponse(url, indexer, "rift", indexedRiftState);
       } catch (error) {
         return errorResponse(error, 400);
       }
@@ -948,7 +1044,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const system = Number.parseInt(parts[5] ?? "", 10);
       let payload;
       try {
-        payload = await cachedGalaxySystemPayload(
+        payload = cachedGalaxySystemPayload(
           galaxySystemCache,
           {
             chainId: loaded.config.chainId,
@@ -980,7 +1076,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             galaxy,
             center,
             radius,
-            systems: await Promise.all(Array.from({ length: to - from + 1 }, async (_, index) => {
+            systems: Array.from({ length: to - from + 1 }, (_, index) => {
               const system = from + index;
               return cachedGalaxySystemPayload(
                 galaxySystemCache,
@@ -992,7 +1088,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
                   indexer
                 }
               );
-            }))
+            })
           },
           {
             headers: corsHeaders
@@ -1056,7 +1152,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     }
 
     if (request.method === "POST" && url.pathname === "/graphql") {
-      return handleGraphQLRequest(request);
+      return handleGraphQLRequest(request, workerRole);
     }
 
     if (request.method === "GET" && url.pathname === "/graphql") {
@@ -1066,7 +1162,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             service: {
               name: "Veydrift",
               status: loaded.problems.length === 0 ? "ready" : "configuration-required",
-              runtime: getRuntimeConfig()
+              runtime: getRuntimeConfig(workerRole)
             }
           }
         },
@@ -1088,54 +1184,134 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   };
 
   const serveWithResponseCache = async (request: Request): Promise<Response> => {
-    const url = new URL(request.url);
-    const cacheTtlMs = enableResponseCache ? cacheableJsonRequestTtlMs(request, url) : 0;
-    if (cacheTtlMs > 0) {
-      const cacheKey = cacheableJsonRequestKey(request, url, indexer);
-      const cached = responseCache.get(cacheKey);
-      if (cached && cached.expiresAt > Date.now()) {
-        return withRequestCors(request, cachedJsonResponse(cached));
-      }
-
-      const inflight = inflightResponseCache.get(cacheKey);
-      if (inflight) {
-        const coalesced = await inflight;
-        if (coalesced) return withRequestCors(request, cachedJsonResponse(coalesced));
-      }
-
-      let resolveInflight: (cached: CachedJsonResponse | null) => void;
-      inflightResponseCache.set(cacheKey, new Promise((resolve) => {
-        resolveInflight = resolve;
-      }));
-
-      const response = await routeRequest(request);
-      if (response.status === 200 && jsonContentType(response.headers.get("content-type"))) {
-        const body = await response.clone().arrayBuffer();
-        const headers: Array<[string, string]> = [];
-        response.headers.forEach((value, key) => headers.push([key, value]));
-        const cachedResponse = {
-          body,
-          expiresAt: Date.now() + cacheTtlMs,
-          headers,
-          status: response.status,
-          statusText: response.statusText
-        };
-        responseCache.set(cacheKey, cachedResponse);
-        pruneResponseCache(responseCache);
-        resolveInflight!(cachedResponse);
-        inflightResponseCache.delete(cacheKey);
-        return withRequestCors(request, cachedJsonResponse(cachedResponse));
-      }
-      resolveInflight!(null);
-      inflightResponseCache.delete(cacheKey);
-      return withRequestCors(request, response);
+    if (request.signal.aborted) {
+      return new Response(null, { status: 499, statusText: "Client Closed Request" });
     }
 
-    return withRequestCors(request, await routeRequest(request));
+    let removeAbortListener: (() => void) | undefined;
+    const aborted = new Promise<Response>((resolve) => {
+      const onAbort = () => {
+        resolve(new Response(null, { status: 499, statusText: "Client Closed Request" }));
+      };
+      request.signal.addEventListener("abort", onAbort, { once: true });
+      removeAbortListener = () => request.signal.removeEventListener("abort", onAbort);
+    });
+    const serve = async (): Promise<Response> => {
+      const url = new URL(request.url);
+      if (isBootstrapReadPath(url.pathname)) {
+        return withRequestCors(request, await routeRequest(request));
+      }
+
+      const cacheTtlMs = enableResponseCache ? cacheableJsonRequestTtlMs(request, url) : 0;
+      if (cacheTtlMs > 0) {
+        const cacheKey = cacheableJsonRequestKey(request, url, indexer);
+        const staleCacheKey = cacheableJsonRequestStaleKey(request, url);
+        const cached = responseCache.get(cacheKey);
+        const now = Date.now();
+        if (cached && cached.expiresAt > now) {
+          return withRequestCors(request, cachedJsonResponse(request, cached));
+        }
+        const sharedCached = sharedResponseCache?.get(cacheKey, now);
+        if (sharedCached) {
+          responseCache.set(cacheKey, sharedCached);
+          return withRequestCors(request, cachedJsonResponse(request, sharedCached));
+        }
+        if (cached && cached.expiresAt + staleCachedJsonWindowMs > now) {
+          if (!inflightResponseCache.has(cacheKey)) {
+            let resolveRefresh: (cached: CachedJsonResponse | null) => void;
+            const refresh = new Promise<CachedJsonResponse | null>((resolve) => {
+              resolveRefresh = resolve;
+            });
+            inflightResponseCache.set(cacheKey, refresh);
+            void refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedResponseCache, cacheKey, cacheTtlMs, staleCacheKey)
+              .then((refreshed) => resolveRefresh!(refreshed.cached))
+              .catch(() => resolveRefresh!(null))
+              .finally(() => {
+                inflightResponseCache.delete(cacheKey);
+              });
+          }
+          return withRequestCors(request, cachedJsonResponse(request, cached));
+        }
+        const sharedCache = sharedResponseCache;
+        const sharedStale = sharedCache?.get(cacheKey, now, true);
+        if (sharedCache && sharedStale) {
+          responseCache.set(cacheKey, sharedStale);
+          if (sharedCache.tryAcquireRefresh(cacheKey)) {
+            void refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedCache, cacheKey, cacheTtlMs, staleCacheKey)
+              .catch(() => null)
+              .finally(() => sharedCache.releaseRefresh(cacheKey));
+          }
+          return withRequestCors(request, cachedJsonResponse(request, sharedStale));
+        }
+        const sharedVersionlessStale = staleCacheKey !== cacheKey
+          ? sharedCache?.get(staleCacheKey, now, true)
+          : null;
+        if (sharedCache && sharedVersionlessStale) {
+          responseCache.set(cacheKey, sharedVersionlessStale);
+          if (sharedCache.tryAcquireRefresh(cacheKey)) {
+            void refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedCache, cacheKey, cacheTtlMs, staleCacheKey)
+              .catch(() => null)
+              .finally(() => sharedCache.releaseRefresh(cacheKey));
+          }
+          return withRequestCors(request, cachedJsonResponse(request, sharedVersionlessStale));
+        }
+
+        const inflight = inflightResponseCache.get(cacheKey);
+        if (inflight) {
+          const refreshed = await inflight;
+          if (refreshed) {
+            return withRequestCors(request, cachedJsonResponse(request, refreshed));
+          }
+        }
+
+        const rateLimited = readRateLimitResponse(request, url, readRateLimits);
+        if (rateLimited) return withRequestCors(request, rateLimited);
+
+        const ownsSharedRefresh = sharedResponseCache?.tryAcquireRefresh(cacheKey) ?? false;
+        if (sharedResponseCache && !ownsSharedRefresh) {
+          const refreshed = sharedResponseCache.get(cacheKey);
+          if (refreshed) {
+            responseCache.set(cacheKey, refreshed);
+            return withRequestCors(request, cachedJsonResponse(request, refreshed));
+          }
+        }
+
+        let resolveInflight: (cached: CachedJsonResponse | null) => void;
+        inflightResponseCache.set(cacheKey, new Promise((resolve) => {
+          resolveInflight = resolve;
+        }));
+
+        try {
+          const refreshed = await refreshCachedJsonResponse(request, url, routeRequest, responseCache, sharedResponseCache, cacheKey, cacheTtlMs, staleCacheKey);
+          if (refreshed.cached) {
+            resolveInflight!(refreshed.cached);
+            inflightResponseCache.delete(cacheKey);
+            return withRequestCors(request, cachedJsonResponse(request, refreshed.cached));
+          }
+          resolveInflight!(null);
+          inflightResponseCache.delete(cacheKey);
+          return withRequestCors(request, refreshed.response);
+        } finally {
+          if (ownsSharedRefresh) sharedResponseCache?.releaseRefresh(cacheKey);
+        }
+      }
+
+      const rateLimited = readRateLimitResponse(request, url, readRateLimits);
+      if (rateLimited) return withRequestCors(request, rateLimited);
+      return withRequestCors(request, await routeRequest(request));
+    };
+
+    try {
+      return await Promise.race([serve(), aborted]);
+    } catch (error) {
+      return withRequestCors(request, errorResponse(error, isSqliteBusyError(error) ? 503 : 500));
+    } finally {
+      removeAbortListener?.();
+    }
   };
 
-  prewarmHotResponseCache(serveWithResponseCache, indexer, prewarmResponseCache);
-  return serveWithResponseCache;
+  prewarmHotResponseCache(serveWithResponseCache, indexer, prewarmResponseCache, prewarmStartDelayMs());
+  return logRequests ? requestLoggingHandler(serveWithResponseCache, workerRole) : serveWithResponseCache;
 }
 
 /**
@@ -1148,8 +1324,10 @@ export function deriveLogBackfiller(
   reader: ChainReader | undefined
 ):
   | {
+      failoverRpc?: (reason: string) => boolean;
       getHeadBlock: () => Promise<bigint>;
       listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
+      rpcMetrics?: () => unknown;
     }
   | undefined {
   if (
@@ -1158,11 +1336,94 @@ export function deriveLogBackfiller(
     typeof reader.getBlockNumber === "function"
   ) {
     return {
+      ...(typeof reader.failoverRpc === "function" ? { failoverRpc: reader.failoverRpc.bind(reader) } : {}),
       getHeadBlock: reader.getBlockNumber.bind(reader),
-      listContractLogs: reader.listContractLogs.bind(reader)
+      listContractLogs: reader.listContractLogs.bind(reader),
+      ...(typeof reader.rpcMetrics === "function" ? { rpcMetrics: reader.rpcMetrics.bind(reader) } : {})
     };
   }
   return undefined;
+}
+
+export function createViemLiveLogSubscriber(config: BackendConfig): LiveLogSubscriber | undefined {
+  if (!config.wsRpcUrl) return undefined;
+
+  const client = createPublicClient({
+    transport: webSocket(config.wsRpcUrl, {
+      keepAlive: true,
+      reconnect: true,
+      retryCount: 10,
+      timeout: 10_000
+    })
+  });
+  const blockTimestampCache = new Map<string, Promise<string | undefined>>();
+
+  const timestampForBlock = (blockNumber: bigint): Promise<string | undefined> => {
+    const key = blockNumber.toString();
+    let cached = blockTimestampCache.get(key);
+    if (!cached) {
+      cached = client
+        .getBlock({ blockNumber })
+        .then((block) => block.timestamp.toString())
+        .catch((error) => {
+          console.warn("Veydrift viem websocket block timestamp lookup failed", error);
+          return undefined;
+        });
+      blockTimestampCache.set(key, cached);
+      if (blockTimestampCache.size > 256) {
+        const oldest = blockTimestampCache.keys().next().value;
+        if (oldest) blockTimestampCache.delete(oldest);
+      }
+    }
+    return cached;
+  };
+
+  return {
+    subscribe({ addresses, onError, onLogs }) {
+      return client.watchEvent({
+        address: addresses,
+        batch: false,
+        onError,
+        onLogs(logs) {
+          void Promise.all(logs.map((log) => normalizeViemLog(log, timestampForBlock)))
+            .then((normalizedLogs) => {
+              const usableLogs = normalizedLogs.filter((log): log is RpcLog => log !== null);
+              if (usableLogs.length > 0) onLogs(usableLogs);
+            })
+            .catch(onError);
+        }
+      });
+    }
+  };
+}
+
+async function normalizeViemLog(
+  log: ViemLog,
+  timestampForBlock: (blockNumber: bigint) => Promise<string | undefined>
+): Promise<RpcLog | null> {
+  if (log.blockNumber === null || log.transactionHash === null) return null;
+  const blockTimestamp = await timestampForBlock(log.blockNumber);
+  return {
+    blockNumber: toQuantity(log.blockNumber),
+    transactionHash: log.transactionHash,
+    topics: log.topics.filter((topic): topic is `0x${string}` => typeof topic === "string"),
+    data: log.data,
+    ...(log.address ? { address: log.address } : {}),
+    ...(typeof log.logIndex === "number" ? { logIndex: toQuantity(BigInt(log.logIndex)) } : {}),
+    ...(blockTimestamp ? { blockTimestamp } : {}),
+    ...(log.removed ? { removed: true } : {})
+  };
+}
+
+function toQuantity(value: bigint): `0x${string}` {
+  return `0x${value.toString(16)}`;
+}
+
+function rpcUrlsForConfig(config: BackendConfig): string[] {
+  return [
+    config.rpcUrl,
+    ...(config.rpcFallbackUrls ?? [])
+  ].filter((url): url is string => Boolean(url && url.trim().length > 0));
 }
 
 function withRequestCors(request: Request, response: Response): Response {
@@ -1174,6 +1435,43 @@ function withRequestCors(request: Request, response: Response): Response {
     status: response.status,
     statusText: response.statusText
   });
+}
+
+function requestLoggingHandler(
+  serve: (request: Request) => Promise<Response>,
+  workerRole: WorkerRole
+): (request: Request) => Promise<Response> {
+  return async (request: Request): Promise<Response> => {
+    const startedAt = performance.now();
+    const url = new URL(request.url);
+    try {
+      const response = await serve(request);
+      logApiRequest(request, url, workerRole, response.status, performance.now() - startedAt);
+      return response;
+    } catch (error) {
+      logApiRequest(request, url, workerRole, 500, performance.now() - startedAt, error);
+      throw error;
+    }
+  };
+}
+
+function logApiRequest(
+  request: Request,
+  url: URL,
+  workerRole: WorkerRole,
+  status: number,
+  durationMs: number,
+  error?: unknown
+): void {
+  const entry = {
+    durationMs: Math.round(durationMs),
+    method: request.method,
+    path: `${url.pathname}${url.search}`,
+    status,
+    workerRole,
+    ...(error ? { error: reasonText(error) } : {})
+  };
+  console.info("veydrift-api-request", JSON.stringify(entry));
 }
 
 function allowedCorsOrigin(request: Request): string {
@@ -1217,6 +1515,93 @@ function isIndexableChainReader(
   );
 }
 
+const readRateLimitWindowMs = 10_000;
+const readRateLimitMaxRequests = 40;
+const staleCachedJsonWindowMs = 300_000;
+
+function readRateLimitResponse(
+  request: Request,
+  url: URL,
+  limits: Map<string, { count: number; resetAt: number }>
+): Response | null {
+  return limitedReadResponse(request, url, limits, readRateLimitMaxRequests, "route");
+}
+
+function limitedReadResponse(
+  request: Request,
+  url: URL,
+  limits: Map<string, { count: number; resetAt: number }>,
+  maxRequests: number,
+  scope: "client" | "route" = "client"
+): Response | null {
+  if (request.method !== "GET") return null;
+  if (url.pathname === "/health" || url.pathname === "/debug/indexer") return null;
+  if (!isRateLimitedReadPath(url.pathname)) return null;
+
+  const now = Date.now();
+  if (limits.size > 2_048) {
+    for (const [key, value] of limits) {
+      if (value.resetAt <= now) limits.delete(key);
+      if (limits.size <= 2_048) break;
+    }
+  }
+
+  const clientKey = requestClientKey(request);
+  if (!clientKey) return null;
+  const key = scope === "route" ? `${clientKey} ${url.pathname}${url.search}` : clientKey;
+  const current = limits.get(key);
+  if (!current || current.resetAt <= now) {
+    limits.set(key, { count: 1, resetAt: now + readRateLimitWindowMs });
+    return null;
+  }
+  current.count += 1;
+  if (current.count <= maxRequests) return null;
+
+  return Response.json(
+    {
+      error: "rate_limited",
+      message: "Too many refresh requests. Please wait a moment and retry."
+    },
+    {
+      headers: {
+        ...corsHeaders,
+        "retry-after": String(Math.ceil((current.resetAt - now) / 1_000))
+      },
+      status: 429
+    }
+  );
+}
+
+function isRateLimitedReadPath(pathname: string): boolean {
+  return pathname === "/chain/events"
+    || pathname === "/missions"
+    || pathname === "/highscores"
+    || pathname.startsWith("/wallet/")
+    || pathname.startsWith("/universe/")
+    || pathname.startsWith("/raid-finder/");
+}
+
+function isBootstrapReadPath(pathname: string): boolean {
+  return pathname === "/runtime-config" || pathname === "/health";
+}
+
+function requestClientKey(request: Request): string | null {
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  const realIp = request.headers.get("x-real-ip")?.trim();
+  return forwarded || realIp || null;
+}
+
+function sharedResponseCacheForIndex(indexDbPath: string): SharedResponseCache | null {
+  const path = responseCachePath(indexDbPath);
+  if (!path) return null;
+  try {
+    return new SharedResponseCache(path);
+  } catch (error) {
+    console.warn("Veydrift shared response cache unavailable", reasonText(error));
+    return null;
+  }
+}
+
 // Predicate kept for diagnostics/tests: true when a warm DB inherited a recorded reconcile failure
 // (lastReconciliationError set, not currently reconciling). The backend no longer auto-runs canonical
 // reconcile at startup; recovery is an explicit operator action or event-log replay.
@@ -1231,41 +1616,136 @@ export function shouldRecoverFailedReconciliation(
 type CachedJsonResponse = {
   body: ArrayBuffer;
   expiresAt: number;
+  gzipBody?: ArrayBuffer;
   headers: Array<[string, string]>;
   status: number;
   statusText: string;
 };
 
+type CachedJsonRefreshResult =
+  | { cached: CachedJsonResponse; response?: never }
+  | { cached: null; response: Response };
+
+async function refreshCachedJsonResponse(
+  request: Request,
+  url: URL,
+  routeRequest: (request: Request) => Promise<Response>,
+  responseCache: Map<string, CachedJsonResponse>,
+  sharedResponseCache: SharedResponseCache | null | undefined,
+  cacheKey: string,
+  cacheTtlMs: number,
+  staleCacheKey = cacheKey
+): Promise<CachedJsonRefreshResult> {
+  const response = await routeRequest(request);
+  if (response.status !== 200 || !jsonContentType(response.headers.get("content-type"))) {
+    return { cached: null, response };
+  }
+
+  const body = await response.clone().arrayBuffer();
+  const responseHeaders = new Headers(response.headers);
+  responseHeaders.set("cache-control", clientCacheControlHeader(url, cacheTtlMs));
+  const headers: Array<[string, string]> = [];
+  responseHeaders.forEach((value, key) => headers.push([key, value]));
+  const cached = {
+    body,
+    expiresAt: Date.now() + cacheTtlMs,
+    headers,
+    status: response.status,
+    statusText: response.statusText
+  };
+  responseCache.set(cacheKey, cached);
+  sharedResponseCache?.set(cacheKey, cached, cached.expiresAt + staleCachedJsonWindowMs);
+  if (staleCacheKey !== cacheKey) {
+    sharedResponseCache?.set(staleCacheKey, cached, cached.expiresAt + staleCachedJsonWindowMs);
+  }
+  pruneResponseCache(responseCache);
+  return { cached };
+}
+
 function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (request.method !== "GET") return 0;
   if (url.pathname === "/chain/events") return 0;
   if (url.pathname === "/health") return 10_000;
-  if (url.pathname === "/debug/indexer") return 2_000;
+  if (url.pathname === "/debug/indexer") return 10_000;
   if (url.pathname === "/highscores") return 300_000;
-  if (url.pathname === "/missions") return 60_000;
-  if (url.pathname.match(/^\/mission\/[^/]+$/)) return 60_000;
+  if (url.pathname === "/raid-finder/debris") return 30_000;
+  // Mission-control reads are backed by the mission read-model version in responseCacheVersion(), so
+  // they stay fresh across indexed mission events while still coalescing repeated UI refreshes.
+  if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return 30_000;
+  if (url.pathname === "/missions") return 300_000;
+  if (url.pathname.match(/^\/mission\/[^/]+$/)) return 30_000;
+  if (cacheableWalletSnapshotPath(url.pathname)) return 15_000;
+  if (url.pathname.match(/^\/wallet\/[^/]+\/(?:shipyard|defenses)$/)) return 0;
+  if (url.pathname.startsWith("/wallet/")) return 5_000;
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return 30_000;
   if (url.pathname === "/universe/systems") return 30_000;
-  if (url.pathname.match(/^\/wallet\/[^/]+\/(?:overview|fleet-visibility|missions)$/)) {
-    return 60_000;
-  }
-  if (url.pathname.match(/^\/wallet\/[^/]+\/(?:settlement|planets|queues|infrastructure|moon|shipyard|defenses|research|rift|highscore)$/)) {
-    return 10_000;
-  }
   return 0;
 }
 
+function cacheableWalletSnapshotPath(pathname: string): boolean {
+  if (!pathname.startsWith("/wallet/")) return false;
+  if (pathname.match(/^\/wallet\/[^/]+\/(?:shipyard|defenses)(?:$|\?)/)) return false;
+  return Boolean(pathname.match(
+    /^\/wallet\/[^/]+\/(?:overview|infrastructure|moon|planets|settlement|queues|research|rift|alliance|profile|highscore|fleet-visibility|attack-protection)$/
+  ));
+}
+
 function cacheableJsonRequestKey(request: Request, url: URL, indexer: SettlementIndexer | undefined): string {
-  const indexerVersion = indexer ? indexer.responseCacheVersion() : "none";
+  const indexerVersion = indexer ? cacheableJsonRequestVersion(url, indexer) : "none";
   return `${request.method} ${url.pathname}${url.search} indexer=${indexerVersion}`;
 }
 
-function cachedJsonResponse(cached: CachedJsonResponse): Response {
-  return new Response(cached.body.slice(0), {
-    headers: cached.headers,
+function cacheableJsonRequestStaleKey(request: Request, url: URL): string {
+  return `${request.method} ${url.pathname}${url.search} indexer=stale`;
+}
+
+function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): string {
+  if (url.pathname === "/health") return "ttl";
+  if (url.pathname === "/debug/indexer") return "ttl";
+  if (url.pathname === "/highscores") return "ttl";
+  if (url.pathname === "/raid-finder/debris") return "ttl";
+  if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return indexer.missionResponseCacheVersion();
+  if (url.pathname === "/missions") return "ttl";
+  if (url.pathname.match(/^\/mission\/[^/]+$/)) return indexer.missionResponseCacheVersion();
+  if (cacheableWalletSnapshotPath(url.pathname)) return indexer.responseCacheVersion();
+  if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return "ttl";
+  if (url.pathname === "/universe/systems") return "ttl";
+  return indexer.responseCacheVersion();
+}
+
+function clientCacheControlHeader(url: URL, ttlMs: number): string {
+  const seconds = Math.max(1, Math.floor(ttlMs / 1_000));
+  const scope = url.pathname.startsWith("/wallet/") ? "private" : "public";
+  return `${scope}, max-age=${seconds}, stale-while-revalidate=${seconds}`;
+}
+
+function cachedJsonResponse(request: Request, cached: CachedJsonResponse): Response {
+  const headers = new Headers(cached.headers);
+  const shouldGzip = cached.body.byteLength > 2_048 && requestAcceptsGzip(request) && !headers.has("content-encoding");
+  const body = shouldGzip ? cachedGzipBody(cached) : cached.body.slice(0);
+
+  if (shouldGzip) {
+    headers.set("content-encoding", "gzip");
+    headers.set("content-length", String(body.byteLength));
+    appendVaryHeader(headers, "Accept-Encoding");
+  }
+
+  return new Response(body, {
+    headers,
     status: cached.status,
     statusText: cached.statusText
   });
+}
+
+function requestAcceptsGzip(request: Request): boolean {
+  return /\bgzip\b/i.test(request.headers.get("accept-encoding") ?? "");
+}
+
+function cachedGzipBody(cached: CachedJsonResponse): ArrayBuffer {
+  if (cached.gzipBody) return cached.gzipBody.slice(0);
+  const compressed = gzipSync(new Uint8Array(cached.body));
+  cached.gzipBody = compressed.buffer.slice(compressed.byteOffset, compressed.byteOffset + compressed.byteLength);
+  return cached.gzipBody.slice(0);
 }
 
 function jsonContentType(value: string | null): boolean {
@@ -1285,21 +1765,21 @@ function pruneResponseCache(cache: Map<string, CachedJsonResponse>): void {
 function prewarmHotResponseCache(
   serve: (request: Request) => Promise<Response>,
   indexer: SettlementIndexer | undefined,
-  enabled: boolean
+  enabled: boolean,
+  startDelayMs = 0
 ): void {
   if (!enabled || !indexer) return;
 
-  let paths: string[] = [];
-  try {
-    indexer.allActiveFleetMissions();
-    globalMissionArchiveRows(indexer);
-    paths = hotResponseCachePaths(indexer);
-  } catch {
-    // Best-effort only. A cold/stale index should not make worker startup fail.
-  }
-
   const timer = setTimeout(() => {
     void (async () => {
+      let paths: string[] = [];
+      try {
+        indexer.allActiveFleetMissions();
+        globalMissionArchiveRows(indexer);
+        paths = hotResponseCachePaths(indexer);
+      } catch {
+        // Best-effort only. A cold/stale index should not make worker startup fail.
+      }
       for (const path of paths) {
         try {
           const response = await serve(new Request(`http://localhost${path}`));
@@ -1307,16 +1787,25 @@ function prewarmHotResponseCache(
         } catch {
           // Best-effort only. A cold/stale index should not make worker startup fail.
         }
+        await delay(0);
       }
     })();
-  }, 0);
+  }, startDelayMs);
   timer.unref?.();
+}
+
+function prewarmStartDelayMs(): number {
+  const parsedIndex = Number.parseInt(process.env[WORKER_INDEX_ENV] ?? "0", 10);
+  const index = Number.isFinite(parsedIndex) ? Math.max(0, parsedIndex) : 0;
+  return 500 + index * 250;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function hotResponseCachePaths(indexer: SettlementIndexer): string[] {
   const paths = new Set<string>([
-    "/health",
-    "/runtime-config",
     "/highscores?page=1&pageSize=250",
     "/missions?status=active",
     "/missions?status=completed&page=1&pageSize=25"
@@ -1336,6 +1825,7 @@ function hotResponseCachePaths(indexer: SettlementIndexer): string[] {
   for (const [wallet, planets] of indexer.settledPlanetsByOwner()) {
     const encodedWallet = encodeURIComponent(wallet);
     paths.add(`/wallet/${encodedWallet}/fleet-visibility`);
+    paths.add(`/wallet/${encodedWallet}/fleet-visibility?archive=none`);
     paths.add(`/wallet/${encodedWallet}/missions?status=completed&page=1&pageSize=25`);
     paths.add(`/wallet/${encodedWallet}/settlement`);
     paths.add(`/wallet/${encodedWallet}/planets`);
@@ -1480,16 +1970,16 @@ type IndexedWarmBuilder<T extends object> = (
   indexer: SettlementIndexer
 ) => T;
 
-async function indexedWalletStateResponse<T extends object>(
+function indexedWalletStateResponse<T extends object>(
   url: URL,
   indexer: SettlementIndexer | undefined,
   surface: string,
   build: IndexedWarmBuilder<T>,
   options: { includeSelectedPlanet?: boolean } = {}
-): Promise<Response> {
+): Response {
   const wallet = walletAddressFromPath(url);
   const planetId = options.includeSelectedPlanet === false ? undefined : selectedPlanetId(url);
-  const indexed = await indexedWarmResponse(indexer, wallet, planetId, surface, build);
+  const indexed = indexedWarmResponse(indexer, wallet, planetId, surface, build);
   return indexed ?? indexedReadNotReadyResponse(surface, indexer, indexedReadLookup(url, wallet));
 }
 
@@ -1507,13 +1997,13 @@ function indexedReadLookup(url: URL, wallet: `0x${string}`): IndexedReadLookupCo
   };
 }
 
-async function indexedWarmResponse<T extends object>(
+function indexedWarmResponse<T extends object>(
   indexer: SettlementIndexer | undefined,
   wallet: `0x${string}`,
   selectedPlanetId: bigint | undefined,
   surface: string,
   build: IndexedWarmBuilder<T>
-): Promise<Response | null> {
+): Response | null {
   if (!indexer) return null;
 
   if (!hasWarmPlanetIndex(indexer)) return null;
@@ -1666,19 +2156,19 @@ function indexedWalletPlanets(
   };
 }
 
-async function watchedPlanetsResponse(
+function watchedPlanetsResponse(
   indexer: SettlementIndexer,
   wallet: `0x${string}`,
   url: URL,
   config: BackendConfig
-): Promise<{
+): {
   wallet: `0x${string}`;
   watchedPlanetIds: string[];
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
   planets: GalaxySystemPayload["planets"];
   detail: string;
   stale: boolean;
-}> {
+} {
   const page = positiveIntegerQuery(url, "page", 1, 1_000_000);
   const pageSize = positiveIntegerQuery(url, "pageSize", 25, 100);
   const watched = indexer.watchedPlanets(wallet, page, pageSize);
@@ -1755,11 +2245,9 @@ function accruedPlanetState<T extends PlanetState | null>(
 ): T {
   if (!planet) return planet;
 
-  const { buildings, ships, technologyLevels } = indexer.resourceProjectionRows(planet.planetId, planet.owner);
-  const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
   return {
     ...planet,
-    resources: resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt)
+    resources: accruedResourcesWithBuildingQueue(indexer, planet)
   };
 }
 
@@ -1804,33 +2292,14 @@ function indexedFleetVisibility(
   indexer: SettlementIndexer,
   options: { includeArchive?: boolean } = {}
 ): FleetMissionVisibility {
-  const visibility = indexer.fleetMissionVisibility(wallet);
+  const visibility = indexer.fleetMissionVisibility(
+    wallet,
+    options.includeArchive === undefined ? {} : { includeArchive: options.includeArchive }
+  );
   if (options.includeArchive === false) {
-    return {
-      ...visibility,
-      completedMissions: [],
-      battleReports: activeMissionBattleReports(visibility)
-    };
+    return visibility;
   }
   return visibility;
-}
-
-function activeMissionBattleReports(visibility: FleetMissionVisibility): FleetMissionVisibility["battleReports"] {
-  const activeMissionIds = new Set(
-    [
-      ...visibility.incoming,
-      ...visibility.outgoing,
-      ...visibility.returning,
-      ...visibility.joinableAttacks,
-    ].map((mission) => mission.missionId)
-  );
-  if (activeMissionIds.size === 0) return [];
-
-  return visibility.battleReports.filter((report) =>
-    activeMissionIds.has(report.missionId)
-      || (report.attackGroupId ? activeMissionIds.has(report.attackGroupId) : false)
-      || report.participants.some((participant) => activeMissionIds.has(participant.missionId))
-  );
 }
 
 function expectsBattleReport(mission: FleetMissionSummary): boolean {
@@ -1918,7 +2387,12 @@ function globalMissionArchiveRows(indexer: SettlementIndexer): FleetMissionArchi
   const cached = globalMissionArchiveRowsCache.get(indexer);
   if (cached && cached.stateVersion === stateVersion && cached.expiresAt > Date.now()) return cached.rows;
 
-  const rows = chronologicalMissionArchiveRows(indexer.allCompletedFleetMissions(), indexer.battleReports());
+  const completedMissions = indexer.completedFleetMissionsFromCanonicalRows();
+  const rows = (completedMissions.length > 0 ? completedMissions : indexer.allCompletedFleetMissions())
+    .map((mission): FleetMissionArchiveEntry => ({
+      kind: "mission",
+      mission
+    }));
   globalMissionArchiveRowsCache.set(indexer, {
     expiresAt: Date.now() + 60_000,
     stateVersion,
@@ -2233,12 +2707,11 @@ type GalaxySystemPayload = Omit<SystemSnapshot, "planets"> & {
 };
 
 type GalaxySystemCacheEntry = {
-  indexerVersion: number;
-  projectionBucket: number;
+  indexerVersion: string;
   payload: GalaxySystemPayload;
 };
 
-async function cachedGalaxySystemPayload(
+function cachedGalaxySystemPayload(
   cache: Map<string, GalaxySystemCacheEntry>,
   input: {
     chainId: number;
@@ -2247,9 +2720,8 @@ async function cachedGalaxySystemPayload(
     system: number;
     indexer: SettlementIndexer | undefined;
   }
-): Promise<GalaxySystemPayload> {
-  const indexerVersion = input.indexer?.stateVersion() ?? 0;
-  const projectionBucket = input.indexer ? Math.floor(Date.now() / 5_000) : 0;
+): GalaxySystemPayload {
+  const indexerVersion = input.indexer?.responseCacheVersion() ?? "none";
   const cacheKey = [
     input.chainId,
     input.settlementContractAddress.toLowerCase(),
@@ -2260,22 +2732,20 @@ async function cachedGalaxySystemPayload(
   if (
     cached
     && cached.indexerVersion === indexerVersion
-    && cached.projectionBucket === projectionBucket
   ) {
     return cached.payload;
   }
 
-  const payload = await galaxySystemPayload(input);
+  const payload = galaxySystemPayload(input);
   cache.set(cacheKey, {
     indexerVersion,
-    projectionBucket,
     payload
   });
   pruneGalaxySystemCache(cache);
   return payload;
 }
 
-async function galaxySystemPayload({
+function galaxySystemPayload({
   chainId,
   settlementContractAddress,
   galaxy,
@@ -2287,7 +2757,7 @@ async function galaxySystemPayload({
   galaxy: number;
   system: number;
   indexer: SettlementIndexer | undefined;
-}): Promise<GalaxySystemPayload> {
+}): GalaxySystemPayload {
   const baseSnapshot = systemSnapshot(
     chainId,
     settlementContractAddress,
@@ -2312,7 +2782,7 @@ async function galaxySystemPayload({
       report
     ])
   );
-  const allianceIntel = await allianceIntelForOccupiedPlanets(
+  const allianceIntel = allianceIntelForOccupiedPlanets(
     Array.from(occupied.values()),
     indexer
   );
@@ -2530,10 +3000,102 @@ function resourceWithClaimableAccrual(
   return Math.floor(currentValue + Math.min(produced, remainingCapacity)).toString();
 }
 
-async function allianceIntelForOccupiedPlanets(
+function accruedResourcesWithBuildingQueue(
+  indexer: SettlementIndexer,
+  planet: SettledPlanetEvent | PlanetState,
+  now = Date.now()
+): Resources {
+  const lastSettledAtSeconds = Number(planet.lastSettledAt);
+  if (!Number.isFinite(lastSettledAtSeconds) || lastSettledAtSeconds <= 0) return planet.resources;
+
+  const nowSeconds = Math.floor(now / 1_000);
+  if (nowSeconds <= lastSettledAtSeconds) return planet.resources;
+
+  const completed = indexer.completedBuildingQueues(planet.planetId)
+    .filter((queue) => typeof queue.itemId === "number" && typeof queue.targetLevel === "number")
+    .filter((queue, index, queues) => (
+      queues.findIndex((candidate) => (
+        candidate.itemId === queue.itemId
+          && candidate.targetLevel === queue.targetLevel
+          && candidate.readyAt === queue.readyAt
+      )) === index
+    ))
+    .sort(compareQueueReadyAt);
+
+  if (completed.length === 0) {
+    const { buildings, ships, technologyLevels } = indexer.resourceProjectionRows(planet.planetId, planet.owner);
+    const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
+    return resourcesWithClaimableAccrual(
+      planet.resources,
+      derived.productionPerHour,
+      derived.storageCaps,
+      planet.lastSettledAt,
+      now
+    );
+  }
+
+  const projectionRows = indexer.resourceProjectionRows(planet.planetId, planet.owner);
+  let buildings = projectionRows.buildings;
+  let resources = planet.resources;
+  let cursor = lastSettledAtSeconds;
+
+  for (const queue of completed) {
+    const readyAt = Number(queue.readyAt);
+    if (!Number.isFinite(readyAt) || readyAt > nowSeconds) continue;
+
+    if (readyAt > cursor) {
+      const derived = deriveInfrastructureFields(planet, buildings, projectionRows.ships, projectionRows.technologyLevels);
+      resources = resourcesWithClaimableAccrualByElapsed(
+        resources,
+        derived.productionPerHour,
+        derived.storageCaps,
+        Math.floor(readyAt - cursor)
+      );
+      cursor = readyAt;
+    }
+
+    buildings = buildings.map((building) => (
+      building.id === queue.itemId && typeof queue.targetLevel === "number"
+        ? { ...building, level: Math.max(building.level, queue.targetLevel) }
+        : building
+    ));
+  }
+
+  if (nowSeconds > cursor) {
+    const derived = deriveInfrastructureFields(planet, buildings, projectionRows.ships, projectionRows.technologyLevels);
+    resources = resourcesWithClaimableAccrualByElapsed(
+      resources,
+      derived.productionPerHour,
+      derived.storageCaps,
+      Math.floor(nowSeconds - cursor)
+    );
+  }
+
+  return resources;
+}
+
+function resourcesWithClaimableAccrualByElapsed(
+  current: Resources,
+  productionPerHour: Resources | null,
+  storageCaps: Resources | null,
+  elapsedSeconds: number
+): Resources {
+  if (!productionPerHour || !storageCaps || elapsedSeconds <= 0) return current;
+  return {
+    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds),
+    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds),
+    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds)
+  };
+}
+
+function compareQueueReadyAt(left: QueueState, right: QueueState): number {
+  return Number(left.readyAt ?? "0") - Number(right.readyAt ?? "0");
+}
+
+function allianceIntelForOccupiedPlanets(
   planets: readonly SettledPlanetEvent[],
   indexer: SettlementIndexer | undefined
-): Promise<Map<string, AllianceIdentity>> {
+): Map<string, AllianceIdentity> {
   return allianceIntelForPlayers(planets.map((planet) => planet.owner), indexer);
 }
 
@@ -2582,7 +3144,37 @@ function moonChanceStatus(report: MoonChanceReportEvent): string {
   return report.moonCreated ? "created" : "not_created";
 }
 
-function getRuntimeConfig(): RuntimeConfig {
+export function runtimeConfigResponse(workerRole: WorkerRole = envWorkerRole()): Response {
+  return Response.json(getRuntimeConfig(workerRole), {
+    headers: corsHeaders
+  });
+}
+
+export function readerBootstrapHealthResponse(workerRole: WorkerRole = envWorkerRole()): Response {
+  const loaded = loadBackendConfig();
+  const readiness = backendReadiness(loaded.problems, null, null);
+  return Response.json(
+    {
+      ok: readiness.ready,
+      service: "veydrift-backend",
+      configured: loaded.problems.length === 0,
+      backend: backendDeploymentMetadata(workerRole),
+      chain: safeConfigSummary(loaded.config),
+      readiness,
+      chainSync: null,
+      missionResolution: null,
+      randomnessCommitter: null,
+      indexer: null,
+      rpc: null
+    } satisfies HealthPayload & Record<string, unknown>,
+    {
+      headers: corsHeaders,
+      status: readiness.ready ? 200 : 503
+    }
+  );
+}
+
+function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConfig {
   const apiUrl = process.env.VEYDRIFT_PUBLIC_API_URL ?? "https://api-test.veydrift.com";
   const graphqlUrl = process.env.VEYDRIFT_PUBLIC_GRAPHQL_URL ?? `${apiUrl}/graphql`;
   const rpcUrl = process.env.VEYDRIFT_RPC_URL ?? "";
@@ -2597,6 +3189,11 @@ function getRuntimeConfig(): RuntimeConfig {
   const moonContractAddress = process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS ?? null;
   const randomnessEngineAddress = process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS ?? null;
   const allianceContractAddress = process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS ?? null;
+  const burningChickenNftContractAddress = process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS ?? null;
+  const burningChickenBurnContractAddress = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS ?? null;
+  const burningChickenBurnSelector = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR ?? "0x6364233d";
+  const burningChickenLevelSelector = process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR ?? "0x05c58df2";
+  const burningChickenRpcUrl = process.env.VEYDRIFT_BASE_MAINNET_RPC_URL ?? "https://mainnet.base.org";
   const resourceTokenAddresses = {
     crystal: process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS ?? null,
     deuterium: process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS ?? null,
@@ -2606,10 +3203,23 @@ function getRuntimeConfig(): RuntimeConfig {
   return {
     allianceContractAddress,
     apiUrl,
+    backend: backendDeploymentMetadata(workerRole),
+    burningChicken: {
+      burnContractAddress: burningChickenBurnContractAddress,
+      burnSelector: burningChickenBurnSelector,
+      levelSelector: burningChickenLevelSelector,
+      nftContractAddress: burningChickenNftContractAddress,
+      rpcUrl: burningChickenRpcUrl
+    },
     chainId: Number.parseInt(process.env.VEYDRIFT_CHAIN_ID ?? "84532", 10),
     contractAddress,
     featureSupport: {
       allianceConfigured: Boolean(allianceContractAddress),
+      chickenBurnConfigured: Boolean(
+        burningChickenNftContractAddress
+          && burningChickenBurnContractAddress
+          && burningChickenBurnSelector
+      ),
       gameConfigured: Boolean(gameContractAddress),
       highscoresEndpoint: true,
       moonConfigured: Boolean(moonContractAddress),
@@ -2630,6 +3240,72 @@ function getRuntimeConfig(): RuntimeConfig {
     resourceTokenAddresses,
     rpcProvider: rpcUrl.includes("alchemy") ? "alchemy" : "unknown"
   };
+}
+
+function envWorkerRole(): WorkerRole {
+  return process.env[WORKER_ROLE_ENV] === "reader" ? "reader" : "writer";
+}
+
+function backendDeploymentMetadata(role: WorkerRole): BackendDeploymentMetadata {
+  const parsedIndex = Number.parseInt(process.env[WORKER_INDEX_ENV] ?? (role === "writer" ? "0" : ""), 10);
+  const build = backendBuildMetadata(process.env);
+  return {
+    build,
+    worker: {
+      count: resolveWorkerCount(process.env, navigator.hardwareConcurrency),
+      defaultMaxWorkerCount: DEFAULT_MAX_WORKER_COUNT,
+      index: Number.isFinite(parsedIndex) ? parsedIndex : null,
+      role
+    }
+  };
+}
+
+function backendBuildMetadata(env: NodeJS.ProcessEnv): BackendDeploymentMetadata["build"] {
+  const buildArtifactSha = backendBuildArtifactSha();
+  for (const [source, value] of [
+    ["SOURCE_VERSION", env.SOURCE_VERSION],
+    ["EASYPANEL_GIT_SHA", env.EASYPANEL_GIT_SHA],
+    ["RAILWAY_GIT_COMMIT_SHA", env.RAILWAY_GIT_COMMIT_SHA],
+    ["GITHUB_SHA", env.GITHUB_SHA],
+    ["COMMIT_SHA", env.COMMIT_SHA],
+    ["VEYDRIFT_BUILD_GIT_SHA", env.VEYDRIFT_BUILD_GIT_SHA],
+    ["VEYDRIFT_BUILD_ARTIFACT", buildArtifactSha]
+  ] as const) {
+    const trimmed = value?.trim();
+    if (trimmed) {
+      return deploymentBuildMetadata(trimmed, source, env);
+    }
+  }
+  return deploymentBuildMetadata(null, null, env);
+}
+
+function deploymentBuildMetadata(
+  gitSha: string | null,
+  gitShaSource: string | null,
+  env: NodeJS.ProcessEnv
+): BackendDeploymentMetadata["build"] {
+  return {
+    deploymentAbiHash: env.VEYDRIFT_DEPLOYMENT_ABI_HASH?.trim() || null,
+    deploymentCommit: env.VEYDRIFT_DEPLOYMENT_COMMIT?.trim() || null,
+    deploymentTimestamp: env.VEYDRIFT_DEPLOYMENT_TIMESTAMP?.trim() || null,
+    gitSha,
+    gitShaSource
+  };
+}
+
+function backendBuildArtifactSha(): string | null {
+  for (const path of [
+    "../../.veydrift-backend-build-sha",
+    ".veydrift-backend-build-sha"
+  ]) {
+    try {
+      const trimmed = readFileSync(path, "utf8").trim();
+      if (trimmed) return trimmed;
+    } catch {
+      // The artifact exists only in deploy images that generate it during build.
+    }
+  }
+  return null;
 }
 
 function universeContractAddress(config: BackendConfig): `0x${string}` {
@@ -3559,11 +4235,20 @@ function reasonText(error: unknown): string {
 function statusForError(error: unknown, fallback: number): number {
   if (!(error instanceof Error)) return fallback;
 
+  if (isSqliteBusyError(error)) return 503;
   if (isLiveWalletReadTimeout(error)) return 503;
   if (isRateLimitedRpcError(error)) return 503;
   if (isUpstreamRpcError(error)) return 502;
 
   return fallback;
+}
+
+function isSqliteBusyError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return message.includes("database is locked")
+    || message.includes("sqlite_busy")
+    || message.includes("sqlite_locked");
 }
 
 function isLiveWalletReadTimeout(error: Error): boolean {
@@ -3697,7 +4382,7 @@ function badRequest(message: string): Response {
   );
 }
 
-async function handleGraphQLRequest(request: Request): Promise<Response> {
+async function handleGraphQLRequest(request: Request, workerRole: WorkerRole): Promise<Response> {
   let payload: GraphQLPayload;
 
   try {
@@ -3740,7 +4425,7 @@ async function handleGraphQLRequest(request: Request): Promise<Response> {
         service: {
           name: "Veydrift",
           status: "playable-test",
-          runtime: getRuntimeConfig()
+          runtime: getRuntimeConfig(workerRole)
         }
       }
     },

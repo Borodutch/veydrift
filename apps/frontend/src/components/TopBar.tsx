@@ -19,7 +19,6 @@ interface TopBarProps {
   queue?: QueueItem | undefined;
   researchQueue?: QueueItem | undefined;
   account?: string | undefined;
-  coordinates?: string | undefined;
   isWalletConnected: boolean;
   energy?: EnergyBalance | undefined;
 }
@@ -46,7 +45,6 @@ export function TopBar({
   queue,
   researchQueue,
   account,
-  coordinates,
   energy,
   isWalletConnected,
 }: TopBarProps) {
@@ -90,7 +88,7 @@ export function TopBar({
               />
               {shouldShowTopBarEnergy(energy) && (
                 <EnergyPip
-                  context={coordinates ? `Selected player planet [${coordinates}]` : "Selected player planet"}
+                  context="Selected player planet"
                   produced={energy.produced}
                   rates={rates}
                   required={energy.required}
@@ -135,11 +133,6 @@ export function TopBar({
             <TelegramIcon className="h-3.5 w-3.5" />
             <span className="sr-only lg:not-sr-only">Telegram</span>
           </a>
-          {coordinates && (
-            <span className="inline-flex h-6 items-center whitespace-nowrap font-mono text-xs leading-none text-slate-400">
-              {coordinates}
-            </span>
-          )}
           {isWalletConnected && account && (
             <span className="inline-flex h-6 max-w-[7.25rem] items-center truncate font-mono text-xs leading-none text-slate-400">
               {shortAddress(account)}

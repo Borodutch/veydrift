@@ -11,6 +11,7 @@ import {
   missionDraftBlocker,
   missionShipOptions,
   missionTimingSummary,
+  NonAttackMissionIntelPanel,
   publicTargetBattleForecast,
   rebalanceLootRatio,
   ShipQuantityRow,
@@ -56,6 +57,30 @@ const deployAction: Extract<GalaxyAction, { enabled: true }> = {
   label: "Deploy",
   mode: "mission",
   mission: "deploy",
+  ships: {
+    smallCargo: 1,
+    lightFighter: 0,
+    recycler: 0,
+    colonyShip: 0,
+    largeCargo: 0,
+    heavyFighter: 0,
+    cruiser: 0,
+    battleship: 0,
+    bomber: 0,
+    destroyer: 0,
+    deathstar: 0,
+    battlecruiser: 0,
+    reaper: 0,
+    pathfinder: 0,
+  },
+};
+
+const transportAction: Extract<GalaxyAction, { enabled: true }> = {
+  enabled: true,
+  kind: "transport",
+  label: "Transport",
+  mode: "mission",
+  mission: "transport",
   ships: {
     smallCargo: 1,
     lightFighter: 0,
@@ -199,6 +224,7 @@ describe("mission creation", () => {
     expect(missionConfirmButtonLabel({ acsDefendMode: true })).toBe("Coordinate defense");
     expect(missionCreationSource).toContain("actionPendingLabel?: string | undefined;");
     expect(missionCreationSource).toContain("disabled={Boolean(blockedReason) || actionPending}");
+    expect(missionCreationSource).toContain("const visibleBlockedReason = actionPending ? undefined : blockedReason;");
     expect(missionCreationSource).toContain("missionConfirmButtonLabel({");
     expect(missionCreationSource).toContain("if (actionPendingLabel) return actionPendingLabel;");
   });
@@ -562,6 +588,94 @@ describe("mission creation", () => {
     expect(missionCreationSource).not.toContain("Mission Summary");
     expect(missionCreationSource).not.toContain("MissionStatCard");
     expect(missionCreationSource).not.toContain("Projected arrival resources use");
+  });
+
+  test("uses the compact Attack-style intel shell for non-attack mission setup", () => {
+    expect(missionCreationSource).toContain("<NonAttackMissionIntelPanel");
+    expect(missionCreationSource).toContain("<TargetDecisionTable coords={coords} target={target} />");
+    expect(missionCreationSource).toContain("<MissionPlanContent");
+    expect(missionCreationSource).toContain("<ResourceIntelTable resourceIntel={resourceIntel} />");
+    expect(missionCreationSource).toContain("missionPlanTitle(action)");
+  });
+
+  test("keeps non-attack mission panels visually shared but mission-specific", () => {
+    const target = targetPlanet({
+      publicState: {
+        resources: { metal: "1200", crystal: "800", deuterium: "400" },
+        buildings: [],
+        research: [],
+        fleet: [{ id: 2, count: 3 }],
+        defenses: [{ id: 0, count: 4 }],
+        stationedDefenders: [],
+      },
+    });
+    const resourceIntel = targetResourceIntel(target, 3_600);
+    const panelProps = {
+      coords: { galaxy: 7, system: 41, position: 6 },
+      destinationIntelVisible: true,
+      holdDepotLevel: 0,
+      holdingBreakdown: null,
+      resourceIntel,
+      stationedDefenderUnits: [],
+      target,
+      targetDefenseUnits: [{ key: "rocketLauncher", label: "Rocket Launcher", count: 4 }],
+      targetFleetUnits: [{ key: "recycler", label: "Recycler", count: 3 }],
+    };
+
+    const transportText = collectText(NonAttackMissionIntelPanel({
+      ...panelProps,
+      action: transportAction,
+      cargoCapacity: 4_000,
+      cargoSupported: true,
+    })).join(" ");
+    const harvestText = collectText(NonAttackMissionIntelPanel({
+      ...panelProps,
+      action: harvestAction,
+      cargoCapacity: 2_000,
+      cargoSupported: false,
+    })).join(" ");
+    const defendText = collectText(NonAttackMissionIntelPanel({
+      ...panelProps,
+      action: defenseHoldAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      holdDepotLevel: 3,
+      holdingBreakdown: {
+        depotSupport: 120,
+        holdSeconds: 3_600,
+        holdingFuel: 300,
+        netHoldingFuel: 180,
+      },
+    })).join(" ");
+    const deployText = collectText(NonAttackMissionIntelPanel({
+      ...panelProps,
+      action: deployAction,
+      cargoCapacity: 4_000,
+      cargoSupported: true,
+      destinationIntelVisible: false,
+    })).join(" ");
+
+    expect(transportText).toContain("Target");
+    expect(transportText).toContain("Transport run");
+    expect(transportText).toContain("Own or alliance planet");
+    expect(transportText).toContain("Manual load / 4,000 capacity");
+    expect(transportText).toContain("Resources");
+    expect(transportText).not.toContain("Max carry");
+
+    expect(harvestText).toContain("Debris sweep");
+    expect(harvestText).toContain("Debris field target");
+    expect(harvestText).toContain("Recycler holds for debris");
+
+    expect(defendText).toContain("Station defense");
+    expect(defendText).toContain("Arrive, hold, return");
+    expect(defendText).toContain("180 D net");
+    expect(defendText).toContain("Level 3 support");
+
+    expect(deployText).toContain("Deploy fleet");
+    expect(deployText).toContain("Own planets only");
+    expect(deployText).toContain("One-way arrival");
+    expect(deployText).not.toContain("Resources");
+    expect(deployText).not.toContain("Forces");
   });
 
   test("keeps the legacy standalone outcome and destination panels available for non-attack surfaces", () => {

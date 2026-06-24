@@ -19,8 +19,9 @@
 export const WORKER_ROLE_ENV = "VEYDRIFT_WORKER_ROLE";
 export const WORKER_INDEX_ENV = "VEYDRIFT_WORKER_INDEX";
 export const WORKER_COUNT_ENV = "VEYDRIFT_WORKER_COUNT";
+export const LEGACY_MAX_WORKER_COUNT_ENV = "VEYDRIFT_MAX_WORKER_COUNT";
 export const WRITER_INTERNAL_PORT_ENV = "VEYDRIFT_WRITER_INTERNAL_PORT";
-export const DEFAULT_MAX_WORKER_COUNT = 4;
+export const DEFAULT_MAX_WORKER_COUNT = 2;
 
 export type WorkerRole = "writer" | "reader";
 
@@ -28,7 +29,14 @@ export type WorkerRole = "writer" | "reader";
 // single writer so all DB writes — and the writer's in-memory indexer bookkeeping (e.g. the bounded
 // fleet-mission reconcile queue drained after applyLog) — happen on exactly one process.
 const READ_ONLY_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
-const WRITER_ONLY_READ_PATHS = new Set(["/chain/events"]);
+const WRITER_ONLY_READ_PATHS = new Set([
+  // The live chain event stream is owned by the writer's chain-sync subscription.
+  "/chain/events"
+]);
+// Keep this empty until a read genuinely needs live writer execution. Public diagnostics are served
+// from reader-local WAL snapshots so a busy writer cannot make QA probes time out.
+const WRITER_PREFERRED_READ_PATHS = new Set<string>();
+const WRITER_PREFERRED_READ_PREFIXES: string[] = [];
 const BODYLESS_METHODS = new Set(["GET", "HEAD"]);
 
 // Request headers that must not be copied verbatim when re-issuing a forwarded request: the body is
@@ -40,25 +48,33 @@ export type WorkerAssignment =
   | { kind: "worker"; role: WorkerRole; index: number };
 
 // Resolve how many worker processes to run. `VEYDRIFT_WORKER_COUNT` is an
-// explicit override (useful for tests, constrained containers, or pinning a
-// single-process deployment). Without an override, keep the pool memory-bounded:
-// each worker opens the indexed SQLite read model and carries per-process caches,
-// so using every host CPU can multiply RAM during api-test divergence scans.
+// explicit target for lowering/pinning the pool; it is still bounded by the
+// deploy-safe cap so stale service configs cannot accidentally keep a
+// memory-heavy 10-worker pool alive. `VEYDRIFT_MAX_WORKER_COUNT` is retained as
+// a legacy cap, but it can only lower the built-in default cap, not raise it.
 // The result is always at least 1 so the backend can boot on a single-core host.
 export function resolveWorkerCount(
   env: Record<string, string | undefined>,
   hardwareConcurrency: number
 ): number {
+  const configuredCap = parsePositiveIntegerEnv(env[LEGACY_MAX_WORKER_COUNT_ENV]);
+  const maxWorkerCount = Math.min(configuredCap ?? DEFAULT_MAX_WORKER_COUNT, DEFAULT_MAX_WORKER_COUNT);
   const override = env[WORKER_COUNT_ENV];
   if (override !== undefined && override.trim() !== "") {
     const parsed = Number.parseInt(override, 10);
     if (Number.isFinite(parsed) && parsed >= 1) {
-      return parsed;
+      return Math.max(1, Math.min(parsed, maxWorkerCount));
     }
   }
 
   const cpus = Number.isFinite(hardwareConcurrency) ? Math.floor(hardwareConcurrency) : 1;
-  return Math.max(1, Math.min(cpus, DEFAULT_MAX_WORKER_COUNT));
+  return Math.max(1, Math.min(cpus, maxWorkerCount));
+}
+
+function parsePositiveIntegerEnv(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : undefined;
 }
 
 // The first worker is the single writer; every other worker is a reader.
@@ -100,21 +116,43 @@ export function resolveWriterInternalPort(
   return mainPort + 1;
 }
 
-// Wrap a reader's request handler so it serves read-only methods locally and forwards every mutating
-// request to the single writer's loopback listener at `writerOrigin` (e.g. "http://127.0.0.1:4001").
-// This keeps readers as pure WAL read-replicas: the writer is the sole mutator of the SQLite index and
-// the only holder of the in-memory indexer state, so cross-process state never diverges (VEY-KANEO-466).
+// Wrap a reader's request handler so it serves read-only traffic locally and forwards only writes plus
+// writer-owned streams to the single writer's loopback listener at `writerOrigin`
+// (e.g. "http://127.0.0.1:4001"). Keeping indexed GETs on readers preserves the 9-reader capacity for
+// normal gameplay bursts while writer-only paths remain deterministic.
 export function createForwardingFetch(
   localHandler: (request: Request) => Promise<Response>,
   writerOrigin: string,
-  fetchImpl: typeof fetch = fetch
+  fetchImpl: typeof fetch = fetch,
+  localBootstrapHandler?: (request: Request) => Response | Promise<Response> | undefined
 ): (request: Request) => Promise<Response> {
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     if (READ_ONLY_METHODS.has(request.method) && !WRITER_ONLY_READ_PATHS.has(url.pathname)) {
+      const bootstrapResponse = await localBootstrapHandler?.(request);
+      if (bootstrapResponse) return bootstrapResponse;
+      if (isWriterPreferredReadPath(request.method, url.pathname)) {
+        return forwardToWriter(request, url, writerOrigin, fetchImpl);
+      }
       return localHandler(request);
     }
 
+    return forwardToWriter(request, url, writerOrigin, fetchImpl);
+  };
+}
+
+function isWriterPreferredReadPath(method: string, pathname: string): boolean {
+  if (method !== "GET" && method !== "HEAD") return false;
+  return WRITER_PREFERRED_READ_PATHS.has(pathname)
+    || WRITER_PREFERRED_READ_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
+async function forwardToWriter(
+  request: Request,
+  url: URL,
+  writerOrigin: string,
+  fetchImpl: typeof fetch
+): Promise<Response> {
     const target = `${writerOrigin}${url.pathname}${url.search}`;
     const headers = new Headers(request.headers);
     for (const name of STRIPPED_FORWARD_REQUEST_HEADERS) {
@@ -124,15 +162,26 @@ export function createForwardingFetch(
       ? undefined
       : await request.arrayBuffer();
 
+    const abortController = new AbortController();
+    const abortForwardedRequest = () => {
+      abortController.abort();
+    };
+    if (request.signal?.aborted) {
+      abortForwardedRequest();
+    } else {
+      request.signal?.addEventListener("abort", abortForwardedRequest, { once: true });
+    }
     let upstream: Response;
     try {
       upstream = await fetchImpl(target, {
         method: request.method,
         headers,
         redirect: "manual",
+        signal: abortController.signal,
         ...(body && body.byteLength > 0 ? { body } : {})
       });
     } catch {
+      request.signal?.removeEventListener("abort", abortForwardedRequest);
       return Response.json(
         {
           error: "writer_unavailable",
@@ -148,10 +197,87 @@ export function createForwardingFetch(
     const responseHeaders = new Headers(upstream.headers);
     responseHeaders.delete("content-length");
     responseHeaders.delete("content-encoding");
-    return new Response(upstream.body, {
+    return new Response(forwardedResponseBody(upstream.body, abortController, () => {
+      request.signal?.removeEventListener("abort", abortForwardedRequest);
+    }), {
       status: upstream.status,
       statusText: upstream.statusText,
       headers: responseHeaders
     });
+}
+
+export function createRequestLoggingFetch(
+  fetchHandler: (request: Request) => Promise<Response>,
+  workerRole: WorkerRole
+): (request: Request) => Promise<Response> {
+  return async (request: Request): Promise<Response> => {
+    const startedAt = performance.now();
+    const url = new URL(request.url);
+    try {
+      const response = await fetchHandler(request);
+      logBackendRequest(request, url, workerRole, response.status, performance.now() - startedAt);
+      return response;
+    } catch (error) {
+      logBackendRequest(request, url, workerRole, 500, performance.now() - startedAt, error);
+      throw error;
+    }
   };
+}
+
+function logBackendRequest(
+  request: Request,
+  url: URL,
+  workerRole: WorkerRole,
+  status: number,
+  durationMs: number,
+  error?: unknown
+): void {
+  const entry = {
+    durationMs: Math.round(durationMs),
+    method: request.method,
+    path: `${url.pathname}${url.search}`,
+    status,
+    workerRole,
+    ...(error ? { error: error instanceof Error ? error.message : String(error) } : {})
+  };
+  console.info("veydrift-api-request", JSON.stringify(entry));
+}
+
+function forwardedResponseBody(
+  upstreamBody: ReadableStream<Uint8Array> | null,
+  abortController: AbortController,
+  cleanup: () => void
+): ReadableStream<Uint8Array> | null {
+  if (!upstreamBody) {
+    cleanup();
+    return null;
+  }
+
+  const reader = upstreamBody.getReader();
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          cleanup();
+          controller.close();
+          return;
+        }
+        controller.enqueue(value);
+      } catch (error) {
+        cleanup();
+        controller.error(error);
+        abortController.abort();
+      }
+    },
+    async cancel(reason) {
+      cleanup();
+      abortController.abort();
+      try {
+        await reader.cancel(reason);
+      } catch {
+        // The upstream may already be closed by the abort; cancellation is best-effort.
+      }
+    }
+  });
 }

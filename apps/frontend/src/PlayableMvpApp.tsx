@@ -48,6 +48,9 @@ import {
   buildingKeyForContractId,
   infrastructureActionNoticeFor,
   infrastructureDisplayActionNoticeFor,
+  isStartedBuildingQueueSyncingLabel,
+  isStartedBuildingQueueSynced,
+  recoveredStartedBuildingAction,
   type BuildingActionState,
 } from "./buildingActionNotice";
 import { buildingUpgradeStatus, formatMissingResources } from "./buildingDetails";
@@ -78,7 +81,7 @@ import {
   type ShipKey,
 } from "./playableMvp";
 import { activeProductionQueue } from "./productionQueueFallback";
-import { allianceContractAddress, gameContractAddress, moonContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
+import { allianceContractAddress, burningChickenConfig, gameContractAddress, moonContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
 import {
   activeBuildingQueueResponse,
   buildingQueueItemForDisplay,
@@ -116,6 +119,7 @@ import {
   waitForStartedDefenseProductionState,
   waitForStartedShipProductionState,
   waitForStartedBuildingState,
+  startedBuildingQueueFromWalletPlanets,
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
   waitForAllianceApplicationCleared,
@@ -167,6 +171,7 @@ import {
   fetchBattleReports,
   fetchAllianceState,
   fetchAttackProtectionStatus,
+  fetchBurningChickens,
   fetchPlayerProfile,
   mergePlayerProfile,
   walletRequestErrorMessage,
@@ -196,6 +201,8 @@ import {
   sendStartMoonBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
   sendAcceptAllianceInviteTransaction,
+  sendAllianceBatchKickTransaction,
+  sendAllianceBatchRoleTransaction,
   sendAllianceJoinRequestTransaction,
   sendAllianceKickTransaction,
   sendAllianceLeaveTransaction,
@@ -210,6 +217,8 @@ import {
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
+  sendBurningChickenMoonTransaction,
+  ensureBaseSepoliaNetwork,
   isOnChainRevertError,
   isUserRejected,
   updatePlayerProfile,
@@ -217,6 +226,7 @@ import {
   type ChainAllianceState,
   type ChainInfrastructureState,
   type ChainMoonState,
+  type BurningChickenNft,
   type ChainResearchState,
   type ChainRiftState,
   type ChainShipyardState,
@@ -339,7 +349,8 @@ const buildingWalletConfirmationLabel = (label: string) =>
   label === "Building completion"
     ? "Building completion: confirm the game-state update in your wallet; token balance changes are not expected."
     : `${label}: unlock your wallet if needed, then confirm in your wallet.`;
-const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
+const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 30_000;
+const CHAIN_EVENT_REFRESH_DEBOUNCE_MS = 3_000;
 const BUILDING_COMPLETION_AUTO_REFRESH_BUFFER_MS = 1_500;
 // VEY-KANEO-433: after an active mission's ETA passes, wait a short beat before the tightened Mission
 // Control refresh so the backend indexer has settled the arrival/resolution before we re-read it.
@@ -349,6 +360,8 @@ const MISSION_RESOLUTION_REFRESH_BUFFER_MS = 1_500;
 const PRODUCTION_QUEUE_COMPLETION_REFRESH_BUFFER_MS = 1_500;
 export const previousMissionIndexingBlockerLabel = "Waiting for previous mission to index.";
 export const previousMissionTransactionBlockerLabel = "Waiting for previous mission transaction.";
+const CHICKEN_MOON_CONFIRM_TIMEOUT_MS = 120_000;
+const CHICKEN_MOON_CONFIRM_POLL_MS = 3_000;
 
 type RefreshFreshnessGate = { current: number };
 export type ResourceSnapshotFreshness = {
@@ -383,6 +396,26 @@ function combatTechLevelForKey(
   fallbackLevels: Record<string, number> | undefined,
 ): number {
   return safeResourceNumber(primaryLevels?.[key]) ?? safeResourceNumber(fallbackLevels?.[key]) ?? 0;
+}
+
+const ASTROPHYSICS_TECHNOLOGY_ID = "12";
+
+export function colonizationLimitBlocker({
+  planetCount,
+  researchTechnologyLevels,
+  shipyardTechnologyLevels,
+}: {
+  planetCount: number;
+  researchTechnologyLevels?: Record<string, number> | undefined;
+  shipyardTechnologyLevels?: Record<string, number> | undefined;
+}): string | undefined {
+  const astrophysicsLevel =
+    safeResourceNumber(researchTechnologyLevels?.[ASTROPHYSICS_TECHNOLOGY_ID])
+      ?? safeResourceNumber(shipyardTechnologyLevels?.[ASTROPHYSICS_TECHNOLOGY_ID])
+      ?? 0;
+  const limit = 1 + Math.max(0, Math.trunc(astrophysicsLevel));
+  if (planetCount < limit) return undefined;
+  return `Your colony limit is ${planetCount}/${limit}. Research Astrophysics before colonizing another planet.`;
 }
 
 export function attackerCombatTechLevelsForMission({
@@ -569,6 +602,42 @@ export function walletQueuesForManagedPlanet(
   };
 }
 
+export function selectedPlanetIdFromRoster({
+  homePlanetId,
+  planets,
+  selectedPlanetId,
+}: {
+  homePlanetId: string | null | undefined;
+  planets: readonly Pick<ManagedPlanetResponse, "isHomePlanet" | "planetId">[] | undefined;
+  selectedPlanetId: string | undefined;
+}): string | undefined {
+  if (selectedPlanetId && planets?.some((planet) => planet.planetId === selectedPlanetId)) {
+    return selectedPlanetId;
+  }
+
+  if (homePlanetId && planets?.some((planet) => planet.planetId === homePlanetId)) {
+    return homePlanetId;
+  }
+
+  return planets?.find((planet) => planet.isHomePlanet)?.planetId ?? planets?.[0]?.planetId;
+}
+
+export function selectedPlanetIdForWalletRead({
+  activePlanetId,
+  homePlanetId,
+  walletPlanets,
+}: {
+  activePlanetId: string | undefined;
+  homePlanetId: string | null | undefined;
+  walletPlanets: readonly Pick<ManagedPlanetResponse, "isHomePlanet" | "planetId">[];
+}): string | undefined {
+  return selectedPlanetIdFromRoster({
+    homePlanetId,
+    planets: walletPlanets,
+    selectedPlanetId: activePlanetId,
+  });
+}
+
 export function shouldApplyResourceSnapshot(
   current: ResourceSnapshotFreshness,
   next: ResourceSnapshotFreshness,
@@ -601,33 +670,13 @@ export function recordedResourceSnapshotFreshness(
 }
 
 export function infrastructureStateForRefreshApplication({
-  applyResourceState,
-  current,
   next,
 }: {
   applyResourceState: boolean;
   current: ChainInfrastructureState | null;
   next: ChainInfrastructureState;
 }): ChainInfrastructureState {
-  if (applyResourceState || !current) return next;
-
-  const currentPlanetId = current.planetId ?? current.homePlanetId ?? null;
-  const nextPlanetId = next.planetId ?? next.homePlanetId ?? null;
-  if (currentPlanetId && nextPlanetId && currentPlanetId !== nextPlanetId) return next;
-
-  const settledAt = current.planetLastSettledAt ?? next.planetLastSettledAt;
-  const preserved = {
-    ...next,
-    resources: current.resources,
-    ...(settledAt === undefined ? {} : { planetLastSettledAt: settledAt }),
-  };
-
-  if (current.resourcesAsOfNow !== undefined) {
-    return { ...preserved, resourcesAsOfNow: current.resourcesAsOfNow };
-  }
-
-  const { resourcesAsOfNow: _droppedStaleResourcesAsOfNow, ...withoutStaleAsOfNow } = preserved;
-  return withoutStaleAsOfNow;
+  return next;
 }
 
 export function buildingCompletionAutoRefreshDelayMs(
@@ -656,24 +705,19 @@ export function walletCurrentResourcesFor({
   );
 }
 
-// Authoritative on-chain construction queues + fleet visibility are not resource
-// snapshots, so they must apply even when the resource anti-snapback gate rejects
-// an equal/older settlement read (e.g. after a building completes with no fresh
-// spend to settle). Only the resource/settlement state stays behind the gate. The
-// request-ordering gate still guards against out-of-order responses upstream.
+// Successful backend reads are authoritative. The request-ordering gate still
+// guards against out-of-order responses upstream.
 export function planOnChainRefresh(
   current: ResourceSnapshotFreshness,
   next: ResourceSnapshotFreshness,
   options: { force?: boolean } = {},
 ): OnChainRefreshPlan {
+  void current;
+  void next;
+  void options;
   return {
     applyQueues: true,
-    // An explicit post-action refetch (force) is a deliberate, request-ordered read taken AFTER a
-    // confirmed spend, so it must apply even when the backend momentarily returns an equal/older
-    // lastSettledAt (indexer lag, or the spend not yet reflected). Otherwise the anti-snapback gate
-    // suppresses it and the top-bar resources stay frozen until a full page reload (VEY-KANEO-484).
-    // Periodic polls keep the gate, preserving the single poll-only store invariant (VEY-KANEO-430).
-    applyResourceState: options.force === true || shouldApplyResourceSnapshot(current, next),
+    applyResourceState: true,
   };
 }
 
@@ -683,6 +727,10 @@ export function shouldRefreshAllianceStateForPage(page: Page): boolean {
 
 export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
   return page === "overview" || page === "galaxy" || page === "planet" || page === "mission-control" || page === "raid-target-finder";
+}
+
+export function shouldClearCachedShipyardStateForPageRefresh(page: Page): boolean {
+  return page === "shipyard" || shouldRefreshMissionActionStateForPage(page);
 }
 
 // VEY-KANEO-433: Mission Control auto-polls its own data (active missions, the past-mission archives,
@@ -1611,6 +1659,19 @@ export function clearRecoveredWalletContractUnavailableAction<
   return action;
 }
 
+function keepGlobalReadStateDuringTransaction(current: ChainLoadStatus): ChainLoadStatus {
+  return current === "ready" ? "ready" : current;
+}
+
+function globalReadStatusAfterTransactionRefreshFailure(current: ChainLoadStatus): ChainLoadStatus {
+  return current === "ready" ? "ready" : "error";
+}
+
+function globalReadStatusDuringRefresh(current: ChainLoadStatus, hasUsableState: boolean): ChainLoadStatus {
+  if (current === "ready" || hasUsableState) return "ready";
+  return "loading";
+}
+
 function pendingActionLabel(...actions: Array<{ status: string; label?: string | undefined }>): string | undefined {
   return actions.find((action) => action.status === "pending" && action.label)?.label;
 }
@@ -2062,6 +2123,9 @@ function driveLevelsFromTechnologyLevels(levels: Record<string, number> | undefi
 // The contract recomputes the real subsidy on launch, so an unknown level (no public state) previews
 // as 0 rather than blocking.
 const ALLIANCE_DEPOT_BUILDING_ID = 13;
+const INITIAL_OVERVIEW_SNAPSHOT_TIMEOUT_MS = 2_500;
+const INITIAL_FLEET_VISIBILITY_TIMEOUT_MS = 1_200;
+
 function allianceDepotLevelFromPlanet(planet: Planet | undefined): number {
   const buildings = planet?.publicState?.buildings;
   if (!buildings) return 0;
@@ -2073,19 +2137,37 @@ export async function loadWalletPlanetSyncSnapshot(
   apiBaseUrl: string,
   account: string,
   activePlanetId: string | undefined,
+  options: { forceHomePlanet?: boolean; forceWalletPlanets?: boolean } = {},
+  loaders: {
+    fetchWalletOverviewSnapshot?: typeof fetchWalletOverviewSnapshot;
+    fetchWalletPlanets?: typeof fetchWalletPlanets;
+    fetchWalletQueues?: typeof fetchWalletQueues;
+    fetchFleetMissionVisibility?: typeof fetchFleetMissionVisibility;
+    fetchWalletSettlement?: typeof fetchWalletSettlement;
+  } = {},
 ): Promise<WalletPlanetSyncSnapshot> {
-  try {
-    return await fetchWalletOverviewSnapshot(apiBaseUrl, account, activePlanetId);
-  } catch (error) {
-    if (!isMissingOverviewSnapshotEndpoint(error)) {
-      throw error;
+  const loadOverviewSnapshot = loaders.fetchWalletOverviewSnapshot ?? fetchWalletOverviewSnapshot;
+  const loadWalletPlanets = loaders.fetchWalletPlanets ?? fetchWalletPlanets;
+  const loadWalletQueues = loaders.fetchWalletQueues ?? fetchWalletQueues;
+  const loadFleetMissionVisibility = loaders.fetchFleetMissionVisibility ?? fetchFleetMissionVisibility;
+  const loadWalletSettlement = loaders.fetchWalletSettlement ?? fetchWalletSettlement;
+  const readPlanetId = options.forceHomePlanet || options.forceWalletPlanets ? undefined : activePlanetId;
+  if (readPlanetId !== undefined) {
+    try {
+      return await loadOverviewSnapshot(apiBaseUrl, account, readPlanetId, {
+        timeoutMs: INITIAL_OVERVIEW_SNAPSHOT_TIMEOUT_MS,
+      });
+    } catch (error) {
+      if (!isRecoverableOverviewSnapshotError(error)) {
+        throw error;
+      }
+      // The overview snapshot is a fast-path optimization. Older backends may not expose it, and
+      // mission visibility inside it can be briefly slow; hydrate critical planet state below instead
+      // of leaving first paint blocked on noncritical mission data.
     }
-    // Older backends do not expose the combined DB-backed overview snapshot yet.
-    // Fall back to the previous indexed fan-out path so deployed frontend/backend
-    // rollouts can overlap without blanking Overview.
   }
 
-  const planetsResult = await settlePromise(fetchWalletPlanets(apiBaseUrl, account));
+  const planetsResult = await settlePromise(loadWalletPlanets(apiBaseUrl, account));
   const indexedSettlement = settlementFromIndexedPlanets(
     account,
     planetsResult.status === "fulfilled" ? planetsResult.value : undefined,
@@ -2094,13 +2176,16 @@ export async function loadWalletPlanetSyncSnapshot(
     const indexedQueues = playerQueuesFromIndexedPlanet(
       account,
       indexedSettlement.homePlanetId,
-      activePlanetId,
+      readPlanetId,
       planetsResult.status === "fulfilled" ? planetsResult.value : undefined,
     );
     const queuesResultPromise = indexedPlanetsExposeResearchQueue(planetsResult)
       ? Promise.resolve({ status: "fulfilled", value: indexedQueues } satisfies PromiseSettledResult<PlayerQueuesResponse>)
-      : settlePromise(fetchWalletQueues(apiBaseUrl, account, activePlanetId));
-    const visibilityResultPromise = settlePromise(fetchFleetMissionVisibility(apiBaseUrl, account, { includeArchive: false }));
+      : settlePromise(loadWalletQueues(apiBaseUrl, account, readPlanetId));
+    const visibilityResultPromise = settlePromise(loadFleetMissionVisibility(apiBaseUrl, account, {
+      includeArchive: false,
+      timeoutMs: INITIAL_FLEET_VISIBILITY_TIMEOUT_MS,
+    }));
     const [queuesResult, visibilityResult] = await Promise.all([queuesResultPromise, visibilityResultPromise]);
     return walletPlanetSyncSnapshotFromResults(
       account,
@@ -2114,9 +2199,12 @@ export async function loadWalletPlanetSyncSnapshot(
   }
 
   const [settlementResult, queuesResult, visibilityResult] = await Promise.allSettled([
-    fetchWalletSettlement(apiBaseUrl, account),
-    fetchWalletQueues(apiBaseUrl, account, activePlanetId),
-    fetchFleetMissionVisibility(apiBaseUrl, account, { includeArchive: false }),
+    loadWalletSettlement(apiBaseUrl, account),
+    loadWalletQueues(apiBaseUrl, account, readPlanetId),
+    loadFleetMissionVisibility(apiBaseUrl, account, {
+      includeArchive: false,
+      timeoutMs: INITIAL_FLEET_VISIBILITY_TIMEOUT_MS,
+    }),
   ]);
 
   const settlement = settlementResult.status === "fulfilled"
@@ -2167,8 +2255,11 @@ function settlePromise<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>>
   );
 }
 
-function isMissingOverviewSnapshotEndpoint(error: unknown): boolean {
-  return error instanceof Error && /Overview snapshot API failed: 404\b/.test(error.message);
+function isRecoverableOverviewSnapshotError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return /Overview snapshot API failed: 404\b/.test(error.message)
+    || /Timed out reading overview snapshot from the game API/i.test(error.message)
+    || /Game servers are unavailable while loading overview snapshot/i.test(error.message);
 }
 
 function settlementFromIndexedPlanets(
@@ -2300,6 +2391,28 @@ function pendingMissionLaunchForDraft(
 
 function managedPlanetCoordinates(planet: ManagedPlanetResponse | undefined): Coordinates | undefined {
   return planet ? { galaxy: planet.galaxy, system: planet.system, position: planet.position } : undefined;
+}
+
+async function waitForConfirmedChickenMoonState(
+  apiBaseUrl: string,
+  account: string,
+  planetId: string,
+): Promise<ChainMoonState> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < CHICKEN_MOON_CONFIRM_TIMEOUT_MS) {
+    const nextMoonState = await fetchMoonState(apiBaseUrl, account, planetId);
+    if (nextMoonState.moon?.exists) {
+      return nextMoonState;
+    }
+    await delay(CHICKEN_MOON_CONFIRM_POLL_MS);
+  }
+
+  throw new Error("Chicken burn confirmed, but the granted moon was not indexed yet. Refresh moon state before retrying.");
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function missionReferenceFromManagedPlanet(planet: ManagedPlanetResponse | undefined): FleetMissionPlanetReference | null {
@@ -2505,6 +2618,16 @@ function emptyFleetVisibility(wallet: string, homePlanetId: string | null): Flee
   };
 }
 
+function chainEventWalletPlanetsChanged(event: MessageEvent | undefined): boolean {
+  if (!event) return false;
+  try {
+    const payload = JSON.parse(event.data) as { walletPlanetsChanged?: boolean };
+    return payload.walletPlanetsChanged === true;
+  } catch {
+    return false;
+  }
+}
+
 function initialInspectPageState(): {
   page: Page;
   playerWallet: string | null;
@@ -2577,18 +2700,30 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [onChainSettlementState, setOnChainSettlementState] = useState<WalletSettlementResponse | undefined>();
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile | undefined>();
   const [walletPlanets, setWalletPlanets] = useState<ManagedPlanetResponse[]>([]);
+  const [burningChickens, setBurningChickens] = useState<BurningChickenNft[]>([]);
+  const [burningChickensLoading, setBurningChickensLoading] = useState(false);
+  const [burningChickensError, setBurningChickensError] = useState<string | undefined>();
   const [watchedPlanets, setWatchedPlanets] = useState<WatchedPlanetsResponse | undefined>();
   const [watchedPlanetsLoading, setWatchedPlanetsLoading] = useState(false);
   const [watchedPlanetsError, setWatchedPlanetsError] = useState<string | undefined>();
   const [watchedPlanetsPage, setWatchedPlanetsPage] = useState(1);
   const [watchBusyPlanetId, setWatchBusyPlanetId] = useState<string | undefined>();
   const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>();
+  const resolvedSelectedPlanetId = useMemo(() => selectedPlanetIdFromRoster({
+    homePlanetId: onChainSettlementState?.homePlanetId,
+    planets: walletPlanets,
+    selectedPlanetId,
+  }), [onChainSettlementState?.homePlanetId, selectedPlanetId, walletPlanets]);
   const selectedManagedPlanet = useMemo(
-    () => walletPlanets.find((item) => item.planetId === (selectedPlanetId ?? onChainSettlementState?.homePlanetId))
+    () => walletPlanets.find((item) => item.planetId === resolvedSelectedPlanetId)
       ?? walletPlanets[0],
-    [onChainSettlementState?.homePlanetId, selectedPlanetId, walletPlanets]
+    [resolvedSelectedPlanetId, walletPlanets]
   );
   const activePlanetId = selectedManagedPlanet?.planetId ?? onChainSettlementState?.homePlanetId ?? undefined;
+  const walletMoonCount = useMemo(
+    () => walletPlanets.filter((item) => item.moon?.exists).length,
+    [walletPlanets],
+  );
   const [planetSectionStore, setPlanetSectionStore] = useState<PlanetSectionStore>({});
   const activePlanetSection = useMemo(
     () => planetSectionForPlanet(planetSectionStore, activePlanetId),
@@ -2787,6 +2922,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [riftError, setRiftError] = useState<string | undefined>();
   const [riftAction, setRiftAction] = useState<RiftActionState>({ status: "idle" });
   const [buildingAction, setBuildingAction] = useState<BuildingActionState>({ status: "idle" });
+  const [failedStartedBuildingExpectation, setFailedStartedBuildingExpectation] =
+    useState<StartedBuildingExpectation | undefined>();
   const [completedBuildingFinishExpectation, setCompletedBuildingFinishExpectation] =
     useState<FinishedBuildingExpectation | undefined>();
   const [failedBuildingFinishExpectation, setFailedBuildingFinishExpectation] =
@@ -3122,6 +3259,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   useEffect(() => {
     setPlayerProfile(undefined);
     setPlanetSectionStore({});
+    setSelectedPlanetId(undefined);
+    setWalletPlanets([]);
+    setOnChainQueues(undefined);
+    setFleetVisibility(undefined);
+    setHydratedWalletSnapshotKey(undefined);
+    latestOnChainResourceSnapshot.current = { planetId: null, lastSettledAt: null };
+    latestInfrastructureResourceSnapshot.current = { planetId: null, lastSettledAt: null };
     setPlayerProfileAction({ status: "idle" });
   }, [account]);
 
@@ -3366,6 +3510,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const moonContract = useMemo(() => {
     return runtimeConfig.status === "ready" ? moonContractAddress(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
+  const chickenBurnConfig = useMemo(() => {
+    return runtimeConfig.status === "ready" ? burningChickenConfig(runtimeConfig.config) : undefined;
+  }, [runtimeConfig]);
   const gameActionInputsAvailable = Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId));
   const allianceActionInputsAvailable = Boolean(provider && account && allianceContract);
   const moonActionInputsAvailable = Boolean(provider && account && moonContract && (activePlanetId ?? onChainSettlement?.homePlanetId));
@@ -3416,13 +3563,15 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    setInfrastructureLoading(true);
-    setMoonLoading(true);
+    const shouldShowInfrastructureLoading = !infrastructureChainState;
+    const shouldShowMoonLoading = !moonState;
+    setInfrastructureLoading(shouldShowInfrastructureLoading);
+    setMoonLoading(shouldShowMoonLoading);
     setInfrastructureError(undefined);
     setMoonError(undefined);
     setPlanetSectionStore((current) => {
-      let next = setPlanetSectionStatus(current, activePlanetId, "infrastructureChainState", { loading: true, error: undefined });
-      next = setPlanetSectionStatus(next, activePlanetId, "moonState", { loading: true, error: undefined });
+      let next = setPlanetSectionStatus(current, activePlanetId, "infrastructureChainState", { loading: shouldShowInfrastructureLoading, error: undefined });
+      next = setPlanetSectionStatus(next, activePlanetId, "moonState", { loading: shouldShowMoonLoading, error: undefined });
       return next;
     });
     try {
@@ -3434,15 +3583,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       if (infrastructureResult.status === "fulfilled") {
         const nextInfrastructure = infrastructureResult.value;
         const nextFreshness = resourceSnapshotFreshnessForInfrastructure(nextInfrastructure);
-        const applyResourceState = shouldApplyResourceSnapshot(latestInfrastructureResourceSnapshot.current, nextFreshness);
-        if (applyResourceState) {
-          latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
-            latestInfrastructureResourceSnapshot.current,
-            nextFreshness,
-          );
-        }
+        latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
+          latestInfrastructureResourceSnapshot.current,
+          nextFreshness,
+        );
         setInfrastructureChainState((current) => infrastructureStateForRefreshApplication({
-          applyResourceState,
+          applyResourceState: true,
           current,
           next: nextInfrastructure,
         }));
@@ -3476,7 +3622,32 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setMoonLoading(false);
       }
     }
-  }, [account, activePlanetId, apiBaseUrl]);
+  }, [account, activePlanetId, apiBaseUrl, infrastructureChainState, moonState]);
+
+  const refreshBurningChickens = useCallback(async () => {
+    if (!account || !chickenBurnConfig) {
+      setBurningChickens([]);
+      setBurningChickensLoading(false);
+      setBurningChickensError(undefined);
+      return;
+    }
+
+    setBurningChickensLoading(true);
+    setBurningChickensError(undefined);
+    try {
+      const nextChickens = await fetchBurningChickens(account, chickenBurnConfig);
+      setBurningChickens(nextChickens);
+    } catch (error) {
+      console.error(error);
+      setBurningChickensError(error instanceof Error ? error.message : "Burning Chickens could not be loaded.");
+    } finally {
+      setBurningChickensLoading(false);
+    }
+  }, [account, chickenBurnConfig]);
+
+  useEffect(() => {
+    void refreshBurningChickens();
+  }, [refreshBurningChickens]);
 
   const refreshLiveInfrastructureState = useCallback(async () => {
     const requestId = beginRefreshRequest(infrastructureRefreshGate);
@@ -3487,22 +3658,20 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return null;
     }
 
-    setInfrastructureLoading(true);
+    const shouldShowInfrastructureLoading = !infrastructureChainState;
+    setInfrastructureLoading(shouldShowInfrastructureLoading);
     setInfrastructureError(undefined);
-    setActivePlanetSectionStatus("infrastructureChainState", { loading: true, error: undefined });
+    setActivePlanetSectionStatus("infrastructureChainState", { loading: shouldShowInfrastructureLoading, error: undefined });
     try {
       const nextInfrastructure = await fetchInfrastructureState(apiBaseUrl, account, activePlanetId);
       if (!canApplyRefreshRequest(infrastructureRefreshGate, requestId)) return nextInfrastructure;
       const nextFreshness = resourceSnapshotFreshnessForInfrastructure(nextInfrastructure);
-      const applyResourceState = shouldApplyResourceSnapshot(latestInfrastructureResourceSnapshot.current, nextFreshness);
-      if (applyResourceState) {
-        latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
-          latestInfrastructureResourceSnapshot.current,
-          nextFreshness,
-        );
-      }
+      latestInfrastructureResourceSnapshot.current = recordedResourceSnapshotFreshness(
+        latestInfrastructureResourceSnapshot.current,
+        nextFreshness,
+      );
       setInfrastructureChainState((current) => infrastructureStateForRefreshApplication({
-        applyResourceState,
+        applyResourceState: true,
         current,
         next: nextInfrastructure,
       }));
@@ -3524,7 +3693,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setInfrastructureLoading(false);
       }
     }
-  }, [account, activePlanetId, apiBaseUrl]);
+  }, [account, activePlanetId, apiBaseUrl, infrastructureChainState]);
 
   const refreshDefenseState = useCallback(async () => {
     const requestId = beginRefreshRequest(defenseRefreshGate);
@@ -3586,7 +3755,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       });
   }, [account, apiBaseUrl]);
 
-  const refreshShipyardState = useCallback(async () => {
+  const refreshShipyardState = useCallback(async (options: { clearCachedState?: boolean } = {}) => {
     const requestId = beginRefreshRequest(shipyardRefreshGate);
     if (!apiBaseUrl || !account) {
       setShipyardState(null);
@@ -3598,6 +3767,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     setShipyardLoading(true);
     setShipyardError(undefined);
     setActivePlanetSectionStatus("shipyardState", { loading: true, error: undefined });
+    if (options.clearCachedState) {
+      setShipyardState(null);
+    }
     try {
       const next = await fetchShipyardState(apiBaseUrl, account, activePlanetId);
       if (!canApplyRefreshRequest(shipyardRefreshGate, requestId)) return next;
@@ -3632,16 +3804,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return null;
     }
 
-    setResearchLoading(true);
+    const shouldShowBlockingLoading = !researchState;
+    setResearchLoading(shouldShowBlockingLoading);
     setResearchError(undefined);
-    setActivePlanetSectionStatus("researchState", { loading: true, error: undefined });
+    setActivePlanetSectionStatus("researchState", { loading: shouldShowBlockingLoading, error: undefined });
     try {
       const next = await fetchResearchState(apiBaseUrl, account, activePlanetId);
       if (!canApplyRefreshRequest(researchRefreshGate, requestId)) return next;
-      setResearchState((current) => {
-        const preserved = preserveActiveResearchState(current, next);
-        return researchStateWithFallbackQueue(preserved, onChainQueues?.research) ?? preserved;
-      });
+      setResearchState(next);
       setActivePlanetSectionStatus("researchState", {
         loading: false,
         error: undefined,
@@ -3661,7 +3831,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         setResearchLoading(false);
       }
     }
-  }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research]);
+  }, [account, activePlanetId, apiBaseUrl, researchState]);
 
   const refreshRiftState = useCallback(async () => {
     const requestId = beginRefreshRequest(riftRefreshGate);
@@ -3700,7 +3870,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
   }, [account, activePlanetId, apiBaseUrl, onChainQueues?.research]);
 
-  const refreshOnChainState = useCallback(async (renameExpectation?: { planetId: string; name: string }, options: { force?: boolean } = {}) => {
+  const refreshOnChainState = useCallback(async (
+    renameExpectation?: { planetId: string; name: string },
+    options: { force?: boolean; forceHomePlanet?: boolean; forceWalletPlanets?: boolean } = {},
+  ) => {
     const requestId = beginRefreshRequest(onChainRefreshGate);
     if (!apiBaseUrl || !account) {
       latestOnChainResourceSnapshot.current = { planetId: null, lastSettledAt: null };
@@ -3714,17 +3887,35 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    const hasUsableOnChainState = Boolean(onChainSettlementState || walletPlanets.length > 0 || onChainQueues);
+    setOnChainStatus((current) => globalReadStatusDuringRefresh(current, hasUsableOnChainState));
     setPlanetSectionStore((current) => {
       let next = setPlanetSectionStatus(current, activePlanetId, "settlementState", { loading: true, error: undefined });
       next = setPlanetSectionStatus(next, activePlanetId, "queuesState", { loading: true, error: undefined });
       return setPlanetSectionStatus(next, activePlanetId, "fleetVisibilityState", { loading: true, error: undefined });
     });
     try {
-      const loadSnapshot = () => loadWalletPlanetSyncSnapshot(apiBaseUrl, account, activePlanetId);
+      const canUseCachedWalletPlanets =
+        hydratedWalletSnapshotKey === walletSnapshotHydrationKey(apiBaseUrl, account);
+      const walletPlanetsForRead = canUseCachedWalletPlanets ? walletPlanets : [];
+      const homePlanetIdForRead = canUseCachedWalletPlanets ? onChainSettlementState?.homePlanetId : undefined;
+      const readPlanetId = selectedPlanetIdForWalletRead({
+        activePlanetId: options.forceHomePlanet || options.forceWalletPlanets || !canUseCachedWalletPlanets ? undefined : activePlanetId,
+        homePlanetId: homePlanetIdForRead,
+        walletPlanets: walletPlanetsForRead,
+      });
+      const loadSnapshot = () => loadWalletPlanetSyncSnapshot(
+        apiBaseUrl,
+        account,
+        readPlanetId,
+        {
+          ...(options.forceHomePlanet === undefined ? {} : { forceHomePlanet: options.forceHomePlanet }),
+          ...(options.forceWalletPlanets === undefined ? {} : { forceWalletPlanets: options.forceWalletPlanets }),
+        },
+      );
       const snapshot = renameExpectation
         ? await waitForRenamedWalletPlanet(loadSnapshot, renameExpectation)
-        : await waitForHydratedWalletPlanet(loadSnapshot, activePlanetId);
+        : await waitForHydratedWalletPlanet(loadSnapshot, readPlanetId);
       const { planetsResponse, queues, settlement, selectedPlanet, fleetVisibility } = snapshot;
       const planets = planetsResponse.planets;
       const nextSettlement = selectedPlanet
@@ -3739,12 +3930,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       }
       const nextFreshness = resourceSnapshotFreshnessForSettlement(nextSettlement);
       const plan = planOnChainRefresh(latestOnChainResourceSnapshot.current, nextFreshness, options);
-      // Construction queues + fleet visibility are authoritative and not resource
-      // snapshots, so apply them regardless of the resource anti-snapback gate.
-      // This is what lets the Overview Buildings card clear a completed build
-      // queue on the periodic poll without waiting for a manual page reload.
+      // Successful wallet sync reads are authoritative for queues and fleet visibility.
       if (plan.applyQueues) {
-        setOnChainQueues((current) => preserveActiveResearchQueue(current, queues, { now: Date.now() }));
+        setOnChainQueues(queues);
         setFleetVisibility(fleetVisibility);
         setOnChainError(undefined);
         setOnChainStatus("ready");
@@ -3757,8 +3945,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         nextFreshness,
       );
       setWalletPlanets(planets);
-      if (!selectedPlanetId && selectedPlanet?.planetId) {
-        setSelectedPlanetId(selectedPlanet.planetId);
+      const nextSelectedPlanetId = selectedPlanetIdFromRoster({
+        homePlanetId: nextSettlement.homePlanetId,
+        planets,
+        selectedPlanetId: options.forceHomePlanet ? undefined : selectedPlanetId,
+      });
+      if (nextSelectedPlanetId !== selectedPlanetId) {
+        setSelectedPlanetId(nextSelectedPlanetId);
       }
       applyOnChainSettlementSnapshot(nextSettlement);
       setPlayerProfile((current) => mergePlayerProfile(current, nextSettlement.player ?? planetsResponse.player));
@@ -3769,14 +3962,14 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       }
       const message = error instanceof Error ? error.message : "Failed to load live game state";
       setOnChainError(message);
-      setOnChainStatus("error");
+      setOnChainStatus((current) => hasUsableOnChainState && current !== "local" ? current : "error");
       setPlanetSectionStore((current) => {
         let next = setPlanetSectionStatus(current, activePlanetId, "settlementState", { loading: false, error: message });
         next = setPlanetSectionStatus(next, activePlanetId, "queuesState", { loading: false, error: message });
         return setPlanetSectionStatus(next, activePlanetId, "fleetVisibilityState", { loading: false, error: message });
       });
     }
-  }, [account, activePlanetId, apiBaseUrl, applyOnChainSettlementSnapshot, isWalletConnected, selectedPlanetId]);
+  }, [account, activePlanetId, apiBaseUrl, applyOnChainSettlementSnapshot, hydratedWalletSnapshotKey, isWalletConnected, onChainQueues, onChainSettlementState, onChainSettlementState?.homePlanetId, selectedPlanetId, walletPlanets]);
 
   const loadMissionArchive = useCallback(async (page: number) => {
     if (!apiBaseUrl || !account) {
@@ -3970,7 +4163,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return true;
     }
 
-    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setOnChainStatus(keepGlobalReadStateDuringTransaction);
     setInfrastructureLoading(true);
     setInfrastructureError(undefined);
 
@@ -4028,7 +4221,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       }
 
       setOnChainError(message);
-      setOnChainStatus("error");
+      setOnChainStatus(globalReadStatusAfterTransactionRefreshFailure);
       setInfrastructureError(message);
       throw error;
     } finally {
@@ -4048,7 +4241,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setOnChainStatus(keepGlobalReadStateDuringTransaction);
     setDefenseLoading(true);
     setDefenseError(undefined);
 
@@ -4075,7 +4268,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
       const message = error instanceof Error ? error.message : "Failed to load started defense production state.";
       setOnChainError(message);
-      setOnChainStatus("error");
+      setOnChainStatus(globalReadStatusAfterTransactionRefreshFailure);
       setDefenseError(message);
       throw error;
     } finally {
@@ -4095,7 +4288,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setOnChainStatus(keepGlobalReadStateDuringTransaction);
     setShipyardLoading(true);
     setShipyardError(undefined);
 
@@ -4122,7 +4315,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
       const message = error instanceof Error ? error.message : "Failed to load started ship production state.";
       setOnChainError(message);
-      setOnChainStatus("error");
+      setOnChainStatus(globalReadStatusAfterTransactionRefreshFailure);
       setShipyardError(message);
       throw error;
     } finally {
@@ -4142,8 +4335,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
-    setResearchLoading(true);
+    setOnChainStatus(keepGlobalReadStateDuringTransaction);
+    setResearchLoading(false);
     setResearchError(undefined);
 
     try {
@@ -4169,7 +4362,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
       const message = error instanceof Error ? error.message : "Failed to load started research state.";
       setOnChainError(message);
-      setOnChainStatus("error");
+      setOnChainStatus(globalReadStatusAfterTransactionRefreshFailure);
       setResearchError(message);
       throw error;
     } finally {
@@ -4189,19 +4382,20 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     const requestId = beginRefreshRequest(infrastructureRefreshGate);
-    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
+    setOnChainStatus(keepGlobalReadStateDuringTransaction);
     setInfrastructureLoading(true);
     setInfrastructureError(undefined);
 
     try {
       const snapshot = await waitForStartedBuildingState(
         async () => {
-          const [infrastructure, queues] = await Promise.all([
+          const [infrastructure, queues, planetsResponse] = await Promise.all([
             fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
             fetchWalletQueues(apiBaseUrl, account, activePlanetId),
+            fetchWalletPlanets(apiBaseUrl, account).catch(() => undefined),
           ]);
 
-          return { infrastructure, queues };
+          return { infrastructure, planetsResponse, queues };
         },
         expectation,
       );
@@ -4211,8 +4405,17 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         latestInfrastructureResourceSnapshot.current,
         resourceSnapshotFreshnessForInfrastructure(snapshot.infrastructure),
       );
+      const walletPlanetQueue = startedBuildingQueueFromWalletPlanets(snapshot.planetsResponse, expectation);
+      const visibleBuildingQueue = snapshot.infrastructure.queue?.active
+        ? snapshot.infrastructure.queue
+        : walletPlanetQueue ?? snapshot.queues.building;
       setInfrastructureChainState(snapshot.infrastructure);
-      setOnChainQueues(snapshot.queues);
+      if (snapshot.planetsResponse) {
+        setWalletPlanets(snapshot.planetsResponse.planets);
+      }
+      setOnChainQueues(visibleBuildingQueue === snapshot.queues.building
+        ? snapshot.queues
+        : { ...snapshot.queues, building: visibleBuildingQueue ?? null });
       setOnChainError(undefined);
       setOnChainStatus("ready");
       // Reconcile the settlement snapshot so the top-bar resources reflect the
@@ -4223,7 +4426,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load started building state.";
       setOnChainError(message);
-      setOnChainStatus("error");
+      setOnChainStatus(globalReadStatusAfterTransactionRefreshFailure);
       setInfrastructureError(message);
       throw error;
     } finally {
@@ -4243,8 +4446,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return;
     }
 
-    setOnChainStatus((current) => current === "ready" ? "ready" : "loading");
-    setResearchLoading(true);
+    setOnChainStatus(keepGlobalReadStateDuringTransaction);
+    setResearchLoading(false);
     setResearchError(undefined);
 
     try {
@@ -4270,7 +4473,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
       const message = error instanceof Error ? error.message : "Failed to load finished research state.";
       setOnChainError(message);
-      setOnChainStatus("error");
+      setOnChainStatus(globalReadStatusAfterTransactionRefreshFailure);
       setResearchError(message);
       throw error;
     } finally {
@@ -4333,14 +4536,44 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     return () => abortController.abort();
   }, [homePlanetIdentitySyncKey]);
 
+  const initialPageRefreshRef = useRef({
+    refreshInfrastructureState,
+    refreshOnChainState,
+  });
+  initialPageRefreshRef.current = {
+    refreshInfrastructureState,
+    refreshOnChainState,
+  };
+
   useEffect(() => {
-    void refreshOnChainState();
-  }, [refreshOnChainState]);
+    void initialPageRefreshRef.current.refreshOnChainState();
+  }, [account, activePlanetId, apiBaseUrl]);
 
   useEffect(() => {
     if (!pageStateHydrationReady) return;
-    refreshInfrastructureState();
-  }, [pageStateHydrationReady, refreshInfrastructureState]);
+    void initialPageRefreshRef.current.refreshInfrastructureState();
+  }, [account, activePlanetId, apiBaseUrl, pageStateHydrationReady]);
+
+  const chainEventRefreshRef = useRef({
+    page,
+    refreshAllianceState,
+    refreshDefenseState,
+    refreshInfrastructureState,
+    refreshOnChainState,
+    refreshResearchState,
+    refreshRiftState,
+    refreshShipyardState,
+  });
+  chainEventRefreshRef.current = {
+    page,
+    refreshAllianceState,
+    refreshDefenseState,
+    refreshInfrastructureState,
+    refreshOnChainState,
+    refreshResearchState,
+    refreshRiftState,
+    refreshShipyardState,
+  };
 
   useEffect(() => {
     if (!apiBaseUrl || !account || typeof window.EventSource === "undefined") {
@@ -4349,15 +4582,53 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     }
 
     const events = new window.EventSource(`${apiBaseUrl.replace(/\/+$/, "")}/chain/events`);
-    const refreshFromChainEvent = () => {
-      void refreshOnChainState();
-      refreshInfrastructureState();
-      if (page === "shipyard" || shouldRefreshMissionActionStateForPage(page)) refreshShipyardState();
-      if (page === "defenses" || shouldRefreshMissionActionStateForPage(page)) refreshDefenseState();
-      if (shouldRefreshAllianceStateForPage(page)) refreshAllianceState();
-      if (page === "research") refreshResearchState();
-      if (page === "rift") refreshRiftState();
-      if (page === "moon") refreshInfrastructureState();
+    let refreshTimer: number | undefined;
+    let refreshInFlight = false;
+    let refreshQueued = false;
+    let forceWalletPlanetsRefreshQueued = false;
+
+    const runChainEventRefresh = () => {
+      const {
+        page: currentPage,
+        refreshAllianceState: refreshAllianceStateFromEvent,
+        refreshDefenseState: refreshDefenseStateFromEvent,
+        refreshInfrastructureState: refreshInfrastructureStateFromEvent,
+        refreshOnChainState: refreshOnChainStateFromEvent,
+        refreshResearchState: refreshResearchStateFromEvent,
+        refreshRiftState: refreshRiftStateFromEvent,
+        refreshShipyardState: refreshShipyardStateFromEvent,
+      } = chainEventRefreshRef.current;
+      const forceWalletPlanetsRefresh = forceWalletPlanetsRefreshQueued;
+      refreshInFlight = true;
+      refreshQueued = false;
+      forceWalletPlanetsRefreshQueued = false;
+      const refreshes: Array<Promise<unknown>> = [
+        refreshOnChainStateFromEvent(undefined, forceWalletPlanetsRefresh
+          ? { force: true, forceWalletPlanets: true }
+          : undefined),
+        refreshInfrastructureStateFromEvent(),
+      ];
+      if (currentPage === "shipyard" || shouldRefreshMissionActionStateForPage(currentPage)) refreshes.push(refreshShipyardStateFromEvent());
+      if (currentPage === "defenses" || shouldRefreshMissionActionStateForPage(currentPage)) refreshes.push(refreshDefenseStateFromEvent());
+      if (shouldRefreshAllianceStateForPage(currentPage)) refreshes.push(Promise.resolve(refreshAllianceStateFromEvent()));
+      if (currentPage === "research") refreshes.push(refreshResearchStateFromEvent());
+      if (currentPage === "rift") refreshes.push(refreshRiftStateFromEvent());
+      if (currentPage === "moon") refreshes.push(refreshInfrastructureStateFromEvent());
+
+      void Promise.allSettled(refreshes).finally(() => {
+        refreshInFlight = false;
+        if (refreshQueued) scheduleChainEventRefresh();
+      });
+    };
+
+    const scheduleChainEventRefresh = (event?: MessageEvent) => {
+      forceWalletPlanetsRefreshQueued ||= chainEventWalletPlanetsChanged(event);
+      refreshQueued = true;
+      if (refreshTimer !== undefined || refreshInFlight) return;
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = undefined;
+        runChainEventRefresh();
+      }, CHAIN_EVENT_REFRESH_DEBOUNCE_MS);
     };
     const updateSyncStatus = (event: MessageEvent) => {
       try {
@@ -4372,22 +4643,17 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       }
     };
 
-    events.addEventListener("chain-event", refreshFromChainEvent);
+    events.addEventListener("chain-event", scheduleChainEventRefresh);
     events.addEventListener("sync-status", updateSyncStatus);
     events.onerror = () => setChainSyncHealthy(false);
 
-    return () => events.close();
+    return () => {
+      if (refreshTimer !== undefined) window.clearTimeout(refreshTimer);
+      events.close();
+    };
   }, [
     account,
     apiBaseUrl,
-    page,
-    refreshDefenseState,
-    refreshAllianceState,
-    refreshInfrastructureState,
-    refreshOnChainState,
-    refreshResearchState,
-    refreshRiftState,
-    refreshShipyardState,
   ]);
 
   useEffect(() => {
@@ -4656,10 +4922,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
     return settledState.queue?.kind === "building" ? settledState.queue : undefined;
   }, [activeBuildingQueue, now, settledState.queue]);
-  const effectiveResearchState = useMemo(
-    () => researchStateWithFallbackQueue(researchState, onChainQueues?.research),
-    [onChainQueues?.research, researchState],
-  );
+  const effectiveResearchState = researchState;
 
   useEffect(() => {
     if (!apiBaseUrl || !account || !pageStateHydrationReady) {
@@ -4730,6 +4993,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       resources: liveOnChainResources,
     };
   }, [buildingQueue, isWalletConnected, liveOnChainResources, settledState]);
+
+  useEffect(() => {
+    if (!isStartedBuildingQueueSynced(activeBuildingQueue, failedStartedBuildingExpectation)) return;
+    setFailedStartedBuildingExpectation(undefined);
+    setBuildingAction((current) => recoveredStartedBuildingAction({
+      action: current,
+      activeBuildingQueue,
+      expectation: failedStartedBuildingExpectation,
+    }));
+  }, [activeBuildingQueue, failedStartedBuildingExpectation]);
 
   useEffect(() => {
     if (!completedBuildingFinishExpectation) return;
@@ -4808,7 +5081,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
 
   useEffect(() => {
     if (!pageStateHydrationReady) return;
-    if (page === "shipyard" || shouldRefreshMissionActionStateForPage(page)) {
+    if (shouldClearCachedShipyardStateForPageRefresh(page)) {
+      refreshShipyardState({ clearCachedState: true });
+    } else if (shouldRefreshMissionActionStateForPage(page)) {
       refreshShipyardState();
     }
   }, [page, pageStateHydrationReady, refreshShipyardState]);
@@ -4884,7 +5159,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       const building = buildingContractIds[key];
       const label = "Building upgrade";
       let backendStateReady = false;
+      let startedExpectation: StartedBuildingExpectation | undefined;
       setBuildingAction({ status: "pending", buildingKey: key, label: "Refreshing infrastructure state" });
+      setFailedStartedBuildingExpectation(undefined);
 
       try {
         const liveInfrastructure = await refreshLiveInfrastructureState();
@@ -4905,6 +5182,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         }
 
         backendStateReady = true;
+        const buildingRow = liveInfrastructure?.buildings.find((row) => row.id === building);
+        const currentLevel = buildingRow?.level ?? 0;
+        startedExpectation = {
+          itemId: building,
+          planetId,
+          targetLevel: currentLevel + 1,
+        };
         setBuildingAction({ status: "pending", buildingKey: key, label: buildingWalletConfirmationLabel(label) });
         const txHash = await sendStartBuildingUpgradeTransaction(
           provider,
@@ -4922,21 +5206,21 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         await confirmSubmittedTransaction(txHash);
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         setBuildingAction({ status: "pending", buildingKey: key, label: transactionSyncingLabel(label) });
-        const currentLevel = liveInfrastructure?.buildings.find((row) => row.id === building)?.level ?? 0;
-        await refreshStartedBuildingState({
-          itemId: building,
-          planetId,
-          targetLevel: currentLevel + 1,
-        });
+        await refreshStartedBuildingState(startedExpectation);
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setFailedStartedBuildingExpectation(undefined);
         setBuildingAction({ status: "success", buildingKey: key, label: "Building upgrade started." });
       } catch (error) {
         console.error(error);
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        const actionLabel = backendStateReady ? spendTransactionErrorMessage(error) : buildingUpgradeActionErrorLabel(error);
+        if (startedExpectation && isStartedBuildingQueueSyncingLabel(actionLabel)) {
+          setFailedStartedBuildingExpectation(startedExpectation);
+        }
         setBuildingAction({
           status: "error",
           buildingKey: key,
-          label: backendStateReady ? spendTransactionErrorMessage(error) : buildingUpgradeActionErrorLabel(error),
+          label: actionLabel,
           ...rejectedActionAutoDismiss(error),
         });
       }
@@ -5296,6 +5580,79 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     });
   }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, runGatedTransaction]);
 
+  const handleBurnChickenForMoon = useCallback((tokenId: string) => {
+    if (!provider || !account || !chickenBurnConfig || !activePlanetId || !activePlanetCoords) {
+      setMoonAction({ status: "error", label: "Wallet, Burning Chicken config, selected planet, or selected coordinates are unavailable." });
+      return;
+    }
+
+    const targetLabel = `${activePlanetCoords.galaxy}:${activePlanetCoords.system}:${activePlanetCoords.position}`;
+    const label = `Burn Chicken #${tokenId} for ${targetLabel}`;
+    void runGatedTransaction(`moon:chicken-burn:${tokenId}`, async () => {
+      const planetSwitchRequestId = planetSwitchGate.current;
+      setMoonAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
+
+      try {
+        const txHash = await sendBurningChickenMoonTransaction(
+          provider,
+          account,
+          chickenBurnConfig,
+          tokenId,
+          activePlanetId,
+          activePlanetCoords,
+        );
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setMoonAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
+        await confirmSubmittedTransaction(txHash);
+        await ensureBaseSepoliaNetwork(provider);
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setMoonAction({ status: "pending", label: "Chicken burned. Waiting for Veydrift indexed moon state..." });
+        if (!apiBaseUrl || !activePlanetId) {
+          throw new Error("Chicken burn confirmed, but Veydrift API state is unavailable for moon confirmation.");
+        }
+        const confirmedMoonState = await waitForConfirmedChickenMoonState(apiBaseUrl, account, activePlanetId);
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setMoonState(confirmedMoonState);
+        setActivePlanetSectionStatus("moonState", {
+          loading: false,
+          error: undefined,
+          lastSuccessfulRefreshAt: Date.now(),
+        });
+        await Promise.allSettled([
+          refreshOnChainState(undefined, { force: true }),
+          refreshBurningChickens(),
+        ]);
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setMoonAction({ status: "success", label: `${label} confirmed.` });
+      } catch (error) {
+        console.error(error);
+        try {
+          await ensureBaseSepoliaNetwork(provider);
+        } catch (switchError) {
+          console.error(switchError);
+        }
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setMoonAction({
+          status: "error",
+          label: error instanceof Error ? error.message : `${label} failed.`,
+        });
+      }
+    });
+  }, [
+    account,
+    activePlanetId,
+    activePlanetCoords,
+    apiBaseUrl,
+    chickenBurnConfig,
+    confirmSubmittedTransaction,
+    provider,
+    refreshBurningChickens,
+    refreshOnChainState,
+    runGatedTransaction,
+    setActivePlanetSectionStatus,
+    setMoonState,
+  ]);
+
   const handleBuildShip = useCallback((shipId: number, _key: ShipKey, quantity: number) => {
     const planetId = shipyardState?.planetId ?? shipyardState?.homePlanetId;
     if (!provider || !account || !gameContract || !planetId) {
@@ -5604,6 +5961,25 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     ));
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
+  const handleBatchKickAllianceMembers = useCallback((playerAddresses: string[]) => {
+    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+    if (playerAddresses.length === 0) {
+      setAllianceAction({ status: "error", label: "Select at least one alliance member." });
+      return;
+    }
+
+    void runAllianceTransaction("Alliance batch roster removal", () => sendAllianceBatchKickTransaction(
+      provider,
+      account,
+      allianceContract,
+      allianceState.membership.allianceId,
+      playerAddresses,
+    ));
+  }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+
   const handleLeaveAlliance = useCallback(() => {
     if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
       setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
@@ -5630,6 +6006,27 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       allianceContract,
       allianceState.membership.allianceId,
       playerAddress,
+      role,
+    ));
+  }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+
+  const handleBatchSetAllianceRole = useCallback((playerAddresses: string[], role: "member" | "officer") => {
+    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+    if (playerAddresses.length === 0) {
+      setAllianceAction({ status: "error", label: "Select at least one alliance member." });
+      return;
+    }
+
+    const label = role === "officer" ? "Alliance batch officer promotion" : "Alliance batch member demotion";
+    void runAllianceTransaction(label, () => sendAllianceBatchRoleTransaction(
+      provider,
+      account,
+      allianceContract,
+      allianceState.membership.allianceId,
+      playerAddresses,
       role,
     ));
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
@@ -6000,7 +6397,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         setPlanetManagementAction({ status: "pending", label: transactionSyncingLabel("Colony abandon") });
         setSelectedPlanetId(undefined);
-        await refreshOnChainState();
+        await refreshOnChainState(undefined, { force: true, forceHomePlanet: true });
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         setPlanetManagementAction({ status: "success", label: "Colony abandoned." });
       } catch (error) {
@@ -6167,6 +6564,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     };
 
     if (action.mode === "colonize") {
+      const colonyLimitBlocker = colonizationLimitBlocker({
+        planetCount: walletPlanets.length,
+        researchTechnologyLevels: effectiveResearchState?.technologyLevels,
+        shipyardTechnologyLevels: shipyardState?.technologyLevels,
+      });
+      if (colonyLimitBlocker) {
+        setGalaxyAction({ status: "error", label: colonyLimitBlocker });
+        return;
+      }
+
       closeMissionCreationWhenComplete(runGalaxyTransaction("Colony mission", () => sendCreateColonyTransaction(
         provider,
         account,
@@ -6288,7 +6695,19 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       validateShipInventory: { originPlanetId, ships: draft.ships },
     }));
     closeMissionCreationWhenComplete(runMission());
-  }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingGalaxyMission, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
+  }, [
+    account,
+    activePlanetId,
+    effectiveResearchState?.technologyLevels,
+    gameContract,
+    onChainSettlement?.homePlanetId,
+    pendingGalaxyMission,
+    provider,
+    runGalaxyTransaction,
+    selectedManagedPlanet,
+    shipyardState?.technologyLevels,
+    walletPlanets.length,
+  ]);
 
   const handleStartMoonBuilding = useCallback((buildingId: number, label: string) => {
     if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
@@ -6644,7 +7063,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       crawlerProduction={infrastructureChainState?.crawlerProduction}
       energy={topBarEnergy}
       isWalletConnected={isWalletConnected}
-      coordinates={activePlanetCoords ? `${activePlanetCoords.galaxy}:${activePlanetCoords.system}:${activePlanetCoords.position}` : homeCoordinateLabel}
       queue={isWalletConnected ? undefined : settledState.queue}
       rates={rates}
       resourceStatus={isWalletConnected && !walletPlanetHydrated && onChainStatus !== "error" ? "loading" : isWalletConnected ? onChainStatus : "local"}
@@ -6690,6 +7108,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const gameTransactionInputsAvailable = Boolean(provider && account && gameContract);
   const allianceTransactionInputsAvailable = Boolean(provider && account && allianceContract);
   const moonTransactionInputsAvailable = Boolean(provider && account && moonContract);
+  const chickenBurnTransactionInputsAvailable = Boolean(provider && account && chickenBurnConfig);
   const gameTransactionUnavailableReason = transactionUnavailableReasonFor({
     activeActionLabel: pendingActionLabel(
       buildingAction,
@@ -6721,6 +7140,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const canSubmitGameTransaction = gameTransactionInputsAvailable && !transactionActionPending;
   const canSubmitAllianceTransaction = allianceTransactionInputsAvailable && !transactionActionPending;
   const canSubmitMoonTransaction = moonTransactionInputsAvailable && !transactionActionPending;
+  const canSubmitChickenBurnTransaction = chickenBurnTransactionInputsAvailable && !transactionActionPending;
   const canSubmitProfileMutation = Boolean(provider && account && apiBaseUrl) && !transactionActionPending;
   const missionLaunchBlocker = gameTransactionUnavailableReason ?? missionLaunchStateBlocker;
   const activePlanetSections = planetSectionAccessForPlanet(planetSectionStore, activePlanetId, {
@@ -6959,13 +7379,25 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return (
         <MoonPage
           action={moonAction}
+          burningChicken={{
+            chickens: burningChickens,
+            configured: Boolean(chickenBurnConfig),
+            error: burningChickensError,
+            loading: burningChickensLoading,
+            maxMoonsPerPlayer: 2,
+            moonCount: walletMoonCount,
+          }}
+          canBurnChicken={canSubmitChickenBurnTransaction}
           canTransact={canSubmitMoonTransaction}
           error={moonSection.status.error ?? moonError}
           loading={moonLoading || moonSection.status.loading}
           moonState={moonState}
+          onBurnChicken={handleBurnChickenForMoon}
           onJumpGate={handleJumpGate}
           onRefresh={moonSection.refresh ?? refreshInfrastructureState}
+          onRefreshChickens={refreshBurningChickens}
           onStartBuilding={handleStartMoonBuilding}
+          selectedCoordinates={activePlanetCoords}
           transactionUnavailableReason={moonTransactionUnavailableReason}
         />
       );
@@ -7067,6 +7499,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           transactionUnavailableReason={allianceTransactionUnavailableReason}
           onAcceptInvite={handleAcceptAllianceInvite}
           onApproveJoinRequest={handleApproveAllianceJoinRequest}
+          onBatchKick={handleBatchKickAllianceMembers}
+          onBatchSetRole={handleBatchSetAllianceRole}
           onCancelJoinRequest={handleCancelAllianceJoinRequest}
           onCreate={handleCreateAlliance}
           onDismissJoinRequest={handleDismissAllianceJoinRequest}
@@ -7096,6 +7530,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           transactionUnavailableReason={allianceTransactionUnavailableReason}
           onApproveJoinRequest={handleApproveAllianceJoinRequest}
           onBack={() => handleNavigate("alliance")}
+          onBatchKick={handleBatchKickAllianceMembers}
+          onBatchSetRole={handleBatchSetAllianceRole}
           onDismissJoinRequest={handleDismissAllianceJoinRequest}
           onInvite={handleInviteAllianceMember}
           onKick={handleKickAllianceMember}

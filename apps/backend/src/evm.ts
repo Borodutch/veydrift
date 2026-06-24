@@ -1036,8 +1036,11 @@ type JsonRpcResponse<T> = {
 };
 
 export type RpcLog = {
+  address?: string;
   blockNumber: string;
+  blockTimestamp?: string;
   logIndex?: string;
+  removed?: boolean;
   transactionHash: string;
   topics: string[];
   data: string;
@@ -4767,13 +4770,6 @@ export function canonicalHealPlanetIdsForLog(log: RpcLog): string[] {
   try {
     if (topic === attackBattleResolvedTopic || topic === combatDebrisSignaledTopic) {
       addTopic(topic === attackBattleResolvedTopic ? 3 : 2);
-    } else if (topic === fleetMissionLaunchedTopic) {
-      addDataWord(0);
-    } else if (topic === fleetMissionReturnExposedTopic) {
-      addDataWord(0);
-      addDataWord(1);
-    } else if (topic === fleetMissionReturnedTopic) {
-      addTopic(3);
     }
   } catch {
     return [];

@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
   BASE_SEPOLIA,
+  __clearGameApiReadPoolForTests,
   assertWalletUnlocked,
   decodeBoolResult,
   decodeColonizationTargetId,
@@ -8,6 +9,7 @@ import {
   encodeQuantity,
   encodeAddressUintCall,
   encodeAddressCall,
+  encodeBurningChickenMoonCall,
   encodeColonizationTargetId,
   encodeGameCall,
   encodeJoinAttackMissionCall,
@@ -17,6 +19,7 @@ import {
   encodeLaunchFleetMissionCall,
   encodeUintCall,
   ensureBaseSepoliaNetwork,
+  ensureBaseMainnetNetwork,
   fetchAllianceState,
   fetchDefenseState,
   fetchFleetMissionArchive,
@@ -54,6 +57,8 @@ import {
   sendJumpGateJumpTransaction,
   sendRecallFleetMissionTransaction,
   sendAcceptAllianceInviteTransaction,
+  sendAllianceBatchKickTransaction,
+  sendAllianceBatchRoleTransaction,
   sendAllianceJoinRequestTransaction,
   sendAllianceKickTransaction,
   sendAllianceLeaveTransaction,
@@ -65,6 +70,7 @@ import {
   sendApproveAllianceJoinRequestTransaction,
   sendCancelAllianceJoinRequestTransaction,
   sendCreateAllianceTransaction,
+  sendBurningChickenMoonTransaction,
   sendDismissAllianceJoinRequestTransaction,
   sendRequestResourceWithdrawalTransaction,
   requestAccounts,
@@ -88,11 +94,23 @@ import {
 } from "./walletFlow";
 import { GAME_UNAVAILABLE_MESSAGE } from "./gameUnavailable";
 
+afterEach(() => {
+  __clearGameApiReadPoolForTests();
+});
+
 const account = "0x1111111111111111111111111111111111111111";
 const contract = "0x2222222222222222222222222222222222222222";
 
 function customErrorData(selector: string, args: Array<number | bigint> = []): string {
   return selector + args.map((value) => BigInt(value).toString(16).padStart(64, "0")).join("");
+}
+
+function bytes32StringErrorData(selector: string, value: string): string {
+  const encoded = [...new TextEncoder().encode(value)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")
+    .padEnd(64, "0");
+  return selector + encoded;
 }
 
 describe("walletFlow", () => {
@@ -101,6 +119,69 @@ describe("walletFlow", () => {
     expect(isBaseSepoliaChain("84532")).toBe(true);
     expect(isBaseSepoliaChain(84532)).toBe(true);
     expect(isBaseSepoliaChain("0x1")).toBe(false);
+  });
+
+  test("encodes Burning Chicken moon burns with token id, planet id, and coordinates", () => {
+    expect(encodeBurningChickenMoonCall("0x6364233d", "42", "7", { galaxy: 1, system: 44, position: 8 })).toBe(
+      "0x6364233d"
+        + "2a".padStart(64, "0")
+        + "7".padStart(64, "0")
+        + "1".padStart(64, "0")
+        + "2c".padStart(64, "0")
+        + "8".padStart(64, "0")
+    );
+  });
+
+  test("switches to Base mainnet and sends Burning Chicken moon burn transactions", async () => {
+    const requests: Array<{ method: string; params?: unknown[] }> = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push(params === undefined ? { method } : { method, params });
+      if (method === "wallet_switchEthereumChain") return null;
+      if (method === "eth_sendTransaction") return "0xchicken";
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    await expect(sendBurningChickenMoonTransaction(provider, account, {
+      burnContractAddress: "0x3333333333333333333333333333333333333333",
+      burnSelector: "0x6364233d",
+      nftContractAddress: "0x4444444444444444444444444444444444444444",
+    }, "42", "7", { galaxy: 1, system: 44, position: 8 })).resolves.toBe("0xchicken");
+
+    expect(requests).toEqual([
+      { method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: "0x3333333333333333333333333333333333333333",
+          data: encodeBurningChickenMoonCall("0x6364233d", "42", "7", { galaxy: 1, system: 44, position: 8 }),
+        }],
+      },
+    ]);
+  });
+
+  test("adds Base mainnet when the wallet does not recognize it", async () => {
+    const requests: Array<{ method: string; params?: unknown[] }> = [];
+    let switched = false;
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push(params === undefined ? { method } : { method, params });
+      if (method === "wallet_switchEthereumChain") {
+        if (!switched) {
+          switched = true;
+          throw { code: 4902, message: "unknown chain" };
+        }
+        return null;
+      }
+      if (method === "wallet_addEthereumChain") return null;
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    await expect(ensureBaseMainnetNetwork(provider)).resolves.toBeUndefined();
+    expect(requests.map((request) => request.method)).toEqual([
+      "wallet_switchEthereumChain",
+      "wallet_addEthereumChain",
+      "wallet_switchEthereumChain",
+    ]);
   });
 
   test("detects rejected wallet requests", () => {
@@ -1413,6 +1494,10 @@ describe("walletFlow", () => {
       .toContain("colony limit");
     expect(walletRequestErrorMessage({ message: "execution reverted", data: "0x57aab7e3" }))
       .toContain("Computer");
+    expect(walletRequestErrorMessage({ message: "execution reverted", data: bytes32StringErrorData("0xb8f7e9ba", "RESEARCH_LAB_6") }))
+      .toContain("Research Lab 6 is required");
+    expect(walletRequestErrorMessage({ message: "execution reverted", data: "0xcc9beebc" }))
+      .toContain("Another queue is already active");
     expect(walletRequestErrorMessage(new Error("execution reverted"))).not.toContain("indexed spendable balance");
     expect(walletRequestErrorMessage(new Error("execution reverted"))).not.toContain("reconnect your wallet");
     expect(walletRequestErrorMessage(new Error("Timed out reading wallet accounts from the wallet after 10 seconds."))).toContain(
@@ -1827,32 +1912,44 @@ describe("walletFlow", () => {
       sendAllianceKickTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
     ).resolves.toBe("0xalliance4");
     await expect(
-      sendAllianceRoleTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333", "officer")
+      sendAllianceBatchKickTransaction(provider, account, contract, "1", [
+        "0x3333333333333333333333333333333333333333",
+        "0x4444444444444444444444444444444444444444",
+      ])
     ).resolves.toBe("0xalliance5");
     await expect(
-      sendAllianceProfileTransaction(provider, account, contract, "1", "VDF", "Veydrift Directorate", "Line 1\nLine 2")
+      sendAllianceRoleTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333", "officer")
     ).resolves.toBe("0xalliance6");
     await expect(
-      sendAllianceJoinRequestTransaction(provider, account, contract, "1")
+      sendAllianceBatchRoleTransaction(provider, account, contract, "1", [
+        "0x3333333333333333333333333333333333333333",
+        "0x4444444444444444444444444444444444444444",
+      ], "officer")
     ).resolves.toBe("0xalliance7");
     await expect(
-      sendCancelAllianceJoinRequestTransaction(provider, account, contract, "1")
+      sendAllianceProfileTransaction(provider, account, contract, "1", "VDF", "Veydrift Directorate", "Line 1\nLine 2")
     ).resolves.toBe("0xalliance8");
     await expect(
-      sendApproveAllianceJoinRequestTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
+      sendAllianceJoinRequestTransaction(provider, account, contract, "1")
     ).resolves.toBe("0xalliance9");
     await expect(
-      sendDismissAllianceJoinRequestTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
+      sendCancelAllianceJoinRequestTransaction(provider, account, contract, "1")
     ).resolves.toBe("0xalliance10");
     await expect(
-      sendAllianceLeaveTransaction(provider, account, contract)
+      sendApproveAllianceJoinRequestTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
     ).resolves.toBe("0xalliance11");
     await expect(
-      sendAllianceTransferOwnershipTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
+      sendDismissAllianceJoinRequestTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
     ).resolves.toBe("0xalliance12");
     await expect(
-      sendAllianceDiplomacyTransaction(provider, account, contract, "1", "2", "war")
+      sendAllianceLeaveTransaction(provider, account, contract)
     ).resolves.toBe("0xalliance13");
+    await expect(
+      sendAllianceTransferOwnershipTransaction(provider, account, contract, "1", "0x3333333333333333333333333333333333333333")
+    ).resolves.toBe("0xalliance14");
+    await expect(
+      sendAllianceDiplomacyTransaction(provider, account, contract, "1", "2", "war")
+    ).resolves.toBe("0xalliance15");
 
     expect(requests[0]).toMatchObject({
       method: "eth_sendTransaction",
@@ -1895,14 +1992,34 @@ describe("walletFlow", () => {
         {
           from: account,
           to: contract,
+          data: `0x7c581707${"1".padStart(64, "0")}${"40".padStart(64, "0")}${"2".padStart(64, "0")}${"3333333333333333333333333333333333333333".padStart(64, "0")}${"4444444444444444444444444444444444444444".padStart(64, "0")}`
+        }
+      ]
+    });
+    expect(requests[5]).toEqual({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: account,
+          to: contract,
           data: `0xbfbb73f1${"1".padStart(64, "0")}${"3333333333333333333333333333333333333333".padStart(64, "0")}${"2".padStart(64, "0")}`
         }
       ]
     });
-    expect((requests[5] as { params: Array<{ data: string }> }).params[0]?.data.startsWith(
+    expect(requests[6]).toEqual({
+      method: "eth_sendTransaction",
+      params: [
+        {
+          from: account,
+          to: contract,
+          data: `0xe0c22e19${"1".padStart(64, "0")}${"60".padStart(64, "0")}${"2".padStart(64, "0")}${"2".padStart(64, "0")}${"3333333333333333333333333333333333333333".padStart(64, "0")}${"4444444444444444444444444444444444444444".padStart(64, "0")}`
+        }
+      ]
+    });
+    expect((requests[7] as { params: Array<{ data: string }> }).params[0]?.data.startsWith(
       `0x3fd0e7a5${"1".padStart(64, "0")}`
     )).toBe(true);
-    expect(requests[6]).toEqual({
+    expect(requests[8]).toEqual({
       method: "eth_sendTransaction",
       params: [
         {
@@ -1912,7 +2029,7 @@ describe("walletFlow", () => {
         }
       ]
     });
-    expect(requests[7]).toEqual({
+    expect(requests[9]).toEqual({
       method: "eth_sendTransaction",
       params: [
         {
@@ -1922,7 +2039,7 @@ describe("walletFlow", () => {
         }
       ]
     });
-    expect(requests[8]).toEqual({
+    expect(requests[10]).toEqual({
       method: "eth_sendTransaction",
       params: [
         {
@@ -1932,7 +2049,7 @@ describe("walletFlow", () => {
         }
       ]
     });
-    expect(requests[9]).toEqual({
+    expect(requests[11]).toEqual({
       method: "eth_sendTransaction",
       params: [
         {
@@ -1942,7 +2059,7 @@ describe("walletFlow", () => {
         }
       ]
     });
-    expect(requests[10]).toEqual({
+    expect(requests[12]).toEqual({
       method: "eth_sendTransaction",
       params: [
         {
@@ -1952,7 +2069,7 @@ describe("walletFlow", () => {
         }
       ]
     });
-    expect(requests[11]).toEqual({
+    expect(requests[13]).toEqual({
       method: "eth_sendTransaction",
       params: [
         {
@@ -1962,7 +2079,7 @@ describe("walletFlow", () => {
         }
       ]
     });
-    expect(requests[12]).toEqual({
+    expect(requests[14]).toEqual({
       method: "eth_sendTransaction",
       params: [
         {
@@ -1974,7 +2091,7 @@ describe("walletFlow", () => {
     });
   });
 
-  test("fetches dynamic wallet state without browser cache", async () => {
+  test("fetches dynamic wallet state without browser cache and pools duplicate burst reads", async () => {
     const originalFetch = globalThis.fetch;
     const calls: Array<{ url: string; init: { cache: RequestCache | undefined; headers: HeadersInit | undefined; signal: boolean } }> = [];
 
@@ -2027,14 +2144,6 @@ describe("walletFlow", () => {
         },
       },
       {
-        url: `https://api.example.test/wallet/${account}/settlement`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
         url: `https://api.example.test/wallet/${account}/planets`,
         init: {
           cache: "no-store",
@@ -2067,22 +2176,6 @@ describe("walletFlow", () => {
         },
       },
       {
-        url: `https://api.example.test/wallet/${account}/infrastructure`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/moon?planetId=7`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
         url: `https://api.example.test/wallet/${account}/moon?planetId=7`,
         init: {
           cache: "no-store",
@@ -2092,14 +2185,6 @@ describe("walletFlow", () => {
       },
       {
         url: `https://api.example.test/wallet/${account}/moon`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
-        url: `https://api.example.test/wallet/${account}/research?planetId=7`,
         init: {
           cache: "no-store",
           headers: { accept: "application/json" },
@@ -2147,14 +2232,6 @@ describe("walletFlow", () => {
         },
       },
       {
-        url: `https://api.example.test/wallet/${account}/shipyard?planetId=4`,
-        init: {
-          cache: "no-store",
-          headers: { accept: "application/json" },
-          signal: true,
-        },
-      },
-      {
         url: `https://api.example.test/wallet/${account}/shipyard`,
         init: {
           cache: "no-store",
@@ -2172,6 +2249,54 @@ describe("walletFlow", () => {
       },
     ]);
     expect(calls.map((call) => new URL(call.url).searchParams.has("source"))).not.toContain(true);
+  });
+
+  test("limits distinct game API reads while still pooling duplicate URLs", async () => {
+    const originalFetch = globalThis.fetch;
+    let active = 0;
+    let maxActive = 0;
+    let calls = 0;
+
+    globalThis.fetch = (async () => {
+      active += 1;
+      calls += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return new Response(JSON.stringify({ ok: true }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await Promise.all([
+        fetchWalletSettlement("https://api.example.test", account),
+        fetchWalletSettlement("https://api.example.test", account),
+        fetchWalletPlanets("https://api.example.test", account),
+        fetchWalletQueues("https://api.example.test", account),
+        fetchInfrastructureState("https://api.example.test", account, "1"),
+        fetchMoonState("https://api.example.test", account, "1"),
+        fetchResearchState("https://api.example.test", account, "1"),
+        fetchFleetMissionVisibility("https://api.example.test", account),
+        fetchFleetMissionVisibility("https://api.example.test", account, { includeArchive: false }),
+        fetchShipyardState("https://api.example.test", account, "1"),
+        fetchDefenseState("https://api.example.test", account, "1"),
+      ]);
+
+      expect(calls).toBe(10);
+      expect(maxActive).toBeLessThanOrEqual(3);
+
+      const followUp = fetchResearchState("https://api.example.test", account, "2");
+      const followUpCompleted = await Promise.race([
+        followUp.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 20)),
+      ]);
+      expect(followUpCompleted).toBe(true);
+      if (followUpCompleted) await followUp;
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("includes backend wallet API validation messages in shipyard errors", async () => {

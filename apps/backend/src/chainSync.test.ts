@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setSystemTime, test } from "bun:test";
 import { ChainSyncService } from "./chainSync";
+import type { LiveLogSubscriber } from "./chainSync";
 import type { BackendConfig } from "./config";
 import type { RpcLog, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
@@ -14,6 +15,7 @@ const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57d
 const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
+const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 
 function topicWord(value: bigint): string {
   return `0x${value.toString(16).padStart(64, "0")}`;
@@ -25,6 +27,15 @@ function abiWords(...values: bigint[]): string {
 
 function ownerTopic(address: string): string {
   return `0x${address.slice(2).padStart(64, "0")}`;
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  if (!predicate()) throw new Error("Timed out waiting for condition");
 }
 
 // eth_getLogs responses carry logIndex at runtime even though the RpcLog type doesn't declare it
@@ -92,6 +103,38 @@ class MockBackfiller {
   }
 }
 
+class MockLiveLogSubscriber implements LiveLogSubscriber {
+  subscription:
+    | {
+      addresses: `0x${string}`[];
+      onError: (error: Error) => void;
+      onLogs: (logs: RpcLog[]) => void;
+    }
+    | null = null;
+  subscribeCalls = 0;
+  unsubscribeCalls = 0;
+
+  constructor(private readonly setupError: Error | null = null) {}
+
+  subscribe(options: {
+    addresses: `0x${string}`[];
+    onError: (error: Error) => void;
+    onLogs: (logs: RpcLog[]) => void;
+  }): () => void {
+    this.subscribeCalls += 1;
+    if (this.setupError) throw this.setupError;
+    this.subscription = options;
+    return () => {
+      this.unsubscribeCalls += 1;
+    };
+  }
+
+  emit(logs: RpcLog[]): void {
+    if (!this.subscription) throw new Error("No live-log subscription is active.");
+    this.subscription.onLogs(logs);
+  }
+}
+
 function planetStartedLog(block: string, planetId: bigint, tx: string): RpcLog {
   return {
     blockNumber: block,
@@ -102,6 +145,430 @@ function planetStartedLog(block: string, planetId: bigint, tx: string): RpcLog {
 }
 
 describe("ChainSyncService (polling)", () => {
+  test("closes an event stream when the request signal aborts", async () => {
+    const service = new ChainSyncService(config, makeIndexer());
+    const abortController = new AbortController();
+    const reader = service.eventStream(abortController.signal).getReader();
+
+    await expect(reader.read()).resolves.toMatchObject({ done: false });
+    abortController.abort();
+
+    await expect(reader.read()).resolves.toMatchObject({ done: true });
+    service.stop();
+  });
+
+  test("uses the viem websocket subscriber as the live ingestion source when available", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x180n);
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService(config, indexer, {
+      liveLogSubscriber: liveLogs,
+      logBackfiller: backfiller
+    });
+
+    service.start();
+    await waitFor(() => liveLogs.subscription !== null && service.snapshot().liveListenerConnected);
+    await waitFor(() => service.snapshot().latestSyncedBlock === String(0x180n));
+    liveLogs.emit([{
+      ...planetStartedLog("0x181", 7n, "0xlive"),
+      address: config.gameContractAddress!,
+      logIndex: "0x0"
+    }]);
+
+    await waitFor(() => indexer.snapshot().indexedPlanets === 1);
+    expect(service.snapshot()).toMatchObject({
+      activeSource: "viem_ws",
+      eventsReceived: 1,
+      latestSyncedBlock: String(0x181n),
+      liveListenerConnected: true,
+      pollingEnabled: false,
+      subscribedToLogs: true
+    });
+    expect(backfiller.ranges).toEqual([{ from: 100n, to: 0x180n }]);
+    service.stop();
+    expect(liveLogs.unsubscribeCalls).toBe(1);
+  });
+
+  test("does not let delayed startup catch-up regress the cursor after a websocket log", async () => {
+    const indexer = makeIndexer();
+    let resolveCatchUp!: () => void;
+    const catchUpBlocked = new Promise<void>((resolve) => {
+      resolveCatchUp = resolve;
+    });
+    const ranges: Array<{ from: bigint; to: bigint | "latest" }> = [];
+    let listCalls = 0;
+    const backfiller = {
+      async getHeadBlock() {
+        return 0x180n;
+      },
+      async listContractLogs(from: bigint, to: bigint | "latest" = "latest") {
+        ranges.push({ from, to });
+        listCalls += 1;
+        if (listCalls === 1) {
+          await catchUpBlocked;
+        }
+        return [];
+      }
+    };
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService(config, indexer, {
+      liveLogSubscriber: liveLogs,
+      logBackfiller: backfiller
+    });
+
+    service.start();
+    await waitFor(() => liveLogs.subscription !== null && ranges.length === 1);
+    liveLogs.emit([{
+      ...planetStartedLog("0x181", 7n, "0xlive-before-catch-up-finishes"),
+      address: config.gameContractAddress!,
+      logIndex: "0x0"
+    }]);
+
+    await waitFor(() => service.snapshot().latestSyncedBlock === String(0x181n));
+    expect(service.snapshot().pollBacklogBlocks).toBe("0");
+    resolveCatchUp();
+    await waitFor(() => service.snapshot().lastPollDurationMs !== null);
+
+    expect(ranges).toEqual([
+      { from: 100n, to: 0x180n },
+      { from: 100n, to: 0x180n }
+    ]);
+    expect(service.snapshot()).toMatchObject({
+      latestHeadBlock: String(0x181n),
+      latestSyncedBlock: String(0x181n),
+      pollBacklogBlocks: "0"
+    });
+    service.stop();
+  });
+
+  test("uses HTTP getLogs only to catch up cursor gaps before a websocket log", async () => {
+    const indexer = makeIndexer();
+    const gapLog = {
+      ...planetStartedLog("0x181", 7n, "0xgap"),
+      logIndex: "0x0"
+    };
+    const backfiller = new MockBackfiller(0x180n, (from, to) =>
+      from === 0x181n && to === 0x181n ? [gapLog] : []
+    );
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService(config, indexer, {
+      liveLogSubscriber: liveLogs,
+      logBackfiller: backfiller
+    });
+
+    service.start();
+    await waitFor(() => service.snapshot().latestSyncedBlock === String(0x180n));
+    liveLogs.emit([{
+      ...planetStartedLog("0x182", 8n, "0xlive-after-gap"),
+      address: config.gameContractAddress!,
+      logIndex: "0x0"
+    }]);
+
+    await waitFor(() => indexer.snapshot().indexedPlanets === 2);
+    expect(backfiller.ranges).toEqual([
+      { from: 100n, to: 0x180n },
+      { from: 0x181n, to: 0x181n }
+    ]);
+    expect(service.snapshot()).toMatchObject({
+      activeSource: "viem_ws",
+      latestSyncedBlock: String(0x182n),
+      pollBacklogBlocks: "0"
+    });
+    service.stop();
+  });
+
+  test("falls back to HTTP polling when websocket setup fails", async () => {
+    const indexer = makeIndexer();
+    const log = {
+      ...planetStartedLog("0x181", 7n, "0xfallback"),
+      logIndex: "0x0"
+    };
+    const backfiller = new MockBackfiller(0x181n, () => [log]);
+    const liveLogs = new MockLiveLogSubscriber(new Error("websocket refused"));
+    const service = new ChainSyncService(config, indexer, {
+      liveLogSubscriber: liveLogs,
+      logBackfiller: backfiller,
+      pollIntervalMs: 60_000
+    });
+
+    service.start();
+
+    await waitFor(() => indexer.snapshot().indexedPlanets === 1);
+    expect(service.snapshot()).toMatchObject({
+      activeSource: "fallback_poll",
+      liveListenerConnected: false,
+      liveListenerErrorCount: 1,
+      liveListenerLastError: "websocket refused",
+      pollingEnabled: true
+    });
+    service.stop();
+  });
+
+  test("does not let a slow targeted canonical heal block websocket log handling", async () => {
+    let resolveHeal!: () => void;
+    const healStarted = new Promise<void>((resolve) => {
+      resolveHeal = resolve;
+    });
+    const healCalls: string[][] = [];
+    const indexer = {
+      applyLog: () => ({
+        applied: true,
+        duplicate: false,
+        ignored: false,
+        removed: false,
+        snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
+      }),
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>,
+      healCanonicalPlanets: async (planetIds: string[]) => {
+        healCalls.push(planetIds);
+        await healStarted;
+      }
+    };
+    const backfiller = new MockBackfiller(0x180n);
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService(config, indexer, {
+      liveLogSubscriber: liveLogs,
+      logBackfiller: backfiller
+    });
+    const combatLog: TestLog = {
+      blockNumber: "0x181",
+      transactionHash: "0xcombat-ws-slow-heal",
+      logIndex: "0x0",
+      topics: [
+        attackBattleResolvedTopic,
+        topicWord(99n),
+        ownerTopic(player),
+        topicWord(8n)
+      ],
+      data: abiWords(1n, 2n, 3n, 4n)
+    };
+
+    service.start();
+    await waitFor(() => liveLogs.subscription !== null && service.snapshot().liveListenerConnected);
+    liveLogs.emit([combatLog]);
+
+    await waitFor(() => service.snapshot().latestSyncedBlock === String(0x181n));
+    await waitFor(() => healCalls.length === 1);
+    expect(healCalls).toEqual([["8"]]);
+    expect(service.snapshot()).toMatchObject({
+      activeSource: "viem_ws",
+      eventsReceived: 1,
+      pollBacklogBlocks: "0"
+    });
+    resolveHeal();
+    service.stop();
+  });
+
+  test("does not count synchronous targeted-heal enqueue work as websocket handler latency", async () => {
+    const healCalls: string[][] = [];
+    const indexer = {
+      applyLog: () => ({
+        applied: true,
+        duplicate: false,
+        ignored: false,
+        removed: false,
+        snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
+      }),
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>,
+      healCanonicalPlanets: async (planetIds: string[]) => {
+        healCalls.push(planetIds);
+        const deadline = Date.now() + 1_200;
+        while (Date.now() < deadline) {}
+      }
+    };
+    const backfiller = new MockBackfiller(0x180n);
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService(config, indexer, {
+      liveLogSubscriber: liveLogs,
+      logBackfiller: backfiller
+    });
+    const combatLog: TestLog = {
+      blockNumber: "0x181",
+      transactionHash: "0xcombat-ws-sync-heal-enqueue",
+      logIndex: "0x0",
+      topics: [
+        attackBattleResolvedTopic,
+        topicWord(99n),
+        ownerTopic(player),
+        topicWord(8n)
+      ],
+      data: abiWords(1n, 2n, 3n, 4n)
+    };
+
+    service.start();
+    await waitFor(() => liveLogs.subscription !== null && service.snapshot().liveListenerConnected);
+    liveLogs.emit([combatLog]);
+
+    await waitFor(() => service.snapshot().latestSyncedBlock === String(0x181n));
+    expect(service.snapshot()).toMatchObject({
+      recentHandlerDurationMs: { count: 1 },
+      slowHandlerCount300Ms: 0,
+      slowHandlerCount1000Ms: 0
+    });
+    await waitFor(() => healCalls.length === 1, 2_000);
+    expect(healCalls).toEqual([["8"]]);
+    service.stop();
+  });
+
+  test("logs handler completion timing and warns for slow websocket handlers", async () => {
+    const backfiller = new MockBackfiller(0x180n);
+    const liveLogs = new MockLiveLogSubscriber();
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(" "));
+    };
+    const indexer = {
+      applyLog: () => {
+        const deadline = Date.now() + 320;
+        while (Date.now() < deadline) {}
+        return {
+          applied: true,
+          duplicate: false,
+          ignored: false,
+          removed: false,
+          snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
+        };
+      },
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>,
+      healCanonicalPlanets: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    };
+    const service = new ChainSyncService(config, indexer, {
+      liveLogSubscriber: liveLogs,
+      logBackfiller: backfiller
+    });
+
+    try {
+      service.start();
+      await waitFor(() => liveLogs.subscription !== null);
+      liveLogs.emit([{
+        ...planetStartedLog("0x181", 7n, "0xslow"),
+        address: config.gameContractAddress!,
+        logIndex: "0x0"
+      }]);
+
+      await waitFor(() => service.snapshot().slowHandlerCount300Ms === 1);
+      expect(service.snapshot()).toMatchObject({
+        activeSource: "viem_ws",
+        eventsReceived: 1,
+        recentHandlerDurationMs: { count: 1 },
+        slowHandlerCount300Ms: 1,
+        slowHandlerCount1000Ms: 0
+      });
+      expect(warnings.length).toBeGreaterThan(0);
+      expect(JSON.parse(warnings.at(-1) ?? "{}")).toMatchObject({
+        msg: "Veydrift chain event handled",
+        source: "viem_ws",
+        eventTopic: planetStartedTopic,
+        contractAddress: config.gameContractAddress,
+        transactionHash: "0xslow",
+        applyResult: { applied: true },
+        sideEffects: { targetedCanonicalHealPlanetIds: [] }
+      });
+    } finally {
+      console.warn = originalWarn;
+      service.stop();
+    }
+  });
+
+  test("keeps handler latency readiness window fresh without hiding cumulative slow counters", async () => {
+    const baseTime = new Date("2026-06-24T19:20:00.000Z").getTime();
+    const originalWarn = console.warn;
+    const originalLog = console.log;
+    console.warn = () => {};
+    console.log = () => {};
+    let applyCalls = 0;
+    const indexer = {
+      applyLog: (log: RpcLog) => {
+        applyCalls += 1;
+        if (log.transactionHash === "0xold-slow") {
+          setSystemTime(new Date(baseTime + 1_500));
+        } else {
+          setSystemTime(new Date(baseTime + 62_012));
+        }
+        return {
+          applied: true,
+          duplicate: false,
+          ignored: false,
+          removed: false,
+          snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
+        };
+      },
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>
+    };
+    const backfiller = new MockBackfiller(0x180n);
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService(config, indexer, {
+      liveLogSubscriber: liveLogs,
+      logBackfiller: backfiller
+    });
+
+    try {
+      service.start();
+      await waitFor(() => liveLogs.subscription !== null);
+
+      setSystemTime(new Date(baseTime));
+      liveLogs.emit([{
+        ...planetStartedLog("0x181", 7n, "0xold-slow"),
+        address: config.gameContractAddress!,
+        logIndex: "0x0"
+      }]);
+      await waitFor(() => applyCalls === 1);
+      expect(service.snapshot()).toMatchObject({
+        maxHandlerDurationMs: 1500,
+        slowHandlerCount1000Ms: 1,
+        recentHandlerDurationMs: { count: 1, p95: 1500, max: 1500 }
+      });
+
+      setSystemTime(new Date(baseTime + 62_000));
+      liveLogs.emit([{
+        ...planetStartedLog("0x182", 8n, "0xfresh-fast"),
+        address: config.gameContractAddress!,
+        logIndex: "0x0"
+      }]);
+      await waitFor(() => applyCalls === 2);
+
+      expect(service.snapshot()).toMatchObject({
+        maxHandlerDurationMs: 1500,
+        slowHandlerCount1000Ms: 1,
+        recentHandlerDurationMs: {
+          count: 1,
+          p95: 12,
+          max: 12,
+          windowMs: 60_000,
+          lastSampledAt: "2026-06-24T19:21:02.012Z"
+        }
+      });
+    } finally {
+      setSystemTime();
+      console.warn = originalWarn;
+      console.log = originalLog;
+      service.stop();
+    }
+  });
+
+  test("marks chain events that change the wallet planet roster", async () => {
+    const indexer = makeIndexer();
+    const backfiller = new MockBackfiller(0x181n, () => [{
+      ...planetStartedLog("0x181", 7n, "0xplanet"),
+      logIndex: "0x0"
+    }]);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+    const reader = service.eventStream().getReader();
+
+    await expect(reader.read()).resolves.toMatchObject({ done: false });
+    await service.poll();
+    const event = await reader.read();
+    const text = new TextDecoder().decode(event.value);
+
+    expect(text).toContain("event: chain-event");
+    expect(text).toContain("\"walletPlanetsChanged\":true");
+    await reader.cancel();
+    service.stop();
+  });
+
   test("replays from configured base on the first poll, then ingests only new ranges", async () => {
     const indexer = makeIndexer();
     const seeded = planetStartedLog("0x191", 7n, "0xseed");
@@ -298,11 +765,108 @@ describe("ChainSyncService (polling)", () => {
 
     await service.poll();
 
+    await waitFor(() => healCalls.length === 1);
     expect(healCalls).toEqual([["8"]]);
     service.stop();
   });
 
-  test("queues origin and target canonical heals for exposed fleet returns", async () => {
+  test("does not let a slow targeted canonical heal hold the live poll open", async () => {
+    let resolveHeal!: () => void;
+    const healStarted = new Promise<void>((resolve) => {
+      resolveHeal = resolve;
+    });
+    const healCalls: string[][] = [];
+    const indexer = {
+      applyLog: () => ({
+        applied: true,
+        duplicate: false,
+        ignored: false,
+        removed: false,
+        snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
+      }),
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>,
+      healCanonicalPlanets: async (planetIds: string[]) => {
+        healCalls.push(planetIds);
+        await healStarted;
+      }
+    };
+    const combatLog: TestLog = {
+      blockNumber: "0x181",
+      transactionHash: "0xcombat-slow-heal",
+      logIndex: "0x0",
+      topics: [
+        attackBattleResolvedTopic,
+        topicWord(99n),
+        ownerTopic(player),
+        topicWord(8n)
+      ],
+      data: abiWords(1n, 2n, 3n, 4n)
+    };
+    const backfiller = new MockBackfiller(0x181n, () => [combatLog]);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    await waitFor(() => healCalls.length === 1);
+    expect(healCalls).toEqual([["8"]]);
+    expect(service.snapshot()).toMatchObject({
+      latestSyncedBlock: String(0x181n),
+      pollBacklogBlocks: "0"
+    });
+    resolveHeal();
+    service.stop();
+  });
+
+  test("surfaces poll timing, getLogs range, backlog, and recent receive lag metrics", async () => {
+    const indexer = {
+      applyLog: () => ({
+        applied: true,
+        duplicate: false,
+        ignored: false,
+        removed: false,
+        snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
+      }),
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>
+    };
+    const blockTimestamp = Math.floor(Date.now() / 1000) - 3;
+    const log: TestLog & { blockTimestamp: string } = {
+      ...planetStartedLog("0x181", 7n, "0xlagged"),
+      blockTimestamp: blockTimestamp.toString(),
+      logIndex: "0x0"
+    };
+    const backfiller = new MockBackfiller(0x182n, () => [log]);
+    const published: Array<ReturnType<ChainSyncService["snapshot"]>> = [];
+    const service = new ChainSyncService(config, indexer, {
+      logBackfiller: backfiller,
+      diagnosticsPublisher: (snapshot) => published.push(snapshot)
+    });
+
+    await service.poll();
+
+    expect(service.snapshot()).toMatchObject({
+      lastGetLogsRange: { fromBlock: "385", toBlock: "386" },
+      latestHeadBlock: "386",
+      latestSyncedBlock: "386",
+      pollBacklogBlocks: "0",
+      pollBacklogMs: 0,
+      recentEventReceiveLagMs: {
+        count: 1
+      }
+    });
+    expect(service.snapshot().lastPollDurationMs).toBeGreaterThanOrEqual(0);
+    expect(service.snapshot().lastGetLogsDurationMs).toBeGreaterThanOrEqual(0);
+    expect(service.snapshot().recentEventReceiveLagMs.p95).toBeGreaterThanOrEqual(2_000);
+    expect(published.at(-1)).toMatchObject({
+      lastGetLogsRange: { fromBlock: "385", toBlock: "386" },
+      latestHeadBlock: "386",
+      latestSyncedBlock: "386",
+      pollBacklogBlocks: "0",
+      recentEventReceiveLagMs: { count: 1 }
+    });
+    service.stop();
+  });
+
+  test("does not canonical-heal ordinary return exposure logs", async () => {
     const healCalls: string[][] = [];
     const indexer = {
       applyLog: () => ({
@@ -329,7 +893,66 @@ describe("ChainSyncService (polling)", () => {
 
     await service.poll();
 
-    expect(healCalls).toEqual([["12", "23"]]);
+    expect(healCalls).toEqual([]);
+    service.stop();
+  });
+
+  test("does not canonical-heal ordinary fleet-return logs", async () => {
+    let canonicalReads = 0;
+    const indexer = new SettlementIndexer(
+      {
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; },
+        async getCanonicalPlanetState(planetId: bigint) {
+          canonicalReads += 1;
+          expect(planetId).toBe(83n);
+          return {
+            planetId: "83",
+            resources: { metal: "0", crystal: "0", deuterium: "0" },
+            buildings: [],
+            defenses: [],
+            ships: [
+              { id: 0, count: 34, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+              { id: 1, count: 1, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+              { id: 4, count: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+              { id: 5, count: 5, cost: { metal: "0", crystal: "0", deuterium: "0" } }
+            ],
+            queues: {
+              building: null,
+              defense: null,
+              ship: null
+            }
+          };
+        }
+      },
+      100n
+    );
+    const logs: TestLog[] = [
+      planetStartedLog("0x180", 83n, "0xplanet83"),
+      {
+        blockNumber: "0x180",
+        transactionHash: "0xstale-zero",
+        logIndex: "0x1",
+        topics: [planetShipCountChangedTopic, topicWord(83n), topicWord(0n)],
+        data: abiWords(0n)
+      },
+      {
+        blockNumber: "0x181",
+        transactionHash: "0xreturn83",
+        logIndex: "0x0",
+        topics: [fleetMissionReturnedTopic, topicWord(2582n), ownerTopic(player), topicWord(83n)],
+        data: "0x"
+      }
+    ];
+    const backfiller = new MockBackfiller(0x181n, () => logs);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(canonicalReads).toBe(0);
+    expect(indexer.shipRows("83").filter((ship) => ship.count > 0)).toEqual([]);
+    expect(service.snapshot().latestSyncedBlock).toBe(String(0x181n));
     service.stop();
   });
 

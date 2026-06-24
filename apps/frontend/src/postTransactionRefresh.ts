@@ -35,6 +35,7 @@ export type StartedBuildingExpectation = {
 
 export type StartedBuildingSnapshot = {
   infrastructure: ChainInfrastructureState;
+  planetsResponse?: WalletPlanetsResponse | undefined;
   queues: PlayerQueuesResponse;
 };
 
@@ -131,6 +132,12 @@ type WaitOptions = {
   delay?: (ms: number) => Promise<void>;
 };
 
+// Keep transaction flows as light-client reads: after a receipt, wait for the
+// backend-indexed event to become visible instead of fabricating local state.
+// Base Sepolia indexing can lag past the old ~12s window under deploy/load.
+const DEFAULT_POST_TRANSACTION_REFRESH_ATTEMPTS = 80;
+const DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS = 750;
+
 type MissionLaunchWaitOptions = WaitOptions & {
   expectedMission?: FleetMissionSummary | undefined;
 };
@@ -185,7 +192,21 @@ export function isStartedBuildingStateVisible(
   }
 
   return buildingQueueMatches(snapshot.infrastructure.queue, expectation)
-    || buildingQueueMatches(snapshot.queues.building, expectation);
+    || buildingQueueMatches(snapshot.queues.building, expectation)
+    || Boolean(startedBuildingQueueFromWalletPlanets(snapshot.planetsResponse, expectation));
+}
+
+export function startedBuildingQueueFromWalletPlanets(
+  planetsResponse: WalletPlanetsResponse | undefined,
+  expectation: StartedBuildingExpectation,
+): QueueStateResponse | undefined {
+  const planet = expectation.planetId
+    ? planetsResponse?.planets.find((entry) => entry.planetId === expectation.planetId)
+    : planetsResponse?.planets.find((entry) => entry.planetId === planetsResponse.homePlanetId || entry.isHomePlanet)
+      ?? planetsResponse?.planets[0];
+
+  const queue = planet?.queues.building;
+  return buildingQueueMatches(queue, expectation) ? queue ?? undefined : undefined;
 }
 
 export function isStartedDefenseProductionVisible(
@@ -541,8 +562,8 @@ export async function waitForFinishedBuildingState(
   expectation: FinishedBuildingExpectation,
   options: WaitOptions = {},
 ): Promise<FinishedBuildingSnapshot> {
-  const attempts = options.attempts ?? 8;
-  const intervalMs = options.intervalMs ?? 1_500;
+  const attempts = options.attempts ?? DEFAULT_POST_TRANSACTION_REFRESH_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS;
   const delay = options.delay ?? defaultDelay;
   let latest: FinishedBuildingSnapshot | undefined;
   let lastError: unknown;
@@ -571,8 +592,8 @@ export async function waitForStartedBuildingState(
   expectation: StartedBuildingExpectation,
   options: WaitOptions = {},
 ): Promise<StartedBuildingSnapshot> {
-  const attempts = options.attempts ?? 8;
-  const intervalMs = options.intervalMs ?? 1_500;
+  const attempts = options.attempts ?? DEFAULT_POST_TRANSACTION_REFRESH_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS;
   const delay = options.delay ?? defaultDelay;
   let latest: StartedBuildingSnapshot | undefined;
   let lastError: unknown;
@@ -604,8 +625,8 @@ export async function waitForStartedDefenseProductionState(
   expectation: StartedDefenseProductionExpectation,
   options: WaitOptions = {},
 ): Promise<StartedDefenseProductionSnapshot> {
-  const attempts = options.attempts ?? 8;
-  const intervalMs = options.intervalMs ?? 1_500;
+  const attempts = options.attempts ?? DEFAULT_POST_TRANSACTION_REFRESH_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS;
   const delay = options.delay ?? defaultDelay;
   let latest: StartedDefenseProductionSnapshot | undefined;
 
@@ -628,8 +649,8 @@ export async function waitForStartedShipProductionState(
   expectation: StartedShipProductionExpectation,
   options: WaitOptions = {},
 ): Promise<StartedShipProductionSnapshot> {
-  const attempts = options.attempts ?? 8;
-  const intervalMs = options.intervalMs ?? 1_500;
+  const attempts = options.attempts ?? DEFAULT_POST_TRANSACTION_REFRESH_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS;
   const delay = options.delay ?? defaultDelay;
   let latest: StartedShipProductionSnapshot | undefined;
 
@@ -652,8 +673,8 @@ export async function waitForStartedResearchState(
   expectation: StartedResearchExpectation,
   options: WaitOptions = {},
 ): Promise<StartedResearchSnapshot> {
-  const attempts = options.attempts ?? 8;
-  const intervalMs = options.intervalMs ?? 1_500;
+  const attempts = options.attempts ?? DEFAULT_POST_TRANSACTION_REFRESH_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS;
   const delay = options.delay ?? defaultDelay;
   let latest: StartedResearchSnapshot | undefined;
 
@@ -676,8 +697,8 @@ export async function waitForFinishedResearchState(
   expectation: FinishedResearchExpectation,
   options: WaitOptions = {},
 ): Promise<FinishedResearchSnapshot> {
-  const attempts = options.attempts ?? 8;
-  const intervalMs = options.intervalMs ?? 1_500;
+  const attempts = options.attempts ?? DEFAULT_POST_TRANSACTION_REFRESH_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS;
   const delay = options.delay ?? defaultDelay;
   let latest: FinishedResearchSnapshot | undefined;
 
@@ -700,8 +721,8 @@ export async function waitForAllianceApplicationCleared(
   expectation: AllianceApplicationExpectation,
   options: WaitOptions = {},
 ): Promise<ChainAllianceState> {
-  const attempts = options.attempts ?? 8;
-  const intervalMs = options.intervalMs ?? 1_500;
+  const attempts = options.attempts ?? DEFAULT_POST_TRANSACTION_REFRESH_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS;
   const delay = options.delay ?? defaultDelay;
   let latest: ChainAllianceState | undefined;
   let lastError: unknown;
@@ -730,8 +751,8 @@ export async function waitForAllianceProfileState(
   expectation: AllianceProfileExpectation,
   options: WaitOptions = {},
 ): Promise<ChainAllianceState> {
-  const attempts = options.attempts ?? 8;
-  const intervalMs = options.intervalMs ?? 1_500;
+  const attempts = options.attempts ?? DEFAULT_POST_TRANSACTION_REFRESH_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS;
   const delay = options.delay ?? defaultDelay;
   let latest: ChainAllianceState | undefined;
   let lastError: unknown;
@@ -760,8 +781,8 @@ export async function waitForMissionLaunchState(
   txHash: string,
   options: MissionLaunchWaitOptions = {},
 ): Promise<MissionLaunchSnapshot> {
-  const attempts = options.attempts ?? 8;
-  const intervalMs = options.intervalMs ?? 1_500;
+  const attempts = options.attempts ?? DEFAULT_POST_TRANSACTION_REFRESH_ATTEMPTS;
+  const intervalMs = options.intervalMs ?? DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS;
   const delay = options.delay ?? defaultDelay;
   let latest: MissionLaunchSnapshot | undefined;
   let lastError: unknown;
@@ -790,8 +811,8 @@ export async function waitForHydratedWalletPlanet(
   preferredPlanetId?: string | undefined,
   options: WaitOptions = {},
 ): Promise<HydratedWalletPlanetSnapshot> {
-  const attempts = options.attempts ?? 12;
-  const intervalMs = options.intervalMs ?? 1_500;
+  const attempts = options.attempts ?? 24;
+  const intervalMs = options.intervalMs ?? DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS;
   const delay = options.delay ?? defaultDelay;
   let latest: WalletPlanetSyncSnapshot | undefined;
   let lastError: unknown;
@@ -819,8 +840,8 @@ export async function waitForRenamedWalletPlanet(
   expectation: { planetId: string; name: string },
   options: WaitOptions = {},
 ): Promise<HydratedWalletPlanetSnapshot> {
-  const attempts = options.attempts ?? 12;
-  const intervalMs = options.intervalMs ?? 1_500;
+  const attempts = options.attempts ?? 24;
+  const intervalMs = options.intervalMs ?? DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS;
   const delay = options.delay ?? defaultDelay;
   let latest: WalletPlanetSyncSnapshot | undefined;
   let lastError: unknown;

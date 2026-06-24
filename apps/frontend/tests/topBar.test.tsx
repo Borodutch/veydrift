@@ -99,8 +99,8 @@ describe("TopBar", () => {
     expect(panelText).toContain("Crawler production details are syncing from the backend production model.");
   });
 
-  test("labels energy popup values with the active player planet coordinates", () => {
-    const topBar = renderTopBar({ coordinates: "8:490:11" });
+  test("labels energy popup values without selected player planet coordinates", () => {
+    const topBar = renderTopBar();
     const energyInfo = elementNodes(topBar).find(
       (item) => item.type === "summary"
         && typeof item.props?.["aria-label"] === "string"
@@ -108,8 +108,23 @@ describe("TopBar", () => {
     );
     const energyDetails = elementNodes(topBar).find((item) => item.type === "details");
 
-    expect(energyInfo?.props?.["aria-label"]).toContain("Context: Selected player planet [8:490:11].");
-    expect(visibleText(energyDetails)).toContain("Selected player planet [8:490:11]");
+    expect(energyInfo?.props?.["aria-label"]).toContain("Context: Selected player planet.");
+    expect(energyInfo?.props?.["aria-label"]).not.toContain("8:490:11");
+    expect(visibleText(energyDetails)).toContain("Selected player planet");
+    expect(visibleText(energyDetails)).not.toContain("8:490:11");
+  });
+
+  test("does not render selected planet coordinates in header chrome", () => {
+    const topBar = renderTopBar();
+    const headerText = visibleText(topBar);
+    const energyInfo = elementNodes(topBar).find(
+      (item) => item.type === "summary"
+        && typeof item.props?.["aria-label"] === "string"
+        && item.props["aria-label"].includes("Energy powers mines")
+    );
+
+    expect(headerText).not.toContain("8:490:11");
+    expect(energyInfo?.props?.["aria-label"]).not.toContain("8:490:11");
   });
 
   test("shows zero crawler effect in the resources info popup without implying a bonus", () => {

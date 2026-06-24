@@ -41,6 +41,13 @@ export const WALLET_ACCOUNT_UNAVAILABLE_MESSAGE = "Wallet account is unavailable
 export const WALLET_CONNECTION_REJECTED_MESSAGE = "Wallet connection was rejected. Reconnect your wallet, then retry.";
 export const WALLET_ACCOUNT_MISMATCH_MESSAGE = "The selected wallet account changed. Reconnect the active wallet, then retry.";
 
+const GAME_API_RECENT_READ_TTL_MS = 750;
+const GAME_API_MAX_CONCURRENT_READS = 3;
+const gameApiInflightReads = new Map<string, Promise<unknown>>();
+const gameApiRecentReads = new Map<string, { expiresAt: number; value: unknown }>();
+let gameApiActiveReads = 0;
+const gameApiReadQueue: Array<() => void> = [];
+
 export type SettlementConfig = {
   address?: string;
   legacyAddress?: string;
@@ -946,7 +953,23 @@ export const BASE_SEPOLIA = {
     "https://sepolia.basescan.org"
   ]
 } as const;
-const BASE_MAINNET_CHAIN_ID_HEX = "0x2105";
+export const BASE_MAINNET = {
+  chainId: 8453,
+  chainIdHex: "0x2105",
+  chainName: "Base",
+  nativeCurrency: {
+    name: "Ether",
+    symbol: "ETH",
+    decimals: 18
+  },
+  rpcUrls: [
+    "https://mainnet.base.org"
+  ],
+  blockExplorerUrls: [
+    "https://basescan.org"
+  ]
+} as const;
+const BASE_MAINNET_CHAIN_ID_HEX = BASE_MAINNET.chainIdHex;
 
 const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
 const START_PLANET_SELECTOR = "0xf45f1f18";
@@ -998,15 +1021,34 @@ const ALLIANCE_SELECTORS = {
   dismissJoinRequest: "0xcd844a18",
   approveJoinRequest: "0x8ff388c7",
   kickMember: "0xbd0e667c",
+  kickMembers: "0x7c581707",
   leaveAlliance: "0xdabd761d",
   setMemberRole: "0xbfbb73f1",
+  setMembersRole: "0xe0c22e19",
   setDiplomacy: "0x63b9e8f8",
   transferAllianceOwnership: "0xb1d3b1e4"
 } as const;
 const ERC20_SELECTORS = {
   approve: "0x095ea7b3"
 } as const;
+const ERC721_SELECTORS = {
+  balanceOf: "0x70a08231",
+  tokenOfOwnerByIndex: "0x2f745c59",
+} as const;
 const REJECTED_CODES = new Set([4001, "4001", "ACTION_REJECTED", "USER_REJECTED"]);
+
+export type BurningChickenConfig = {
+  burnContractAddress: string;
+  burnSelector: string;
+  levelSelector?: string | null | undefined;
+  nftContractAddress: string;
+  rpcUrl?: string | null | undefined;
+};
+
+export type BurningChickenNft = {
+  level: number | null;
+  tokenId: string;
+};
 
 export type FarcasterWalletClient = {
   wallet?: {
@@ -1161,6 +1203,10 @@ export function walletRequestErrorMessage(error: unknown): string {
 
 const INSUFFICIENT_RESOURCES_REVERT_SELECTOR = "0x2ab0f96f";
 const INSUFFICIENT_SHIPS_REVERT_SELECTOR = "0x705f508b";
+const MISSING_DEPENDENCY_REVERT_SELECTOR = "0xb8f7e9ba";
+const QUEUE_ACTIVE_REVERT_SELECTOR = "0xcc9beebc";
+const QUEUE_INACTIVE_REVERT_SELECTOR = "0x63b016a9";
+const LEVEL_TOO_HIGH_REVERT_SELECTOR = "0x1aca3780";
 export const INSUFFICIENT_RESOURCES_SPEND_MESSAGE =
   "You don't have enough resources for this action. Your spendable balance may still be catching up with recent spending — refresh resources and try again once you can cover the cost.";
 
@@ -1269,8 +1315,51 @@ function revertUintArg(error: unknown, index: number): bigint | undefined {
   return BigInt(`0x${word}`);
 }
 
+function revertBytes32StringArg(error: unknown, index: number): string | undefined {
+  const data = errorData(error);
+  if (typeof data !== "string") return undefined;
+  const wordStart = 10 + index * 64;
+  const word = data.slice(wordStart, wordStart + 64);
+  if (!/^[a-fA-F0-9]{64}$/.test(word)) return undefined;
+  const bytes = word.match(/.{1,2}/g)?.map((byte) => Number.parseInt(byte, 16)) ?? [];
+  const trimmed = bytes.filter((byte) => byte !== 0);
+  if (trimmed.length === 0) return undefined;
+  return new TextDecoder().decode(new Uint8Array(trimmed)).trim() || undefined;
+}
+
+function dependencyLabel(dependency: string | undefined): string {
+  if (!dependency) return "A prerequisite";
+
+  const parts = dependency.split("_");
+  const level = parts.at(-1);
+  const subjectParts = level && /^\d+$/.test(level) ? parts.slice(0, -1) : parts;
+  const subject = subjectParts.join(" ");
+  const readableSubject = subject
+    ? subject.toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())
+    : "Prerequisite";
+
+  return level && /^\d+$/.test(level) ? `${readableSubject} ${level}` : dependency.replace(/_/g, " ");
+}
+
 function contractRevertReason(error: unknown, context?: FleetMissionRevertContext): string | undefined {
   const selector = revertSelector(error);
+  if (selector === MISSING_DEPENDENCY_REVERT_SELECTOR) {
+    const dependency = revertBytes32StringArg(error, 0);
+    return `${dependencyLabel(dependency)} is required before this action can be started. Finish or refresh prerequisite queues, then retry.`;
+  }
+
+  if (selector === QUEUE_ACTIVE_REVERT_SELECTOR) {
+    return "Another queue is already active. Finish or wait for the current queue to clear, then retry.";
+  }
+
+  if (selector === QUEUE_INACTIVE_REVERT_SELECTOR) {
+    return "There is no active queue to finish. Refresh game state and retry.";
+  }
+
+  if (selector === LEVEL_TOO_HIGH_REVERT_SELECTOR) {
+    return "This level is already at the maximum allowed by the contract.";
+  }
+
   if (selector === INSUFFICIENT_SHIPS_REVERT_SELECTOR) {
     const shipId = revertUintArg(error, 0);
     if (shipId === COLONY_SHIP_ID || isColonizeMissionContext(context)) {
@@ -1648,6 +1737,21 @@ export function encodeGameCall(selector: string, values: Array<bigint | number |
   return `${selector}${values.map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")}`;
 }
 
+export function encodeBurningChickenMoonCall(
+  selector: string,
+  tokenId: bigint | number | string,
+  planetId: bigint | number | string,
+  coordinates: { galaxy: number; system: number; position: number },
+): string {
+  return encodeGameCall(selector, [
+    tokenId,
+    planetId,
+    coordinates.galaxy,
+    coordinates.system,
+    coordinates.position,
+  ]);
+}
+
 export function encodePlanetNameCall(selector: string, planetId: bigint | number | string, name: string): string {
   const encoded = new TextEncoder().encode(name);
   const length = encoded.length;
@@ -1944,6 +2048,21 @@ export function encodeUintAddressUintCall(selector: string, value: bigint | numb
   return `${encodeUintAddressCall(selector, value, address)}${BigInt(role).toString(16).padStart(64, "0")}`;
 }
 
+export function encodeUintAddressArrayCall(selector: string, value: bigint | number | string, addresses: string[]): string {
+  const encodedAddresses = addresses.map((address) => address.toLowerCase().replace(/^0x/, "").padStart(64, "0")).join("");
+  return `${selector}${BigInt(value).toString(16).padStart(64, "0")}${(64n).toString(16).padStart(64, "0")}${BigInt(addresses.length).toString(16).padStart(64, "0")}${encodedAddresses}`;
+}
+
+export function encodeUintAddressArrayUintCall(
+  selector: string,
+  value: bigint | number | string,
+  addresses: string[],
+  role: bigint | number | string
+): string {
+  const encodedAddresses = addresses.map((address) => address.toLowerCase().replace(/^0x/, "").padStart(64, "0")).join("");
+  return `${selector}${BigInt(value).toString(16).padStart(64, "0")}${(96n).toString(16).padStart(64, "0")}${BigInt(role).toString(16).padStart(64, "0")}${BigInt(addresses.length).toString(16).padStart(64, "0")}${encodedAddresses}`;
+}
+
 function encodeAbiString(value: string): string {
   const bytes = new TextEncoder().encode(value);
   const body = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -2036,12 +2155,47 @@ export async function ensureBaseSepoliaNetwork(provider: Eip1193Provider): Promi
   }
 }
 
+export async function ensureBaseMainnetNetwork(provider: Eip1193Provider): Promise<void> {
+  try {
+    await switchToBaseMainnet(provider);
+  } catch (error) {
+    if (!isUnknownChainError(error)) {
+      throw error;
+    }
+
+    try {
+      await provider.request({
+        method: "wallet_addEthereumChain",
+        params: [
+          BASE_MAINNET
+        ]
+      });
+    } catch (addError) {
+      if (!isAlreadyAddedChainError(addError)) {
+        throw addError;
+      }
+    }
+    await switchToBaseMainnet(provider);
+  }
+}
+
 function switchToBaseSepolia(provider: Eip1193Provider): Promise<unknown> {
   return provider.request({
     method: "wallet_switchEthereumChain",
     params: [
       {
         chainId: BASE_SEPOLIA.chainIdHex
+      }
+    ]
+  });
+}
+
+function switchToBaseMainnet(provider: Eip1193Provider): Promise<unknown> {
+  return provider.request({
+    method: "wallet_switchEthereumChain",
+    params: [
+      {
+        chainId: BASE_MAINNET.chainIdHex
       }
     ]
   });
@@ -2318,6 +2472,20 @@ export async function sendAllianceKickTransaction(
   });
 }
 
+export async function sendAllianceBatchKickTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  playerAddresses: string[]
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeUintAddressArrayCall(ALLIANCE_SELECTORS.kickMembers, allianceId, playerAddresses)
+  });
+}
+
 export async function sendAllianceLeaveTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -2342,6 +2510,21 @@ export async function sendAllianceRoleTransaction(
     from: account,
     to: contractAddress,
     data: encodeUintAddressUintCall(ALLIANCE_SELECTORS.setMemberRole, allianceId, playerAddress, role === "officer" ? 2 : 1)
+  });
+}
+
+export async function sendAllianceBatchRoleTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  playerAddresses: string[],
+  role: "member" | "officer"
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeUintAddressArrayUintCall(ALLIANCE_SELECTORS.setMembersRole, allianceId, playerAddresses, role === "officer" ? 2 : 1)
   });
 }
 
@@ -2459,6 +2642,100 @@ export async function sendStartMoonBuildingUpgradeTransaction(
     from: account,
     to: contractAddress,
     data: encodeGameCall(MOON_SELECTORS.startMoonBuildingUpgrade, [planetId, buildingId])
+  });
+}
+
+export async function fetchBurningChickens(
+  account: string,
+  config: BurningChickenConfig,
+): Promise<BurningChickenNft[]> {
+  const balanceHex = await callBaseMainnetContract(
+    config,
+    config.nftContractAddress,
+    encodeAddressCall(ERC721_SELECTORS.balanceOf, account),
+  );
+  const balance = decodeUintResult(balanceHex);
+  const chickens: BurningChickenNft[] = [];
+
+  for (let index = 0n; index < balance; index += 1n) {
+    const tokenHex = await callBaseMainnetContract(
+      config,
+      config.nftContractAddress,
+      encodeAddressUintCall(ERC721_SELECTORS.tokenOfOwnerByIndex, account, index),
+    );
+    const tokenId = decodeUintResult(tokenHex).toString();
+    chickens.push({
+      level: await fetchBurningChickenLevel(tokenId, config),
+      tokenId,
+    });
+  }
+
+  return chickens;
+}
+
+async function fetchBurningChickenLevel(
+  tokenId: string,
+  config: BurningChickenConfig,
+): Promise<number | null> {
+  const selector = config.levelSelector?.trim();
+  if (!selector) return null;
+
+  try {
+    const levelHex = await callBaseMainnetContract(
+      config,
+      config.nftContractAddress,
+      encodeUintCall(selector, tokenId),
+    );
+    const level = Number(decodeUintResult(levelHex));
+    return Number.isFinite(level) ? level : null;
+  } catch {
+    return null;
+  }
+}
+
+async function callBaseMainnetContract(
+  config: BurningChickenConfig,
+  contractAddress: string,
+  data: string,
+): Promise<string> {
+  const response = await fetch(config.rpcUrl || BASE_MAINNET.rpcUrls[0], {
+    body: JSON.stringify({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "eth_call",
+      params: [
+        {
+          to: contractAddress,
+          data,
+        },
+        "latest",
+      ],
+    }),
+    headers: {
+      "content-type": "application/json",
+    },
+    method: "POST",
+  });
+  const body = await response.json() as { error?: { message?: string }; result?: string };
+  if (!response.ok || body.error || typeof body.result !== "string") {
+    throw new Error(body.error?.message ?? "Burning Chicken contract read failed.");
+  }
+  return body.result;
+}
+
+export async function sendBurningChickenMoonTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  config: BurningChickenConfig,
+  tokenId: string,
+  planetId: string,
+  coordinates: { galaxy: number; system: number; position: number },
+): Promise<string> {
+  await ensureBaseMainnetNetwork(provider);
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: config.burnContractAddress,
+    data: encodeBurningChickenMoonCall(config.burnSelector, tokenId, planetId, coordinates),
   });
 }
 
@@ -2833,6 +3110,7 @@ export async function requestWatchedPlanetSignature(
 
 type WalletReadOptions = {
   source?: "indexed";
+  timeoutMs?: number;
 };
 
 type FleetMissionVisibilityOptions = WalletReadOptions & {
@@ -2868,7 +3146,8 @@ export async function fetchWalletOverviewSnapshot(
     apiUrl,
     wallet,
     withWalletReadOptions("overview", planetId, options),
-    "Overview snapshot"
+    "Overview snapshot",
+    options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }
   );
 }
 
@@ -2879,7 +3158,8 @@ export async function fetchFleetMissionVisibility(apiUrl: string, wallet: string
     apiUrl,
     wallet,
     withWalletReadOptions("fleet-visibility", undefined, options, params),
-    "Fleet visibility"
+    "Fleet visibility",
+    options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }
   );
 }
 
@@ -2897,9 +3177,10 @@ export async function fetchFleetMissionArchive(
 }
 
 export async function fetchGlobalActiveMissions(apiUrl: string): Promise<GlobalActiveMissionsResponse> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/missions?status=active`);
-  if (!response.ok) throw new Error(await apiErrorMessage(response, "Active missions"));
-  return response.json() as Promise<GlobalActiveMissionsResponse>;
+  return fetchGameApiJson<GlobalActiveMissionsResponse>(
+    `${apiUrl.replace(/\/+$/, "")}/missions?status=active`,
+    "Active missions"
+  );
 }
 
 export async function fetchGlobalMissionArchive(
@@ -2910,21 +3191,24 @@ export async function fetchGlobalMissionArchive(
   params.set("status", "completed");
   params.set("page", String(options.page ?? 1));
   params.set("pageSize", String(options.pageSize ?? 25));
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/missions?${params.toString()}`);
-  if (!response.ok) throw new Error(await apiErrorMessage(response, "Mission archive"));
-  return response.json() as Promise<GlobalMissionArchiveResponse>;
+  return fetchGameApiJson<GlobalMissionArchiveResponse>(
+    `${apiUrl.replace(/\/+$/, "")}/missions?${params.toString()}`,
+    "Mission archive"
+  );
 }
 
 export async function fetchMission(apiUrl: string, missionId: string): Promise<MissionDetailResponse> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/mission/${encodeURIComponent(missionId)}`);
-  if (!response.ok) throw new Error(await apiErrorMessage(response, "Mission"));
-  return response.json() as Promise<MissionDetailResponse>;
+  return fetchGameApiJson<MissionDetailResponse>(
+    `${apiUrl.replace(/\/+$/, "")}/mission/${encodeURIComponent(missionId)}`,
+    "Mission"
+  );
 }
 
 export async function fetchBattleReports(apiUrl: string): Promise<BattleReport[]> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/battle-reports`);
-  if (!response.ok) throw new Error(await apiErrorMessage(response, "Battle reports"));
-  return response.json() as Promise<BattleReport[]>;
+  return fetchGameApiJson<BattleReport[]>(
+    `${apiUrl.replace(/\/+$/, "")}/battle-reports`,
+    "Battle reports"
+  );
 }
 
 export async function fetchInfrastructureState(apiUrl: string, wallet: string, planetId?: string, options: WalletReadOptions = {}): Promise<ChainInfrastructureState> {
@@ -3162,9 +3446,10 @@ function highscoreNetworkFailureMessage(error: unknown): string {
 }
 
 export async function fetchSystemData(apiUrl: string, galaxy: number, system: number): Promise<unknown> {
-  const response = await fetch(`${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}`);
-  if (!response.ok) throw new Error(`System API failed: ${response.status}`);
-  return response.json();
+  const url = `${apiUrl.replace(/\/+$/, "")}/universe/galaxies/${galaxy}/systems/${system}`;
+  return fetchGameApiJson<unknown>(url, "System", {
+    httpErrorMessage: async (response) => `System API failed: ${response.status}`
+  });
 }
 
 function delay(ms: number): Promise<void> {
@@ -3181,6 +3466,60 @@ async function fetchWalletJson<T>(
   options: { timeoutMs?: number } = {}
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? WALLET_API_READ_TIMEOUT_MS;
+  const url = `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`;
+  return fetchGameApiJson<T>(url, label, {
+    cache: "no-store",
+    timeoutMs,
+    networkFailureMessage: (error) => walletApiNetworkFailureMessage(label, error)
+  });
+}
+
+async function fetchGameApiJson<T>(
+  url: string,
+  label: string,
+  options: {
+    cache?: RequestCache;
+    httpErrorMessage?: (response: Response) => Promise<string>;
+    networkFailureMessage?: (error: unknown) => string;
+    timeoutMs?: number;
+  } = {}
+): Promise<T> {
+  const cacheKey = `GET ${url}`;
+  const now = Date.now();
+  const recent = gameApiRecentReads.get(cacheKey);
+  if (recent && recent.expiresAt > now) return recent.value as T;
+  if (recent) gameApiRecentReads.delete(cacheKey);
+
+  const inflight = gameApiInflightReads.get(cacheKey);
+  if (inflight) return inflight as Promise<T>;
+
+  const request = fetchGameApiJsonUnpooled<T>(url, label, options);
+  gameApiInflightReads.set(cacheKey, request);
+  try {
+    const value = await request;
+    gameApiRecentReads.set(cacheKey, {
+      expiresAt: Date.now() + GAME_API_RECENT_READ_TTL_MS,
+      value
+    });
+    pruneRecentGameApiReads();
+    return value;
+  } finally {
+    gameApiInflightReads.delete(cacheKey);
+  }
+}
+
+async function fetchGameApiJsonUnpooled<T>(
+  url: string,
+  label: string,
+  options: {
+    cache?: RequestCache;
+    httpErrorMessage?: (response: Response) => Promise<string>;
+    networkFailureMessage?: (error: unknown) => string;
+    timeoutMs?: number;
+  }
+): Promise<T> {
+  const releaseReadSlot = await acquireGameApiReadSlot();
+  const timeoutMs = options.timeoutMs ?? WALLET_API_READ_TIMEOUT_MS;
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     controller.abort(new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(timeoutMs / 1_000)} seconds.`));
@@ -3188,8 +3527,8 @@ async function fetchWalletJson<T>(
 
   let response: Response;
   try {
-    response = await fetch(`${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/${path}`, {
-      cache: "no-store",
+    response = await fetch(url, {
+      ...(options.cache !== undefined ? { cache: options.cache } : {}),
       headers: { accept: "application/json" },
       signal: controller.signal,
     });
@@ -3199,15 +3538,57 @@ async function fetchWalletJson<T>(
         ? controller.signal.reason
         : new Error(`Timed out reading ${label.toLowerCase()} from the game API after ${Math.round(timeoutMs / 1_000)} seconds.`);
     }
-    throw new Error(walletApiNetworkFailureMessage(label, error));
+    throw new Error(options.networkFailureMessage?.(error) ?? walletApiNetworkFailureMessage(label, error));
   } finally {
     clearTimeout(timeoutId);
+    releaseReadSlot();
   }
 
   if (!response.ok) {
-    throw new Error(await apiErrorMessage(response, label));
+    throw new Error(options.httpErrorMessage ? await options.httpErrorMessage(response) : await apiErrorMessage(response, label));
   }
   return response.json() as Promise<T>;
+}
+
+async function acquireGameApiReadSlot(): Promise<() => void> {
+  if (gameApiActiveReads < GAME_API_MAX_CONCURRENT_READS) {
+    gameApiActiveReads += 1;
+    return releaseGameApiReadSlot;
+  }
+
+  // A queued read receives the slot that releaseGameApiReadSlot hands to it.
+  // Do not increment gameApiActiveReads after the wait, or a burst leaves the
+  // counter permanently above the limit once all actual fetches have finished.
+  await new Promise<void>((resolve) => {
+    gameApiReadQueue.push(resolve);
+  });
+  return releaseGameApiReadSlot;
+}
+
+function releaseGameApiReadSlot(): void {
+  const next = gameApiReadQueue.shift();
+  if (next) {
+    next();
+    return;
+  }
+  gameApiActiveReads = Math.max(0, gameApiActiveReads - 1);
+}
+
+function pruneRecentGameApiReads(): void {
+  if (gameApiRecentReads.size <= 256) return;
+  const now = Date.now();
+  for (const [key, value] of gameApiRecentReads) {
+    if (value.expiresAt <= now || gameApiRecentReads.size > 256) {
+      gameApiRecentReads.delete(key);
+    }
+  }
+}
+
+export function __clearGameApiReadPoolForTests(): void {
+  gameApiInflightReads.clear();
+  gameApiRecentReads.clear();
+  gameApiActiveReads = 0;
+  gameApiReadQueue.length = 0;
 }
 
 async function mutateWatchedPlanet(

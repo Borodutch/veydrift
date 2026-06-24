@@ -1,8 +1,10 @@
 import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { createHmac } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { privateKeyToAccount } from "viem/accounts";
 import { resolveWsRpcUrl, type BackendConfig } from "./config";
 import type {
@@ -34,7 +36,8 @@ import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
 import { watchedPlanetMessage } from "./playerProfiles";
 import { deriveInfrastructureFields } from "./readModels";
-import { createRequestHandler, deriveLogBackfiller, shouldRecoverFailedReconciliation } from "./server";
+import { createRequestHandler, deriveLogBackfiller, readerBootstrapHealthResponse, runtimeConfigResponse, shouldRecoverFailedReconciliation } from "./server";
+import { DEFAULT_MAX_WORKER_COUNT } from "./workerPool";
 
 setSystemTime(new Date(1_770_007_680_000));
 afterAll(() => setSystemTime());
@@ -87,6 +90,41 @@ const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425
 const allianceJoinRequestedTopic = "0x57dc0d6d966259dfce732817e0ad98a199174482159ce86fec64334a407ed2b5";
 const allianceJoinedTopic = "0x966912f1fd05e1765f8d822e0db01e534676a830ea4b161fc254f4e63f0324eb";
 const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
+
+function expectedBackendGitSha(): string | null {
+  return process.env.SOURCE_VERSION?.trim()
+    || process.env.EASYPANEL_GIT_SHA?.trim()
+    || process.env.RAILWAY_GIT_COMMIT_SHA?.trim()
+    || process.env.GITHUB_SHA?.trim()
+    || process.env.COMMIT_SHA?.trim()
+    || process.env.VEYDRIFT_BUILD_GIT_SHA?.trim()
+    || null;
+}
+
+function expectedBackendGitShaSource(): string | null {
+  if (process.env.SOURCE_VERSION?.trim()) return "SOURCE_VERSION";
+  if (process.env.EASYPANEL_GIT_SHA?.trim()) return "EASYPANEL_GIT_SHA";
+  if (process.env.RAILWAY_GIT_COMMIT_SHA?.trim()) return "RAILWAY_GIT_COMMIT_SHA";
+  if (process.env.GITHUB_SHA?.trim()) return "GITHUB_SHA";
+  if (process.env.COMMIT_SHA?.trim()) return "COMMIT_SHA";
+  if (process.env.VEYDRIFT_BUILD_GIT_SHA?.trim()) return "VEYDRIFT_BUILD_GIT_SHA";
+  return null;
+}
+
+function expectedBackendBuildMetadata() {
+  return {
+    deploymentAbiHash: process.env.VEYDRIFT_DEPLOYMENT_ABI_HASH?.trim() || null,
+    deploymentCommit: process.env.VEYDRIFT_DEPLOYMENT_COMMIT?.trim() || null,
+    deploymentTimestamp: process.env.VEYDRIFT_DEPLOYMENT_TIMESTAMP?.trim() || null,
+    gitSha: expectedBackendGitSha(),
+    gitShaSource: expectedBackendGitShaSource()
+  };
+}
+
+function expectedBackendWorkerCount(): number {
+  return Math.max(1, Math.min(Math.floor(navigator.hardwareConcurrency), DEFAULT_MAX_WORKER_COUNT));
+}
+
 const planet: PlanetState = {
   planetId: "7",
   owner: player,
@@ -721,6 +759,8 @@ describe("chain-sync log backfill wiring", () => {
     const backfiller = deriveLogBackfiller(reader);
     expect(backfiller).toBeDefined();
     expect(typeof backfiller?.listContractLogs).toBe("function");
+    expect(typeof backfiller?.failoverRpc).toBe("function");
+    expect(typeof backfiller?.rpcMetrics).toBe("function");
   });
 
   test("deriveLogBackfiller yields nothing when the reader cannot list contract logs", () => {
@@ -766,6 +806,15 @@ describe("Veydrift backend", () => {
         qaSyntheticStationedDefenders: false
       },
       configured: false,
+      backend: {
+        build: expectedBackendBuildMetadata(),
+        worker: {
+          count: expectedBackendWorkerCount(),
+          defaultMaxWorkerCount: DEFAULT_MAX_WORKER_COUNT,
+          index: 0,
+          role: "writer"
+        }
+      },
       readiness: {
         ready: false,
         configurationReady: false,
@@ -780,10 +829,21 @@ describe("Veydrift backend", () => {
       missionResolution: null,
       randomnessCommitter: null,
       rpc: null,
+      chainSyncRpc: null,
       ok: false,
       service: "veydrift-backend"
     });
     expect(response.status).toBe(503);
+  });
+
+  test("returns immediately for requests already aborted by the client", async () => {
+    const controller = new AbortController();
+    const request = new Request("http://localhost/health", { signal: controller.signal });
+    controller.abort();
+
+    const response = await handler(request);
+
+    expect(response.status).toBe(499);
   });
 
   test("requires websocket head and log subscriptions for ready chain sync health", async () => {
@@ -858,16 +918,344 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("logs every backend request with response time metadata", async () => {
+    const originalInfo = console.info;
+    const logs: unknown[][] = [];
+    console.info = (...args: unknown[]) => {
+      logs.push(args);
+    };
+    try {
+      const chainSync = {
+        start() {},
+        snapshot() {
+          return {
+            connected: true,
+            subscribedToHeads: true,
+            subscribedToLogs: true
+          };
+        }
+      } as unknown as import("./chainSync").ChainSyncService;
+      const loggedHandler = createRequestHandler({
+        chainReader: new MockChainReader(),
+        chainSync,
+        config: configuredTestConfig,
+        logRequests: true
+      });
+
+      const response = await loggedHandler(new Request("http://localhost/runtime-config?source=test"));
+
+      expect(response.status).toBe(200);
+      expect(logs).toHaveLength(1);
+      const log = logs[0];
+      expect(log).toBeDefined();
+      expect(log![0]).toBe("veydrift-api-request");
+      const entry = JSON.parse(String(log![1])) as {
+        durationMs: number;
+        method: string;
+        path: string;
+        status: number;
+        workerRole: string;
+      };
+      expect(entry).toMatchObject({
+        method: "GET",
+        path: "/runtime-config?source=test",
+        status: 200,
+        workerRole: "writer"
+      });
+      expect(entry.durationMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      console.info = originalInfo;
+    }
+  });
+
+  test("does not touch the indexer snapshot on reader health checks", async () => {
+    const indexer = {
+      snapshot() {
+        throw new Error("reader health must stay off indexed read models");
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      indexer,
+      role: "reader"
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.backend.worker.role).toBe("reader");
+    expect(body.indexer).toBeNull();
+    expect(body.readiness).toMatchObject({
+      ready: true,
+      indexedState: null,
+      safeToServeIndexedState: null
+    });
+  });
+
+  test("keeps concurrent health reads off the response cache", async () => {
+    let snapshots = 0;
+    const chainSync = {
+      start() {},
+      snapshot() {
+        return {
+          connected: true,
+          subscribedToHeads: true,
+          subscribedToLogs: true
+        };
+      }
+    } as unknown as import("./chainSync").ChainSyncService;
+    const indexer = {
+      snapshot() {
+        snapshots += 1;
+        return {
+          indexedState: "healthy",
+          safeToServeIndexedState: true
+        };
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      chainSync,
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer
+    });
+
+    const responses = await Promise.all(Array.from({ length: 10 }, () => handler(new Request("http://localhost/health"))));
+
+    expect(responses.every((response) => response.status === 200)).toBe(true);
+    expect(snapshots).toBe(10);
+  });
+
+  test("does not wait on stale shared-cache locks for health", async () => {
+    let waitDeadlineMs: number | undefined;
+    let snapshots = 0;
+    const sharedResponseCache = {
+      get() {
+        return null;
+      },
+      tryAcquireRefresh() {
+        return false;
+      },
+      async waitForFresh(_cacheKey: string, deadlineMs?: number) {
+        waitDeadlineMs = deadlineMs;
+        return null;
+      },
+      set() {},
+      releaseRefresh() {}
+    } as unknown as import("./sharedResponseCache").SharedResponseCache;
+    const chainSync = {
+      start() {},
+      snapshot() {
+        return {
+          connected: true,
+          subscribedToHeads: true,
+          subscribedToLogs: true
+        };
+      }
+    } as unknown as import("./chainSync").ChainSyncService;
+    const indexer = {
+      snapshot() {
+        snapshots += 1;
+        return {
+          indexedState: "healthy",
+          safeToServeIndexedState: true
+        };
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      chainSync,
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer,
+      sharedResponseCache
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+
+    expect(response.status).toBe(200);
+    expect(waitDeadlineMs).toBeUndefined();
+    expect(snapshots).toBe(1);
+  });
+
+  test("serves versionless shared stale reads instead of recomputing cold routes", async () => {
+    let staleKeyUsed = false;
+    const staleBody = new TextEncoder().encode(JSON.stringify({ stale: true })).buffer as ArrayBuffer;
+    const sharedResponseCache = {
+      get(cacheKey: string, _now?: number, includeStale?: boolean) {
+        if (!includeStale || !cacheKey.endsWith(" indexer=stale")) return null;
+        staleKeyUsed = true;
+        return {
+          body: staleBody,
+          expiresAt: Date.now() - 1_000,
+          headers: [["content-type", "application/json"]],
+          status: 200,
+          statusText: ""
+        };
+      },
+      tryAcquireRefresh() {
+        return false;
+      },
+      async waitForFresh() {
+        throw new Error("should not wait for a versioned refresh when versionless stale data exists");
+      },
+      set() {},
+      releaseRefresh() {}
+    } as unknown as import("./sharedResponseCache").SharedResponseCache;
+    const chainSync = {
+      start() {},
+      snapshot() {
+        throw new Error("stale cache should avoid recomputing the cold route");
+      }
+    } as unknown as import("./chainSync").ChainSyncService;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      chainSync,
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      sharedResponseCache
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?limit=10"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ stale: true });
+    expect(staleKeyUsed).toBe(true);
+  });
+
+  test("does not wait on stale shared-cache locks for cold indexed reads", async () => {
+    let waitCalled = false;
+    const sharedResponseCache = {
+      get() {
+        return null;
+      },
+      tryAcquireRefresh() {
+        return false;
+      },
+      async waitForFresh() {
+        waitCalled = true;
+        return null;
+      },
+      set() {},
+      releaseRefresh() {}
+    } as unknown as import("./sharedResponseCache").SharedResponseCache;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer: testIndexer(),
+      prewarmResponseCache: false,
+      sharedResponseCache
+    });
+
+    const response = await handler(new Request("http://localhost/universe/galaxies/1/systems/1"));
+
+    expect(response.status).toBe(200);
+    expect(waitCalled).toBe(false);
+  });
+
+  test("keeps health off the response-cache path", async () => {
+    let sharedCacheRead = false;
+    const sharedResponseCache = {
+      get() {
+        sharedCacheRead = true;
+        return null;
+      },
+      tryAcquireRefresh() {
+        throw new Error("health should not acquire shared refresh locks");
+      },
+      async waitForFresh() {
+        throw new Error("health should not wait for shared refreshes");
+      },
+      set() {
+        throw new Error("health should not write shared cache entries");
+      },
+      releaseRefresh() {}
+    } as unknown as import("./sharedResponseCache").SharedResponseCache;
+    const chainSync = {
+      start() {},
+      snapshot() {
+        return { connected: true, subscribedToHeads: true, subscribedToLogs: true };
+      }
+    } as unknown as import("./chainSync").ChainSyncService;
+    const indexer = {
+      snapshot() {
+        return {
+          indexedState: "healthy",
+          safeToServeIndexedState: true
+        };
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      chainSync,
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer,
+      sharedResponseCache
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(sharedCacheRead).toBe(false);
+  });
+
+  test("returns quickly when indexed SQLite reads are busy", async () => {
+    const chainSync = {
+      start() {},
+      snapshot() {
+        throw new Error("database is locked");
+      }
+    } as unknown as import("./chainSync").ChainSyncService;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      chainSync,
+      config: configuredTestConfig,
+      enableResponseCache: false
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.error).toBe("database is locked");
+  });
+
   test("returns public runtime config", async () => {
     const response = await handler(new Request("http://localhost/runtime-config"));
+    const body = await response.json();
 
-    await expect(response.json()).resolves.toEqual({
+    expect(body).toEqual({
       apiUrl: "https://api-test.veydrift.com",
       allianceContractAddress: null,
+      backend: {
+        build: expectedBackendBuildMetadata(),
+        worker: {
+          count: expectedBackendWorkerCount(),
+          defaultMaxWorkerCount: DEFAULT_MAX_WORKER_COUNT,
+          index: 0,
+          role: "writer"
+        }
+      },
+      burningChicken: {
+        burnContractAddress: null,
+        burnSelector: "0x6364233d",
+        levelSelector: "0x05c58df2",
+        nftContractAddress: null,
+        rpcUrl: "https://mainnet.base.org"
+      },
       chainId: 84532,
       contractAddress: null,
       featureSupport: {
         allianceConfigured: false,
+        chickenBurnConfigured: false,
         gameConfigured: false,
         highscoresEndpoint: true,
         moonConfigured: false,
@@ -891,6 +1279,225 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
   });
 
+  test("builds reader runtime config without request handler dependencies", async () => {
+    const response = runtimeConfigResponse("reader");
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+    expect(body.backend.worker.role).toBe("reader");
+    expect(body.apiUrl).toBe("https://api-test.veydrift.com");
+  });
+
+  test("builds reader health without request handler dependencies", async () => {
+    const response = readerBootstrapHealthResponse("reader");
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+    expect(body.backend.worker.role).toBe("reader");
+    expect(body.indexer).toBeNull();
+    expect(body.rpc).toBeNull();
+    expect(body.readiness).toMatchObject({
+      ready: false,
+      configurationReady: false,
+      indexedState: null,
+      safeToServeIndexedState: null
+    });
+  });
+
+  test("prefers provider build SHA metadata over stale generic GIT_SHA", async () => {
+    const previousGitSha = process.env.GIT_SHA;
+    const previousSourceVersion = process.env.SOURCE_VERSION;
+    process.env.GIT_SHA = "stale-generic-sha";
+    process.env.SOURCE_VERSION = "provider-source-sha";
+
+    try {
+      const response = await createRequestHandler()(new Request("http://localhost/runtime-config"));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.backend.build).toEqual({
+        deploymentAbiHash: null,
+        deploymentCommit: null,
+        deploymentTimestamp: null,
+        gitSha: "provider-source-sha",
+        gitShaSource: "SOURCE_VERSION"
+      });
+    } finally {
+      if (previousGitSha === undefined) {
+        delete process.env.GIT_SHA;
+      } else {
+        process.env.GIT_SHA = previousGitSha;
+      }
+      if (previousSourceVersion === undefined) {
+        delete process.env.SOURCE_VERSION;
+      } else {
+        process.env.SOURCE_VERSION = previousSourceVersion;
+      }
+    }
+  });
+
+  test("does not use contract deployment manifest commit as the source build SHA", async () => {
+    const previousBuildGitSha = process.env.VEYDRIFT_BUILD_GIT_SHA;
+    const previousDeploymentCommit = process.env.VEYDRIFT_DEPLOYMENT_COMMIT;
+    const previousDeploymentAbiHash = process.env.VEYDRIFT_DEPLOYMENT_ABI_HASH;
+    const previousDeploymentTimestamp = process.env.VEYDRIFT_DEPLOYMENT_TIMESTAMP;
+    process.env.VEYDRIFT_BUILD_GIT_SHA = "current-image-sha";
+    process.env.VEYDRIFT_DEPLOYMENT_COMMIT = "old-contract-deploy-sha";
+    process.env.VEYDRIFT_DEPLOYMENT_ABI_HASH = "abi-hash";
+    process.env.VEYDRIFT_DEPLOYMENT_TIMESTAMP = "2026-06-22T17:31:10Z";
+
+    try {
+      const response = await createRequestHandler()(new Request("http://localhost/runtime-config"));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.backend.build).toMatchObject({
+        deploymentAbiHash: "abi-hash",
+        deploymentCommit: "old-contract-deploy-sha",
+        deploymentTimestamp: "2026-06-22T17:31:10Z"
+      });
+      expect(body.backend.build.gitSha).not.toBe("old-contract-deploy-sha");
+      expect(body.backend.build.gitShaSource).not.toBe("VEYDRIFT_DEPLOYMENT_COMMIT");
+    } finally {
+      if (previousBuildGitSha === undefined) {
+        delete process.env.VEYDRIFT_BUILD_GIT_SHA;
+      } else {
+        process.env.VEYDRIFT_BUILD_GIT_SHA = previousBuildGitSha;
+      }
+      if (previousDeploymentCommit === undefined) {
+        delete process.env.VEYDRIFT_DEPLOYMENT_COMMIT;
+      } else {
+        process.env.VEYDRIFT_DEPLOYMENT_COMMIT = previousDeploymentCommit;
+      }
+      if (previousDeploymentAbiHash === undefined) {
+        delete process.env.VEYDRIFT_DEPLOYMENT_ABI_HASH;
+      } else {
+        process.env.VEYDRIFT_DEPLOYMENT_ABI_HASH = previousDeploymentAbiHash;
+      }
+      if (previousDeploymentTimestamp === undefined) {
+        delete process.env.VEYDRIFT_DEPLOYMENT_TIMESTAMP;
+      } else {
+        process.env.VEYDRIFT_DEPLOYMENT_TIMESTAMP = previousDeploymentTimestamp;
+      }
+    }
+  });
+
+  test("ignores stale generic GIT_SHA metadata without a provider or build artifact SHA", async () => {
+    const previousGitSha = process.env.GIT_SHA;
+    const previousBuildGitSha = process.env.VEYDRIFT_BUILD_GIT_SHA;
+    const previousSourceVersion = process.env.SOURCE_VERSION;
+    const previousEasypanelGitSha = process.env.EASYPANEL_GIT_SHA;
+    const previousRailwayGitCommitSha = process.env.RAILWAY_GIT_COMMIT_SHA;
+    const previousGithubSha = process.env.GITHUB_SHA;
+    const previousCommitSha = process.env.COMMIT_SHA;
+    process.env.GIT_SHA = "stale-generic-sha";
+    delete process.env.VEYDRIFT_BUILD_GIT_SHA;
+    delete process.env.SOURCE_VERSION;
+    delete process.env.EASYPANEL_GIT_SHA;
+    delete process.env.RAILWAY_GIT_COMMIT_SHA;
+    delete process.env.GITHUB_SHA;
+    delete process.env.COMMIT_SHA;
+
+    try {
+      const response = await createRequestHandler()(new Request("http://localhost/runtime-config"));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.backend.build.gitSha).toBeNull();
+      expect(body.backend.build.gitShaSource).toBeNull();
+    } finally {
+      if (previousGitSha === undefined) delete process.env.GIT_SHA;
+      else process.env.GIT_SHA = previousGitSha;
+      if (previousBuildGitSha === undefined) delete process.env.VEYDRIFT_BUILD_GIT_SHA;
+      else process.env.VEYDRIFT_BUILD_GIT_SHA = previousBuildGitSha;
+      if (previousSourceVersion === undefined) delete process.env.SOURCE_VERSION;
+      else process.env.SOURCE_VERSION = previousSourceVersion;
+      if (previousEasypanelGitSha === undefined) delete process.env.EASYPANEL_GIT_SHA;
+      else process.env.EASYPANEL_GIT_SHA = previousEasypanelGitSha;
+      if (previousRailwayGitCommitSha === undefined) delete process.env.RAILWAY_GIT_COMMIT_SHA;
+      else process.env.RAILWAY_GIT_COMMIT_SHA = previousRailwayGitCommitSha;
+      if (previousGithubSha === undefined) delete process.env.GITHUB_SHA;
+      else process.env.GITHUB_SHA = previousGithubSha;
+      if (previousCommitSha === undefined) delete process.env.COMMIT_SHA;
+      else process.env.COMMIT_SHA = previousCommitSha;
+    }
+  });
+
+  test("does not rate-limit runtime config bootstrap reads", async () => {
+    const responses = [];
+    for (let index = 0; index < 6; index += 1) {
+      responses.push(await handler(new Request("https://api-test.veydrift.com/runtime-config", {
+        headers: { "x-forwarded-for": "203.0.113.10" }
+      })));
+    }
+
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200, 200, 200]);
+  });
+
+  test("does not prewarm broad indexed reads on reader workers by default", async () => {
+    const indexer = testIndexer();
+    let prewarmCalls = 0;
+    indexer.allActiveFleetMissions = () => {
+      prewarmCalls += 1;
+      return [];
+    };
+
+    createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer,
+      role: "reader"
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 800));
+
+    expect(prewarmCalls).toBe(0);
+  });
+
+  test("serves concurrent external cold cache misses without refresh_busy responses", async () => {
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer: testIndexer(),
+      prewarmResponseCache: false
+    });
+    const headers = { "x-forwarded-for": "203.0.113.42", accept: "application/json" };
+
+    const responses = await Promise.all([
+      handler(new Request("https://api-test.veydrift.com/highscores?limit=10", { headers })),
+      handler(new Request("https://api-test.veydrift.com/universe/galaxies/1/systems/1", { headers })),
+      handler(new Request("https://api-test.veydrift.com/missions?status=active", { headers }))
+    ]);
+    const bodies = await Promise.all(responses.map((response) => response.json()));
+
+    expect(responses.map((response) => response.status)).not.toContain(429);
+    expect(bodies.map((body) => body.error)).not.toContain("refresh_busy");
+  });
+
+  test("does not rate-limit warm cached public reads during repeated stress probes", async () => {
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer: testIndexer(),
+      prewarmResponseCache: false
+    });
+    const headers = { "x-forwarded-for": "203.0.113.43", accept: "application/json" };
+
+    const warmup = await handler(new Request("https://api-test.veydrift.com/universe/systems?galaxy=2&center=44&radius=1", { headers }));
+    const responses = [];
+    for (let index = 0; index < 6; index += 1) {
+      responses.push(await handler(new Request("https://api-test.veydrift.com/universe/systems?galaxy=2&center=44&radius=1", { headers })));
+    }
+
+    expect(warmup.status).toBe(200);
+    expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200, 200, 200]);
+  });
+
   test("publishes split settlement and game contracts in runtime config", async () => {
     const previousGameAddress = process.env.VEYDRIFT_CONTRACT_ADDRESS;
     const previousGameOverrideAddress = process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS;
@@ -898,6 +1505,11 @@ describe("Veydrift backend", () => {
     const previousMoonAddress = process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS;
     const previousRandomnessEngineAddress = process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS;
     const previousAllianceAddress = process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS;
+    const previousChickenNftAddress = process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS;
+    const previousChickenBurnAddress = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS;
+    const previousChickenBurnSelector = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR;
+    const previousChickenLevelSelector = process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR;
+    const previousBaseMainnetRpcUrl = process.env.VEYDRIFT_BASE_MAINNET_RPC_URL;
     const previousMetalTokenAddress = process.env.VEYDRIFT_METAL_TOKEN_ADDRESS;
     const previousCrystalTokenAddress = process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS;
     const previousDeuteriumTokenAddress = process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS;
@@ -907,6 +1519,11 @@ describe("Veydrift backend", () => {
     process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS = "0x2222222222222222222222222222222222222222";
     process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS = "0x8888888888888888888888888888888888888888";
     process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS = "0x9999999999999999999999999999999999999999";
+    process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR = "0x12345678";
+    process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR = "0x87654321";
+    process.env.VEYDRIFT_BASE_MAINNET_RPC_URL = "https://base.example.test";
     process.env.VEYDRIFT_METAL_TOKEN_ADDRESS = "0x5555555555555555555555555555555555555555";
     process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS = "0x6666666666666666666666666666666666666666";
     process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS = "0x7777777777777777777777777777777777777777";
@@ -920,8 +1537,16 @@ describe("Veydrift backend", () => {
         allianceContractAddress: "0x9999999999999999999999999999999999999999",
         moonContractAddress: "0x2222222222222222222222222222222222222222",
         randomnessEngineAddress: "0x8888888888888888888888888888888888888888",
+        burningChicken: {
+          burnContractAddress: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          burnSelector: "0x12345678",
+          levelSelector: "0x87654321",
+          nftContractAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          rpcUrl: "https://base.example.test"
+        },
         featureSupport: {
           allianceConfigured: true,
+          chickenBurnConfigured: true,
           gameConfigured: true,
           highscoresEndpoint: true,
           moonConfigured: true,
@@ -970,6 +1595,31 @@ describe("Veydrift backend", () => {
       } else {
         process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS = previousRandomnessEngineAddress;
       }
+      if (previousChickenNftAddress === undefined) {
+        delete process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS;
+      } else {
+        process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS = previousChickenNftAddress;
+      }
+      if (previousChickenBurnAddress === undefined) {
+        delete process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS;
+      } else {
+        process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS = previousChickenBurnAddress;
+      }
+      if (previousChickenBurnSelector === undefined) {
+        delete process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR;
+      } else {
+        process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR = previousChickenBurnSelector;
+      }
+      if (previousChickenLevelSelector === undefined) {
+        delete process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR;
+      } else {
+        process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR = previousChickenLevelSelector;
+      }
+      if (previousBaseMainnetRpcUrl === undefined) {
+        delete process.env.VEYDRIFT_BASE_MAINNET_RPC_URL;
+      } else {
+        process.env.VEYDRIFT_BASE_MAINNET_RPC_URL = previousBaseMainnetRpcUrl;
+      }
       if (previousMetalTokenAddress === undefined) {
         delete process.env.VEYDRIFT_METAL_TOKEN_ADDRESS;
       } else {
@@ -1005,10 +1655,27 @@ describe("Veydrift backend", () => {
           runtime: {
             allianceContractAddress: null,
             apiUrl: "https://api-test.veydrift.com",
+            backend: {
+              build: expectedBackendBuildMetadata(),
+              worker: {
+                count: expectedBackendWorkerCount(),
+                defaultMaxWorkerCount: DEFAULT_MAX_WORKER_COUNT,
+                index: 0,
+                role: "writer"
+              }
+            },
+            burningChicken: {
+              burnContractAddress: null,
+              burnSelector: "0x6364233d",
+              levelSelector: "0x05c58df2",
+              nftContractAddress: null,
+              rpcUrl: "https://mainnet.base.org"
+            },
             chainId: 84532,
             contractAddress: null,
             featureSupport: {
               allianceConfigured: false,
+              chickenBurnConfigured: false,
               gameConfigured: false,
               highscoresEndpoint: true,
               moonConfigured: false,
@@ -1282,7 +1949,7 @@ describe("Veydrift backend", () => {
     ]);
   });
 
-  test("embeds matching battle reports into completed attack archive rows before pagination", async () => {
+  test("serves completed attack archive rows without rebuilding battle reports", async () => {
     const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
     const chainReader = new class extends MockChainReader {
       override async getFleetMissionVisibility(): Promise<never> {
@@ -1330,16 +1997,12 @@ describe("Veydrift backend", () => {
       mission: {
         missionId: "77",
         status: "Returned"
-      },
-      report: {
-        missionId: "77",
-        outcome: "AttackerWin",
-        loot: { metal: "75", crystal: "25", deuterium: "0" }
       }
     });
+    expect(body.rows[0].report).toBeUndefined();
   });
 
-  test("refreshes global completed mission archive rows when a resolved attack report is indexed", async () => {
+  test("keeps global completed mission archive independent from battle report decoding", async () => {
     const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
@@ -1372,15 +2035,8 @@ describe("Veydrift backend", () => {
     const afterReportResponse = await handler(new Request("http://localhost/missions?status=completed&page=1&pageSize=25"));
     const afterReportBody = await afterReportResponse.json();
     expect(afterReportResponse.status).toBe(200);
-    expect(afterReportBody.rows[0]).toMatchObject({
-      kind: "mission",
-      mission: { missionId: "88" },
-      report: {
-        missionId: "88",
-        outcome: "AttackerWin",
-        loot: { metal: "75", crystal: "25", deuterium: "0" }
-      }
-    });
+    expect(afterReportBody.rows[0]).toMatchObject({ kind: "mission", mission: { missionId: "88" } });
+    expect(afterReportBody.rows[0].report).toBeUndefined();
   });
 
   test("serves universe-wide active missions from the indexed read model (all players, no wallet scope)", async () => {
@@ -4117,13 +4773,11 @@ describe("Veydrift backend", () => {
         metal: "5064",
         crystal: "4900",
         deuterium: "4800"
-      },
-      // readyAt is in the past, so the elapsed entry is no longer an active construction on public
-      // all-players state either, and the served building rows project the same as-of-now completion.
-      queues: {
-        building: null
       }
     });
+    // Ready queues are projected complete for public read state.
+    expect(occupiedPlanet.publicState.queues.building).toBeNull();
+    expect(occupiedPlanet.publicState.queues.research).toBeNull();
     expect(occupiedPlanet.publicState.buildings).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 0, level: 2 })
     ]));
@@ -4656,7 +5310,7 @@ describe("Veydrift backend", () => {
     expect(infrastructureBody.raidableResources.metal).toBe("2532");
   });
 
-  test("resourcesAsOfNow uses raw contract production while elapsed building queues are only effective UI state (VEY-KANEO-546)", async () => {
+  test("resourcesAsOfNow and served buildings project elapsed building queues across readyAt (VEY-KANEO-546)", async () => {
     const chainReader = new MockChainReader();
     chainReader.getInfrastructureState = async () => {
       throw new Error("resource projection must not call live infrastructure state");
@@ -4706,21 +5360,15 @@ describe("Veydrift backend", () => {
       rawRows.ships,
       rawRows.technologyLevels
     ).productionPerHour;
-    const effectiveRate = deriveInfrastructureFields(
-      { ...planet, lastSettledAt: startTs.toString() },
-      indexer.infrastructureRows(planet.planetId),
-      indexer.shipRows(planet.planetId),
-      indexer.technologyLevels(player)
-    ).productionPerHour;
-    if (!rawRate || !effectiveRate) throw new Error("expected derivable production rates");
+    if (!rawRate) throw new Error("expected derivable production rates");
     const elapsed = Math.floor(Date.now() / 1_000) - startTs;
     const rawProjectedMetal = Number(planet.resources.metal) + Math.floor((Number(rawRate.metal) * elapsed) / 3_600);
-    const effectiveProjectedMetal = Number(planet.resources.metal) + Math.floor((Number(effectiveRate.metal) * elapsed) / 3_600);
 
     expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(10);
     expect(rawRows.buildings.find((building) => building.id === 0)?.level).toBe(1);
-    expect(infrastructureBody.resourcesAsOfNow.metal).toBe(rawProjectedMetal.toString());
-    expect(Number(infrastructureBody.resourcesAsOfNow.metal)).toBeLessThan(effectiveProjectedMetal);
+    expect(Number(infrastructureBody.resourcesAsOfNow.metal)).toBeGreaterThan(rawProjectedMetal);
+    expect(infrastructureBody.buildings.find((building: { id: number }) => building.id === 0)?.level).toBe(10);
+    expect(infrastructureBody.queue).toBeNull();
   });
 
   test("returned loot resource credit updates every wallet current-resource feeder (VEY-KANEO-517)", async () => {
@@ -5068,6 +5716,77 @@ describe("Veydrift backend", () => {
     }
   });
 
+  test("serves fresh mission-critical unit endpoints even when cache version is unchanged", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-server-unit-cache-"));
+    const databasePath = join(dir, "index.sqlite");
+    const chainReader = new MockChainReader();
+    chainReader.getShipyardState = (async () => {
+      throw new Error("shipyard page must be served from the indexed DB, never a live eth_call");
+    }) as ChainReader["getShipyardState"];
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("unit endpoints should not rebuild from chain");
+    };
+
+    try {
+      const writerIndexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock, { databasePath });
+      writerIndexer.applyEvent({
+        ...planet,
+        eventName: "PlanetStarted",
+        transactionHash: "0xabc",
+        blockNumber: "123"
+      });
+      writerIndexer.applyLog({
+        blockNumber: "0x7d",
+        transactionHash: "0xship-warm",
+        logIndex: "0x0",
+        topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+        data: abiWords(5n)
+      });
+      writerIndexer.applyLog({
+        blockNumber: "0x7d",
+        transactionHash: "0xdefense-warm",
+        logIndex: "0x1",
+        topics: [planetDefenseCountChangedTopic, topic(7n), topic(1n)],
+        data: abiWords(3n)
+      });
+
+      const readerIndexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock, {
+        databasePath,
+        runStartupBackfill: false
+      });
+      const handler = createRequestHandler({
+        config: { ...configuredTestConfig, indexDbPath: databasePath },
+        chainReader,
+        enableResponseCache: true,
+        indexer: readerIndexer,
+        prewarmResponseCache: false,
+        role: "reader"
+      });
+
+      const warmedShipyard = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`))).json();
+      expect(warmedShipyard.ships).toContainEqual(expect.objectContaining({ id: 0, count: 5 }));
+      const warmedDefenses = await (await handler(new Request(`http://localhost/wallet/${player}/defenses?planetId=7`))).json();
+      expect(warmedDefenses.defenses).toContainEqual(expect.objectContaining({ id: 1, count: 3 }));
+
+      const db = new Database(databasePath);
+      try {
+        // Simulate another worker applying the canonical event mutation while this reader's persisted
+        // version token stays unchanged. These endpoints must still avoid worker-local response cache.
+        db.query("UPDATE contract_ship_counts SET count = 0 WHERE planet_id = '7' AND ship_id = 0").run();
+        db.query("UPDATE contract_defense_counts SET count = 4 WHERE planet_id = '7' AND defense_id = 1").run();
+      } finally {
+        db.close();
+      }
+
+      const freshShipyard = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`))).json();
+      expect(freshShipyard.ships).toContainEqual(expect.objectContaining({ id: 0, count: 0 }));
+      const freshDefenses = await (await handler(new Request(`http://localhost/wallet/${player}/defenses?planetId=7`))).json();
+      expect(freshDefenses.defenses).toContainEqual(expect.objectContaining({ id: 1, count: 4 }));
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("serves post-spend indexed resources after multiple active queued spends", async () => {
     const chainReader = new MockChainReader();
     chainReader.getWalletSettlement = async () => {
@@ -5151,10 +5870,9 @@ describe("Veydrift backend", () => {
       crystal: "2070",
       deuterium: "2370"
     });
-    // Lazy on-chain reconciliation (VEY-KANEO-468): these fixture queues all have elapsed readyAts,
-    // so they settle as-of-now and pop — no active queue remains (their levels/counts are projected
-    // into the planet's building/defense/ship/research state). The point of this test is the
-    // resource deductions from the spends, asserted above.
+    // Building/research queues are projected complete; unit queues retain the old as-of-now visibility
+    // behavior in this narrow fixture. The point of this test is still the resource deductions from the
+    // spends, asserted above.
     expect(planetsBody.planets[0].queues).toMatchObject({
       building: null,
       defense: null,
@@ -5365,10 +6083,7 @@ describe("Veydrift backend", () => {
 
     expect(queuesResponse.status).toBe(200);
     expect(queuesResponse.headers.get("x-veydrift-index-state")).toBe("stale");
-    // Lazy on-chain reconciliation (VEY-KANEO-468): readyAt is in the past, so the queue is settled
-    // as-of-now and popped — there is no active construction left, and the building level is
-    // projected up (asserted via the infrastructure rows below). Previously this lingered as an
-    // active "complete: true" queue (the stale-"Ready" bug).
+    // Elapsed building queues are projected complete for served UI state.
     expect(queuesBody.building).toBeNull();
     expect(infrastructureResponse.status).toBe(200);
     expect(infrastructureResponse.headers.get("x-veydrift-index-state")).toBe("stale");
@@ -5410,9 +6125,9 @@ describe("Veydrift backend", () => {
         crystal: "4780",
         deuterium: "4740"
       },
-      // Lazy on-chain reconciliation (VEY-KANEO-468): the elapsed building has settled as-of-now,
-      // so there is no active construction (the level is projected up in `buildings` above).
-      queue: null
+      // The elapsed building is projected complete for the UI.
+      queue: null,
+      buildings: expect.arrayContaining([expect.objectContaining({ id: 5, level: 1 })])
     });
 
     indexer.applyLog({
@@ -5434,6 +6149,82 @@ describe("Veydrift backend", () => {
       id: 5,
       level: 1
     });
+  });
+
+  test("projects accrued resources across a due storage upgrade without applying the new cap early", async () => {
+    const chainReader = new MockChainReader();
+    const now = BigInt(Math.floor(Date.now() / 1_000));
+    const readyAt = now - 3_600n;
+    const lastSettledAt = readyAt - 3_600n;
+    const cappedPlanet: PlanetState = {
+      ...planet,
+      lastSettledAt: lastSettledAt.toString(),
+      resources: {
+        metal: "5000",
+        crystal: "4900",
+        deuterium: "10000"
+      }
+    };
+    chainReader.listSettledPlanetEvents = async () => [
+      {
+        ...cappedPlanet,
+        eventName: "PlanetStarted",
+        transactionHash: "0xabc",
+        blockNumber: "123"
+      }
+    ];
+    chainReader.getInfrastructureState = async (wallet) => ({
+      ...(await MockChainReader.prototype.getInfrastructureState.call(chainReader, wallet)),
+      resources: cappedPlanet.resources,
+      resourcesAsOfNow: cappedPlanet.resources,
+      storageCaps: {
+        metal: "10000",
+        crystal: "10000",
+        deuterium: "10000"
+      }
+    });
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("infrastructure page must be served from the indexed DB");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm indexed state should not rebuild from chain");
+    };
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xdeutsynth",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(2n)],
+      data: abiWords(5n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xsolar",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(3n)],
+      data: abiWords(10n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      blockTimestamp: `0x${lastSettledAt.toString(16)}`,
+      transactionHash: "0xtank",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(9n)],
+      data: abiWords(1n, readyAt, 1000n, 1000n, 0n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    const body = await response.json();
+    const deuteriumPerHour = Number(body.productionPerHour.deuterium);
+
+    expect(body.storageCaps.deuterium).toBe("20000");
+    expect(body.resourcesAsOfNow.deuterium).toBe((10_000 + deuteriumPerHour).toString());
   });
 
   test("serves indexed infrastructure energy from solar satellite ship counts", async () => {
@@ -5637,8 +6428,7 @@ describe("Veydrift backend", () => {
         expect.objectContaining({ id: 9, energyPerUnit: "22" })
       ])
     });
-    // The elapsed research queue no longer occupies the active slot, and served technology rows
-    // project the as-of-now completed target before ResearchCompleted.
+    // The elapsed research queue is projected complete for served UI state.
     expect(research).toMatchObject({
       source: "contract-state-indexer",
       queue: null
@@ -5780,11 +6570,10 @@ describe("Veydrift backend", () => {
           id: 0,
           level: 2
         })
-      ]),
-      // Lazy on-chain reconciliation projects the elapsed build to level 2 and removes it from
-      // the active queue before a BuildingCompleted log is indexed.
-      queue: null
+      ])
     });
+    // Elapsed queues project into served building levels.
+    expect(body.queue).toBeNull();
   });
 
   test("keeps indexed infrastructure globally healthy while selected planet resources warm", async () => {
@@ -6429,21 +7218,90 @@ describe("Veydrift backend", () => {
         }
       ],
       planetCount: 1,
-      // The mock reader's active queues have readyAt before this suite's fixed clock, so highscore
-      // rankings include the same request-time lazy-completion projection as detail reads.
+      // Unit/building/research queues are not committed state until their completion event lands.
       score: {
-        total: "8105",
+        total: "8095",
         economy: "8080",
-        research: "3",
-        researchLevels: "2",
-        military: "22",
-        fleet: "12",
-        fleetCount: "3",
-        defense: "10"
+        research: "1",
+        researchLevels: "1",
+        military: "14",
+        fleet: "8",
+        fleetCount: "2",
+        defense: "6"
       }
     });
     expect(body.source).toBe("contract-state-indexer");
     expect(response.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
+  });
+
+  test("keeps cached highscores stable across mission-only read-model changes", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const originalHighscoreLeaderboard = indexer.highscoreLeaderboard.bind(indexer);
+    let highscoreLeaderboardCalls = 0;
+    indexer.highscoreLeaderboard = () => {
+      highscoreLeaderboardCalls += 1;
+      return originalHighscoreLeaderboard();
+    };
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      enableResponseCache: true,
+      indexer,
+      prewarmResponseCache: false
+    });
+    const request = new Request("http://localhost/highscores?category=total&page=1&pageSize=10");
+
+    expect((await handler(request.clone())).status).toBe(200);
+    expect(highscoreLeaderboardCalls).toBe(1);
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xmission-only",
+      logIndex: "0x0",
+      topics: [fleetMissionReturnExposedTopic, topic(50n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 100n, 300n, 0n, 0n, 0n)
+    });
+
+    expect((await handler(request.clone())).status).toBe(200);
+    expect(highscoreLeaderboardCalls).toBe(1);
+  });
+
+  test("sends public browser cache headers for cached public API reads", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      enableResponseCache: true,
+      indexer,
+      prewarmResponseCache: false
+    });
+
+    const response = await handler(new Request("http://localhost/highscores?category=total&page=1&pageSize=10"));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=300, stale-while-revalidate=300");
+  });
+
+  test("sends private browser cache headers for cached wallet API reads", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      enableResponseCache: true,
+      indexer,
+      prewarmResponseCache: false
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/overview`));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, max-age=15, stale-while-revalidate=15");
   });
 
   test("accrues production into highscore raidable loot so it matches the public planet read (VEY-KANEO-454)", async () => {
@@ -6486,25 +7344,23 @@ describe("Veydrift backend", () => {
     expect(highscoreResponse.status).toBe(200);
 
     const tacticalPlanet = highscoreBody.rankings.total[0].planets[0];
-    // The finder's raidable loot reflects the raw-preview accrued 5064 metal (~50% plunder =>
-    // 2532), matching the accrued resources the public planet read exposes. Before VEY-454 this
+    // The finder's raidable loot reflects the accrued 5128 metal (~50% plunder =>
+    // 2564), matching the accrued resources the public planet read exposes. Before VEY-454 this
     // used the stale stored 5000 and under-reported LOOT at 2500.
-    expect(tacticalPlanet.tactical.raidableResources.metal).toBe("2532");
+    expect(tacticalPlanet.tactical.raidableResources.metal).toBe("2564");
     expect(Number(tacticalPlanet.tactical.raidableResources.metal)).toBeGreaterThan(2500);
   });
 
-  test("Raid Target Finder loot is derived from the same accrued resources the public universe surface exposes (VEY-KANEO-454)", async () => {
+  test("public planet, universe, and Raid Target Finder resources share the same current public basis (VEY-KANEO-454/621)", async () => {
     // Cross-surface invariant for the QA report: the Raid Target Finder LOOT (highscores
-    // `raidableResources`) must be derived from the SAME accrued (capped) resources the public
-    // universe surface (`publicState.resources`) shows — not a staler stored snapshot. Both the
-    // highscores path (`rankedHighscorePlanets`) and the universe path (`publicPlanetStateRef`)
-    // run `resourcesWithClaimableAccrual` over the identical settled base, so they must agree.
+    // `raidableResources`) must be derived from the SAME accrued/current (capped) resources the
+    // public planet read (`GET /planets/{id}`) and universe surface (`publicState.resources`) show
+    // — not a staler stored snapshot. The direct planet, highscores, and universe paths all run
+    // `resourcesWithClaimableAccrual` over the identical settled base, so they must agree.
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
-    // Metal mine + solar plant settled two hours ago, with an indexed elapsed building queue.
-    // Lens-backed public state must accrue from raw stored levels so it stays aligned with the
-    // contract previewResources view; elapsed queues are only effective for UI row state.
+    // Metal mine + solar plant settled two hours ago.
     indexer.applyEvent({
       ...planet,
       eventName: "PlanetStarted",
@@ -6532,12 +7388,15 @@ describe("Veydrift backend", () => {
       indexer
     });
 
+    const planetResponse = await handler(new Request("http://localhost/planets/7"));
+    const planetBody = await planetResponse.json();
     const universeResponse = await handler(new Request("http://localhost/universe/galaxies/2/systems/44"));
     const universeBody = await universeResponse.json();
     const publicPlanet = universeBody.planets.find((item: { position: number }) => item.position === 9);
     const publicResources = publicPlanet.publicState.resources;
-    // The public universe surface accrues production from the raw stored building rows.
-    expect(publicResources.metal).toBe("5064");
+    // The public planet and universe surfaces share one accrued/current basis.
+    expect(planetBody.resources).toEqual(publicResources);
+    expect(publicResources.metal).toBe("5128");
     expect(publicPlanet.publicState.productionPerHour).toEqual(expect.objectContaining({
       metal: expect.any(String),
       crystal: expect.any(String),
@@ -7017,14 +7876,14 @@ describe("Veydrift backend", () => {
       homePlanetId: planet.planetId,
       planetCount: 1,
       score: {
-        total: "8105",
+        total: "8095",
         economy: "8080",
-        research: "3",
-        researchLevels: "2",
-        military: "22",
-        fleet: "12",
-        fleetCount: "3",
-        defense: "10"
+        research: "1",
+        researchLevels: "1",
+        military: "14",
+        fleet: "8",
+        fleetCount: "2",
+        defense: "6"
       }
     });
   });
@@ -7213,6 +8072,78 @@ describe("Veydrift backend", () => {
       position: 8,
       key: "2:44:8"
     });
+  });
+
+  test("gzips cached JSON responses when the client accepts gzip", async () => {
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      enableResponseCache: true,
+      prewarmResponseCache: false
+    });
+
+    const response = await handler(new Request("http://localhost/universe/systems?galaxy=2&center=44&radius=8", {
+      headers: {
+        "accept-encoding": "gzip"
+      }
+    }));
+    const decoded = gunzipSync(new Uint8Array(await response.arrayBuffer())).toString("utf8");
+    const body = JSON.parse(decoded);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-encoding")).toBe("gzip");
+    expect(response.headers.get("vary")).toContain("Accept-Encoding");
+    expect(body.systems).toHaveLength(17);
+  });
+
+  test("serves repeated cached reads without spending the cold-read rate limit budget", async () => {
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      enableResponseCache: true,
+      prewarmResponseCache: false
+    });
+    expect((await handler(new Request("http://localhost/universe/systems?galaxy=2&center=44&radius=1"))).status).toBe(200);
+
+    for (let index = 0; index < 4; index += 1) {
+      const response = await handler(new Request("http://localhost/universe/systems?galaxy=2&center=44&radius=1", {
+        headers: {
+          "x-forwarded-for": "203.0.113.9"
+        }
+      }));
+      expect(response.status).toBe(200);
+      await response.arrayBuffer();
+    }
+    const rateLimited = await handler(new Request("http://localhost/universe/systems?galaxy=2&center=44&radius=1", {
+      headers: {
+        "x-forwarded-for": "203.0.113.9"
+      }
+    }));
+    expect(rateLimited.status).toBe(200);
+  });
+
+  test("rate-limits repeated reads per route without starving shipyard inventory refreshes", async () => {
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      enableResponseCache: false,
+      prewarmResponseCache: false
+    });
+    const headers = { "x-forwarded-for": "203.0.113.10" };
+
+    for (let index = 0; index < 40; index += 1) {
+      await handler(new Request(`http://localhost/wallet/${player}/overview?planetId=7`, { headers }));
+    }
+
+    const repeatedOverview = await handler(
+      new Request(`http://localhost/wallet/${player}/overview?planetId=7`, { headers })
+    );
+    const shipyardRefresh = await handler(
+      new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`, { headers })
+    );
+
+    expect(repeatedOverview.status).toBe(429);
+    expect(shipyardRefresh.status).not.toBe(429);
   });
 
   test("returns deterministic universe system data", async () => {
@@ -7459,9 +8390,63 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     expect(body.chainSync).toBeNull();
     expect(body.missionResolution).toBeNull();
     expect(body.randomnessCommitter).toBeNull();
-    // Reads are still served from the shared WAL database.
-    expect(body.indexer).not.toBeNull();
+    // Reader liveness must stay cheap; diagnostics still expose the shared WAL snapshot explicitly.
+    expect(body.indexer).toBeNull();
     expect(response.status).toBe(200);
+
+    const debugResponse = await handler(new Request("http://localhost/debug/indexer"));
+    const debugBody = await debugResponse.json();
+    expect(debugBody.indexer).not.toBeNull();
+  });
+
+  test("reader debug indexer exposes persisted writer chain-sync diagnostics", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-reader-debug-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    try {
+      const writerIndexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, { databasePath });
+      writerIndexer.recordWriterChainSyncDiagnostics({
+        chainSync: {
+          lastPollDurationMs: 33128,
+          lastGetLogsDurationMs: 17,
+          lastGetLogsRange: { fromBlock: "43277454", toBlock: "43277454" },
+          pollBacklogBlocks: "0",
+          recentEventReceiveLagMs: { count: 100, p50: 20263, p95: 52236, max: 62933 }
+        },
+        chainSyncRpc: {
+          callsByMethod: { eth_blockNumber: 364, eth_getLogs: 190 },
+          timeouts: 0
+        }
+      });
+      const readerIndexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, {
+        databasePath,
+        readOnly: true
+      });
+      const handler = createRequestHandler({
+        chainReader: new MockChainReader(),
+        config: { ...configuredTestConfig, indexDbPath: databasePath },
+        indexer: readerIndexer,
+        role: "reader"
+      });
+
+      const response = await handler(new Request("http://localhost/debug/indexer"));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.writerDiagnostics).toMatchObject({ source: "persisted" });
+      expect(body.chainSync).toMatchObject({
+        lastPollDurationMs: 33128,
+        lastGetLogsDurationMs: 17,
+        lastGetLogsRange: { fromBlock: "43277454", toBlock: "43277454" },
+        pollBacklogBlocks: "0",
+        recentEventReceiveLagMs: { p95: 52236 }
+      });
+      expect(body.chainSyncRpc).toMatchObject({
+        callsByMethod: { eth_getLogs: 190 },
+        timeouts: 0
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test("reader workers skip mission resolution even when test config enables it", async () => {
@@ -7561,6 +8546,50 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     expect(body.chainSync).not.toBeNull();
     expect(body.randomnessCommitter).not.toBeNull();
     expect(body.indexer).not.toBeNull();
+  });
+
+  test("writer boot skips expensive startup materialized backfill", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-server-boot-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+
+    try {
+      const writer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, { databasePath });
+      writer.applyEvent({
+        ...planet,
+        eventName: "PlanetStarted",
+        transactionHash: "0xbootbackfill",
+        blockNumber: "100"
+      });
+      expect(writer.walletSettlement(player)).toMatchObject({
+        hasFirstPlanet: true,
+        homePlanetId: planet.planetId
+      });
+
+      const database = new Database(databasePath);
+      database.query("DELETE FROM contract_players").run();
+      database.query("DELETE FROM contract_planets").run();
+      database.query("DELETE FROM contract_planet_resources").run();
+      database.close();
+
+      const handler = createRequestHandler({
+        chainReader: new MockChainReader(),
+        config: {
+          ...configuredTestConfig,
+          indexDbPath: databasePath
+        }
+      });
+
+      const response = await handler(new Request(`http://localhost/wallet/${player}/settlement`));
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        hasFirstPlanet: false,
+        homePlanetId: null
+      });
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
   });
 });
 

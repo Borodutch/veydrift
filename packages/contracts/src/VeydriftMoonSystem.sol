@@ -41,9 +41,11 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     bytes32 public constant MOON_SEED_DOMAIN = keccak256("veydrift.moon.v1");
     bytes32 public constant MOON_CHANCE_DOMAIN = keccak256("veydrift.moon-chance.v1");
     bytes32 public constant MOON_DESTRUCTION_DOMAIN = keccak256("veydrift.moon-destruction.v1");
+    bytes32 public constant CHICKEN_BURN_MOON_DOMAIN = keccak256("veydrift.chicken-burn-moon.v1");
     uint16 public constant BPS = 10_000;
     uint256 public constant MOON_CHANCE_DEBRIS_UNIT = 100_000;
     uint16 public constant MAX_MOON_CHANCE_BPS = 2_000;
+    uint8 public constant MAX_CHICKEN_BURN_MOONS_PER_PLAYER = 2;
 
     struct Moon {
         bool exists;
@@ -117,7 +119,20 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     mapping(uint256 outcomeId => MoonDestructionOutcome outcome) internal _moonDestructionOutcomes;
     mapping(uint256 requestId => uint256 outcomeId) public moonDestructionOutcomeByRequestId;
     mapping(bytes32 battleKey => uint256 outcomeId) public moonDestructionOutcomeByBattle;
+    mapping(bytes32 burnId => bool granted) public chickenBurnMoonGranted;
+    mapping(address player => uint8 count) public chickenBurnMoonGrantCountOf;
 
+    error ChickenBurnAlreadyGranted(bytes32 burnId);
+    error ChickenBurnMoonLimitReached(address player, uint256 limit);
+    error CoordinateMismatch(
+        uint256 planetId,
+        uint16 expectedGalaxy,
+        uint16 expectedSystem,
+        uint8 expectedPosition,
+        uint16 actualGalaxy,
+        uint16 actualSystem,
+        uint8 actualPosition
+    );
     error ConstructionActive();
     error ConstructionInactive();
     error ConstructionNotReady(uint64 readyAt);
@@ -151,6 +166,15 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         uint8 position,
         uint16 fields,
         uint16 diameterKm
+    );
+    event ChickenBurnMoonGranted(
+        bytes32 indexed burnId,
+        address indexed player,
+        uint256 indexed planetId,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position,
+        uint8 playerGrantCount
     );
     event MoonBuildingStarted(
         uint256 indexed planetId,
@@ -263,6 +287,65 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         uint256 seed =
             uint256(keccak256(abi.encodePacked(MOON_SEED_DOMAIN, block.chainid, planetId)));
         createdMoon = _createMoon(planetId, planetRef, planetRef.owner, seed);
+    }
+
+    function grantMoonFromChickenBurn(
+        bytes32 burnId,
+        address player,
+        uint256 planetId,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position
+    ) external onlyOwner returns (Moon memory createdMoon) {
+        if (burnId == bytes32(0) || player == address(0)) revert ZeroAddress();
+        if (chickenBurnMoonGranted[burnId]) revert ChickenBurnAlreadyGranted(burnId);
+
+        VeydriftGameStorage.Planet memory planetRef = game.planet(planetId);
+        if (planetRef.owner == address(0)) revert NoPlanet();
+        if (planetRef.owner != player) revert NotMoonOwner();
+        if (
+            planetRef.galaxy != galaxy || planetRef.system != system
+                || planetRef.position != position
+        ) {
+            revert CoordinateMismatch(
+                planetId,
+                galaxy,
+                system,
+                position,
+                planetRef.galaxy,
+                planetRef.system,
+                planetRef.position
+            );
+        }
+        if (_moons[planetId].exists) revert MoonAlreadyExists(planetId);
+
+        uint8 currentCount = chickenBurnMoonGrantCountOf[player];
+        if (currentCount >= MAX_CHICKEN_BURN_MOONS_PER_PLAYER) {
+            revert ChickenBurnMoonLimitReached(player, MAX_CHICKEN_BURN_MOONS_PER_PLAYER);
+        }
+
+        chickenBurnMoonGranted[burnId] = true;
+        uint8 nextCount = currentCount + 1;
+        chickenBurnMoonGrantCountOf[player] = nextCount;
+
+        uint256 seed = uint256(
+            keccak256(
+                abi.encodePacked(
+                    CHICKEN_BURN_MOON_DOMAIN,
+                    block.chainid,
+                    address(this),
+                    burnId,
+                    player,
+                    planetId,
+                    galaxy,
+                    system,
+                    position
+                )
+            )
+        );
+        createdMoon = _createMoon(planetId, planetRef, player, seed);
+
+        emit ChickenBurnMoonGranted(burnId, player, planetId, galaxy, system, position, nextCount);
     }
 
     function requestMoonChanceFromBattle(

@@ -280,6 +280,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         // settling first. Mirrors the prologue every other mutating colonization path already runs.
         _settleDueColonizeArrivals(msg.sender);
         _settleDueCombatArrivals(msg.sender);
+        _settleResearchDue(msg.sender, _currentTimestamp());
         _settleResources(originPlanetId);
         _validateColonyCreation(originPlanetId);
         if (ships.colonyShip != 1 || _missionShipTotal(ships) != 1) revert InvalidQuantity();
@@ -298,6 +299,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
 
         (uint16 galaxy, uint16 system, uint8 position) = _decodeColonyTarget(mission.targetPlanetId);
+        _settleResearchDue(mission.owner, mission.arrivalAt);
         uint256 limit = 1 + _technologyLevels[mission.owner][Technology.Astrophysics];
         if (
             occupiedCoordinates[_coordinateKey(galaxy, system, position)]
@@ -606,25 +608,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     }
 
     function _settleResources(uint256 planetId) private {
-        uint64 currentTime = _currentTimestamp();
-        Planet storage planetRef = _planets[planetId];
-        if (currentTime > planetRef.lastSettledAt) {
-            uint256 elapsed = uint256(currentTime) - planetRef.lastSettledAt;
-            (uint256 metalPerHour, uint256 crystalPerHour, uint256 deutPerHour) =
-                _productionPerHour(planetId);
-            Resources memory produced = Resources({
-                metal: _toUint128((metalPerHour * elapsed) / 1 hours),
-                crystal: _toUint128((crystalPerHour * elapsed) / 1 hours),
-                deuterium: _toUint128((deutPerHour * elapsed) / 1 hours)
-            });
-            (, Resources memory added) =
-                _cappedResourceIncrease(planetId, planetRef.resources, produced);
-            added = _reserveLimitedIncrease(added);
-            _increaseInternalResources(added);
-            planetRef.resources = _add(planetRef.resources, added);
-            planetRef.lastSettledAt = currentTime;
-        }
-        _settleDuePlanet(planetId);
+        _settleActionPlanet(planetId);
     }
 
     function _spend(uint256 planetId, Resources memory cost) private {

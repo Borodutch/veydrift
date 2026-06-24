@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   createForwardingFetch,
+  createRequestLoggingFetch,
   DEFAULT_MAX_WORKER_COUNT,
+  LEGACY_MAX_WORKER_COUNT_ENV,
   resolveWorkerAssignment,
   resolveWorkerCount,
   resolveWriterInternalPort,
@@ -15,27 +17,56 @@ import {
 describe("resolveWorkerCount", () => {
   test("uses the host CPU count up to the default memory-bounded cap when no override is set", () => {
     expect(resolveWorkerCount({}, 2)).toBe(2);
-    expect(resolveWorkerCount({}, 8)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({}, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
   });
 
   test("floors fractional CPU counts and never returns less than 1", () => {
-    expect(resolveWorkerCount({}, 4.9)).toBe(4);
+    expect(resolveWorkerCount({}, 12.9)).toBe(DEFAULT_MAX_WORKER_COUNT);
     expect(resolveWorkerCount({}, 0)).toBe(1);
     expect(resolveWorkerCount({}, Number.NaN)).toBe(1);
   });
 
-  test("honors a positive integer override even above the default cap", () => {
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "3" }, 16)).toBe(3);
+  test("honors a positive integer override up to the deploy-safe cap", () => {
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "2" }, 16)).toBe(2);
     expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "1" }, 16)).toBe(1);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "12" }, 16)).toBe(12);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "3" }, 16)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "12" }, 16)).toBe(DEFAULT_MAX_WORKER_COUNT);
+  });
+
+  test("honors the legacy max-worker env as a deployment cap", () => {
+    expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "1" }, 16)).toBe(1);
+    expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "2" }, 16)).toBe(2);
+    expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "3" }, 16)).toBe(DEFAULT_MAX_WORKER_COUNT);
+  });
+
+  test("applies the legacy max-worker env as a hard cap to an explicit worker count", () => {
+    expect(resolveWorkerCount({
+      [WORKER_COUNT_ENV]: "3",
+      [LEGACY_MAX_WORKER_COUNT_ENV]: "1"
+    }, 16)).toBe(1);
+    expect(resolveWorkerCount({
+      [WORKER_COUNT_ENV]: "2",
+      [LEGACY_MAX_WORKER_COUNT_ENV]: "5"
+    }, 16)).toBe(2);
+    expect(resolveWorkerCount({
+      [WORKER_COUNT_ENV]: "10",
+      [LEGACY_MAX_WORKER_COUNT_ENV]: "10"
+    }, 16)).toBe(DEFAULT_MAX_WORKER_COUNT);
   });
 
   test("ignores blank or invalid overrides and falls back to the capped default", () => {
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "" }, 6)).toBe(DEFAULT_MAX_WORKER_COUNT);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "   " }, 8)).toBe(DEFAULT_MAX_WORKER_COUNT);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "0" }, 8)).toBe(DEFAULT_MAX_WORKER_COUNT);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "-2" }, 8)).toBe(DEFAULT_MAX_WORKER_COUNT);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "abc" }, 8)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "   " }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "0" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "-2" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "abc" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "0" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "abc" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({
+      [WORKER_COUNT_ENV]: "12",
+      [LEGACY_MAX_WORKER_COUNT_ENV]: "abc"
+    }, 16)).toBe(DEFAULT_MAX_WORKER_COUNT);
   });
 });
 
@@ -49,10 +80,14 @@ describe("roleForIndex", () => {
 
 describe("resolveWorkerAssignment", () => {
   test("a process without a role env is the supervisor sized to the pool", () => {
-    expect(resolveWorkerAssignment({}, 8)).toEqual({ kind: "supervisor", workerCount: DEFAULT_MAX_WORKER_COUNT });
+    expect(resolveWorkerAssignment({}, 12)).toEqual({ kind: "supervisor", workerCount: DEFAULT_MAX_WORKER_COUNT });
     expect(resolveWorkerAssignment({ [WORKER_COUNT_ENV]: "2" }, 16)).toEqual({
       kind: "supervisor",
       workerCount: 2
+    });
+    expect(resolveWorkerAssignment({ [LEGACY_MAX_WORKER_COUNT_ENV]: "1" }, 16)).toEqual({
+      kind: "supervisor",
+      workerCount: 1
     });
   });
 
@@ -80,9 +115,9 @@ describe("resolveWorkerAssignment", () => {
   });
 
   test("an unrecognized role env is treated as the supervisor", () => {
-    expect(resolveWorkerAssignment({ [WORKER_ROLE_ENV]: "bogus" }, 4)).toEqual({
+    expect(resolveWorkerAssignment({ [WORKER_ROLE_ENV]: "bogus" }, 12)).toEqual({
       kind: "supervisor",
-      workerCount: 4
+      workerCount: DEFAULT_MAX_WORKER_COUNT
     });
   });
 });
@@ -118,7 +153,7 @@ describe("createForwardingFetch", () => {
     const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
 
     for (const method of ["GET", "HEAD", "OPTIONS"]) {
-      const response = await handler(new Request("http://localhost/missions", { method }));
+      const response = await handler(new Request("http://localhost/debug/config", { method }));
       expect(response.status).toBe(200);
     }
     expect(forwarded).toBe(false);
@@ -180,6 +215,386 @@ describe("createForwardingFetch", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/event-stream");
     await expect(response.text()).resolves.toBe("event: sync-status\n\n");
+  });
+
+  test("serves health readiness reads locally on readers", async () => {
+    const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
+    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: init?.body });
+      return Response.json({ error: "writer should not receive health" }, { status: 503 });
+    }) as unknown as typeof fetch;
+
+    const local = async () => Response.json({ ok: true, readiness: { ready: true } });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    const response = await handler(new Request("http://localhost/health"));
+
+    expect(calls).toEqual([]);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ ok: true });
+  });
+
+  test("serves indexer debug reads locally from persisted writer diagnostics", async () => {
+    const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
+    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: init?.body });
+      return Response.json({
+        error: "writer should not receive debug reads"
+      }, { status: 503 });
+    }) as unknown as typeof fetch;
+
+    const local = async () => Response.json({
+      writerDiagnostics: { source: "persisted", updatedAt: "2026-06-24T18:00:00.000Z" },
+      chainSync: {
+        lastPollDurationMs: 12,
+        lastGetLogsDurationMs: 8,
+        lastGetLogsRange: { fromBlock: "43272548", toBlock: "43272549" },
+        pollBacklogBlocks: "0",
+        recentEventReceiveLagMs: { count: 3, p50: 300, p95: 800, max: 900 }
+      },
+      chainSyncRpc: { requestCount: 4 },
+      indexer: { indexedState: "healthy" }
+    });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    const response = await handler(new Request("http://localhost/debug/indexer?sample=qa"));
+
+    expect(calls).toEqual([]);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      writerDiagnostics: { source: "persisted" },
+      chainSync: {
+        lastPollDurationMs: 12,
+        lastGetLogsDurationMs: 8,
+        lastGetLogsRange: { fromBlock: "43272548", toBlock: "43272549" },
+        pollBacklogBlocks: "0",
+        recentEventReceiveLagMs: { count: 3, p95: 800 }
+      },
+      chainSyncRpc: { requestCount: 4 }
+    });
+  });
+
+  test("does not fail indexer debug reads when the writer is busy", async () => {
+    const fetchImpl = (async () => {
+      throw new Error("writer timed out");
+    }) as unknown as typeof fetch;
+    const local = async () => Response.json({
+      writerDiagnostics: { source: "persisted", updatedAt: "2026-06-24T18:00:00.000Z" },
+      chainSync: {
+        lastPollDurationMs: 33128,
+        pollBacklogBlocks: "0"
+      },
+      indexer: { indexedState: "healthy" }
+    });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    const response = await handler(new Request("http://localhost/debug/indexer"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      writerDiagnostics: { source: "persisted" },
+      chainSync: {
+        lastPollDurationMs: 33128,
+        pollBacklogBlocks: "0"
+      }
+    });
+  });
+
+  test("serves runtime-config bootstrap reads locally on readers", async () => {
+    const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
+    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: init?.body });
+      return Response.json({ error: "writer should not receive runtime-config" }, { status: 503 });
+    }) as unknown as typeof fetch;
+
+    const local = async () => Response.json({
+      backend: { worker: { role: "reader" } },
+      apiUrl: "https://api-test.veydrift.com",
+      chainId: 84532
+    });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    const response = await handler(new Request("http://localhost/runtime-config"));
+
+    expect(calls).toEqual([]);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      backend: { worker: { role: "reader" } },
+      apiUrl: "https://api-test.veydrift.com",
+      chainId: 84532
+    });
+  });
+
+  test("serves runtime-config bootstrap reads before initializing the local reader handler", async () => {
+    const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
+    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: init?.body });
+      return Response.json({ error: "writer should not receive runtime-config" }, { status: 503 });
+    }) as unknown as typeof fetch;
+
+    let localInitialized = false;
+    const local = async () => {
+      localInitialized = true;
+      return Response.json({ error: "reader handler should not initialize" }, { status: 503 });
+    };
+    const bootstrap = (request: Request) => {
+      return new URL(request.url).pathname === "/runtime-config"
+        ? Response.json({ backend: { worker: { role: "reader" } } })
+        : undefined;
+    };
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl, bootstrap);
+
+    const response = await handler(new Request("http://localhost/runtime-config"));
+
+    expect(localInitialized).toBe(false);
+    expect(calls).toEqual([]);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ backend: { worker: { role: "reader" } } });
+  });
+
+  test("logs runtime-config bootstrap responses at the reader boundary", async () => {
+    const originalInfo = console.info;
+    const logs: unknown[][] = [];
+    console.info = (...args: unknown[]) => {
+      logs.push(args);
+    };
+    try {
+      const local = async () => Response.json({ error: "reader handler should not initialize" }, { status: 503 });
+      const bootstrap = (request: Request) => {
+        return new URL(request.url).pathname === "/runtime-config"
+          ? Response.json({ backend: { worker: { role: "reader" } } })
+          : undefined;
+      };
+      const handler = createRequestLoggingFetch(
+        createForwardingFetch(local, "http://127.0.0.1:4001", fetch, bootstrap),
+        "reader"
+      );
+
+      const response = await handler(new Request("http://localhost/runtime-config?source=test"));
+
+      expect(response.status).toBe(200);
+      expect(logs).toHaveLength(1);
+      const log = logs[0];
+      expect(log).toBeDefined();
+      expect(log![0]).toBe("veydrift-api-request");
+      const entry = JSON.parse(String(log![1])) as {
+        durationMs: number;
+        method: string;
+        path: string;
+        status: number;
+        workerRole: string;
+      };
+      expect(entry).toMatchObject({
+        method: "GET",
+        path: "/runtime-config?source=test",
+        status: 200,
+        workerRole: "reader"
+      });
+      expect(entry.durationMs).toBeGreaterThanOrEqual(0);
+    } finally {
+      console.info = originalInfo;
+    }
+  });
+
+  test("serves health bootstrap reads before initializing the local reader handler", async () => {
+    const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
+    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(input), body: init?.body });
+      return Response.json({ error: "writer should not receive health" }, { status: 503 });
+    }) as unknown as typeof fetch;
+
+    let localInitialized = false;
+    const local = async () => {
+      localInitialized = true;
+      return Response.json({ error: "reader handler should not initialize" }, { status: 503 });
+    };
+    const bootstrap = (request: Request) => {
+      return new URL(request.url).pathname === "/health"
+        ? Response.json({ ok: true, backend: { worker: { role: "reader" } } })
+        : undefined;
+    };
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl, bootstrap);
+
+    const response = await handler(new Request("http://localhost/health"));
+
+    expect(localInitialized).toBe(false);
+    expect(calls).toEqual([]);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true, backend: { worker: { role: "reader" } } });
+  });
+
+  test("serves indexed gameplay reads locally on reader workers", async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (input: string | URL) => {
+      calls.push(String(input));
+      return Response.json({ ok: true });
+    }) as unknown as typeof fetch;
+
+    const local = async () => {
+      return Response.json({ ok: true, worker: "reader" });
+    };
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    for (const path of [
+      "/highscores?limit=10",
+      "/universe/galaxies/6/systems/9",
+      "/wallet/0x1111111111111111111111111111111111111111/infrastructure",
+      "/raid-finder/debris"
+    ]) {
+      const response = await handler(new Request(`http://localhost${path}`));
+      expect(response.status).toBe(200);
+    }
+
+    expect(calls).toEqual([]);
+  });
+
+  test("keeps runtime-config local when the writer is busy", async () => {
+    const fetchImpl = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60_000));
+      return Response.json({ error: "late writer response" }, { status: 503 });
+    }) as unknown as typeof fetch;
+
+    const local = async () => Response.json({
+      backend: { worker: { role: "reader" } },
+      apiUrl: "https://api-test.veydrift.com",
+      chainId: 84532
+    });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    const response = await handler(new Request("http://localhost/runtime-config"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      backend: { worker: { role: "reader" } },
+      apiUrl: "https://api-test.veydrift.com",
+      chainId: 84532
+    });
+  });
+
+  test("keeps health local when the writer is busy", async () => {
+    const fetchImpl = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 60_000));
+      return Response.json({ error: "late writer response" }, { status: 503 });
+    }) as unknown as typeof fetch;
+
+    const local = async () => Response.json({
+      ok: true,
+      backend: { worker: { role: "reader" } },
+      readiness: { ready: true }
+    });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    const response = await handler(new Request("http://localhost/health"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      backend: { worker: { role: "reader" } },
+      readiness: { ready: true }
+    });
+  });
+
+  test("keeps bootstrap reads local while a writer-owned read is waiting on the writer", async () => {
+    let releaseWriter!: () => void;
+    const writerReady = new Promise<void>((resolve) => {
+      releaseWriter = resolve;
+    });
+    const fetchImpl = (async () => {
+      await writerReady;
+      return Response.json({ rankings: {} });
+    }) as unknown as typeof fetch;
+
+    const local = async () => Response.json({ error: "reader handler should not initialize" }, { status: 503 });
+    const bootstrap = (request: Request) => {
+      const pathname = new URL(request.url).pathname;
+      if (pathname === "/runtime-config") return Response.json({ backend: { worker: { role: "reader" } } });
+      if (pathname === "/health") return Response.json({ ok: true, backend: { worker: { role: "reader" } } });
+      return undefined;
+    };
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl, bootstrap);
+
+    const indexedRead = handler(new Request("http://localhost/chain/events"));
+    await Promise.resolve();
+
+    const runtime = await handler(new Request("http://localhost/runtime-config"));
+    const health = await handler(new Request("http://localhost/health"));
+
+    expect(runtime.status).toBe(200);
+    expect(health.status).toBe(200);
+    await expect(runtime.json()).resolves.toMatchObject({ backend: { worker: { role: "reader" } } });
+    await expect(health.json()).resolves.toMatchObject({ ok: true, backend: { worker: { role: "reader" } } });
+
+    releaseWriter();
+    await expect(indexedRead.then((response) => response.json())).resolves.toEqual({ rankings: {} });
+  });
+
+  test("aborts the writer SSE request when the client cancels the forwarded stream", async () => {
+    let upstreamCanceled = false;
+    let fetchAborted = false;
+    const fetchImpl = (async (_input: string | URL, init?: RequestInit) => {
+      init?.signal?.addEventListener("abort", () => {
+        fetchAborted = true;
+      });
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("event: sync-status\n\n"));
+          },
+          cancel() {
+            upstreamCanceled = true;
+          }
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        }
+      );
+    }) as unknown as typeof fetch;
+
+    const local = async () => new Response("reader-has-no-chain-sync", { status: 503 });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    const response = await handler(new Request("http://localhost/chain/events"));
+    const reader = response.body?.getReader();
+    expect(reader).toBeDefined();
+    await expect(reader!.read()).resolves.toMatchObject({ done: false });
+    await reader!.cancel("client navigated away");
+
+    expect(fetchAborted).toBe(true);
+    expect(upstreamCanceled).toBe(true);
+  });
+
+  test("aborts the writer SSE request when the original browser request aborts", async () => {
+    let fetchAborted = false;
+    const fetchImpl = (async (_input: string | URL, init?: RequestInit) => {
+      init?.signal?.addEventListener("abort", () => {
+        fetchAborted = true;
+      });
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("event: sync-status\n\n"));
+          }
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "text/event-stream" }
+        }
+      );
+    }) as unknown as typeof fetch;
+
+    const local = async () => new Response("reader-has-no-chain-sync", { status: 503 });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+    const abortController = new AbortController();
+
+    const response = await handler(new Request("http://localhost/chain/events", {
+      signal: abortController.signal
+    }));
+    expect(response.status).toBe(200);
+
+    abortController.abort();
+
+    expect(fetchAborted).toBe(true);
   });
 
   test("does not try to consume a body when forwarding bodyless writer-only reads", async () => {

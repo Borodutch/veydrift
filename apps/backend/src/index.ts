@@ -1,10 +1,12 @@
 import { installCrashDiagnostics } from "./crashDiagnostics";
-import { createRequestHandler } from "./server";
+import { createRequestHandler, readerBootstrapHealthResponse, runtimeConfigResponse } from "./server";
 import {
   createForwardingFetch,
+  createRequestLoggingFetch,
   resolveWorkerAssignment,
   resolveWriterInternalPort,
   roleForIndex,
+  WORKER_COUNT_ENV,
   WORKER_INDEX_ENV,
   WORKER_ROLE_ENV,
   WRITER_INTERNAL_PORT_ENV,
@@ -27,9 +29,8 @@ const idleTimeout = Number.parseInt(process.env.VEYDRIFT_HTTP_IDLE_TIMEOUT_SECON
 // mutating request and the SSE stream there so the writer remains the sole mutator of the SQLite index
 // and the only holder of the live chain-sync stream.
 function serveWorker(role: WorkerRole, index: number, writerInternalPort?: number): void {
-  const handler = createRequestHandler({ role });
-
   if (role === "writer" && writerInternalPort !== undefined) {
+    const handler = createRequestHandler({ role, logRequests: false });
     Bun.serve({
       idleTimeout,
       port: writerInternalPort,
@@ -44,11 +45,32 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
   }
 
   if (role === "reader" && writerInternalPort !== undefined) {
+    let handler: ReturnType<typeof createRequestHandler> | undefined;
+    const localReaderHandler = async (request: Request): Promise<Response> => {
+      handler ??= createRequestHandler({ role, logRequests: false });
+      return handler(request);
+    };
+    const localBootstrapHandler = (request: Request): Response | undefined => {
+      const url = new URL(request.url);
+      if (request.method !== "GET") return undefined;
+      if (url.pathname === "/runtime-config") return runtimeConfigResponse(role);
+      if (url.pathname === "/health") return readerBootstrapHealthResponse(role);
+      return undefined;
+    };
+
     Bun.serve({
       idleTimeout,
       port,
       reusePort: true,
-      fetch: createForwardingFetch(handler, `http://127.0.0.1:${writerInternalPort}`)
+      fetch: createRequestLoggingFetch(
+        createForwardingFetch(
+          localReaderHandler,
+          `http://127.0.0.1:${writerInternalPort}`,
+          fetch,
+          localBootstrapHandler
+        ),
+        role
+      )
     });
     console.log(
       `Veydrift backend worker ${index} (reader) listening on http://localhost:${port} [reusePort]; ` +
@@ -57,6 +79,7 @@ function serveWorker(role: WorkerRole, index: number, writerInternalPort?: numbe
     return;
   }
 
+  const handler = createRequestLoggingFetch(createRequestHandler({ role, logRequests: false }), role);
   Bun.serve({
     idleTimeout,
     port,
@@ -87,6 +110,7 @@ function superviseWorkers(workerCount: number): void {
       cmd: ["bun", import.meta.path],
       env: {
         ...process.env,
+        [WORKER_COUNT_ENV]: String(workerCount),
         [WORKER_ROLE_ENV]: role,
         [WORKER_INDEX_ENV]: String(index),
         [WRITER_INTERNAL_PORT_ENV]: String(writerInternalPort)
@@ -108,12 +132,18 @@ function superviseWorkers(workerCount: number): void {
     spawnChild(index);
   }
 
+  // Keep the supervisor event loop alive. Bun child-process handles are not a reliable liveness
+  // anchor in all container/runtime combinations, and if the supervisor exits cleanly Swarm treats the
+  // task as "Complete" and tears down the worker children.
+  const keepAlive = setInterval(() => {}, 60 * 60 * 1_000);
+
   // Forward the supervisor's shutdown to the workers so they never outlive it as orphaned port
   // listeners. installCrashDiagnostics() turns SIGTERM/SIGINT into process.exit(0) (and an uncaught
   // exception into process.exit(1)); the "exit" event fires synchronously for all of those paths, so
   // killing the workers here covers every catchable shutdown. (SIGKILL is uncatchable; container
   // teardown reaps the workers in that case.)
   process.on("exit", () => {
+    clearInterval(keepAlive);
     shuttingDown = true;
     for (const child of children.values()) {
       child.kill();

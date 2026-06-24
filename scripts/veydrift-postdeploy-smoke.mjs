@@ -5,6 +5,10 @@ const options = parseArgs(process.argv.slice(2));
 const apiUrl = trimSlash(options["api-url"] ?? "https://api-test.veydrift.com");
 const wallet = options.wallet;
 const manifest = options.manifest ? readManifest(options.manifest) : null;
+const runtimeStressRounds = positiveIntegerOption(options["runtime-stress-rounds"] ?? "12", "runtime-stress-rounds");
+const runtimeStressP95Ms = positiveIntegerOption(options["runtime-stress-p95-ms"] ?? "500", "runtime-stress-p95-ms");
+const runtimeStressTimeoutMs = positiveIntegerOption(options["runtime-stress-timeout-ms"] ?? "6000", "runtime-stress-timeout-ms");
+const requestTimeoutMs = positiveIntegerOption(options["timeout-ms"] ?? String(runtimeStressTimeoutMs), "timeout-ms");
 const failures = [];
 const evidence = [];
 let walletHomePlanetId = null;
@@ -87,6 +91,8 @@ if (wallet) {
   }
 }
 
+await checkRuntimeConfigStress(runtimeStressEndpoints());
+
 const result = {
   ok: failures.length === 0,
   apiUrl,
@@ -108,22 +114,117 @@ async function checkWallet(name, endpoint, validate) {
 }
 
 async function checkJson(name, endpoint, validate) {
-  try {
-    const response = await fetch(`${apiUrl}${endpoint}`, { headers: { accept: "application/json" } });
-    const text = await response.text();
-    let body;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      fail(`${name} did not return JSON: HTTP ${response.status}`);
-      return;
-    }
-    evidence.push({ name, endpoint, status: response.status, keys: Object.keys(body).sort() });
-    expect(response.ok, `${name} returned HTTP ${response.status}`);
-    validate(body);
-  } catch (error) {
-    fail(`${name} request failed: ${error instanceof Error ? error.message : String(error)}`);
+  const sample = await timedJson(endpoint, requestTimeoutMs);
+  evidence.push({
+    name,
+    endpoint,
+    status: sample.status,
+    ms: sample.ms,
+    timedOut: sample.timedOut,
+    ...(sample.body && typeof sample.body === "object" ? { keys: Object.keys(sample.body).sort() } : {}),
+    ...(sample.error ? { error: sample.error } : {})
+  });
+  if (!sample.ok) {
+    fail(sample.timedOut
+      ? `${name} timed out after ${requestTimeoutMs}ms`
+      : `${name} request failed: ${sample.error ?? `HTTP ${sample.status ?? "unknown"}`}`);
+    return;
   }
+  validate(sample.body);
+}
+
+async function checkRuntimeConfigStress(noisyEndpoints) {
+  const runtimeSamples = [];
+  const noisySamples = [];
+  for (let round = 0; round < runtimeStressRounds; round += 1) {
+    const [runtime, ...noisy] = await Promise.all([
+      timedJson("/runtime-config", runtimeStressTimeoutMs),
+      ...noisyEndpoints.map((endpoint) => timedJson(endpoint, runtimeStressTimeoutMs))
+    ]);
+    runtimeSamples.push(runtime);
+    noisySamples.push(...noisy.map((sample) => ({ ...sample, round })));
+  }
+
+  const runtimeLatencies = runtimeSamples.map((sample) => sample.ms).sort((left, right) => left - right);
+  const runtimeP95Ms = percentile(runtimeLatencies, 95);
+  const badRuntimeSamples = runtimeSamples.filter((sample) => !sample.ok || sample.status === 429 || sample.timedOut);
+  const badNoisySamples = noisySamples.filter((sample) => !sample.ok || sample.status === 429 || sample.timedOut);
+  evidence.push({
+    name: "runtime-config-stress",
+    endpoint: "/runtime-config",
+    rounds: runtimeStressRounds,
+    p95Ms: runtimeP95Ms,
+    maxMs: Math.max(0, ...runtimeLatencies),
+    noisyEndpoints,
+    runtimeStatuses: runtimeSamples.map((sample) => sample.status),
+    noisyStatuses: noisySamples.map((sample) => ({ endpoint: sample.endpoint, status: sample.status, error: sample.error }))
+  });
+
+  expect(badRuntimeSamples.length === 0, "runtime-config stress returned non-2xx, 429, or timed out");
+  expect(badNoisySamples.length === 0, "runtime-config noisy stress endpoints returned non-2xx, 429, or timed out");
+  expect(runtimeP95Ms <= runtimeStressP95Ms, `runtime-config stress p95 ${runtimeP95Ms}ms exceeded ${runtimeStressP95Ms}ms`);
+}
+
+function runtimeStressEndpoints() {
+  const endpoints = [
+    "/universe/galaxies/6/systems/9",
+    "/universe/galaxies/1/systems/1",
+    "/highscores?limit=10"
+  ];
+  if (wallet) {
+    const planetId = walletHomePlanetId ?? "1";
+    endpoints.push(
+      `/wallet/${wallet}/overview?planetId=${encodeURIComponent(String(planetId))}`,
+      `/wallet/${wallet}/infrastructure?planetId=${encodeURIComponent(String(planetId))}`
+    );
+  }
+  return endpoints;
+}
+
+async function timedJson(endpoint, timeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const started = Date.now();
+  try {
+    const response = await fetch(`${apiUrl}${endpoint}`, {
+      headers: { accept: "application/json" },
+      signal: controller.signal
+    });
+    const text = await response.text();
+    const body = JSON.parse(text);
+    return {
+      endpoint,
+      ok: response.ok,
+      status: response.status,
+      ms: Date.now() - started,
+      body,
+      error: body?.error ?? undefined,
+      timedOut: false
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const normalizedMessage = message.toLowerCase();
+    return {
+      endpoint,
+      ok: false,
+      status: null,
+      ms: Date.now() - started,
+      body: null,
+      error: message,
+      timedOut: normalizedMessage.includes("abort")
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function percentile(sortedValues, percentileValue) {
+  if (sortedValues.length === 0) return 0;
+  const index = Math.min(
+    sortedValues.length - 1,
+    Math.max(0, Math.ceil((percentileValue / 100) * sortedValues.length) - 1)
+  );
+  return sortedValues[index] ?? 0;
 }
 
 function expect(condition, message) {
@@ -156,6 +257,14 @@ function parseArgs(args) {
   return parsed;
 }
 
+function positiveIntegerOption(value, name) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0 || String(parsed) !== String(value)) {
+    usage(`--${name} must be a positive integer.`);
+  }
+  return parsed;
+}
+
 function readManifest(path) {
   try {
     return JSON.parse(readFileSync(path, "utf8"));
@@ -166,6 +275,10 @@ function readManifest(path) {
 }
 
 function usage(message) {
-  console.error(`${message}\nUsage: node scripts/veydrift-postdeploy-smoke.mjs [--manifest <file>] [--api-url <url>] [--wallet <0x...>]`);
+  console.error(
+    `${message}\nUsage: node scripts/veydrift-postdeploy-smoke.mjs [--manifest <file>] ` +
+      `[--api-url <url>] [--wallet <0x...>] [--timeout-ms 6000] [--runtime-stress-rounds 12] ` +
+      `[--runtime-stress-p95-ms 500] [--runtime-stress-timeout-ms 6000]`
+  );
   process.exit(1);
 }

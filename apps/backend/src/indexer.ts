@@ -113,6 +113,52 @@ export type IndexedDebrisTarget = IndexedDebrisFieldEvent & {
 };
 export type IndexedMoonChanceReportEvent = MoonChanceReportEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
 
+type SettledPlanetIndexCache = {
+  stateVersion: string;
+  planets: SettledPlanetEvent[];
+  byId: Map<string, SettledPlanetEvent>;
+  byOwner: Map<string, SettledPlanetEvent[]>;
+  bySystem: Map<string, SettledPlanetEvent[]>;
+};
+
+type TargetedSettledPlanetCache = {
+  stateVersion: string;
+  byId: Map<string, SettledPlanetEvent | null>;
+  byOwner: Map<string, SettledPlanetEvent[]>;
+  bySystem: Map<string, SettledPlanetEvent[]>;
+};
+
+type PlanetEventResourceRow = {
+  event_json: string;
+  metal: string | null;
+  crystal: string | null;
+  deuterium: string | null;
+  last_settled_at: string | null;
+  transaction_hash: string | null;
+  block_number: string | null;
+  log_index: string | null;
+};
+
+type IndexedLevelsByIdCache = {
+  stateVersion: string;
+  values: Map<string, Map<number, number>>;
+};
+
+type QueueStateCache = {
+  stateVersion: string;
+  values: Map<string, QueueState | null>;
+};
+
+type TechnologyLevelsCache = {
+  stateVersion: string;
+  values: Map<string, Record<string, number>>;
+};
+
+type AllianceIntelCache = {
+  stateVersion: string;
+  values: Map<string, Map<string, AllianceIdentity>>;
+};
+
 export type IndexerSnapshot = {
   allianceReconciledAt: string | null;
   allianceStaleReason: string | null;
@@ -143,11 +189,20 @@ export type IndexerSnapshot = {
   staleReason: string | null;
 };
 
+const writerChainSyncDiagnosticsMetadataKey = "writerChainSyncDiagnostics";
+
+export type WriterChainSyncDiagnostics = {
+  chainSync: unknown | null;
+  chainSyncRpc: unknown | null;
+  updatedAt: string;
+};
+
 const indexedStateVersionMetadataKey = "indexedStateVersion";
 
 export type SettlementIndexerOptions = {
   database?: Database;
   databasePath?: string;
+  readOnly?: boolean;
   // Multi-process API workers share one SQLite DB. The writer is the only process that should run
   // startup materialized-state repair/backfill; readers only need the schema and current rows.
   runStartupBackfill?: boolean;
@@ -361,6 +416,18 @@ const CANONICAL_READ_PLANET_CHUNK = 25;
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const legacyReturnCreditableMissionTypes = new Set(["Transport", "Deploy", "Colonize", "Harvest", "AcsDefend", "DefenseHold"]);
 
+function systemCacheKey(galaxy: number, system: number): string {
+  return `${galaxy}:${system}`;
+}
+
+function cloneQueueState(queue: QueueState | null): QueueState | null {
+  if (!queue) return null;
+  return {
+    ...queue,
+    cost: { ...queue.cost },
+    ...(queue.backlog ? { backlog: queue.backlog.map((entry) => cloneQueueState(entry)!) } : {})
+  };
+}
 
 export class SettlementIndexer {
   private readonly db: Database;
@@ -378,12 +445,10 @@ export class SettlementIndexer {
   private missionReadModelDbVersion: string | null = null;
   private battleReportReadModelDbVersion: string | null = null;
   // Memoized full highscore leaderboard (every owner's score + their planets). The leaderboard is a
-  // function of indexed state plus request-time lazy-completion projection. It is valid until the next
-  // touch() or until the next active queue readyAt can change projected levels/counts.
+  // function of indexed contract-mirror state and is valid until the next event-listener mutation.
   private leaderboardCache:
     | {
       generation: number;
-      asOfNowValidUntilSec: number;
       planetsByOwner: Map<string, SettledPlanetEvent[]>;
       entries: HighscoreEntry[];
     }
@@ -405,6 +470,26 @@ export class SettlementIndexer {
       battleReports: BattleReport[];
     }
     | null = null;
+  private decodedBattleReportCache:
+    | {
+      missionGeneration: number;
+      battleReportGeneration: number;
+      battleReports: BattleReport[];
+    }
+    | null = null;
+  private battleReportsByMissionIdCache:
+    | {
+      missionGeneration: number;
+      battleReportGeneration: number;
+      reportsByMissionId: Map<string, BattleReport[]>;
+    }
+    | null = null;
+  private fulfilledRandomnessRequestIdsCache:
+    | {
+      missionGeneration: number;
+      requestIds: ReadonlySet<string>;
+    }
+    | null = null;
   private battleReportGeneration = 0;
   private missionReferenceCache:
     | {
@@ -414,6 +499,44 @@ export class SettlementIndexer {
       active: FleetMissionSummary[];
       completed: FleetMissionSummary[];
       activeByTarget: Map<string, FleetMissionSummary[]>;
+    }
+    | null = null;
+  private fleetMissionPlanetReferenceCache:
+    | {
+      stateVersion: string;
+      refs: Map<string, FleetMissionPlanetReference | null>;
+    }
+    | null = null;
+  private canonicalActiveMissionCache = new Map<
+    string,
+    {
+      missionGeneration: number;
+      stateVersion: string;
+      includeOverduePendingRandomness: boolean;
+      fulfilledRandomnessRequestIds: ReadonlySet<string> | null;
+      baseMissions: FleetMissionSummary[];
+    }
+  >();
+  private canonicalCompletedMissionCache:
+    | {
+      missionGeneration: number;
+      stateVersion: string;
+      missions: FleetMissionSummary[];
+    }
+    | null = null;
+  private settledPlanetIndexCache:
+    | SettledPlanetIndexCache
+    | null = null;
+  private targetedSettledPlanetCache: TargetedSettledPlanetCache | null = null;
+  private indexedLevelsByIdCache: IndexedLevelsByIdCache | null = null;
+  private queueStateCache: QueueStateCache | null = null;
+  private technologyLevelsCache: TechnologyLevelsCache | null = null;
+  private allianceIntelCache: AllianceIntelCache | null = null;
+  private resolvedBattleMissionIdsCache:
+    | {
+      missionGeneration: number;
+      battleReportGeneration: number;
+      missionIds: ReadonlySet<string>;
     }
     | null = null;
   private attackLaunchSecondsCache = new Map<string, { missionGeneration: number; launchesByTarget: Map<string, number[]> }>();
@@ -455,12 +578,13 @@ export class SettlementIndexer {
     private readonly fromBlock: bigint,
     options: SettlementIndexerOptions = {}
   ) {
-    this.db = options.database ?? openIndexerDatabase(options.databasePath ?? ":memory:");
+    this.db = options.database ?? openIndexerDatabase(options.databasePath ?? ":memory:", options.readOnly ?? false);
     this.qaSyntheticStationedDefenders = options.qaSyntheticStationedDefenders ?? false;
     this.randomnessEngineConfigured = options.randomnessEngineConfigured ?? false;
     this.rebuildDeadlineMs = options.rebuildDeadlineMs && options.rebuildDeadlineMs > 0 ? options.rebuildDeadlineMs : 0;
-    this.migrate(options.runStartupBackfill ?? true);
-    this.prewarmMissionReadModel();
+    if (!options.readOnly) {
+      this.migrate(options.runStartupBackfill ?? true);
+    }
   }
 
   // VEY-KANEO-471: see SettlementIndexerOptions. Read once in fleetMissionVisibility.
@@ -550,12 +674,40 @@ export class SettlementIndexer {
     return snapshot;
   }
 
-  settledPlanetsInSystem(galaxy: number, system: number): SettledPlanetEvent[] {
-    return this.planetsFromRows(
-      "SELECT event_json FROM contract_planets WHERE galaxy = ? AND system_number = ? ORDER BY position ASC",
-      galaxy,
-      system
+  recordWriterChainSyncDiagnostics(diagnostics: Pick<WriterChainSyncDiagnostics, "chainSync" | "chainSyncRpc">): void {
+    this.setMetadata(
+      writerChainSyncDiagnosticsMetadataKey,
+      JSON.stringify({
+        ...diagnostics,
+        updatedAt: new Date().toISOString()
+      } satisfies WriterChainSyncDiagnostics),
+      { invalidateSnapshot: false }
     );
+  }
+
+  writerChainSyncDiagnostics(): WriterChainSyncDiagnostics | null {
+    const raw = this.metadata(writerChainSyncDiagnosticsMetadataKey);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw) as Partial<WriterChainSyncDiagnostics>;
+      if (!parsed || typeof parsed !== "object" || typeof parsed.updatedAt !== "string") {
+        return null;
+      }
+      return {
+        chainSync: parsed.chainSync ?? null,
+        chainSyncRpc: parsed.chainSyncRpc ?? null,
+        updatedAt: parsed.updatedAt
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  settledPlanetsInSystem(galaxy: number, system: number): SettledPlanetEvent[] {
+    const cached = this.currentSettledPlanetIndexCache();
+    if (cached) return [...(cached.bySystem.get(systemCacheKey(galaxy, system)) ?? [])];
+
+    return [...this.targetedSettledPlanetsInSystem(galaxy, system)];
   }
 
   debrisFieldsInSystem(galaxy: number, system: number): IndexedDebrisFieldEvent[] {
@@ -625,16 +777,11 @@ export class SettlementIndexer {
   }
 
   settledPlanets(): SettledPlanetEvent[] {
-    return this.planetsFromRows("SELECT event_json FROM contract_planets ORDER BY CAST(planet_id AS INTEGER) ASC");
+    return [...this.settledPlanetIndex().planets];
   }
 
   settledPlanetsByOwner(): Map<string, SettledPlanetEvent[]> {
-    const planetsByOwner = new Map<string, SettledPlanetEvent[]>();
-    for (const planet of this.settledPlanets()) {
-      const owner = planet.owner.toLowerCase();
-      planetsByOwner.set(owner, [...(planetsByOwner.get(owner) ?? []), planet]);
-    }
-    return planetsByOwner;
+    return new Map([...this.settledPlanetIndex().byOwner].map(([owner, planets]) => [owner, [...planets]]));
   }
 
   fleetDefenseRawCounts(): FleetDefenseUnitCount[] {
@@ -663,8 +810,10 @@ export class SettlementIndexer {
   }
 
   planet(planetId: string): SettledPlanetEvent | null {
-    const row = this.db.query("SELECT event_json FROM contract_planets WHERE planet_id = ?").get(planetId) as EventRow | null;
-    return row ? this.withResourceSnapshot(parseEvent<SettledPlanetEvent>(row.event_json)) : null;
+    const cached = this.currentSettledPlanetIndexCache();
+    if (cached) return cached.byId.get(planetId) ?? null;
+
+    return this.targetedSettledPlanetById(planetId);
   }
 
   hasPendingPlanetResources(planetId: string): boolean {
@@ -818,6 +967,10 @@ export class SettlementIndexer {
   allianceIntelForPlayers(wallets: readonly string[]): Map<string, AllianceIdentity> {
     const uniqueWallets = [...new Set(wallets.map((wallet) => wallet.toLowerCase()))];
     if (uniqueWallets.length === 0) return new Map();
+    const cache = this.allianceIntelCacheForCurrentVersion();
+    const cacheKey = [...uniqueWallets].sort().join(",");
+    const cached = cache.values.get(cacheKey);
+    if (cached) return new Map(cached);
 
     const rows = this.db.query(`
       SELECT member.wallet, alliance.alliance_id, alliance.tag, alliance.name
@@ -826,7 +979,7 @@ export class SettlementIndexer {
       WHERE alliance.active = 1 AND member.wallet IN (${uniqueWallets.map(() => "?").join(",")})
     `).all(...uniqueWallets) as Array<{ wallet: string; alliance_id: string; tag: string; name: string }>;
 
-    return new Map(rows.map((row) => [
+    const intel = new Map(rows.map((row) => [
       row.wallet.toLowerCase(),
       {
         allianceId: row.alliance_id,
@@ -834,6 +987,8 @@ export class SettlementIndexer {
         name: row.name
       }
     ]));
+    cache.values.set(cacheKey, intel);
+    return new Map(intel);
   }
 
   allianceRelationship(allianceId: string | null | undefined, otherAllianceId: string | null | undefined): ReturnType<typeof diplomacyStatusName> {
@@ -1016,10 +1171,7 @@ export class SettlementIndexer {
   }
 
   walletSettlement(wallet: `0x${string}`): { wallet: `0x${string}`; hasFirstPlanet: boolean; homePlanetId: string | null; planet: SettledPlanetEvent | null; contractKind: "game" } {
-    const planets = this.planetsFromRows(
-      "SELECT event_json FROM contract_planets WHERE owner = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
-      wallet
-    );
+    const planets = this.settledPlanetsForOwner(wallet);
     const planet = planets.find((item) => item.eventName === "PlanetStarted") ?? planets[0] ?? null;
 
     return {
@@ -1033,10 +1185,7 @@ export class SettlementIndexer {
 
   walletPlanets(wallet: `0x${string}`): WalletPlanets {
     const settlement = this.walletSettlement(wallet);
-    const planets = this.planetsFromRows(
-      "SELECT event_json FROM contract_planets WHERE owner = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
-      wallet
-    ).map((planet) => indexedManagedPlanet(
+    const planets = this.settledPlanetsForOwner(wallet).map((planet) => indexedManagedPlanet(
       planet,
       settlement.homePlanetId,
       this.infrastructureRows(planet.planetId),
@@ -1068,16 +1217,17 @@ export class SettlementIndexer {
     };
   }
 
-  fleetMissionVisibility(wallet: `0x${string}`): FleetMissionVisibility {
+  fleetMissionVisibility(wallet: `0x${string}`, options: { includeArchive?: boolean } = {}): FleetMissionVisibility {
     const settlement = this.walletSettlement(wallet);
     const walletLower = wallet.toLowerCase();
     const ownedPlanetIds = new Set(
-      this.settledPlanets()
-        .filter((planet) => planet.owner.toLowerCase() === walletLower)
+      this.settledPlanetsForOwner(wallet)
         .map((planet) => planet.planetId)
     );
-    const summaries = this.indexedFleetMissionSummariesWithPlanetReferences();
-    const battleReports = this.indexedBattleReports();
+    const includeArchive = options.includeArchive !== false;
+    const summaries = includeArchive
+      ? this.indexedFleetMissionSummariesWithPlanetReferences()
+      : this.activeFleetMissionsForWalletVisibility(wallet, [...ownedPlanetIds]);
     // VEY-KANEO-456: index every mission by id so an incoming attack can resolve the allied AcsDefend
     // fleets stationed against it (linked by `counterplayDefenderMissionIds`) into per-defender detail
     // for the Stationed defenses panel. `nowSeconds` drives the lazy as-of-now reconciliation that hides
@@ -1105,27 +1255,52 @@ export class SettlementIndexer {
       ? this.syntheticStationedDefenseAttack(wallet, ownedPlanetIds, nowSeconds)
       : null;
 
+    const visibleIncoming = syntheticIncoming ? [syntheticIncoming, ...incoming] : incoming;
+    const outgoing = summaries.filter((mission) =>
+      isVisibleActiveFleetMission(mission)
+      && mission.owner.toLowerCase() === walletLower
+      && mission.status === "Outbound"
+    );
+    const returning = summaries.filter((mission) =>
+      isVisibleActiveFleetMission(mission)
+      && mission.owner.toLowerCase() === walletLower
+      && (mission.status === "Returning" || mission.status === "Recalled")
+    );
+    const joinableAttacks = summaries.filter((mission) =>
+      isVisibleActiveFleetMission(mission)
+      && mission.owner.toLowerCase() !== walletLower
+      && !ownedPlanetIds.has(mission.targetPlanetId)
+      && mission.missionType === "Attack"
+      && mission.status === "Outbound"
+    );
+
+    if (!includeArchive) {
+      const activeMissions = [
+        ...visibleIncoming,
+        ...outgoing,
+        ...returning,
+        ...joinableAttacks
+      ];
+      return {
+        wallet,
+        homePlanetId: settlement.homePlanetId,
+        incoming: visibleIncoming,
+        outgoing,
+        returning,
+        joinableAttacks,
+        completedMissions: [],
+        battleReports: this.indexedBattleReportsForMissions(activeMissions)
+      };
+    }
+
+    const battleReports = this.indexedBattleReports();
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
-      incoming: syntheticIncoming ? [syntheticIncoming, ...incoming] : incoming,
-      outgoing: summaries.filter((mission) =>
-        isVisibleActiveFleetMission(mission)
-        && mission.owner.toLowerCase() === walletLower
-        && mission.status === "Outbound"
-      ),
-      returning: summaries.filter((mission) =>
-        isVisibleActiveFleetMission(mission)
-        && mission.owner.toLowerCase() === walletLower
-        && (mission.status === "Returning" || mission.status === "Recalled")
-      ),
-      joinableAttacks: summaries.filter((mission) =>
-        isVisibleActiveFleetMission(mission)
-        && mission.owner.toLowerCase() !== walletLower
-        && !ownedPlanetIds.has(mission.targetPlanetId)
-        && mission.missionType === "Attack"
-        && mission.status === "Outbound"
-      ),
+      incoming: visibleIncoming,
+      outgoing,
+      returning,
+      joinableAttacks,
       completedMissions: summaries
         .filter((mission) => isVisibleCompletedMission(mission, walletLower, ownedPlanetIds))
         .sort(compareFleetMissionsNewestFirst),
@@ -1146,25 +1321,19 @@ export class SettlementIndexer {
     const settlement = this.walletSettlement(wallet);
     const walletLower = wallet.toLowerCase();
     const ownedPlanetIds = new Set(
-      this.settledPlanets()
-        .filter((planet) => planet.owner.toLowerCase() === walletLower)
+      this.settledPlanetsForOwner(wallet)
         .map((planet) => planet.planetId)
     );
-    const completedMissions = this.indexedFleetMissionSummariesWithPlanetReferences()
+    const completedMissions = this.completedFleetMissionsFromCanonicalRows()
       .filter((mission) => isVisibleCompletedMission(mission, walletLower, ownedPlanetIds))
       .sort(compareFleetMissionsNewestFirst);
-    const battleReports = this.indexedBattleReports().filter((report) =>
-      report.attacker.toLowerCase() === walletLower
-        || ownedPlanetIds.has(report.targetPlanetId)
-        || report.participants.some((participant) => participant.address.toLowerCase() === walletLower)
-    );
 
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
       ownedPlanetIds,
       completedMissions,
-      battleReports
+      battleReports: []
     };
   }
 
@@ -1173,7 +1342,7 @@ export class SettlementIndexer {
   }
 
   stationedDefendersForPlanet(planetId: string, asOfSeconds = Math.floor(Date.now() / 1_000)): StationedDefenderSummary[] {
-    return (this.indexedFleetMissionReferenceIndex().activeByTarget.get(planetId) ?? [])
+    return this.activeFleetMissionsFromCanonicalRowsForTarget(planetId, { includeOverduePendingRandomness: true })
       .filter((mission) => this.isActiveDefenseHoldForPlanet(mission, planetId, asOfSeconds))
       .map((mission) => this.stationedDefenderSummary(mission, this.defenseHoldWindowEnd(mission)))
       .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
@@ -1219,7 +1388,7 @@ export class SettlementIndexer {
 
   // Every active mission across the universe (all players), for the Mission Control "All" active tab.
   allActiveFleetMissions(): FleetMissionSummary[] {
-    return this.indexedFleetMissionReferenceIndex().active;
+    return this.activeFleetMissionsFromCanonicalRows();
   }
 
   // Every completed mission across the universe (all players), newest-first, for the past "All" tab.
@@ -1228,37 +1397,62 @@ export class SettlementIndexer {
   }
 
   activeFleetMissionsForTarget(planetId: string): FleetMissionSummary[] {
-    return this.indexedFleetMissionReferenceIndex().activeByTarget.get(planetId) ?? [];
+    return this.activeFleetMissionsFromCanonicalRowsForTarget(planetId);
   }
 
   dueUnresolvedFleetMissionsForPlanet(planetId: string, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
-    const resolvedBattleMissionIds = this.resolvedBattleMissionIds();
-    // Use the full mission set, not the public active feed: over-due attacks awaiting randomness are
-    // hidden from active report/intel surfaces, but they still block planet actions until settled.
-    return this.indexedFleetMissionReferenceIndex().summaries.filter((mission) =>
+    // Include over-due attacks awaiting randomness: they are hidden from active report/intel surfaces,
+    // but still block planet actions until settled. Keep this on canonical rows so infrastructure reads
+    // do not cold-decode the full historical mission log.
+    const candidates = this.activeFleetMissionsFromCanonicalRowsForPlanetTouching(planetId, { includeOverduePendingRandomness: true }).filter((mission) =>
       mission.status === "Outbound"
         && (mission.missionType === "Attack" || mission.missionType === "Harvest")
         && Number(mission.arrivalAt) <= asOfSeconds
         && mission.needsResolution !== true
         && (mission.originPlanetId === planetId || mission.targetPlanetId === planetId)
-        && !resolvedBattleMissionIds.has(mission.missionId)
     ).sort((left, right) => Number(left.arrivalAt) - Number(right.arrivalAt));
+    const resolvedBattleMissionIds = this.resolvedBattleMissionIdsForMissions(candidates.map((mission) => mission.missionId));
+    return candidates.filter((mission) => !resolvedBattleMissionIds.has(mission.missionId));
   }
 
   private resolvedBattleMissionIds(): ReadonlySet<string> {
+    const cached = this.resolvedBattleMissionIdsCache;
+    if (
+      cached
+      && cached.missionGeneration === this.missionGeneration
+      && cached.battleReportGeneration === this.battleReportGeneration
+    ) {
+      return cached.missionIds;
+    }
     const missionIds = new Set<string>();
-    for (const report of this.indexedBattleReports()) {
+    for (const report of this.decodedBattleReportsOnly()) {
       missionIds.add(report.missionId);
       for (const participant of report.participants) {
         missionIds.add(participant.missionId);
       }
     }
+    this.resolvedBattleMissionIdsCache = {
+      missionGeneration: this.missionGeneration,
+      battleReportGeneration: this.battleReportGeneration,
+      missionIds
+    };
     return missionIds;
+  }
+
+  private resolvedBattleMissionIdsForMissions(missionIds: Iterable<string>): ReadonlySet<string> {
+    const resolvedMissionIds = new Set<string>();
+    for (const report of this.battleReportsForMissionIds(missionIds)) {
+      resolvedMissionIds.add(report.missionId);
+      for (const participant of report.participants) {
+        resolvedMissionIds.add(participant.missionId);
+      }
+    }
+    return resolvedMissionIds;
   }
 
   pendingFleetSlotSettlementMissionsForWallet(wallet: `0x${string}`, asOfSeconds = nowSeconds()): FleetMissionSummary[] {
     const walletLower = wallet.toLowerCase();
-    return this.indexedFleetMissionReferenceIndex().active
+    return this.activeFleetMissionsFromCanonicalRowsForOwner(wallet, { includeOverduePendingRandomness: true })
       .filter((mission) =>
         mission.owner.toLowerCase() === walletLower
         && fleetSlotSettlementBlocksLaunch(mission, asOfSeconds)
@@ -1267,29 +1461,28 @@ export class SettlementIndexer {
   }
 
   infrastructureRows(planetId: string): InfrastructureState["buildings"] {
-    const completedBuildingLevels = new Map<number, number>();
-    for (const completed of this.queueSettlement(`building:${planetId}`).completed) {
-      if (typeof completed.itemId !== "number" || typeof completed.targetLevel !== "number") continue;
-      completedBuildingLevels.set(
-        completed.itemId,
-        Math.max(completedBuildingLevels.get(completed.itemId) ?? 0, completed.targetLevel)
-      );
+    const completedLevels = new Map<number, number>();
+    for (const queue of this.queueSettlement(`building:${planetId}`).completed) {
+      if (typeof queue.itemId === "number" && typeof queue.targetLevel === "number") {
+        completedLevels.set(queue.itemId, Math.max(completedLevels.get(queue.itemId) ?? 0, queue.targetLevel));
+      }
     }
+    const levels = this.indexedLevelsById("contract_building_levels", "building_id", "level", planetId);
 
-    // Lazy on-chain reconciliation: the active building queue already disappears as-of-now once
-    // readyAt has elapsed, so served building rows must apply the same elapsed entries. Otherwise
-    // derived energy, production, storage, tactical summaries, and build requirements are computed
-    // from a half-settled state: queue null, but level still pinned to the last indexed completion.
     return deriveBuildingRows((id) => Math.max(
-      this.indexedLevel("contract_building_levels", "building_id", planetId, id),
-      completedBuildingLevels.get(id) ?? 0
+      levels.get(id) ?? 0,
+      completedLevels.get(id) ?? 0
     ));
   }
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
-    const completedShipCounts = this.completedActiveQueueQuantities(`ship:${planetId}`);
+    const completedQuantities = this.completedQueueQuantities(`ship:${planetId}`);
+    const counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId);
     return deriveShipRows(
-      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id) + (completedShipCounts.get(id) ?? 0),
+      (id) => (
+        (counts.get(id) ?? 0)
+        + (completedQuantities.get(id) ?? 0)
+      ),
       this.planet(planetId)?.temperature,
       durationLevels
     );
@@ -1307,33 +1500,36 @@ export class SettlementIndexer {
     };
   }
 
+  completedBuildingQueues(planetId: string): QueueState[] {
+    return this.queueSettlement(`building:${planetId}`).completed;
+  }
+
   private contractInfrastructureRows(planetId: string): InfrastructureState["buildings"] {
-    return deriveBuildingRows((id) => this.indexedLevel("contract_building_levels", "building_id", planetId, id));
+    const levels = this.indexedLevelsById("contract_building_levels", "building_id", "level", planetId);
+    return deriveBuildingRows((id) => levels.get(id) ?? 0);
   }
 
   private contractShipRows(planetId: string): ShipyardState["ships"] {
+    const counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId);
     return deriveShipRows(
-      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id),
+      (id) => counts.get(id) ?? 0,
       this.planet(planetId)?.temperature
     );
   }
 
-  // Ships physically present at the planet and therefore launchable right now — the value the contract
-  // returns from `shipCount(planetId, ship)`. Post the VeydriftGame events upgrade this is identical to
-  // `shipRows`: the contract emits PlanetShipCountChanged on EVERY ship-count mutation (the single sink
-  // `_setPlanetShipCount` emits it, and launch debits, return credits, and combat losses all route
-  // through it), so `contract_ship_counts` is now the authoritative at-planet roster for every mission
-  // type — attack/transport/colonize/deploy/acs-defend. The indexer applies those events directly
-  // (applyShipCountChangedEvent), so a fleet that has departed is already debited and a fleet that
-  // returned (minus combat losses) is already credited, with no departed-ships projection or reconcile
-  // needed. Builds emit ShipCompleted, also applied. (VEY-KANEO-461)
-  availableShipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
-    const completedShipCounts = this.completedActiveQueueQuantities(`ship:${planetId}`);
-    return deriveShipRows(
-      (id) => this.indexedLevel("contract_ship_counts", "ship_id", planetId, id) + (completedShipCounts.get(id) ?? 0),
-      this.planet(planetId)?.temperature,
-      durationLevels
+  private contractDefenseRows(planetId: string): DefenseState["defenses"] {
+    const counts = this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId);
+    return deriveDefenseRows(
+      (id) => counts.get(id) ?? 0
     );
+  }
+
+  // Ships launchable from the UI now include due-but-not-yet-mutated shipyard output. The upgraded
+  // contract lazily reconciles the same queue before launch checks, so this served projection matches
+  // what the next mutating action can use. Departed/returned/combat counts still come from absolute
+  // PlanetShipCountChanged events in the contract table.
+  availableShipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
+    return this.shipRows(planetId, durationLevels);
   }
 
   // NOTE: the combat-triggered bounded per-planet canonical reconcile (planetReconcileBlock /
@@ -1346,14 +1542,34 @@ export class SettlementIndexer {
   // already integrate authoritatively from the event stream.
 
   defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
-    const completedDefenseCounts = this.completedActiveQueueQuantities(`defense:${planetId}`);
+    const completedQuantities = this.completedQueueQuantities(`defense:${planetId}`);
+    const counts = this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId);
     return deriveDefenseRows(
-      (id) => this.indexedLevel("contract_defense_counts", "defense_id", planetId, id) + (completedDefenseCounts.get(id) ?? 0),
+      (id) => (
+        (counts.get(id) ?? 0)
+        + (completedQuantities.get(id) ?? 0)
+      ),
       durationLevels
     );
   }
 
   technologyLevels(wallet: `0x${string}`): Record<string, number> {
+    const levels = this.contractTechnologyLevels(wallet);
+    for (const queue of this.queueSettlement(`research:${wallet.toLowerCase()}`).completed) {
+      if (typeof queue.itemId === "number" && typeof queue.targetLevel === "number") {
+        const key = String(queue.itemId);
+        levels[key] = Math.max(levels[key] ?? 0, queue.targetLevel);
+      }
+    }
+    return levels;
+  }
+
+  private contractTechnologyLevels(wallet: `0x${string}`): Record<string, number> {
+    const normalizedWallet = wallet.toLowerCase();
+    const cache = this.technologyLevelsCacheForCurrentVersion();
+    const cached = cache.values.get(normalizedWallet);
+    if (cached) return { ...cached };
+
     const rows = this.db.query(`
       SELECT technology_id AS id, level AS value
       FROM contract_technology_levels
@@ -1362,29 +1578,14 @@ export class SettlementIndexer {
     `).all(wallet) as LevelRow[];
 
     const levels = Object.fromEntries(rows.map((row) => [String(row.id), row.value]));
-    for (const completed of this.queueSettlement(`research:${wallet.toLowerCase()}`).completed) {
-      if (typeof completed.itemId !== "number" || typeof completed.targetLevel !== "number") continue;
-      const key = String(completed.itemId);
-      levels[key] = Math.max(levels[key] ?? 0, completed.targetLevel);
-    }
-    return levels;
-  }
-
-  private contractTechnologyLevels(wallet: `0x${string}`): Record<string, number> {
-    const rows = this.db.query(`
-      SELECT technology_id AS id, level AS value
-      FROM contract_technology_levels
-      WHERE owner = lower(?)
-      ORDER BY technology_id ASC
-    `).all(wallet) as LevelRow[];
-
-    return Object.fromEntries(rows.map((row) => [String(row.id), row.value]));
+    cache.values.set(normalizedWallet, levels);
+    return { ...levels };
   }
 
   fleetSlots(wallet: `0x${string}`): ShipyardState["fleetSlots"] {
     const walletLower = wallet.toLowerCase();
     const asOfSeconds = nowSeconds();
-    const active = this.indexedFleetMissionReferenceIndex().active
+    const active = this.activeFleetMissionsFromCanonicalRowsForOwner(wallet)
       .filter((mission) =>
         mission.owner.toLowerCase() === walletLower
         && !fleetSlotFreedByLazyLaunchSettlement(mission, asOfSeconds)
@@ -1409,80 +1610,16 @@ export class SettlementIndexer {
 
   private completedQueueQuantities(queueKeyValue: string): Map<number, number> {
     const quantities = new Map<number, number>();
-    for (const completed of this.queueSettlement(queueKeyValue).completed) {
-      if (typeof completed.itemId !== "number" || typeof completed.quantity !== "number") continue;
-      quantities.set(completed.itemId, (quantities.get(completed.itemId) ?? 0) + completed.quantity);
-    }
-    return quantities;
-  }
-
-  private activeQueueSettlement(queueKeyValue: string, nowSec = nowSeconds()) {
-    const queue = this.queueState(queueKeyValue);
-    if (!queue) return settleQueueAsOfNow(queue, nowSec);
-    // VEY-KANEO-525: existing production DBs can contain duplicated historical ship/defense backlog_json
-    // entries. Unit-count surfaces may project the elapsed active head, but backlog entries are not
-    // canonical completed state and must not inflate public rows, tactical summaries, or highscores.
-    const activeOnly: QueueState = { ...queue };
-    delete activeOnly.backlog;
-    return settleQueueAsOfNow(activeOnly, nowSec);
-  }
-
-  private completedActiveQueueQuantities(queueKeyValue: string, nowSec = nowSeconds()): Map<number, number> {
-    const quantities = new Map<number, number>();
-    for (const completed of this.activeQueueSettlement(queueKeyValue, nowSec).completed) {
-      if (typeof completed.itemId !== "number" || typeof completed.quantity !== "number") continue;
-      quantities.set(completed.itemId, (quantities.get(completed.itemId) ?? 0) + completed.quantity);
-    }
-    return quantities;
-  }
-
-  private projectedQueueLevelRows(rows: readonly LevelRow[] | undefined, queueKeyValue: string, nowSec: number): LevelRow[] {
-    const levels = new Map((rows ?? []).map((row) => [row.id, row.value]));
-    for (const completed of this.queueSettlement(queueKeyValue, nowSec).completed) {
-      if (typeof completed.itemId !== "number" || typeof completed.targetLevel !== "number") continue;
-      levels.set(completed.itemId, Math.max(levels.get(completed.itemId) ?? 0, completed.targetLevel));
-    }
-    return sortedLevelRows(levels);
-  }
-
-  private projectedQueueQuantityRows(rows: readonly LevelRow[] | undefined, queueKeyValue: string, nowSec: number): LevelRow[] {
-    const quantities = new Map((rows ?? []).map((row) => [row.id, row.value]));
-    for (const completed of this.activeQueueSettlement(queueKeyValue, nowSec).completed) {
-      if (typeof completed.itemId !== "number" || typeof completed.quantity !== "number") continue;
-      quantities.set(completed.itemId, (quantities.get(completed.itemId) ?? 0) + completed.quantity);
-    }
-    return sortedLevelRows(quantities);
-  }
-
-  private nextHighscoreProjectionInvalidationSec(
-    planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>,
-    nowSec: number
-  ): number {
-    let next = Number.POSITIVE_INFINITY;
-    for (const [owner, planets] of planetsByOwner) {
-      next = Math.min(next, this.nextQueueProjectionInvalidationSec(`research:${owner.toLowerCase()}`, nowSec));
-      for (const planet of planets) {
-        next = Math.min(
-          next,
-          this.nextQueueProjectionInvalidationSec(`building:${planet.planetId}`, nowSec),
-          this.nextQueueProjectionInvalidationSec(`defense:${planet.planetId}`, nowSec),
-          this.nextQueueProjectionInvalidationSec(`ship:${planet.planetId}`, nowSec)
-        );
+    for (const queue of this.queueSettlement(queueKeyValue).completed) {
+      if (typeof queue.itemId === "number" && typeof queue.quantity === "number") {
+        quantities.set(queue.itemId, (quantities.get(queue.itemId) ?? 0) + queue.quantity);
       }
     }
-    return next;
-  }
-
-  private nextQueueProjectionInvalidationSec(queueKeyValue: string, nowSec: number): number {
-    const readyAt = this.queueSettlement(queueKeyValue, nowSec).queue?.readyAt;
-    const readyAtSec = readyAt === undefined || readyAt === null ? Number.POSITIVE_INFINITY : Number(readyAt);
-    if (!Number.isFinite(readyAtSec) || readyAtSec <= 0) return Number.POSITIVE_INFINITY;
-    return readyAtSec <= nowSec ? nowSec : readyAtSec;
+    return quantities;
   }
 
   private moonBuildingLevelAsOfNow(planetId: string, buildingId: number): number {
-    // Moon buildings still serve the contract-authoritative table directly; the lazy infrastructure
-    // projection above only applies to planet building queues covered by the current contract path.
+    // Moon buildings serve the contract-authoritative table directly, like planet buildings.
     return this.indexedLevel("contract_moon_building_levels", "moon_building_id", planetId, buildingId);
   }
 
@@ -1496,21 +1633,23 @@ export class SettlementIndexer {
         "SELECT event_json FROM indexed_planets WHERE owner = lower(?) ORDER BY CAST(planet_id AS INTEGER) ASC",
         wallet
       ));
+    const contractTechnologies = this.contractTechnologyLevels(wallet);
 
     return calculateIndexedHighscore({
       wallet,
       homePlanetId: settlement.homePlanetId,
       planetCount: ownedPlanets.length,
       planets: ownedPlanets.map((planet) => ({
-        buildings: this.infrastructureRows(planet.planetId).map(({ id, level }) => ({ id, level })),
-        defenses: this.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
-        ships: this.shipRows(planet.planetId).map(({ id, count }) => ({ id, count }))
+        buildings: this.contractInfrastructureRows(planet.planetId).map(({ id, level }) => ({ id, level })),
+        defenses: this.contractDefenseRows(planet.planetId).map(({ id, count }) => ({ id, count })),
+        ships: this.contractShipRows(planet.planetId).map(({ id, count }) => ({ id, count }))
       })),
-      technologies: this.technologyRows(wallet).map(({ id, level }) => ({ id, level }))
+      technologies: deriveTechnologyRows((id) => contractTechnologies[String(id)] ?? 0)
+        .map(({ id, level }) => ({ id, level }))
     });
   }
 
-  highscoreEntriesForOwners(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>, nowSec = nowSeconds()): HighscoreEntry[] {
+  highscoreEntriesForOwners(planetsByOwner: ReadonlyMap<string, SettledPlanetEvent[]>): HighscoreEntry[] {
     const ownersAndPlanets = [...planetsByOwner.entries()];
     if (ownersAndPlanets.length === 0) return [];
 
@@ -1528,12 +1667,12 @@ export class SettlementIndexer {
         homePlanetId: homePlanet?.planetId ?? null,
         planetCount: planets.length,
         planets: planets.map((planet) => ({
-          buildings: levelRows(this.projectedQueueLevelRows(buildingsByPlanet.get(planet.planetId), `building:${planet.planetId}`, nowSec)),
+          buildings: levelRows(buildingsByPlanet.get(planet.planetId)),
           moonBuildings: levelRows(moonBuildingsByPlanet.get(planet.planetId)),
-          defenses: countRows(this.projectedQueueQuantityRows(defensesByPlanet.get(planet.planetId), `defense:${planet.planetId}`, nowSec)),
-          ships: countRows(this.projectedQueueQuantityRows(shipsByPlanet.get(planet.planetId), `ship:${planet.planetId}`, nowSec))
+          defenses: countRows(defensesByPlanet.get(planet.planetId)),
+          ships: countRows(shipsByPlanet.get(planet.planetId))
         })),
-        technologies: levelRows(this.projectedQueueLevelRows(technologiesByOwner.get(owner.toLowerCase()), `research:${owner.toLowerCase()}`, nowSec))
+        technologies: levelRows(technologiesByOwner.get(owner.toLowerCase()))
       });
     });
   }
@@ -1542,19 +1681,16 @@ export class SettlementIndexer {
   // scores depend only on integrated (completed) state, so the same result is valid for every
   // request until the next touch() — turning the rankings / raid-finder hot path from an
   // O(all-planets) recompute per request into an O(1) lookup between block integrations
-  // (VEY-KANEO-467). The accrual-to-now projection still runs per request, but only for the
-  // bounded set of planets visible on the requested page (see rankedHighscorePlanets).
+  // (VEY-KANEO-467).
   highscoreLeaderboard(): { planetsByOwner: Map<string, SettledPlanetEvent[]>; entries: HighscoreEntry[] } {
-    const nowSec = nowSeconds();
     const cached = this.leaderboardCache;
-    if (cached && cached.generation === this.stateGeneration && nowSec < cached.asOfNowValidUntilSec) {
+    if (cached && cached.generation === this.stateGeneration) {
       return cached;
     }
     const planetsByOwner = this.settledPlanetsByOwner();
-    const entries = this.highscoreEntriesForOwners(planetsByOwner, nowSec);
+    const entries = this.highscoreEntriesForOwners(planetsByOwner);
     this.leaderboardCache = {
       generation: this.stateGeneration,
-      asOfNowValidUntilSec: this.nextHighscoreProjectionInvalidationSec(planetsByOwner, nowSec),
       planetsByOwner,
       entries
     };
@@ -1570,8 +1706,15 @@ export class SettlementIndexer {
   responseCacheVersion(): string {
     // Reader workers do not receive the writer worker's in-memory `stateGeneration`, so route-level
     // caches must include a token persisted into the shared WAL database.
-    const indexedStateVersion = this.metadata(indexedStateVersionMetadataKey) ?? this.stateGeneration.toString();
-    return `${indexedStateVersion}:${this.currentMissionReadModelDbVersion()}`;
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}`;
+  }
+
+  missionResponseCacheVersion(): string {
+    return this.currentMissionReadModelDbVersion();
+  }
+
+  indexedStateCacheVersion(): string {
+    return this.metadata(indexedStateVersionMetadataKey) ?? this.stateGeneration.toString();
   }
 
   checkpointWal(mode: "PASSIVE" | "TRUNCATE" = "PASSIVE"): Array<{ busy: number; log: number; checkpointed: number }> {
@@ -1619,12 +1762,6 @@ export class SettlementIndexer {
     return rowsByOwner;
   }
 
-  // Lazy on-chain reconciliation (VEY-KANEO-468): the active queue must reflect the as-of-now
-  // SETTLED state, not just flag the head "complete". `settleQueueAsOfNow` (via queueSettlement)
-  // pops every elapsed active/backlog entry and returns the next genuinely-in-progress queue (or
-  // null when all have settled), matching the derived levels/counts (infrastructureRows / shipRows
-  // / defenseRows / technologyLevels), which already apply the same completed entries. Flag-only
-  // `withQueueAsOfNow` left a finished item lingering in the "active" slot as "Ready".
   planetQueue(planetId: string, kind: "building" | "defense" | "ship"): QueueState | null {
     return this.queueSettlement(`${kind}:${planetId}`).queue;
   }
@@ -1824,13 +1961,15 @@ export class SettlementIndexer {
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isFleetMissionLog(log)) {
-      this.applyFleetMissionCompatibilityEvent(log);
-      this.touch();
+      if (this.applyFleetMissionCompatibilityEvent(log) > 0) {
+        this.touch();
+      }
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isBattleReportLog(log)) {
-      this.applyBattleCompatibilityEvent(log);
-      this.touch();
+      if (this.applyBattleCompatibilityEvent(log) > 0) {
+        this.touch();
+      }
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isMoonChanceReportLog(log)) {
@@ -1912,6 +2051,10 @@ export class SettlementIndexer {
 
   private async drainTargetedHealQueue(): Promise<void> {
     if (!this.chainReader.getCanonicalPlanetState) return;
+    const totalStats: CurrentStateHealStats = {
+      planetsScanned: 0,
+      shipMismatches: 0
+    };
 
     while (this.targetedHealPlanetIds.size > 0) {
       const planetIds = [...this.targetedHealPlanetIds].slice(0, CANONICAL_READ_PLANET_CHUNK);
@@ -1921,7 +2064,18 @@ export class SettlementIndexer {
       const planets = planetIds
         .map((planetId) => this.planet(planetId))
         .filter((planet): planet is SettledPlanetEvent => planet !== null);
-      await this.healCurrentCanonicalPlanets(planets, CANONICAL_READ_PLANET_CHUNK);
+      const stats = await this.healCurrentCanonicalPlanets(planets, CANONICAL_READ_PLANET_CHUNK);
+      totalStats.planetsScanned += stats.planetsScanned;
+      totalStats.shipMismatches += stats.shipMismatches;
+    }
+
+    if (totalStats.planetsScanned > 0) {
+      await this.runHealWrite("targeted current-state heal metadata", () => {
+        this.setMetadata("lastCurrentStateHealAt", new Date().toISOString());
+        this.setMetadata("lastCurrentStateHealPlanetsScanned", totalStats.planetsScanned.toString());
+        this.setMetadata("lastCurrentStateHealShipMismatches", totalStats.shipMismatches.toString());
+        this.touch();
+      });
     }
   }
 
@@ -2622,6 +2776,10 @@ export class SettlementIndexer {
         ON contract_fleet_missions (owner, status_id);
       CREATE INDEX IF NOT EXISTS contract_fleet_missions_target_idx
         ON contract_fleet_missions (target_planet_id, status_id);
+      CREATE INDEX IF NOT EXISTS contract_fleet_missions_origin_idx
+        ON contract_fleet_missions (origin_planet_id, status_id);
+      CREATE INDEX IF NOT EXISTS contract_fleet_missions_status_type_idx
+        ON contract_fleet_missions (status_id, mission_type_id);
       CREATE TABLE IF NOT EXISTS contract_rift_withdrawals (
         owner TEXT NOT NULL,
         resource_id INTEGER NOT NULL,
@@ -2690,9 +2848,9 @@ export class SettlementIndexer {
     this.ensureColumn("player_profiles", "description", "TEXT");
     this.ensureColumn("contract_production_queues", "backlog_json", "TEXT");
     this.ensureColumn("contract_planet_resources", "log_index", "TEXT NOT NULL DEFAULT '0x0'");
-    this.backfillMissionEventLogs();
-    this.backfillUnitCountEventLogs();
     if (runStartupBackfill) {
+      this.backfillMissionEventLogs();
+      this.backfillUnitCountEventLogs();
       this.backfillCanonicalTables();
       this.replayFleetMissionRowsFromEventLogs();
     }
@@ -3528,7 +3686,8 @@ export class SettlementIndexer {
     `).get(mission.missionId) as EventRow | null;
     if (existing) {
       const marker = parseJson<{ source?: string }>(existing.event_json, {});
-      if (marker.source !== "indexed_mission_event_logs") return 0;
+      const baselineBlock = safeBigInt(this.metadata("lastReconciledBlock"), 0n);
+      if (marker.source !== "indexed_mission_event_logs" && safeBigInt(mission.blockNumber, 0n) <= baselineBlock) return 0;
     }
 
     const eventJson = JSON.stringify({
@@ -3871,6 +4030,10 @@ export class SettlementIndexer {
 
   private withResourceSnapshot(planet: SettledPlanetEvent): SettledPlanetEvent {
     const resources = this.planetResourceSnapshot(planet.planetId);
+    return this.withResourceSnapshotRow(planet, resources);
+  }
+
+  private withResourceSnapshotRow(planet: SettledPlanetEvent, resources: PlanetResourceRow | null): SettledPlanetEvent {
     return resources ? {
       ...planet,
       blockNumber: resources.block_number,
@@ -4118,7 +4281,8 @@ export class SettlementIndexer {
     this.touch();
   }
 
-  private applyFleetMissionCompatibilityEvent(log: IndexedRpcLog): void {
+  private applyFleetMissionCompatibilityEvent(log: IndexedRpcLog): number {
+    let mutationsApplied = 0;
     const txLogs = this.indexedLogsForTransaction(log.transactionHash);
     const missions = decodeCompleteFleetMissionLogs(txLogs);
     for (const mission of missions) {
@@ -4132,13 +4296,14 @@ export class SettlementIndexer {
           if (this.hasTransactionUnitCountChanged(log.transactionHash, "ship", mission.originPlanetId, shipId)) continue;
           mutations.push({ kind: "ship", planetId: mission.originPlanetId, itemId: shipId, delta: -quantity });
         }
-        this.applyLegacyUnitMutationsOnce(mutationKey, mutations, log);
+        mutationsApplied += this.applyLegacyUnitMutationsOnce(mutationKey, mutations, log);
       }
     }
     if (isFleetMissionReturnedLog(log)) {
-      this.applyReturnedFleetCompatibilityEvent(log);
+      mutationsApplied += this.applyReturnedFleetCompatibilityEvent(log);
     }
     this.replayFleetMissionRowsFromEventLogs();
+    return mutationsApplied;
   }
 
   private applyReturnedFleetCompatibilityEvent(log: IndexedRpcLog): number {
@@ -4273,19 +4438,19 @@ export class SettlementIndexer {
     );
   }
 
-  private applyBattleCompatibilityEvent(log: IndexedRpcLog): void {
+  private applyBattleCompatibilityEvent(log: IndexedRpcLog): number {
     const missionId = battleLogMissionId(log);
-    if (!missionId) return;
+    if (!missionId) return 0;
     const mutationKey = `legacy:battle:${missionId}`;
-    if (this.hasLegacyUnitMutation(mutationKey)) return;
+    if (this.hasLegacyUnitMutation(mutationKey)) return 0;
     const battleLogs = this.indexedLogsForTransaction(log.transactionHash)
       .filter((candidate) => isBattleReportLog(candidate) && battleLogMissionId(candidate) === missionId);
     const report = decodeBattleReportLogs(battleLogs, missionId);
-    if (!report || isZeroResources(report.defenderLosses)) return;
+    if (!report || isZeroResources(report.defenderLosses)) return 0;
 
     const mutations = this.solvePlanetBattleLossMutations(report);
-    if (!mutations) return;
-    this.applyLegacyUnitMutationsOnce(mutationKey, this.filterLegacyMutationsWithoutExactCountEvent(mutations, log.transactionHash), log);
+    if (!mutations) return 0;
+    return this.applyLegacyUnitMutationsOnce(mutationKey, this.filterLegacyMutationsWithoutExactCountEvent(mutations, log.transactionHash), log);
   }
 
   private applyGuardedBattleCompatibilityEvent(
@@ -4682,9 +4847,9 @@ export class SettlementIndexer {
 
     const derived = deriveInfrastructureFields(
       planet,
-      this.infrastructureRows(planet.planetId),
-      this.shipRows(planet.planetId),
-      this.technologyLevels(planet.owner)
+      this.contractInfrastructureRows(planet.planetId),
+      this.contractShipRows(planet.planetId),
+      this.contractTechnologyLevels(planet.owner)
     );
     return resourcesWithClaimableAccrual(
       planet.resources,
@@ -4695,6 +4860,9 @@ export class SettlementIndexer {
   }
 
   private queueState(queueKeyValue: string): QueueState | null {
+    const cache = this.queueStateCacheForCurrentVersion();
+    if (cache.values.has(queueKeyValue)) return cloneQueueState(cache.values.get(queueKeyValue) ?? null);
+
     if (queueKeyValue.startsWith("moon-building:")) {
       const row = this.db.query(`
         SELECT planet_id, moon_building_id, target_level, ready_at, metal_cost, crystal_cost, deuterium_cost, event_json
@@ -4702,7 +4870,7 @@ export class SettlementIndexer {
         WHERE planet_id = ?
       `).get(queueKeyValue.slice("moon-building:".length)) as MoonBuildingQueueRow | null;
       if (row) {
-        return {
+        const queue = {
           active: true,
           kind: "moon-building",
           itemId: row.moon_building_id,
@@ -4714,6 +4882,8 @@ export class SettlementIndexer {
             deuterium: row.deuterium_cost
           }
         };
+        cache.values.set(queueKeyValue, queue);
+        return cloneQueueState(queue);
       }
     }
 
@@ -4722,7 +4892,10 @@ export class SettlementIndexer {
       FROM contract_production_queues
       WHERE queue_key = ?
     `).get(queueKeyValue) as QueueRow | null;
-    if (!row) return null;
+    if (!row) {
+      cache.values.set(queueKeyValue, null);
+      return null;
+    }
 
     const queue = this.productionQueueFromRow(row);
     if (row.backlog_json) {
@@ -4732,7 +4905,8 @@ export class SettlementIndexer {
         queue.backlog = sanitizedBacklog;
       }
     }
-    return queue;
+    cache.values.set(queueKeyValue, queue);
+    return cloneQueueState(queue);
   }
 
   private productionQueueFromRow(row: QueueRow): QueueState {
@@ -4953,6 +5127,28 @@ export class SettlementIndexer {
       WHERE planet_id = ? AND ${idColumn} = ?
     `).get(planetId, itemId) as { value: number } | null;
     return row?.value ?? 0;
+  }
+
+  private indexedLevelsById(
+    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
+    idColumn: string,
+    valueColumn: "count" | "level",
+    planetId: string
+  ): Map<number, number> {
+    const cacheable = !table.endsWith("_ship_counts") && !table.endsWith("_defense_counts");
+    const cache = cacheable ? this.indexedLevelsByIdCacheForCurrentVersion() : null;
+    const cacheKey = `${table}:${idColumn}:${valueColumn}:${planetId}`;
+    const cached = cache?.values.get(cacheKey);
+    if (cached) return new Map(cached);
+
+    const rows = this.db.query(`
+      SELECT ${idColumn} AS id, ${valueColumn} AS value
+      FROM ${table}
+      WHERE planet_id = ?
+    `).all(planetId) as Array<{ id: number; value: number }>;
+    const levels = new Map(rows.map((row) => [row.id, row.value]));
+    cache?.values.set(cacheKey, levels);
+    return new Map(levels);
   }
 
   private upsertIndexedLevel(
@@ -5273,7 +5469,12 @@ export class SettlementIndexer {
     this.missionReadModelDbVersion = this.advanceMissionReadModelDbVersion();
     this.missionReadModelCache = null;
     this.decodedMissionLogCache = null;
+    this.decodedBattleReportCache = null;
+    this.battleReportsByMissionIdCache = null;
+    this.fulfilledRandomnessRequestIdsCache = null;
     this.missionReferenceCache = null;
+    this.canonicalActiveMissionCache.clear();
+    this.canonicalCompletedMissionCache = null;
     this.attackLaunchSecondsCache.clear();
   }
 
@@ -5284,7 +5485,12 @@ export class SettlementIndexer {
       this.missionGeneration += 1;
       this.missionReadModelCache = null;
       this.decodedMissionLogCache = null;
+      this.decodedBattleReportCache = null;
+      this.battleReportsByMissionIdCache = null;
+      this.fulfilledRandomnessRequestIdsCache = null;
       this.missionReferenceCache = null;
+      this.canonicalActiveMissionCache.clear();
+      this.canonicalCompletedMissionCache = null;
       this.attackLaunchSecondsCache.clear();
     }
     return version;
@@ -5313,6 +5519,8 @@ export class SettlementIndexer {
           battleReports: null
         };
       }
+      this.decodedBattleReportCache = null;
+      this.battleReportsByMissionIdCache = null;
     }
     return version;
   }
@@ -5338,6 +5546,7 @@ export class SettlementIndexer {
         battleReports: null
       };
     }
+    this.decodedBattleReportCache = null;
   }
 
   private recordLog(eventId: string, log: IndexedRpcLog): boolean {
@@ -5507,8 +5716,10 @@ export class SettlementIndexer {
     this.setMetadata("lastReconciliationError", error instanceof Error ? error.message : String(error));
   }
 
-  private setMetadata(key: string, value: string): void {
-    this.snapshotCache = null;
+  private setMetadata(key: string, value: string, options: { invalidateSnapshot?: boolean } = {}): void {
+    if (options.invalidateSnapshot !== false) {
+      this.snapshotCache = null;
+    }
     this.db.query(`
       INSERT INTO indexer_metadata (key, value)
       VALUES (?, ?)
@@ -5630,7 +5841,8 @@ export class SettlementIndexer {
       return cached;
     }
 
-    const summaries = source.map((mission) => this.withFleetMissionPlanetReferences(mission));
+    const stateVersion = this.indexedStateCacheVersion();
+    const summaries = source.map((mission) => this.withFleetMissionPlanetReferences(mission, stateVersion));
     const byId = new Map(summaries.map((mission) => [mission.missionId, mission]));
     const active = summaries
       .filter(isVisibleActiveFleetMission)
@@ -5648,6 +5860,215 @@ export class SettlementIndexer {
     const next = { source, summaries, byId, active, completed, activeByTarget };
     this.missionReferenceCache = next;
     return next;
+  }
+
+  private activeFleetMissionsFromCanonicalRows(options: { includeOverduePendingRandomness?: boolean } = {}): FleetMissionSummary[] {
+    this.currentMissionReadModelDbVersion();
+    const stateVersion = this.indexedStateCacheVersion();
+    const asOfSeconds = nowSeconds();
+    const includeOverduePendingRandomness = options.includeOverduePendingRandomness === true;
+    const cacheKey = includeOverduePendingRandomness ? "with-overdue-pending-randomness" : "visible";
+    const cached = this.canonicalActiveMissionCache.get(cacheKey);
+    if (
+      cached
+      && cached.missionGeneration === this.missionGeneration
+      && cached.stateVersion === stateVersion
+      && cached.includeOverduePendingRandomness === includeOverduePendingRandomness
+    ) {
+      return this.activeFleetMissionsAsOf(cached.baseMissions, asOfSeconds, includeOverduePendingRandomness, cached.fulfilledRandomnessRequestIds);
+    }
+
+    const rows = this.db.query(`
+      SELECT *
+      FROM contract_fleet_missions
+      WHERE status_id IN (1, 2, 5)
+      ORDER BY CAST(arrival_at AS INTEGER) ASC
+    `).all() as ContractFleetMissionRow[];
+    const baseMissions = rows.map((row) => this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion));
+    const needsGate = this.randomnessEngineConfigured && baseMissions.some(
+      (mission) =>
+        missionBattleRandomnessRequestId(mission) !== null
+        && mission.status === "Outbound"
+        && Number(mission.arrivalAt) <= asOfSeconds
+    );
+    const fulfilledRandomnessRequestIds = needsGate ? this.fulfilledRandomnessRequestIds() : null;
+    const next = {
+      missionGeneration: this.missionGeneration,
+      stateVersion,
+      includeOverduePendingRandomness,
+      fulfilledRandomnessRequestIds,
+      baseMissions
+    };
+    this.canonicalActiveMissionCache.set(cacheKey, next);
+    return this.activeFleetMissionsAsOf(baseMissions, asOfSeconds, includeOverduePendingRandomness, fulfilledRandomnessRequestIds);
+  }
+
+  private activeFleetMissionsFromCanonicalRowsForOwner(
+    wallet: `0x${string}`,
+    options: { includeOverduePendingRandomness?: boolean } = {}
+  ): FleetMissionSummary[] {
+    const walletLower = wallet.toLowerCase();
+    return this.activeFleetMissionsFromCanonicalRowsWhere(
+      `owner:${walletLower}`,
+      "owner = ?",
+      [walletLower],
+      options
+    );
+  }
+
+  private activeFleetMissionsFromCanonicalRowsForTarget(
+    planetId: string,
+    options: { includeOverduePendingRandomness?: boolean } = {}
+  ): FleetMissionSummary[] {
+    return this.activeFleetMissionsFromCanonicalRowsWhere(
+      `target:${planetId}`,
+      "target_planet_id = ?",
+      [planetId],
+      options
+    );
+  }
+
+  private activeFleetMissionsFromCanonicalRowsForPlanetTouching(
+    planetId: string,
+    options: { includeOverduePendingRandomness?: boolean } = {}
+  ): FleetMissionSummary[] {
+    return this.activeFleetMissionsFromCanonicalRowsWhere(
+      `touching:${planetId}`,
+      "(origin_planet_id = ? OR target_planet_id = ?)",
+      [planetId, planetId],
+      options
+    );
+  }
+
+  private activeFleetMissionsForWalletVisibility(wallet: `0x${string}`, ownedPlanetIds: readonly string[]): FleetMissionSummary[] {
+    const walletLower = wallet.toLowerCase();
+    const uniqueTargetIds = [...new Set(ownedPlanetIds.filter((planetId) => planetId.length > 0))]
+      .sort((left, right) => Number(left) - Number(right));
+    const ownedOrOutgoing = uniqueTargetIds.length === 0
+      ? this.activeFleetMissionsFromCanonicalRowsForOwner(wallet)
+      : this.activeFleetMissionsFromCanonicalRowsWhere(
+        `visibility:${walletLower}:${uniqueTargetIds.join(",")}`,
+        `(owner = ? OR target_planet_id IN (${uniqueTargetIds.map(() => "?").join(",")}))`,
+        [walletLower, ...uniqueTargetIds]
+      );
+    const activeJoinableAttacks = this.activeOutboundAttackFleetMissionsFromCanonicalRows();
+    const byMissionId = new Map<string, FleetMissionSummary>();
+    for (const mission of ownedOrOutgoing) byMissionId.set(mission.missionId, mission);
+    for (const mission of activeJoinableAttacks) byMissionId.set(mission.missionId, mission);
+    return [...byMissionId.values()].sort(compareFleetMissionsActiveSoonestFirst);
+  }
+
+  private activeOutboundAttackFleetMissionsFromCanonicalRows(): FleetMissionSummary[] {
+    return this.activeFleetMissionsFromCanonicalRowsWhere(
+      "outbound-attacks",
+      "status_id = ? AND mission_type_id = ?",
+      [1, 3]
+    );
+  }
+
+  private activeFleetMissionsFromCanonicalRowsWhere(
+    cacheKeyPrefix: string,
+    whereSql: string,
+    params: readonly SQLQueryBindings[],
+    options: { includeOverduePendingRandomness?: boolean } = {}
+  ): FleetMissionSummary[] {
+    this.currentMissionReadModelDbVersion();
+    const stateVersion = this.indexedStateCacheVersion();
+    const asOfSeconds = nowSeconds();
+    const includeOverduePendingRandomness = options.includeOverduePendingRandomness === true;
+    const cacheKey = `${cacheKeyPrefix}:${includeOverduePendingRandomness ? "with-overdue-pending-randomness" : "visible"}`;
+    const cached = this.canonicalActiveMissionCache.get(cacheKey);
+    if (
+      cached
+      && cached.missionGeneration === this.missionGeneration
+      && cached.stateVersion === stateVersion
+      && cached.includeOverduePendingRandomness === includeOverduePendingRandomness
+    ) {
+      return this.activeFleetMissionsAsOf(cached.baseMissions, asOfSeconds, includeOverduePendingRandomness, cached.fulfilledRandomnessRequestIds);
+    }
+
+    const rows = this.db.query(`
+      SELECT *
+      FROM contract_fleet_missions
+      WHERE status_id IN (1, 2, 5)
+        AND (${whereSql})
+      ORDER BY CAST(arrival_at AS INTEGER) ASC
+    `).all(...params) as ContractFleetMissionRow[];
+    const baseMissions = rows.map((row) => this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion));
+    const needsGate = this.randomnessEngineConfigured && baseMissions.some(
+      (mission) =>
+        missionBattleRandomnessRequestId(mission) !== null
+        && mission.status === "Outbound"
+        && Number(mission.arrivalAt) <= asOfSeconds
+    );
+    const fulfilledRandomnessRequestIds = needsGate ? this.fulfilledRandomnessRequestIds() : null;
+    const next = {
+      missionGeneration: this.missionGeneration,
+      stateVersion,
+      includeOverduePendingRandomness,
+      fulfilledRandomnessRequestIds,
+      baseMissions
+    };
+    this.canonicalActiveMissionCache.set(cacheKey, next);
+    return this.activeFleetMissionsAsOf(baseMissions, asOfSeconds, includeOverduePendingRandomness, fulfilledRandomnessRequestIds);
+  }
+
+  private activeFleetMissionsAsOf(
+    baseMissions: readonly FleetMissionSummary[],
+    asOfSeconds: number,
+    includeOverduePendingRandomness: boolean,
+    fulfilledRandomnessRequestIds: ReadonlySet<string> | null
+  ): FleetMissionSummary[] {
+    return baseMissions
+      .map((mission) => {
+        const status = (
+          (mission.status === "Returning" || mission.status === "Recalled")
+          && Number(mission.returnAt) <= asOfSeconds
+        )
+          ? "Returned"
+          : mission.status;
+        const resolvedMission = {
+          ...mission,
+          status,
+          needsResolution: fleetMissionNeedsResolution({ ...mission, status }, asOfSeconds, fulfilledRandomnessRequestIds)
+        };
+        return withMissionAsOfNow(
+          withFleetMissionResolutionBlocker(resolvedMission, asOfSeconds, fulfilledRandomnessRequestIds),
+          asOfSeconds
+        );
+      })
+      .filter(includeOverduePendingRandomness ? isActiveFleetMissionStatusForSummary : isVisibleActiveFleetMission)
+      .sort(compareFleetMissionsActiveSoonestFirst);
+  }
+
+  completedFleetMissionsFromCanonicalRows(): FleetMissionSummary[] {
+    this.currentMissionReadModelDbVersion();
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.canonicalCompletedMissionCache;
+    if (
+      cached
+      && cached.missionGeneration === this.missionGeneration
+      && cached.stateVersion === stateVersion
+    ) {
+      return cached.missions;
+    }
+
+    const rows = this.db.query(`
+      SELECT *
+      FROM contract_fleet_missions
+      WHERE status_id IN (3, 4)
+      ORDER BY CAST(return_at AS INTEGER) DESC, CAST(arrival_at AS INTEGER) DESC, CAST(mission_id AS INTEGER) DESC
+    `).all() as ContractFleetMissionRow[];
+
+    const missions = rows
+      .map((row) => this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion))
+      .sort(compareFleetMissionsNewestFirst);
+    this.canonicalCompletedMissionCache = {
+      missionGeneration: this.missionGeneration,
+      stateVersion,
+      missions
+    };
+    return missions;
   }
 
   private decodedMissionLogs(): {
@@ -5695,11 +6116,31 @@ export class SettlementIndexer {
     return next;
   }
 
-  private prewarmMissionReadModel(): void {
-    if (this.count("indexed_mission_event_logs") === 0) return;
-    this.indexedFleetMissionSummaries();
-    this.indexedFleetMissionReferenceIndex();
-    this.indexedBattleReports();
+  private decodedBattleReportsOnly(): BattleReport[] {
+    this.currentMissionReadModelDbVersion();
+    this.currentBattleReportReadModelDbVersion();
+    const cached = this.decodedBattleReportCache;
+    if (
+      cached
+      && cached.missionGeneration === this.missionGeneration
+      && cached.battleReportGeneration === this.battleReportGeneration
+    ) {
+      return cached.battleReports;
+    }
+
+    const battleRows = this.db.query(`
+      SELECT event_json
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'battle'
+      ORDER BY CAST(block_number AS INTEGER) ASC
+    `).all() as EventRow[];
+    const battleReports = decodeBattleReports(sortedEventRows(battleRows));
+    this.decodedBattleReportCache = {
+      missionGeneration: this.missionGeneration,
+      battleReportGeneration: this.battleReportGeneration,
+      battleReports
+    };
+    return battleReports;
   }
 
   private mergeCanonicalFleetMissions(eventMissions: FleetMissionSummary[]): FleetMissionSummary[] {
@@ -5776,6 +6217,7 @@ export class SettlementIndexer {
         blockNumber: canonicalEventMission.blockNumber,
         launchBlockNumber: canonicalEventMission.launchBlockNumber,
         needsResolution: canonicalEventMission.needsResolution,
+        ...(canonicalEventMission.defenseHoldUntil ? { defenseHoldUntil: canonicalEventMission.defenseHoldUntil } : {}),
         ...(canonicalEventMission.randomnessRequestId ? { randomnessRequestId: canonicalEventMission.randomnessRequestId } : {})
       }
       : base;
@@ -5800,7 +6242,27 @@ export class SettlementIndexer {
   // VEY-KANEO-479: request ids the RandomnessEngine has fulfilled, read from the ingested
   // RandomnessFulfilled logs.
   private fulfilledRandomnessRequestIds(): ReadonlySet<string> {
-    return this.decodedMissionLogs().fulfilledRandomnessRequestIds;
+    this.currentMissionReadModelDbVersion();
+    const cached = this.fulfilledRandomnessRequestIdsCache;
+    if (cached && cached.missionGeneration === this.missionGeneration) {
+      return cached.requestIds;
+    }
+
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'randomness'
+      ORDER BY CAST(block_number AS INTEGER) ASC
+    `).all() as EventRow[];
+    const requestIds = new Set<string>();
+    for (const log of sortedEventRows(rows)) {
+      requestIds.add(decodeRandomnessFulfilledRequestId(log));
+    }
+    this.fulfilledRandomnessRequestIdsCache = {
+      missionGeneration: this.missionGeneration,
+      requestIds
+    };
+    return requestIds;
   }
 
   // VEY-KANEO-489: replay every Attack `attacker` has launched, grouped by target planet, as ascending
@@ -5867,7 +6329,7 @@ export class SettlementIndexer {
     // and each joiner's resulting return-leg cargo). Solo attacks come back with a single participant.
     // The defender snapshot is reconstructed from historical absolute ship/defense count events before
     // the battle report log, so the UI can show battle-time units without substituting current defenses.
-    const reportsWithParticipants = attachAttackGroupParticipants(this.decodedMissionLogs().battleReports, summaries);
+    const reportsWithParticipants = attachAttackGroupParticipants(this.decodedBattleReportsOnly(), summaries);
     const defenderSnapshots = this.battleTimeDefenderSnapshots(reportsWithParticipants);
     const reports = reportsWithParticipants.map((report) => ({
       ...report,
@@ -5878,6 +6340,126 @@ export class SettlementIndexer {
       cached.battleReports = reports;
     }
     return reports;
+  }
+
+  private indexedBattleReportsForMissions(missions: readonly FleetMissionSummary[]): BattleReport[] {
+    if (missions.length === 0) return [];
+
+    const missionIds = new Set<string>();
+    for (const mission of missions) {
+      missionIds.add(mission.missionId);
+      if (mission.attackGroupId) missionIds.add(mission.attackGroupId);
+      for (const joinedMissionId of mission.joinedAttackMissionIds ?? []) {
+        missionIds.add(joinedMissionId);
+      }
+    }
+
+    const matchingReportsById = new Map<string, BattleReport>();
+    for (const report of this.battleReportsForMissionIds(missionIds)) {
+      matchingReportsById.set(report.missionId, report);
+      for (const participant of report.participants) {
+        if (missionIds.has(participant.missionId)) {
+          matchingReportsById.set(report.missionId, report);
+        }
+      }
+    }
+    const matchingReports = [...matchingReportsById.values()];
+    if (matchingReports.length === 0) return [];
+
+    const reportMissionIds = new Set<string>(missionIds);
+    for (const report of matchingReports) {
+      reportMissionIds.add(report.missionId);
+      if (report.attackGroupId) reportMissionIds.add(report.attackGroupId);
+      for (const participant of report.participants) {
+        reportMissionIds.add(participant.missionId);
+      }
+    }
+    const summaries = this.fleetMissionSummariesFromCanonicalRowsByIds(reportMissionIds);
+    const reportsWithParticipants = attachAttackGroupParticipants(matchingReports, summaries);
+    const defenderSnapshots = this.battleTimeDefenderSnapshots(reportsWithParticipants);
+    return reportsWithParticipants.map((report) => ({
+      ...report,
+      defenderSnapshot: defenderSnapshots.get(report.missionId) ?? null
+    }));
+  }
+
+  private fleetMissionSummariesFromCanonicalRowsByIds(missionIds: Iterable<string>): FleetMissionSummary[] {
+    this.currentMissionReadModelDbVersion();
+    const uniqueMissionIds = [...new Set([...missionIds].filter((missionId) => missionId.length > 0))].sort((left, right) => Number(left) - Number(right));
+    if (uniqueMissionIds.length === 0) return [];
+
+    const stateVersion = this.indexedStateCacheVersion();
+    const summaries: FleetMissionSummary[] = [];
+    for (let offset = 0; offset < uniqueMissionIds.length; offset += 250) {
+      const chunk = uniqueMissionIds.slice(offset, offset + 250);
+      const rows = this.db.query(`
+        SELECT *
+        FROM contract_fleet_missions
+        WHERE mission_id IN (${chunk.map(() => "?").join(",")})
+        ORDER BY CAST(mission_id AS INTEGER) ASC
+      `).all(...chunk) as ContractFleetMissionRow[];
+      for (const row of rows) {
+        summaries.push(this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion));
+      }
+    }
+    return summaries;
+  }
+
+  private battleReportsForMissionIds(missionIds: Iterable<string>): BattleReport[] {
+    this.currentMissionReadModelDbVersion();
+    this.currentBattleReportReadModelDbVersion();
+    const uniqueMissionIds = [...new Set([...missionIds].filter((missionId) => missionId.length > 0))].sort((left, right) => Number(left) - Number(right));
+    if (uniqueMissionIds.length === 0) return [];
+
+    const battleRows = this.db.query(`
+      SELECT event_json
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'battle'
+      ORDER BY CAST(block_number AS INTEGER) ASC
+    `).all() as EventRow[];
+    const logs = sortedEventRows(battleRows);
+    return uniqueMissionIds
+      .map((missionId) => decodeBattleReportLogs(logs, missionId))
+      .filter((report): report is BattleReport => report !== null)
+      .sort((left, right) => {
+        const leftBlock = BigInt(left.blockNumber);
+        const rightBlock = BigInt(right.blockNumber);
+        if (leftBlock === rightBlock) return 0;
+        return leftBlock < rightBlock ? 1 : -1;
+      });
+  }
+
+  private battleReportsByMissionId(): Map<string, BattleReport[]> {
+    this.currentBattleReportReadModelDbVersion();
+    const cached = this.battleReportsByMissionIdCache;
+    if (
+      cached
+      && cached.missionGeneration === this.missionGeneration
+      && cached.battleReportGeneration === this.battleReportGeneration
+    ) {
+      return cached.reportsByMissionId;
+    }
+
+    const reportsByMissionId = new Map<string, BattleReport[]>();
+    const add = (missionId: string | null | undefined, report: BattleReport) => {
+      if (!missionId) return;
+      const reports = reportsByMissionId.get(missionId);
+      if (reports) reports.push(report);
+      else reportsByMissionId.set(missionId, [report]);
+    };
+    for (const report of this.decodedBattleReportsOnly()) {
+      add(report.missionId, report);
+      add(report.attackGroupId, report);
+      for (const participant of report.participants) {
+        add(participant.missionId, report);
+      }
+    }
+    this.battleReportsByMissionIdCache = {
+      missionGeneration: this.missionGeneration,
+      battleReportGeneration: this.battleReportGeneration,
+      reportsByMissionId
+    };
+    return reportsByMissionId;
   }
 
   private battleTimeDefenderSnapshots(reports: BattleReport[]): Map<string, BattleReportDefenderSnapshot> {
@@ -6096,18 +6678,33 @@ export class SettlementIndexer {
     );
   }
 
-  private withFleetMissionPlanetReferences(mission: FleetMissionSummary): FleetMissionSummary {
+  private withFleetMissionPlanetReferences(mission: FleetMissionSummary, stateVersion = this.indexedStateCacheVersion()): FleetMissionSummary {
     return withMissionAsOfNow(
       {
         ...mission,
-        originPlanet: this.fleetMissionPlanetReference(mission.originPlanetId),
-        targetPlanet: this.fleetMissionPlanetReference(mission.targetPlanetId)
+        originPlanet: this.fleetMissionPlanetReference(mission.originPlanetId, stateVersion),
+        targetPlanet: this.fleetMissionPlanetReference(mission.targetPlanetId, stateVersion)
       },
       nowSeconds()
     );
   }
 
-  private fleetMissionPlanetReference(planetId: string): FleetMissionPlanetReference | null {
+  private fleetMissionPlanetReference(planetId: string, stateVersion = this.indexedStateCacheVersion()): FleetMissionPlanetReference | null {
+    if (!this.fleetMissionPlanetReferenceCache || this.fleetMissionPlanetReferenceCache.stateVersion !== stateVersion) {
+      this.fleetMissionPlanetReferenceCache = {
+        stateVersion,
+        refs: new Map()
+      };
+    }
+    if (this.fleetMissionPlanetReferenceCache.refs.has(planetId)) {
+      return this.fleetMissionPlanetReferenceCache.refs.get(planetId) ?? null;
+    }
+    const ref = this.fleetMissionPlanetReferenceUncached(planetId);
+    this.fleetMissionPlanetReferenceCache.refs.set(planetId, ref);
+    return ref;
+  }
+
+  private fleetMissionPlanetReferenceUncached(planetId: string): FleetMissionPlanetReference | null {
     const planet = this.planet(planetId);
     if (!planet) return null;
     return {
@@ -6122,8 +6719,18 @@ export class SettlementIndexer {
       archetype: planetArchetypeForTemperature(planet.temperature),
       // VEY-KANEO-440: surface the Alliance Depot level (building id 13) so the ACS Defend compose UX
       // can preview how much holding fuel the defended planet's depot subsidizes.
-      allianceDepotLevel: this.infrastructureRows(planet.planetId).find((building) => building.id === 13)?.level ?? 0
+      allianceDepotLevel: this.projectedBuildingLevel(planet.planetId, 13)
     };
+  }
+
+  private projectedBuildingLevel(planetId: string, buildingId: number): number {
+    let level = this.indexedLevel("contract_building_levels", "building_id", planetId, buildingId);
+    for (const queue of this.queueSettlement(`building:${planetId}`).completed) {
+      if (queue.itemId === buildingId && typeof queue.targetLevel === "number") {
+        level = Math.max(level, queue.targetLevel);
+      }
+    }
+    return level;
   }
 
   private count(table:
@@ -6149,8 +6756,212 @@ export class SettlementIndexer {
     return (this.db.query(sql).all(...params) as EventRow[]).map((row) => parseEvent<T>(row.event_json));
   }
 
+  private currentSettledPlanetIndexCache(): SettledPlanetIndexCache | null {
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.settledPlanetIndexCache;
+    return cached && cached.stateVersion === stateVersion ? cached : null;
+  }
+
+  private settledPlanetIndex(): SettledPlanetIndexCache {
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.settledPlanetIndexCache;
+    if (cached && cached.stateVersion === stateVersion) return cached;
+
+    const planetRows = this.db.query(`
+      SELECT planet_id, event_json
+      FROM contract_planets
+      ORDER BY CAST(planet_id AS INTEGER) ASC
+    `).all() as Array<EventRow & { planet_id: string }>;
+    const resourceRows = this.db.query(`
+      SELECT planet_id, metal, crystal, deuterium, last_settled_at, transaction_hash, block_number, log_index
+      FROM contract_planet_resources
+    `).all() as Array<PlanetResourceRow & { planet_id: string }>;
+    const resourcesByPlanet = new Map(resourceRows.map((row) => [row.planet_id, row]));
+    const planets = planetRows.map((row) => this.withResourceSnapshotRow(
+      parseEvent<SettledPlanetEvent>(row.event_json),
+      resourcesByPlanet.get(row.planet_id) ?? null
+    ));
+    const byId = new Map<string, SettledPlanetEvent>();
+    const byOwner = new Map<string, SettledPlanetEvent[]>();
+    const bySystem = new Map<string, SettledPlanetEvent[]>();
+    for (const planet of planets) {
+      byId.set(planet.planetId, planet);
+      const owner = planet.owner.toLowerCase();
+      byOwner.set(owner, [...(byOwner.get(owner) ?? []), planet]);
+      const systemKey = systemCacheKey(planet.galaxy, planet.system);
+      bySystem.set(systemKey, [...(bySystem.get(systemKey) ?? []), planet]);
+    }
+    const next = { stateVersion, planets, byId, byOwner, bySystem };
+    this.settledPlanetIndexCache = next;
+    return next;
+  }
+
   private planetsFromRows(sql: string, ...params: SQLQueryBindings[]): SettledPlanetEvent[] {
     return this.rows<SettledPlanetEvent>(sql, ...params).map((planet) => this.withResourceSnapshot(planet));
+  }
+
+  private settledPlanetsForOwner(wallet: `0x${string}`): SettledPlanetEvent[] {
+    const normalizedWallet = wallet.toLowerCase();
+    const cachedIndex = this.currentSettledPlanetIndexCache();
+    if (cachedIndex) return [...(cachedIndex.byOwner.get(normalizedWallet) ?? [])];
+
+    const targeted = this.targetedSettledPlanetCacheForCurrentVersion();
+    const cached = targeted.byOwner.get(normalizedWallet);
+    if (cached) return [...cached];
+
+    const planets = this.planetRowsWithResources(`
+      SELECT
+        planet.event_json,
+        resources.metal,
+        resources.crystal,
+        resources.deuterium,
+        resources.last_settled_at,
+        resources.transaction_hash,
+        resources.block_number,
+        resources.log_index
+      FROM contract_planets planet
+      LEFT JOIN contract_planet_resources resources ON resources.planet_id = planet.planet_id
+      WHERE planet.owner = lower(?)
+      ORDER BY CAST(planet.planet_id AS INTEGER) ASC
+    `, normalizedWallet);
+    targeted.byOwner.set(normalizedWallet, planets);
+    for (const planet of planets) targeted.byId.set(planet.planetId, planet);
+    return [...planets];
+  }
+
+  private targetedSettledPlanetsInSystem(galaxy: number, system: number): SettledPlanetEvent[] {
+    const key = systemCacheKey(galaxy, system);
+    const targeted = this.targetedSettledPlanetCacheForCurrentVersion();
+    const cached = targeted.bySystem.get(key);
+    if (cached) return [...cached];
+
+    const planets = this.planetRowsWithResources(`
+      SELECT
+        planet.event_json,
+        resources.metal,
+        resources.crystal,
+        resources.deuterium,
+        resources.last_settled_at,
+        resources.transaction_hash,
+        resources.block_number,
+        resources.log_index
+      FROM contract_planets planet
+      LEFT JOIN contract_planet_resources resources ON resources.planet_id = planet.planet_id
+      WHERE planet.galaxy = ? AND planet.system_number = ?
+      ORDER BY planet.position ASC
+    `, galaxy, system);
+    targeted.bySystem.set(key, planets);
+    for (const planet of planets) targeted.byId.set(planet.planetId, planet);
+    return [...planets];
+  }
+
+  private targetedSettledPlanetById(planetId: string): SettledPlanetEvent | null {
+    const targeted = this.targetedSettledPlanetCacheForCurrentVersion();
+    if (targeted.byId.has(planetId)) return targeted.byId.get(planetId) ?? null;
+
+    const [planet = null] = this.planetRowsWithResources(`
+      SELECT
+        planet.event_json,
+        resources.metal,
+        resources.crystal,
+        resources.deuterium,
+        resources.last_settled_at,
+        resources.transaction_hash,
+        resources.block_number,
+        resources.log_index
+      FROM contract_planets planet
+      LEFT JOIN contract_planet_resources resources ON resources.planet_id = planet.planet_id
+      WHERE planet.planet_id = ?
+      LIMIT 1
+    `, planetId);
+    targeted.byId.set(planetId, planet);
+    return planet;
+  }
+
+  private targetedSettledPlanetCacheForCurrentVersion(): TargetedSettledPlanetCache {
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.targetedSettledPlanetCache;
+    if (cached && cached.stateVersion === stateVersion) return cached;
+
+    const next: TargetedSettledPlanetCache = {
+      stateVersion,
+      byId: new Map(),
+      byOwner: new Map(),
+      bySystem: new Map()
+    };
+    this.targetedSettledPlanetCache = next;
+    return next;
+  }
+
+  private indexedLevelsByIdCacheForCurrentVersion(): IndexedLevelsByIdCache {
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.indexedLevelsByIdCache;
+    if (cached && cached.stateVersion === stateVersion) return cached;
+
+    const next: IndexedLevelsByIdCache = {
+      stateVersion,
+      values: new Map()
+    };
+    this.indexedLevelsByIdCache = next;
+    return next;
+  }
+
+  private queueStateCacheForCurrentVersion(): QueueStateCache {
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.queueStateCache;
+    if (cached && cached.stateVersion === stateVersion) return cached;
+
+    const next: QueueStateCache = {
+      stateVersion,
+      values: new Map()
+    };
+    this.queueStateCache = next;
+    return next;
+  }
+
+  private technologyLevelsCacheForCurrentVersion(): TechnologyLevelsCache {
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.technologyLevelsCache;
+    if (cached && cached.stateVersion === stateVersion) return cached;
+
+    const next: TechnologyLevelsCache = {
+      stateVersion,
+      values: new Map()
+    };
+    this.technologyLevelsCache = next;
+    return next;
+  }
+
+  private allianceIntelCacheForCurrentVersion(): AllianceIntelCache {
+    const stateVersion = this.indexedStateCacheVersion();
+    const cached = this.allianceIntelCache;
+    if (cached && cached.stateVersion === stateVersion) return cached;
+
+    const next: AllianceIntelCache = {
+      stateVersion,
+      values: new Map()
+    };
+    this.allianceIntelCache = next;
+    return next;
+  }
+
+  private planetRowsWithResources(sql: string, ...params: SQLQueryBindings[]): SettledPlanetEvent[] {
+    const rows = this.db.query(sql).all(...params) as PlanetEventResourceRow[];
+    return rows.map((row) => this.withResourceSnapshotRow(
+      parseEvent<SettledPlanetEvent>(row.event_json),
+      row.metal === null || row.crystal === null || row.deuterium === null || row.last_settled_at === null
+        || row.transaction_hash === null || row.block_number === null || row.log_index === null
+        ? null
+        : {
+          metal: row.metal,
+          crystal: row.crystal,
+          deuterium: row.deuterium,
+          last_settled_at: row.last_settled_at,
+          transaction_hash: row.transaction_hash,
+          block_number: row.block_number,
+          log_index: row.log_index
+        }
+    ));
   }
 
   private blockingStaleReason({
@@ -6318,6 +7129,10 @@ function isActiveFleetMissionStatus(status: string): boolean {
   return status === "Outbound" || status === "Returning" || status === "Recalled";
 }
 
+function isActiveFleetMissionStatusForSummary(mission: FleetMissionSummary): boolean {
+  return isActiveFleetMissionStatus(mission.status);
+}
+
 function isVisibleActiveFleetMission(mission: FleetMissionSummary): boolean {
   return isActiveFleetMissionStatus(mission.status) && !isOverduePendingRandomnessMission(mission);
 }
@@ -6430,12 +7245,16 @@ function isStoredFleetMissionSummary(value: unknown): value is FleetMissionSumma
     && mission.needsResolution !== undefined;
 }
 
-function openIndexerDatabase(databasePath: string): Database {
+function openIndexerDatabase(databasePath: string, readOnly = false): Database {
   if (databasePath !== ":memory:") {
     mkdirSync(dirname(databasePath), { recursive: true });
   }
-  const database = new Database(databasePath);
-  database.exec("PRAGMA busy_timeout = 10000;");
+  const database = new Database(databasePath, readOnly ? { readonly: true } : undefined);
+  database.exec(`PRAGMA busy_timeout = ${readOnly ? 25 : 10000};`);
+  if (readOnly) {
+    database.exec("PRAGMA query_only = ON;");
+    return database;
+  }
   if (databasePath !== ":memory:") {
     // Read-concurrency tuning for the API's read-heavy traffic (VEY-KANEO-467):
     // - WAL lets readers run without blocking the background event-integration writer.
@@ -6699,12 +7518,6 @@ function chunks<T>(items: readonly T[], size: number): T[][] {
     result.push(items.slice(index, index + size));
   }
   return result;
-}
-
-function sortedLevelRows(rowsById: ReadonlyMap<number, number>): LevelRow[] {
-  return [...rowsById.entries()]
-    .sort(([left], [right]) => left - right)
-    .map(([id, value]) => ({ id, value }));
 }
 
 function levelRows(rows: readonly LevelRow[] | undefined): Array<{ id: number; level: number }> {

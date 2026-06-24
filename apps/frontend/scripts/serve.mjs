@@ -10,6 +10,7 @@ const ogImageCache = new Map();
 const ogDataCache = new Map();
 const assetDataCache = new Map();
 let sharpModule;
+const defaultMetadataTimeoutMs = 1_500;
 
 const planetAssets = {
   "cold-tundra": "/assets/game/style-pass/generated/planets/cold-tundra.webp",
@@ -149,7 +150,7 @@ function imagePathForRoute(route) {
   return `/og/alliance/${encodeURIComponent(route.allianceId)}.png`;
 }
 
-async function routeMeta(route) {
+export async function routeMeta(route) {
   const key = JSON.stringify(route);
   const cached = ogDataCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
@@ -296,10 +297,32 @@ function fallbackMeta(route) {
   };
 }
 
+function metadataFetchTimeoutMs() {
+  const value = Number(process.env.VEYDRIFT_OG_METADATA_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : defaultMetadataTimeoutMs;
+}
+
 async function fetchJson(pathname) {
-  const response = await fetch(`${apiBaseUrl}${pathname}`, { headers: { accept: "application/json" } });
-  if (!response.ok) throw new Error(`API ${pathname} returned ${response.status}`);
-  return response.json();
+  const timeoutMs = metadataFetchTimeoutMs();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  timeout.unref?.();
+
+  try {
+    const response = await fetch(`${apiBaseUrl}${pathname}`, {
+      headers: { accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`API ${pathname} returned ${response.status}`);
+    return response.json();
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`API ${pathname} timed out after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function planetLabel(planet) {

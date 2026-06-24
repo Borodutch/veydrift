@@ -715,11 +715,10 @@ describe("SettlementIndexer", () => {
     }
   });
 
-  test("projects elapsed building queues into as-of-now infrastructure rows before completion logs", () => {
-    // A crystal-storage upgrade whose build timer has elapsed by wall-clock raises the backend
-    // storage cap as-of-now. Current contract lazy settlement completes due construction inside
-    // _settleResources, so read models must match the same as-of-now state even before a
-    // BuildingCompleted log is indexed.
+  test("projects elapsed building queues as completed for served building levels", () => {
+    // A crystal-storage upgrade whose build timer has elapsed by wall-clock is still active in
+    // contract storage until a transaction finalizes it and emits BuildingCompleted. Served UI
+    // state projects that timer as completed so the building does not appear stuck.
     // Both timestamps sit before the suite's mocked clock (2026-01-01), so the queued upgrade's
     // build timer has already elapsed by wall-clock and would be optimistically completed.
     const startTs = 1_767_000_000;
@@ -753,9 +752,8 @@ describe("SettlementIndexer", () => {
     });
 
     const rows = indexer.infrastructureRows(planet.planetId);
-    // Storage level is projected from the elapsed queue...
     expect(rows.find((building) => building.id === 8)?.level).toBe(2);
-    // ...so the derived storage cap matches the as-of-now level-2 40,000.
+    expect(indexer.playerQueues(player, planet.planetId).building).toBeNull();
     const caps = deriveInfrastructureFields(
       { ...planet, lastSettledAt: startTs.toString() },
       rows,
@@ -764,8 +762,8 @@ describe("SettlementIndexer", () => {
     ).storageCaps;
     expect(caps?.crystal).toBe("40000");
 
-    // A non-storage building (metal mine, id 0) under the identical elapsed-queue setup is also
-    // projected from the elapsed targetLevel.
+    // A non-storage building (metal mine, id 0) under the identical elapsed-queue setup also
+    // projects to the completed level.
     const mineIndexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -787,7 +785,6 @@ describe("SettlementIndexer", () => {
       topics: [buildingStartedTopic, topic(7n), topic(0n)],
       data: abiWords(8n, BigInt(elapsedReadyAt), 0n, 0n, 0n)
     });
-    // Served level advances as-of-now before a BuildingCompleted log arrives.
     expect(mineIndexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(8);
     // The later completion log is monotonic and does not double-advance the level.
     mineIndexer.applyLog({
@@ -2881,7 +2878,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.fleetSlots(player)).toEqual({ active: 5, limit: 5 });
   });
 
-  test("projects elapsed production queues into served rows before completion events", () => {
+  test("projects elapsed research and unit queues into served state", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -2890,15 +2887,29 @@ describe("SettlementIndexer", () => {
     indexer.applyEvent(planet);
     indexer.applyLog({
       blockNumber: "0x83",
-      transactionHash: "0xready-ship",
+      transactionHash: "0xship-count",
       logIndex: "0x0",
-      topics: [shipQueuedTopic, topic(7n), topic(3n)],
-      data: abiWords(2n, 1767225500n, 2000n, 1000n, 0n)
+      topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(9n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xready-ship",
+      logIndex: "0x1",
+      topics: [shipQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(14n, 1767225500n, 2000n, 1000n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xdefense-count",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(7n), topic(1n)],
+      data: abiWords(8n)
     });
     indexer.applyLog({
       blockNumber: "0x84",
       transactionHash: "0xready-defense",
-      logIndex: "0x0",
+      logIndex: "0x1",
       topics: [defenseQueuedTopic, topic(7n), topic(1n)],
       data: abiWords(5n, 1767225500n, 4000n, 2000n, 0n)
     });
@@ -2915,17 +2926,17 @@ describe("SettlementIndexer", () => {
       defense: null,
       research: null
     });
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 3)).toMatchObject({
-      id: 3,
-      count: 2
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)).toMatchObject({
+      id: 0,
+      count: 23
     });
-    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 3)).toMatchObject({
-      id: 3,
-      count: 2
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)).toMatchObject({
+      id: 0,
+      count: 23
     });
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)).toMatchObject({
       id: 1,
-      count: 5
+      count: 13
     });
     expect(indexer.technologyLevels(player)).toMatchObject({ "4": 2 });
   });
@@ -5206,11 +5217,11 @@ describe("SettlementIndexer", () => {
       lastReconciliationError: null
     });
 
-    expect(rawReads).toBe(2);
+    expect(rawReads).toBe(1);
     expect(overlapArgs).toEqual([{ fromBlock: 0x121n, toBlock: 0x123n }]);
     expect(indexer.planet(planet.planetId)?.resources).toEqual(rawState.resources);
     expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(4);
-    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(8);
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(10);
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(6);
     expect(indexer.shipRows("99").find((ship) => ship.id === 2)?.count).toBe(3);
   });
@@ -5358,10 +5369,10 @@ describe("SettlementIndexer", () => {
       async listContractLogs() {
         return [{
           blockNumber: "0x95",
-          transactionHash: "0xreturned",
+          transactionHash: "0xbattle",
           logIndex: "0x0",
-          topics: [fleetMissionReturnedTopic, topic(70n), addressTopic(player), topic(BigInt(planet.planetId))],
-          data: "0x"
+          topics: [attackBattleResolvedTopic, topic(70n), addressTopic(player), topic(BigInt(planet.planetId))],
+          data: abiWords(1n, 0n, 123n, 0n, 0n, 0n)
         }];
       }
     }, 100n);
@@ -5382,7 +5393,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.defenseRows(planet.planetId).find((row) => row.id === 1)?.count).toBe(4);
   });
 
-  test("current-state seed ignores older replayed defense backlog events behind canonical counts", async () => {
+  test("current-state seed projects elapsed canonical defense queues while ignoring older replayed rows", async () => {
     const rawState: CanonicalPlanetChainState = {
       planetId: planet.planetId,
       resources: planet.resources,
@@ -5458,6 +5469,7 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 0)?.count).toBe(9);
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)?.count).toBe(12);
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(2);
   });
 
   test("serves only future deduplicated defense backlog entries behind the active queue", async () => {
@@ -5570,7 +5582,7 @@ describe("SettlementIndexer", () => {
     ]);
   });
 
-  test("unit rows and highscores ignore duplicated historical ship and defense backlog artifacts", () => {
+  test("unit rows project ready active queues while highscores ignore stale queue artifacts", () => {
     const shalex = "0x4065de123cf18e9c4ab7da18db21518285ea164e" as Address;
     const noseals = "0x01bf1238aadc0f32d7881b90dc3c57247dff9ba9" as Address;
     const shipPlanet: SettledPlanetEvent = {
@@ -5666,17 +5678,17 @@ describe("SettlementIndexer", () => {
     ]);
 
     const shalexScore = indexer.highscoreForWallet(shalex);
-    expect(shalexScore.score.fleetCount).toBe("15");
-    expect(shalexScore.score.fleet).toBe("102");
+    expect(shalexScore.score.fleetCount).toBe("14");
+    expect(shalexScore.score.fleet).toBe("62");
     const nosealsScore = indexer.highscoreForWallet(noseals);
-    expect(nosealsScore.score.defense).toBe("54");
+    expect(nosealsScore.score.defense).toBe("34");
 
     const leaderboard = indexer.highscoreLeaderboard().entries;
     expect(leaderboard.find((entry) => entry.wallet === shalex)?.score).toMatchObject({
-      fleet: "102",
-      fleetCount: "15"
+      fleet: "62",
+      fleetCount: "14"
     });
-    expect(leaderboard.find((entry) => entry.wallet === noseals)?.score.defense).toBe("54");
+    expect(leaderboard.find((entry) => entry.wallet === noseals)?.score.defense).toBe("34");
   });
 
   test("newer fleet mission events win over seeded canonical mission rows", async () => {
@@ -6551,7 +6563,30 @@ describe("SettlementIndexer", () => {
     expect(third.entries).toEqual(indexer.highscoreEntriesForOwners(indexer.settledPlanetsByOwner()));
   });
 
-  test("projects elapsed queues into bulk highscore leaderboard scores", () => {
+  test("keeps the indexed highscore cache version stable for mission-only events", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    const indexedVersionBefore = indexer.indexedStateCacheVersion();
+    const responseVersionBefore = indexer.responseCacheVersion();
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xmission-only",
+      logIndex: "0x0",
+      topics: [fleetMissionReturnExposedTopic, topic(50n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 100n, 300n, 0n, 0n, 0n)
+    });
+
+    expect(indexer.indexedStateCacheVersion()).toBe(indexedVersionBefore);
+    expect(indexer.responseCacheVersion()).not.toBe(responseVersionBefore);
+  });
+
+  test("keeps projected elapsed building and research queues out of bulk highscore leaderboard scores", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -6600,10 +6635,10 @@ describe("SettlementIndexer", () => {
     });
     expect(leaderboardEntry.score).toEqual(directWalletEntry.score);
     expect(leaderboardEntry.totalUserScore).toBe(directWalletEntry.totalUserScore);
-    expect(BigInt(leaderboardEntry.score.total) > 0n).toBe(true);
+    expect(leaderboardEntry.score.total).toBe("0");
   });
 
-  test("expires cached highscore leaderboard when a queue becomes due as of now", () => {
+  test("keeps cached highscore leaderboard stable when a queue merely becomes due as of now", () => {
     const originalNow = new Date("2026-01-01T00:00:00Z");
     setSystemTime(originalNow);
     try {
@@ -6629,9 +6664,9 @@ describe("SettlementIndexer", () => {
       setSystemTime(new Date(Number(readyAt + 1n) * 1_000));
 
       const after = indexer.highscoreLeaderboard();
-      expect(after).not.toBe(before);
+      expect(after).toBe(before);
       expect(after.entries[0]?.score).toEqual(indexer.highscoreForWallet(player).score);
-      expect(BigInt(after.entries[0]?.score.economy ?? "0") > 0n).toBe(true);
+      expect(after.entries[0]?.score.economy).toBe("0");
     } finally {
       setSystemTime(new Date("2026-01-01T00:00:00Z"));
     }
