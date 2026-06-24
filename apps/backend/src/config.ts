@@ -10,6 +10,8 @@ export type BackendConfig = {
   indexFromBlock: bigint;
   currentStateHealRunId?: string;
   currentStateHealConcurrency?: number;
+  // Deprecated safety valve. Runtime canonical fleet-mission sync is disabled by default and must not be
+  // scheduled by the backend; missions are mutated from indexed event logs after the one-time heal.
   fleetMissionSyncIntervalMs?: number;
   logChunkSpan?: bigint;
   // VEY-KANEO-485: hard deadline (ms) for the chain-read phase of a full cold rebuild. If the
@@ -124,7 +126,7 @@ const defaultRebuildDeadlineMs = 1_800_000;
 // Operators can tune it via VEYDRIFT_POLL_INTERVAL_MS.
 const defaultPollIntervalMs = 1_000;
 const defaultCurrentStateHealConcurrency = 25;
-const defaultFleetMissionSyncIntervalMs = 60_000;
+const defaultFleetMissionSyncIntervalMs = 0;
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 const privateKeyPattern = /^0x[a-fA-F0-9]{64}$/;
 const deploymentModes = new Set<DeploymentMode>(["local", "test", "staging", "production"]);

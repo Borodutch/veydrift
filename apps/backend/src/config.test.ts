@@ -123,9 +123,9 @@ describe("backend config", () => {
     expect(defaults.problems).toEqual([]);
     // Fast live-event latency while staying cheap on the single self-hosted node.
     expect(defaults.config.pollIntervalMs).toBe(1_000);
-    // Fleet mission canonical sync is a bounded safety net for missed terminal mission events, not
-    // the hot event path.
-    expect(defaults.config.fleetMissionSyncIntervalMs).toBe(60_000);
+    // Runtime canonical mission sync is off by default; the backend stays event-only after the
+    // one-time current-state heal.
+    expect(defaults.config.fleetMissionSyncIntervalMs).toBe(0);
 
     const overridden = loadBackendConfig({
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
@@ -155,7 +155,7 @@ describe("backend config", () => {
     expect(invalid.problems.some((problem) => problem.field === "VEYDRIFT_FLEET_MISSION_SYNC_INTERVAL_MS")).toBe(true);
     // Falls back to the default rather than a bad value.
     expect(invalid.config.pollIntervalMs).toBe(1_000);
-    expect(invalid.config.fleetMissionSyncIntervalMs).toBe(60_000);
+    expect(invalid.config.fleetMissionSyncIntervalMs).toBe(0);
   });
 
   test("enables the public mission resolver only for test deployments with a resolver address", () => {

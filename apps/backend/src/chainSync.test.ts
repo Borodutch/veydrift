@@ -304,12 +304,7 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
-  test("does not let a slow targeted canonical heal block websocket log handling", async () => {
-    let resolveHeal!: () => void;
-    const healStarted = new Promise<void>((resolve) => {
-      resolveHeal = resolve;
-    });
-    const healCalls: string[][] = [];
+  test("does not canonical-heal combat logs during websocket handling", async () => {
     const indexer = {
       applyLog: () => ({
         applied: true,
@@ -318,11 +313,7 @@ describe("ChainSyncService (polling)", () => {
         removed: false,
         snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
       }),
-      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>,
-      healCanonicalPlanets: async (planetIds: string[]) => {
-        healCalls.push(planetIds);
-        await healStarted;
-      }
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>
     };
     const backfiller = new MockBackfiller(0x180n);
     const liveLogs = new MockLiveLogSubscriber();
@@ -348,19 +339,15 @@ describe("ChainSyncService (polling)", () => {
     liveLogs.emit([combatLog]);
 
     await waitFor(() => service.snapshot().latestSyncedBlock === String(0x181n));
-    await waitFor(() => healCalls.length === 1);
-    expect(healCalls).toEqual([["8"]]);
     expect(service.snapshot()).toMatchObject({
       activeSource: "viem_ws",
       eventsReceived: 1,
       pollBacklogBlocks: "0"
     });
-    resolveHeal();
     service.stop();
   });
 
-  test("does not count synchronous targeted-heal enqueue work as websocket handler latency", async () => {
-    const healCalls: string[][] = [];
+  test("keeps websocket handler latency scoped to event indexing", async () => {
     const indexer = {
       applyLog: () => ({
         applied: true,
@@ -369,12 +356,7 @@ describe("ChainSyncService (polling)", () => {
         removed: false,
         snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
       }),
-      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>,
-      healCanonicalPlanets: async (planetIds: string[]) => {
-        healCalls.push(planetIds);
-        const deadline = Date.now() + 1_200;
-        while (Date.now() < deadline) {}
-      }
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>
     };
     const backfiller = new MockBackfiller(0x180n);
     const liveLogs = new MockLiveLogSubscriber();
@@ -405,8 +387,6 @@ describe("ChainSyncService (polling)", () => {
       slowHandlerCount300Ms: 0,
       slowHandlerCount1000Ms: 0
     });
-    await waitFor(() => healCalls.length === 1, 2_000);
-    expect(healCalls).toEqual([["8"]]);
     service.stop();
   });
 
@@ -430,10 +410,7 @@ describe("ChainSyncService (polling)", () => {
           snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
         };
       },
-      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>,
-      healCanonicalPlanets: async () => {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>
     };
     const service = new ChainSyncService(config, indexer, {
       liveLogSubscriber: liveLogs,
@@ -465,7 +442,7 @@ describe("ChainSyncService (polling)", () => {
         contractAddress: config.gameContractAddress,
         transactionHash: "0xslow",
         applyResult: { applied: true },
-        sideEffects: { targetedCanonicalHealPlanetIds: [] }
+        sideEffects: { canonicalHealQueued: false }
       });
     } finally {
       console.warn = originalWarn;
@@ -733,8 +710,7 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
-  test("queues a targeted canonical heal for applied combat settlement logs", async () => {
-    const healCalls: string[][] = [];
+  test("does not canonical-heal applied combat settlement logs", async () => {
     const indexer = {
       applyLog: () => ({
         applied: true,
@@ -743,10 +719,7 @@ describe("ChainSyncService (polling)", () => {
         removed: false,
         snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
       }),
-      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>,
-      healCanonicalPlanets: async (planetIds: string[]) => {
-        healCalls.push(planetIds);
-      }
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>
     };
     const combatLog: TestLog = {
       blockNumber: "0x181",
@@ -765,17 +738,14 @@ describe("ChainSyncService (polling)", () => {
 
     await service.poll();
 
-    await waitFor(() => healCalls.length === 1);
-    expect(healCalls).toEqual([["8"]]);
+    expect(service.snapshot()).toMatchObject({
+      latestSyncedBlock: String(0x181n),
+      pollBacklogBlocks: "0"
+    });
     service.stop();
   });
 
-  test("does not let a slow targeted canonical heal hold the live poll open", async () => {
-    let resolveHeal!: () => void;
-    const healStarted = new Promise<void>((resolve) => {
-      resolveHeal = resolve;
-    });
-    const healCalls: string[][] = [];
+  test("keeps live poll event-only for combat settlement logs", async () => {
     const indexer = {
       applyLog: () => ({
         applied: true,
@@ -784,11 +754,7 @@ describe("ChainSyncService (polling)", () => {
         removed: false,
         snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
       }),
-      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>,
-      healCanonicalPlanets: async (planetIds: string[]) => {
-        healCalls.push(planetIds);
-        await healStarted;
-      }
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>
     };
     const combatLog: TestLog = {
       blockNumber: "0x181",
@@ -807,13 +773,10 @@ describe("ChainSyncService (polling)", () => {
 
     await service.poll();
 
-    await waitFor(() => healCalls.length === 1);
-    expect(healCalls).toEqual([["8"]]);
     expect(service.snapshot()).toMatchObject({
       latestSyncedBlock: String(0x181n),
       pollBacklogBlocks: "0"
     });
-    resolveHeal();
     service.stop();
   });
 

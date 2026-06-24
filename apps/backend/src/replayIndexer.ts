@@ -33,7 +33,13 @@ async function main(): Promise<void> {
   const result = args.legacyUnitMutationsOnly
     ? { replay: indexer.applyLegacyUnitMutationsFromEventLogs(), rebuild: null }
     : args.currentStateSeed
-    ? { replay: null, rebuild: await indexer.seedCurrentCanonicalState({ planetConcurrency: args.currentStateConcurrency ?? 25 }) }
+    ? {
+      replay: null,
+      rebuild: await indexer.startCurrentStateHealOnce(
+        loaded.config.currentStateHealRunId ?? "manual-current-state-seed",
+        { planetConcurrency: args.currentStateConcurrency ?? 25 }
+      )
+    }
     : args.canonicalSync
     ? await indexer.syncCanonicalState(fromBlock, toBlock, {
       rebuildDeadlineMs: args.canonicalSyncRebuildDeadlineMs ?? 0
