@@ -4,6 +4,7 @@ export type RuntimeConfig = {
   burningChicken?: {
     burnContractAddress: string | null;
     burnSelector: string | null;
+    levelSelector: string | null;
     nftContractAddress: string | null;
     rpcUrl: string | null;
   };
@@ -65,6 +66,7 @@ export function moonContractAddress(config: RuntimeConfig): string | undefined {
 export type ConfiguredBurningChickenConfig = {
   burnContractAddress: string;
   burnSelector: string;
+  levelSelector: string | null;
   nftContractAddress: string;
   rpcUrl: string | null;
 };
@@ -77,6 +79,7 @@ export function burningChickenConfig(config: RuntimeConfig): ConfiguredBurningCh
   return {
     burnContractAddress: chicken.burnContractAddress,
     burnSelector: chicken.burnSelector,
+    levelSelector: chicken.levelSelector,
     nftContractAddress: chicken.nftContractAddress,
     rpcUrl: chicken.rpcUrl,
   };
