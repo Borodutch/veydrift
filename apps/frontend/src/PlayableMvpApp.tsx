@@ -265,6 +265,8 @@ import {
   type AutoDismissableActionState,
 } from "./actionNoticeAutoDismiss";
 
+const maxChickenBurnMoonsPerPlayer = 2;
+
 export function researchStartTransactionLabel(
   technologyId: number,
   key: ResearchKey,
@@ -5585,6 +5587,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       setMoonAction({ status: "error", label: "Wallet, Burning Chicken config, selected planet, or selected coordinates are unavailable." });
       return;
     }
+    if (walletMoonCount >= maxChickenBurnMoonsPerPlayer) {
+      setMoonAction({ status: "error", label: "This wallet has reached the two-moon limit." });
+      return;
+    }
 
     const targetLabel = `${activePlanetCoords.galaxy}:${activePlanetCoords.system}:${activePlanetCoords.position}`;
     const label = `Burn Chicken #${tokenId} for ${targetLabel}`;
@@ -5651,6 +5657,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     runGatedTransaction,
     setActivePlanetSectionStatus,
     setMoonState,
+    walletMoonCount,
   ]);
 
   const handleBuildShip = useCallback((shipId: number, _key: ShipKey, quantity: number) => {
@@ -7384,7 +7391,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
             configured: Boolean(chickenBurnConfig),
             error: burningChickensError,
             loading: burningChickensLoading,
-            maxMoonsPerPlayer: 2,
+            maxMoonsPerPlayer: maxChickenBurnMoonsPerPlayer,
             moonCount: walletMoonCount,
           }}
           canBurnChicken={canSubmitChickenBurnTransaction}

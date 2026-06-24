@@ -1,5 +1,5 @@
 import type { ChickenBurnEvent } from "./events";
-import { MoonGrantAlreadyProcessedError, type MoonGrantClient } from "./grant";
+import { MoonGrantAlreadyProcessedError, MoonGrantLimitReachedError, type MoonGrantClient } from "./grant";
 import type { JsonStateStore } from "./store";
 
 export type ListenerLogger = {
@@ -18,6 +18,7 @@ export type ProcessorSnapshot = {
   processedCount: number;
   duplicateCount: number;
   grantFailureCount: number;
+  skippedLimitCount: number;
   lastProcessedBurnId: string | null;
   lastGrantTxHash: string | null;
   lastError: string | null;
@@ -27,6 +28,7 @@ export class ChickenBurnProcessor {
   private processedCount = 0;
   private duplicateCount = 0;
   private grantFailureCount = 0;
+  private skippedLimitCount = 0;
   private lastProcessedBurnId: string | null = null;
   private lastGrantTxHash: string | null = null;
   private lastError: string | null = null;
@@ -42,6 +44,7 @@ export class ChickenBurnProcessor {
       processedCount: this.processedCount,
       duplicateCount: this.duplicateCount,
       grantFailureCount: this.grantFailureCount,
+      skippedLimitCount: this.skippedLimitCount,
       lastProcessedBurnId: this.lastProcessedBurnId,
       lastGrantTxHash: this.lastGrantTxHash,
       lastError: this.lastError
@@ -77,6 +80,19 @@ export class ChickenBurnProcessor {
         this.logger.warn("[chicken-burn] burn already granted on-chain", {
           burnId: event.burnId,
           sourceTxHash: event.sourceTxHash
+        });
+        return;
+      }
+      if (error instanceof MoonGrantLimitReachedError) {
+        await this.store.markProcessed(event.burnId);
+        this.skippedLimitCount += 1;
+        this.lastProcessedBurnId = event.burnId;
+        this.lastError = null;
+        this.logger.warn("[chicken-burn] skipped burn because moon limit is reached", {
+          burnId: event.burnId,
+          sourceTxHash: event.sourceTxHash,
+          player: error.player,
+          limit: error.limit
         });
         return;
       }
