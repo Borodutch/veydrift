@@ -349,9 +349,17 @@ VEYDRIFT_CONTRACT_ADDRESS=<Base Sepolia VeydriftGame proxy address>
 VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS=<Base Sepolia compact settlement address>
 VEYDRIFT_GAME_CONTRACT_ADDRESS=<Base Sepolia VeydriftGame proxy address>
 VEYDRIFT_SETTLEMENT_START_PRICE_WEI=<VeydriftGame startPrice in wei, for example 50000000000000000>
+VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS=<Base Sepolia VeydriftAllianceSystem proxy address>
+VEYDRIFT_MOON_CONTRACT_ADDRESS=<Base Sepolia VeydriftMoonSystem proxy address>
+VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS=<Base Sepolia RandomnessEngine proxy address>
 VEYDRIFT_METAL_TOKEN_ADDRESS=<Base Sepolia VeydriftMetal ERC-20 proxy address>
 VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=<Base Sepolia VeydriftCrystal ERC-20 proxy address>
 VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=<Base Sepolia VeydriftDeuterium ERC-20 proxy address>
+VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS=<Base mainnet Burning Chicken NFT address>
+VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS=<Base mainnet Burning Chicken burn contract address>
+VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR=<4-byte burn-for-moon selector, defaults to 0x6364233d>
+VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR=<4-byte level selector, defaults to 0x05c58df2>
+VEYDRIFT_BASE_MAINNET_RPC_URL=<Base mainnet public or redacted provider RPC URL>
 VEYDRIFT_NETWORK_NAME=Base Sepolia
 VEYDRIFT_PUBLIC_API_URL=https://api-test.veydrift.com
 VEYDRIFT_PUBLIC_GRAPHQL_URL=https://api-test.veydrift.com/graphql
@@ -364,6 +372,66 @@ PORT=4000
 Vaultwarden or EasyPanel secret storage and must not be committed. When the
 shared `ALCHEMY_BASE_SEPOLIA_API_KEY` is used, the backend derives both HTTPS
 and websocket Alchemy RPC URLs.
+
+`VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS`,
+`VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS`, and
+`VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR` must be set on the backend test service
+before `/runtime-config` reports `featureSupport.chickenBurnConfigured: true`.
+The Base mainnet RPC URL is public runtime metadata for frontend reads; prefer a
+redacted/proxy provider URL if the deploy uses a paid key.
+
+The Chicken burn listener is a separate EasyPanel service in the same `veydrift`
+project. Configure it from the repository root with:
+
+```text
+Source path: /
+Build type: Nixpacks
+Nixpacks version: 1.34.1
+Nixpacks config path: apps/chicken-burn-listener/nixpacks.toml
+Install command: bun install --frozen-lockfile
+Build command: cd apps/chicken-burn-listener && bun run check
+Start command: cd apps/chicken-burn-listener && bun run start
+```
+
+Configure `veydrift/chicken-burn-listener-test` with these deploy secrets and
+runtime values:
+
+```text
+BASE_MAINNET_HTTP_RPC_URL=<Base mainnet Alchemy HTTPS URL from secret storage>
+BASE_MAINNET_WS_RPC_URL=<Base mainnet Alchemy WSS URL from secret storage>
+CHICKEN_CONTRACT_ADDRESS=<Base mainnet Burning Chicken burn/NFT contract address>
+CHICKEN_BURN_EVENT_SIGNATURE=<optional deployed event signature override>
+CHICKEN_BURN_START_BLOCK=<first block to scan, or 0 for full configured backfill window>
+VEYDRIFT_RPC_URL=<self-hosted Base Sepolia RPC URL>
+VEYDRIFT_CHAIN_ID=84532
+VEYDRIFT_MOON_SYSTEM_ADDRESS=<Base Sepolia VeydriftMoonSystem proxy address>
+VEYDRIFT_GRANT_PRIVATE_KEY=<moon proxy owner/admin key from secret storage>
+STATE_FILE=/data/chicken-burn-listener-state.json
+BACKFILL_INTERVAL_MS=15000
+BACKFILL_BLOCKS=2000
+MAX_RANGE_BLOCKS=90000
+PORT=8080
+```
+
+Mount `/data` as durable service storage so replayed Base mainnet logs do not
+resubmit already processed burn ids after a restart. The moon contract also
+keeps `chickenBurnMoonGranted(bytes32)` as the on-chain replay guard.
+
+To upgrade the live Base Sepolia moon proxy after a merge, run a dry run first
+and then broadcast from the current moon proxy owner:
+
+```sh
+cd packages/contracts
+MOON_PROXY_ADDRESS=<Base Sepolia VeydriftMoonSystem proxy> PRIVATE_KEY=<owner-key> \
+  forge script script/UpgradeMoonSystem.s.sol:UpgradeMoonSystem --rpc-url "$VEYDRIFT_RPC_URL"
+
+MOON_PROXY_ADDRESS=<Base Sepolia VeydriftMoonSystem proxy> PRIVATE_KEY=<owner-key> \
+  forge script script/UpgradeMoonSystem.s.sol:UpgradeMoonSystem --rpc-url "$VEYDRIFT_RPC_URL" --broadcast
+```
+
+Record the old proxy, new implementation, upgrade transaction, backend
+`/runtime-config`, and listener `/health` evidence in the Kaneo handoff. Do not
+paste full RPC URLs or private keys into Kaneo, GitHub, or source control.
 
 #### Backend redeploy health gate
 
