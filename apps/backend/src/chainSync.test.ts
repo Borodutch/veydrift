@@ -344,6 +344,90 @@ describe("ChainSyncService (polling)", () => {
     service.stop();
   });
 
+  test("does not let a slow targeted canonical heal hold the live poll open", async () => {
+    let resolveHeal!: () => void;
+    const healStarted = new Promise<void>((resolve) => {
+      resolveHeal = resolve;
+    });
+    const healCalls: string[][] = [];
+    const indexer = {
+      applyLog: () => ({
+        applied: true,
+        duplicate: false,
+        ignored: false,
+        removed: false,
+        snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
+      }),
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>,
+      healCanonicalPlanets: async (planetIds: string[]) => {
+        healCalls.push(planetIds);
+        await healStarted;
+      }
+    };
+    const combatLog: TestLog = {
+      blockNumber: "0x181",
+      transactionHash: "0xcombat-slow-heal",
+      logIndex: "0x0",
+      topics: [
+        attackBattleResolvedTopic,
+        topicWord(99n),
+        ownerTopic(player),
+        topicWord(8n)
+      ],
+      data: abiWords(1n, 2n, 3n, 4n)
+    };
+    const backfiller = new MockBackfiller(0x181n, () => [combatLog]);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(healCalls).toEqual([["8"]]);
+    expect(service.snapshot()).toMatchObject({
+      latestSyncedBlock: String(0x181n),
+      pollBacklogBlocks: "0"
+    });
+    resolveHeal();
+    service.stop();
+  });
+
+  test("surfaces poll timing, getLogs range, backlog, and recent receive lag metrics", async () => {
+    const indexer = {
+      applyLog: () => ({
+        applied: true,
+        duplicate: false,
+        ignored: false,
+        removed: false,
+        snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
+      }),
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>
+    };
+    const blockTimestamp = Math.floor(Date.now() / 1000) - 3;
+    const log: TestLog & { blockTimestamp: string } = {
+      ...planetStartedLog("0x181", 7n, "0xlagged"),
+      blockTimestamp: blockTimestamp.toString(),
+      logIndex: "0x0"
+    };
+    const backfiller = new MockBackfiller(0x182n, () => [log]);
+    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(service.snapshot()).toMatchObject({
+      lastGetLogsRange: { fromBlock: "385", toBlock: "386" },
+      latestHeadBlock: "386",
+      latestSyncedBlock: "386",
+      pollBacklogBlocks: "0",
+      pollBacklogMs: 0,
+      recentEventReceiveLagMs: {
+        count: 1
+      }
+    });
+    expect(service.snapshot().lastPollDurationMs).toBeGreaterThanOrEqual(0);
+    expect(service.snapshot().lastGetLogsDurationMs).toBeGreaterThanOrEqual(0);
+    expect(service.snapshot().recentEventReceiveLagMs.p95).toBeGreaterThanOrEqual(2_000);
+    service.stop();
+  });
+
   test("does not canonical-heal ordinary return exposure logs", async () => {
     const healCalls: string[][] = [];
     const indexer = {

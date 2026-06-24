@@ -14,6 +14,7 @@ type LogBackfiller = {
   failoverRpc?(reason: string): boolean;
   getHeadBlock(): Promise<bigint>;
   listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  rpcMetrics?(): unknown;
 };
 
 type ChainSyncIndexer = Partial<Pick<SettlementIndexer, "applyLog" | "clearPendingReconciliationReason" | "healCanonicalPlanets" | "markStale" | "snapshot">>;
@@ -25,9 +26,20 @@ export type ChainSyncSnapshot = {
   lastError: string | null;
   lastEventAt: string | null;
   lastPolledAt: string | null;
+  lastPollDurationMs: number | null;
+  lastGetLogsDurationMs: number | null;
+  lastGetLogsRange: { fromBlock: string; toBlock: string } | null;
   latestHeadBlock: string | null;
   lastHeadAdvancedAt: string | null;
   latestSyncedBlock: string | null;
+  pollBacklogBlocks: string | null;
+  pollBacklogMs: number | null;
+  recentEventReceiveLagMs: {
+    count: number;
+    p50: number | null;
+    p95: number | null;
+    max: number | null;
+  };
   headStallPollCount: number;
   pollFailureCount: number;
   reorgDetectedAt: string | null;
@@ -63,6 +75,9 @@ export class ChainSyncService {
   private lastEventAt: string | null = null;
   private lastHeadAdvancedAt: string | null = null;
   private lastPolledAt: string | null = null;
+  private lastPollDurationMs: number | null = null;
+  private lastGetLogsDurationMs: number | null = null;
+  private lastGetLogsRange: { fromBlock: string; toBlock: string } | null = null;
   private latestHeadBlock: string | null = null;
   private latestSyncedBlock: string | null = null;
   private reorgDetectedAt: string | null = null;
@@ -79,6 +94,7 @@ export class ChainSyncService {
   // resume from the durable DB cursor. A cold/manual event replay may seed history; the live poll must
   // never skip directly to head because there is no startup canonical self-heal to cover the gap.
   private cursor: bigint | null = null;
+  private readonly recentEventReceiveLagsMs: number[] = [];
 
   constructor(
     private readonly config: BackendConfig,
@@ -106,8 +122,14 @@ export class ChainSyncService {
       lastEventAt: this.lastEventAt,
       lastHeadAdvancedAt: this.lastHeadAdvancedAt,
       lastPolledAt: this.lastPolledAt,
+      lastPollDurationMs: this.lastPollDurationMs,
+      lastGetLogsDurationMs: this.lastGetLogsDurationMs,
+      lastGetLogsRange: this.lastGetLogsRange,
       latestHeadBlock: this.latestHeadBlock,
       latestSyncedBlock: this.latestSyncedBlock,
+      pollBacklogBlocks: this.pollBacklogBlocks(),
+      pollBacklogMs: this.pollBacklogMs(),
+      recentEventReceiveLagMs: this.recentEventReceiveLagSummary(),
       headStallPollCount: this.headStallPollCount,
       pollFailureCount: this.pollFailureCount,
       reorgDetectedAt: this.reorgDetectedAt,
@@ -217,6 +239,7 @@ export class ChainSyncService {
       return;
     }
     this.pollInProgress = true;
+    const pollStartedAt = Date.now();
     try {
       const head = await backfiller.getHeadBlock();
       this.lastPolledAt = new Date().toISOString();
@@ -240,7 +263,14 @@ export class ChainSyncService {
       }
 
       const fromBlock = this.cursor < 0n ? 0n : this.cursor + 1n;
-      const logs = await backfiller.listContractLogs(fromBlock, head);
+      this.lastGetLogsRange = { fromBlock: fromBlock.toString(), toBlock: head.toString() };
+      const getLogsStartedAt = Date.now();
+      let logs: RpcLog[];
+      try {
+        logs = await backfiller.listContractLogs(fromBlock, head);
+      } finally {
+        this.lastGetLogsDurationMs = Date.now() - getLogsStartedAt;
+      }
       const { applied, lastHash, walletPlanetsChanged } = await this.applyLogs(logs, applyLog);
       // Advance the cursor to the scanned head ONLY after a clean ingest — a throw skips this and the
       // next pass retries the same range. Events are absolute-state SETs + txHash:logIndex deduped, so
@@ -267,6 +297,7 @@ export class ChainSyncService {
         this.connected = false;
       }
     } finally {
+      this.lastPollDurationMs = Date.now() - pollStartedAt;
       this.pollInProgress = false;
     }
   }
@@ -285,6 +316,7 @@ export class ChainSyncService {
       try {
         const result = applyLog.call(this.indexer, log);
         if (result.applied) {
+          this.recordEventReceiveLag(log);
           this.eventsReceived += 1;
           this.lastEventAt = new Date().toISOString();
           applied += 1;
@@ -349,6 +381,65 @@ export class ChainSyncService {
     if (!this.headStallReason || this.headStallPollCount !== 0) return;
     this.indexer?.clearPendingReconciliationReason?.(this.headStallReason);
     this.headStallReason = null;
+  }
+
+  private pollBacklogBlocks(): string | null {
+    if (this.latestHeadBlock === null) return null;
+    const synced = this.cursor ?? this.parseBlockLabel(this.latestSyncedBlock);
+    if (synced === null) return null;
+    try {
+      const backlog = BigInt(this.latestHeadBlock) - synced;
+      return (backlog > 0n ? backlog : 0n).toString();
+    } catch {
+      return null;
+    }
+  }
+
+  private pollBacklogMs(): number | null {
+    const backlogBlocks = this.pollBacklogBlocks();
+    if (backlogBlocks === null) return null;
+    const blocks = Number(backlogBlocks);
+    if (!Number.isFinite(blocks)) return null;
+    // Base Sepolia targets ~2s blocks; exact observed tx lag is reported from blockTimestamp logs.
+    return Math.round(blocks * 2_000);
+  }
+
+  private parseBlockLabel(label: string | null): bigint | null {
+    if (label === null) return null;
+    try {
+      return BigInt(label);
+    } catch {
+      return null;
+    }
+  }
+
+  private recordEventReceiveLag(log: RpcLog): void {
+    if (!("blockTimestamp" in log) || typeof log.blockTimestamp !== "string") return;
+    let blockTimestampSeconds: bigint;
+    try {
+      blockTimestampSeconds = BigInt(log.blockTimestamp);
+    } catch {
+      return;
+    }
+    const lagMs = Date.now() - Number(blockTimestampSeconds * 1_000n);
+    if (!Number.isFinite(lagMs) || lagMs < 0) return;
+    this.recentEventReceiveLagsMs.push(Math.round(lagMs));
+    if (this.recentEventReceiveLagsMs.length > 100) {
+      this.recentEventReceiveLagsMs.splice(0, this.recentEventReceiveLagsMs.length - 100);
+    }
+  }
+
+  private recentEventReceiveLagSummary(): ChainSyncSnapshot["recentEventReceiveLagMs"] {
+    if (this.recentEventReceiveLagsMs.length === 0) {
+      return { count: 0, max: null, p50: null, p95: null };
+    }
+    const sorted = [...this.recentEventReceiveLagsMs].sort((left, right) => left - right);
+    return {
+      count: sorted.length,
+      p50: percentile(sorted, 0.5),
+      p95: percentile(sorted, 0.95),
+      max: sorted.at(-1) ?? null
+    };
   }
 
   private initialCursor(): bigint {
@@ -422,4 +513,13 @@ function compareBigIntish(left: string, right: string): number {
   if (leftValue < rightValue) return -1;
   if (leftValue > rightValue) return 1;
   return 0;
+}
+
+function percentile(sortedValues: readonly number[], percentileValue: number): number | null {
+  if (sortedValues.length === 0) return null;
+  const index = Math.min(
+    sortedValues.length - 1,
+    Math.max(0, Math.ceil(sortedValues.length * percentileValue) - 1)
+  );
+  return sortedValues[index] ?? null;
 }

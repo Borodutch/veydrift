@@ -758,6 +758,8 @@ describe("chain-sync log backfill wiring", () => {
     const backfiller = deriveLogBackfiller(reader);
     expect(backfiller).toBeDefined();
     expect(typeof backfiller?.listContractLogs).toBe("function");
+    expect(typeof backfiller?.failoverRpc).toBe("function");
+    expect(typeof backfiller?.rpcMetrics).toBe("function");
   });
 
   test("deriveLogBackfiller yields nothing when the reader cannot list contract logs", () => {
@@ -826,6 +828,7 @@ describe("Veydrift backend", () => {
       missionResolution: null,
       randomnessCommitter: null,
       rpc: null,
+      chainSyncRpc: null,
       ok: false,
       service: "veydrift-backend"
     });

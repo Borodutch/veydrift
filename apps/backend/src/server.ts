@@ -34,6 +34,7 @@ import {
   type SettledPlanetEvent,
   type ShipyardState,
   type StationedDefenderSummary,
+  HttpJsonRpcTransport,
   VeydriftGameReader
 } from "./evm";
 import { highscoreCategories, highscoreFormula, type HighscoreEntry, type ScoreBreakdown } from "./highscores";
@@ -185,7 +186,20 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     dependencies.chainReader
       ? chainReader
       : loaded.problems.length === 0
-        ? new VeydriftGameReader(loaded.config)
+        ? new VeydriftGameReader(loaded.config, undefined, { hydrateQueueStartedAt: false })
+        : undefined;
+  const logBackfillChainReader =
+    dependencies.chainReader
+      ? chainReader
+      : loaded.problems.length === 0
+        ? new VeydriftGameReader(
+          loaded.config,
+          new HttpJsonRpcTransport(rpcUrlsForConfig(loaded.config), {
+            cacheTtlMs: 0,
+            minRequestIntervalMs: 0
+          }),
+          { hydrateQueueStartedAt: false }
+        )
         : undefined;
   const indexer =
     dependencies.indexer ??
@@ -206,7 +220,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       // backend boot and starving trivial endpoints such as /runtime-config.
       runStartupBackfill: false
     }) : undefined);
-  const logBackfiller = deriveLogBackfiller(indexerChainReader);
+  const logBackfiller = deriveLogBackfiller(logBackfillChainReader);
   const chainSync =
     dependencies.chainSync ??
     (isWriter && loaded.problems.length === 0
@@ -306,7 +320,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           missionResolution: null,
           randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
           indexer: indexerSnapshot,
-          rpc: chainReader?.rpcMetrics?.() ?? null
+          rpc: chainReader?.rpcMetrics?.() ?? null,
+          chainSyncRpc: logBackfiller?.rpcMetrics?.() ?? null
         } satisfies HealthPayload & Record<string, unknown>,
         {
           headers: corsHeaders,
@@ -344,7 +359,8 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         {
           indexer: indexer?.snapshot() ?? null,
           chainSync: chainSync?.snapshot() ?? null,
-          rpc: chainReader?.rpcMetrics?.() ?? null
+          rpc: chainReader?.rpcMetrics?.() ?? null,
+          chainSyncRpc: logBackfiller?.rpcMetrics?.() ?? null
         },
         {
           headers: corsHeaders
@@ -1258,8 +1274,10 @@ export function deriveLogBackfiller(
   reader: ChainReader | undefined
 ):
   | {
+      failoverRpc?: (reason: string) => boolean;
       getHeadBlock: () => Promise<bigint>;
       listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
+      rpcMetrics?: () => unknown;
     }
   | undefined {
   if (
@@ -1268,11 +1286,20 @@ export function deriveLogBackfiller(
     typeof reader.getBlockNumber === "function"
   ) {
     return {
+      ...(typeof reader.failoverRpc === "function" ? { failoverRpc: reader.failoverRpc.bind(reader) } : {}),
       getHeadBlock: reader.getBlockNumber.bind(reader),
-      listContractLogs: reader.listContractLogs.bind(reader)
+      listContractLogs: reader.listContractLogs.bind(reader),
+      ...(typeof reader.rpcMetrics === "function" ? { rpcMetrics: reader.rpcMetrics.bind(reader) } : {})
     };
   }
   return undefined;
+}
+
+function rpcUrlsForConfig(config: BackendConfig): string[] {
+  return [
+    config.rpcUrl,
+    ...(config.rpcFallbackUrls ?? [])
+  ].filter((url): url is string => Boolean(url && url.trim().length > 0));
 }
 
 function withRequestCors(request: Request, response: Response): Response {
