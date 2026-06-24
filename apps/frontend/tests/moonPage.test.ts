@@ -60,7 +60,7 @@ describe("Moon page helpers", () => {
   test("keeps loaded Burning Chickens visible during a background refresh", () => {
     const page = MoonPage({
       burningChicken: {
-        chickens: [{ tokenId: "42", level: 7 }],
+        chickens: [{ tokenId: "42" }],
         configured: true,
         loading: true,
         maxMoonsPerPlayer: 2,
@@ -80,7 +80,6 @@ describe("Moon page helpers", () => {
 
     expect(text).toContain("Refreshing Burning Chickens");
     expect(text).toContain("Chicken # 42");
-    expect(text).toContain("Level 7");
     expect(text).toContain("Burn for Moon");
     expect(text).not.toContain("No eligible Burning Chickens");
   });
@@ -110,7 +109,7 @@ describe("Moon page helpers", () => {
   test("disables chicken burns at the two-moon limit", () => {
     const page = MoonPage({
       burningChicken: {
-        chickens: [{ tokenId: "9", level: 2 }],
+        chickens: [{ tokenId: "9" }],
         configured: true,
         loading: false,
         maxMoonsPerPlayer: 2,
