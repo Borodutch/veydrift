@@ -1036,8 +1036,11 @@ type JsonRpcResponse<T> = {
 };
 
 export type RpcLog = {
+  address?: string;
   blockNumber: string;
+  blockTimestamp?: string;
   logIndex?: string;
+  removed?: boolean;
   transactionHash: string;
   topics: string[];
   data: string;
