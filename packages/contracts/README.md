@@ -152,6 +152,9 @@ Alliances:
 - Alliance roles are owner, officer, and member. Owners and officers can invite
   members; owners and officers can kick members; owners can add or remove
   officers. Officers cannot remove the owner or other officers.
+- `kickMembers(allianceId, players)` and `setMembersRole(allianceId, players, role)`
+  batch existing roster operations. They preserve the same authorization rules as
+  the single-member calls and emit the existing per-member roster events.
 - `transferAllianceOwnership(allianceId, newOwner)` hands the single owner role
   to one of the alliance's officers and demotes the previous owner to officer,
   so an alliance always keeps exactly one owner. Only the current owner can call
@@ -359,9 +362,9 @@ PRIVATE_KEY=... PROXY_ADDRESS=0xProxy forge script script/Upgrade.s.sol:Upgrade 
 
 The proxy owner must be the broadcasting account for upgrades.
 
-Upgrade the `VeydriftAllianceSystem` proxy (UUPS). The new implementation is
-storage-compatible — it only adds `transferAllianceOwnership` — so the proxy
-keeps every alliance, membership, diplomacy, and defense-intent record:
+Upgrade the `VeydriftAllianceSystem` proxy (UUPS). The new implementation must
+remain storage-compatible so the proxy keeps every alliance, membership,
+diplomacy, and defense-intent record:
 
 ```bash
 PRIVATE_KEY=... ALLIANCE_PROXY_ADDRESS=0xAllianceProxy \

@@ -378,16 +378,15 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     function kickMember(uint256 allianceId, address player) external {
         _requireOfficer(allianceId, msg.sender);
         Membership memory kicker = _memberships[msg.sender];
-        Membership memory kicked = _memberships[player];
-        if (kicked.allianceId != allianceId) revert NotAllianceMember(player, allianceId);
-        if (
-            kicked.role == AllianceRole.Owner
-                || (kicker.role == AllianceRole.Officer && kicked.role != AllianceRole.Member)
-        ) {
-            revert NotAuthorized(msg.sender, allianceId);
-        }
+        _kickMember(allianceId, kicker, player);
+    }
 
-        _removeMember(allianceId, player);
+    function kickMembers(uint256 allianceId, address[] calldata players) external {
+        _requireOfficer(allianceId, msg.sender);
+        Membership memory kicker = _memberships[msg.sender];
+        for (uint256 i = 0; i < players.length; i++) {
+            _kickMember(allianceId, kicker, players[i]);
+        }
     }
 
     function leaveAlliance() external {
@@ -405,6 +404,19 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
 
     function setMemberRole(uint256 allianceId, address player, AllianceRole role) external {
         _requireOwner(allianceId, msg.sender);
+        _setMemberRole(allianceId, player, role);
+    }
+
+    function setMembersRole(uint256 allianceId, address[] calldata players, AllianceRole role)
+        external
+    {
+        _requireOwner(allianceId, msg.sender);
+        for (uint256 i = 0; i < players.length; i++) {
+            _setMemberRole(allianceId, players[i], role);
+        }
+    }
+
+    function _setMemberRole(uint256 allianceId, address player, AllianceRole role) private {
         if (role != AllianceRole.Member && role != AllianceRole.Officer) revert InvalidRole(role);
         Membership storage membership = _memberships[player];
         if (membership.allianceId != allianceId) revert NotAllianceMember(player, allianceId);
@@ -741,6 +753,19 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         _memberLists[allianceId].push(player);
         _alliances[allianceId].memberCount += 1;
         emit AllianceJoined(allianceId, player, role);
+    }
+
+    function _kickMember(uint256 allianceId, Membership memory kicker, address player) private {
+        Membership memory kicked = _memberships[player];
+        if (kicked.allianceId != allianceId) revert NotAllianceMember(player, allianceId);
+        if (
+            kicked.role == AllianceRole.Owner
+                || (kicker.role == AllianceRole.Officer && kicked.role != AllianceRole.Member)
+        ) {
+            revert NotAuthorized(msg.sender, allianceId);
+        }
+
+        _removeMember(allianceId, player);
     }
 
     function _removeMember(uint256 allianceId, address player) private {

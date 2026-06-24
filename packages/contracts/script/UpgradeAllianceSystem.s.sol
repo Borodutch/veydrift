@@ -5,10 +5,10 @@ import {Script} from "forge-std/Script.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 
 /// @notice Storage-compatible UUPS upgrade for the live `VeydriftAllianceSystem`
-/// proxy. The new implementation adds `transferAllianceOwnership` without
-/// touching the existing storage layout, so the proxy keeps every alliance,
-/// membership, diplomacy, and defense-intent record. The broadcasting account
-/// must be the proxy `owner()` because `_authorizeUpgrade` is owner-gated.
+/// proxy. The new implementation adds alliance roster behavior without touching
+/// the existing storage layout, so the proxy keeps every alliance, membership,
+/// diplomacy, and defense-intent record. The broadcasting account must be the
+/// proxy `owner()` because `_authorizeUpgrade` is owner-gated.
 contract UpgradeAllianceSystem is Script {
     event AllianceSystemUpgraded(address indexed proxy, address indexed implementation);
 

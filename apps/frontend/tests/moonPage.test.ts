@@ -57,6 +57,79 @@ describe("Moon page helpers", () => {
     expect(text).not.toContain("No moon in orbit");
   });
 
+  test("keeps loaded Burning Chickens visible during a background refresh", () => {
+    const page = MoonPage({
+      burningChicken: {
+        chickens: [{ tokenId: "42", level: 7 }],
+        configured: true,
+        loading: true,
+        maxMoonsPerPlayer: 2,
+        moonCount: 0,
+      },
+      canBurnChicken: true,
+      moonState: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        moon: null,
+        buildings: [],
+        queue: null,
+      },
+      selectedCoordinates: { galaxy: 1, system: 44, position: 8 },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Refreshing Burning Chickens");
+    expect(text).toContain("Chicken # 42");
+    expect(text).toContain("Level 7");
+    expect(text).toContain("Burn for Moon");
+    expect(text).not.toContain("No eligible Burning Chickens");
+  });
+
+  test("renders a useful Burning Chicken empty state", () => {
+    const page = MoonPage({
+      burningChicken: {
+        chickens: [],
+        configured: true,
+        loading: false,
+        maxMoonsPerPlayer: 2,
+        moonCount: 0,
+      },
+      moonState: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        moon: null,
+        buildings: [],
+        queue: null,
+      },
+      selectedCoordinates: { galaxy: 1, system: 44, position: 8 },
+    });
+
+    expect(visibleText(page)).toContain("No eligible Burning Chickens were found in this wallet on Base mainnet.");
+  });
+
+  test("disables chicken burns at the two-moon limit", () => {
+    const page = MoonPage({
+      burningChicken: {
+        chickens: [{ tokenId: "9", level: 2 }],
+        configured: true,
+        loading: false,
+        maxMoonsPerPlayer: 2,
+        moonCount: 2,
+      },
+      canBurnChicken: true,
+      moonState: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        moon: null,
+        buildings: [],
+        queue: null,
+      },
+      selectedCoordinates: { galaxy: 1, system: 44, position: 8 },
+    });
+    expect(visibleText(page)).toContain("Moon limit reached");
+    expect(visibleText(page)).toContain("Burn for Moon");
+  });
+
   test("passes transaction sync copy into loaded moon systems while actions are gated", () => {
     const page = MoonPage({
       canTransact: false,

@@ -90,6 +90,15 @@ contract VeydriftMoonSystemTest is Test {
         bool deathstarsDestroyed,
         uint256 randomWord
     );
+    event ChickenBurnMoonGranted(
+        bytes32 indexed burnId,
+        address indexed player,
+        uint256 indexed planetId,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position,
+        uint8 playerGrantCount
+    );
 
     function setUp() public {
         randomness = new RandomnessEngine(admin, fulfiller);
@@ -198,6 +207,122 @@ contract VeydriftMoonSystemTest is Test {
         _buildMoon(planetId, MoonBuilding.LunarBase);
         assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.LunarBase), 1);
         assertEq(moons.moon(planetId).fields, moon.fields + 3);
+    }
+
+    function testChickenBurnGrantCreatesMoonForMatchingOwnedCoordinates() public {
+        uint256 planetId = _startPlanet();
+        VeydriftGameStorage.Planet memory planetRef = game.planet(planetId);
+        bytes32 burnId = keccak256("base-mainnet-tx-1-log-0");
+
+        vm.expectEmit(true, true, true, true, address(moons));
+        emit ChickenBurnMoonGranted(
+            burnId, player, planetId, planetRef.galaxy, planetRef.system, planetRef.position, 1
+        );
+        VeydriftMoonSystem.Moon memory moon = moons.grantMoonFromChickenBurn(
+            burnId, player, planetId, planetRef.galaxy, planetRef.system, planetRef.position
+        );
+
+        assertTrue(moon.exists);
+        assertEq(moon.owner, player);
+        assertEq(moon.planetId, planetId);
+        assertTrue(moons.chickenBurnMoonGranted(burnId));
+        assertEq(moons.chickenBurnMoonGrantCountOf(player), 1);
+    }
+
+    function testChickenBurnGrantRejectsDuplicateBurnEvent() public {
+        uint256 planetId = _startPlanet();
+        VeydriftGameStorage.Planet memory planetRef = game.planet(planetId);
+        bytes32 burnId = keccak256("base-mainnet-tx-1-log-0");
+
+        moons.grantMoonFromChickenBurn(
+            burnId, player, planetId, planetRef.galaxy, planetRef.system, planetRef.position
+        );
+
+        uint256 secondPlanetId = 1_002;
+        _setPlanetLocation(secondPlanetId, player, 2, 10, 6);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftMoonSystem.ChickenBurnAlreadyGranted.selector, burnId)
+        );
+        moons.grantMoonFromChickenBurn(burnId, player, secondPlanetId, 2, 10, 6);
+    }
+
+    function testChickenBurnGrantCapsEachPlayerAtTwoIntegrationMoons() public {
+        uint256 firstPlanetId = _startPlanet();
+        VeydriftGameStorage.Planet memory first = game.planet(firstPlanetId);
+        uint256 secondPlanetId = 1_002;
+        uint256 thirdPlanetId = 1_003;
+        _setPlanetLocation(secondPlanetId, player, 2, 10, 6);
+        _setPlanetLocation(thirdPlanetId, player, 2, 11, 7);
+
+        moons.grantMoonFromChickenBurn(
+            keccak256("burn-1"), player, firstPlanetId, first.galaxy, first.system, first.position
+        );
+        moons.grantMoonFromChickenBurn(keccak256("burn-2"), player, secondPlanetId, 2, 10, 6);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftMoonSystem.ChickenBurnMoonLimitReached.selector,
+                player,
+                moons.MAX_CHICKEN_BURN_MOONS_PER_PLAYER()
+            )
+        );
+        moons.grantMoonFromChickenBurn(keccak256("burn-3"), player, thirdPlanetId, 2, 11, 7);
+    }
+
+    function testChickenBurnGrantRejectsWrongCoordinatesAndOwner() public {
+        uint256 planetId = _startPlanet();
+        VeydriftGameStorage.Planet memory planetRef = game.planet(planetId);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftMoonSystem.CoordinateMismatch.selector,
+                planetId,
+                planetRef.galaxy,
+                planetRef.system + 1,
+                planetRef.position,
+                planetRef.galaxy,
+                planetRef.system,
+                planetRef.position
+            )
+        );
+        moons.grantMoonFromChickenBurn(
+            keccak256("wrong-coordinates"),
+            player,
+            planetId,
+            planetRef.galaxy,
+            planetRef.system + 1,
+            planetRef.position
+        );
+
+        address impostor = address(0xBAD);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftMoonSystem.NotMoonOwner.selector));
+        moons.grantMoonFromChickenBurn(
+            keccak256("wrong-owner"),
+            impostor,
+            planetId,
+            planetRef.galaxy,
+            planetRef.system,
+            planetRef.position
+        );
+
+        vm.expectRevert(abi.encodeWithSelector(VeydriftMoonSystem.NoPlanet.selector));
+        moons.grantMoonFromChickenBurn(keccak256("no-planet"), player, 99_999, 1, 1, 1);
+    }
+
+    function testChickenBurnGrantIsAdminOnly() public {
+        uint256 planetId = _startPlanet();
+        VeydriftGameStorage.Planet memory planetRef = game.planet(planetId);
+
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftMoonSystem.NotOwner.selector, player));
+        moons.grantMoonFromChickenBurn(
+            keccak256("non-admin"),
+            player,
+            planetId,
+            planetRef.galaxy,
+            planetRef.system,
+            planetRef.position
+        );
     }
 
     function testMoonChanceCalculationAndCap() public view {
