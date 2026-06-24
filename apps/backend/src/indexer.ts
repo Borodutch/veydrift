@@ -175,6 +175,11 @@ export type IndexerSnapshot = {
   lastCurrentStateHealPlanetsScanned: number | null;
   lastCurrentStateHealRunId: string | null;
   lastCurrentStateHealShipMismatches: number | null;
+  lastCanonicalFleetMissionSyncAt: string | null;
+  lastCanonicalFleetMissionSyncDurationMs: number | null;
+  lastCanonicalFleetMissionSyncError: string | null;
+  lastCanonicalFleetMissionSyncRows: number | null;
+  lastCanonicalFleetMissionSyncUpdatedRows: number | null;
   lastReconciledAt: string | null;
   lastReconciledBlock: string | null;
   lastReconciliationError: string | null;
@@ -434,6 +439,7 @@ export class SettlementIndexer {
   private planetRebuildPromise: Promise<IndexerSnapshot> | null = null;
   private rebuildPromise: Promise<IndexerSnapshot> | null = null;
   private currentStateHealPromise: Promise<IndexerSnapshot> | null = null;
+  private canonicalFleetMissionSyncPromise: Promise<IndexerSnapshot> | null = null;
   private currentStateHealRunId: string | null = null;
   private targetedHealPlanetIds = new Set<string>();
   private targetedHealPromise: Promise<void> | null = null;
@@ -650,6 +656,11 @@ export class SettlementIndexer {
       lastCurrentStateHealPlanetsScanned: metadataNumber(this.metadata("lastCurrentStateHealPlanetsScanned")),
       lastCurrentStateHealRunId: this.metadata("lastCurrentStateHealRunId"),
       lastCurrentStateHealShipMismatches: metadataNumber(this.metadata("lastCurrentStateHealShipMismatches")),
+      lastCanonicalFleetMissionSyncAt: this.metadata("lastCanonicalFleetMissionSyncAt"),
+      lastCanonicalFleetMissionSyncDurationMs: metadataNumber(this.metadata("lastCanonicalFleetMissionSyncDurationMs")),
+      lastCanonicalFleetMissionSyncError: this.metadata("lastCanonicalFleetMissionSyncError"),
+      lastCanonicalFleetMissionSyncRows: metadataNumber(this.metadata("lastCanonicalFleetMissionSyncRows")),
+      lastCanonicalFleetMissionSyncUpdatedRows: metadataNumber(this.metadata("lastCanonicalFleetMissionSyncUpdatedRows")),
       lastReconciledAt,
       lastReconciledBlock,
       lastReconciliationError,
@@ -2169,6 +2180,43 @@ export class SettlementIndexer {
     return this.currentStateHealPromise;
   }
 
+  async syncCanonicalFleetMissions(reason = "periodic"): Promise<IndexerSnapshot> {
+    if (!this.chainReader.listCanonicalFleetMissions) return this.snapshot();
+    if (this.canonicalFleetMissionSyncPromise) return this.canonicalFleetMissionSyncPromise;
+
+    this.canonicalFleetMissionSyncPromise = this.syncCanonicalFleetMissionsUncached(reason)
+      .finally(() => {
+        this.canonicalFleetMissionSyncPromise = null;
+      });
+    return this.canonicalFleetMissionSyncPromise;
+  }
+
+  private async syncCanonicalFleetMissionsUncached(reason: string): Promise<IndexerSnapshot> {
+    const startedAt = Date.now();
+    try {
+      const missions = await this.chainReader.listCanonicalFleetMissions?.();
+      const updatedRows = missions ? await this.replaceCanonicalFleetMissions(missions) : 0;
+      await this.runHealWrite("canonical fleet mission sync metadata", () => {
+        this.setMetadata("lastCanonicalFleetMissionSyncAt", new Date().toISOString());
+        this.setMetadata("lastCanonicalFleetMissionSyncDurationMs", (Date.now() - startedAt).toString());
+        this.setMetadata("lastCanonicalFleetMissionSyncRows", (missions?.length ?? 0).toString());
+        this.setMetadata("lastCanonicalFleetMissionSyncUpdatedRows", updatedRows.toString());
+        this.setMetadata("lastCanonicalFleetMissionSyncReason", reason.slice(0, 128));
+        this.db.query("DELETE FROM indexer_metadata WHERE key = 'lastCanonicalFleetMissionSyncError'").run();
+        this.snapshotCache = null;
+      });
+    } catch (error) {
+      await this.runHealWrite("canonical fleet mission sync error", () => {
+        this.setMetadata("lastCanonicalFleetMissionSyncAt", new Date().toISOString());
+        this.setMetadata("lastCanonicalFleetMissionSyncDurationMs", (Date.now() - startedAt).toString());
+        this.setMetadata("lastCanonicalFleetMissionSyncError", error instanceof Error ? error.message : String(error));
+        this.snapshotCache = null;
+      });
+      throw error;
+    }
+    return this.snapshot();
+  }
+
   startCurrentStateHealOnce(runId: string, options: { planetConcurrency?: number } = {}): Promise<IndexerSnapshot> {
     const normalizedRunId = runId.trim().slice(0, 128);
     if (!normalizedRunId) return Promise.resolve(this.snapshot());
@@ -3632,30 +3680,37 @@ export class SettlementIndexer {
     for (const [planetId, queue] of state.moonQueues) {
       this.upsertCanonicalMoonQueue(planetId, queue);
     }
+    let fleetMissionRowsChanged = 0;
     for (const mission of state.fleetMissions.values()) {
-      this.upsertCanonicalFleetMission(mission);
+      fleetMissionRowsChanged += this.upsertCanonicalFleetMission(mission);
     }
-    if (state.fleetMissions.size > 0) {
+    if (fleetMissionRowsChanged > 0) {
       this.touchMissionReadModel();
     }
   }
 
-  private async replaceCanonicalFleetMissions(missions: CanonicalFleetMissionSnapshot[]): Promise<void> {
+  private async replaceCanonicalFleetMissions(missions: CanonicalFleetMissionSnapshot[]): Promise<number> {
+    let changedRows = 0;
     await this.runHealWrite("fleet missions", () => {
       const liveIds = new Set(missions.map((mission) => mission.missionId));
       const existingRows = this.db.query("SELECT mission_id FROM contract_fleet_missions").all() as Array<{ mission_id: string }>;
       for (const row of existingRows) {
         if (!liveIds.has(row.mission_id)) {
-          this.db.query("DELETE FROM contract_fleet_missions WHERE mission_id = ?").run(row.mission_id);
+          changedRows += this.db.query("DELETE FROM contract_fleet_missions WHERE mission_id = ?").run(row.mission_id).changes;
         }
       }
       for (const mission of missions) {
-        this.upsertCanonicalFleetMission(mission);
+        changedRows += this.upsertCanonicalFleetMission(mission);
       }
       this.setMetadata("lastFleetMissionsReconciledAt", new Date().toISOString());
-      this.touchMissionReadModel();
-      this.touch();
+      if (changedRows > 0) {
+        this.touchMissionReadModel();
+        this.touch();
+      } else {
+        this.snapshotCache = null;
+      }
     });
+    return changedRows;
   }
 
   private replayFleetMissionRowsFromEventLogs(): void {
@@ -3738,8 +3793,16 @@ export class SettlementIndexer {
     return result.changes;
   }
 
-  private upsertCanonicalFleetMission(mission: CanonicalFleetMissionSnapshot): void {
-    this.db.query(`
+  private upsertCanonicalFleetMission(mission: CanonicalFleetMissionSnapshot): number {
+    const eventJson = canonicalFleetMissionEventJson(mission);
+    const existing = this.db.query(`
+      SELECT event_json
+      FROM contract_fleet_missions
+      WHERE mission_id = ?
+    `).get(mission.missionId) as EventRow | null;
+    if (existing?.event_json === eventJson) return 0;
+
+    return this.db.query(`
       INSERT INTO contract_fleet_missions (
         mission_id, status_id, mission_type_id, owner, origin_planet_id, target_planet_id,
         departure_at, arrival_at, return_at, fuel_cost,
@@ -3778,8 +3841,8 @@ export class SettlementIndexer {
       mission.cargo.deuterium,
       "{}",
       mission.randomnessRequestId,
-      JSON.stringify(mission)
-    );
+      eventJson
+    ).changes;
   }
 
   private upsertCanonicalMoonQueue(planetId: string, queue: QueueState): void {
@@ -7535,6 +7598,10 @@ function isVisibleCompletedMission(
 ): boolean {
   if (mission.status !== "Resolved" && mission.status !== "Returned") return false;
   return mission.owner.toLowerCase() === walletLower || ownedPlanetIds.has(mission.targetPlanetId);
+}
+
+function canonicalFleetMissionEventJson(mission: CanonicalFleetMissionSnapshot): string {
+  return JSON.stringify(mission);
 }
 
 function compareFleetMissionsNewestFirst(left: FleetMissionSummary, right: FleetMissionSummary): number {

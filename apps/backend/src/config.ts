@@ -10,6 +10,7 @@ export type BackendConfig = {
   indexFromBlock: bigint;
   currentStateHealRunId?: string;
   currentStateHealConcurrency?: number;
+  fleetMissionSyncIntervalMs?: number;
   logChunkSpan?: bigint;
   // VEY-KANEO-485: hard deadline (ms) for the chain-read phase of a full cold rebuild. If the
   // deploy->head backfill does not finish in this window the rebuild rejects with a real error
@@ -122,6 +123,7 @@ const defaultRebuildDeadlineMs = 1_800_000;
 // Operators can tune it via VEYDRIFT_POLL_INTERVAL_MS.
 const defaultPollIntervalMs = 1_000;
 const defaultCurrentStateHealConcurrency = 25;
+const defaultFleetMissionSyncIntervalMs = 60_000;
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
 const privateKeyPattern = /^0x[a-fA-F0-9]{64}$/;
 const deploymentModes = new Set<DeploymentMode>(["local", "test", "staging", "production"]);
@@ -153,6 +155,9 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   const currentStateHealConcurrency =
     parsePositiveInteger(env.VEYDRIFT_CURRENT_STATE_HEAL_CONCURRENCY, "VEYDRIFT_CURRENT_STATE_HEAL_CONCURRENCY", problems)
       ?? defaultCurrentStateHealConcurrency;
+  const fleetMissionSyncIntervalMs =
+    parseNonNegativeInteger(env.VEYDRIFT_FLEET_MISSION_SYNC_INTERVAL_MS, "VEYDRIFT_FLEET_MISSION_SYNC_INTERVAL_MS", problems)
+      ?? defaultFleetMissionSyncIntervalMs;
   const currentStateHealRunId = normalizeRunId(env.VEYDRIFT_CURRENT_STATE_HEAL_RUN_ID);
   const { rpcUrl, rpcFallbackUrls, rpcSource } = resolveRpcUrl(env);
   const { wsRpcUrl, wsRpcSource } = resolveWsRpcUrl(env);
@@ -240,6 +245,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       indexFromBlock,
       ...(currentStateHealRunId ? { currentStateHealRunId } : {}),
       currentStateHealConcurrency,
+      fleetMissionSyncIntervalMs,
       logChunkSpan,
       rebuildDeadlineMs,
       pollIntervalMs,
@@ -353,6 +359,27 @@ function parsePositiveInteger(
     problems.push({
       field,
       message: "Expected a positive safe integer."
+    });
+    return undefined;
+  }
+
+  return parsed;
+}
+
+function parseNonNegativeInteger(
+  value: string | undefined,
+  field: string,
+  problems: ConfigProblem[]
+): number | undefined {
+  if (value === undefined || value === "") {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isSafeInteger(parsed) || parsed < 0 || parsed.toString() !== value) {
+    problems.push({
+      field,
+      message: "Expected a non-negative safe integer."
     });
     return undefined;
   }

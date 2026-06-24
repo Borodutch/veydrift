@@ -283,6 +283,30 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         console.error("Veydrift current-state heal failed", error);
       });
   }
+  if (
+    usesProductionDependencies
+    && isWriter
+    && indexer
+    && loaded.problems.length === 0
+    && loaded.config.fleetMissionSyncIntervalMs !== undefined
+    && loaded.config.fleetMissionSyncIntervalMs > 0
+  ) {
+    const syncCanonicalFleetMissions = (reason: string) => {
+      void indexer.syncCanonicalFleetMissions(reason).catch((error) => {
+        console.error("Veydrift canonical fleet mission sync failed", error);
+      });
+    };
+    const startupFleetMissionSync = setTimeout(
+      () => syncCanonicalFleetMissions("startup"),
+      Math.min(5_000, loaded.config.fleetMissionSyncIntervalMs)
+    );
+    startupFleetMissionSync.unref?.();
+    const fleetMissionSync = setInterval(
+      () => syncCanonicalFleetMissions("periodic"),
+      loaded.config.fleetMissionSyncIntervalMs
+    );
+    fleetMissionSync.unref?.();
+  }
   if (isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
     const checkpointWal = () => {
       try {
