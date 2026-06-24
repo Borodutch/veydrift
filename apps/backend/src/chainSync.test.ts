@@ -348,6 +348,7 @@ describe("ChainSyncService (polling)", () => {
     liveLogs.emit([combatLog]);
 
     await waitFor(() => service.snapshot().latestSyncedBlock === String(0x181n));
+    await waitFor(() => healCalls.length === 1);
     expect(healCalls).toEqual([["8"]]);
     expect(service.snapshot()).toMatchObject({
       activeSource: "viem_ws",
@@ -355,6 +356,57 @@ describe("ChainSyncService (polling)", () => {
       pollBacklogBlocks: "0"
     });
     resolveHeal();
+    service.stop();
+  });
+
+  test("does not count synchronous targeted-heal enqueue work as websocket handler latency", async () => {
+    const healCalls: string[][] = [];
+    const indexer = {
+      applyLog: () => ({
+        applied: true,
+        duplicate: false,
+        ignored: false,
+        removed: false,
+        snapshot: {} as ReturnType<SettlementIndexer["snapshot"]>
+      }),
+      snapshot: () => ({ latestIndexedBlock: "0x180" }) as ReturnType<SettlementIndexer["snapshot"]>,
+      healCanonicalPlanets: async (planetIds: string[]) => {
+        healCalls.push(planetIds);
+        const deadline = Date.now() + 1_200;
+        while (Date.now() < deadline) {}
+      }
+    };
+    const backfiller = new MockBackfiller(0x180n);
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService(config, indexer, {
+      liveLogSubscriber: liveLogs,
+      logBackfiller: backfiller
+    });
+    const combatLog: TestLog = {
+      blockNumber: "0x181",
+      transactionHash: "0xcombat-ws-sync-heal-enqueue",
+      logIndex: "0x0",
+      topics: [
+        attackBattleResolvedTopic,
+        topicWord(99n),
+        ownerTopic(player),
+        topicWord(8n)
+      ],
+      data: abiWords(1n, 2n, 3n, 4n)
+    };
+
+    service.start();
+    await waitFor(() => liveLogs.subscription !== null && service.snapshot().liveListenerConnected);
+    liveLogs.emit([combatLog]);
+
+    await waitFor(() => service.snapshot().latestSyncedBlock === String(0x181n));
+    expect(service.snapshot()).toMatchObject({
+      recentHandlerDurationMs: { count: 1 },
+      slowHandlerCount300Ms: 0,
+      slowHandlerCount1000Ms: 0
+    });
+    await waitFor(() => healCalls.length === 1, 2_000);
+    expect(healCalls).toEqual([["8"]]);
     service.stop();
   });
 
@@ -713,6 +765,7 @@ describe("ChainSyncService (polling)", () => {
 
     await service.poll();
 
+    await waitFor(() => healCalls.length === 1);
     expect(healCalls).toEqual([["8"]]);
     service.stop();
   });
@@ -754,6 +807,7 @@ describe("ChainSyncService (polling)", () => {
 
     await service.poll();
 
+    await waitFor(() => healCalls.length === 1);
     expect(healCalls).toEqual([["8"]]);
     expect(service.snapshot()).toMatchObject({
       latestSyncedBlock: String(0x181n),
