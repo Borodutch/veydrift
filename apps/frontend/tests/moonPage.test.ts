@@ -107,6 +107,34 @@ describe("Moon page helpers", () => {
     expect(visibleText(page)).toContain("No eligible Burning Chickens were found in this wallet on Base mainnet.");
   });
 
+  test("renders manual Chicken token entry when wallet listing is unavailable", () => {
+    const page = MoonPage({
+      burningChicken: {
+        chickens: [],
+        configured: true,
+        error: "Automatic Chicken wallet listing is unavailable for this contract. Enter a Chicken token ID manually.",
+        loading: false,
+        maxMoonsPerPlayer: 2,
+        moonCount: 0,
+      },
+      canBurnChicken: true,
+      moonState: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        moon: null,
+        buildings: [],
+        queue: null,
+      },
+      selectedCoordinates: { galaxy: 1, system: 44, position: 8 },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Automatic Chicken wallet listing is unavailable");
+    expect(text).toContain("Chicken token ID");
+    expect(text).toContain("Burn Token");
+    expect(text).not.toContain("execution reverted");
+  });
+
   test("disables chicken burns at the two-moon limit", () => {
     const page = MoonPage({
       burningChicken: {

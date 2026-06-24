@@ -1033,8 +1033,12 @@ const ERC20_SELECTORS = {
 } as const;
 const ERC721_SELECTORS = {
   balanceOf: "0x70a08231",
+  supportsInterface: "0x01ffc9a7",
   tokenOfOwnerByIndex: "0x2f745c59",
 } as const;
+const ERC721_ENUMERABLE_INTERFACE_ID = "0x780e9d63";
+export const BURNING_CHICKEN_MANUAL_TOKEN_ENTRY_MESSAGE =
+  "Automatic Chicken wallet listing is unavailable for this contract. Enter a Chicken token ID manually.";
 const REJECTED_CODES = new Set([4001, "4001", "ACTION_REJECTED", "USER_REJECTED"]);
 
 export type BurningChickenConfig = {
@@ -2040,6 +2044,10 @@ export function encodeAddressUintCall(selector: string, address: string, value: 
   return `${selector}${address.toLowerCase().replace(/^0x/, "").padStart(64, "0")}${BigInt(value).toString(16).padStart(64, "0")}`;
 }
 
+export function encodeBytes4Call(selector: string, value: string): string {
+  return `${selector}${value.toLowerCase().replace(/^0x/, "").padEnd(64, "0")}`;
+}
+
 export function encodeUintAddressCall(selector: string, value: bigint | number | string, address: string): string {
   return `${selector}${BigInt(value).toString(16).padStart(64, "0")}${address.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
 }
@@ -2656,6 +2664,12 @@ export async function fetchBurningChickens(
   );
   const balance = decodeUintResult(balanceHex);
   const chickens: BurningChickenNft[] = [];
+  if (balance === 0n) return chickens;
+
+  const enumerable = await supportsBurningChickenEnumerable(config);
+  if (!enumerable) {
+    throw new Error(BURNING_CHICKEN_MANUAL_TOKEN_ENTRY_MESSAGE);
+  }
 
   for (let index = 0n; index < balance; index += 1n) {
     const tokenHex = await callBaseMainnetContract(
@@ -2671,6 +2685,19 @@ export async function fetchBurningChickens(
   }
 
   return chickens;
+}
+
+async function supportsBurningChickenEnumerable(config: BurningChickenConfig): Promise<boolean> {
+  try {
+    const result = await callBaseMainnetContract(
+      config,
+      config.nftContractAddress,
+      encodeBytes4Call(ERC721_SELECTORS.supportsInterface, ERC721_ENUMERABLE_INTERFACE_ID),
+    );
+    return decodeBoolResult(result);
+  } catch {
+    return false;
+  }
 }
 
 async function fetchBurningChickenLevel(

@@ -196,6 +196,39 @@ function ChickenBurnPanel({
         </p>
       ) : null}
 
+      {configured ? (
+        <form
+          className="mt-3 flex flex-col gap-2 rounded border border-white/10 bg-black/15 p-3 sm:flex-row sm:items-center"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const formData = new FormData(event.currentTarget);
+            const tokenId = String(formData.get("chickenTokenId") ?? "").trim();
+            if (disabledReason || !isPositiveIntegerInput(tokenId)) return;
+            onBurnChicken?.(tokenId);
+          }}
+        >
+          <label className="min-w-0 flex-1 text-xs font-medium text-slate-300">
+            Chicken token ID
+            <input
+              className="mt-1 h-8 w-full rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100 outline-none placeholder:text-slate-500 focus:border-amber-200/40"
+              inputMode="numeric"
+              name="chickenTokenId"
+              pattern="[0-9]*"
+              placeholder="Enter token ID"
+              required
+            />
+          </label>
+          <button
+            className="h-8 rounded border border-amber-200/20 bg-amber-200/10 px-3 text-xs font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={Boolean(disabledReason)}
+            title={disabledReason}
+            type="submit"
+          >
+            Burn Token
+          </button>
+        </form>
+      ) : null}
+
       {chickens.length > 0 ? (
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {chickens.map((chicken) => (
