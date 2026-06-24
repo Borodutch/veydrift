@@ -6,6 +6,7 @@ import {
   decodeBoolResult,
   decodeColonizationTargetId,
   decodeUintResult,
+  encodeBytes4Call,
   encodeQuantity,
   encodeAddressUintCall,
   encodeAddressCall,
@@ -20,6 +21,7 @@ import {
   encodeUintCall,
   ensureBaseSepoliaNetwork,
   ensureBaseMainnetNetwork,
+  fetchBurningChickens,
   fetchAllianceState,
   fetchDefenseState,
   fetchFleetMissionArchive,
@@ -90,6 +92,7 @@ import {
   watchPlanet,
   WATCHED_PLANETS_API_READ_TIMEOUT_MS,
   walletRequestErrorMessage,
+  BURNING_CHICKEN_MANUAL_TOKEN_ENTRY_MESSAGE,
   type Eip1193Provider
 } from "./walletFlow";
 import { GAME_UNAVAILABLE_MESSAGE } from "./gameUnavailable";
@@ -130,6 +133,52 @@ describe("walletFlow", () => {
         + "2c".padStart(64, "0")
         + "8".padStart(64, "0")
     );
+  });
+
+  test("encodes ERC-165 bytes4 interface checks", () => {
+    expect(encodeBytes4Call("0x01ffc9a7", "0x780e9d63")).toBe(
+      "0x01ffc9a7" + "780e9d63".padEnd(64, "0")
+    );
+  });
+
+  test("does not surface raw reverts when Burning Chickens are not enumerable", async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: string[] = [];
+    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { params?: Array<{ data?: string }> };
+      const data = body.params?.[0]?.data ?? "";
+      calls.push(data);
+      if (data.startsWith("0x70a08231")) {
+        return new Response(JSON.stringify({ result: "0x" + "1".padStart(64, "0") }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      }
+      if (data.startsWith("0x01ffc9a7")) {
+        return new Response(JSON.stringify({ result: "0x" + "0".padStart(64, "0") }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      }
+      return new Response(JSON.stringify({ error: { message: "execution reverted" } }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchBurningChickens(account, {
+        burnContractAddress: contract,
+        burnSelector: "0x6364233d",
+        levelSelector: "0x05c58df2",
+        nftContractAddress: contract,
+        rpcUrl: "https://base.example.test",
+      })).rejects.toThrow(BURNING_CHICKEN_MANUAL_TOKEN_ENTRY_MESSAGE);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    expect(calls.some((data) => data.startsWith("0x2f745c59"))).toBe(false);
   });
 
   test("switches to Base mainnet and sends Burning Chicken moon burn transactions", async () => {
