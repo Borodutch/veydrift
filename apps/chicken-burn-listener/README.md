@@ -37,6 +37,10 @@ event ChickenBurned(
 ```
 
 Set `CHICKEN_BURN_EVENT_SIGNATURE` if the deployed contract uses another event name/signature. The
-event must expose the burner, token id, planet id, galaxy, system, and position by name. ERC-721
-`Transfer(from, address(0), tokenId)` burns are also supported when the burn transaction calldata is
-one of the documented `burn*ForMoon(tokenId, planetId, galaxy, system, position)` shapes.
+event must expose the burner, token id, planet id, galaxy, system, and position by name.
+
+`ENABLE_TRANSFER_BURN_FALLBACK=true` also supports ERC-721 `Transfer(from, address(0), tokenId)`
+burns when the burn transaction calldata is one of the documented
+`burn*ForMoon(tokenId, planetId, galaxy, system, position)` shapes. Keep this off for the upgraded
+Chicken contract, because `burnForMoon` emits both the Veydrift burn event and the normal ERC-721
+burn Transfer in the same transaction.
