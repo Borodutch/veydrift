@@ -390,6 +390,26 @@ function combatTechLevelForKey(
   return safeResourceNumber(primaryLevels?.[key]) ?? safeResourceNumber(fallbackLevels?.[key]) ?? 0;
 }
 
+const ASTROPHYSICS_TECHNOLOGY_ID = "12";
+
+export function colonizationLimitBlocker({
+  planetCount,
+  researchTechnologyLevels,
+  shipyardTechnologyLevels,
+}: {
+  planetCount: number;
+  researchTechnologyLevels?: Record<string, number> | undefined;
+  shipyardTechnologyLevels?: Record<string, number> | undefined;
+}): string | undefined {
+  const astrophysicsLevel =
+    safeResourceNumber(researchTechnologyLevels?.[ASTROPHYSICS_TECHNOLOGY_ID])
+      ?? safeResourceNumber(shipyardTechnologyLevels?.[ASTROPHYSICS_TECHNOLOGY_ID])
+      ?? 0;
+  const limit = 1 + Math.max(0, Math.trunc(astrophysicsLevel));
+  if (planetCount < limit) return undefined;
+  return `Your colony limit is ${planetCount}/${limit}. Research Astrophysics before colonizing another planet.`;
+}
+
 export function attackerCombatTechLevelsForMission({
   researchTechnologyLevels,
   shipyardTechnologyLevels,
@@ -6366,6 +6386,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     };
 
     if (action.mode === "colonize") {
+      const colonyLimitBlocker = colonizationLimitBlocker({
+        planetCount: walletPlanets.length,
+        researchTechnologyLevels: effectiveResearchState?.technologyLevels,
+        shipyardTechnologyLevels: shipyardState?.technologyLevels,
+      });
+      if (colonyLimitBlocker) {
+        setGalaxyAction({ status: "error", label: colonyLimitBlocker });
+        return;
+      }
+
       closeMissionCreationWhenComplete(runGalaxyTransaction("Colony mission", () => sendCreateColonyTransaction(
         provider,
         account,
@@ -6487,7 +6517,19 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       validateShipInventory: { originPlanetId, ships: draft.ships },
     }));
     closeMissionCreationWhenComplete(runMission());
-  }, [account, activePlanetId, gameContract, onChainSettlement?.homePlanetId, pendingGalaxyMission, provider, runGalaxyTransaction, selectedManagedPlanet, shipyardState?.technologyLevels]);
+  }, [
+    account,
+    activePlanetId,
+    effectiveResearchState?.technologyLevels,
+    gameContract,
+    onChainSettlement?.homePlanetId,
+    pendingGalaxyMission,
+    provider,
+    runGalaxyTransaction,
+    selectedManagedPlanet,
+    shipyardState?.technologyLevels,
+    walletPlanets.length,
+  ]);
 
   const handleStartMoonBuilding = useCallback((buildingId: number, label: string) => {
     if (!provider || !account || !moonContract || !moonState?.homePlanetId) {

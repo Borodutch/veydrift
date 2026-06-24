@@ -12,6 +12,7 @@ import {
   beginRefreshRequest,
   canLoadIndexedPageState,
   canApplyRefreshRequest,
+  colonizationLimitBlocker,
   canonicalInfrastructureBuildingCompletionQueue,
   completedBuildingFinishSyncReasonFor,
   defenseCompletionPlanetIdFor,
@@ -131,6 +132,20 @@ describe("Playable MVP app display helpers", () => {
       researchTechnologyLevels: { "5": 3 },
       shipyardTechnologyLevels: { "5": 4, "6": 2, "7": 5 },
     })).toEqual({ weapons: 3, shielding: 2, armor: 5 });
+  });
+
+  test("blocks colonization locally when Astrophysics colony limit is reached", () => {
+    expect(colonizationLimitBlocker({
+      planetCount: 1,
+      researchTechnologyLevels: { "12": 0 },
+      shipyardTechnologyLevels: undefined,
+    })).toContain("Research Astrophysics");
+
+    expect(colonizationLimitBlocker({
+      planetCount: 1,
+      researchTechnologyLevels: { "12": 1 },
+      shipyardTechnologyLevels: undefined,
+    })).toBeUndefined();
   });
 
   test("gates page state refreshes until the current wallet snapshot is hydrated", () => {
