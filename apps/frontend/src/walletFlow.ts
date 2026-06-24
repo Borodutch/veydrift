@@ -1040,11 +1040,13 @@ const REJECTED_CODES = new Set([4001, "4001", "ACTION_REJECTED", "USER_REJECTED"
 export type BurningChickenConfig = {
   burnContractAddress: string;
   burnSelector: string;
+  levelSelector?: string | null | undefined;
   nftContractAddress: string;
   rpcUrl?: string | null | undefined;
 };
 
 export type BurningChickenNft = {
+  level: number | null;
   tokenId: string;
 };
 
@@ -1739,10 +1741,14 @@ export function encodeBurningChickenMoonCall(
   selector: string,
   tokenId: bigint | number | string,
   planetId: bigint | number | string,
+  coordinates: { galaxy: number; system: number; position: number },
 ): string {
   return encodeGameCall(selector, [
     tokenId,
     planetId,
+    coordinates.galaxy,
+    coordinates.system,
+    coordinates.position,
   ]);
 }
 
@@ -2659,11 +2665,32 @@ export async function fetchBurningChickens(
     );
     const tokenId = decodeUintResult(tokenHex).toString();
     chickens.push({
+      level: await fetchBurningChickenLevel(tokenId, config),
       tokenId,
     });
   }
 
   return chickens;
+}
+
+async function fetchBurningChickenLevel(
+  tokenId: string,
+  config: BurningChickenConfig,
+): Promise<number | null> {
+  const selector = config.levelSelector?.trim();
+  if (!selector) return null;
+
+  try {
+    const levelHex = await callBaseMainnetContract(
+      config,
+      config.nftContractAddress,
+      encodeUintCall(selector, tokenId),
+    );
+    const level = Number(decodeUintResult(levelHex));
+    return Number.isFinite(level) ? level : null;
+  } catch {
+    return null;
+  }
 }
 
 async function callBaseMainnetContract(
@@ -2702,12 +2729,13 @@ export async function sendBurningChickenMoonTransaction(
   config: BurningChickenConfig,
   tokenId: string,
   planetId: string,
+  coordinates: { galaxy: number; system: number; position: number },
 ): Promise<string> {
   await ensureBaseMainnetNetwork(provider);
   return sendWalletTransaction(provider, account, {
     from: account,
     to: config.burnContractAddress,
-    data: encodeBurningChickenMoonCall(config.burnSelector, tokenId, planetId),
+    data: encodeBurningChickenMoonCall(config.burnSelector, tokenId, planetId, coordinates),
   });
 }
 

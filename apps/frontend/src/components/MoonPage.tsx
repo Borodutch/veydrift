@@ -142,6 +142,7 @@ function ChickenBurnPanel({
     hasMoon,
     moonLimitReached,
     pending,
+    selectedCoordinates,
     transactionUnavailableReason,
   });
   const targetLabel = selectedCoordinates
@@ -201,6 +202,9 @@ function ChickenBurnPanel({
             <div className="rounded border border-white/10 bg-black/15 p-3" key={chicken.tokenId}>
               <div className="flex items-center justify-between gap-2">
                 <span className="min-w-0 truncate text-sm font-semibold text-slate-100">Chicken #{chicken.tokenId}</span>
+                <span className="shrink-0 rounded border border-amber-200/20 bg-amber-200/10 px-2 py-0.5 text-[11px] text-amber-100">
+                  {chicken.level === null ? "Level unknown" : `Level ${chicken.level}`}
+                </span>
               </div>
               <button
                 className="mt-3 h-8 w-full rounded border border-amber-200/20 bg-amber-200/10 text-xs font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
@@ -229,6 +233,7 @@ function chickenBurnDisabledReason({
   hasMoon,
   moonLimitReached,
   pending,
+  selectedCoordinates,
   transactionUnavailableReason,
 }: {
   canBurnChicken?: boolean | undefined;
@@ -236,9 +241,11 @@ function chickenBurnDisabledReason({
   hasMoon: boolean;
   moonLimitReached: boolean;
   pending: boolean;
+  selectedCoordinates?: Coordinates | undefined;
   transactionUnavailableReason?: string | undefined;
 }): string | undefined {
   if (!configured) return "Burning Chicken burn config is unavailable.";
+  if (!selectedCoordinates) return "Select a Veydrift planet before burning a chicken.";
   if (hasMoon) return "The selected planet already has a moon.";
   if (moonLimitReached) return "This wallet has reached the two-moon limit.";
   if (!canBurnChicken) return transactionUnavailableReason ?? "Wallet or Burning Chicken contract unavailable.";

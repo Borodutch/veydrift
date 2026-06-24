@@ -5581,14 +5581,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, runGatedTransaction]);
 
   const handleBurnChickenForMoon = useCallback((tokenId: string) => {
-    if (!provider || !account || !chickenBurnConfig || !activePlanetId) {
-      setMoonAction({ status: "error", label: "Wallet, Burning Chicken config, or selected planet is unavailable." });
+    if (!provider || !account || !chickenBurnConfig || !activePlanetId || !activePlanetCoords) {
+      setMoonAction({ status: "error", label: "Wallet, Burning Chicken config, selected planet, or selected coordinates are unavailable." });
       return;
     }
 
-    const targetLabel = activePlanetCoords
-      ? `${activePlanetCoords.galaxy}:${activePlanetCoords.system}:${activePlanetCoords.position}`
-      : `planet #${activePlanetId}`;
+    const targetLabel = `${activePlanetCoords.galaxy}:${activePlanetCoords.system}:${activePlanetCoords.position}`;
     const label = `Burn Chicken #${tokenId} for ${targetLabel}`;
     void runGatedTransaction(`moon:chicken-burn:${tokenId}`, async () => {
       const planetSwitchRequestId = planetSwitchGate.current;
@@ -5601,6 +5599,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           chickenBurnConfig,
           tokenId,
           activePlanetId,
+          activePlanetCoords,
         );
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         setMoonAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
