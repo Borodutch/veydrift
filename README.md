@@ -111,6 +111,9 @@ VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=0x...
 VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=0x...
 VEYDRIFT_INDEX_DB_PATH=.data/contract-state.sqlite
 VEYDRIFT_INDEX_FROM_BLOCK=0
+VEYDRIFT_MISSION_RESOLVER_PRIVATE_KEY=0x...
+# Optional alternative when the RPC node has an unlocked funded resolver account.
+VEYDRIFT_MISSION_RESOLVER_ADDRESS=0x...
 VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY=...
 ALCHEMY_BASE_SEPOLIA_API_KEY=...
 # Optional explicit websocket overrides; otherwise the Alchemy key derives the Base Sepolia WS URL.
@@ -138,6 +141,10 @@ not call RPC to read `startPrice` or the wallet's native ETH balance.
 `VEYDRIFT_METAL_TOKEN_ADDRESS`, `VEYDRIFT_CRYSTAL_TOKEN_ADDRESS`, and
 `VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS` expose the upgradeable ERC-20 resource token
 proxies deployed for the game.
+On test deployments, `VEYDRIFT_MISSION_RESOLVER_PRIVATE_KEY` enables the
+writer-only fleet settlement keeper that submits due `resolveFleetMission` and
+`completeFleetMissionReturn` transactions. `VEYDRIFT_MISSION_RESOLVER_ADDRESS`
+is supported for RPC nodes with an unlocked funded resolver account.
 Health/debug responses only report safe configuration metadata and never echo
 RPC URLs or API keys. Ownership remains canonical onchain; the normal backend
 serves frontend/API reads from the SQLite-backed contract state index and mutates

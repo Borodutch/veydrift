@@ -31,6 +31,7 @@ import type {
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import { VeydriftGameReader, riftRequirements } from "./evm";
 import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
+import { MissionResolutionService } from "./missionResolution";
 import { watchedPlanetMessage } from "./playerProfiles";
 import { deriveInfrastructureFields } from "./readModels";
 import { createRequestHandler, deriveLogBackfiller, shouldRecoverFailedReconciliation } from "./server";
@@ -7461,6 +7462,89 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     // Reads are still served from the shared WAL database.
     expect(body.indexer).not.toBeNull();
     expect(response.status).toBe(200);
+  });
+
+  test("reader workers skip mission resolution even when test config enables it", async () => {
+    const indexer = {
+      snapshot() {
+        return {
+          indexedState: "healthy",
+          safeToServeIndexedState: true
+        };
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: {
+        ...configuredTestConfig,
+        missionResolutionEnabled: true,
+        missionResolverAddress: "0x4444444444444444444444444444444444444444"
+      },
+      indexer,
+      role: "reader"
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    expect(body.missionResolution).toBeNull();
+    expect(response.status).toBe(200);
+  });
+
+  test("writer health surfaces mission resolution status when enabled", async () => {
+    const service = new MissionResolutionService(
+      {
+        ...configuredTestConfig,
+        missionResolutionEnabled: true,
+        missionResolverAddress: "0x4444444444444444444444444444444444444444"
+      },
+      {
+        chainClient: {
+          async listResolvableFleetMissions() {
+            return [];
+          },
+          async listReturnableFleetMissions() {
+            return [];
+          },
+          async resolveFleetMission() {
+            return "0xresolve";
+          },
+          async completeFleetMissionReturn() {
+            return "0xreturn";
+          }
+        },
+        intervalMs: 60_000
+      }
+    );
+    const indexer = {
+      snapshot() {
+        return {
+          indexedState: "healthy",
+          safeToServeIndexedState: true
+        };
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: {
+        ...configuredTestConfig,
+        missionResolutionEnabled: true,
+        missionResolverAddress: "0x4444444444444444444444444444444444444444"
+      },
+      indexer,
+      missionResolution: service
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    service.stop();
+    expect(body.missionResolution).toMatchObject({
+      enabled: true,
+      resolverConfigured: true,
+      resolverAddress: "0x4444444444444444444444444444444444444444"
+    });
+    expect(response.status).toBe(503);
   });
 
   test("writer workers (the default) construct chain-sync and the committer", async () => {

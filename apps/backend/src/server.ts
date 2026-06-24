@@ -44,6 +44,7 @@ import {
   type IndexerSnapshot
 } from "./indexer";
 import { RandomnessCommitterService } from "./randomnessCommitter";
+import { MissionResolutionService } from "./missionResolution";
 import {
   validatePlayerDescription,
   validatePlayerDisplayName,
@@ -119,6 +120,7 @@ export type ServerDependencies = {
   config?: BackendConfig;
   configProblems?: ConfigProblem[];
   chainReader?: ChainReader;
+  missionResolution?: MissionResolutionService;
   randomnessCommitter?: RandomnessCommitterService;
   indexer?: SettlementIndexer;
   // Worker role in the multi-process pool (VEY-KANEO-466). "writer" (the default) owns chain-sync
@@ -182,8 +184,14 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const randomnessCommitter =
     dependencies.randomnessCommitter ??
     (isWriter && loaded.problems.length === 0 ? new RandomnessCommitterService(loaded.config) : undefined);
+  const missionResolution =
+    dependencies.missionResolution ??
+    (isWriter && loaded.problems.length === 0 && loaded.config.missionResolutionEnabled
+      ? new MissionResolutionService(loaded.config)
+      : undefined);
 
   chainSync?.start();
+  missionResolution?.start();
   randomnessCommitter?.start();
   const runStartupReconcile = dependencies.runStartupReconcile ?? false;
   if (isWriter && runStartupReconcile && indexer && loaded.problems.length === 0) {
@@ -262,7 +270,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           chain: safeConfigSummary(loaded.config),
           readiness,
           chainSync: chainSyncSnapshot,
-          missionResolution: null,
+          missionResolution: missionResolution?.snapshot() ?? null,
           randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
           indexer: indexerSnapshot,
           rpc: chainReader?.rpcMetrics?.() ?? null
@@ -290,6 +298,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           configured: loaded.problems.length === 0,
           chain: safeConfigSummary(loaded.config),
           chainSync: chainSync?.snapshot() ?? null,
+          missionResolution: missionResolution?.snapshot() ?? null,
           randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
           indexer: indexer?.snapshot() ?? null,
           problems: loaded.problems
