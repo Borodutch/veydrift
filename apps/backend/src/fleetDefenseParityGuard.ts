@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { writeFileSync } from "node:fs";
+import { decodeFunctionResult, encodeFunctionData } from "viem";
 import type { Address, DefenseState, ShipyardState } from "./evm";
 import {
   compareFleetDefenseParity,
@@ -13,9 +14,57 @@ type DebugFleetDefenseState = {
   indexer?: unknown;
 };
 
+type ApiMission = {
+  arrivalAt: string;
+  missionId: string;
+  needsResolution?: boolean;
+  owner: Address;
+  originPlanetId: string;
+  returnAt: string;
+  resolutionBlocker?: string;
+  status: string;
+};
+
 const shipCountSelector = "0x57686701";
 const defenseCountSelector = "0x836e3a32";
 const addressPattern = /^0x[a-fA-F0-9]{40}$/;
+const missionStatuses = ["None", "Outbound", "Returning", "Resolved", "Returned", "Recalled"] as const;
+const missionParityAbi = [
+  {
+    type: "function",
+    name: "fleetMission",
+    stateMutability: "view",
+    inputs: [{ type: "uint256", name: "missionId" }],
+    outputs: [
+      { type: "uint8", name: "status" },
+      { type: "uint8", name: "missionType" },
+      { type: "address", name: "owner" },
+      { type: "uint256", name: "originPlanetId" },
+      { type: "uint256", name: "targetPlanetId" },
+      { type: "uint64", name: "departureAt" },
+      { type: "uint64", name: "arrivalAt" },
+      { type: "uint64", name: "returnAt" },
+      { type: "uint128", name: "fuelCost" },
+      {
+        type: "tuple",
+        name: "cargo",
+        components: [
+          { type: "uint128", name: "metal" },
+          { type: "uint128", name: "crystal" },
+          { type: "uint128", name: "deuterium" }
+        ]
+      },
+      { type: "uint256", name: "randomnessRequestId" }
+    ]
+  },
+  {
+    type: "function",
+    name: "activeFleetMissionCount",
+    stateMutability: "view",
+    inputs: [{ type: "address", name: "player" }],
+    outputs: [{ type: "uint256" }]
+  }
+] as const;
 
 const options = parseArgs(process.argv.slice(2));
 const apiUrl = trimSlash(options["api-url"] ?? process.env.VEYDRIFT_API_URL ?? "https://api-test.veydrift.com");
@@ -47,14 +96,21 @@ async function main(): Promise<void> {
   const gameAddress = await resolveGameAddress();
   const rawState = await fetchJson<DebugFleetDefenseState>(`${apiUrl}/debug/fleet-defense-state`, apiTimeoutMs);
   const rawCounts = rawState.counts ?? [];
+  const activeMissions = await readActiveMissions();
+  const missionParity = await readMissionParity(gameAddress, activeMissions);
+  const fleetSlotParity = await readFleetSlotParity(gameAddress, rawCounts, activeMissions);
   const chainCounts = await readChainCounts(gameAddress, rawCounts);
   const apiCounts = await readApiCounts(rawCounts, warmupPasses);
   const report = compareFleetDefenseParity(chainCounts, rawCounts, apiCounts);
+  const ok = report.ok && missionParity.discrepancies.length === 0 && fleetSlotParity.discrepancies.length === 0;
   const artifact = {
     ...report,
+    ok,
     apiUrl,
     rpcUrl: redactUrl(rpcUrl),
     gameAddress,
+    missionParity,
+    fleetSlotParity,
     checkedPlanets: new Set(rawCounts.map((count) => count.planetId)).size,
     checkedUnits: {
       chain: chainCounts.length,
@@ -74,6 +130,16 @@ async function main(): Promise<void> {
   writeArtifact(artifact);
 
   if (!artifact.ok) {
+    for (const item of missionParity.discrepancies.slice(0, 25)) {
+      console.error(
+        `${item.kind}: mission ${item.missionId} api=${item.apiStatus} chain=${item.chainStatus ?? "n/a"} arrivalAt=${item.arrivalAt} returnAt=${item.returnAt} owner=${item.owner}`
+      );
+    }
+    for (const item of fleetSlotParity.discrepancies.slice(0, 25)) {
+      console.error(
+        `${item.kind}: owner=${item.owner} api=${item.apiActive} chain=${item.chainActive} planet=${item.planetId}`
+      );
+    }
     for (const item of artifact.discrepancies.slice(0, 25)) {
       console.error(
         `${item.kind}: planet ${item.planetId} ${item.unitKind} ${item.unitId} (${item.unitName}) chain=${item.chain} raw=${item.raw ?? "missing"} api=${item.api ?? "missing"} owner=${item.owner}`
@@ -87,6 +153,170 @@ async function main(): Promise<void> {
     }
     process.exit(1);
   }
+}
+
+async function readActiveMissions(): Promise<ApiMission[]> {
+  const body = await fetchJson<{ missions?: ApiMission[] }>(`${apiUrl}/missions`, apiTimeoutMs);
+  return (body.missions ?? []).filter((mission) => mission?.missionId && mission?.owner);
+}
+
+async function readMissionParity(gameAddress: Address, activeMissions: readonly ApiMission[]): Promise<{
+  checked: number;
+  discrepancies: Array<{
+    arrivalAt: string;
+    apiStatus: string;
+    chainStatus?: string;
+    kind: "api_chain_status_mismatch" | "due_active_mission";
+    missionId: string;
+    owner: Address;
+    returnAt: string;
+  }>;
+}> {
+  const limit = parsePositiveInt(options["mission-parity-limit"], 250);
+  const missions = activeMissions.slice(0, limit);
+  const calls = missions.map((mission) => ({
+    mission,
+    data: encodeFunctionData({
+      abi: missionParityAbi,
+      functionName: "fleetMission",
+      args: [BigInt(mission.missionId)]
+    })
+  }));
+  const responses = await rpcBatch(calls.map((call, index) => ({
+    jsonrpc: "2.0",
+    id: index + 1,
+    method: "eth_call",
+    params: [{ to: gameAddress, data: call.data }, "latest"]
+  })));
+  const byId = new Map(responses.map((response) => [response.id, response]));
+  const discrepancies: Awaited<ReturnType<typeof readMissionParity>>["discrepancies"] = [];
+  const now = Math.floor(Date.now() / 1_000);
+
+  for (let index = 0; index < calls.length; index += 1) {
+    const call = calls[index];
+    if (!call) continue;
+    const response = byId.get(index + 1);
+    if (!response || response.error) {
+      throw new Error(`RPC fleetMission(${call.mission.missionId}) failed: ${response?.error?.message ?? "missing response"}`);
+    }
+    const decoded = decodeFunctionResult({
+      abi: missionParityAbi,
+      functionName: "fleetMission",
+      data: response.result as `0x${string}`
+    });
+    const chainStatus = missionStatuses[Number(decoded[0])] ?? `Unknown:${String(decoded[0])}`;
+    if (call.mission.status !== chainStatus) {
+      discrepancies.push({
+        arrivalAt: call.mission.arrivalAt,
+        apiStatus: call.mission.status,
+        chainStatus,
+        kind: "api_chain_status_mismatch",
+        missionId: call.mission.missionId,
+        owner: call.mission.owner,
+        returnAt: call.mission.returnAt
+      });
+    }
+    const arrivalDue = call.mission.status === "Outbound"
+      && Number(call.mission.arrivalAt) <= now
+      && call.mission.needsResolution === true
+      && !call.mission.resolutionBlocker;
+    const returnDue = (call.mission.status === "Returning" || call.mission.status === "Recalled")
+      && Number(call.mission.returnAt) <= now;
+    if (arrivalDue || returnDue) {
+      discrepancies.push({
+        arrivalAt: call.mission.arrivalAt,
+        apiStatus: call.mission.status,
+        chainStatus,
+        kind: "due_active_mission",
+        missionId: call.mission.missionId,
+        owner: call.mission.owner,
+        returnAt: call.mission.returnAt
+      });
+    }
+  }
+
+  return { checked: missions.length, discrepancies };
+}
+
+async function readFleetSlotParity(
+  gameAddress: Address,
+  rawCounts: readonly FleetDefenseUnitCount[],
+  activeMissions: readonly ApiMission[]
+): Promise<{
+  checked: number;
+  discrepancies: Array<{
+    apiActive: number;
+    chainActive: number;
+    kind: "active_fleet_slot_mismatch";
+    owner: Address;
+    planetId: string;
+  }>;
+}> {
+  const owners = ownerPlanetRefs(rawCounts, activeMissions);
+  const calls = [...owners.values()].map((ref) => ({
+    ref,
+    data: encodeFunctionData({
+      abi: missionParityAbi,
+      functionName: "activeFleetMissionCount",
+      args: [ref.owner]
+    })
+  }));
+  const responses = await rpcBatch(calls.map((call, index) => ({
+    jsonrpc: "2.0",
+    id: index + 1,
+    method: "eth_call",
+    params: [{ to: gameAddress, data: call.data }, "latest"]
+  })));
+  const byId = new Map(responses.map((response) => [response.id, response]));
+  const discrepancies: Awaited<ReturnType<typeof readFleetSlotParity>>["discrepancies"] = [];
+
+  for (let index = 0; index < calls.length; index += 1) {
+    const call = calls[index];
+    if (!call) continue;
+    const response = byId.get(index + 1);
+    if (!response || response.error) {
+      throw new Error(`RPC activeFleetMissionCount(${call.ref.owner}) failed: ${response?.error?.message ?? "missing response"}`);
+    }
+    const decoded = decodeFunctionResult({
+      abi: missionParityAbi,
+      functionName: "activeFleetMissionCount",
+      data: response.result as `0x${string}`
+    });
+    const chainActive = Number(decoded);
+    const shipyard = await fetchJson<ShipyardState>(
+      `${apiUrl}/wallet/${encodeURIComponent(call.ref.owner)}/shipyard?planetId=${encodeURIComponent(call.ref.planetId)}`,
+      apiTimeoutMs
+    );
+    const apiActive = Number(shipyard.fleetSlots?.active ?? 0);
+    if (apiActive !== chainActive) {
+      discrepancies.push({
+        apiActive,
+        chainActive,
+        kind: "active_fleet_slot_mismatch",
+        owner: call.ref.owner,
+        planetId: call.ref.planetId
+      });
+    }
+  }
+
+  return { checked: calls.length, discrepancies };
+}
+
+function ownerPlanetRefs(
+  rawCounts: readonly FleetDefenseUnitCount[],
+  activeMissions: readonly ApiMission[]
+): Map<string, { owner: Address; planetId: string }> {
+  const refs = new Map<string, { owner: Address; planetId: string }>();
+  for (const count of rawCounts) {
+    refs.set(count.owner.toLowerCase(), { owner: count.owner.toLowerCase() as Address, planetId: count.planetId });
+  }
+  for (const mission of activeMissions) {
+    refs.set(mission.owner.toLowerCase(), {
+      owner: mission.owner.toLowerCase() as Address,
+      planetId: mission.originPlanetId
+    });
+  }
+  return refs;
 }
 
 async function resolveGameAddress(): Promise<Address> {
@@ -286,7 +516,7 @@ function parseArgs(args: string[]): Record<string, string | undefined> {
 function usage(message?: string): never {
   if (message) console.error(message);
   console.error(
-    "Usage: bun apps/backend/src/fleetDefenseParityGuard.ts [--api-url <url>] [--rpc-url <url>] [--game <address>] [--warmup-passes <n>] [--rpc-batch-size <n>] [--api-timeout-ms <n>] [--rpc-timeout-ms <n>] [--out <file>]"
+    "Usage: bun apps/backend/src/fleetDefenseParityGuard.ts [--api-url <url>] [--rpc-url <url>] [--game <address>] [--warmup-passes <n>] [--mission-parity-limit <n>] [--rpc-batch-size <n>] [--api-timeout-ms <n>] [--rpc-timeout-ms <n>] [--out <file>]"
   );
   process.exit(message ? 1 : 0);
 }
