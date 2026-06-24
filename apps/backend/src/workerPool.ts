@@ -48,28 +48,27 @@ export type WorkerAssignment =
   | { kind: "supervisor"; workerCount: number }
   | { kind: "worker"; role: WorkerRole; index: number };
 
-// Resolve how many worker processes to run. `VEYDRIFT_WORKER_COUNT` is the
-// explicit override (useful for tests, constrained containers, or pinning a
-// single-process deployment). `VEYDRIFT_MAX_WORKER_COUNT` is retained as a
-// legacy cap for deployed service configs that predate the explicit override.
-// Without either, keep the pool bounded to a deliberate default so auto-sizing
-// does not unexpectedly spawn one reader per host CPU. The result is always at
-// least 1 so the backend can boot on a single-core host.
+// Resolve how many worker processes to run. `VEYDRIFT_WORKER_COUNT` is an
+// explicit target for lowering/pinning the pool; it is still bounded by the
+// deploy-safe cap so stale service configs cannot accidentally keep a
+// memory-heavy 10-worker pool alive. `VEYDRIFT_MAX_WORKER_COUNT` is retained as
+// a legacy cap, but it can only lower the built-in default cap, not raise it.
+// The result is always at least 1 so the backend can boot on a single-core host.
 export function resolveWorkerCount(
   env: Record<string, string | undefined>,
   hardwareConcurrency: number
 ): number {
+  const configuredCap = parsePositiveIntegerEnv(env[LEGACY_MAX_WORKER_COUNT_ENV]);
+  const maxWorkerCount = Math.min(configuredCap ?? DEFAULT_MAX_WORKER_COUNT, DEFAULT_MAX_WORKER_COUNT);
   const override = env[WORKER_COUNT_ENV];
   if (override !== undefined && override.trim() !== "") {
     const parsed = Number.parseInt(override, 10);
     if (Number.isFinite(parsed) && parsed >= 1) {
-      return parsed;
+      return Math.max(1, Math.min(parsed, maxWorkerCount));
     }
   }
 
   const cpus = Number.isFinite(hardwareConcurrency) ? Math.floor(hardwareConcurrency) : 1;
-  const legacyCap = parsePositiveIntegerEnv(env[LEGACY_MAX_WORKER_COUNT_ENV]);
-  const maxWorkerCount = legacyCap ?? DEFAULT_MAX_WORKER_COUNT;
   return Math.max(1, Math.min(cpus, maxWorkerCount));
 }
 
