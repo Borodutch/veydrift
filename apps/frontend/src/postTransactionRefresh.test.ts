@@ -37,7 +37,7 @@ import {
   type WalletPlanetSyncSnapshot,
   type FinishedBuildingSnapshot,
 } from "./postTransactionRefresh";
-import type { ChainAllianceState, FleetMissionSummary } from "./walletFlow";
+import type { ChainAllianceState, FleetMissionSummary, WalletPlanetsResponse } from "./walletFlow";
 
 const wallet = "0x2222222222222222222222222222222222222222";
 
@@ -559,6 +559,72 @@ describe("post-transaction refresh reconciliation", () => {
     })).toBe(true);
   });
 
+  test("accepts started building from wallet planets while infrastructure and queue endpoints catch up", () => {
+    const walletPlanetsOnly = {
+      ...startedBuildingSnapshot(),
+      infrastructure: {
+        ...startedBuildingSnapshot().infrastructure,
+        queue: null,
+      },
+      planetsResponse: startedBuildingWalletPlanetsResponse(),
+      queues: {
+        ...startedBuildingSnapshot().queues,
+        building: null,
+      },
+    };
+
+    expect(isStartedBuildingStateVisible(walletPlanetsOnly, {
+      itemId: 3,
+      planetId: "7",
+      targetLevel: 2,
+    })).toBe(true);
+  });
+
+  test("does not accept another planet's building queue from wallet planets", () => {
+    expect(isStartedBuildingStateVisible({
+      ...staleStartedBuildingSnapshot(),
+      planetsResponse: startedBuildingWalletPlanetsResponse("8"),
+    }, {
+      itemId: 3,
+      planetId: "7",
+      targetLevel: 2,
+    })).toBe(false);
+  });
+
+  test("polls past a stale response until wallet planets expose the started building queue", async () => {
+    const walletPlanetsOnly = {
+      ...startedBuildingSnapshot(),
+      infrastructure: {
+        ...startedBuildingSnapshot().infrastructure,
+        queue: null,
+      },
+      planetsResponse: startedBuildingWalletPlanetsResponse(),
+      queues: {
+        ...startedBuildingSnapshot().queues,
+        building: null,
+      },
+    };
+    const snapshots = [
+      staleStartedBuildingSnapshot(),
+      walletPlanetsOnly,
+    ];
+    const loads: StartedBuildingSnapshot[] = [];
+
+    const result = await waitForStartedBuildingState(
+      async () => {
+        const snapshot = snapshots.shift() ?? startedBuildingSnapshot();
+        loads.push(snapshot);
+        return snapshot;
+      },
+      { itemId: 3, planetId: "7", targetLevel: 2 },
+      { attempts: 3, intervalMs: 1, delay: async () => undefined },
+    );
+
+    expect(loads).toHaveLength(2);
+    expect(result.planetsResponse?.planets[0]?.queues.building?.itemId).toBe(3);
+    expect(result.planetsResponse?.planets[0]?.queues.building?.targetLevel).toBe(2);
+  });
+
   test("polls past a stale first response after starting a building upgrade", async () => {
     const snapshots = [
       staleStartedBuildingSnapshot(),
@@ -840,6 +906,62 @@ function startedBuildingSnapshot(): StartedBuildingSnapshot {
       ship: null,
       research: null,
     },
+  };
+}
+
+function startedBuildingWalletPlanetsResponse(planetId = "7"): WalletPlanetsResponse {
+  const snapshot = startedBuildingSnapshot();
+  return {
+    wallet,
+    homePlanetId: "7",
+    planets: [
+      {
+        ...snapshot.infrastructure,
+        coordinates: "6:9:1",
+        fields: 163,
+        fieldsCapacity: 163,
+        fieldsUsed: 12,
+        galaxy: 6,
+        isHomePlanet: planetId === "7",
+        keyLevels: {
+          metalMine: 1,
+          crystalMine: 0,
+          deuteriumSynthesizer: 0,
+          solarPlant: 0,
+          roboticsFactory: 1,
+          shipyard: 0,
+          researchLab: 0,
+          terraformer: 0,
+        },
+        lastSettledAt: "1770000000",
+        metalMultiplierBps: 10000,
+        crystalMultiplierBps: 10000,
+        deuteriumMultiplierBps: 10000,
+        moon: null,
+        name: "New Zion",
+        owner: wallet,
+        planetId,
+        position: 1,
+        queues: {
+          building: snapshot.infrastructure.queue,
+          defense: null,
+          ship: null,
+        },
+        resources: snapshot.infrastructure.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
+        resourcesAsOfNow: snapshot.infrastructure.resourcesAsOfNow
+          ?? snapshot.infrastructure.resources
+          ?? { metal: "0", crystal: "0", deuterium: "0" },
+        system: 9,
+        tactical: {
+          raidableResources: { metal: "0", crystal: "0", deuterium: "0" },
+          raidableResourceTotal: "0",
+          ships: { count: 0, power: "0" },
+          defenses: { count: 0, power: "0" },
+          combatPower: "0",
+        },
+        temperature: 42,
+      },
+    ],
   };
 }
 
