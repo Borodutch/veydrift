@@ -17,6 +17,7 @@ function launchedLog(args: {
   missionType: number;
   arrivalAt: bigint;
   returnAt?: bigint;
+  randomnessRequestId?: bigint;
 }): { topics: string[]; data: string } {
   const topics = encodeEventTopics({
     abi: battleEventsAbi,
@@ -31,7 +32,7 @@ function launchedLog(args: {
       { name: "returnAt", type: "uint64" },
       { name: "randomnessRequestId", type: "uint256" }
     ],
-    [100n, 200n, args.arrivalAt, args.returnAt ?? 0n, 5n]
+    [100n, 200n, args.arrivalAt, args.returnAt ?? 0n, args.randomnessRequestId ?? 5n]
   );
   return { topics: topics as string[], data };
 }
@@ -136,7 +137,8 @@ describe("decodeBattleLog", () => {
       missionId: "42",
       missionType: MissionType.Attack,
       arrivalAt: 1_700_000_000,
-      returnAt: 1_700_000_500
+      returnAt: 1_700_000_500,
+      randomnessRequestId: "5"
     });
   });
 
@@ -153,7 +155,26 @@ describe("decodeBattleLog", () => {
       missionId: "7",
       missionType: MissionType.Transport,
       arrivalAt: 1_000,
-      returnAt: 2_000
+      returnAt: 2_000,
+      randomnessRequestId: "5"
+    });
+  });
+
+  test("decodes an ACS attack joiner's main attack mission id", () => {
+    const decoded = decodeBattleLog(
+      launchedLog({
+        missionId: 78n,
+        missionType: MissionType.AcsAttack,
+        arrivalAt: 1_000n,
+        returnAt: 2_000n,
+        randomnessRequestId: 77n
+      })
+    );
+    expect(decoded).toMatchObject({
+      kind: "launched",
+      missionId: "78",
+      missionType: MissionType.AcsAttack,
+      randomnessRequestId: "77"
     });
   });
 

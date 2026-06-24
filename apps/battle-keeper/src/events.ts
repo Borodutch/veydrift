@@ -162,6 +162,8 @@ export type DecodedLaunched = {
   arrivalAt: number;
   /** Stored return timestamp from launch; only return-leg mission types use it for a return leg. */
   returnAt: number;
+  /** Randomness request id for normal attacks; ACS attack joiners store the main attack mission id. */
+  randomnessRequestId: string;
 };
 
 export type DecodedResolved = {
@@ -224,13 +226,15 @@ export function decodeBattleLog(log: RawLog): DecodedBattleEvent | null {
         missionType: number;
         arrivalAt: bigint;
         returnAt: bigint;
+        randomnessRequestId: bigint;
       };
       return {
         kind: "launched",
         missionId: args.missionId.toString(),
         missionType: Number(args.missionType),
         arrivalAt: Number(args.arrivalAt),
-        returnAt: Number(args.returnAt)
+        returnAt: Number(args.returnAt),
+        randomnessRequestId: args.randomnessRequestId.toString()
       };
     }
 

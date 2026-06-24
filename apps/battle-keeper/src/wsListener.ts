@@ -224,7 +224,8 @@ export class WsBattleListener {
         missionId: decoded.missionId,
         missionType: decoded.missionType,
         arrivalAt: decoded.arrivalAt,
-        returnAt: decoded.returnAt
+        returnAt: decoded.returnAt,
+        randomnessRequestId: decoded.randomnessRequestId
       });
     } else if (decoded.kind === "resolved") {
       this.keeper.recordArrivalResolved({

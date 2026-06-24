@@ -34,14 +34,18 @@ class MockResolver implements MissionResolver {
 
 function makeKeeper(
   behavior: ResolveBehavior,
-  options: { now?: () => number; maxConcurrency?: number } = {}
+  options: { now?: () => number; maxConcurrency?: number; acsJoinerRetryDelaySeconds?: number } = {}
 ): { keeper: BattleKeeper; resolver: MockResolver } {
   const resolver = new MockResolver(behavior);
-  const keeper = new BattleKeeper(resolver, {
+  const keeperOptions = {
     now: options.now ?? (() => 1_000),
     maxConcurrency: options.maxConcurrency ?? 3,
-    logger: silentLogger
-  });
+    logger: silentLogger,
+    ...(options.acsJoinerRetryDelaySeconds !== undefined
+      ? { acsJoinerRetryDelaySeconds: options.acsJoinerRetryDelaySeconds }
+      : {})
+  };
+  const keeper = new BattleKeeper(resolver, keeperOptions);
   return { keeper, resolver };
 }
 
@@ -49,12 +53,14 @@ const launch = (
   missionId: string,
   missionType: number,
   arrivalAt: number,
-  returnAt = 0
-): { missionId: string; missionType: number; arrivalAt: number; returnAt: number } => ({
+  returnAt = 0,
+  randomnessRequestId?: string
+): { missionId: string; missionType: number; arrivalAt: number; returnAt: number; randomnessRequestId?: string } => ({
   missionId,
   missionType,
   arrivalAt,
-  returnAt
+  returnAt,
+  ...(randomnessRequestId ? { randomnessRequestId } : {})
 });
 
 describe("BattleKeeper pending tracking", () => {
@@ -181,6 +187,38 @@ describe("BattleKeeper pending tracking", () => {
     expect(snap.awaitingArrivalCount).toBe(0);
     expect(snap.awaitingReturnCount).toBe(1);
     expect(snap.pendingMissionIds).toEqual(["9"]);
+  });
+
+  test("an ACS attack joiner waits behind its pending main attack", async () => {
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => 1_000, maxConcurrency: 1 });
+    keeper.recordLaunched(launch("78", MissionType.AcsAttack, 900, 1_500, "77"));
+    keeper.recordLaunched(launch("77", MissionType.Attack, 900, 1_500));
+
+    await keeper.tick();
+
+    expect(resolver.calls).toEqual(["77:arrival"]);
+    expect(keeper.snapshot().pendingMissionIds).toContain("78");
+  });
+
+  test("an ACS joiner arrival submit waits for authoritative status before queueing return", async () => {
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", {
+      now: () => 1_000,
+      acsJoinerRetryDelaySeconds: 60
+    });
+    keeper.recordLaunched(launch("78", MissionType.AcsAttack, 900, 1_500, "77"));
+
+    await keeper.tick();
+
+    expect(resolver.calls).toEqual(["78:arrival"]);
+    const pending = keeper.pendingMissions();
+    expect(pending).toEqual([
+      expect.objectContaining({
+        missionId: "78",
+        leg: "arrival",
+        dueAt: 1_060
+      })
+    ]);
+    expect(keeper.snapshot().awaitingReturnCount).toBe(0);
   });
 
   test("recordReturned drops a mission from the return leg", () => {
