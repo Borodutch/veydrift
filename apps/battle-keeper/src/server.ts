@@ -1,4 +1,4 @@
-import type { BattleKeeper, KeeperSnapshot } from "./keeper";
+import type { BattleKeeper, KeeperSnapshot, PendingMissionDiagnostic } from "./keeper";
 import type { SweepSnapshot } from "./sweep";
 import type { RpcTransportSnapshot } from "./transport";
 import type { WsBattleListener, WsListenerSnapshot } from "./wsListener";
@@ -22,6 +22,7 @@ export type KeeperHealth = {
   lastResolvedAt: string | null;
   lastError: string | null;
   healthWarnings: string[];
+  staleDueMissions: PendingMissionDiagnostic[];
   build: KeeperBuildInfo;
   keeper: KeeperSnapshot;
   rpc: RpcTransportSnapshot | null;
@@ -56,14 +57,14 @@ export function buildHealth(
   const wsSnapshot = ws.snapshot();
   const sweepSnapshot = options.sweep?.snapshot() ?? null;
   const healthWarnings: string[] = [];
+  const staleDueSeconds = options.staleDueSeconds ?? defaultStaleDueSeconds;
+  const staleDueMissions = keeperSnapshot.dueMissions.filter(
+    (mission) => mission.dueAgeSeconds >= staleDueSeconds && mission.retryCount > 0
+  );
   if (!wsSnapshot.connected) {
     healthWarnings.push("websocket_disconnected");
   }
-  if (
-    keeperSnapshot.oldestDueAgeSeconds !== null &&
-    keeperSnapshot.oldestDueAgeSeconds >= (options.staleDueSeconds ?? defaultStaleDueSeconds) &&
-    keeperSnapshot.submitFailureCount > 0
-  ) {
+  if (staleDueMissions.length > 0) {
     healthWarnings.push("stale_due_retry_backlog");
   }
   if (sweepSnapshot?.lastSweepError) {
@@ -81,6 +82,7 @@ export function buildHealth(
     lastResolvedAt: keeperSnapshot.lastResolvedAt,
     lastError: keeperSnapshot.lastError,
     healthWarnings,
+    staleDueMissions,
     build: options.build ?? buildInfoFromEnv(),
     keeper: keeperSnapshot,
     rpc: rpcSnapshot,

@@ -334,15 +334,30 @@ describe("BattleKeeper resolution loop", () => {
     keeper.recordLaunched(launch("1", MissionType.Attack, 500));
 
     await keeper.tick(); // first attempt reverts
-    expect(keeper.snapshot().pendingCount).toBe(1);
-    expect(keeper.snapshot().resolvedCount).toBe(0);
-    expect(keeper.snapshot().submitFailureCount).toBe(1);
-    expect(keeper.snapshot().lastError).toContain("not resolvable");
+    const retrySnapshot = keeper.snapshot();
+    expect(retrySnapshot.pendingCount).toBe(1);
+    expect(retrySnapshot.resolvedCount).toBe(0);
+    expect(retrySnapshot.submitFailureCount).toBe(1);
+    expect(retrySnapshot.lastErrorMissionId).toBe("1");
+    expect(retrySnapshot.lastErrorLeg).toBe("arrival");
+    expect(retrySnapshot.lastError).toContain("not resolvable");
+    expect(retrySnapshot.dueMissions).toEqual([
+      expect.objectContaining({
+        missionId: "1",
+        missionTypeName: "Attack",
+        leg: "arrival",
+        dueAgeSeconds: 500,
+        retryCount: 1,
+        lastError: expect.stringContaining("NoRandomnessCommitment")
+      })
+    ]);
 
     await keeper.tick(); // second attempt succeeds
     expect(resolver.calls).toEqual(["1:arrival", "1:arrival"]);
-    expect(keeper.snapshot().pendingCount).toBe(0);
-    expect(keeper.snapshot().resolvedCount).toBe(1);
+    const resolvedSnapshot = keeper.snapshot();
+    expect(resolvedSnapshot.pendingCount).toBe(0);
+    expect(resolvedSnapshot.resolvedCount).toBe(1);
+    expect(resolvedSnapshot.dueMissions).toEqual([]);
     expect(attempts).toBe(2);
   });
 
