@@ -27,6 +27,7 @@ export type BackendConfig = {
   pollIntervalMs?: number;
   missionResolutionEnabled: boolean;
   missionResolverAddress?: `0x${string}`;
+  missionResolverPrivateKey?: `0x${string}`;
   // VEY-KANEO-471: QA staging flag. When VEYDRIFT_QA_SYNTHETIC_STATIONED_DEFENDERS is truthy AND the
   // deployment is NOT production, the fleet-visibility read model injects one synthetic incoming
   // attack with a populated `stationedDefenders` payload so the Mission Control "Stationed defenses"
@@ -191,6 +192,11 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     "VEYDRIFT_MISSION_RESOLVER_ADDRESS",
     problems
   );
+  const missionResolverPrivateKey = parsePrivateKey(
+    env.VEYDRIFT_MISSION_RESOLVER_PRIVATE_KEY,
+    "VEYDRIFT_MISSION_RESOLVER_PRIVATE_KEY",
+    problems
+  );
   const randomnessFulfillerPrivateKeyEnv =
     env.VEYDRIFT_RANDOMNESS_FULFILLER_KEY ?? env.VEYDRIFT_RANDOMNESS_FULFILLER_PRIVATE_KEY;
   const randomnessFulfillerPrivateKey = parsePrivateKey(
@@ -249,8 +255,9 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       logChunkSpan,
       rebuildDeadlineMs,
       pollIntervalMs,
-      missionResolutionEnabled: deploymentMode === "test" && Boolean(missionResolverAddress),
+      missionResolutionEnabled: deploymentMode === "test" && Boolean(missionResolverAddress || missionResolverPrivateKey),
       ...(missionResolverAddress ? { missionResolverAddress } : {}),
+      ...(missionResolverPrivateKey ? { missionResolverPrivateKey } : {}),
       qaSyntheticStationedDefenders,
       ...(moonContractAddress ? { moonContractAddress } : {}),
       ...(randomnessEngineAddress ? { randomnessEngineAddress } : {}),
@@ -279,7 +286,7 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
     hasRpcUrl: Boolean(config.rpcUrl),
     moonContractConfigured: Boolean(config.moonContractAddress),
     missionResolutionEnabled: config.missionResolutionEnabled,
-    missionResolverConfigured: Boolean(config.missionResolverAddress),
+    missionResolverConfigured: Boolean(config.missionResolverAddress || config.missionResolverPrivateKey),
     randomnessEngineConfigured: Boolean(config.randomnessEngineAddress),
     randomnessCommitterConfigured: Boolean(
       config.randomnessEngineAddress && config.randomnessFulfillerPrivateKey && config.rpcUrl

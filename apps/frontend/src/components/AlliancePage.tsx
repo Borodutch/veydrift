@@ -1,4 +1,4 @@
-import { Crown, Shield, UserRound, Users, X } from "lucide-preact";
+import { Check, Crown, LogOut, Pencil, Shield, Trash2, UserPlus, UserRound, Users, X } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
@@ -108,6 +108,7 @@ export function AlliancePage({
   const [profileTag, setProfileTag] = useState("");
   const [profileName, setProfileName] = useState("");
   const [profileDescription, setProfileDescription] = useState("");
+  const [profileFormOpen, setProfileFormOpen] = useState(false);
   const [inviteAddress, setInviteAddress] = useState("");
   const [inviteFormOpen, setInviteFormOpen] = useState(false);
   const [activeAllianceId, setActiveAllianceId] = useState<string | null>(selectedAllianceId ?? null);
@@ -120,7 +121,7 @@ export function AlliancePage({
   const isMember = hasAllianceMembership(allianceState);
   const isOwner = role === "owner";
   const canManageMembers = role === "owner" || role === "officer";
-  const disabled = !canTransact || loading || actionState.status === "pending";
+  const disabled = !canTransact || actionState.status === "pending";
   const roster = useMemo(
     () => buildAllianceRoster(allianceState?.members ?? [], profile?.owner),
     [allianceState?.members, profile?.owner]
@@ -209,6 +210,7 @@ export function AlliancePage({
               isMember={isMember}
               isOwner={isOwner}
               profileDescription={profileDescription}
+              profileFormOpen={profileFormOpen}
               profileName={profileName}
               profileTag={profileTag}
               role={role}
@@ -227,6 +229,7 @@ export function AlliancePage({
               onOpenAlliance={onOpenAlliance}
               onOpenPlayer={openPlayer}
               onSetDescription={setDescription}
+              onSetProfileFormOpen={setProfileFormOpen}
               onSetInviteAddress={setInviteAddress}
               onSetInviteFormOpen={setInviteFormOpen}
               onSetName={setName}
@@ -435,6 +438,7 @@ function MyAllianceSection({
   isMember,
   isOwner,
   profileDescription,
+  profileFormOpen,
   profileName,
   profileTag,
   role,
@@ -453,6 +457,7 @@ function MyAllianceSection({
   onOpenAlliance,
   onOpenPlayer,
   onSetDescription,
+  onSetProfileFormOpen,
   onSetInviteAddress,
   onSetInviteFormOpen,
   onSetName,
@@ -474,6 +479,7 @@ function MyAllianceSection({
   isMember: boolean;
   isOwner: boolean;
   profileDescription: string;
+  profileFormOpen: boolean;
   profileName: string;
   profileTag: string;
   role: AllianceRole;
@@ -492,6 +498,7 @@ function MyAllianceSection({
   onOpenAlliance?: ((allianceId: string) => void) | undefined;
   onOpenPlayer: (playerAddress: string) => void;
   onSetDescription: (value: string) => void;
+  onSetProfileFormOpen: (value: boolean) => void;
   onSetInviteAddress: (value: string) => void;
   onSetInviteFormOpen: (value: boolean) => void;
   onSetName: (value: string) => void;
@@ -560,24 +567,83 @@ function MyAllianceSection({
           </div>
         </div>
 
-        {isOwner ? (
+        {isOwner || canManageMembers ? (
           <div className="rounded border border-white/10 bg-black/20 p-3">
-            <h3 className="text-sm font-semibold text-white">Profile</h3>
-            <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              <TextField label="Tag" value={profileTag} onInput={onSetProfileTag} placeholder="VDFT" />
-              <TextField label="Name" value={profileName} onInput={onSetProfileName} placeholder="Veydrift Union" />
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-white">Alliance controls</h3>
+                <p className="mt-1 text-sm text-slate-400">
+                  Update public alliance details or invite another commander.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2 sm:justify-end">
+                {isOwner ? (
+                  <button
+                    className="inline-flex items-center justify-center gap-2 rounded border border-cyan-300/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={disabled}
+                    onClick={() => onSetProfileFormOpen(!profileFormOpen)}
+                    title={profileFormOpen ? "Close alliance profile editor" : "Edit alliance profile"}
+                    type="button"
+                  >
+                    {profileFormOpen ? <X size={15} /> : <Pencil size={15} />}
+                    {profileFormOpen ? "Close Edit" : "Edit Profile"}
+                  </button>
+                ) : null}
+                {canManageMembers ? (
+                  <button
+                    className="inline-flex items-center justify-center gap-2 rounded border border-cyan-300/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={disabled}
+                    onClick={() => onSetInviteFormOpen(!inviteFormOpen)}
+                    title={inviteFormOpen ? "Close member invite form" : "Invite alliance member"}
+                    type="button"
+                  >
+                    {inviteFormOpen ? <X size={15} /> : <UserPlus size={15} />}
+                    {inviteFormOpen ? "Close Invite" : "Invite Member"}
+                  </button>
+                ) : null}
+              </div>
             </div>
-            <div className="mt-3">
-              <TextArea label="Description" value={profileDescription} onInput={onSetProfileDescription} placeholder="Public alliance description" />
-            </div>
-            <button
-              className="mt-3 rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={disabled || !profileTag.trim() || !profileName.trim()}
-              onClick={() => onUpdateProfile(profileTag.trim(), profileName.trim(), profileDescription.trim())}
-              type="button"
-            >
-              Update Profile
-            </button>
+            {inviteFormOpen && canManageMembers ? (
+              <div className="mt-3 grid gap-2 border-t border-white/10 pt-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+                <TextField label="Wallet" value={inviteAddress} onInput={onSetInviteAddress} placeholder="0x..." />
+                <button
+                  className="inline-flex items-center justify-center gap-2 self-end rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={disabled || !inviteAddress.trim()}
+                  onClick={() => onInvite(inviteAddress.trim())}
+                  type="button"
+                >
+                  <UserPlus size={15} />
+                  Send Invite
+                </button>
+              </div>
+            ) : null}
+            {profileFormOpen ? (
+              <div className="mt-3 border-t border-white/10 pt-3">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <TextField label="Tag" value={profileTag} onInput={onSetProfileTag} placeholder="VDFT" />
+                  <TextField label="Name" value={profileName} onInput={onSetProfileName} placeholder="Veydrift Union" />
+                </div>
+                <div className="mt-3">
+                  <TextArea label="Description" value={profileDescription} onInput={onSetProfileDescription} placeholder="Public alliance description" />
+                </div>
+                <button
+                  className="mt-3 inline-flex items-center justify-center gap-2 rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={disabled || !profileTag.trim() || !profileName.trim()}
+                  onClick={() => onUpdateProfile(profileTag.trim(), profileName.trim(), profileDescription.trim())}
+                  type="button"
+                >
+                  <Check size={15} />
+                  Save Profile
+                </button>
+                <div className="mt-3 border-t border-white/10 pt-3">
+                  <AllianceExitActionButton
+                    disabled={disabled}
+                    exitAction={exitAction}
+                    onSubmit={onLeaveAlliance}
+                  />
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -592,19 +658,14 @@ function MyAllianceSection({
           canManageMembers={canManageMembers}
           disabled={disabled}
           isOwner={isOwner}
-          inviteAddress={inviteAddress}
-          inviteFormOpen={inviteFormOpen}
           roster={roster}
           viewer={viewer}
           exitAction={exitAction}
           onBatchKick={onBatchKick}
           onBatchSetRole={onBatchSetRole}
-          onInvite={onInvite}
           onKick={onKick}
           onLeaveAlliance={onLeaveAlliance}
           onOpenPlayer={onOpenPlayer}
-          onSetInviteAddress={onSetInviteAddress}
-          onSetInviteFormOpen={onSetInviteFormOpen}
           onSetRole={onSetRole}
           onTransferOwnership={onTransferOwnership}
         />
@@ -644,13 +705,13 @@ function DirectorySection({
   const activeWarIds = new Set(activeWars.map((war) => war.otherAllianceId));
   const visibleAlliances = sortedAllianceDirectory(alliances);
   const [page, setPage] = useState(1);
+  const clampedPage = clampDirectoryPage(page, visibleAlliances.length);
   const pageCount = directoryPageCount(visibleAlliances.length);
-  const clampedPage = Math.min(page, pageCount);
   const pageRows = directoryPageRows(visibleAlliances, clampedPage);
 
   useEffect(() => {
-    setPage(1);
-  }, [alliances, currentAllianceId]);
+    setPage((current) => clampDirectoryPage(current, visibleAlliances.length));
+  }, [visibleAlliances.length]);
 
   return (
     <Panel title="Alliances">
@@ -1027,7 +1088,7 @@ export function AllianceExitActionButton({
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <button
-              className="rounded border border-red-300/30 px-3 py-2 text-sm font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center justify-center gap-2 rounded border border-red-300/30 px-3 py-2 text-sm font-semibold text-red-100 hover:bg-red-300/10 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={disabled}
               onClick={() => {
                 setConfirming(false);
@@ -1035,25 +1096,28 @@ export function AllianceExitActionButton({
               }}
               type="button"
             >
+              {isDelete ? <Trash2 size={15} /> : <LogOut size={15} />}
               {confirmLabel}
             </button>
             <button
-              className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10"
+              className="inline-flex items-center justify-center gap-2 rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10"
               onClick={() => setConfirming(false)}
               type="button"
             >
+              <X size={15} />
               Cancel
             </button>
           </div>
         </div>
       ) : (
         <button
-          className="rounded border border-red-300/30 px-3 py-2 text-sm font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex items-center justify-center gap-2 rounded border border-red-300/30 px-3 py-2 text-sm font-semibold text-red-100 hover:bg-red-300/10 disabled:cursor-not-allowed disabled:opacity-50"
           disabled={blocked}
           onClick={() => setConfirming(true)}
           type="button"
           title={exitAction.reason ?? exitAction.label}
         >
+          {isDelete ? <Trash2 size={15} /> : <LogOut size={15} />}
           {exitAction.label}
         </button>
       )}
@@ -1070,38 +1134,28 @@ function RosterSection({
   canManageMembers,
   disabled,
   exitAction,
-  inviteAddress,
-  inviteFormOpen,
   isOwner,
   roster,
   viewer,
-  onInvite,
   onBatchKick,
   onBatchSetRole,
   onKick,
   onLeaveAlliance,
   onOpenPlayer,
-  onSetInviteAddress,
-  onSetInviteFormOpen,
   onSetRole,
   onTransferOwnership,
 }: {
   canManageMembers: boolean;
   disabled: boolean;
   exitAction: { canSubmit: boolean; label: "Leave Alliance" | "Delete Alliance"; reason: string | null };
-  inviteAddress: string;
-  inviteFormOpen: boolean;
   isOwner: boolean;
   roster: RosterGroups;
   viewer?: string | undefined;
-  onInvite: (playerAddress: string) => void;
   onBatchKick: (playerAddresses: string[]) => void;
   onBatchSetRole: (playerAddresses: string[], role: "member" | "officer") => void;
   onKick: (playerAddress: string) => void;
   onLeaveAlliance: () => void;
   onOpenPlayer: (playerAddress: string) => void;
-  onSetInviteAddress: (value: string) => void;
-  onSetInviteFormOpen: (value: boolean) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
   onTransferOwnership: (playerAddress: string) => void;
 }) {
@@ -1111,20 +1165,15 @@ function RosterSection({
         canManageMembers={canManageMembers}
         disabled={disabled}
         exitAction={exitAction}
-        inviteAddress={inviteAddress}
-        inviteFormOpen={inviteFormOpen}
         isOwner={isOwner}
         rows={roster.all}
         title="Members"
         viewer={viewer}
         onBatchKick={onBatchKick}
         onBatchSetRole={onBatchSetRole}
-        onInvite={onInvite}
         onKick={onKick}
         onLeaveAlliance={onLeaveAlliance}
         onOpenPlayer={onOpenPlayer}
-        onSetInviteAddress={onSetInviteAddress}
-        onSetInviteFormOpen={onSetInviteFormOpen}
         onSetRole={onSetRole}
         onTransferOwnership={onTransferOwnership}
       />
@@ -1136,48 +1185,38 @@ function RosterList({
   canManageMembers,
   disabled,
   exitAction,
-  inviteAddress,
-  inviteFormOpen,
   isOwner,
   rows,
   title,
   viewer,
-  onInvite,
   onBatchKick,
   onBatchSetRole,
   onKick,
   onLeaveAlliance,
   onOpenPlayer,
-  onSetInviteAddress,
-  onSetInviteFormOpen,
   onSetRole,
   onTransferOwnership,
 }: {
   canManageMembers: boolean;
   disabled: boolean;
   exitAction: { canSubmit: boolean; label: "Leave Alliance" | "Delete Alliance"; reason: string | null };
-  inviteAddress: string;
-  inviteFormOpen: boolean;
   isOwner: boolean;
   rows: RosterMember[];
   title: string;
   viewer?: string | undefined;
-  onInvite: (playerAddress: string) => void;
   onBatchKick: (playerAddresses: string[]) => void;
   onBatchSetRole: (playerAddresses: string[], role: "member" | "officer") => void;
   onKick: (playerAddress: string) => void;
   onLeaveAlliance: () => void;
   onOpenPlayer: (playerAddress: string) => void;
-  onSetInviteAddress: (value: string) => void;
-  onSetInviteFormOpen: (value: boolean) => void;
   onSetRole: (playerAddress: string, role: "member" | "officer") => void;
   onTransferOwnership: (playerAddress: string) => void;
 }) {
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const sortedRows = useMemo(() => sortedRosterMembers(rows), [rows]);
+  const clampedPage = clampRosterPage(page, sortedRows.length);
   const pageCount = rosterPageCount(sortedRows.length);
-  const clampedPage = Math.min(page, pageCount);
   const visibleRows = rosterPageRows(sortedRows, clampedPage);
   const selectableRows = useMemo(
     () => sortedRows.filter((member) => canSelectAllianceRosterMember({ canManageMembers, isOwner, member, viewer })),
@@ -1204,8 +1243,8 @@ function RosterList({
     .map((member) => member.address);
 
   useEffect(() => {
-    setPage(1);
-  }, [rows]);
+    setPage((current) => clampRosterPage(current, sortedRows.length));
+  }, [sortedRows.length]);
 
   useEffect(() => {
     const valid = new Set(selectableRows.map((member) => member.address.toLowerCase()));
@@ -1289,30 +1328,18 @@ function RosterList({
             />
           ) : null}
           <AllianceMemberActions
-            canManageMembers={canManageMembers}
             disabled={disabled}
             exitAction={exitAction}
-            inviteAddress={inviteAddress}
-            inviteFormOpen={inviteFormOpen}
-            onInvite={onInvite}
             onLeaveAlliance={onLeaveAlliance}
-            onSetInviteAddress={onSetInviteAddress}
-            onSetInviteFormOpen={onSetInviteFormOpen}
           />
         </div>
       ) : (
         <div className="mt-2 grid gap-3">
           <p className="text-sm text-slate-400">No {title.toLowerCase()} found.</p>
           <AllianceMemberActions
-            canManageMembers={canManageMembers}
             disabled={disabled}
             exitAction={exitAction}
-            inviteAddress={inviteAddress}
-            inviteFormOpen={inviteFormOpen}
-            onInvite={onInvite}
             onLeaveAlliance={onLeaveAlliance}
-            onSetInviteAddress={onSetInviteAddress}
-            onSetInviteFormOpen={onSetInviteFormOpen}
           />
         </div>
       )}
@@ -1331,44 +1358,55 @@ export function AllianceMemberActions({
   onSetInviteAddress,
   onSetInviteFormOpen,
 }: {
-  canManageMembers: boolean;
+  canManageMembers?: boolean;
   disabled: boolean;
   exitAction: { canSubmit: boolean; label: "Leave Alliance" | "Delete Alliance"; reason: string | null };
-  inviteAddress: string;
-  inviteFormOpen: boolean;
-  onInvite: (playerAddress: string) => void;
+  inviteAddress?: string;
+  inviteFormOpen?: boolean;
+  onInvite?: (playerAddress: string) => void;
   onLeaveAlliance: () => void;
-  onSetInviteAddress: (value: string) => void;
-  onSetInviteFormOpen: (value: boolean) => void;
+  onSetInviteAddress?: (value: string) => void;
+  onSetInviteFormOpen?: (value: boolean) => void;
 }) {
+  const showInvite = Boolean(canManageMembers && onInvite && onSetInviteAddress && onSetInviteFormOpen);
+  const showExit = exitAction.label !== "Delete Alliance";
+  if (!showInvite && !showExit) return null;
+
   return (
     <div className="mt-2 border-t border-white/10 pt-3">
       <div className="flex flex-wrap items-center gap-2">
-        {canManageMembers ? (
+        {showInvite ? (
           <button
-            className="rounded border border-cyan-300/25 px-3 py-2 text-sm font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 rounded border border-cyan-300/25 px-3 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-50"
             disabled={disabled}
-            onClick={() => onSetInviteFormOpen(!inviteFormOpen)}
+            onClick={() => onSetInviteFormOpen?.(!inviteFormOpen)}
+            title={inviteFormOpen ? "Close member invite form" : "Invite alliance member"}
             type="button"
           >
-            Invite
+            {inviteFormOpen ? <X size={15} /> : <UserPlus size={15} />}
+            {inviteFormOpen ? "Close Invite" : "Invite Member"}
           </button>
         ) : null}
-        <AllianceExitActionButton
-          disabled={disabled}
-          exitAction={exitAction}
-          onSubmit={onLeaveAlliance}
-        />
+        {showExit ? (
+          <AllianceExitActionButton
+            disabled={disabled}
+            exitAction={exitAction}
+            onSubmit={onLeaveAlliance}
+          />
+        ) : null}
       </div>
-      {inviteFormOpen && canManageMembers ? (
+      {showInvite && inviteFormOpen ? (
         <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-          <TextField label="Wallet" value={inviteAddress} onInput={onSetInviteAddress} placeholder="0x..." />
+          <TextField label="Wallet" value={inviteAddress ?? ""} onInput={(value) => onSetInviteAddress?.(value)} placeholder="0x..." />
           <button
-            className="self-end rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={disabled || !inviteAddress.trim()}
-            onClick={() => onInvite(inviteAddress.trim())}
+            className="inline-flex items-center justify-center gap-2 self-end rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={disabled || !inviteAddress?.trim()}
+            onClick={() => {
+              if (inviteAddress?.trim()) onInvite?.(inviteAddress.trim());
+            }}
             type="button"
           >
+            <UserPlus size={15} />
             Send Invite
           </button>
         </div>
@@ -1381,8 +1419,12 @@ export function rosterPageCount(total: number): number {
   return Math.max(1, Math.ceil(total / allianceRosterPageSize));
 }
 
+export function clampRosterPage(page: number, total: number): number {
+  return Math.min(Math.max(1, page), rosterPageCount(total));
+}
+
 export function rosterPageRows<T>(rows: T[], page: number): T[] {
-  const clampedPage = Math.min(Math.max(1, page), rosterPageCount(rows.length));
+  const clampedPage = clampRosterPage(page, rows.length);
   const start = (clampedPage - 1) * allianceRosterPageSize;
   return rows.slice(start, start + allianceRosterPageSize);
 }
@@ -1403,8 +1445,12 @@ export function directoryPageCount(total: number): number {
   return Math.max(1, Math.ceil(total / allianceDirectoryPageSize));
 }
 
+export function clampDirectoryPage(page: number, total: number): number {
+  return Math.min(Math.max(1, page), directoryPageCount(total));
+}
+
 export function directoryPageRows<T>(rows: T[], page: number): T[] {
-  const clampedPage = Math.min(Math.max(1, page), directoryPageCount(rows.length));
+  const clampedPage = clampDirectoryPage(page, rows.length);
   const start = (clampedPage - 1) * allianceDirectoryPageSize;
   return rows.slice(start, start + allianceDirectoryPageSize);
 }

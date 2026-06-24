@@ -180,6 +180,19 @@ describe("backend config", () => {
     }).config.missionResolutionEnabled).toBe(false);
   });
 
+  test("enables the public mission resolver in test deployments with a resolver private key", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_DEPLOYMENT_MODE: "test",
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_MISSION_RESOLVER_PRIVATE_KEY: "0x1111111111111111111111111111111111111111111111111111111111111111",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config.missionResolutionEnabled).toBe(true);
+    expect(safeConfigSummary(result.config).missionResolverConfigured).toBe(true);
+  });
+
   // VEY-KANEO-471: the synthetic stationed-defense QA payload must require an explicit opt-in AND a
   // non-production deployment, and must never be reachable in production even if the env is set.
   test("gates the synthetic stationed-defense QA flag on opt-in and non-production", () => {

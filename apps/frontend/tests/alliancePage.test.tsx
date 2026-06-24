@@ -8,6 +8,8 @@ import {
   allianceInviteAcceptanceState,
   allianceJoinRequestApprovalState,
   allianceJoinRequestDismissalState,
+  clampDirectoryPage,
+  clampRosterPage,
   directoryPageCount,
   directoryPageRows,
   hasAllianceMembership,
@@ -293,10 +295,23 @@ describe("AlliancePage loading display", () => {
 
     expect(allianceRosterPageSize).toBe(10);
     expect(rosterPageCount(rows.length)).toBe(13);
+    expect(clampRosterPage(3, rows.length)).toBe(3);
+    expect(clampRosterPage(99, rows.length)).toBe(13);
+    expect(clampRosterPage(0, rows.length)).toBe(1);
     expect(rosterPageRows(rows, 1)).toEqual(rows.slice(0, 10));
     expect(rosterPageRows(rows, 2)).toEqual(rows.slice(10, 20));
     expect(rosterPageRows(rows, 13)).toEqual(rows.slice(120, 121));
     expect(rosterPageRows(rows, 99)).toEqual(rows.slice(120, 121));
+  });
+
+  test("preserves alliance roster page during same-size refetches and only clamps invalid pages", () => {
+    expect(clampRosterPage(5, 118)).toBe(5);
+    expect(clampRosterPage(5, 111)).toBe(5);
+    expect(clampRosterPage(12, 111)).toBe(12);
+    expect(clampRosterPage(12, 109)).toBe(11);
+    expect(alliancePageSource).toContain("setPage((current) => clampRosterPage(current, sortedRows.length));");
+    expect(alliancePageSource).toContain("[sortedRows.length]");
+    expect(alliancePageSource).not.toContain("setPage(1);\n  }, [rows]);");
   });
 
   test("sorts alliance rosters by role group and member score before pagination", () => {
@@ -349,6 +364,8 @@ describe("AlliancePage loading display", () => {
     expect(sortedAllianceDirectory(alliances).map((alliance) => alliance.allianceId)).toEqual(["2", "3", "1", "4"]);
     expect(allianceDirectoryPageSize).toBe(10);
     expect(directoryPageCount(rows.length)).toBe(3);
+    expect(clampDirectoryPage(2, rows.length)).toBe(2);
+    expect(clampDirectoryPage(9, rows.length)).toBe(3);
     expect(directoryPageRows(rows, 1)).toEqual(rows.slice(0, 10));
     expect(directoryPageRows(rows, 3)).toEqual(rows.slice(20, 24));
   });
@@ -403,6 +420,24 @@ describe("AlliancePage loading display", () => {
     expect(alliancePageSource).toContain("Declare War");
     expect(alliancePageSource).not.toContain('<span className="text-xs uppercase tracking-[0.14em] text-slate-500">Declare War</span>');
     expect(alliancePageSource).not.toContain("<option value=\"\">Select alliance</option>");
+  });
+
+  test("polishes alliance edit invite and delete controls with explicit labels", () => {
+    expect(alliancePageSource).toContain("profileFormOpen");
+    expect(alliancePageSource).toContain("Alliance controls");
+    expect(alliancePageSource).toContain("Edit Profile");
+    expect(alliancePageSource).toContain("Save Profile");
+    expect(alliancePageSource).not.toContain("<h3 className=\"text-sm font-semibold text-white\">Profile</h3>");
+    expect(alliancePageSource).toContain("Invite Member");
+    expect(alliancePageSource).toContain("Close Invite");
+    expect(alliancePageSource).toContain("Confirm Delete");
+    expect(alliancePageSource).toContain("Trash2 size={15}");
+    expect(alliancePageSource).toContain('const showExit = exitAction.label !== "Delete Alliance";');
+  });
+
+  test("keeps member controls enabled during background alliance refetches", () => {
+    expect(alliancePageSource).toContain('const disabled = !canTransact || actionState.status === "pending";');
+    expect(alliancePageSource).not.toContain("const disabled = !canTransact || loading || actionState.status === \"pending\";");
   });
 
   test("removes alliance inspect labeling from the dedicated alliance route", () => {
