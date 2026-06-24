@@ -32,7 +32,10 @@ const WRITER_ONLY_READ_PATHS = new Set([
   // The live chain event stream is owned by the writer's chain-sync subscription.
   "/chain/events"
 ]);
-const WRITER_PREFERRED_READ_PATHS = new Set<string>();
+const WRITER_PREFERRED_READ_PATHS = new Set<string>([
+  // Public QA/debug needs the writer-owned chain-sync snapshot; reader workers have chainSync=null.
+  "/debug/indexer"
+]);
 const WRITER_PREFERRED_READ_PREFIXES: string[] = [];
 const BODYLESS_METHODS = new Set(["GET", "HEAD"]);
 
