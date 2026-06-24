@@ -119,6 +119,7 @@ import {
   waitForStartedDefenseProductionState,
   waitForStartedShipProductionState,
   waitForStartedBuildingState,
+  startedBuildingQueueFromWalletPlanets,
   waitForFinishedBuildingState,
   waitForHydratedWalletPlanet,
   waitForAllianceApplicationCleared,
@@ -4303,12 +4304,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     try {
       const snapshot = await waitForStartedBuildingState(
         async () => {
-          const [infrastructure, queues] = await Promise.all([
+          const [infrastructure, queues, planetsResponse] = await Promise.all([
             fetchInfrastructureState(apiBaseUrl, account, activePlanetId),
             fetchWalletQueues(apiBaseUrl, account, activePlanetId),
+            fetchWalletPlanets(apiBaseUrl, account).catch(() => undefined),
           ]);
 
-          return { infrastructure, queues };
+          return { infrastructure, planetsResponse, queues };
         },
         expectation,
       );
@@ -4318,8 +4320,17 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         latestInfrastructureResourceSnapshot.current,
         resourceSnapshotFreshnessForInfrastructure(snapshot.infrastructure),
       );
+      const walletPlanetQueue = startedBuildingQueueFromWalletPlanets(snapshot.planetsResponse, expectation);
+      const visibleBuildingQueue = snapshot.infrastructure.queue?.active
+        ? snapshot.infrastructure.queue
+        : walletPlanetQueue ?? snapshot.queues.building;
       setInfrastructureChainState(snapshot.infrastructure);
-      setOnChainQueues(snapshot.queues);
+      if (snapshot.planetsResponse) {
+        setWalletPlanets(snapshot.planetsResponse.planets);
+      }
+      setOnChainQueues(visibleBuildingQueue === snapshot.queues.building
+        ? snapshot.queues
+        : { ...snapshot.queues, building: visibleBuildingQueue ?? null });
       setOnChainError(undefined);
       setOnChainStatus("ready");
       // Reconcile the settlement snapshot so the top-bar resources reflect the

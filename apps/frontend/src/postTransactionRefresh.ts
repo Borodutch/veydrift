@@ -35,6 +35,7 @@ export type StartedBuildingExpectation = {
 
 export type StartedBuildingSnapshot = {
   infrastructure: ChainInfrastructureState;
+  planetsResponse?: WalletPlanetsResponse | undefined;
   queues: PlayerQueuesResponse;
 };
 
@@ -191,7 +192,21 @@ export function isStartedBuildingStateVisible(
   }
 
   return buildingQueueMatches(snapshot.infrastructure.queue, expectation)
-    || buildingQueueMatches(snapshot.queues.building, expectation);
+    || buildingQueueMatches(snapshot.queues.building, expectation)
+    || Boolean(startedBuildingQueueFromWalletPlanets(snapshot.planetsResponse, expectation));
+}
+
+export function startedBuildingQueueFromWalletPlanets(
+  planetsResponse: WalletPlanetsResponse | undefined,
+  expectation: StartedBuildingExpectation,
+): QueueStateResponse | undefined {
+  const planet = expectation.planetId
+    ? planetsResponse?.planets.find((entry) => entry.planetId === expectation.planetId)
+    : planetsResponse?.planets.find((entry) => entry.planetId === planetsResponse.homePlanetId || entry.isHomePlanet)
+      ?? planetsResponse?.planets[0];
+
+  const queue = planet?.queues.building;
+  return buildingQueueMatches(queue, expectation) ? queue ?? undefined : undefined;
 }
 
 export function isStartedDefenseProductionVisible(
