@@ -90,6 +90,8 @@ const corsHeaders = {
 } as const;
 
 const indexedSource = "contract-state-indexer" as const;
+const burningChickenCoordinateBurnSelector = "0x6364233d";
+const burningChickenLevelSelector = "0x05c58df2";
 
 type GraphQLPayload = {
   query?: string;
@@ -3215,8 +3217,10 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
   const allianceContractAddress = process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS ?? null;
   const burningChickenNftContractAddress = process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS ?? null;
   const burningChickenBurnContractAddress = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS ?? null;
-  const burningChickenBurnSelector = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR ?? "0x6364233d";
-  const burningChickenLevelSelector = process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR ?? "0x05c58df2";
+  const burningChickenBurnSelector = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR ?? burningChickenCoordinateBurnSelector;
+  const configuredChickenBurnSelector =
+    burningChickenBurnSelector.toLowerCase() === burningChickenCoordinateBurnSelector;
+  const configuredChickenLevelSelector = process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR ?? burningChickenLevelSelector;
   const burningChickenRpcUrl = process.env.VEYDRIFT_BASE_MAINNET_RPC_URL ?? "https://mainnet.base.org";
   const resourceTokenAddresses = {
     crystal: process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS ?? null,
@@ -3231,7 +3235,7 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
     burningChicken: {
       burnContractAddress: burningChickenBurnContractAddress,
       burnSelector: burningChickenBurnSelector,
-      levelSelector: burningChickenLevelSelector,
+      levelSelector: configuredChickenLevelSelector,
       nftContractAddress: burningChickenNftContractAddress,
       rpcUrl: burningChickenRpcUrl
     },
@@ -3242,7 +3246,7 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
       chickenBurnConfigured: Boolean(
         burningChickenNftContractAddress
           && burningChickenBurnContractAddress
-          && burningChickenBurnSelector
+          && configuredChickenBurnSelector
       ),
       gameConfigured: Boolean(gameContractAddress),
       highscoresEndpoint: true,

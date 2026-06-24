@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  burningChickenConfig,
   defaultPlayableApiUrl,
   gameContractAddress,
   resolvePlayableApiUrl,
@@ -62,5 +63,40 @@ describe("runtime config URL", () => {
     };
 
     expect(gameContractAddress(config)).toBe("0x1111111111111111111111111111111111111111");
+  });
+
+  test("only accepts the coordinate Burning Chicken burn selector", () => {
+    const baseConfig: RuntimeConfig = {
+      apiUrl: "https://api-test.veydrift.com",
+      burningChicken: {
+        burnContractAddress: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        burnSelector: "0x6364233d",
+        levelSelector: "0x05c58df2",
+        nftContractAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        rpcUrl: "https://mainnet.base.org",
+      },
+      chainId: 84532,
+      contractAddress: null,
+      gameContractAddress: null,
+      graphqlUrl: "https://api-test.veydrift.com/graphql",
+      network: "Base Sepolia",
+      resourceTokenAddresses: {
+        crystal: null,
+        deuterium: null,
+        metal: null,
+      },
+      rpcProvider: "alchemy",
+    };
+
+    expect(burningChickenConfig(baseConfig)?.burnSelector).toBe("0x6364233d");
+    expect(
+      burningChickenConfig({
+        ...baseConfig,
+        burningChicken: {
+          ...baseConfig.burningChicken!,
+          burnSelector: "0xe1775196",
+        },
+      }),
+    ).toBeUndefined();
   });
 });
