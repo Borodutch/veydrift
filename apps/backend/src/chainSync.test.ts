@@ -189,6 +189,58 @@ describe("ChainSyncService (polling)", () => {
     expect(liveLogs.unsubscribeCalls).toBe(1);
   });
 
+  test("does not let delayed startup catch-up regress the cursor after a websocket log", async () => {
+    const indexer = makeIndexer();
+    let resolveCatchUp!: () => void;
+    const catchUpBlocked = new Promise<void>((resolve) => {
+      resolveCatchUp = resolve;
+    });
+    const ranges: Array<{ from: bigint; to: bigint | "latest" }> = [];
+    let listCalls = 0;
+    const backfiller = {
+      async getHeadBlock() {
+        return 0x180n;
+      },
+      async listContractLogs(from: bigint, to: bigint | "latest" = "latest") {
+        ranges.push({ from, to });
+        listCalls += 1;
+        if (listCalls === 1) {
+          await catchUpBlocked;
+        }
+        return [];
+      }
+    };
+    const liveLogs = new MockLiveLogSubscriber();
+    const service = new ChainSyncService(config, indexer, {
+      liveLogSubscriber: liveLogs,
+      logBackfiller: backfiller
+    });
+
+    service.start();
+    await waitFor(() => liveLogs.subscription !== null && ranges.length === 1);
+    liveLogs.emit([{
+      ...planetStartedLog("0x181", 7n, "0xlive-before-catch-up-finishes"),
+      address: config.gameContractAddress!,
+      logIndex: "0x0"
+    }]);
+
+    await waitFor(() => service.snapshot().latestSyncedBlock === String(0x181n));
+    expect(service.snapshot().pollBacklogBlocks).toBe("0");
+    resolveCatchUp();
+    await waitFor(() => service.snapshot().lastPollDurationMs !== null);
+
+    expect(ranges).toEqual([
+      { from: 100n, to: 0x180n },
+      { from: 100n, to: 0x180n }
+    ]);
+    expect(service.snapshot()).toMatchObject({
+      latestHeadBlock: String(0x181n),
+      latestSyncedBlock: String(0x181n),
+      pollBacklogBlocks: "0"
+    });
+    service.stop();
+  });
+
   test("uses HTTP getLogs only to catch up cursor gaps before a websocket log", async () => {
     const indexer = makeIndexer();
     const gapLog = {

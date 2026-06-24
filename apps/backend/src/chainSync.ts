@@ -329,7 +329,7 @@ export class ChainSyncService {
       // Advance the cursor to the scanned head ONLY after a clean ingest — a throw skips this and the
       // next pass retries the same range. Events are absolute-state SETs + txHash:logIndex deduped, so
       // the retried overlap is idempotent.
-      this.cursor = head;
+      this.cursor = maxBigInt(this.cursor, head);
       this.latestSyncedBlock = maxBlockString(this.latestSyncedBlock, head);
       if (applied > 0) {
         this.notify({
