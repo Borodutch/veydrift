@@ -405,6 +405,24 @@ describe("AlliancePage loading display", () => {
     expect(alliancePageSource).not.toContain("<option value=\"\">Select alliance</option>");
   });
 
+  test("polishes alliance edit invite and delete controls with explicit labels", () => {
+    expect(alliancePageSource).toContain("profileFormOpen");
+    expect(alliancePageSource).toContain("Alliance controls");
+    expect(alliancePageSource).toContain("Edit Profile");
+    expect(alliancePageSource).toContain("Save Profile");
+    expect(alliancePageSource).not.toContain("<h3 className=\"text-sm font-semibold text-white\">Profile</h3>");
+    expect(alliancePageSource).toContain("Invite Member");
+    expect(alliancePageSource).toContain("Close Invite");
+    expect(alliancePageSource).toContain("Confirm Delete");
+    expect(alliancePageSource).toContain("Trash2 size={15}");
+    expect(alliancePageSource).toContain('const showExit = exitAction.label !== "Delete Alliance";');
+  });
+
+  test("keeps member controls enabled during background alliance refetches", () => {
+    expect(alliancePageSource).toContain('const disabled = !canTransact || actionState.status === "pending";');
+    expect(alliancePageSource).not.toContain("const disabled = !canTransact || loading || actionState.status === \"pending\";");
+  });
+
   test("removes alliance inspect labeling from the dedicated alliance route", () => {
     expect(inspectPagesSource).not.toContain('eyebrow="Alliance Inspect"');
     expect(inspectPagesSource).toContain('<Panel title={isCurrentAlliance ? "My Alliance" : "Alliance"}>');
