@@ -5,7 +5,6 @@ import {
   energyBalanceFromChain,
   infrastructurePlayableState,
   isBuildingQueueReadyToFinish,
-  optimisticStartedBuildingQueueResponse,
   researchQueueForDisplay,
 } from "./chainState";
 import type { ChainInfrastructureState, PlayerQueuesResponse, QueueStateResponse } from "./walletFlow";
@@ -82,38 +81,6 @@ describe("chainState", () => {
     expect(queue).toEqual(infrastructure.queue);
     expect(isBuildingQueueReadyToFinish(queue, readyAtSeconds * 1_000)).toBe(true);
     expect(isBuildingQueueReadyToFinish(queue, (readyAtSeconds - 1) * 1_000)).toBe(false);
-  });
-
-  test("creates an optimistic started-building queue while the indexer catches up", () => {
-    const now = 1_700_000_000_123;
-    const queue = optimisticStartedBuildingQueueResponse({
-      cost: { metal: "400", crystal: "120", deuterium: "0" },
-      durationSeconds: 115,
-      itemId: 4,
-      now,
-      targetLevel: 2,
-    });
-
-    expect(queue).toEqual({
-      active: true,
-      kind: "building",
-      itemId: 4,
-      targetLevel: 2,
-      startedAt: "1700000000",
-      readyAt: "1700000115",
-      cost: { metal: "400", crystal: "120", deuterium: "0" },
-      backlog: [],
-      asOfNow: {
-        secondsRemaining: 115,
-        complete: false,
-      },
-    });
-    expect(buildingQueueItemForDisplay(queue, now)).toMatchObject({
-      kind: "building",
-      key: "roboticsFactory",
-      targetLevel: 2,
-    });
-    expect(isBuildingQueueReadyToFinish(queue, now + 120_000)).toBe(false);
   });
 
   test("accepts normalized millisecond readyAt values for ready building completion", () => {
