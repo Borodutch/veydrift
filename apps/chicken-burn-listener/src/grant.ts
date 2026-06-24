@@ -18,10 +18,7 @@ export const moonGrantAbi = [
     inputs: [
       { name: "burnId", type: "bytes32" },
       { name: "player", type: "address" },
-      { name: "planetId", type: "uint256" },
-      { name: "galaxy", type: "uint16" },
-      { name: "system", type: "uint16" },
-      { name: "position", type: "uint8" }
+      { name: "planetId", type: "uint256" }
     ],
     outputs: [
       {
@@ -114,10 +111,7 @@ export class ViemMoonGrantClient implements MoonGrantClient {
     const args = [
       event.burnId,
       event.burner,
-      BigInt(event.planetId),
-      event.galaxy,
-      event.system,
-      event.position
+      BigInt(event.planetId)
     ] as const;
     const data = encodeFunctionData({
       abi: moonGrantAbi,
