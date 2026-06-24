@@ -3,6 +3,7 @@ import {
   createForwardingFetch,
   createRequestLoggingFetch,
   DEFAULT_MAX_WORKER_COUNT,
+  LEGACY_MAX_WORKER_COUNT_ENV,
   resolveWorkerAssignment,
   resolveWorkerCount,
   resolveWriterInternalPort,
@@ -31,12 +32,28 @@ describe("resolveWorkerCount", () => {
     expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "12" }, 16)).toBe(12);
   });
 
+  test("honors the legacy max-worker env as a deployment cap", () => {
+    expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "1" }, 16)).toBe(1);
+    expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "2" }, 16)).toBe(2);
+    expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "3" }, 2)).toBe(2);
+  });
+
+  test("prefers the explicit worker-count override over the legacy cap", () => {
+    expect(resolveWorkerCount({
+      [WORKER_COUNT_ENV]: "3",
+      [LEGACY_MAX_WORKER_COUNT_ENV]: "1"
+    }, 16)).toBe(3);
+  });
+
   test("ignores blank or invalid overrides and falls back to the capped default", () => {
     expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
     expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "   " }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
     expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "0" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
     expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "-2" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
     expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "abc" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "0" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "abc" }, 12)).toBe(DEFAULT_MAX_WORKER_COUNT);
   });
 });
 
@@ -54,6 +71,10 @@ describe("resolveWorkerAssignment", () => {
     expect(resolveWorkerAssignment({ [WORKER_COUNT_ENV]: "2" }, 16)).toEqual({
       kind: "supervisor",
       workerCount: 2
+    });
+    expect(resolveWorkerAssignment({ [LEGACY_MAX_WORKER_COUNT_ENV]: "1" }, 16)).toEqual({
+      kind: "supervisor",
+      workerCount: 1
     });
   });
 

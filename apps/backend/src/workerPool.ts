@@ -19,6 +19,7 @@
 export const WORKER_ROLE_ENV = "VEYDRIFT_WORKER_ROLE";
 export const WORKER_INDEX_ENV = "VEYDRIFT_WORKER_INDEX";
 export const WORKER_COUNT_ENV = "VEYDRIFT_WORKER_COUNT";
+export const LEGACY_MAX_WORKER_COUNT_ENV = "VEYDRIFT_MAX_WORKER_COUNT";
 export const WRITER_INTERNAL_PORT_ENV = "VEYDRIFT_WRITER_INTERNAL_PORT";
 export const DEFAULT_MAX_WORKER_COUNT = 2;
 
@@ -47,12 +48,13 @@ export type WorkerAssignment =
   | { kind: "supervisor"; workerCount: number }
   | { kind: "worker"; role: WorkerRole; index: number };
 
-// Resolve how many worker processes to run. `VEYDRIFT_WORKER_COUNT` is an
+// Resolve how many worker processes to run. `VEYDRIFT_WORKER_COUNT` is the
 // explicit override (useful for tests, constrained containers, or pinning a
-// single-process deployment). Without an override, keep the pool bounded to a
-// deliberate default so auto-sizing does not unexpectedly spawn one reader per
-// host CPU. The result is always at least 1 so the backend can boot on a
-// single-core host.
+// single-process deployment). `VEYDRIFT_MAX_WORKER_COUNT` is retained as a
+// legacy cap for deployed service configs that predate the explicit override.
+// Without either, keep the pool bounded to a deliberate default so auto-sizing
+// does not unexpectedly spawn one reader per host CPU. The result is always at
+// least 1 so the backend can boot on a single-core host.
 export function resolveWorkerCount(
   env: Record<string, string | undefined>,
   hardwareConcurrency: number
@@ -66,7 +68,15 @@ export function resolveWorkerCount(
   }
 
   const cpus = Number.isFinite(hardwareConcurrency) ? Math.floor(hardwareConcurrency) : 1;
-  return Math.max(1, Math.min(cpus, DEFAULT_MAX_WORKER_COUNT));
+  const legacyCap = parsePositiveIntegerEnv(env[LEGACY_MAX_WORKER_COUNT_ENV]);
+  const maxWorkerCount = legacyCap ?? DEFAULT_MAX_WORKER_COUNT;
+  return Math.max(1, Math.min(cpus, maxWorkerCount));
+}
+
+function parsePositiveIntegerEnv(value: string | undefined): number | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 1 ? parsed : undefined;
 }
 
 // The first worker is the single writer; every other worker is a reader.
