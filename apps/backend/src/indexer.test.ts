@@ -4867,12 +4867,16 @@ describe("SettlementIndexer", () => {
     }
   });
 
-  test("canonical fleet mission sync clears stale active reader rows after terminal chain status", async () => {
+  test("canonical fleet mission sync is a no-op; terminal rows must come from event logs", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");
     let canonicalMissions: CanonicalFleetMissionSnapshot[] = [];
+    let canonicalReads = 0;
     const chainReader = {
-      async listCanonicalFleetMissions() { return canonicalMissions; },
+      async listCanonicalFleetMissions() {
+        canonicalReads += 1;
+        return canonicalMissions;
+      },
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
       async listSettledPlanetEvents() { return [planet]; }
@@ -4929,23 +4933,16 @@ describe("SettlementIndexer", () => {
 
       const syncSnapshot = await writer.syncCanonicalFleetMissions("test");
 
-      expect(syncSnapshot.lastCanonicalFleetMissionSyncRows).toBe(1);
-      expect(syncSnapshot.lastCanonicalFleetMissionSyncUpdatedRows).toBe(1);
+      expect(canonicalReads).toBe(0);
+      expect(syncSnapshot.lastCanonicalFleetMissionSyncRows).toBeNull();
+      expect(syncSnapshot.lastCanonicalFleetMissionSyncUpdatedRows).toBeNull();
       expect(syncSnapshot.lastCanonicalFleetMissionSyncError).toBeNull();
-      expect(reader.allActiveFleetMissions().map((mission) => mission.missionId)).not.toContain("4749");
-      expect(reader.allCompletedFleetMissions()).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            missionId: "4749",
-            status: "Returned",
-            ships: expect.objectContaining({ smallCargo: "1" })
-          })
-        ])
-      );
+      expect(reader.allActiveFleetMissions().map((mission) => mission.missionId)).toContain("4749");
+      expect(reader.allCompletedFleetMissions().map((mission) => mission.missionId)).not.toContain("4749");
       expect(reader.fleetMission("4749")).toMatchObject({
         missionId: "4749",
-        status: "Returned",
-        needsResolution: false
+        status: "Outbound",
+        needsResolution: true
       });
     } finally {
       rmSync(dir, { force: true, recursive: true });
@@ -5130,9 +5127,10 @@ describe("SettlementIndexer", () => {
     );
   });
 
-  test("explicit canonical sync replays logs then repairs canonical rows from chain snapshots", async () => {
+  test("explicit canonical sync replays logs then runs the one-time raw current-state heal", async () => {
     let fetchedLogs = 0;
     let readCanonicalInfrastructure = 0;
+    let rawCanonicalReads = 0;
     const liveInfrastructure: InfrastructureState = {
       wallet: player,
       homePlanetId: planet.planetId,
@@ -5193,6 +5191,22 @@ describe("SettlementIndexer", () => {
         ];
       },
       async listCurrentPlanets() { return [planet]; },
+      async getCanonicalPlanetState(planetId) {
+        rawCanonicalReads += 1;
+        return {
+          planetId: planetId.toString(),
+          resources: liveInfrastructure.resources!,
+          buildings: liveInfrastructure.buildings,
+          defenses: liveDefense.defenses,
+          ships: liveShipyard.ships,
+          queues: {
+            building: null,
+            defense: null,
+            ship: null
+          }
+        };
+      },
+      async getBlockNumber() { return 0x91n; },
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
       async listSettledPlanetEvents() { return [planet]; },
@@ -5217,9 +5231,11 @@ describe("SettlementIndexer", () => {
     const result = await indexer.syncCanonicalState(100n, 0x91n);
 
     expect(fetchedLogs).toBe(1);
-    expect(readCanonicalInfrastructure).toBe(1);
+    expect(readCanonicalInfrastructure).toBe(0);
+    expect(rawCanonicalReads).toBe(1);
     expect(result.replay.indexedEventLogs).toBeGreaterThan(0);
     expect(result.rebuild.lastReconciliationError).toBeNull();
+    expect(result.rebuild.currentStateOneTimeHealCompletedAt).not.toBeNull();
     expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(2);
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(0);
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(5);
@@ -5431,22 +5447,12 @@ describe("SettlementIndexer", () => {
     });
   });
 
-  test("explicit contract-log replay runs targeted canonical heals after rematerializing stored logs", async () => {
-    const canonicalState: CanonicalPlanetChainState = {
-      planetId: planet.planetId,
-      resources: planet.resources,
-      buildings: deriveBuildingRows(() => 0),
-      defenses: deriveDefenseRows((id) => (id === 1 ? 4 : 0)),
-      ships: deriveShipRows(() => 0),
-      queues: {
-        building: null,
-        defense: null,
-        ship: null
-      }
-    };
+  test("explicit contract-log replay stays event-only and does not run targeted canonical heals", async () => {
+    let canonicalReads = 0;
     const indexer = new SettlementIndexer({
       async getCanonicalPlanetState() {
-        return canonicalState;
+        canonicalReads += 1;
+        throw new Error("replay must not read canonical state");
       },
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -5475,7 +5481,8 @@ describe("SettlementIndexer", () => {
 
     await indexer.replayContractLogs(0x94n, 0x95n);
 
-    expect(indexer.defenseRows(planet.planetId).find((row) => row.id === 1)?.count).toBe(4);
+    expect(canonicalReads).toBe(0);
+    expect(indexer.defenseRows(planet.planetId).find((row) => row.id === 1)?.count).toBe(5);
   });
 
   test("current-state seed projects elapsed canonical defense queues while ignoring older replayed rows", async () => {

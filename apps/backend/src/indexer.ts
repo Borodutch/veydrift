@@ -27,7 +27,6 @@ import {
   decodeFleetMissionLogs,
   decodeRandomnessFulfilledRequestId,
   decodeRiftResourceLog,
-  canonicalHealPlanetIdsForLog,
   decodeSettledPlanetLog,
   decodeShipCountChangedLog,
   decodeDefenseCountChangedLog,
@@ -172,6 +171,7 @@ export type IndexerSnapshot = {
   fromBlock: string;
   lastRebuiltAt: string | null;
   lastCurrentStateHealAt: string | null;
+  currentStateOneTimeHealCompletedAt: string | null;
   lastCurrentStateHealPlanetsScanned: number | null;
   lastCurrentStateHealRunId: string | null;
   lastCurrentStateHealShipMismatches: number | null;
@@ -439,7 +439,6 @@ export class SettlementIndexer {
   private planetRebuildPromise: Promise<IndexerSnapshot> | null = null;
   private rebuildPromise: Promise<IndexerSnapshot> | null = null;
   private currentStateHealPromise: Promise<IndexerSnapshot> | null = null;
-  private canonicalFleetMissionSyncPromise: Promise<IndexerSnapshot> | null = null;
   private currentStateHealRunId: string | null = null;
   private targetedHealPlanetIds = new Set<string>();
   private targetedHealPromise: Promise<void> | null = null;
@@ -653,6 +652,7 @@ export class SettlementIndexer {
       fromBlock: this.fromBlock.toString(),
       lastRebuiltAt: this.metadata("lastRebuiltAt"),
       lastCurrentStateHealAt: this.metadata("lastCurrentStateHealAt"),
+      currentStateOneTimeHealCompletedAt: this.metadata("currentStateOneTimeHealCompletedAt"),
       lastCurrentStateHealPlanetsScanned: metadataNumber(this.metadata("lastCurrentStateHealPlanetsScanned")),
       lastCurrentStateHealRunId: this.metadata("lastCurrentStateHealRunId"),
       lastCurrentStateHealShipMismatches: metadataNumber(this.metadata("lastCurrentStateHealShipMismatches")),
@@ -2100,17 +2100,10 @@ export class SettlementIndexer {
       throw new Error("contract log replay is unavailable: chain reader cannot list raw contract logs");
     }
     const logs = await this.chainReader.listContractLogs(fromBlock, toBlock);
-    const targetedHealPlanetIds = new Set<string>();
     for (const log of sortRpcLogs(logs)) {
       this.applyLog(log);
-      for (const planetId of canonicalHealPlanetIdsForLog(log)) {
-        targetedHealPlanetIds.add(planetId);
-      }
     }
     this.rebuildMaterializedStateFromEventLogs();
-    if (targetedHealPlanetIds.size > 0) {
-      await this.healCanonicalPlanets([...targetedHealPlanetIds]);
-    }
     this.setMetadata("lastEventReplayAt", new Date().toISOString());
     if (typeof toBlock === "bigint") {
       this.recordLatestBlock(toBlock.toString());
@@ -2151,13 +2144,23 @@ export class SettlementIndexer {
   async syncCanonicalState(
     fromBlock = this.fromBlock,
     toBlock: bigint | "latest" = "latest",
-    options: { rebuildDeadlineMs?: number } = {}
+    options: { rebuildDeadlineMs?: number; planetConcurrency?: number } = {}
   ): Promise<{
     replay: IndexerSnapshot;
     rebuild: IndexerSnapshot;
   }> {
     const replay = await this.replayContractLogs(fromBlock, toBlock);
-    const rebuild = await this.rebuild({ deadlineMs: options.rebuildDeadlineMs ?? 0 });
+    void options.rebuildDeadlineMs;
+    if (
+      this.metadata("currentStateOneTimeHealCompletedAt")
+      || !this.chainReader.listCurrentPlanets
+      || !this.chainReader.getCanonicalPlanetState
+    ) {
+      return { replay, rebuild: this.snapshot() };
+    }
+    const rebuild = await this.startCurrentStateHealOnce("canonical-sync-one-time-heal", {
+      planetConcurrency: options.planetConcurrency ?? CANONICAL_READ_PLANET_CHUNK
+    });
     return { replay, rebuild };
   }
 
@@ -2181,52 +2184,25 @@ export class SettlementIndexer {
   }
 
   async syncCanonicalFleetMissions(reason = "periodic"): Promise<IndexerSnapshot> {
-    if (!this.chainReader.listCanonicalFleetMissions) return this.snapshot();
-    if (this.canonicalFleetMissionSyncPromise) return this.canonicalFleetMissionSyncPromise;
-
-    this.canonicalFleetMissionSyncPromise = this.syncCanonicalFleetMissionsUncached(reason)
-      .finally(() => {
-        this.canonicalFleetMissionSyncPromise = null;
-      });
-    return this.canonicalFleetMissionSyncPromise;
-  }
-
-  private async syncCanonicalFleetMissionsUncached(reason: string): Promise<IndexerSnapshot> {
-    const startedAt = Date.now();
-    try {
-      const missions = await this.chainReader.listCanonicalFleetMissions?.();
-      const updatedRows = missions ? await this.replaceCanonicalFleetMissions(missions) : 0;
-      await this.runHealWrite("canonical fleet mission sync metadata", () => {
-        this.setMetadata("lastCanonicalFleetMissionSyncAt", new Date().toISOString());
-        this.setMetadata("lastCanonicalFleetMissionSyncDurationMs", (Date.now() - startedAt).toString());
-        this.setMetadata("lastCanonicalFleetMissionSyncRows", (missions?.length ?? 0).toString());
-        this.setMetadata("lastCanonicalFleetMissionSyncUpdatedRows", updatedRows.toString());
-        this.setMetadata("lastCanonicalFleetMissionSyncReason", reason.slice(0, 128));
-        this.db.query("DELETE FROM indexer_metadata WHERE key = 'lastCanonicalFleetMissionSyncError'").run();
-        this.snapshotCache = null;
-      });
-    } catch (error) {
-      await this.runHealWrite("canonical fleet mission sync error", () => {
-        this.setMetadata("lastCanonicalFleetMissionSyncAt", new Date().toISOString());
-        this.setMetadata("lastCanonicalFleetMissionSyncDurationMs", (Date.now() - startedAt).toString());
-        this.setMetadata("lastCanonicalFleetMissionSyncError", error instanceof Error ? error.message : String(error));
-        this.snapshotCache = null;
-      });
-      throw error;
-    }
+    void reason;
     return this.snapshot();
   }
 
   startCurrentStateHealOnce(runId: string, options: { planetConcurrency?: number } = {}): Promise<IndexerSnapshot> {
     const normalizedRunId = runId.trim().slice(0, 128);
     if (!normalizedRunId) return Promise.resolve(this.snapshot());
+    if (this.metadata("currentStateOneTimeHealCompletedAt")) {
+      return Promise.resolve(this.snapshot());
+    }
     if (this.metadata("lastCurrentStateHealRunId") === normalizedRunId) {
       return Promise.resolve(this.snapshot());
     }
     this.currentStateHealRunId = normalizedRunId;
     return this.seedCurrentCanonicalState(options).then((snapshot) => {
       this.setMetadata("lastCurrentStateHealRunId", normalizedRunId);
-      this.setMetadata("lastCurrentStateHealAt", new Date().toISOString());
+      const completedAt = new Date().toISOString();
+      this.setMetadata("lastCurrentStateHealAt", completedAt);
+      this.setMetadata("currentStateOneTimeHealCompletedAt", completedAt);
       return this.snapshot();
     });
   }
@@ -2293,7 +2269,6 @@ export class SettlementIndexer {
     if (!this.chainReader.listContractLogs) return;
 
     const logs = sortRpcLogs(await this.chainReader.listContractLogs(fromBlock, toBlock));
-    const targetedHealPlanetIds = new Set<string>();
     for (const log of logs) {
       await this.runHealOperation(`record overlap log ${indexedLogKey(log)}`, () => {
         this.applyLog(log);
@@ -2301,12 +2276,6 @@ export class SettlementIndexer {
       await this.runHealWrite(`replay overlap log ${indexedLogKey(log)}`, () => {
         this.applyStoredLogSideEffects(log);
       });
-      for (const planetId of canonicalHealPlanetIdsForLog(log)) {
-        targetedHealPlanetIds.add(planetId);
-      }
-    }
-    if (targetedHealPlanetIds.size > 0) {
-      await this.healCanonicalPlanets([...targetedHealPlanetIds]);
     }
   }
 

@@ -1,5 +1,5 @@
 import type { BackendConfig } from "./config";
-import { canonicalHealPlanetIdsForLog, isSettledPlanetLog } from "./evm";
+import { isSettledPlanetLog } from "./evm";
 import type { RpcLog } from "./evm";
 import type { SettlementIndexer } from "./indexer";
 
@@ -7,9 +7,8 @@ import type { SettlementIndexer } from "./indexer";
 // `listContractLogs` returns every indexed-contract log in a block range (chunked internally). The
 // primary live path is a websocket log subscriber when configured; this backfiller remains the durable
 // cursor recovery path for startup gaps, websocket setup failures, and detected block gaps. applyLog
-// dedups by txHash:logIndex, so overlapping ranges are idempotent. Combat/fleet logs may also enqueue a
-// planet-scoped canonical heal when the contract does not emit enough per-unit survivor data to update
-// ship/defense rows from logs alone.
+// dedups by txHash:logIndex, so overlapping ranges are idempotent. Runtime mutation must stay event-only:
+// canonical state reads are reserved for a one-time operator heal, never for live log handling.
 type LogBackfiller = {
   failoverRpc?(reason: string): boolean;
   getHeadBlock(): Promise<bigint>;
@@ -27,7 +26,7 @@ export type LiveLogSubscriber = {
   }): (() => void) | Promise<() => void>;
 };
 
-type ChainSyncIndexer = Partial<Pick<SettlementIndexer, "applyLog" | "clearPendingReconciliationReason" | "healCanonicalPlanets" | "markStale" | "snapshot">>;
+type ChainSyncIndexer = Partial<Pick<SettlementIndexer, "applyLog" | "clearPendingReconciliationReason" | "markStale" | "snapshot">>;
 
 export type ChainSyncSnapshot = {
   connected: boolean;
@@ -503,7 +502,6 @@ export class ChainSyncService {
           applied += 1;
           lastHash = log.transactionHash;
           walletPlanetsChanged ||= isSettledPlanetLog(log);
-          this.queueTargetedCanonicalHeal(log);
         }
         if (result.removed) {
           // A reorg-removed log. The contract re-emits the canonical post-state on the new chain, and
@@ -519,18 +517,6 @@ export class ChainSyncService {
       }
     }
     return { applied, lastHash, walletPlanetsChanged };
-  }
-
-  private queueTargetedCanonicalHeal(log: RpcLog): void {
-    const planetIds = canonicalHealPlanetIdsForLog(log);
-    if (planetIds.length === 0) return;
-    const healCanonicalPlanets = this.indexer?.healCanonicalPlanets;
-    if (!healCanonicalPlanets) return;
-    // Keep targeted canonical repairs strictly outside the live event handler. The repair itself is
-    // best-effort/background; even synchronous queue bookkeeping must not poison handler latency.
-    setTimeout(() => {
-      void healCanonicalPlanets.call(this.indexer, planetIds);
-    }, 0);
   }
 
   private markConnected(): void {
@@ -667,7 +653,7 @@ export class ChainSyncService {
         }
         : null,
       sideEffects: {
-        targetedCanonicalHealPlanetIds: canonicalHealPlanetIdsForLog(log)
+        canonicalHealQueued: false
       }
     };
     const serialized = JSON.stringify(logLine);
