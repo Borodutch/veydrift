@@ -100,6 +100,7 @@ export class ChainSyncService {
     private readonly config: BackendConfig,
     private readonly indexer: ChainSyncIndexer | undefined,
     private readonly options: {
+      diagnosticsPublisher?: (snapshot: ChainSyncSnapshot) => void;
       logBackfiller?: LogBackfiller;
       pollIntervalMs?: number;
     } = {}
@@ -299,6 +300,15 @@ export class ChainSyncService {
     } finally {
       this.lastPollDurationMs = Date.now() - pollStartedAt;
       this.pollInProgress = false;
+      this.publishDiagnostics();
+    }
+  }
+
+  private publishDiagnostics(): void {
+    try {
+      this.options.diagnosticsPublisher?.(this.snapshot());
+    } catch (error) {
+      console.warn("Veydrift chain-sync diagnostics publish failed", error);
     }
   }
 

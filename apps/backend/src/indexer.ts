@@ -189,6 +189,14 @@ export type IndexerSnapshot = {
   staleReason: string | null;
 };
 
+const writerChainSyncDiagnosticsMetadataKey = "writerChainSyncDiagnostics";
+
+export type WriterChainSyncDiagnostics = {
+  chainSync: unknown | null;
+  chainSyncRpc: unknown | null;
+  updatedAt: string;
+};
+
 const indexedStateVersionMetadataKey = "indexedStateVersion";
 
 export type SettlementIndexerOptions = {
@@ -664,6 +672,35 @@ export class SettlementIndexer {
       snapshot
     };
     return snapshot;
+  }
+
+  recordWriterChainSyncDiagnostics(diagnostics: Pick<WriterChainSyncDiagnostics, "chainSync" | "chainSyncRpc">): void {
+    this.setMetadata(
+      writerChainSyncDiagnosticsMetadataKey,
+      JSON.stringify({
+        ...diagnostics,
+        updatedAt: new Date().toISOString()
+      } satisfies WriterChainSyncDiagnostics),
+      { invalidateSnapshot: false }
+    );
+  }
+
+  writerChainSyncDiagnostics(): WriterChainSyncDiagnostics | null {
+    const raw = this.metadata(writerChainSyncDiagnosticsMetadataKey);
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw) as Partial<WriterChainSyncDiagnostics>;
+      if (!parsed || typeof parsed !== "object" || typeof parsed.updatedAt !== "string") {
+        return null;
+      }
+      return {
+        chainSync: parsed.chainSync ?? null,
+        chainSyncRpc: parsed.chainSyncRpc ?? null,
+        updatedAt: parsed.updatedAt
+      };
+    } catch {
+      return null;
+    }
   }
 
   settledPlanetsInSystem(galaxy: number, system: number): SettledPlanetEvent[] {
@@ -5679,8 +5716,10 @@ export class SettlementIndexer {
     this.setMetadata("lastReconciliationError", error instanceof Error ? error.message : String(error));
   }
 
-  private setMetadata(key: string, value: string): void {
-    this.snapshotCache = null;
+  private setMetadata(key: string, value: string, options: { invalidateSnapshot?: boolean } = {}): void {
+    if (options.invalidateSnapshot !== false) {
+      this.snapshotCache = null;
+    }
     this.db.query(`
       INSERT INTO indexer_metadata (key, value)
       VALUES (?, ?)

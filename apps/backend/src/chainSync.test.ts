@@ -408,7 +408,11 @@ describe("ChainSyncService (polling)", () => {
       logIndex: "0x0"
     };
     const backfiller = new MockBackfiller(0x182n, () => [log]);
-    const service = new ChainSyncService(config, indexer, { logBackfiller: backfiller });
+    const published: Array<ReturnType<ChainSyncService["snapshot"]>> = [];
+    const service = new ChainSyncService(config, indexer, {
+      logBackfiller: backfiller,
+      diagnosticsPublisher: (snapshot) => published.push(snapshot)
+    });
 
     await service.poll();
 
@@ -425,6 +429,13 @@ describe("ChainSyncService (polling)", () => {
     expect(service.snapshot().lastPollDurationMs).toBeGreaterThanOrEqual(0);
     expect(service.snapshot().lastGetLogsDurationMs).toBeGreaterThanOrEqual(0);
     expect(service.snapshot().recentEventReceiveLagMs.p95).toBeGreaterThanOrEqual(2_000);
+    expect(published.at(-1)).toMatchObject({
+      lastGetLogsRange: { fromBlock: "385", toBlock: "386" },
+      latestHeadBlock: "386",
+      latestSyncedBlock: "386",
+      pollBacklogBlocks: "0",
+      recentEventReceiveLagMs: { count: 1 }
+    });
     service.stop();
   });
 

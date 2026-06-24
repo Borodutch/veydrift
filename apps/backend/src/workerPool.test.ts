@@ -234,31 +234,35 @@ describe("createForwardingFetch", () => {
     await expect(response.json()).resolves.toMatchObject({ ok: true });
   });
 
-  test("forwards indexer debug reads to the writer for chain-sync diagnostics", async () => {
+  test("serves indexer debug reads locally from persisted writer diagnostics", async () => {
     const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
     const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
       calls.push({ url: String(input), body: init?.body });
       return Response.json({
-        chainSync: {
-          lastPollDurationMs: 12,
-          lastGetLogsDurationMs: 8,
-          lastGetLogsRange: { fromBlock: "43272548", toBlock: "43272549" },
-          pollBacklogBlocks: "0",
-          recentEventReceiveLagMs: { count: 3, p50: 300, p95: 800, max: 900 }
-        },
-        chainSyncRpc: { requestCount: 4 },
-        indexer: { indexedState: "healthy" }
-      });
+        error: "writer should not receive debug reads"
+      }, { status: 503 });
     }) as unknown as typeof fetch;
 
-    const local = async () => Response.json({ chainSync: null, worker: "reader" });
+    const local = async () => Response.json({
+      writerDiagnostics: { source: "persisted", updatedAt: "2026-06-24T18:00:00.000Z" },
+      chainSync: {
+        lastPollDurationMs: 12,
+        lastGetLogsDurationMs: 8,
+        lastGetLogsRange: { fromBlock: "43272548", toBlock: "43272549" },
+        pollBacklogBlocks: "0",
+        recentEventReceiveLagMs: { count: 3, p50: 300, p95: 800, max: 900 }
+      },
+      chainSyncRpc: { requestCount: 4 },
+      indexer: { indexedState: "healthy" }
+    });
     const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
 
     const response = await handler(new Request("http://localhost/debug/indexer?sample=qa"));
 
-    expect(calls).toEqual([{ url: "http://127.0.0.1:4001/debug/indexer?sample=qa", body: undefined }]);
+    expect(calls).toEqual([]);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
+      writerDiagnostics: { source: "persisted" },
       chainSync: {
         lastPollDurationMs: 12,
         lastGetLogsDurationMs: 8,
@@ -267,6 +271,32 @@ describe("createForwardingFetch", () => {
         recentEventReceiveLagMs: { count: 3, p95: 800 }
       },
       chainSyncRpc: { requestCount: 4 }
+    });
+  });
+
+  test("does not fail indexer debug reads when the writer is busy", async () => {
+    const fetchImpl = (async () => {
+      throw new Error("writer timed out");
+    }) as unknown as typeof fetch;
+    const local = async () => Response.json({
+      writerDiagnostics: { source: "persisted", updatedAt: "2026-06-24T18:00:00.000Z" },
+      chainSync: {
+        lastPollDurationMs: 33128,
+        pollBacklogBlocks: "0"
+      },
+      indexer: { indexedState: "healthy" }
+    });
+    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
+
+    const response = await handler(new Request("http://localhost/debug/indexer"));
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      writerDiagnostics: { source: "persisted" },
+      chainSync: {
+        lastPollDurationMs: 33128,
+        pollBacklogBlocks: "0"
+      }
     });
   });
 
