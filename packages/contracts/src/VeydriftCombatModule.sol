@@ -86,18 +86,20 @@ contract VeydriftCombatRapidfire is IVeydriftCombatRapidfire {
                 FleetBattleGroup calldata group = targetPool[groupIndex];
                 for (uint8 shipId = 0; shipId <= uint8(Ship.Pathfinder);) {
                     uint32 count = _missionShipQuantity(group.ships, Ship(shipId));
-                    generated += _shipRapidfireExtraShots(
-                        count,
-                        VeydriftCatalog.shipRapidfireAgainstShip(firingShip, Ship(shipId)),
-                        incoming,
-                        targetTotal,
-                        seed,
-                        round,
-                        side,
-                        firingUnit,
-                        _targetLane(TARGET_LANE_ATTACKER_SHIP, group.laneGroup, shipId),
-                        chain
-                    );
+                    if (count != 0) {
+                        generated += _shipRapidfireExtraShots(
+                            count,
+                            VeydriftCatalog.shipRapidfireAgainstShip(firingShip, Ship(shipId)),
+                            incoming,
+                            targetTotal,
+                            seed,
+                            round,
+                            side,
+                            firingUnit,
+                            _targetLane(TARGET_LANE_ATTACKER_SHIP, group.laneGroup, shipId),
+                            chain
+                        );
+                    }
                     unchecked {
                         ++shipId;
                     }
@@ -140,18 +142,21 @@ contract VeydriftCombatRapidfire is IVeydriftCombatRapidfire {
                 chain
             );
             for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
-                generated += _shipRapidfireExtraShots(
-                    targetPool.defenses[i],
-                    VeydriftCatalog.shipRapidfireAgainstDefense(firingShip, Defense(i)),
-                    incoming,
-                    targetPool.units,
-                    seed,
-                    round,
-                    side,
-                    firingUnit,
-                    _targetLane(TARGET_LANE_DEFENSE, 0, i),
-                    chain
-                );
+                uint32 count = targetPool.defenses[i];
+                if (count != 0) {
+                    generated += _shipRapidfireExtraShots(
+                        count,
+                        VeydriftCatalog.shipRapidfireAgainstDefense(firingShip, Defense(i)),
+                        incoming,
+                        targetPool.units,
+                        seed,
+                        round,
+                        side,
+                        firingUnit,
+                        _targetLane(TARGET_LANE_DEFENSE, 0, i),
+                        chain
+                    );
+                }
                 unchecked {
                     ++i;
                 }
@@ -198,18 +203,20 @@ contract VeydriftCombatRapidfire is IVeydriftCombatRapidfire {
     ) private pure returns (uint256 generated) {
         for (uint8 shipId = 0; shipId <= uint8(Ship.Pathfinder);) {
             uint32 count = _missionShipQuantity(ships, Ship(shipId));
-            generated += _shipRapidfireExtraShots(
-                count,
-                VeydriftCatalog.shipRapidfireAgainstShip(firingShip, Ship(shipId)),
-                incoming,
-                targetTotal,
-                seed,
-                round,
-                side,
-                firingUnit,
-                _targetLane(laneBase, laneGroup, shipId),
-                chain
-            );
+            if (count != 0) {
+                generated += _shipRapidfireExtraShots(
+                    count,
+                    VeydriftCatalog.shipRapidfireAgainstShip(firingShip, Ship(shipId)),
+                    incoming,
+                    targetTotal,
+                    seed,
+                    round,
+                    side,
+                    firingUnit,
+                    _targetLane(laneBase, laneGroup, shipId),
+                    chain
+                );
+            }
             unchecked {
                 ++shipId;
             }
