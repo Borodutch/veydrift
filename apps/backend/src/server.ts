@@ -1681,7 +1681,7 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (request.method !== "GET") return 0;
   if (url.pathname === "/chain/events") return 0;
   if (url.pathname === "/health") return 10_000;
-  if (url.pathname === "/debug/indexer") return 2_000;
+  if (url.pathname === "/debug/indexer") return 10_000;
   if (url.pathname === "/highscores") return 300_000;
   if (url.pathname === "/raid-finder/debris") return 30_000;
   // Mission-control reads are backed by the mission read-model version in responseCacheVersion(), so

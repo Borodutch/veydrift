@@ -461,6 +461,134 @@ contract VeydriftAllianceSystemTest is Test {
         );
     }
 
+    function testOwnerCanBatchUpdateMemberRoles() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        _inviteAndAccept(allianceId, member);
+        _inviteAndAccept(allianceId, enemy);
+        _inviteAndAccept(allianceId, recruit);
+
+        address[] memory officers = new address[](2);
+        officers[0] = member;
+        officers[1] = enemy;
+
+        vm.prank(leader);
+        alliances.setMembersRole(allianceId, officers, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        assertEq(
+            uint8(alliances.allianceOf(member).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Officer)
+        );
+        assertEq(
+            uint8(alliances.allianceOf(enemy).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Officer)
+        );
+        assertEq(
+            uint8(alliances.allianceOf(recruit).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Member)
+        );
+
+        address[] memory members = new address[](1);
+        members[0] = member;
+
+        vm.prank(leader);
+        alliances.setMembersRole(allianceId, members, VeydriftAllianceSystem.AllianceRole.Member);
+
+        assertEq(
+            uint8(alliances.allianceOf(member).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Member)
+        );
+    }
+
+    function testBatchRoleUpdatePreservesOwnerProtection() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        _inviteAndAccept(allianceId, member);
+
+        address[] memory targets = new address[](2);
+        targets[0] = member;
+        targets[1] = leader;
+
+        vm.prank(leader);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.NotAuthorized.selector, leader, allianceId
+            )
+        );
+        alliances.setMembersRole(allianceId, targets, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        assertEq(
+            uint8(alliances.allianceOf(member).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Member)
+        );
+        assertEq(
+            uint8(alliances.allianceOf(leader).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Owner)
+        );
+    }
+
+    function testOfficerCanBatchKickMembers() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        _inviteAndAccept(allianceId, member);
+        _inviteAndAccept(allianceId, enemy);
+        _inviteAndAccept(allianceId, recruit);
+
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        address[] memory targets = new address[](2);
+        targets[0] = enemy;
+        targets[1] = recruit;
+
+        vm.prank(member);
+        alliances.kickMembers(allianceId, targets);
+
+        assertEq(
+            uint8(alliances.allianceOf(enemy).role), uint8(VeydriftAllianceSystem.AllianceRole.None)
+        );
+        assertEq(
+            uint8(alliances.allianceOf(recruit).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.None)
+        );
+        assertEq(alliances.allianceProfile(allianceId).memberCount, 2);
+    }
+
+    function testBatchKickIsAtomicWhenTargetCannotBeRemoved() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("VDFT", "Veydrift Union", "");
+        _inviteAndAccept(allianceId, member);
+        _inviteAndAccept(allianceId, enemy);
+        _inviteAndAccept(allianceId, recruit);
+
+        vm.startPrank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+        alliances.setMemberRole(allianceId, enemy, VeydriftAllianceSystem.AllianceRole.Officer);
+        vm.stopPrank();
+
+        address[] memory targets = new address[](2);
+        targets[0] = recruit;
+        targets[1] = enemy;
+
+        vm.prank(member);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.NotAuthorized.selector, member, allianceId
+            )
+        );
+        alliances.kickMembers(allianceId, targets);
+
+        assertEq(
+            uint8(alliances.allianceOf(recruit).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Member)
+        );
+        assertEq(
+            uint8(alliances.allianceOf(enemy).role),
+            uint8(VeydriftAllianceSystem.AllianceRole.Officer)
+        );
+        assertEq(alliances.allianceProfile(allianceId).memberCount, 4);
+    }
+
     function testDiplomacyFeedsAttackLimitContext() public {
         vm.prank(leader);
         uint256 allianceId = alliances.createAlliance("ALLY", "Alliance", "");

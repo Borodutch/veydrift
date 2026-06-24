@@ -201,6 +201,8 @@ import {
   sendStartMoonBuildingUpgradeTransaction,
   sendStartDefenseProductionTransaction,
   sendAcceptAllianceInviteTransaction,
+  sendAllianceBatchKickTransaction,
+  sendAllianceBatchRoleTransaction,
   sendAllianceJoinRequestTransaction,
   sendAllianceKickTransaction,
   sendAllianceLeaveTransaction,
@@ -5959,6 +5961,25 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     ));
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
 
+  const handleBatchKickAllianceMembers = useCallback((playerAddresses: string[]) => {
+    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+    if (playerAddresses.length === 0) {
+      setAllianceAction({ status: "error", label: "Select at least one alliance member." });
+      return;
+    }
+
+    void runAllianceTransaction("Alliance batch roster removal", () => sendAllianceBatchKickTransaction(
+      provider,
+      account,
+      allianceContract,
+      allianceState.membership.allianceId,
+      playerAddresses,
+    ));
+  }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+
   const handleLeaveAlliance = useCallback(() => {
     if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
       setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
@@ -5985,6 +6006,27 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       allianceContract,
       allianceState.membership.allianceId,
       playerAddress,
+      role,
+    ));
+  }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
+
+  const handleBatchSetAllianceRole = useCallback((playerAddresses: string[], role: "member" | "officer") => {
+    if (!provider || !account || !allianceContract || !allianceState?.membership.allianceId) {
+      setAllianceAction({ status: "error", label: "Alliance contract unavailable." });
+      return;
+    }
+    if (playerAddresses.length === 0) {
+      setAllianceAction({ status: "error", label: "Select at least one alliance member." });
+      return;
+    }
+
+    const label = role === "officer" ? "Alliance batch officer promotion" : "Alliance batch member demotion";
+    void runAllianceTransaction(label, () => sendAllianceBatchRoleTransaction(
+      provider,
+      account,
+      allianceContract,
+      allianceState.membership.allianceId,
+      playerAddresses,
       role,
     ));
   }, [account, allianceContract, allianceState?.membership.allianceId, provider, runAllianceTransaction]);
@@ -7457,6 +7499,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           transactionUnavailableReason={allianceTransactionUnavailableReason}
           onAcceptInvite={handleAcceptAllianceInvite}
           onApproveJoinRequest={handleApproveAllianceJoinRequest}
+          onBatchKick={handleBatchKickAllianceMembers}
+          onBatchSetRole={handleBatchSetAllianceRole}
           onCancelJoinRequest={handleCancelAllianceJoinRequest}
           onCreate={handleCreateAlliance}
           onDismissJoinRequest={handleDismissAllianceJoinRequest}
@@ -7486,6 +7530,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           transactionUnavailableReason={allianceTransactionUnavailableReason}
           onApproveJoinRequest={handleApproveAllianceJoinRequest}
           onBack={() => handleNavigate("alliance")}
+          onBatchKick={handleBatchKickAllianceMembers}
+          onBatchSetRole={handleBatchSetAllianceRole}
           onDismissJoinRequest={handleDismissAllianceJoinRequest}
           onInvite={handleInviteAllianceMember}
           onKick={handleKickAllianceMember}

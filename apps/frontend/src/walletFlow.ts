@@ -1021,8 +1021,10 @@ const ALLIANCE_SELECTORS = {
   dismissJoinRequest: "0xcd844a18",
   approveJoinRequest: "0x8ff388c7",
   kickMember: "0xbd0e667c",
+  kickMembers: "0x7c581707",
   leaveAlliance: "0xdabd761d",
   setMemberRole: "0xbfbb73f1",
+  setMembersRole: "0xe0c22e19",
   setDiplomacy: "0x63b9e8f8",
   transferAllianceOwnership: "0xb1d3b1e4"
 } as const;
@@ -2046,6 +2048,21 @@ export function encodeUintAddressUintCall(selector: string, value: bigint | numb
   return `${encodeUintAddressCall(selector, value, address)}${BigInt(role).toString(16).padStart(64, "0")}`;
 }
 
+export function encodeUintAddressArrayCall(selector: string, value: bigint | number | string, addresses: string[]): string {
+  const encodedAddresses = addresses.map((address) => address.toLowerCase().replace(/^0x/, "").padStart(64, "0")).join("");
+  return `${selector}${BigInt(value).toString(16).padStart(64, "0")}${(64n).toString(16).padStart(64, "0")}${BigInt(addresses.length).toString(16).padStart(64, "0")}${encodedAddresses}`;
+}
+
+export function encodeUintAddressArrayUintCall(
+  selector: string,
+  value: bigint | number | string,
+  addresses: string[],
+  role: bigint | number | string
+): string {
+  const encodedAddresses = addresses.map((address) => address.toLowerCase().replace(/^0x/, "").padStart(64, "0")).join("");
+  return `${selector}${BigInt(value).toString(16).padStart(64, "0")}${(96n).toString(16).padStart(64, "0")}${BigInt(role).toString(16).padStart(64, "0")}${BigInt(addresses.length).toString(16).padStart(64, "0")}${encodedAddresses}`;
+}
+
 function encodeAbiString(value: string): string {
   const bytes = new TextEncoder().encode(value);
   const body = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -2455,6 +2472,20 @@ export async function sendAllianceKickTransaction(
   });
 }
 
+export async function sendAllianceBatchKickTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  playerAddresses: string[]
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeUintAddressArrayCall(ALLIANCE_SELECTORS.kickMembers, allianceId, playerAddresses)
+  });
+}
+
 export async function sendAllianceLeaveTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -2479,6 +2510,21 @@ export async function sendAllianceRoleTransaction(
     from: account,
     to: contractAddress,
     data: encodeUintAddressUintCall(ALLIANCE_SELECTORS.setMemberRole, allianceId, playerAddress, role === "officer" ? 2 : 1)
+  });
+}
+
+export async function sendAllianceBatchRoleTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  allianceId: string,
+  playerAddresses: string[],
+  role: "member" | "officer"
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeUintAddressArrayUintCall(ALLIANCE_SELECTORS.setMembersRole, allianceId, playerAddresses, role === "officer" ? 2 : 1)
   });
 }
 
