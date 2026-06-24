@@ -107,12 +107,12 @@ describe("Moon page helpers", () => {
     expect(visibleText(page)).toContain("No eligible Burning Chickens were found in this wallet on Base mainnet.");
   });
 
-  test("renders manual Chicken token entry when wallet listing is unavailable", () => {
+  test("does not render manual Chicken token entry on lookup errors", () => {
     const page = MoonPage({
       burningChicken: {
         chickens: [],
         configured: true,
-        error: "Automatic Chicken wallet listing is unavailable for this contract. Enter a Chicken token ID manually.",
+        error: "Burning Chicken wallet lookup is temporarily unavailable.",
         loading: false,
         maxMoonsPerPlayer: 2,
         moonCount: 0,
@@ -129,9 +129,9 @@ describe("Moon page helpers", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Automatic Chicken wallet listing is unavailable");
-    expect(text).toContain("Chicken token ID");
-    expect(text).toContain("Burn Token");
+    expect(text).toContain("Burning Chicken wallet lookup is temporarily unavailable.");
+    expect(text).not.toContain("Chicken token ID");
+    expect(text).not.toContain("Burn Token");
     expect(text).not.toContain("execution reverted");
   });
 

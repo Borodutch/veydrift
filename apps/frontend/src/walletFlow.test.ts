@@ -92,7 +92,6 @@ import {
   watchPlanet,
   WATCHED_PLANETS_API_READ_TIMEOUT_MS,
   walletRequestErrorMessage,
-  BURNING_CHICKEN_MANUAL_TOKEN_ENTRY_MESSAGE,
   type Eip1193Provider
 } from "./walletFlow";
 import { GAME_UNAVAILABLE_MESSAGE } from "./gameUnavailable";
@@ -141,10 +140,25 @@ describe("walletFlow", () => {
     );
   });
 
-  test("does not surface raw reverts when Burning Chickens are not enumerable", async () => {
+  test("discovers Burning Chickens through Blockscout when the NFT is not enumerable", async () => {
     const originalFetch = globalThis.fetch;
     const calls: string[] = [];
-    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = String(input);
+      if (url.startsWith("https://base.blockscout.com/")) {
+        calls.push(url);
+        return new Response(JSON.stringify({
+          items: [{
+            id: "91528",
+            metadata: { attributes: [{ trait_type: "Level", value: 2 }] },
+          }],
+          next_page_params: null,
+        }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      }
+
       const body = JSON.parse(String(init?.body ?? "{}")) as { params?: Array<{ data?: string }> };
       const data = body.params?.[0]?.data ?? "";
       calls.push(data);
@@ -160,7 +174,13 @@ describe("walletFlow", () => {
           status: 200,
         });
       }
-      return new Response(JSON.stringify({ error: { message: "execution reverted" } }), {
+      if (data.startsWith("0x6352211e")) {
+        return new Response(JSON.stringify({ result: "0x" + account.toLowerCase().replace(/^0x/, "").padStart(64, "0") }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      }
+      return new Response(JSON.stringify({ error: { message: "unexpected call" } }), {
         headers: { "content-type": "application/json" },
         status: 200,
       });
@@ -173,12 +193,13 @@ describe("walletFlow", () => {
         levelSelector: "0x05c58df2",
         nftContractAddress: contract,
         rpcUrl: "https://base.example.test",
-      })).rejects.toThrow(BURNING_CHICKEN_MANUAL_TOKEN_ENTRY_MESSAGE);
+      })).resolves.toEqual([{ level: 2, tokenId: "91528" }]);
     } finally {
       globalThis.fetch = originalFetch;
     }
 
     expect(calls.some((data) => data.startsWith("0x2f745c59"))).toBe(false);
+    expect(calls.some((data) => data.startsWith("https://base.blockscout.com/"))).toBe(true);
   });
 
   test("switches to Base mainnet and sends Burning Chicken moon burn transactions", async () => {
