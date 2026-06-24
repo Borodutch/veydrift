@@ -131,7 +131,10 @@ type WaitOptions = {
   delay?: (ms: number) => Promise<void>;
 };
 
-const DEFAULT_POST_TRANSACTION_REFRESH_ATTEMPTS = 16;
+// Keep transaction flows as light-client reads: after a receipt, wait for the
+// backend-indexed event to become visible instead of fabricating local state.
+// Base Sepolia indexing can lag past the old ~12s window under deploy/load.
+const DEFAULT_POST_TRANSACTION_REFRESH_ATTEMPTS = 80;
 const DEFAULT_POST_TRANSACTION_REFRESH_INTERVAL_MS = 750;
 
 type MissionLaunchWaitOptions = WaitOptions & {
