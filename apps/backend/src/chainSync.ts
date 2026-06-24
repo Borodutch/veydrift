@@ -63,6 +63,9 @@ export type ChainSyncSnapshot = {
     p50: number | null;
     p95: number | null;
     max: number | null;
+    windowMs: number;
+    windowStartedAt: string | null;
+    lastSampledAt: string | null;
   };
   headStallPollCount: number;
   pollFailureCount: number;
@@ -90,6 +93,7 @@ type ChainSyncListener = (event: ChainSyncEvent) => void;
 // a sustained RPC outage should. lastError surfaces immediately on the very first failure regardless.
 const CONNECTED_FAILURE_THRESHOLD = 5;
 const HEAD_STALL_FAILURE_THRESHOLD = 30;
+const HANDLER_DIAGNOSTICS_WINDOW_MS = 60_000;
 
 export class ChainSyncService {
   private connected = false;
@@ -129,7 +133,7 @@ export class ChainSyncService {
   // never skip directly to head because there is no startup canonical self-heal to cover the gap.
   private cursor: bigint | null = null;
   private readonly recentEventReceiveLagsMs: number[] = [];
-  private readonly recentHandlerDurationsMs: number[] = [];
+  private readonly recentHandlerDurationsMs: Array<{ durationMs: number; sampledAtMs: number }> = [];
 
   constructor(
     private readonly config: BackendConfig,
@@ -629,7 +633,8 @@ export class ChainSyncService {
   ): void {
     this.lastHandlerDurationMs = durationMs;
     this.maxHandlerDurationMs = Math.max(this.maxHandlerDurationMs ?? 0, durationMs);
-    this.recentHandlerDurationsMs.push(durationMs);
+    const sampledAtMs = Date.now();
+    this.recentHandlerDurationsMs.push({ durationMs, sampledAtMs });
     if (this.recentHandlerDurationsMs.length > 100) {
       this.recentHandlerDurationsMs.splice(0, this.recentHandlerDurationsMs.length - 100);
     }
@@ -670,16 +675,36 @@ export class ChainSyncService {
   }
 
   private recentHandlerDurationSummary(): ChainSyncSnapshot["recentHandlerDurationMs"] {
-    if (this.recentHandlerDurationsMs.length === 0) {
-      return { count: 0, max: null, p50: null, p95: null };
+    const cutoffMs = Date.now() - HANDLER_DIAGNOSTICS_WINDOW_MS;
+    const freshSamples = this.recentHandlerDurationsMs.filter((sample) => sample.sampledAtMs >= cutoffMs);
+    if (freshSamples.length === 0) {
+      return {
+        count: 0,
+        max: null,
+        p50: null,
+        p95: null,
+        windowMs: HANDLER_DIAGNOSTICS_WINDOW_MS,
+        windowStartedAt: new Date(cutoffMs).toISOString(),
+        lastSampledAt: this.lastHandlerSampledAt()
+      };
     }
-    const sorted = [...this.recentHandlerDurationsMs].sort((left, right) => left - right);
+    const sorted = freshSamples
+      .map((sample) => sample.durationMs)
+      .sort((left, right) => left - right);
     return {
       count: sorted.length,
       p50: percentile(sorted, 0.5),
       p95: percentile(sorted, 0.95),
-      max: sorted.at(-1) ?? null
+      max: sorted.at(-1) ?? null,
+      windowMs: HANDLER_DIAGNOSTICS_WINDOW_MS,
+      windowStartedAt: new Date(cutoffMs).toISOString(),
+      lastSampledAt: this.lastHandlerSampledAt()
     };
+  }
+
+  private lastHandlerSampledAt(): string | null {
+    const lastSample = this.recentHandlerDurationsMs.at(-1);
+    return lastSample ? new Date(lastSample.sampledAtMs).toISOString() : null;
   }
 
   private initialCursor(): bigint {
