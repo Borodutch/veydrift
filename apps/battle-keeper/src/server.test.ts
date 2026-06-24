@@ -70,7 +70,7 @@ describe("health handler", () => {
       },
       { logger: silentLogger, now: () => 1_000 }
     );
-    keeper.recordLaunched({ missionId: "189", missionType: MissionType.Attack, arrivalAt: 700, returnAt: 900 });
+    keeper.recordLaunched({ missionId: "4347", missionType: MissionType.Attack, arrivalAt: 700, returnAt: 900 });
     // Record the failure signal health uses to distinguish a stale retry backlog from merely due work.
     await keeper.tick();
 
@@ -95,5 +95,17 @@ describe("health handler", () => {
     expect(health.healthWarnings).toContain("stale_due_retry_backlog");
     expect(health.build.gitSha).toBe("ad1b95e");
     expect(health.keeper.oldestDueAgeSeconds).toBe(300);
+    expect(health.keeper.oldestDueMissionId).toBe("4347");
+    expect(health.keeper.oldestDueMissionLeg).toBe("arrival");
+    expect(health.staleDueMissions).toEqual([
+      expect.objectContaining({
+        missionId: "4347",
+        missionTypeName: "Attack",
+        leg: "arrival",
+        dueAgeSeconds: 300,
+        retryCount: 1,
+        lastError: expect.stringContaining("mission 4347 not resolvable yet")
+      })
+    ]);
   });
 });

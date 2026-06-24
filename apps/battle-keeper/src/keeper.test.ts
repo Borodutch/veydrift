@@ -34,14 +34,18 @@ class MockResolver implements MissionResolver {
 
 function makeKeeper(
   behavior: ResolveBehavior,
-  options: { now?: () => number; maxConcurrency?: number } = {}
+  options: { now?: () => number; maxConcurrency?: number; acsJoinerRetryDelaySeconds?: number } = {}
 ): { keeper: BattleKeeper; resolver: MockResolver } {
   const resolver = new MockResolver(behavior);
-  const keeper = new BattleKeeper(resolver, {
+  const keeperOptions = {
     now: options.now ?? (() => 1_000),
     maxConcurrency: options.maxConcurrency ?? 3,
-    logger: silentLogger
-  });
+    logger: silentLogger,
+    ...(options.acsJoinerRetryDelaySeconds !== undefined
+      ? { acsJoinerRetryDelaySeconds: options.acsJoinerRetryDelaySeconds }
+      : {})
+  };
+  const keeper = new BattleKeeper(resolver, keeperOptions);
   return { keeper, resolver };
 }
 
@@ -49,12 +53,14 @@ const launch = (
   missionId: string,
   missionType: number,
   arrivalAt: number,
-  returnAt = 0
-): { missionId: string; missionType: number; arrivalAt: number; returnAt: number } => ({
+  returnAt = 0,
+  randomnessRequestId?: string
+): { missionId: string; missionType: number; arrivalAt: number; returnAt: number; randomnessRequestId?: string } => ({
   missionId,
   missionType,
   arrivalAt,
-  returnAt
+  returnAt,
+  ...(randomnessRequestId ? { randomnessRequestId } : {})
 });
 
 describe("BattleKeeper pending tracking", () => {
@@ -183,6 +189,38 @@ describe("BattleKeeper pending tracking", () => {
     expect(snap.pendingMissionIds).toEqual(["9"]);
   });
 
+  test("an ACS attack joiner waits behind its pending main attack", async () => {
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", { now: () => 1_000, maxConcurrency: 1 });
+    keeper.recordLaunched(launch("78", MissionType.AcsAttack, 900, 1_500, "77"));
+    keeper.recordLaunched(launch("77", MissionType.Attack, 900, 1_500));
+
+    await keeper.tick();
+
+    expect(resolver.calls).toEqual(["77:arrival"]);
+    expect(keeper.snapshot().pendingMissionIds).toContain("78");
+  });
+
+  test("an ACS joiner arrival submit waits for authoritative status before queueing return", async () => {
+    const { keeper, resolver } = makeKeeper(async () => "0xhash", {
+      now: () => 1_000,
+      acsJoinerRetryDelaySeconds: 60
+    });
+    keeper.recordLaunched(launch("78", MissionType.AcsAttack, 900, 1_500, "77"));
+
+    await keeper.tick();
+
+    expect(resolver.calls).toEqual(["78:arrival"]);
+    const pending = keeper.pendingMissions();
+    expect(pending).toEqual([
+      expect.objectContaining({
+        missionId: "78",
+        leg: "arrival",
+        dueAt: 1_060
+      })
+    ]);
+    expect(keeper.snapshot().awaitingReturnCount).toBe(0);
+  });
+
   test("recordReturned drops a mission from the return leg", () => {
     const { keeper } = makeKeeper(async () => "0xhash");
     keeper.recordLaunched(launch("3", MissionType.Transport, 500, 900));
@@ -296,15 +334,30 @@ describe("BattleKeeper resolution loop", () => {
     keeper.recordLaunched(launch("1", MissionType.Attack, 500));
 
     await keeper.tick(); // first attempt reverts
-    expect(keeper.snapshot().pendingCount).toBe(1);
-    expect(keeper.snapshot().resolvedCount).toBe(0);
-    expect(keeper.snapshot().submitFailureCount).toBe(1);
-    expect(keeper.snapshot().lastError).toContain("not resolvable");
+    const retrySnapshot = keeper.snapshot();
+    expect(retrySnapshot.pendingCount).toBe(1);
+    expect(retrySnapshot.resolvedCount).toBe(0);
+    expect(retrySnapshot.submitFailureCount).toBe(1);
+    expect(retrySnapshot.lastErrorMissionId).toBe("1");
+    expect(retrySnapshot.lastErrorLeg).toBe("arrival");
+    expect(retrySnapshot.lastError).toContain("not resolvable");
+    expect(retrySnapshot.dueMissions).toEqual([
+      expect.objectContaining({
+        missionId: "1",
+        missionTypeName: "Attack",
+        leg: "arrival",
+        dueAgeSeconds: 500,
+        retryCount: 1,
+        lastError: expect.stringContaining("NoRandomnessCommitment")
+      })
+    ]);
 
     await keeper.tick(); // second attempt succeeds
     expect(resolver.calls).toEqual(["1:arrival", "1:arrival"]);
-    expect(keeper.snapshot().pendingCount).toBe(0);
-    expect(keeper.snapshot().resolvedCount).toBe(1);
+    const resolvedSnapshot = keeper.snapshot();
+    expect(resolvedSnapshot.pendingCount).toBe(0);
+    expect(resolvedSnapshot.resolvedCount).toBe(1);
+    expect(resolvedSnapshot.dueMissions).toEqual([]);
     expect(attempts).toBe(2);
   });
 

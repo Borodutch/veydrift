@@ -50,6 +50,7 @@ import {
   type IndexerSnapshot
 } from "./indexer";
 import { RandomnessCommitterService } from "./randomnessCommitter";
+import { MissionResolutionService } from "./missionResolution";
 import {
   validatePlayerDescription,
   validatePlayerDisplayName,
@@ -157,6 +158,7 @@ export type ServerDependencies = {
   config?: BackendConfig;
   configProblems?: ConfigProblem[];
   chainReader?: ChainReader;
+  missionResolution?: MissionResolutionService;
   randomnessCommitter?: RandomnessCommitterService;
   indexer?: SettlementIndexer;
   // Worker role in the multi-process pool (VEY-KANEO-466). "writer" (the default) owns chain-sync
@@ -260,8 +262,14 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const randomnessCommitter =
     dependencies.randomnessCommitter ??
     (isWriter && loaded.problems.length === 0 ? new RandomnessCommitterService(loaded.config) : undefined);
+  const missionResolution =
+    dependencies.missionResolution ??
+    (isWriter && loaded.problems.length === 0 && loaded.config.missionResolutionEnabled
+      ? new MissionResolutionService(loaded.config)
+      : undefined);
 
   chainSync?.start();
+  missionResolution?.start();
   randomnessCommitter?.start();
   const runStartupReconcile = dependencies.runStartupReconcile ?? false;
   if (isWriter && runStartupReconcile && indexer && loaded.problems.length === 0) {
@@ -281,6 +289,30 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       .catch((error) => {
         console.error("Veydrift current-state heal failed", error);
       });
+  }
+  if (
+    usesProductionDependencies
+    && isWriter
+    && indexer
+    && loaded.problems.length === 0
+    && loaded.config.fleetMissionSyncIntervalMs !== undefined
+    && loaded.config.fleetMissionSyncIntervalMs > 0
+  ) {
+    const syncCanonicalFleetMissions = (reason: string) => {
+      void indexer.syncCanonicalFleetMissions(reason).catch((error) => {
+        console.error("Veydrift canonical fleet mission sync failed", error);
+      });
+    };
+    const startupFleetMissionSync = setTimeout(
+      () => syncCanonicalFleetMissions("startup"),
+      Math.min(5_000, loaded.config.fleetMissionSyncIntervalMs)
+    );
+    startupFleetMissionSync.unref?.();
+    const fleetMissionSync = setInterval(
+      () => syncCanonicalFleetMissions("periodic"),
+      loaded.config.fleetMissionSyncIntervalMs
+    );
+    fleetMissionSync.unref?.();
   }
   if (isWriter && indexer && typeof indexer.checkpointWal === "function" && loaded.problems.length === 0) {
     const checkpointWal = () => {
@@ -341,7 +373,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           chain: safeConfigSummary(loaded.config),
           readiness,
           chainSync: chainSyncSnapshot,
-          missionResolution: null,
+          missionResolution: missionResolution?.snapshot() ?? null,
           randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
           indexer: indexerSnapshot,
           rpc: chainReader?.rpcMetrics?.() ?? null,
@@ -368,6 +400,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           configured: loaded.problems.length === 0,
           chain: safeConfigSummary(loaded.config),
           chainSync: chainSync?.snapshot() ?? null,
+          missionResolution: missionResolution?.snapshot() ?? null,
           randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
           indexer: indexer?.snapshot() ?? null,
           problems: loaded.problems
@@ -1656,7 +1689,7 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (request.method !== "GET") return 0;
   if (url.pathname === "/chain/events") return 0;
   if (url.pathname === "/health") return 10_000;
-  if (url.pathname === "/debug/indexer") return 2_000;
+  if (url.pathname === "/debug/indexer") return 10_000;
   if (url.pathname === "/highscores") return 300_000;
   if (url.pathname === "/raid-finder/debris") return 30_000;
   // Mission-control reads are backed by the mission read-model version in responseCacheVersion(), so

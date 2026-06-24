@@ -115,7 +115,7 @@ describe("backend config", () => {
     expect(safeConfigSummary(result.config).randomnessCommitterConfigured).toBe(true);
   });
 
-  test("defaults the chain-sync poll cadence and accepts env overrides", () => {
+  test("defaults backend polling cadences and accepts env overrides", () => {
     const defaults = loadBackendConfig({
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
       VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
@@ -123,23 +123,39 @@ describe("backend config", () => {
     expect(defaults.problems).toEqual([]);
     // Fast live-event latency while staying cheap on the single self-hosted node.
     expect(defaults.config.pollIntervalMs).toBe(1_000);
+    // Fleet mission canonical sync is a bounded safety net for missed terminal mission events, not
+    // the hot event path.
+    expect(defaults.config.fleetMissionSyncIntervalMs).toBe(60_000);
 
     const overridden = loadBackendConfig({
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
       VEYDRIFT_RPC_URL: "https://example.invalid/rpc",
-      VEYDRIFT_POLL_INTERVAL_MS: "2000"
+      VEYDRIFT_POLL_INTERVAL_MS: "2000",
+      VEYDRIFT_FLEET_MISSION_SYNC_INTERVAL_MS: "30000"
     });
     expect(overridden.problems).toEqual([]);
     expect(overridden.config.pollIntervalMs).toBe(2_000);
+    expect(overridden.config.fleetMissionSyncIntervalMs).toBe(30_000);
+
+    const disabledFleetSync = loadBackendConfig({
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc",
+      VEYDRIFT_FLEET_MISSION_SYNC_INTERVAL_MS: "0"
+    });
+    expect(disabledFleetSync.problems).toEqual([]);
+    expect(disabledFleetSync.config.fleetMissionSyncIntervalMs).toBe(0);
 
     const invalid = loadBackendConfig({
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
       VEYDRIFT_RPC_URL: "https://example.invalid/rpc",
-      VEYDRIFT_POLL_INTERVAL_MS: "-5"
+      VEYDRIFT_POLL_INTERVAL_MS: "-5",
+      VEYDRIFT_FLEET_MISSION_SYNC_INTERVAL_MS: "-5"
     });
     expect(invalid.problems.some((problem) => problem.field === "VEYDRIFT_POLL_INTERVAL_MS")).toBe(true);
+    expect(invalid.problems.some((problem) => problem.field === "VEYDRIFT_FLEET_MISSION_SYNC_INTERVAL_MS")).toBe(true);
     // Falls back to the default rather than a bad value.
     expect(invalid.config.pollIntervalMs).toBe(1_000);
+    expect(invalid.config.fleetMissionSyncIntervalMs).toBe(60_000);
   });
 
   test("enables the public mission resolver only for test deployments with a resolver address", () => {
@@ -162,6 +178,19 @@ describe("backend config", () => {
       VEYDRIFT_MISSION_RESOLVER_ADDRESS: "0x4444444444444444444444444444444444444444",
       VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
     }).config.missionResolutionEnabled).toBe(false);
+  });
+
+  test("enables the public mission resolver in test deployments with a resolver private key", () => {
+    const result = loadBackendConfig({
+      VEYDRIFT_DEPLOYMENT_MODE: "test",
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_MISSION_RESOLVER_PRIVATE_KEY: "0x1111111111111111111111111111111111111111111111111111111111111111",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    });
+
+    expect(result.problems).toEqual([]);
+    expect(result.config.missionResolutionEnabled).toBe(true);
+    expect(safeConfigSummary(result.config).missionResolverConfigured).toBe(true);
   });
 
   // VEY-KANEO-471: the synthetic stationed-defense QA payload must require an explicit opt-in AND a
