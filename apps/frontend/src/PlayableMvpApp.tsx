@@ -5086,6 +5086,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         }
 
         backendStateReady = true;
+        const buildingRow = liveInfrastructure?.buildings.find((row) => row.id === building);
+        const currentLevel = buildingRow?.level ?? 0;
+        startedExpectation = {
+          itemId: building,
+          planetId,
+          targetLevel: currentLevel + 1,
+        };
         setBuildingAction({ status: "pending", buildingKey: key, label: buildingWalletConfirmationLabel(label) });
         const txHash = await sendStartBuildingUpgradeTransaction(
           provider,
@@ -5103,12 +5110,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         await confirmSubmittedTransaction(txHash);
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         setBuildingAction({ status: "pending", buildingKey: key, label: transactionSyncingLabel(label) });
-        const currentLevel = liveInfrastructure?.buildings.find((row) => row.id === building)?.level ?? 0;
-        startedExpectation = {
-          itemId: building,
-          planetId,
-          targetLevel: currentLevel + 1,
-        };
         await refreshStartedBuildingState(startedExpectation);
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         setFailedStartedBuildingExpectation(undefined);
