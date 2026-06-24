@@ -9,6 +9,7 @@ import {
   encodeQuantity,
   encodeAddressUintCall,
   encodeAddressCall,
+  encodeBurningChickenMoonCall,
   encodeColonizationTargetId,
   encodeGameCall,
   encodeJoinAttackMissionCall,
@@ -18,6 +19,7 @@ import {
   encodeLaunchFleetMissionCall,
   encodeUintCall,
   ensureBaseSepoliaNetwork,
+  ensureBaseMainnetNetwork,
   fetchAllianceState,
   fetchDefenseState,
   fetchFleetMissionArchive,
@@ -66,6 +68,7 @@ import {
   sendApproveAllianceJoinRequestTransaction,
   sendCancelAllianceJoinRequestTransaction,
   sendCreateAllianceTransaction,
+  sendBurningChickenMoonTransaction,
   sendDismissAllianceJoinRequestTransaction,
   sendRequestResourceWithdrawalTransaction,
   requestAccounts,
@@ -114,6 +117,69 @@ describe("walletFlow", () => {
     expect(isBaseSepoliaChain("84532")).toBe(true);
     expect(isBaseSepoliaChain(84532)).toBe(true);
     expect(isBaseSepoliaChain("0x1")).toBe(false);
+  });
+
+  test("encodes Burning Chicken moon burns with token id, planet id, and coordinates", () => {
+    expect(encodeBurningChickenMoonCall("0x6364233d", "42", "7", { galaxy: 1, system: 44, position: 8 })).toBe(
+      "0x6364233d"
+        + "2a".padStart(64, "0")
+        + "7".padStart(64, "0")
+        + "1".padStart(64, "0")
+        + "2c".padStart(64, "0")
+        + "8".padStart(64, "0")
+    );
+  });
+
+  test("switches to Base mainnet and sends Burning Chicken moon burn transactions", async () => {
+    const requests: Array<{ method: string; params?: unknown[] }> = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push(params === undefined ? { method } : { method, params });
+      if (method === "wallet_switchEthereumChain") return null;
+      if (method === "eth_sendTransaction") return "0xchicken";
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    await expect(sendBurningChickenMoonTransaction(provider, account, {
+      burnContractAddress: "0x3333333333333333333333333333333333333333",
+      burnSelector: "0x6364233d",
+      nftContractAddress: "0x4444444444444444444444444444444444444444",
+    }, "42", "7", { galaxy: 1, system: 44, position: 8 })).resolves.toBe("0xchicken");
+
+    expect(requests).toEqual([
+      { method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] },
+      {
+        method: "eth_sendTransaction",
+        params: [{
+          from: account,
+          to: "0x3333333333333333333333333333333333333333",
+          data: encodeBurningChickenMoonCall("0x6364233d", "42", "7", { galaxy: 1, system: 44, position: 8 }),
+        }],
+      },
+    ]);
+  });
+
+  test("adds Base mainnet when the wallet does not recognize it", async () => {
+    const requests: Array<{ method: string; params?: unknown[] }> = [];
+    let switched = false;
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push(params === undefined ? { method } : { method, params });
+      if (method === "wallet_switchEthereumChain") {
+        if (!switched) {
+          switched = true;
+          throw { code: 4902, message: "unknown chain" };
+        }
+        return null;
+      }
+      if (method === "wallet_addEthereumChain") return null;
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    await expect(ensureBaseMainnetNetwork(provider)).resolves.toBeUndefined();
+    expect(requests.map((request) => request.method)).toEqual([
+      "wallet_switchEthereumChain",
+      "wallet_addEthereumChain",
+      "wallet_switchEthereumChain",
+    ]);
   });
 
   test("detects rejected wallet requests", () => {
