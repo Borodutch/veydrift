@@ -10,6 +10,8 @@ import { privateKeyToAccount } from "viem/accounts";
 
 import type { ChickenBurnEvent } from "./events";
 
+export const maxChickenBurnMoonsPerPlayer = 2;
+
 export const moonGrantAbi = [
   {
     type: "function",
@@ -45,11 +47,27 @@ export const moonGrantAbi = [
     stateMutability: "view",
     inputs: [{ name: "burnId", type: "bytes32" }],
     outputs: [{ name: "granted", type: "bool" }]
+  },
+  {
+    type: "function",
+    name: "chickenBurnMoonGrantCountOf",
+    stateMutability: "view",
+    inputs: [{ name: "player", type: "address" }],
+    outputs: [{ name: "count", type: "uint8" }]
+  },
+  {
+    type: "error",
+    name: "ChickenBurnMoonLimitReached",
+    inputs: [
+      { name: "player", type: "address" },
+      { name: "limit", type: "uint256" }
+    ]
   }
 ] as const satisfies Abi;
 
 export type MoonGrantClient = {
   grantMoon(event: ChickenBurnEvent): Promise<`0x${string}`>;
+  chickenBurnMoonGrantCount(player: `0x${string}`): Promise<number>;
   isBurnGranted(burnId: `0x${string}`): Promise<boolean>;
   grantAddress(): string;
 };
@@ -58,6 +76,16 @@ export class MoonGrantAlreadyProcessedError extends Error {
   constructor(readonly burnId: `0x${string}`) {
     super(`burn ${burnId} already granted on-chain`);
     this.name = "MoonGrantAlreadyProcessedError";
+  }
+}
+
+export class MoonGrantLimitReachedError extends Error {
+  constructor(
+    readonly player: `0x${string}`,
+    readonly limit = maxChickenBurnMoonsPerPlayer
+  ) {
+    super(`chicken burn moon limit reached for ${player} (${limit})`);
+    this.name = "MoonGrantLimitReachedError";
   }
 }
 
@@ -106,9 +134,22 @@ export class ViemMoonGrantClient implements MoonGrantClient {
     });
   }
 
+  async chickenBurnMoonGrantCount(player: `0x${string}`): Promise<number> {
+    const count = await this.publicClient.readContract({
+      address: this.moonSystemAddress,
+      abi: moonGrantAbi,
+      functionName: "chickenBurnMoonGrantCountOf",
+      args: [player]
+    });
+    return Number(count);
+  }
+
   async grantMoon(event: ChickenBurnEvent): Promise<`0x${string}`> {
     if (await this.isBurnGranted(event.burnId)) {
       throw new MoonGrantAlreadyProcessedError(event.burnId);
+    }
+    if (await this.chickenBurnMoonGrantCount(event.burner) >= maxChickenBurnMoonsPerPlayer) {
+      throw new MoonGrantLimitReachedError(event.burner);
     }
 
     const args = [
@@ -124,11 +165,18 @@ export class ViemMoonGrantClient implements MoonGrantClient {
       functionName: "grantMoonFromChickenBurn",
       args
     });
-    await this.publicClient.call({
-      account: this.account.address,
-      to: this.moonSystemAddress,
-      data
-    });
+    try {
+      await this.publicClient.call({
+        account: this.account.address,
+        to: this.moonSystemAddress,
+        data
+      });
+    } catch (error) {
+      if (isChickenBurnMoonLimitReachedRevert(error)) {
+        throw new MoonGrantLimitReachedError(event.burner);
+      }
+      throw error;
+    }
     const hash = await this.walletClient.writeContract({
       account: this.account,
       chain: this.chain,
@@ -145,4 +193,8 @@ export class ViemMoonGrantClient implements MoonGrantClient {
     }
     return hash;
   }
+}
+
+function isChickenBurnMoonLimitReachedRevert(error: unknown): boolean {
+  return String(error).includes("ChickenBurnMoonLimitReached");
 }
