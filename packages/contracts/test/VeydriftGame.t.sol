@@ -6973,6 +6973,69 @@ contract VeydriftGameTest is Test {
         );
     }
 
+    function testColonizeLaunchSettlesDueAstrophysicsBeforePlanetLimit() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(planetId, 2, 44, 8);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 3);
+        _setResearchQueue(player, Technology.Astrophysics, 1, uint64(block.timestamp));
+        _setShipCount(planetId, Ship.ColonyShip, 1);
+        _setResources(planetId, 100_000, 100_000, 100_000);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            planetId,
+            _colonizationTargetId(2, 44, 9),
+            VeydriftGameStorage.FleetMissionType.Colonize,
+            _colonyShipManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            0
+        );
+
+        assertGt(missionId, 0);
+        assertEq(game.technologyLevel(player, Technology.Astrophysics), 1);
+        assertFalse(game.researchQueue(player).active);
+    }
+
+    function testColonizeArrivalSettlesDueAstrophysicsAtArrivalBeforeLimit() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setTechnologyLevel(player, Technology.Computer, 2);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 2);
+        _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            _colonizationTargetId(9, 399, 8),
+            VeydriftGameStorage.FleetMissionType.Colonize,
+            _colonyShipManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            10,
+            0
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+
+        uint256 secondColonyId = _createResolvedColony(player, originPlanetId, 67);
+        assertEq(game.planet(secondColonyId).owner, player);
+        assertEq(game.planetCountOf(player), 2);
+
+        _setResearchQueue(player, Technology.Astrophysics, 2, arrivalAt);
+
+        uint256 nextPlanetIdBeforeResolve = game.nextPlanetId();
+        vm.warp(arrivalAt);
+        vm.prank(player);
+        game.resolveFleetMission(missionId);
+
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        assertEq(game.technologyLevel(player, Technology.Astrophysics), 2);
+        assertEq(game.planetCountOf(player), 3);
+        assertEq(game.planet(nextPlanetIdBeforeResolve).owner, player);
+    }
+
     function testDirectQueueFinishCallsRequireActiveReadyQueues() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
@@ -7339,6 +7402,18 @@ contract VeydriftGameTest is Test {
         bytes32 outerSlot = keccak256(abi.encode(account, uint256(20)));
         bytes32 slot = keccak256(abi.encode(uint256(uint8(technology)), outerSlot));
         vm.store(address(game), slot, bytes32(uint256(level)));
+    }
+
+    function _setResearchQueue(
+        address account,
+        Technology technology,
+        uint16 targetLevel,
+        uint64 readyAt
+    ) internal {
+        bytes32 slot = keccak256(abi.encode(account, uint256(10)));
+        uint256 packed = uint256(1) | (uint256(uint8(technology)) << 8)
+            | (uint256(targetLevel) << 16) | (uint256(readyAt) << 32);
+        vm.store(address(game), slot, bytes32(packed));
     }
 
     function _setPlayerLastActiveAt(address account, uint64 lastActiveAt) internal {

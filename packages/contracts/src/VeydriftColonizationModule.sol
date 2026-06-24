@@ -280,6 +280,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         // settling first. Mirrors the prologue every other mutating colonization path already runs.
         _settleDueColonizeArrivals(msg.sender);
         _settleDueCombatArrivals(msg.sender);
+        _settleResearchDue(msg.sender, _currentTimestamp());
         _settleResources(originPlanetId);
         _validateColonyCreation(originPlanetId);
         if (ships.colonyShip != 1 || _missionShipTotal(ships) != 1) revert InvalidQuantity();
@@ -298,6 +299,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
 
         (uint16 galaxy, uint16 system, uint8 position) = _decodeColonyTarget(mission.targetPlanetId);
+        _settleResearchDue(mission.owner, mission.arrivalAt);
         uint256 limit = 1 + _technologyLevels[mission.owner][Technology.Astrophysics];
         if (
             occupiedCoordinates[_coordinateKey(galaxy, system, position)]
