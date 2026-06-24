@@ -2188,6 +2188,32 @@ export class SettlementIndexer {
     return this.snapshot();
   }
 
+  startFleetMissionStateHealOnce(runId: string): Promise<IndexerSnapshot> {
+    const normalizedRunId = runId.trim().slice(0, 128);
+    if (!normalizedRunId) return Promise.resolve(this.snapshot());
+    if (this.metadata("currentStateOneTimeHealCompletedAt")) {
+      return Promise.resolve(this.snapshot());
+    }
+    if (this.metadata("lastCurrentStateHealRunId") === normalizedRunId) {
+      return Promise.resolve(this.snapshot());
+    }
+    if (this.currentStateHealPromise) {
+      return this.currentStateHealPromise;
+    }
+    this.currentStateHealRunId = normalizedRunId;
+    this.currentStateHealPromise = this.seedCurrentFleetMissionState(normalizedRunId)
+      .catch((error) => {
+        this.recordReconciliationError(error);
+        this.setMetadata("lastCanonicalFleetMissionSyncError", error instanceof Error ? error.message : String(error));
+        throw error;
+      })
+      .finally(() => {
+        this.currentStateHealPromise = null;
+        this.currentStateHealRunId = null;
+      });
+    return this.currentStateHealPromise;
+  }
+
   startCurrentStateHealOnce(runId: string, options: { planetConcurrency?: number } = {}): Promise<IndexerSnapshot> {
     const normalizedRunId = runId.trim().slice(0, 128);
     if (!normalizedRunId) return Promise.resolve(this.snapshot());
@@ -2205,6 +2231,30 @@ export class SettlementIndexer {
       this.setMetadata("currentStateOneTimeHealCompletedAt", completedAt);
       return this.snapshot();
     });
+  }
+
+  private async seedCurrentFleetMissionState(runId: string): Promise<IndexerSnapshot> {
+    if (!this.chainReader.listCanonicalFleetMissions) {
+      throw new Error("current-state fleet mission heal is unavailable: chain reader cannot enumerate fleet missions");
+    }
+    const startedAt = Date.now();
+    this.setMetadata("lastCurrentStateHealRunId", runId);
+    const fleetMissions = await this.chainReader.listCanonicalFleetMissions();
+    const changedRows = await this.replaceCanonicalFleetMissions(fleetMissions);
+    const completedAt = new Date().toISOString();
+    await this.runHealWrite("current-state fleet mission heal metadata", () => {
+      this.setMetadata("lastCurrentStateHealAt", completedAt);
+      this.setMetadata("currentStateOneTimeHealCompletedAt", completedAt);
+      this.setMetadata("lastCanonicalFleetMissionSyncAt", completedAt);
+      this.setMetadata("lastCanonicalFleetMissionSyncDurationMs", (Date.now() - startedAt).toString());
+      this.setMetadata("lastCanonicalFleetMissionSyncRows", fleetMissions.length.toString());
+      this.setMetadata("lastCanonicalFleetMissionSyncUpdatedRows", changedRows.toString());
+      this.db.query("DELETE FROM indexer_metadata WHERE key = 'lastCanonicalFleetMissionSyncError'").run();
+      this.db.query("DELETE FROM indexer_metadata WHERE key = 'lastReconciliationError'").run();
+      this.touchMissionReadModel();
+      this.touch();
+    });
+    return this.snapshot();
   }
 
   private async seedCurrentCanonicalStateUncached(options: { planetConcurrency?: number } = {}): Promise<IndexerSnapshot> {

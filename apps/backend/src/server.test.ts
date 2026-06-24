@@ -4973,32 +4973,16 @@ describe("Veydrift backend", () => {
     expect(handler).toBeDefined();
   });
 
-  test("explicit startup current-state heal runs once inside the writer process", async () => {
+  test("explicit startup current-state heal runs one fleet mission snapshot inside the writer process", async () => {
     const chainReader = new MockChainReader();
-    let currentStateSeedCalls = 0;
-    const seedableReader = chainReader as MockChainReader & Pick<ChainReader, "listCurrentPlanets" | "getCanonicalPlanetState">;
-    seedableReader.listCurrentPlanets = async () => [
-      {
-        ...planet,
-        eventName: "PlanetStarted",
-        transactionHash: "0xabc",
-        blockNumber: "123"
-      }
-    ];
-    seedableReader.getCanonicalPlanetState = async (planetId: bigint) => {
-      currentStateSeedCalls += 1;
-      return {
-        planetId: planetId.toString(),
-        resources: planet.resources,
-        buildings: [],
-        defenses: [],
-        ships: [],
-        queues: {
-          building: null,
-          defense: null,
-          ship: null
-        }
-      };
+    let fleetMissionSnapshotReads = 0;
+    const seedableReader = chainReader as MockChainReader & Pick<ChainReader, "listCanonicalFleetMissions" | "listCurrentPlanets">;
+    seedableReader.listCurrentPlanets = async () => {
+      throw new Error("startup fleet mission heal must not scan planets");
+    };
+    seedableReader.listCanonicalFleetMissions = async () => {
+      fleetMissionSnapshotReads += 1;
+      return [];
     };
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     const config = {
@@ -5013,12 +4997,14 @@ describe("Veydrift backend", () => {
       indexer
     });
 
-    for (let i = 0; i < 50 && currentStateSeedCalls === 0; i += 1) {
+    for (let i = 0; i < 50 && !indexer.snapshot().currentStateOneTimeHealCompletedAt; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
-    expect(currentStateSeedCalls).toBe(1);
+    expect(fleetMissionSnapshotReads).toBe(1);
     expect(indexer.snapshot()).toMatchObject({
       lastCurrentStateHealRunId: "test-current-heal",
+      currentStateOneTimeHealCompletedAt: expect.any(String),
+      lastCanonicalFleetMissionSyncRows: 0,
       lastReconciliationError: null
     });
 
@@ -5028,7 +5014,7 @@ describe("Veydrift backend", () => {
       indexer
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(currentStateSeedCalls).toBe(1);
+    expect(fleetMissionSnapshotReads).toBe(1);
     expect(handler).toBeDefined();
   });
 
