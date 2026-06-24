@@ -104,10 +104,18 @@ type RuntimeConfig = {
   allianceContractAddress: string | null;
   apiUrl: string;
   backend: BackendDeploymentMetadata;
+  burningChicken: {
+    burnContractAddress: string | null;
+    burnSelector: string | null;
+    levelSelector: string | null;
+    nftContractAddress: string | null;
+    rpcUrl: string | null;
+  };
   chainId: number;
   contractAddress: string | null;
   featureSupport: {
     allianceConfigured: boolean;
+    chickenBurnConfigured: boolean;
     gameConfigured: boolean;
     highscoresEndpoint: boolean;
     moonConfigured: boolean;
@@ -3172,6 +3180,11 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
   const moonContractAddress = process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS ?? null;
   const randomnessEngineAddress = process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS ?? null;
   const allianceContractAddress = process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS ?? null;
+  const burningChickenNftContractAddress = process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS ?? null;
+  const burningChickenBurnContractAddress = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS ?? null;
+  const burningChickenBurnSelector = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR ?? "0x6364233d";
+  const burningChickenLevelSelector = process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR ?? "0x05c58df2";
+  const burningChickenRpcUrl = process.env.VEYDRIFT_BASE_MAINNET_RPC_URL ?? "https://mainnet.base.org";
   const resourceTokenAddresses = {
     crystal: process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS ?? null,
     deuterium: process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS ?? null,
@@ -3182,10 +3195,22 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
     allianceContractAddress,
     apiUrl,
     backend: backendDeploymentMetadata(workerRole),
+    burningChicken: {
+      burnContractAddress: burningChickenBurnContractAddress,
+      burnSelector: burningChickenBurnSelector,
+      levelSelector: burningChickenLevelSelector,
+      nftContractAddress: burningChickenNftContractAddress,
+      rpcUrl: burningChickenRpcUrl
+    },
     chainId: Number.parseInt(process.env.VEYDRIFT_CHAIN_ID ?? "84532", 10),
     contractAddress,
     featureSupport: {
       allianceConfigured: Boolean(allianceContractAddress),
+      chickenBurnConfigured: Boolean(
+        burningChickenNftContractAddress
+          && burningChickenBurnContractAddress
+          && burningChickenBurnSelector
+      ),
       gameConfigured: Boolean(gameContractAddress),
       highscoresEndpoint: true,
       moonConfigured: Boolean(moonContractAddress),

@@ -81,7 +81,7 @@ import {
   type ShipKey,
 } from "./playableMvp";
 import { activeProductionQueue } from "./productionQueueFallback";
-import { allianceContractAddress, gameContractAddress, moonContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
+import { allianceContractAddress, burningChickenConfig, gameContractAddress, moonContractAddress, runtimeConfigUrl, type RuntimeConfigState } from "./runtimeConfig";
 import {
   activeBuildingQueueResponse,
   buildingQueueItemForDisplay,
@@ -171,6 +171,7 @@ import {
   fetchBattleReports,
   fetchAllianceState,
   fetchAttackProtectionStatus,
+  fetchBurningChickens,
   fetchPlayerProfile,
   mergePlayerProfile,
   walletRequestErrorMessage,
@@ -214,6 +215,8 @@ import {
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
+  sendBurningChickenMoonTransaction,
+  ensureBaseSepoliaNetwork,
   isOnChainRevertError,
   isUserRejected,
   updatePlayerProfile,
@@ -221,6 +224,7 @@ import {
   type ChainAllianceState,
   type ChainInfrastructureState,
   type ChainMoonState,
+  type BurningChickenNft,
   type ChainResearchState,
   type ChainRiftState,
   type ChainShipyardState,
@@ -354,6 +358,8 @@ const MISSION_RESOLUTION_REFRESH_BUFFER_MS = 1_500;
 const PRODUCTION_QUEUE_COMPLETION_REFRESH_BUFFER_MS = 1_500;
 export const previousMissionIndexingBlockerLabel = "Waiting for previous mission to index.";
 export const previousMissionTransactionBlockerLabel = "Waiting for previous mission transaction.";
+const CHICKEN_MOON_CONFIRM_TIMEOUT_MS = 120_000;
+const CHICKEN_MOON_CONFIRM_POLL_MS = 3_000;
 
 type RefreshFreshnessGate = { current: number };
 export type ResourceSnapshotFreshness = {
@@ -2385,6 +2391,28 @@ function managedPlanetCoordinates(planet: ManagedPlanetResponse | undefined): Co
   return planet ? { galaxy: planet.galaxy, system: planet.system, position: planet.position } : undefined;
 }
 
+async function waitForConfirmedChickenMoonState(
+  apiBaseUrl: string,
+  account: string,
+  planetId: string,
+): Promise<ChainMoonState> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < CHICKEN_MOON_CONFIRM_TIMEOUT_MS) {
+    const nextMoonState = await fetchMoonState(apiBaseUrl, account, planetId);
+    if (nextMoonState.moon?.exists) {
+      return nextMoonState;
+    }
+    await delay(CHICKEN_MOON_CONFIRM_POLL_MS);
+  }
+
+  throw new Error("Chicken burn confirmed, but the granted moon was not indexed yet. Refresh moon state before retrying.");
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function missionReferenceFromManagedPlanet(planet: ManagedPlanetResponse | undefined): FleetMissionPlanetReference | null {
   if (!planet) return null;
   return {
@@ -2670,6 +2698,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [onChainSettlementState, setOnChainSettlementState] = useState<WalletSettlementResponse | undefined>();
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile | undefined>();
   const [walletPlanets, setWalletPlanets] = useState<ManagedPlanetResponse[]>([]);
+  const [burningChickens, setBurningChickens] = useState<BurningChickenNft[]>([]);
+  const [burningChickensLoading, setBurningChickensLoading] = useState(false);
+  const [burningChickensError, setBurningChickensError] = useState<string | undefined>();
   const [watchedPlanets, setWatchedPlanets] = useState<WatchedPlanetsResponse | undefined>();
   const [watchedPlanetsLoading, setWatchedPlanetsLoading] = useState(false);
   const [watchedPlanetsError, setWatchedPlanetsError] = useState<string | undefined>();
@@ -2687,6 +2718,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     [resolvedSelectedPlanetId, walletPlanets]
   );
   const activePlanetId = selectedManagedPlanet?.planetId ?? onChainSettlementState?.homePlanetId ?? undefined;
+  const walletMoonCount = useMemo(
+    () => walletPlanets.filter((item) => item.moon?.exists).length,
+    [walletPlanets],
+  );
   const [planetSectionStore, setPlanetSectionStore] = useState<PlanetSectionStore>({});
   const activePlanetSection = useMemo(
     () => planetSectionForPlanet(planetSectionStore, activePlanetId),
@@ -3473,6 +3508,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const moonContract = useMemo(() => {
     return runtimeConfig.status === "ready" ? moonContractAddress(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
+  const chickenBurnConfig = useMemo(() => {
+    return runtimeConfig.status === "ready" ? burningChickenConfig(runtimeConfig.config) : undefined;
+  }, [runtimeConfig]);
   const gameActionInputsAvailable = Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId));
   const allianceActionInputsAvailable = Boolean(provider && account && allianceContract);
   const moonActionInputsAvailable = Boolean(provider && account && moonContract && (activePlanetId ?? onChainSettlement?.homePlanetId));
@@ -3583,6 +3621,31 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       }
     }
   }, [account, activePlanetId, apiBaseUrl, infrastructureChainState, moonState]);
+
+  const refreshBurningChickens = useCallback(async () => {
+    if (!account || !chickenBurnConfig) {
+      setBurningChickens([]);
+      setBurningChickensLoading(false);
+      setBurningChickensError(undefined);
+      return;
+    }
+
+    setBurningChickensLoading(true);
+    setBurningChickensError(undefined);
+    try {
+      const nextChickens = await fetchBurningChickens(account, chickenBurnConfig);
+      setBurningChickens(nextChickens);
+    } catch (error) {
+      console.error(error);
+      setBurningChickensError(error instanceof Error ? error.message : "Burning Chickens could not be loaded.");
+    } finally {
+      setBurningChickensLoading(false);
+    }
+  }, [account, chickenBurnConfig]);
+
+  useEffect(() => {
+    void refreshBurningChickens();
+  }, [refreshBurningChickens]);
 
   const refreshLiveInfrastructureState = useCallback(async () => {
     const requestId = beginRefreshRequest(infrastructureRefreshGate);
@@ -5515,6 +5578,79 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     });
   }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, runGatedTransaction]);
 
+  const handleBurnChickenForMoon = useCallback((tokenId: string) => {
+    if (!provider || !account || !chickenBurnConfig || !activePlanetId || !activePlanetCoords) {
+      setMoonAction({ status: "error", label: "Wallet, Burning Chicken config, selected planet, or selected coordinates are unavailable." });
+      return;
+    }
+
+    const targetLabel = `${activePlanetCoords.galaxy}:${activePlanetCoords.system}:${activePlanetCoords.position}`;
+    const label = `Burn Chicken #${tokenId} for ${targetLabel}`;
+    void runGatedTransaction(`moon:chicken-burn:${tokenId}`, async () => {
+      const planetSwitchRequestId = planetSwitchGate.current;
+      setMoonAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
+
+      try {
+        const txHash = await sendBurningChickenMoonTransaction(
+          provider,
+          account,
+          chickenBurnConfig,
+          tokenId,
+          activePlanetId,
+          activePlanetCoords,
+        );
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setMoonAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
+        await confirmSubmittedTransaction(txHash);
+        await ensureBaseSepoliaNetwork(provider);
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setMoonAction({ status: "pending", label: "Chicken burned. Waiting for Veydrift indexed moon state..." });
+        if (!apiBaseUrl || !activePlanetId) {
+          throw new Error("Chicken burn confirmed, but Veydrift API state is unavailable for moon confirmation.");
+        }
+        const confirmedMoonState = await waitForConfirmedChickenMoonState(apiBaseUrl, account, activePlanetId);
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setMoonState(confirmedMoonState);
+        setActivePlanetSectionStatus("moonState", {
+          loading: false,
+          error: undefined,
+          lastSuccessfulRefreshAt: Date.now(),
+        });
+        await Promise.allSettled([
+          refreshOnChainState(undefined, { force: true }),
+          refreshBurningChickens(),
+        ]);
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setMoonAction({ status: "success", label: `${label} confirmed.` });
+      } catch (error) {
+        console.error(error);
+        try {
+          await ensureBaseSepoliaNetwork(provider);
+        } catch (switchError) {
+          console.error(switchError);
+        }
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setMoonAction({
+          status: "error",
+          label: error instanceof Error ? error.message : `${label} failed.`,
+        });
+      }
+    });
+  }, [
+    account,
+    activePlanetId,
+    activePlanetCoords,
+    apiBaseUrl,
+    chickenBurnConfig,
+    confirmSubmittedTransaction,
+    provider,
+    refreshBurningChickens,
+    refreshOnChainState,
+    runGatedTransaction,
+    setActivePlanetSectionStatus,
+    setMoonState,
+  ]);
+
   const handleBuildShip = useCallback((shipId: number, _key: ShipKey, quantity: number) => {
     const planetId = shipyardState?.planetId ?? shipyardState?.homePlanetId;
     if (!provider || !account || !gameContract || !planetId) {
@@ -6930,6 +7066,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const gameTransactionInputsAvailable = Boolean(provider && account && gameContract);
   const allianceTransactionInputsAvailable = Boolean(provider && account && allianceContract);
   const moonTransactionInputsAvailable = Boolean(provider && account && moonContract);
+  const chickenBurnTransactionInputsAvailable = Boolean(provider && account && chickenBurnConfig);
   const gameTransactionUnavailableReason = transactionUnavailableReasonFor({
     activeActionLabel: pendingActionLabel(
       buildingAction,
@@ -6961,6 +7098,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const canSubmitGameTransaction = gameTransactionInputsAvailable && !transactionActionPending;
   const canSubmitAllianceTransaction = allianceTransactionInputsAvailable && !transactionActionPending;
   const canSubmitMoonTransaction = moonTransactionInputsAvailable && !transactionActionPending;
+  const canSubmitChickenBurnTransaction = chickenBurnTransactionInputsAvailable && !transactionActionPending;
   const canSubmitProfileMutation = Boolean(provider && account && apiBaseUrl) && !transactionActionPending;
   const missionLaunchBlocker = gameTransactionUnavailableReason ?? missionLaunchStateBlocker;
   const activePlanetSections = planetSectionAccessForPlanet(planetSectionStore, activePlanetId, {
@@ -7199,13 +7337,25 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       return (
         <MoonPage
           action={moonAction}
+          burningChicken={{
+            chickens: burningChickens,
+            configured: Boolean(chickenBurnConfig),
+            error: burningChickensError,
+            loading: burningChickensLoading,
+            maxMoonsPerPlayer: 2,
+            moonCount: walletMoonCount,
+          }}
+          canBurnChicken={canSubmitChickenBurnTransaction}
           canTransact={canSubmitMoonTransaction}
           error={moonSection.status.error ?? moonError}
           loading={moonLoading || moonSection.status.loading}
           moonState={moonState}
+          onBurnChicken={handleBurnChickenForMoon}
           onJumpGate={handleJumpGate}
           onRefresh={moonSection.refresh ?? refreshInfrastructureState}
+          onRefreshChickens={refreshBurningChickens}
           onStartBuilding={handleStartMoonBuilding}
+          selectedCoordinates={activePlanetCoords}
           transactionUnavailableReason={moonTransactionUnavailableReason}
         />
       );

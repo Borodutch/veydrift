@@ -1243,10 +1243,18 @@ describe("Veydrift backend", () => {
           role: "writer"
         }
       },
+      burningChicken: {
+        burnContractAddress: null,
+        burnSelector: "0x6364233d",
+        levelSelector: "0x05c58df2",
+        nftContractAddress: null,
+        rpcUrl: "https://mainnet.base.org"
+      },
       chainId: 84532,
       contractAddress: null,
       featureSupport: {
         allianceConfigured: false,
+        chickenBurnConfigured: false,
         gameConfigured: false,
         highscoresEndpoint: true,
         moonConfigured: false,
@@ -1496,6 +1504,11 @@ describe("Veydrift backend", () => {
     const previousMoonAddress = process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS;
     const previousRandomnessEngineAddress = process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS;
     const previousAllianceAddress = process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS;
+    const previousChickenNftAddress = process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS;
+    const previousChickenBurnAddress = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS;
+    const previousChickenBurnSelector = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR;
+    const previousChickenLevelSelector = process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR;
+    const previousBaseMainnetRpcUrl = process.env.VEYDRIFT_BASE_MAINNET_RPC_URL;
     const previousMetalTokenAddress = process.env.VEYDRIFT_METAL_TOKEN_ADDRESS;
     const previousCrystalTokenAddress = process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS;
     const previousDeuteriumTokenAddress = process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS;
@@ -1505,6 +1518,11 @@ describe("Veydrift backend", () => {
     process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS = "0x2222222222222222222222222222222222222222";
     process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS = "0x8888888888888888888888888888888888888888";
     process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS = "0x9999999999999999999999999999999999999999";
+    process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR = "0x12345678";
+    process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR = "0x87654321";
+    process.env.VEYDRIFT_BASE_MAINNET_RPC_URL = "https://base.example.test";
     process.env.VEYDRIFT_METAL_TOKEN_ADDRESS = "0x5555555555555555555555555555555555555555";
     process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS = "0x6666666666666666666666666666666666666666";
     process.env.VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS = "0x7777777777777777777777777777777777777777";
@@ -1518,8 +1536,16 @@ describe("Veydrift backend", () => {
         allianceContractAddress: "0x9999999999999999999999999999999999999999",
         moonContractAddress: "0x2222222222222222222222222222222222222222",
         randomnessEngineAddress: "0x8888888888888888888888888888888888888888",
+        burningChicken: {
+          burnContractAddress: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          burnSelector: "0x12345678",
+          levelSelector: "0x87654321",
+          nftContractAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          rpcUrl: "https://base.example.test"
+        },
         featureSupport: {
           allianceConfigured: true,
+          chickenBurnConfigured: true,
           gameConfigured: true,
           highscoresEndpoint: true,
           moonConfigured: true,
@@ -1568,6 +1594,31 @@ describe("Veydrift backend", () => {
       } else {
         process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS = previousRandomnessEngineAddress;
       }
+      if (previousChickenNftAddress === undefined) {
+        delete process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS;
+      } else {
+        process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS = previousChickenNftAddress;
+      }
+      if (previousChickenBurnAddress === undefined) {
+        delete process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS;
+      } else {
+        process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS = previousChickenBurnAddress;
+      }
+      if (previousChickenBurnSelector === undefined) {
+        delete process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR;
+      } else {
+        process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR = previousChickenBurnSelector;
+      }
+      if (previousChickenLevelSelector === undefined) {
+        delete process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR;
+      } else {
+        process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR = previousChickenLevelSelector;
+      }
+      if (previousBaseMainnetRpcUrl === undefined) {
+        delete process.env.VEYDRIFT_BASE_MAINNET_RPC_URL;
+      } else {
+        process.env.VEYDRIFT_BASE_MAINNET_RPC_URL = previousBaseMainnetRpcUrl;
+      }
       if (previousMetalTokenAddress === undefined) {
         delete process.env.VEYDRIFT_METAL_TOKEN_ADDRESS;
       } else {
@@ -1612,10 +1663,18 @@ describe("Veydrift backend", () => {
                 role: "writer"
               }
             },
+            burningChicken: {
+              burnContractAddress: null,
+              burnSelector: "0x6364233d",
+              levelSelector: "0x05c58df2",
+              nftContractAddress: null,
+              rpcUrl: "https://mainnet.base.org"
+            },
             chainId: 84532,
             contractAddress: null,
             featureSupport: {
               allianceConfigured: false,
+              chickenBurnConfigured: false,
               gameConfigured: false,
               highscoresEndpoint: true,
               moonConfigured: false,

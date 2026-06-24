@@ -953,7 +953,23 @@ export const BASE_SEPOLIA = {
     "https://sepolia.basescan.org"
   ]
 } as const;
-const BASE_MAINNET_CHAIN_ID_HEX = "0x2105";
+export const BASE_MAINNET = {
+  chainId: 8453,
+  chainIdHex: "0x2105",
+  chainName: "Base",
+  nativeCurrency: {
+    name: "Ether",
+    symbol: "ETH",
+    decimals: 18
+  },
+  rpcUrls: [
+    "https://mainnet.base.org"
+  ],
+  blockExplorerUrls: [
+    "https://basescan.org"
+  ]
+} as const;
+const BASE_MAINNET_CHAIN_ID_HEX = BASE_MAINNET.chainIdHex;
 
 const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
 const START_PLANET_SELECTOR = "0xf45f1f18";
@@ -1013,7 +1029,24 @@ const ALLIANCE_SELECTORS = {
 const ERC20_SELECTORS = {
   approve: "0x095ea7b3"
 } as const;
+const ERC721_SELECTORS = {
+  balanceOf: "0x70a08231",
+  tokenOfOwnerByIndex: "0x2f745c59",
+} as const;
 const REJECTED_CODES = new Set([4001, "4001", "ACTION_REJECTED", "USER_REJECTED"]);
+
+export type BurningChickenConfig = {
+  burnContractAddress: string;
+  burnSelector: string;
+  levelSelector?: string | null | undefined;
+  nftContractAddress: string;
+  rpcUrl?: string | null | undefined;
+};
+
+export type BurningChickenNft = {
+  level: number | null;
+  tokenId: string;
+};
 
 export type FarcasterWalletClient = {
   wallet?: {
@@ -1702,6 +1735,21 @@ export function encodeGameCall(selector: string, values: Array<bigint | number |
   return `${selector}${values.map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")}`;
 }
 
+export function encodeBurningChickenMoonCall(
+  selector: string,
+  tokenId: bigint | number | string,
+  planetId: bigint | number | string,
+  coordinates: { galaxy: number; system: number; position: number },
+): string {
+  return encodeGameCall(selector, [
+    tokenId,
+    planetId,
+    coordinates.galaxy,
+    coordinates.system,
+    coordinates.position,
+  ]);
+}
+
 export function encodePlanetNameCall(selector: string, planetId: bigint | number | string, name: string): string {
   const encoded = new TextEncoder().encode(name);
   const length = encoded.length;
@@ -2090,12 +2138,47 @@ export async function ensureBaseSepoliaNetwork(provider: Eip1193Provider): Promi
   }
 }
 
+export async function ensureBaseMainnetNetwork(provider: Eip1193Provider): Promise<void> {
+  try {
+    await switchToBaseMainnet(provider);
+  } catch (error) {
+    if (!isUnknownChainError(error)) {
+      throw error;
+    }
+
+    try {
+      await provider.request({
+        method: "wallet_addEthereumChain",
+        params: [
+          BASE_MAINNET
+        ]
+      });
+    } catch (addError) {
+      if (!isAlreadyAddedChainError(addError)) {
+        throw addError;
+      }
+    }
+    await switchToBaseMainnet(provider);
+  }
+}
+
 function switchToBaseSepolia(provider: Eip1193Provider): Promise<unknown> {
   return provider.request({
     method: "wallet_switchEthereumChain",
     params: [
       {
         chainId: BASE_SEPOLIA.chainIdHex
+      }
+    ]
+  });
+}
+
+function switchToBaseMainnet(provider: Eip1193Provider): Promise<unknown> {
+  return provider.request({
+    method: "wallet_switchEthereumChain",
+    params: [
+      {
+        chainId: BASE_MAINNET.chainIdHex
       }
     ]
   });
@@ -2513,6 +2596,100 @@ export async function sendStartMoonBuildingUpgradeTransaction(
     from: account,
     to: contractAddress,
     data: encodeGameCall(MOON_SELECTORS.startMoonBuildingUpgrade, [planetId, buildingId])
+  });
+}
+
+export async function fetchBurningChickens(
+  account: string,
+  config: BurningChickenConfig,
+): Promise<BurningChickenNft[]> {
+  const balanceHex = await callBaseMainnetContract(
+    config,
+    config.nftContractAddress,
+    encodeAddressCall(ERC721_SELECTORS.balanceOf, account),
+  );
+  const balance = decodeUintResult(balanceHex);
+  const chickens: BurningChickenNft[] = [];
+
+  for (let index = 0n; index < balance; index += 1n) {
+    const tokenHex = await callBaseMainnetContract(
+      config,
+      config.nftContractAddress,
+      encodeAddressUintCall(ERC721_SELECTORS.tokenOfOwnerByIndex, account, index),
+    );
+    const tokenId = decodeUintResult(tokenHex).toString();
+    chickens.push({
+      level: await fetchBurningChickenLevel(tokenId, config),
+      tokenId,
+    });
+  }
+
+  return chickens;
+}
+
+async function fetchBurningChickenLevel(
+  tokenId: string,
+  config: BurningChickenConfig,
+): Promise<number | null> {
+  const selector = config.levelSelector?.trim();
+  if (!selector) return null;
+
+  try {
+    const levelHex = await callBaseMainnetContract(
+      config,
+      config.nftContractAddress,
+      encodeUintCall(selector, tokenId),
+    );
+    const level = Number(decodeUintResult(levelHex));
+    return Number.isFinite(level) ? level : null;
+  } catch {
+    return null;
+  }
+}
+
+async function callBaseMainnetContract(
+  config: BurningChickenConfig,
+  contractAddress: string,
+  data: string,
+): Promise<string> {
+  const response = await fetch(config.rpcUrl || BASE_MAINNET.rpcUrls[0], {
+    body: JSON.stringify({
+      id: 1,
+      jsonrpc: "2.0",
+      method: "eth_call",
+      params: [
+        {
+          to: contractAddress,
+          data,
+        },
+        "latest",
+      ],
+    }),
+    headers: {
+      "content-type": "application/json",
+    },
+    method: "POST",
+  });
+  const body = await response.json() as { error?: { message?: string }; result?: string };
+  if (!response.ok || body.error || typeof body.result !== "string") {
+    throw new Error(body.error?.message ?? "Burning Chicken contract read failed.");
+  }
+  return body.result;
+}
+
+export async function sendBurningChickenMoonTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  config: BurningChickenConfig,
+  tokenId: string,
+  planetId: string,
+  coordinates: { galaxy: number; system: number; position: number },
+): Promise<string> {
+  await ensureBaseMainnetNetwork(provider);
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: config.burnContractAddress,
+    data: encodeBurningChickenMoonCall(config.burnSelector, tokenId, planetId, coordinates),
   });
 }
 

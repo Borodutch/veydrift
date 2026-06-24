@@ -1,9 +1,10 @@
-import { Moon, Orbit } from "lucide-preact";
+import { Flame, Moon, Orbit } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import { useState } from "preact/hooks";
 import type { Resources } from "../playableMvp";
 import type { MissionShips } from "../galaxyActions";
-import type { ChainMoonState } from "../walletFlow";
+import type { BurningChickenNft, ChainMoonState } from "../walletFlow";
+import type { Coordinates } from "../types";
 import { formatCost } from "../buildingDetails";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../moonActions";
 import { formatUserTimestamp } from "../timestampFormat";
@@ -14,25 +15,42 @@ import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailab
 
 interface MoonPageProps {
   action?: { status: "idle" | "pending" | "success" | "error"; label?: string } | undefined;
+  burningChicken?: {
+    chickens: BurningChickenNft[];
+    configured: boolean;
+    error?: string | undefined;
+    loading: boolean;
+    maxMoonsPerPlayer: number;
+    moonCount: number;
+  } | undefined;
   canTransact?: boolean | undefined;
+  canBurnChicken?: boolean | undefined;
   error?: string | undefined;
   loading?: boolean | undefined;
   moonState?: ChainMoonState | null | undefined;
+  onBurnChicken?: ((tokenId: string) => void) | undefined;
   onJumpGate?: ((destinationPlanetId: string, ships?: Partial<MissionShips>) => void) | undefined;
   onRefresh?: (() => void) | undefined;
+  onRefreshChickens?: (() => void) | undefined;
   onStartBuilding?: ((buildingId: number, label: string) => void) | undefined;
+  selectedCoordinates?: Coordinates | undefined;
   transactionUnavailableReason?: string | undefined;
 }
 
 export function MoonPage({
   action,
+  burningChicken,
   canTransact,
+  canBurnChicken,
   error,
   loading,
   moonState,
+  onBurnChicken,
   onJumpGate,
   onRefresh,
+  onRefreshChickens,
   onStartBuilding,
+  selectedCoordinates,
   transactionUnavailableReason,
 }: MoonPageProps) {
   const moon = moonState?.moon;
@@ -46,6 +64,17 @@ export function MoonPage({
       <PageHeader
         actions={onRefresh ? <RefreshButton loading={isLoading} onRefresh={onRefresh} title="Refresh moon state" /> : undefined}
         title="Moon"
+      />
+
+      <ChickenBurnPanel
+        action={action}
+        burningChicken={burningChicken}
+        canBurnChicken={canBurnChicken}
+        hasMoon={hasMoon}
+        onBurnChicken={onBurnChicken}
+        onRefreshChickens={onRefreshChickens}
+        selectedCoordinates={selectedCoordinates}
+        transactionUnavailableReason={transactionUnavailableReason}
       />
 
       {hasMoon && moon ? (
@@ -80,6 +109,148 @@ export function MoonPage({
       )}
     </div>
   );
+}
+
+function ChickenBurnPanel({
+  action,
+  burningChicken,
+  canBurnChicken,
+  hasMoon,
+  onBurnChicken,
+  onRefreshChickens,
+  selectedCoordinates,
+  transactionUnavailableReason,
+}: {
+  action?: MoonPageProps["action"];
+  burningChicken?: MoonPageProps["burningChicken"];
+  canBurnChicken?: boolean | undefined;
+  hasMoon: boolean;
+  onBurnChicken?: MoonPageProps["onBurnChicken"];
+  onRefreshChickens?: MoonPageProps["onRefreshChickens"];
+  selectedCoordinates?: Coordinates | undefined;
+  transactionUnavailableReason?: string | undefined;
+}) {
+  const pending = action?.status === "pending";
+  const configured = Boolean(burningChicken?.configured);
+  const chickens = burningChicken?.chickens ?? [];
+  const moonLimitReached = Boolean(
+    burningChicken && burningChicken.moonCount >= burningChicken.maxMoonsPerPlayer
+  );
+  const disabledReason = chickenBurnDisabledReason({
+    canBurnChicken,
+    configured,
+    hasMoon,
+    moonLimitReached,
+    pending,
+    selectedCoordinates,
+    transactionUnavailableReason,
+  });
+  const targetLabel = selectedCoordinates
+    ? `${selectedCoordinates.galaxy}:${selectedCoordinates.system}:${selectedCoordinates.position}`
+    : "selected planet";
+
+  return (
+    <section className="rounded-md border border-white/10 bg-[#101624] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="mb-3 grid h-10 w-10 place-items-center rounded border border-amber-200/20 bg-amber-200/10 text-amber-200">
+            <Flame aria-hidden="true" size={20} strokeWidth={1.8} />
+          </div>
+          <h3 className="text-sm font-semibold text-white">Burning Chickens</h3>
+          <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-400">
+            Burn an eligible chicken on Base mainnet to grant a moon to {targetLabel}. The moon appears here only after Veydrift indexed state confirms it.
+          </p>
+        </div>
+        {onRefreshChickens ? (
+          <RefreshButton
+            loading={Boolean(burningChicken?.loading)}
+            onRefresh={onRefreshChickens}
+            title="Refresh Burning Chickens"
+          />
+        ) : null}
+      </div>
+
+      {burningChicken?.loading ? (
+        <div className="mt-3">
+          <InlineSyncIndicator label={chickens.length > 0 ? "Refreshing Burning Chickens" : "Checking Burning Chickens"} />
+        </div>
+      ) : null}
+
+      {!configured ? (
+        <p className="mt-3 rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
+          Burning Chicken burn config is not available yet.
+        </p>
+      ) : burningChicken?.error ? (
+        <p className="mt-3 rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
+          {burningChicken.error}
+        </p>
+      ) : chickens.length === 0 && !burningChicken?.loading ? (
+        <p className="mt-3 rounded border border-white/10 bg-black/15 px-3 py-2 text-xs text-slate-300">
+          No eligible Burning Chickens were found in this wallet on Base mainnet.
+        </p>
+      ) : null}
+
+      {moonLimitReached ? (
+        <p className="mt-3 rounded border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
+          Moon limit reached: this wallet already has {burningChicken?.moonCount ?? 0} of {burningChicken?.maxMoonsPerPlayer ?? 2} moons.
+        </p>
+      ) : null}
+
+      {chickens.length > 0 ? (
+        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {chickens.map((chicken) => (
+            <div className="rounded border border-white/10 bg-black/15 p-3" key={chicken.tokenId}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-sm font-semibold text-slate-100">Chicken #{chicken.tokenId}</span>
+                <span className="shrink-0 rounded border border-amber-200/20 bg-amber-200/10 px-2 py-0.5 text-[11px] text-amber-100">
+                  {chicken.level === null ? "Level unknown" : `Level ${chicken.level}`}
+                </span>
+              </div>
+              <button
+                className="mt-3 h-8 w-full rounded border border-amber-200/20 bg-amber-200/10 text-xs font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={Boolean(disabledReason)}
+                onClick={() => onBurnChicken?.(chicken.tokenId)}
+                title={disabledReason}
+                type="button"
+              >
+                Burn for Moon
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {pending && action?.label ? (
+        <p className="mt-3 text-xs text-cyan-100">{action.label}</p>
+      ) : null}
+    </section>
+  );
+}
+
+function chickenBurnDisabledReason({
+  canBurnChicken,
+  configured,
+  hasMoon,
+  moonLimitReached,
+  pending,
+  selectedCoordinates,
+  transactionUnavailableReason,
+}: {
+  canBurnChicken?: boolean | undefined;
+  configured: boolean;
+  hasMoon: boolean;
+  moonLimitReached: boolean;
+  pending: boolean;
+  selectedCoordinates?: Coordinates | undefined;
+  transactionUnavailableReason?: string | undefined;
+}): string | undefined {
+  if (!configured) return "Burning Chicken burn config is unavailable.";
+  if (!selectedCoordinates) return "Select a Veydrift planet before burning a chicken.";
+  if (hasMoon) return "The selected planet already has a moon.";
+  if (moonLimitReached) return "This wallet has reached the two-moon limit.";
+  if (!canBurnChicken) return transactionUnavailableReason ?? "Wallet or Burning Chicken contract unavailable.";
+  if (pending) return "A moon transaction is already pending.";
+  return undefined;
 }
 
 function NoMoonGuidance({ reason }: { reason?: string | undefined }) {
