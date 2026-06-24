@@ -27,6 +27,7 @@ import {
   type ManagedPlanet,
   type PlanetState,
   type PlayerQueues,
+  type QueueState,
   type ResearchState,
   type Resources,
   type RiftState,
@@ -2121,11 +2122,9 @@ function accruedPlanetState<T extends PlanetState | null>(
 ): T {
   if (!planet) return planet;
 
-  const { buildings, ships, technologyLevels } = indexer.resourceProjectionRows(planet.planetId, planet.owner);
-  const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
   return {
     ...planet,
-    resources: resourcesWithClaimableAccrual(planet.resources, derived.productionPerHour, derived.storageCaps, planet.lastSettledAt)
+    resources: accruedResourcesWithBuildingQueue(indexer, planet)
   };
 }
 
@@ -2876,6 +2875,98 @@ function resourceWithClaimableAccrual(
   const produced = Math.floor((rate * elapsedSeconds) / 3_600);
   const remainingCapacity = Math.max(0, cap - currentValue);
   return Math.floor(currentValue + Math.min(produced, remainingCapacity)).toString();
+}
+
+function accruedResourcesWithBuildingQueue(
+  indexer: SettlementIndexer,
+  planet: SettledPlanetEvent | PlanetState,
+  now = Date.now()
+): Resources {
+  const lastSettledAtSeconds = Number(planet.lastSettledAt);
+  if (!Number.isFinite(lastSettledAtSeconds) || lastSettledAtSeconds <= 0) return planet.resources;
+
+  const nowSeconds = Math.floor(now / 1_000);
+  if (nowSeconds <= lastSettledAtSeconds) return planet.resources;
+
+  const completed = indexer.completedBuildingQueues(planet.planetId)
+    .filter((queue) => typeof queue.itemId === "number" && typeof queue.targetLevel === "number")
+    .filter((queue, index, queues) => (
+      queues.findIndex((candidate) => (
+        candidate.itemId === queue.itemId
+          && candidate.targetLevel === queue.targetLevel
+          && candidate.readyAt === queue.readyAt
+      )) === index
+    ))
+    .sort(compareQueueReadyAt);
+
+  if (completed.length === 0) {
+    const { buildings, ships, technologyLevels } = indexer.resourceProjectionRows(planet.planetId, planet.owner);
+    const derived = deriveInfrastructureFields(planet, buildings, ships, technologyLevels);
+    return resourcesWithClaimableAccrual(
+      planet.resources,
+      derived.productionPerHour,
+      derived.storageCaps,
+      planet.lastSettledAt,
+      now
+    );
+  }
+
+  const projectionRows = indexer.resourceProjectionRows(planet.planetId, planet.owner);
+  let buildings = projectionRows.buildings;
+  let resources = planet.resources;
+  let cursor = lastSettledAtSeconds;
+
+  for (const queue of completed) {
+    const readyAt = Number(queue.readyAt);
+    if (!Number.isFinite(readyAt) || readyAt > nowSeconds) continue;
+
+    if (readyAt > cursor) {
+      const derived = deriveInfrastructureFields(planet, buildings, projectionRows.ships, projectionRows.technologyLevels);
+      resources = resourcesWithClaimableAccrualByElapsed(
+        resources,
+        derived.productionPerHour,
+        derived.storageCaps,
+        Math.floor(readyAt - cursor)
+      );
+      cursor = readyAt;
+    }
+
+    buildings = buildings.map((building) => (
+      building.id === queue.itemId && typeof queue.targetLevel === "number"
+        ? { ...building, level: Math.max(building.level, queue.targetLevel) }
+        : building
+    ));
+  }
+
+  if (nowSeconds > cursor) {
+    const derived = deriveInfrastructureFields(planet, buildings, projectionRows.ships, projectionRows.technologyLevels);
+    resources = resourcesWithClaimableAccrualByElapsed(
+      resources,
+      derived.productionPerHour,
+      derived.storageCaps,
+      Math.floor(nowSeconds - cursor)
+    );
+  }
+
+  return resources;
+}
+
+function resourcesWithClaimableAccrualByElapsed(
+  current: Resources,
+  productionPerHour: Resources | null,
+  storageCaps: Resources | null,
+  elapsedSeconds: number
+): Resources {
+  if (!productionPerHour || !storageCaps || elapsedSeconds <= 0) return current;
+  return {
+    metal: resourceWithClaimableAccrual(current.metal, productionPerHour.metal, storageCaps.metal, elapsedSeconds),
+    crystal: resourceWithClaimableAccrual(current.crystal, productionPerHour.crystal, storageCaps.crystal, elapsedSeconds),
+    deuterium: resourceWithClaimableAccrual(current.deuterium, productionPerHour.deuterium, storageCaps.deuterium, elapsedSeconds)
+  };
+}
+
+function compareQueueReadyAt(left: QueueState, right: QueueState): number {
+  return Number(left.readyAt ?? "0") - Number(right.readyAt ?? "0");
 }
 
 function allianceIntelForOccupiedPlanets(

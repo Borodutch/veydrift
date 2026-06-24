@@ -1463,6 +1463,10 @@ export class SettlementIndexer {
     };
   }
 
+  completedBuildingQueues(planetId: string): QueueState[] {
+    return this.queueSettlement(`building:${planetId}`).completed;
+  }
+
   private contractInfrastructureRows(planetId: string): InfrastructureState["buildings"] {
     const levels = this.indexedLevelsById("contract_building_levels", "building_id", "level", planetId);
     return deriveBuildingRows((id) => levels.get(id) ?? 0);

@@ -18,6 +18,10 @@ import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
+import {
+    IVeydriftResourceProjectionGame,
+    VeydriftResourceProjectionLens
+} from "../src/VeydriftResourceProjectionLens.sol";
 import {VeydriftSpaceDockSystem} from "../src/VeydriftSpaceDockSystem.sol";
 import {VeydriftAntiRaidPrimitives} from "../src/libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftRaidStorage} from "../src/libraries/VeydriftRaidStorage.sol";
@@ -1313,6 +1317,32 @@ contract VeydriftGameTest is Test {
             );
         assertGt(state.storageCaps.metal, rawMetalCap);
         assertEq(uint256(game.buildingLevel(storagePlanetId, Building.MetalStorage)), 1);
+    }
+
+    function testResourceProjectionLensUsesReadyStorageCapBeforeReconcile() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.DeuteriumSynthesizer, 5);
+        _setBuildingLevel(planetId, Building.SolarPlant, 10);
+        _setResources(planetId, 100_000, 100_000, 10_000);
+
+        uint64 readyAt = uint64(block.timestamp + 1 hours);
+        _setBuildingConstruction(planetId, Building.DeuteriumTank, 1, readyAt);
+        _setPlanetLastSettledAt(planetId, readyAt - 1 hours);
+        vm.warp(uint256(readyAt) + 1 hours);
+
+        VeydriftResourceProjectionLens lens = new VeydriftResourceProjectionLens();
+        (
+            VeydriftGameStorage.Resources memory resources,
+            VeydriftGameStorage.Resources memory caps,,,
+            uint256 deuteriumPerHour
+        ) = lens.effectiveResourceProjection(
+            IVeydriftResourceProjectionGame(address(game)), planetId
+        );
+
+        assertEq(caps.deuterium, 20_000);
+        assertEq(resources.deuterium, 10_000 + deuteriumPerHour);
+        assertEq(uint256(game.buildingLevel(planetId, Building.DeuteriumTank)), 0);
     }
 
     /// @notice Direct regression for the reported VEY-417 freeze. A Colonize mission is tracked
@@ -7366,6 +7396,18 @@ contract VeydriftGameTest is Test {
         uint256 slot1 = uint256(planetRef.crystalMultiplierBps)
             | (uint256(planetRef.deuteriumMultiplierBps) << 16) | (uint256(lastSettledAt) << 32);
         vm.store(address(game), bytes32(planetBase + 1), bytes32(slot1));
+    }
+
+    function _setBuildingConstruction(
+        uint256 planetId,
+        Building building,
+        uint16 targetLevel,
+        uint64 readyAt
+    ) internal {
+        bytes32 slot = keccak256(abi.encode(planetId, uint256(7)));
+        uint256 packed = uint256(1) | (uint256(uint8(building)) << 8) | (uint256(targetLevel) << 16)
+            | (uint256(readyAt) << 32);
+        vm.store(address(game), slot, bytes32(packed));
     }
 
     function _setDefenseCount(uint256 planetId, Defense defense, uint32 count) internal {

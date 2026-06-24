@@ -5250,7 +5250,7 @@ describe("Veydrift backend", () => {
     expect(infrastructureBody.raidableResources.metal).toBe("2532");
   });
 
-  test("resourcesAsOfNow and served buildings ignore elapsed queues until completion events land (VEY-KANEO-546)", async () => {
+  test("resourcesAsOfNow and served buildings project elapsed building queues across readyAt (VEY-KANEO-546)", async () => {
     const chainReader = new MockChainReader();
     chainReader.getInfrastructureState = async () => {
       throw new Error("resource projection must not call live infrastructure state");
@@ -5306,7 +5306,7 @@ describe("Veydrift backend", () => {
 
     expect(indexer.infrastructureRows(planet.planetId).find((building) => building.id === 0)?.level).toBe(10);
     expect(rawRows.buildings.find((building) => building.id === 0)?.level).toBe(1);
-    expect(infrastructureBody.resourcesAsOfNow.metal).toBe(rawProjectedMetal.toString());
+    expect(Number(infrastructureBody.resourcesAsOfNow.metal)).toBeGreaterThan(rawProjectedMetal);
     expect(infrastructureBody.buildings.find((building: { id: number }) => building.id === 0)?.level).toBe(10);
     expect(infrastructureBody.queue).toBeNull();
   });
@@ -6089,6 +6089,82 @@ describe("Veydrift backend", () => {
       id: 5,
       level: 1
     });
+  });
+
+  test("projects accrued resources across a due storage upgrade without applying the new cap early", async () => {
+    const chainReader = new MockChainReader();
+    const now = BigInt(Math.floor(Date.now() / 1_000));
+    const readyAt = now - 3_600n;
+    const lastSettledAt = readyAt - 3_600n;
+    const cappedPlanet: PlanetState = {
+      ...planet,
+      lastSettledAt: lastSettledAt.toString(),
+      resources: {
+        metal: "5000",
+        crystal: "4900",
+        deuterium: "10000"
+      }
+    };
+    chainReader.listSettledPlanetEvents = async () => [
+      {
+        ...cappedPlanet,
+        eventName: "PlanetStarted",
+        transactionHash: "0xabc",
+        blockNumber: "123"
+      }
+    ];
+    chainReader.getInfrastructureState = async (wallet) => ({
+      ...(await MockChainReader.prototype.getInfrastructureState.call(chainReader, wallet)),
+      resources: cappedPlanet.resources,
+      resourcesAsOfNow: cappedPlanet.resources,
+      storageCaps: {
+        metal: "10000",
+        crystal: "10000",
+        deuterium: "10000"
+      }
+    });
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    chainReader.getInfrastructureState = async () => {
+      throw new Error("infrastructure page must be served from the indexed DB");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm indexed state should not rebuild from chain");
+    };
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xdeutsynth",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(2n)],
+      data: abiWords(5n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xsolar",
+      logIndex: "0x0",
+      topics: [buildingCompletedTopic, topic(7n), topic(3n)],
+      data: abiWords(10n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x83",
+      blockTimestamp: `0x${lastSettledAt.toString(16)}`,
+      transactionHash: "0xtank",
+      logIndex: "0x0",
+      topics: [buildingStartedTopic, topic(7n), topic(9n)],
+      data: abiWords(1n, readyAt, 1000n, 1000n, 0n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/infrastructure`));
+    const body = await response.json();
+    const deuteriumPerHour = Number(body.productionPerHour.deuterium);
+
+    expect(body.storageCaps.deuterium).toBe("20000");
+    expect(body.resourcesAsOfNow.deuterium).toBe((10_000 + deuteriumPerHour).toString());
   });
 
   test("serves indexed infrastructure energy from solar satellite ship counts", async () => {
@@ -7208,10 +7284,10 @@ describe("Veydrift backend", () => {
     expect(highscoreResponse.status).toBe(200);
 
     const tacticalPlanet = highscoreBody.rankings.total[0].planets[0];
-    // The finder's raidable loot reflects the raw-preview accrued 5064 metal (~50% plunder =>
-    // 2532), matching the accrued resources the public planet read exposes. Before VEY-454 this
+    // The finder's raidable loot reflects the accrued 5128 metal (~50% plunder =>
+    // 2564), matching the accrued resources the public planet read exposes. Before VEY-454 this
     // used the stale stored 5000 and under-reported LOOT at 2500.
-    expect(tacticalPlanet.tactical.raidableResources.metal).toBe("2532");
+    expect(tacticalPlanet.tactical.raidableResources.metal).toBe("2564");
     expect(Number(tacticalPlanet.tactical.raidableResources.metal)).toBeGreaterThan(2500);
   });
 
@@ -7224,9 +7300,7 @@ describe("Veydrift backend", () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
-    // Metal mine + solar plant settled two hours ago, with an indexed elapsed building queue.
-    // Lens-backed public state must accrue from raw stored levels so it stays aligned with the
-    // contract previewResources view; elapsed queues are only effective for UI row state.
+    // Metal mine + solar plant settled two hours ago.
     indexer.applyEvent({
       ...planet,
       eventName: "PlanetStarted",
@@ -7260,9 +7334,9 @@ describe("Veydrift backend", () => {
     const universeBody = await universeResponse.json();
     const publicPlanet = universeBody.planets.find((item: { position: number }) => item.position === 9);
     const publicResources = publicPlanet.publicState.resources;
-    // The public planet and universe surfaces accrue production from the raw stored building rows.
+    // The public planet and universe surfaces share one accrued/current basis.
     expect(planetBody.resources).toEqual(publicResources);
-    expect(publicResources.metal).toBe("5064");
+    expect(publicResources.metal).toBe("5128");
     expect(publicPlanet.publicState.productionPerHour).toEqual(expect.objectContaining({
       metal: expect.any(String),
       crystal: expect.any(String),
