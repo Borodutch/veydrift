@@ -99,7 +99,7 @@ export function MoonPage({
       ) : error ? (
         isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <MoonStatusPanel title="Moon state unavailable" body={error} tone="warning" />
       ) : (
-        <NoMoonGuidance reason={unavailableReason} />
+        <NoMoonGuidance moonState={moonState} reason={unavailableReason} />
       )}
     </div>
   );
@@ -138,6 +138,8 @@ function ChickenBurnPanel({
   const targetLabel = selectedCoordinates
     ? `${selectedCoordinates.galaxy}:${selectedCoordinates.system}:${selectedCoordinates.position}`
     : "selected planet";
+  const capCount = burningChicken?.moonCount ?? 0;
+  const capMax = burningChicken?.maxMoonsPerPlayer ?? 2;
   const submitChickenBurn = (event: Event) => {
     event.preventDefault();
     const form = event.currentTarget instanceof HTMLFormElement ? event.currentTarget : null;
@@ -165,9 +167,15 @@ function ChickenBurnPanel({
         </p>
       ) : null}
 
+      {configured ? (
+        <p className="mt-3 rounded border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
+          Testnet cap: {capMax} moons per account. {capCount} / {capMax} testnet Chicken moons used.
+        </p>
+      ) : null}
+
       {moonLimitReached ? (
         <p className="mt-3 rounded border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
-          Moon limit reached: this wallet already has {burningChicken?.moonCount ?? 0} of {burningChicken?.maxMoonsPerPlayer ?? 2} moons.
+          Moon limit reached: this wallet already has {capCount} of {capMax} testnet Chicken moons.
         </p>
       ) : null}
 
@@ -228,26 +236,36 @@ function chickenBurnDisabledReason({
   return undefined;
 }
 
-function NoMoonGuidance({ reason }: { reason?: string | undefined }) {
+function NoMoonGuidance({
+  moonState,
+  reason,
+}: {
+  moonState?: ChainMoonState | null | undefined;
+  reason?: string | undefined;
+}) {
+  const previewBuildings = moonStructurePreviewBuildings(moonState);
+
   return (
     <section className="rounded-md border border-white/10 bg-[#101624] p-4">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+      <div className="grid gap-4">
         <div className="min-w-0">
           <div className="mb-3 grid h-10 w-10 place-items-center rounded border border-cyan-200/20 bg-cyan-200/10 text-cyan-200">
             <Moon aria-hidden="true" size={20} strokeWidth={1.8} />
           </div>
           <h3 className="text-base font-semibold text-white">No moon in orbit</h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
-            Moons form after major battles when debris gathers around a planet. Until one appears here,
-            Lunar Base and Jump Gate construction stay unavailable.
+            Burn a verified Chicken to grant a moon to this planet, then build moon structures.
           </p>
           {reason ? <p className="mt-2 text-xs text-slate-500">{reason}</p> : null}
         </div>
 
-        <div className="grid gap-2 text-xs text-slate-300 sm:grid-cols-3 md:w-[27rem] md:grid-cols-1">
-          <GuidanceStep label="Fight" value="A large battle leaves debris in orbit." />
-          <GuidanceStep label="Chance" value="The debris field can create a moon." />
-          <GuidanceStep label="Build" value="Moon structures unlock only after creation." />
+        <div>
+          <h4 className="text-xs font-semibold uppercase tracking-normal text-cyan-200/80">Moon structures</h4>
+          <div className="mt-2 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
+            {previewBuildings.map((building) => (
+              <GuidanceStep key={building.label} label={building.label} value={building.description} />
+            ))}
+          </div>
         </div>
       </div>
     </section>
@@ -402,6 +420,25 @@ function GuidanceStep({ label, value }: { label: string; value: string }) {
       <div className="mt-1 leading-5 text-slate-300">{value}</div>
     </div>
   );
+}
+
+function moonStructurePreviewBuildings(moonState?: ChainMoonState | null | undefined): Array<{ label: string; description: string }> {
+  const descriptions = new Map([
+    ["Lunar Base", "Adds moon fields so more lunar structures can be built."],
+    ["Jump Gate", "Moves fleets between owned moons when the gate is ready."],
+  ]);
+  const labels = [
+    ...(moonState?.buildings.map((building) => building.label) ?? []),
+    "Lunar Base",
+    "Jump Gate",
+  ];
+  const uniqueLabels = Array.from(new Set(labels));
+
+  return uniqueLabels
+    .map((label) => ({
+      label,
+      description: descriptions.get(label) ?? "Buildable moon structure available after the moon is granted.",
+    }));
 }
 
 function MoonMetric({
