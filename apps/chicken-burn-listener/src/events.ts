@@ -25,9 +25,6 @@ export type ChickenBurnEvent = {
   burner: `0x${string}`;
   tokenId: string;
   planetId: string;
-  galaxy: number;
-  system: number;
-  position: number;
   sourceTxHash: `0x${string}`;
   sourceLogIndex: number;
   sourceBlockNumber: bigint;
@@ -44,10 +41,7 @@ const burnWithMoonFunctions = [
     stateMutability: "nonpayable",
     inputs: [
       { name: "tokenId", type: "uint256" },
-      { name: "planetId", type: "uint256" },
-      { name: "galaxy", type: "uint16" },
-      { name: "system", type: "uint16" },
-      { name: "position", type: "uint8" }
+      { name: "planetId", type: "uint256" }
     ],
     outputs: []
   },
@@ -57,10 +51,7 @@ const burnWithMoonFunctions = [
     stateMutability: "nonpayable",
     inputs: [
       { name: "tokenId", type: "uint256" },
-      { name: "planetId", type: "uint256" },
-      { name: "galaxy", type: "uint16" },
-      { name: "system", type: "uint16" },
-      { name: "position", type: "uint8" }
+      { name: "planetId", type: "uint256" }
     ],
     outputs: []
   },
@@ -70,10 +61,7 @@ const burnWithMoonFunctions = [
     stateMutability: "nonpayable",
     inputs: [
       { name: "tokenId", type: "uint256" },
-      { name: "planetId", type: "uint256" },
-      { name: "galaxy", type: "uint16" },
-      { name: "system", type: "uint16" },
-      { name: "position", type: "uint8" }
+      { name: "planetId", type: "uint256" }
     ],
     outputs: []
   }
@@ -122,20 +110,10 @@ function decodeConfiguredBurnLog(log: RawLog, burnEvent: AbiEvent): ChickenBurnE
     const burner = asAddress(args.burner ?? args.from ?? args.player ?? args.owner);
     const tokenId = asBigInt(args.tokenId ?? args.chickenId);
     const planetId = asBigInt(args.planetId ?? args.targetPlanetId);
-    const galaxy = asNumber(args.galaxy);
-    const system = asNumber(args.system);
-    const position = asNumber(args.position);
-    if (
-      !burner ||
-      tokenId === null ||
-      planetId === null ||
-      galaxy === null ||
-      system === null ||
-      position === null
-    ) {
+    if (!burner || tokenId === null || planetId === null) {
       return null;
     }
-    return buildBurnEvent(log, burner, tokenId, planetId, galaxy, system, position);
+    return buildBurnEvent(log, burner, tokenId, planetId);
   } catch {
     return null;
   }
@@ -165,10 +143,7 @@ function decodeTransferBurnLog(
       log,
       args.from,
       args.tokenId,
-      moonTarget.planetId,
-      moonTarget.galaxy,
-      moonTarget.system,
-      moonTarget.position
+      moonTarget.planetId
     );
   } catch {
     return null;
@@ -179,21 +154,15 @@ export function decodeMoonTargetFromBurnInput(data: `0x${string}`):
   | {
       tokenId: bigint;
       planetId: bigint;
-      galaxy: number;
-      system: number;
-      position: number;
     }
   | null {
   try {
     const decoded = decodeFunctionData({ abi: burnWithMoonFunctions, data });
-    const args = decoded.args as readonly [bigint, bigint, number, number, number];
-    if (!args || args.length !== 5) return null;
+    const args = decoded.args as readonly [bigint, bigint];
+    if (!args || args.length !== 2) return null;
     return {
       tokenId: args[0],
-      planetId: args[1],
-      galaxy: Number(args[2]),
-      system: Number(args[3]),
-      position: Number(args[4])
+      planetId: args[1]
     };
   } catch {
     return null;
@@ -204,10 +173,7 @@ function buildBurnEvent(
   log: RawLog,
   burner: `0x${string}`,
   tokenId: bigint,
-  planetId: bigint,
-  galaxy: number,
-  system: number,
-  position: number
+  planetId: bigint
 ): ChickenBurnEvent {
   const sourceLogIndex = toNumber(log.logIndex);
   return {
@@ -215,9 +181,6 @@ function buildBurnEvent(
     burner,
     tokenId: tokenId.toString(),
     planetId: planetId.toString(),
-    galaxy,
-    system,
-    position,
     sourceTxHash: log.transactionHash,
     sourceLogIndex,
     sourceBlockNumber: toBigInt(log.blockNumber)
@@ -240,12 +203,6 @@ function asBigInt(value: unknown): bigint | null {
   if (typeof value === "number" && Number.isInteger(value) && value >= 0) return BigInt(value);
   if (typeof value === "string" && /^\d+$/.test(value)) return BigInt(value);
   return null;
-}
-
-function asNumber(value: unknown): number | null {
-  const parsed = asBigInt(value);
-  if (parsed === null || parsed > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-  return Number(parsed);
 }
 
 function toBigInt(value: `0x${string}` | bigint): bigint {

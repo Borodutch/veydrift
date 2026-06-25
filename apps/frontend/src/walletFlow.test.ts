@@ -123,14 +123,11 @@ describe("walletFlow", () => {
     expect(isBaseSepoliaChain("0x1")).toBe(false);
   });
 
-  test("encodes Burning Chicken moon burns with token id, planet id, and coordinates", () => {
-    expect(encodeBurningChickenMoonCall("0x6364233d", "42", "7", { galaxy: 1, system: 44, position: 8 })).toBe(
-      "0x6364233d"
+  test("encodes Burning Chicken moon burns with token id and planet id", () => {
+    expect(encodeBurningChickenMoonCall("0xe1775196", "42", "7")).toBe(
+      "0xe1775196"
         + "2a".padStart(64, "0")
         + "7".padStart(64, "0")
-        + "1".padStart(64, "0")
-        + "2c".padStart(64, "0")
-        + "8".padStart(64, "0")
     );
   });
 
@@ -168,17 +165,16 @@ describe("walletFlow", () => {
     try {
       await expect(fetchBurningChickenForOwner(account, "91528", {
         burnContractAddress: contract,
-        burnSelector: "0x6364233d",
-        levelSelector: "0x05c58df2",
+        burnSelector: "0xe1775196",
         nftContractAddress: contract,
         rpcUrl: "https://base.example.test",
-      })).resolves.toEqual({ level: 2, tokenId: "91528" });
+      })).resolves.toEqual({ tokenId: "91528" });
     } finally {
       globalThis.fetch = originalFetch;
     }
 
     expect(calls.some((data) => data.startsWith("0x6352211e"))).toBe(true);
-    expect(calls.some((data) => data.startsWith("0x05c58df2"))).toBe(true);
+    expect(calls.some((data) => data.startsWith("0x05c58df2"))).toBe(false);
     expect(calls.some((data) => data.startsWith("0x2f745c59"))).toBe(false);
     expect(calls.some((data) => data.startsWith("https://base.blockscout.com/"))).toBe(false);
   });
@@ -203,8 +199,7 @@ describe("walletFlow", () => {
     try {
       await expect(fetchBurningChickenForOwner(account, "91528", {
         burnContractAddress: contract,
-        burnSelector: "0x6364233d",
-        levelSelector: "0x05c58df2",
+        burnSelector: "0xe1775196",
         nftContractAddress: contract,
         rpcUrl: "https://base.example.test",
       })).rejects.toThrow("Chicken #91528 is not owned by the connected wallet.");
@@ -224,9 +219,9 @@ describe("walletFlow", () => {
 
     await expect(sendBurningChickenMoonTransaction(provider, account, {
       burnContractAddress: "0x3333333333333333333333333333333333333333",
-      burnSelector: "0x6364233d",
+      burnSelector: "0xe1775196",
       nftContractAddress: "0x4444444444444444444444444444444444444444",
-    }, "42", "7", { galaxy: 1, system: 44, position: 8 })).resolves.toBe("0xchicken");
+    }, "42", "7")).resolves.toBe("0xchicken");
 
     expect(requests).toEqual([
       { method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] },
@@ -235,7 +230,7 @@ describe("walletFlow", () => {
         params: [{
           from: account,
           to: "0x3333333333333333333333333333333333333333",
-          data: encodeBurningChickenMoonCall("0x6364233d", "42", "7", { galaxy: 1, system: 44, position: 8 }),
+          data: encodeBurningChickenMoonCall("0xe1775196", "42", "7"),
         }],
       },
     ]);
