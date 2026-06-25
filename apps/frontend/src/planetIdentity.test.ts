@@ -112,6 +112,15 @@ describe("planet identity", () => {
     expect(formatPlanetType(identity.type)).toBe("Frozen Ice");
   });
 
+  test("preserves moon presence on settlement-derived planet identity", () => {
+    const identity = planetFromSettlementPlanet({
+      ...settlementPlanet,
+      moon: { exists: true },
+    });
+
+    expect(identity.hasMoon).toBe(true);
+  });
+
   test("keeps canonical commander and alliance identity when settlement data refreshes galaxy rows", () => {
     const [systemPlanet] = planetsFromSystemResponse({
       galaxy: 6,

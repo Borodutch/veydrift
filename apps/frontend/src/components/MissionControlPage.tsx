@@ -1772,6 +1772,7 @@ function PastBattleReportRow({
     commanderWallet: report.attacker,
     coordinates: null,
     coords: null,
+    hasMoon: false,
     name: "Attacker",
   };
   // ACS grouped attack: surface the combined group loot and the joiner count so the compact row makes
@@ -2396,6 +2397,7 @@ function identityFromManagedPlanet(planet: ManagedPlanetResponse): MissionPlanet
     archetype: planetTypeFromTemperature(planet.temperature),
     coordinates: planet.coordinates,
     displayName: planet.name?.trim() || `Planet [${planet.coordinates}]`,
+    hasMoon: Boolean(planet.moon?.exists),
     owner: planet.owner,
     ownerDisplayName: null,
   };
@@ -2410,6 +2412,7 @@ function identityFromMissionPlanet(
     archetype: planet.archetype ?? planetArchetypesByCoordinate.get(missionPlanetCoordinateKey(coords)) ?? null,
     coordinates: planet.coordinates,
     displayName: planet.name?.trim() || `Planet [${planet.coordinates}]`,
+    hasMoon: Boolean(planet.hasMoon),
     owner: planet.owner,
     ownerDisplayName: planet.ownerDisplayName ?? null,
   };

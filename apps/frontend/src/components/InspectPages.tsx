@@ -6,6 +6,7 @@ import { descriptionLinkParts, isSafeDescriptionUrl, type DescriptionLinkPart } 
 import { fleetMissionDistance } from "../fleetMissionRules";
 import type { Coordinates } from "../types";
 import { formatUserTimestamp } from "../timestampFormat";
+import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 import {
   fetchHighscores,
   fetchPlayerProfile,
@@ -228,7 +229,7 @@ function PlayerPlanetRow({
       title={`Open [${coords.galaxy}:${coords.system}:${coords.position}]`}
       type="button"
     >
-      <span className="h-16 w-16 overflow-hidden rounded border border-white/10 bg-black/30">
+      <span className="relative h-16 w-16 overflow-hidden rounded border border-white/10 bg-black/30">
         <OptimizedImage
           alt=""
           className="h-full w-full object-cover"
@@ -236,6 +237,7 @@ function PlayerPlanetRow({
           sizes="icon"
           src={playerInspectPlanetImage(planet)}
         />
+        {planet.moon?.exists ? <PlanetMoonIndicator compact /> : null}
       </span>
       <span className="grid min-w-0 gap-2">
         <span className="flex flex-wrap items-center justify-between gap-2">
