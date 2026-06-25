@@ -544,6 +544,11 @@ export class SettlementIndexer {
       missionIds: ReadonlySet<string>;
     }
     | null = null;
+  private recentBattleReportsCache = new Map<number, {
+    battleReportGeneration: number;
+    missionGeneration: number;
+    reports: BattleReport[];
+  }>();
   private attackLaunchSecondsCache = new Map<string, { missionGeneration: number; launchesByTarget: Map<string, number[]> }>();
   private snapshotCache:
     | {
@@ -1237,9 +1242,7 @@ export class SettlementIndexer {
         .map((planet) => planet.planetId)
     );
     const includeArchive = options.includeArchive !== false;
-    const summaries = includeArchive
-      ? this.indexedFleetMissionSummariesWithPlanetReferences()
-      : this.activeFleetMissionsForWalletVisibility(wallet, [...ownedPlanetIds]);
+    const summaries = this.activeFleetMissionsForWalletVisibility(wallet, [...ownedPlanetIds]);
     // VEY-KANEO-456: index every mission by id so an incoming attack can resolve the allied AcsDefend
     // fleets stationed against it (linked by `counterplayDefenderMissionIds`) into per-defender detail
     // for the Stationed defenses panel. `nowSeconds` drives the lazy as-of-now reconciliation that hides
@@ -1305,7 +1308,7 @@ export class SettlementIndexer {
       };
     }
 
-    const battleReports = this.indexedBattleReports();
+    const archive = this.fleetMissionArchive(wallet);
     return {
       wallet,
       homePlanetId: settlement.homePlanetId,
@@ -1313,17 +1316,8 @@ export class SettlementIndexer {
       outgoing,
       returning,
       joinableAttacks,
-      completedMissions: summaries
-        .filter((mission) => isVisibleCompletedMission(mission, walletLower, ownedPlanetIds))
-        .sort(compareFleetMissionsNewestFirst),
-      // A report is visible to the main attacker, the defender (target planet owner), and — for a
-      // grouped ACS attack — every joiner, so each participant can see the shared report and the loot
-      // they personally hauled (VEY-KANEO-432).
-      battleReports: battleReports.filter((report) =>
-        report.attacker.toLowerCase() === walletLower
-          || ownedPlanetIds.has(report.targetPlanetId)
-          || report.participants.some((participant) => participant.address.toLowerCase() === walletLower)
-      )
+      completedMissions: archive.completedMissions,
+      battleReports: this.indexedBattleReportsForMissions(archive.completedMissions.slice(0, 100))
     };
   }
 
@@ -1336,9 +1330,7 @@ export class SettlementIndexer {
       this.settledPlanetsForOwner(wallet)
         .map((planet) => planet.planetId)
     );
-    const completedMissions = this.completedFleetMissionsFromCanonicalRows()
-      .filter((mission) => isVisibleCompletedMission(mission, walletLower, ownedPlanetIds))
-      .sort(compareFleetMissionsNewestFirst);
+    const completedMissions = this.completedFleetMissionsForWalletFromCanonicalRows(wallet, ownedPlanetIds);
 
     return {
       wallet,
@@ -1398,8 +1390,8 @@ export class SettlementIndexer {
     return reports.find((report) => report.missionId === missionId) ?? null;
   }
 
-  battleReports(): BattleReport[] {
-    return this.indexedBattleReports();
+  battleReports(limit = 100): BattleReport[] {
+    return this.recentBattleReports(limit);
   }
 
   // Every active mission across the universe (all players), for the Mission Control "All" active tab.
@@ -6288,6 +6280,41 @@ export class SettlementIndexer {
     return missions;
   }
 
+  private completedFleetMissionsForWalletFromCanonicalRows(
+    wallet: `0x${string}`,
+    ownedPlanetIds: ReadonlySet<string>
+  ): FleetMissionSummary[] {
+    this.currentMissionReadModelDbVersion();
+    const stateVersion = this.indexedStateCacheVersion();
+    const walletLower = wallet.toLowerCase();
+    const asOfSeconds = nowSeconds();
+    const targetIds = [...ownedPlanetIds].filter((planetId) => planetId.length > 0);
+    const params: SQLQueryBindings[] = [asOfSeconds.toString(), walletLower, ...targetIds];
+    const targetSql = targetIds.length > 0
+      ? ` OR target_planet_id IN (${targetIds.map(() => "?").join(",")})`
+      : "";
+    const rows = this.db.query(`
+      SELECT *
+      FROM contract_fleet_missions
+      WHERE (
+          status_id IN (3, 4)
+          OR (status_id IN (2, 5) AND CAST(return_at AS INTEGER) <= CAST(? AS INTEGER))
+        )
+        AND (owner = ?${targetSql})
+      ORDER BY CAST(return_at AS INTEGER) DESC, CAST(arrival_at AS INTEGER) DESC, CAST(mission_id AS INTEGER) DESC
+    `).all(...params) as ContractFleetMissionRow[];
+
+    return rows
+      .map((row) => this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion))
+      .map((mission) => (
+        (mission.status === "Returning" || mission.status === "Recalled")
+          && Number(mission.returnAt) <= asOfSeconds
+      )
+        ? { ...mission, status: "Returned" }
+        : mission)
+      .sort(compareFleetMissionsNewestFirst);
+  }
+
   private decodedMissionLogs(): {
     eventMissions: FleetMissionSummary[];
     fulfilledRandomnessRequestIds: ReadonlySet<string>;
@@ -6557,6 +6584,43 @@ export class SettlementIndexer {
     return reports;
   }
 
+  private recentBattleReports(limit: number): BattleReport[] {
+    this.currentBattleReportReadModelDbVersion();
+    this.currentMissionReadModelDbVersion();
+    const boundedLimit = Math.max(1, Math.min(500, Math.trunc(limit) || 100));
+    const cached = this.recentBattleReportsCache.get(boundedLimit);
+    if (
+      cached
+      && cached.battleReportGeneration === this.battleReportGeneration
+      && cached.missionGeneration === this.missionGeneration
+    ) {
+      return cached.reports;
+    }
+
+    const rows = this.db.query(`
+      SELECT json_extract(event_json, '$.topics[1]') AS mission_topic,
+        MAX(CAST(block_number AS INTEGER)) AS latest_block
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'battle'
+        AND json_extract(event_json, '$.topics[1]') IS NOT NULL
+      GROUP BY mission_topic
+      ORDER BY latest_block DESC
+      LIMIT ?
+    `).all(boundedLimit) as Array<{ mission_topic: string | null }>;
+    const missionIds = rows
+      .map((row) => missionIdFromTopic(row.mission_topic))
+      .filter((missionId): missionId is string => missionId !== null);
+    const reports = this.attachBattleReportParticipantsWithoutSnapshots(this.battleReportsForMissionIds(missionIds))
+      .sort(compareBattleReportsNewestFirst)
+      .slice(0, boundedLimit);
+    this.recentBattleReportsCache.set(boundedLimit, {
+      battleReportGeneration: this.battleReportGeneration,
+      missionGeneration: this.missionGeneration,
+      reports
+    });
+    return reports;
+  }
+
   private indexedBattleReportsForMissions(missions: readonly FleetMissionSummary[]): BattleReport[] {
     if (missions.length === 0) return [];
 
@@ -6595,6 +6659,23 @@ export class SettlementIndexer {
     return reportsWithParticipants.map((report) => ({
       ...report,
       defenderSnapshot: defenderSnapshots.get(report.missionId) ?? null
+    }));
+  }
+
+  private attachBattleReportParticipantsWithoutSnapshots(reports: readonly BattleReport[]): BattleReport[] {
+    if (reports.length === 0) return [];
+    const missionIds = new Set<string>();
+    for (const report of reports) {
+      missionIds.add(report.missionId);
+      if (report.attackGroupId) missionIds.add(report.attackGroupId);
+      for (const participant of report.participants) {
+        missionIds.add(participant.missionId);
+      }
+    }
+    const summaries = this.fleetMissionSummariesFromCanonicalRowsByIds(missionIds);
+    return attachAttackGroupParticipants([...reports], summaries).map((report) => ({
+      ...report,
+      defenderSnapshot: null
     }));
   }
 
@@ -7826,15 +7907,6 @@ function countRows(rows: readonly LevelRow[] | undefined): Array<{ id: number; c
   return (rows ?? []).map((row) => ({ id: row.id, count: row.value }));
 }
 
-function isVisibleCompletedMission(
-  mission: FleetMissionSummary,
-  walletLower: string,
-  ownedPlanetIds: ReadonlySet<string>
-): boolean {
-  if (mission.status !== "Resolved" && mission.status !== "Returned") return false;
-  return mission.owner.toLowerCase() === walletLower || ownedPlanetIds.has(mission.targetPlanetId);
-}
-
 function canonicalFleetMissionEventJson(mission: CanonicalFleetMissionSnapshot): string {
   return JSON.stringify(mission);
 }
@@ -7850,6 +7922,28 @@ function compareFleetMissionsNewestFirst(left: FleetMissionSummary, right: Fleet
   const rightMission = BigInt(right.missionId);
   if (leftMission === rightMission) return 0;
   return rightMission > leftMission ? 1 : -1;
+}
+
+function compareBattleReportsNewestFirst(left: BattleReport, right: BattleReport): number {
+  const leftBlock = BigInt(left.blockNumber);
+  const rightBlock = BigInt(right.blockNumber);
+  if (leftBlock !== rightBlock) return rightBlock > leftBlock ? 1 : -1;
+  const leftLogIndex = BigInt(left.logIndex);
+  const rightLogIndex = BigInt(right.logIndex);
+  if (leftLogIndex !== rightLogIndex) return rightLogIndex > leftLogIndex ? 1 : -1;
+  const leftMission = BigInt(left.missionId);
+  const rightMission = BigInt(right.missionId);
+  if (leftMission === rightMission) return 0;
+  return rightMission > leftMission ? 1 : -1;
+}
+
+function missionIdFromTopic(topic: string | null | undefined): string | null {
+  if (!topic) return null;
+  try {
+    return BigInt(topic).toString();
+  } catch {
+    return null;
+  }
 }
 
 // Soonest-event-first ordering for active missions: returning/recalled fleets sort by their
