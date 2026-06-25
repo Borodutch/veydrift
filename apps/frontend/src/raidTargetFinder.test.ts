@@ -325,6 +325,18 @@ describe("filterRaidTargets", () => {
     expect(visible.map((target) => target.planetId)).toEqual(["rich", "def"]);
   });
 
+  test("hideActiveFleet removes targets that already have fleets inbound", () => {
+    const visible = filterRaidTargets(
+      [
+        { ...targets[2]!, planetId: "already-inbound", inbound: { count: 1, nextArrivalAtMs: 1_200_000 } },
+        { ...targets[2]!, planetId: "open", inbound: { count: 0, nextArrivalAtMs: null } },
+      ],
+      { ...DEFAULT_RAID_TARGET_FILTERS, hideActiveFleet: true },
+    );
+
+    expect(visible.map((target) => target.planetId)).toEqual(["open"]);
+  });
+
   test("minLoot threshold excludes low-value targets", () => {
     const visible = filterRaidTargets(targets, { ...DEFAULT_RAID_TARGET_FILTERS, minLoot: 1000 });
     expect(visible.map((target) => target.planetId)).toEqual(["rich"]);

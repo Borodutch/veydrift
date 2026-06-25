@@ -17,6 +17,7 @@ import {
   rosterPageCount,
   rosterPageRows,
   shouldShowAllianceInitialLoader,
+  shouldShowAllianceTransactionNotice,
   sortedAllianceDirectory,
   sortedRosterMembers,
 } from "../src/components/AlliancePage";
@@ -49,9 +50,26 @@ describe("AlliancePage loading display", () => {
 
   test("surfaces transaction sync copy on alliance pages while shared actions are gated", () => {
     expect(alliancePageSource).toContain("transactionUnavailableReason?: string | undefined;");
-    expect(alliancePageSource).toContain("{!canTransact && transactionUnavailableReason ? <Notice>{transactionUnavailableReason}</Notice> : null}");
+    expect(alliancePageSource).toContain("shouldShowAllianceTransactionNotice({");
+    expect(alliancePageSource).toContain("{!canTransact && showTransactionUnavailableNotice ? <Notice>{transactionUnavailableReason}</Notice> : null}");
     expect(inspectPagesSource).toContain("transactionUnavailableReason?: string | undefined;");
     expect(inspectPagesSource).toContain("{!canTransact && transactionUnavailableReason ? <Notice>{transactionUnavailableReason}</Notice> : null}");
+  });
+
+  test("deduplicates alliance transaction unavailable copy that matches the active action notice", () => {
+    const label = "Alliance join approval: syncing indexed state...";
+    expect(shouldShowAllianceTransactionNotice({
+      actionLabel: label,
+      transactionUnavailableReason: label,
+    })).toBe(false);
+    expect(shouldShowAllianceTransactionNotice({
+      actionLabel: label,
+      transactionUnavailableReason: "Alliance contract unavailable.",
+    })).toBe(true);
+    expect(shouldShowAllianceTransactionNotice({
+      transactionUnavailableReason: "Alliance contract unavailable.",
+    })).toBe(true);
+    expect(shouldShowAllianceTransactionNotice({ actionLabel: label })).toBe(false);
   });
 
   test("uses the shared loader for initial alliance state loading", () => {
