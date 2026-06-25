@@ -1484,13 +1484,9 @@ export class SettlementIndexer {
   }
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
-    const completedQuantities = this.completedQueueQuantities(`ship:${planetId}`);
     const counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId);
     return deriveShipRows(
-      (id) => (
-        (counts.get(id) ?? 0)
-        + (completedQuantities.get(id) ?? 0)
-      ),
+      (id) => counts.get(id) ?? 0,
       this.planet(planetId)?.temperature,
       durationLevels
     );
@@ -1532,10 +1528,9 @@ export class SettlementIndexer {
     );
   }
 
-  // Ships launchable from the UI now include due-but-not-yet-mutated shipyard output. The upgraded
-  // contract lazily reconciles the same queue before launch checks, so this served projection matches
-  // what the next mutating action can use. Departed/returned/combat counts still come from absolute
-  // PlanetShipCountChanged events in the contract table.
+  // Served ship counts mirror the indexed contract count rows exactly. The contract may lazily settle
+  // due queue output during a later mutating action, but the backend must not pre-project those units
+  // into API counts before the corresponding chain event updates the indexed rows.
   availableShipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
     return this.shipRows(planetId, durationLevels);
   }
@@ -1550,13 +1545,9 @@ export class SettlementIndexer {
   // already integrate authoritatively from the event stream.
 
   defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
-    const completedQuantities = this.completedQueueQuantities(`defense:${planetId}`);
     const counts = this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId);
     return deriveDefenseRows(
-      (id) => (
-        (counts.get(id) ?? 0)
-        + (completedQuantities.get(id) ?? 0)
-      ),
+      (id) => counts.get(id) ?? 0,
       durationLevels
     );
   }
