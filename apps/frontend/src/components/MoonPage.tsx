@@ -193,11 +193,17 @@ function ChickenBurnPanel({
         </button>
       </form>
 
-      {pending && action?.label ? (
-        <p className="mt-3 text-xs text-cyan-100">{action.label}</p>
+      {action?.status !== "idle" && action?.label ? (
+        <p className={`mt-3 text-xs ${chickenBurnActionTone(action.status)}`}>{action.label}</p>
       ) : null}
     </section>
   );
+}
+
+function chickenBurnActionTone(status: NonNullable<MoonPageProps["action"]>["status"]): string {
+  if (status === "error") return "text-amber-100";
+  if (status === "success") return "text-emerald-100";
+  return "text-cyan-100";
 }
 
 function chickenBurnDisabledReason({
