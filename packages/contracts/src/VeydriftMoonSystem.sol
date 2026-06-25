@@ -124,15 +124,6 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
 
     error ChickenBurnAlreadyGranted(bytes32 burnId);
     error ChickenBurnMoonLimitReached(address player, uint256 limit);
-    error CoordinateMismatch(
-        uint256 planetId,
-        uint16 expectedGalaxy,
-        uint16 expectedSystem,
-        uint8 expectedPosition,
-        uint16 actualGalaxy,
-        uint16 actualSystem,
-        uint8 actualPosition
-    );
     error ConstructionActive();
     error ConstructionInactive();
     error ConstructionNotReady(uint64 readyAt);
@@ -289,34 +280,17 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         createdMoon = _createMoon(planetId, planetRef, planetRef.owner, seed);
     }
 
-    function grantMoonFromChickenBurn(
-        bytes32 burnId,
-        address player,
-        uint256 planetId,
-        uint16 galaxy,
-        uint16 system,
-        uint8 position
-    ) external onlyOwner returns (Moon memory createdMoon) {
+    function grantMoonFromChickenBurn(bytes32 burnId, address player, uint256 planetId)
+        external
+        onlyOwner
+        returns (Moon memory createdMoon)
+    {
         if (burnId == bytes32(0) || player == address(0)) revert ZeroAddress();
         if (chickenBurnMoonGranted[burnId]) revert ChickenBurnAlreadyGranted(burnId);
 
         VeydriftGameStorage.Planet memory planetRef = game.planet(planetId);
         if (planetRef.owner == address(0)) revert NoPlanet();
         if (planetRef.owner != player) revert NotMoonOwner();
-        if (
-            planetRef.galaxy != galaxy || planetRef.system != system
-                || planetRef.position != position
-        ) {
-            revert CoordinateMismatch(
-                planetId,
-                galaxy,
-                system,
-                position,
-                planetRef.galaxy,
-                planetRef.system,
-                planetRef.position
-            );
-        }
         if (_moons[planetId].exists) revert MoonAlreadyExists(planetId);
 
         uint8 currentCount = chickenBurnMoonGrantCountOf[player];
@@ -337,15 +311,23 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
                     burnId,
                     player,
                     planetId,
-                    galaxy,
-                    system,
-                    position
+                    planetRef.galaxy,
+                    planetRef.system,
+                    planetRef.position
                 )
             )
         );
         createdMoon = _createMoon(planetId, planetRef, player, seed);
 
-        emit ChickenBurnMoonGranted(burnId, player, planetId, galaxy, system, position, nextCount);
+        emit ChickenBurnMoonGranted(
+            burnId,
+            player,
+            planetId,
+            planetRef.galaxy,
+            planetRef.system,
+            planetRef.position,
+            nextCount
+        );
     }
 
     function requestMoonChanceFromBattle(

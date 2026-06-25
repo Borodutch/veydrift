@@ -4,7 +4,6 @@ export type RuntimeConfig = {
   burningChicken?: {
     burnContractAddress: string | null;
     burnSelector: string | null;
-    levelSelector: string | null;
     nftContractAddress: string | null;
     rpcUrl: string | null;
   };
@@ -39,7 +38,7 @@ export type RuntimeConfigState =
   | { status: "error" };
 
 export const defaultPlayableApiUrl = "https://api-test.veydrift.com";
-export const burningChickenCoordinateBurnSelector = "0x6364233d";
+export const burningChickenPlanetBurnSelector = "0xe1775196";
 
 export function resolvePlayableApiUrl(value: string | undefined): string {
   const trimmed = value?.trim();
@@ -67,7 +66,6 @@ export function moonContractAddress(config: RuntimeConfig): string | undefined {
 export type ConfiguredBurningChickenConfig = {
   burnContractAddress: string;
   burnSelector: string;
-  levelSelector: string | null;
   nftContractAddress: string;
   rpcUrl: string | null;
 };
@@ -77,13 +75,12 @@ export function burningChickenConfig(config: RuntimeConfig): ConfiguredBurningCh
   if (!chicken?.nftContractAddress || !chicken.burnContractAddress || !chicken.burnSelector) {
     return undefined;
   }
-  if (chicken.burnSelector.toLowerCase() !== burningChickenCoordinateBurnSelector) {
+  if (chicken.burnSelector.toLowerCase() !== burningChickenPlanetBurnSelector) {
     return undefined;
   }
   return {
     burnContractAddress: chicken.burnContractAddress,
     burnSelector: chicken.burnSelector,
-    levelSelector: chicken.levelSelector,
     nftContractAddress: chicken.nftContractAddress,
     rpcUrl: chicken.rpcUrl,
   };

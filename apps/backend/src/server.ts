@@ -90,8 +90,7 @@ const corsHeaders = {
 } as const;
 
 const indexedSource = "contract-state-indexer" as const;
-const burningChickenCoordinateBurnSelector = "0x6364233d";
-const burningChickenLevelSelector = "0x05c58df2";
+const burningChickenPlanetBurnSelector = "0xe1775196";
 
 type GraphQLPayload = {
   query?: string;
@@ -110,7 +109,6 @@ type RuntimeConfig = {
   burningChicken: {
     burnContractAddress: string | null;
     burnSelector: string | null;
-    levelSelector: string | null;
     nftContractAddress: string | null;
     rpcUrl: string | null;
   };
@@ -3194,10 +3192,9 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
   const allianceContractAddress = process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS ?? null;
   const burningChickenNftContractAddress = process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS ?? null;
   const burningChickenBurnContractAddress = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS ?? null;
-  const burningChickenBurnSelector = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR ?? burningChickenCoordinateBurnSelector;
+  const burningChickenBurnSelector = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR ?? burningChickenPlanetBurnSelector;
   const configuredChickenBurnSelector =
-    burningChickenBurnSelector.toLowerCase() === burningChickenCoordinateBurnSelector;
-  const configuredChickenLevelSelector = process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR ?? burningChickenLevelSelector;
+    burningChickenBurnSelector.toLowerCase() === burningChickenPlanetBurnSelector;
   const burningChickenRpcUrl = process.env.VEYDRIFT_BASE_MAINNET_RPC_URL ?? "https://mainnet.base.org";
   const resourceTokenAddresses = {
     crystal: process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS ?? null,
@@ -3212,7 +3209,6 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
     burningChicken: {
       burnContractAddress: burningChickenBurnContractAddress,
       burnSelector: burningChickenBurnSelector,
-      levelSelector: configuredChickenLevelSelector,
       nftContractAddress: burningChickenNftContractAddress,
       rpcUrl: burningChickenRpcUrl
     },

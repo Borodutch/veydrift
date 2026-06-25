@@ -133,7 +133,6 @@ function ChickenBurnPanel({
     hasMoon,
     moonLimitReached,
     pending,
-    selectedCoordinates,
     transactionUnavailableReason,
   });
   const targetLabel = selectedCoordinates
@@ -212,7 +211,6 @@ function chickenBurnDisabledReason({
   hasMoon,
   moonLimitReached,
   pending,
-  selectedCoordinates,
   transactionUnavailableReason,
 }: {
   canBurnChicken?: boolean | undefined;
@@ -220,11 +218,9 @@ function chickenBurnDisabledReason({
   hasMoon: boolean;
   moonLimitReached: boolean;
   pending: boolean;
-  selectedCoordinates?: Coordinates | undefined;
   transactionUnavailableReason?: string | undefined;
 }): string | undefined {
   if (!configured) return "Burning Chicken burn config is unavailable.";
-  if (!selectedCoordinates) return "Select a Veydrift planet before burning a chicken.";
   if (hasMoon) return "The selected planet already has a moon.";
   if (moonLimitReached) return "This wallet has reached the two-moon limit.";
   if (!canBurnChicken) return transactionUnavailableReason ?? "Wallet or Burning Chicken contract unavailable.";

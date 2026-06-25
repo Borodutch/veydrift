@@ -1246,8 +1246,7 @@ describe("Veydrift backend", () => {
       },
       burningChicken: {
         burnContractAddress: null,
-        burnSelector: "0x6364233d",
-        levelSelector: "0x05c58df2",
+        burnSelector: "0xe1775196",
         nftContractAddress: null,
         rpcUrl: "https://mainnet.base.org"
       },
@@ -1508,7 +1507,6 @@ describe("Veydrift backend", () => {
     const previousChickenNftAddress = process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS;
     const previousChickenBurnAddress = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS;
     const previousChickenBurnSelector = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR;
-    const previousChickenLevelSelector = process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR;
     const previousBaseMainnetRpcUrl = process.env.VEYDRIFT_BASE_MAINNET_RPC_URL;
     const previousMetalTokenAddress = process.env.VEYDRIFT_METAL_TOKEN_ADDRESS;
     const previousCrystalTokenAddress = process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS;
@@ -1521,8 +1519,7 @@ describe("Veydrift backend", () => {
     process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS = "0x9999999999999999999999999999999999999999";
     process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR = "0x6364233d";
-    process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR = "0x87654321";
+    process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR = "0xe1775196";
     process.env.VEYDRIFT_BASE_MAINNET_RPC_URL = "https://base.example.test";
     process.env.VEYDRIFT_METAL_TOKEN_ADDRESS = "0x5555555555555555555555555555555555555555";
     process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS = "0x6666666666666666666666666666666666666666";
@@ -1539,8 +1536,7 @@ describe("Veydrift backend", () => {
         randomnessEngineAddress: "0x8888888888888888888888888888888888888888",
         burningChicken: {
           burnContractAddress: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          burnSelector: "0x6364233d",
-          levelSelector: "0x87654321",
+          burnSelector: "0xe1775196",
           nftContractAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           rpcUrl: "https://base.example.test"
         },
@@ -1610,11 +1606,6 @@ describe("Veydrift backend", () => {
       } else {
         process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR = previousChickenBurnSelector;
       }
-      if (previousChickenLevelSelector === undefined) {
-        delete process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR;
-      } else {
-        process.env.VEYDRIFT_BURNING_CHICKEN_LEVEL_SELECTOR = previousChickenLevelSelector;
-      }
       if (previousBaseMainnetRpcUrl === undefined) {
         delete process.env.VEYDRIFT_BASE_MAINNET_RPC_URL;
       } else {
@@ -1638,13 +1629,13 @@ describe("Veydrift backend", () => {
     }
   });
 
-  test("does not enable Chicken burns for stale planet-id-only selector config", async () => {
+  test("does not enable Chicken burns for stale coordinate selector config", async () => {
     const previousChickenNftAddress = process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS;
     const previousChickenBurnAddress = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS;
     const previousChickenBurnSelector = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR;
     process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR = "0xe1775196";
+    process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR = "0x6364233d";
 
     try {
       const response = await handler(new Request("http://localhost/runtime-config"));
@@ -1652,7 +1643,7 @@ describe("Veydrift backend", () => {
       await expect(response.json()).resolves.toMatchObject({
         burningChicken: {
           burnContractAddress: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-          burnSelector: "0xe1775196",
+          burnSelector: "0x6364233d",
           nftContractAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         },
         featureSupport: {
@@ -1707,8 +1698,7 @@ describe("Veydrift backend", () => {
             },
             burningChicken: {
               burnContractAddress: null,
-              burnSelector: "0x6364233d",
-              levelSelector: "0x05c58df2",
+              burnSelector: "0xe1775196",
               nftContractAddress: null,
               rpcUrl: "https://mainnet.base.org"
             },
