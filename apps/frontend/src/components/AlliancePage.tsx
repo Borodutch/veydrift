@@ -134,6 +134,11 @@ export function AlliancePage({
   const selectedAlliance = findAllianceEntry(directory, activeAllianceId, currentAlliance);
   const inspectedAlliance = selectedAlliance?.allianceId === currentAllianceId ? null : selectedAlliance;
   const initialLoading = shouldShowAllianceInitialLoader({ allianceState, loading });
+  const actionLabel = actionState.status !== "idle" ? actionState.label : undefined;
+  const showTransactionUnavailableNotice = shouldShowAllianceTransactionNotice({
+    actionLabel,
+    transactionUnavailableReason,
+  });
   const openPlayer = onOpenPlayer ?? setSelectedPlayer;
   const openAlliance = onOpenAlliance ?? setActiveAllianceId;
   const exitAction = allianceExitActionState(allianceState);
@@ -192,7 +197,7 @@ export function AlliancePage({
       {allianceState?.allianceAvailable === false ? (
         <Notice>{allianceState.unavailableReason ?? "Alliance contract is not configured."}</Notice>
       ) : null}
-      {!canTransact && transactionUnavailableReason ? <Notice>{transactionUnavailableReason}</Notice> : null}
+      {!canTransact && showTransactionUnavailableNotice ? <Notice>{transactionUnavailableReason}</Notice> : null}
       {actionState.status !== "idle" ? <Notice tone={actionState.status === "error" ? "error" : "info"}>{actionState.label}</Notice> : null}
 
       {initialLoading ? (
@@ -307,6 +312,16 @@ export function shouldShowAllianceInitialLoader({
   loading: boolean;
 }): boolean {
   return loading && !allianceState;
+}
+
+export function shouldShowAllianceTransactionNotice({
+  actionLabel,
+  transactionUnavailableReason,
+}: {
+  actionLabel?: string | undefined;
+  transactionUnavailableReason?: string | undefined;
+}): boolean {
+  return Boolean(transactionUnavailableReason && transactionUnavailableReason !== actionLabel);
 }
 
 export function hasAllianceMembership(allianceState: ChainAllianceState | null): boolean {
