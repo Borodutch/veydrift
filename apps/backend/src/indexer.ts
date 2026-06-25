@@ -573,6 +573,7 @@ export class SettlementIndexer {
         | "listAllianceJoinRequestState"
         | "listAllianceInviteState"
         | "listAllianceDiplomacyState"
+        | "getCanonicalFleetMission"
         | "listAllianceLogs"
         | "listCanonicalFleetMissions"
         | "listContractLogs"
@@ -2194,9 +2195,6 @@ export class SettlementIndexer {
     if (this.metadata("currentStateOneTimeHealCompletedAt")) {
       return Promise.resolve(this.snapshot());
     }
-    if (this.metadata("lastCurrentStateHealRunId") === normalizedRunId) {
-      return Promise.resolve(this.snapshot());
-    }
     if (this.currentStateHealPromise) {
       return this.currentStateHealPromise;
     }
@@ -2234,12 +2232,9 @@ export class SettlementIndexer {
   }
 
   private async seedCurrentFleetMissionState(runId: string): Promise<IndexerSnapshot> {
-    if (!this.chainReader.listCanonicalFleetMissions) {
-      throw new Error("current-state fleet mission heal is unavailable: chain reader cannot enumerate fleet missions");
-    }
     const startedAt = Date.now();
     this.setMetadata("lastCurrentStateHealRunId", runId);
-    const fleetMissions = await this.chainReader.listCanonicalFleetMissions();
+    const fleetMissions = await this.readCurrentFleetMissionHealSnapshot();
     const changedRows = await this.replaceCanonicalFleetMissions(fleetMissions);
     const completedAt = new Date().toISOString();
     await this.runHealWrite("current-state fleet mission heal metadata", () => {
@@ -2255,6 +2250,37 @@ export class SettlementIndexer {
       this.touch();
     });
     return this.snapshot();
+  }
+
+  private async readCurrentFleetMissionHealSnapshot(): Promise<CanonicalFleetMissionSnapshot[]> {
+    if (this.chainReader.getCanonicalFleetMission) {
+      const candidateIds = this.currentFleetMissionHealCandidateIds();
+      const missions: CanonicalFleetMissionSnapshot[] = [];
+      const chunkSize = CANONICAL_READ_PLANET_CHUNK;
+      for (const ids of chunks(candidateIds, chunkSize)) {
+        const rows = await Promise.all(
+          ids.map((missionId) => this.chainReader.getCanonicalFleetMission?.(BigInt(missionId)))
+        );
+        for (const row of rows) {
+          if (row) missions.push(row);
+        }
+      }
+      return missions;
+    }
+    if (this.chainReader.listCanonicalFleetMissions) {
+      return this.chainReader.listCanonicalFleetMissions();
+    }
+    throw new Error("current-state fleet mission heal is unavailable: chain reader cannot read fleet missions");
+  }
+
+  private currentFleetMissionHealCandidateIds(): string[] {
+    const rows = this.db.query(`
+      SELECT mission_id
+      FROM contract_fleet_missions
+      WHERE status_id IN (1, 2, 5)
+      ORDER BY CAST(mission_id AS INTEGER) ASC
+    `).all() as Array<{ mission_id: string }>;
+    return rows.map((row) => row.mission_id);
   }
 
   private async seedCurrentCanonicalStateUncached(options: { planetConcurrency?: number } = {}): Promise<IndexerSnapshot> {
