@@ -3780,11 +3780,12 @@ export class SettlementIndexer {
     if (statusId === null || missionTypeId === null) return 0;
 
     const existing = this.db.query(`
-      SELECT event_json
+      SELECT status_id, event_json
       FROM contract_fleet_missions
       WHERE mission_id = ?
-    `).get(mission.missionId) as EventRow | null;
+    `).get(mission.missionId) as (EventRow & { status_id: number }) | null;
     if (existing) {
+      if (fleetMissionStatusProgressRank(fleetMissionStatusLabel(existing.status_id)) > fleetMissionStatusProgressRank(mission.status)) return 0;
       const marker = parseJson<{ source?: string }>(existing.event_json, {});
       const baselineBlock = safeBigInt(this.metadata("lastReconciledBlock"), 0n);
       if (marker.source !== "indexed_mission_event_logs" && safeBigInt(mission.blockNumber, 0n) <= baselineBlock) return 0;
@@ -7231,6 +7232,14 @@ function fleetMissionTypeId(label: string): number | null {
 function fleetMissionStatusId(label: string): number | null {
   const index = FLEET_MISSION_STATUS_LABELS.indexOf(label as typeof FLEET_MISSION_STATUS_LABELS[number]);
   return index >= 0 ? index : null;
+}
+
+function fleetMissionStatusProgressRank(status: string): number {
+  if (status === "Outbound") return 1;
+  if (status === "Returning" || status === "Recalled") return 2;
+  if (status === "Resolved") return 3;
+  if (status === "Returned") return 4;
+  return 0;
 }
 
 function isActiveFleetMissionStatus(status: string): boolean {
