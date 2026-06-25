@@ -1045,28 +1045,43 @@ function JoinRequests({
             const dismissal = allianceJoinRequestDismissalState(allianceState, request);
             return (
               <div className="rounded border border-white/10 bg-black/20 p-3" key={request.requester}>
-                <button className="font-mono text-sm text-white hover:text-cyan-100" onClick={() => onOpenPlayer(request.requester)} type="button">
-                  {playerLabel(request.requesterDisplayName, request.requester)}
-                </button>
-                <p className="mt-1 text-xs uppercase tracking-[0.14em] text-slate-500">Requested {formatUserTimestamp(request.requestedAt)}</p>
-                {approval.reason ? <p className="mt-2 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">{approval.reason}</p> : null}
-                <button
-                  className="mt-3 w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={disabled || !approval.canApprove}
-                  onClick={() => onApproveJoinRequest(request.requester)}
-                  type="button"
-                >
-                  Approve Member
-                </button>
-                {dismissal.canDismiss || dismissal.reason ? (
-                  <button
-                    className="mt-2 w-full rounded border border-red-300/25 px-3 py-2 text-sm font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={disabled || !dismissal.canDismiss}
-                    onClick={() => onDismissJoinRequest(request.requester)}
-                    type="button"
-                  >
-                    Dismiss application
-                  </button>
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+                  <div className="min-w-0">
+                    <PlayerRowInfo
+                      address={request.requester}
+                      badge="Applicant"
+                      displayName={request.requesterDisplayName}
+                      icon={<UserRound size={14} className="text-slate-500" />}
+                      timestamp={request.requestedAt}
+                      timestampLabel="Requested"
+                      totalScore={request.requesterTotalScore}
+                      onOpenPlayer={onOpenPlayer}
+                    />
+                    {approval.reason ? <p className="mt-2 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">{approval.reason}</p> : null}
+                  </div>
+                  <div className="grid gap-2 md:w-44">
+                    <button
+                      className="w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={disabled || !approval.canApprove}
+                      onClick={() => onApproveJoinRequest(request.requester)}
+                      type="button"
+                    >
+                      Approve Member
+                    </button>
+                    {dismissal.canDismiss || dismissal.reason ? (
+                      <button
+                        className="w-full rounded border border-red-300/25 px-3 py-2 text-sm font-semibold text-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={disabled || !dismissal.canDismiss}
+                        onClick={() => onDismissJoinRequest(request.requester)}
+                        type="button"
+                      >
+                        Dismiss application
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+                {dismissal.reason ? (
+                  <p className="mt-2 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">{dismissal.reason}</p>
                 ) : null}
               </div>
             );
@@ -1076,6 +1091,44 @@ function JoinRequests({
         <p className="text-sm text-slate-400">No pending applications.</p>
       )}
     </Panel>
+  );
+}
+
+function PlayerRowInfo({
+  address,
+  badge,
+  displayName,
+  icon,
+  timestamp,
+  timestampLabel,
+  totalScore,
+  onOpenPlayer,
+}: {
+  address: string;
+  badge: string;
+  displayName?: string | null | undefined;
+  icon: ComponentChildren;
+  timestamp: string;
+  timestampLabel: string;
+  totalScore?: string | undefined;
+  onOpenPlayer: (playerAddress: string) => void;
+}) {
+  return (
+    <button className="min-w-0 text-left" onClick={() => onOpenPlayer(address)} type="button">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        {icon}
+        <span className="font-mono text-sm text-white">{playerLabel(displayName, address)}</span>
+        {displayName ? (
+          <span className="font-mono text-xs text-slate-500">{shortAddress(address)}</span>
+        ) : null}
+        <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-300">
+          {badge}
+        </span>
+      </div>
+      <p className="mt-1 text-xs text-slate-500">
+        Score {formatScore(totalScore)} / {timestampLabel} {formatUserTimestamp(timestamp)}
+      </p>
+    </button>
   );
 }
 
@@ -1756,21 +1809,16 @@ function MemberRow({
           type="checkbox"
         />
       ) : null}
-      <button className="min-w-0 text-left" onClick={() => onOpenPlayer(member.address)} type="button">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          {member.role === "owner" ? <Crown size={14} className="text-amber-200" /> : <UserRound size={14} className="text-slate-500" />}
-          <span className="font-mono text-sm text-white">{playerLabel(member.displayName, member.address)}</span>
-          {member.displayName ? (
-            <span className="font-mono text-xs text-slate-500">{shortAddress(member.address)}</span>
-          ) : null}
-          <span className="rounded border border-white/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-slate-300">
-            {roleLabel(member.role)}
-          </span>
-        </div>
-        <p className="mt-1 text-xs text-slate-500">
-          Score {formatScore(member.totalScore)} / Joined {formatUserTimestamp(member.joinedAt)}
-        </p>
-      </button>
+      <PlayerRowInfo
+        address={member.address}
+        badge={roleLabel(member.role)}
+        displayName={member.displayName}
+        icon={member.role === "owner" ? <Crown size={14} className="text-amber-200" /> : <UserRound size={14} className="text-slate-500" />}
+        timestamp={member.joinedAt}
+        timestampLabel="Joined"
+        totalScore={member.totalScore}
+        onOpenPlayer={onOpenPlayer}
+      />
       {canManageMembers ? (
         <div className="flex flex-wrap gap-2 md:justify-end">
           {ownerCanChangeRole && member.role === "member" ? (
