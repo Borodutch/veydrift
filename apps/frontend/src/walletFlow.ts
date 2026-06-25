@@ -971,6 +971,8 @@ export const BASE_MAINNET = {
   ]
 } as const;
 const BASE_MAINNET_CHAIN_ID_HEX = BASE_MAINNET.chainIdHex;
+const BASE_SEPOLIA_SWITCH_CONFIRM_ATTEMPTS = 6;
+const BASE_SEPOLIA_SWITCH_CONFIRM_INTERVAL_MS = 250;
 
 const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
 const START_PLANET_SELECTOR = "0xf45f1f18";
@@ -2136,6 +2138,32 @@ export async function getChainId(provider: Eip1193Provider, timeoutMs?: number):
   return readWalletRequest<string>(provider, {
     method: "eth_chainId"
   }, "wallet network", timeoutMs);
+}
+
+export async function waitForBaseSepoliaNetwork(
+  provider: Eip1193Provider,
+  options: {
+    attempts?: number;
+    intervalMs?: number;
+    readTimeoutMs?: number;
+  } = {}
+): Promise<string> {
+  const attempts = Math.max(1, options.attempts ?? BASE_SEPOLIA_SWITCH_CONFIRM_ATTEMPTS);
+  const intervalMs = Math.max(0, options.intervalMs ?? BASE_SEPOLIA_SWITCH_CONFIRM_INTERVAL_MS);
+  let lastChainId = "unknown";
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    lastChainId = await getChainId(provider, options.readTimeoutMs);
+    if (isBaseSepoliaChain(lastChainId)) {
+      return lastChainId;
+    }
+
+    if (attempt < attempts - 1) {
+      await delay(intervalMs);
+    }
+  }
+
+  throw new Error(`Wallet switched networks, but still reports chain ${lastChainId}. Select Base Sepolia (${BASE_SEPOLIA.chainIdHex}) in the wallet and try again.`);
 }
 
 export async function ensureBaseSepoliaNetwork(provider: Eip1193Provider): Promise<void> {

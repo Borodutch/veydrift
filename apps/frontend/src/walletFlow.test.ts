@@ -91,6 +91,7 @@ import {
   watchedPlanetMessage,
   watchPlanet,
   WATCHED_PLANETS_API_READ_TIMEOUT_MS,
+  waitForBaseSepoliaNetwork,
   walletRequestErrorMessage,
   type Eip1193Provider
 } from "./walletFlow";
@@ -1516,6 +1517,27 @@ describe("walletFlow", () => {
       "wallet_switchEthereumChain",
       "wallet_addEthereumChain",
       "wallet_switchEthereumChain",
+    ]);
+  });
+
+  test("waits for Rabby mobile to report Base Sepolia after a successful switch", async () => {
+    const chainReads = ["0x1", BASE_SEPOLIA.chainIdHex];
+    const calls: string[] = [];
+    const provider = mockProvider(async ({ method }) => {
+      calls.push(method);
+      if (method === "eth_chainId") {
+        return chainReads.shift() ?? BASE_SEPOLIA.chainIdHex;
+      }
+      return null;
+    });
+
+    await ensureBaseSepoliaNetwork(provider);
+    await expect(waitForBaseSepoliaNetwork(provider, { attempts: 2, intervalMs: 0 })).resolves.toBe(BASE_SEPOLIA.chainIdHex);
+
+    expect(calls).toEqual([
+      "wallet_switchEthereumChain",
+      "eth_chainId",
+      "eth_chainId",
     ]);
   });
 
