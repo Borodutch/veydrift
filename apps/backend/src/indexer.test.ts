@@ -4953,10 +4953,16 @@ describe("SettlementIndexer", () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");
     let canonicalReads = 0;
+    let failNextCanonicalRead = true;
     const chainReader = {
-      async listCanonicalFleetMissions() {
+      async getCanonicalFleetMission(missionId: bigint) {
         canonicalReads += 1;
-        return [{
+        if (failNextCanonicalRead) {
+          failNextCanonicalRead = false;
+          throw new Error("temporary canonical read failure");
+        }
+        if (missionId !== 4749n) return null;
+        return {
           missionId: "4749",
           statusId: 4,
           missionTypeId: 0,
@@ -4971,7 +4977,10 @@ describe("SettlementIndexer", () => {
           fuelCost: "70",
           cargo: { metal: "385", crystal: "210", deuterium: "14" },
           randomnessRequestId: null
-        } satisfies CanonicalFleetMissionSnapshot];
+        } satisfies CanonicalFleetMissionSnapshot;
+      },
+      async listCanonicalFleetMissions() {
+        throw new Error("one-time active mission heal must not enumerate all fleet missions");
       },
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -5004,8 +5013,15 @@ describe("SettlementIndexer", () => {
 
       expect(writer.allActiveFleetMissions().map((mission) => mission.missionId)).toContain("4749");
 
-      const snapshot = await writer.startFleetMissionStateHealOnce("test-fleet-heal");
+      await expect(writer.startFleetMissionStateHealOnce("test-fleet-heal")).rejects.toThrow("temporary canonical read failure");
       expect(canonicalReads).toBe(1);
+      expect(writer.snapshot()).toMatchObject({
+        currentStateOneTimeHealCompletedAt: null,
+        lastCurrentStateHealRunId: "test-fleet-heal"
+      });
+
+      const snapshot = await writer.startFleetMissionStateHealOnce("test-fleet-heal");
+      expect(canonicalReads).toBe(2);
       expect(snapshot).toMatchObject({
         currentStateOneTimeHealCompletedAt: expect.any(String),
         lastCurrentStateHealRunId: "test-fleet-heal",
@@ -5024,7 +5040,7 @@ describe("SettlementIndexer", () => {
       });
 
       await writer.startFleetMissionStateHealOnce("test-fleet-heal");
-      expect(canonicalReads).toBe(1);
+      expect(canonicalReads).toBe(2);
     } finally {
       rmSync(dir, { force: true, recursive: true });
     }

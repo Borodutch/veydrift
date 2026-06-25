@@ -983,6 +983,7 @@ export interface ChainReader {
   listAllianceJoinRequestState?(): Promise<AllianceJoinRequestSnapshot[]>;
   listAllianceInviteState?(candidateWallets: readonly Address[]): Promise<AllianceInviteSnapshot[]>;
   listAllianceDiplomacyState?(): Promise<AllianceDiplomacySnapshot[]>;
+  getCanonicalFleetMission?(missionId: bigint): Promise<CanonicalFleetMissionSnapshot | null>;
   listCanonicalFleetMissions?(): Promise<CanonicalFleetMissionSnapshot[]>;
   listCurrentPlanets?(): Promise<SettledPlanetEvent[]>;
   getCanonicalPlanetState?(planetId: bigint): Promise<CanonicalPlanetChainState>;
@@ -1795,6 +1796,15 @@ export class VeydriftGameReader implements ChainReader {
     return results
       .map((result, index) => this.decodeCanonicalFleetMission(BigInt(index + 1), result))
       .filter((mission): mission is CanonicalFleetMissionSnapshot => mission !== null);
+  }
+
+  async getCanonicalFleetMission(missionId: bigint): Promise<CanonicalFleetMissionSnapshot | null> {
+    const [result] = await this.batchCallContract(this.gameContractAddress, [{
+      selector: "0xf158c946",
+      args: [encodeUint(missionId)]
+    }]);
+    if (result === undefined) return null;
+    return this.decodeCanonicalFleetMission(missionId, result);
   }
 
   async getInfrastructureState(wallet: Address, selectedPlanetId?: bigint): Promise<InfrastructureState> {
