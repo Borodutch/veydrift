@@ -806,7 +806,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         if (!indexer) return indexedReadNotReadyResponse("battle reports", indexer);
         const snapshot = indexer.snapshot();
-        return Response.json(indexer.battleReports(), {
+        const requested = missionArchivePagination(url);
+        const offset = (requested.page - 1) * requested.pageSize;
+        const reports = indexer.battleReports(offset + requested.pageSize).slice(offset, offset + requested.pageSize);
+        return Response.json(reports, {
           headers: indexedStateHeaders(indexedStateLabel(snapshot))
         });
       } catch (error) {
