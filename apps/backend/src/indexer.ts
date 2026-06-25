@@ -3035,13 +3035,13 @@ export class SettlementIndexer {
   }
 
   private backfillMissionEventLogs(): void {
-    const existing = this.count("indexed_mission_event_logs");
-    if (existing > 0) return;
-
     const rows = this.db.query(`
-      SELECT event_id, event_json
+      SELECT indexed_event_logs.event_id, indexed_event_logs.event_json
       FROM indexed_event_logs
-      WHERE removed = 0
+      LEFT JOIN indexed_mission_event_logs
+        ON indexed_mission_event_logs.event_id = indexed_event_logs.event_id
+      WHERE indexed_event_logs.removed = 0
+        AND indexed_mission_event_logs.event_id IS NULL
     `).all() as Array<EventRow & { event_id: string }>;
     if (rows.length === 0) return;
 
