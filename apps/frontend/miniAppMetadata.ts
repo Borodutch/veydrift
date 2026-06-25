@@ -97,7 +97,7 @@ export const productionMiniAppSurface = {
 export const testMiniAppSurface = {
   PUBLIC_SITE_URL: "https://test.veydrift.com",
   ROBOTS: "noindex,nofollow",
-  SITE_TITLE: "Veydrift First Planet Test",
+  SITE_TITLE: "Veydrift",
   SITE_DESCRIPTION: "Veydrift Base Sepolia test app for injected-wallet first-planet settlement.",
   SOCIAL_IMAGE: "https://test.veydrift.com/assets/miniapp/og-image.jpg",
   MINIAPP_IMAGE: "https://test.veydrift.com/assets/miniapp/embed.png",
