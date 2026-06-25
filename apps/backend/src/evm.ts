@@ -248,6 +248,24 @@ export type IndexedDefenseCountChangedEvent = {
   total: number;
 };
 
+export type IndexedMoonShipCountChangedEvent = {
+  eventName: "MoonShipCountChanged";
+  transactionHash: string;
+  blockNumber: string;
+  planetId: string;
+  shipId: number;
+  total: number;
+};
+
+export type IndexedMoonDefenseCountChangedEvent = {
+  eventName: "MoonDefenseCountChanged";
+  transactionHash: string;
+  blockNumber: string;
+  planetId: string;
+  defenseId: number;
+  total: number;
+};
+
 export type InterplanetaryMissileAttackEvent = {
   eventName: "InterplanetaryMissileAttack";
   transactionHash: string;
@@ -923,6 +941,16 @@ export type SettledPlanetEvent = PlanetState & {
 
 export type PlanetSettledEvent = {
   eventName: "PlanetSettled";
+  transactionHash: string;
+  blockNumber: string;
+  logIndex: string;
+  planetId: string;
+  lastSettledAt: string;
+  resources: Resources;
+};
+
+export type MoonResourcesSettledEvent = {
+  eventName: "MoonResourcesSettled";
   transactionHash: string;
   blockNumber: string;
   logIndex: string;
@@ -4564,6 +4592,7 @@ const moonBuildingCatalog: Array<Pick<MoonState["buildings"][number], "id" | "ke
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const colonyCreatedTopic = "0xd7d717f6607ff051c7f2247d5c490eb9ece607b9ee7c7eee946898025815cfc0";
 const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
+const moonResourcesSettledTopic = "0xb20fd9e652e1b740544f362fb3047c43a7bf0d6c7fbf0f5cab5f1f939aac6917";
 const planetRenamedTopic = "0x2b772c1fa271aad466ce009b6b5824b2ad6ccd942d21efc686513ffa8eb166cd";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
@@ -4576,6 +4605,8 @@ const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b
 const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3";
+const moonShipCountChangedTopic = "0xbd55c2b529f64f3a888d38432d6c54b03515f3de3f0114255cb36620f5df1257";
+const moonDefenseCountChangedTopic = "0x0bf9a31209477c6f81619cdd411e232ee9a5b64ec763c598ce43d938cc6194a2";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
@@ -4735,6 +4766,10 @@ export function isPlanetSettledLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === planetSettledTopic;
 }
 
+export function isMoonResourcesSettledLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === moonResourcesSettledTopic;
+}
+
 export function isPlanetRenamedLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === planetRenamedTopic;
 }
@@ -4749,6 +4784,14 @@ export function isShipCountChangedLog(log: RpcLog): boolean {
 
 export function isDefenseCountChangedLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === planetDefenseCountChangedTopic;
+}
+
+export function isMoonShipCountChangedLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === moonShipCountChangedTopic;
+}
+
+export function isMoonDefenseCountChangedLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === moonDefenseCountChangedTopic;
 }
 
 export function isInterplanetaryMissileAttackLog(log: RpcLog): boolean {
@@ -4927,6 +4970,20 @@ export function decodePlanetSettledLog(log: RpcLog): PlanetSettledEvent {
   };
 }
 
+export function decodeMoonResourcesSettledLog(log: RpcLog): MoonResourcesSettledEvent {
+  const words = splitWords(log.data);
+
+  return {
+    eventName: "MoonResourcesSettled",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    logIndex: (log as RpcLog & { logIndex?: string }).logIndex ?? "0x0",
+    planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+    resources: decodeResources(words.slice(0, 3)),
+    lastSettledAt: decodeUintWord(wordAt(words, 3)).toString()
+  };
+}
+
 export function decodeShipCountChangedLog(log: RpcLog): IndexedShipCountChangedEvent {
   const words = splitWords(log.data);
 
@@ -4940,11 +4997,37 @@ export function decodeShipCountChangedLog(log: RpcLog): IndexedShipCountChangedE
   };
 }
 
+export function decodeMoonShipCountChangedLog(log: RpcLog): IndexedMoonShipCountChangedEvent {
+  const words = splitWords(log.data);
+
+  return {
+    eventName: "MoonShipCountChanged",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+    shipId: Number(decodeUint(topicAt(log.topics, 2))),
+    total: Number(decodeUintWord(wordAt(words, 0)))
+  };
+}
+
 export function decodeDefenseCountChangedLog(log: RpcLog): IndexedDefenseCountChangedEvent {
   const words = splitWords(log.data);
 
   return {
     eventName: "PlanetDefenseCountChanged",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+    defenseId: Number(decodeUint(topicAt(log.topics, 2))),
+    total: Number(decodeUintWord(wordAt(words, 0)))
+  };
+}
+
+export function decodeMoonDefenseCountChangedLog(log: RpcLog): IndexedMoonDefenseCountChangedEvent {
+  const words = splitWords(log.data);
+
+  return {
+    eventName: "MoonDefenseCountChanged",
     transactionHash: log.transactionHash,
     blockNumber: BigInt(log.blockNumber).toString(),
     planetId: decodeUint(topicAt(log.topics, 1)).toString(),

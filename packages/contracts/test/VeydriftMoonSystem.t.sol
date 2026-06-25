@@ -14,6 +14,7 @@ import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
+import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {
     Defense,
     MoonBuilding,
@@ -54,7 +55,15 @@ contract VeydriftMoonSystemTest is Test {
     MoonMockResourceToken internal crystalToken;
     MoonMockResourceToken internal deuteriumToken;
 
-    event PlanetShipCountChanged(uint256 indexed planetId, Ship indexed ship, uint32 total);
+    event MoonResourcesSettled(
+        uint256 indexed planetId,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium,
+        uint64 settledAt
+    );
+    event MoonShipCountChanged(uint256 indexed planetId, Ship indexed ship, uint32 total);
+    event MoonDefenseCountChanged(uint256 indexed planetId, Defense indexed defense, uint32 total);
 
     event MoonChanceRequested(
         uint256 indexed outcomeId,
@@ -580,31 +589,36 @@ contract VeydriftMoonSystemTest is Test {
         moons.requestMoonDestructionFromBattle(93, planetId, reporter, 1);
     }
 
-    function testMoonBuildingUpgradeSpendsPlanetResources() public {
+    function testMoonBuildingUpgradeSpendsMoonResources() public {
         uint256 planetId = _startPlanet();
 
         _createMoon(planetId);
 
         vm.prank(player);
         vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGameStorage.InsufficientResources.selector, 500, 500, 0)
+            abi.encodeWithSelector(VeydriftGameStorage.InsufficientResources.selector, 0, 0, 0)
         );
         moons.startMoonBuildingUpgrade(planetId, MoonBuilding.LunarBase);
 
         _fundPlanet(planetId, 100_000, 100_000, 100_000);
+        _grantMoonResources(planetId, 100_000, 100_000, 100_000);
         vm.prank(player);
         moons.startMoonBuildingUpgrade(planetId, MoonBuilding.LunarBase);
 
         VeydriftGameStorage.Planet memory planet = game.planet(planetId);
-        assertEq(planet.resources.metal, 80_000);
-        assertEq(planet.resources.crystal, 60_000);
-        assertEq(planet.resources.deuterium, 80_000);
+        assertEq(planet.resources.metal, 100_000);
+        assertEq(planet.resources.crystal, 100_000);
+        assertEq(planet.resources.deuterium, 100_000);
+        VeydriftGameStorage.Resources memory moonBalance = moons.moonResources(planetId);
+        assertEq(moonBalance.metal, 80_000);
+        assertEq(moonBalance.crystal, 60_000);
+        assertEq(moonBalance.deuterium, 80_000);
 
-        VeydriftGameStorage.Resources memory cost =
-            moons.moonBuildingUpgradeCost(planetId, MoonBuilding.LunarBase);
         vm.prank(player);
-        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
-        game.spendMoonResources(planetId, cost);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftMoonSystem.NotOwner.selector, player));
+        moons.grantMoonResources(
+            planetId, VeydriftGameStorage.Resources({metal: 1, crystal: 0, deuterium: 0})
+        );
     }
 
     function testMoonFacilitiesUnlockWithMoonRoboticsAndFields() public {
@@ -762,8 +776,8 @@ contract VeydriftMoonSystemTest is Test {
         _buildMoon(secondPlanetId, MoonBuilding.LunarBase);
         _buildMoon(secondPlanetId, MoonBuilding.JumpGate);
 
-        _setShipCount(planetId, Ship.SmallCargo, 4);
-        _setShipCount(planetId, Ship.Battlecruiser, 2);
+        _setMoonShipCount(planetId, Ship.SmallCargo, 4);
+        _setMoonShipCount(planetId, Ship.Battlecruiser, 2);
         VeydriftGameStorage.MissionShips memory ships;
         ships.smallCargo = 3;
         ships.battlecruiser = 2;
@@ -771,13 +785,15 @@ contract VeydriftMoonSystemTest is Test {
         vm.prank(player);
         moons.jumpGateJumpShips(planetId, secondPlanetId, ships);
 
-        assertEq(game.shipCount(planetId, Ship.SmallCargo), 1);
-        assertEq(game.shipCount(planetId, Ship.Battlecruiser), 0);
-        assertEq(game.shipCount(secondPlanetId, Ship.SmallCargo), 3);
-        assertEq(game.shipCount(secondPlanetId, Ship.Battlecruiser), 2);
+        assertEq(game.shipCount(planetId, Ship.SmallCargo), 0);
+        assertEq(game.shipCount(secondPlanetId, Ship.SmallCargo), 0);
+        assertEq(moons.moonShipCount(planetId, Ship.SmallCargo), 1);
+        assertEq(moons.moonShipCount(planetId, Ship.Battlecruiser), 0);
+        assertEq(moons.moonShipCount(secondPlanetId, Ship.SmallCargo), 3);
+        assertEq(moons.moonShipCount(secondPlanetId, Ship.Battlecruiser), 2);
     }
 
-    function testJumpGateShipMovementEmitsShipCountChangedForBothMoons() public {
+    function testJumpGateShipMovementEmitsMoonShipCountChangedForBothMoons() public {
         uint256 planetId = _startPlanet();
         uint256 secondPlanetId = 2;
         _setPlanetOwner(secondPlanetId, player);
@@ -793,18 +809,30 @@ contract VeydriftMoonSystemTest is Test {
         _buildMoon(secondPlanetId, MoonBuilding.LunarBase);
         _buildMoon(secondPlanetId, MoonBuilding.JumpGate);
 
-        _setShipCount(planetId, Ship.SmallCargo, 4);
+        _setMoonShipCount(planetId, Ship.SmallCargo, 4);
         VeydriftGameStorage.MissionShips memory ships;
         ships.smallCargo = 3;
 
-        // A jump-gate transfer debits the origin moon and credits the destination moon, emitting the
-        // resulting stored total at both planets so the backend can index moon-gate moves.
-        vm.expectEmit(true, true, false, true, address(game));
-        emit PlanetShipCountChanged(planetId, Ship.SmallCargo, 1);
-        vm.expectEmit(true, true, false, true, address(game));
-        emit PlanetShipCountChanged(secondPlanetId, Ship.SmallCargo, 3);
+        // A jump-gate transfer debits the origin moon and credits the destination moon, emitting
+        // moon-specific totals so the backend never aliases moon fleets to planet fleets.
+        vm.expectEmit(true, true, false, true, address(moons));
+        emit MoonShipCountChanged(planetId, Ship.SmallCargo, 1);
+        vm.expectEmit(true, true, false, true, address(moons));
+        emit MoonShipCountChanged(secondPlanetId, Ship.SmallCargo, 3);
         vm.prank(player);
         moons.jumpGateJumpShips(planetId, secondPlanetId, ships);
+    }
+
+    function testMoonDefenseCountsAreIndependentFromPlanetDefenses() public {
+        uint256 planetId = _startPlanet();
+        _createMoon(planetId);
+
+        vm.expectEmit(true, true, false, true, address(moons));
+        emit MoonDefenseCountChanged(planetId, Defense.RocketLauncher, 12);
+        _setMoonDefenseCount(planetId, Defense.RocketLauncher, 12);
+
+        assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 0);
+        assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 12);
     }
 
     // VEY-KANEO-468: a due moon-building construction completes lazily on the next moon interaction,
@@ -847,6 +875,7 @@ contract VeydriftMoonSystemTest is Test {
     }
 
     function _buildMoon(uint256 planetId, MoonBuilding building) internal {
+        _grantMoonResources(planetId, 10_000_000, 10_000_000, 10_000_000);
         vm.prank(player);
         moons.startMoonBuildingUpgrade(planetId, building);
         VeydriftMoonSystem.MoonBuildingConstruction memory construction =
@@ -913,6 +942,18 @@ contract VeydriftMoonSystemTest is Test {
         vm.store(address(game), bytes32(uint256(15)), deuteriumWord);
     }
 
+    function _grantMoonResources(
+        uint256 planetId,
+        uint128 metal,
+        uint128 crystal,
+        uint128 deuterium
+    ) internal {
+        moons.grantMoonResources(
+            planetId,
+            VeydriftGameStorage.Resources({metal: metal, crystal: crystal, deuterium: deuterium})
+        );
+    }
+
     function _setTechnologyLevel(address account, Technology technology, uint16 level) internal {
         bytes32 outerSlot = keccak256(abi.encode(account, uint256(20)));
         bytes32 slot = keccak256(abi.encode(uint256(uint8(technology)), outerSlot));
@@ -923,6 +964,14 @@ contract VeydriftMoonSystemTest is Test {
         bytes32 outerSlot = keccak256(abi.encode(planetId, uint256(22)));
         bytes32 slot = keccak256(abi.encode(uint256(uint8(ship)), outerSlot));
         vm.store(address(game), slot, bytes32(uint256(count)));
+    }
+
+    function _setMoonShipCount(uint256 planetId, Ship ship, uint32 count) internal {
+        moons.setMoonShipCount(planetId, ship, count);
+    }
+
+    function _setMoonDefenseCount(uint256 planetId, Defense defense, uint32 count) internal {
+        moons.setMoonDefenseCount(planetId, defense, count);
     }
 
     function _expectedMoonShape(uint256 planetId, bytes32 purposeHash, uint256 randomWord)

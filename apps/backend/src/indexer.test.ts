@@ -14,6 +14,7 @@ setSystemTime(new Date("2026-01-01T00:00:00Z"));
 afterAll(() => setSystemTime());
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
+const moonResourcesSettledTopic = "0xb20fd9e652e1b740544f362fb3047c43a7bf0d6c7fbf0f5cab5f1f939aac6917";
 const planetRenamedTopic = "0x2b772c1fa271aad466ce009b6b5824b2ad6ccd942d21efc686513ffa8eb166cd";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
@@ -23,6 +24,8 @@ const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5
 const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e03a5750c4897785";
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3";
+const moonShipCountChangedTopic = "0xbd55c2b529f64f3a888d38432d6c54b03515f3de3f0114255cb36620f5df1257";
+const moonDefenseCountChangedTopic = "0x0bf9a31209477c6f81619cdd411e232ee9a5b64ec763c598ce43d938cc6194a2";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
@@ -2963,6 +2966,41 @@ describe("SettlementIndexer", () => {
       data: abiWords(2n, 44n, 9n, 12n, 8777n)
     });
     indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xparent-ship",
+      logIndex: "0x1",
+      topics: [planetShipCountChangedTopic, topic(7n), topic(1n)],
+      data: abiWords(99n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xparent-defense",
+      logIndex: "0x2",
+      topics: [planetDefenseCountChangedTopic, topic(7n), topic(2n)],
+      data: abiWords(88n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xmoonresources",
+      logIndex: "0x3",
+      topics: [moonResourcesSettledTopic, topic(7n)],
+      data: abiWords(123n, 456n, 789n, 1770000300n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xmoonship",
+      logIndex: "0x4",
+      topics: [moonShipCountChangedTopic, topic(7n), topic(1n)],
+      data: abiWords(5n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xmoondefense",
+      logIndex: "0x5",
+      topics: [moonDefenseCountChangedTopic, topic(7n), topic(2n)],
+      data: abiWords(7n)
+    });
+    indexer.applyLog({
       blockNumber: "0x88",
       transactionHash: "0xmoonbuild",
       logIndex: "0x0",
@@ -2978,17 +3016,21 @@ describe("SettlementIndexer", () => {
       bodyKind: "moon",
       parentPlanetId: planet.planetId,
       resources: {
-        metal: "0",
-        crystal: "0",
-        deuterium: "0"
+        metal: "123",
+        crystal: "456",
+        deuterium: "789"
       },
       resourcesAsOfNow: {
-        metal: "0",
-        crystal: "0",
-        deuterium: "0"
+        metal: "123",
+        crystal: "456",
+        deuterium: "789"
       },
-      ships: [],
-      defenses: [],
+      ships: expect.arrayContaining([
+        expect.objectContaining({ id: 1, count: 5 })
+      ]),
+      defenses: expect.arrayContaining([
+        expect.objectContaining({ id: 2, count: 7 })
+      ]),
       moon: {
         exists: true,
         planetId: planet.planetId,
@@ -3003,6 +3045,8 @@ describe("SettlementIndexer", () => {
         readyAt: "1770001200"
       }
     });
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(99);
+    expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 2)?.count).toBe(88);
 
     indexer.applyLog({
       blockNumber: "0x89",
