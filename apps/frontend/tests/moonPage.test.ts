@@ -102,6 +102,28 @@ describe("Moon page helpers", () => {
     expect(visibleText(page)).toContain("Burning Chicken burn config is not available yet.");
   });
 
+  test("keeps Burning Chicken ownership errors visible", () => {
+    const page = MoonPage({
+      action: { status: "error", label: "Chicken #164 was not found on Base mainnet." },
+      burningChicken: {
+        configured: true,
+        maxMoonsPerPlayer: 2,
+        moonCount: 0,
+      },
+      canBurnChicken: true,
+      moonState: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        moon: null,
+        buildings: [],
+        queue: null,
+      },
+      selectedCoordinates: { galaxy: 1, system: 44, position: 8 },
+    });
+
+    expect(visibleText(page)).toContain("Chicken #164 was not found on Base mainnet.");
+  });
+
   test("disables chicken burns at the two-moon limit", () => {
     const page = MoonPage({
       burningChicken: {
