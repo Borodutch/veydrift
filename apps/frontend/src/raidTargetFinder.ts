@@ -439,7 +439,12 @@ export function filterRaidTargets(
     if (filters.hideProtected && target.protection.isProtected) return false;
     if (filters.hideSameAlliance && target.protection.isSameAlliance) return false;
     if (filters.hideDefended && target.combatPower > 0) return false;
-    if (filters.hideActiveFleet && options.hasActiveFleetActivity?.(target)) return false;
+    if (
+      filters.hideActiveFleet
+      && (target.inbound.count > 0 || options.hasActiveFleetActivity?.(target))
+    ) {
+      return false;
+    }
     if (target.loot < filters.minLoot) return false;
     if (
       filters.maxDistance !== null
