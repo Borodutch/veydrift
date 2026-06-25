@@ -35,6 +35,7 @@ import {
   getAvailableWalletProviderDetails,
   sendSettlementTransaction,
   settlementContractConfigured,
+  waitForBaseSepoliaNetwork,
   walletRequestErrorMessage,
   type Eip1193Provider,
   type PlanetSummary,
@@ -497,6 +498,9 @@ export function FirstPlanetSettlementApp() {
 
           try {
             await ensureBaseSepoliaNetwork(injected);
+            await waitForBaseSepoliaNetwork(injected, {
+              readTimeoutMs: WALLET_BOOTSTRAP_READ_TIMEOUT_MS
+            });
             await refreshWallet(injected, accounts[0], context);
           } catch (error) {
             console.error("Mini App Base Sepolia setup failed", error);
@@ -678,6 +682,9 @@ export function FirstPlanetSettlementApp() {
 
     try {
       await ensureBaseSepoliaNetwork(provider);
+      await waitForBaseSepoliaNetwork(provider, {
+        readTimeoutMs: WALLET_BOOTSTRAP_READ_TIMEOUT_MS
+      });
       await refreshWallet(provider, account);
     } catch (error) {
       if (miniAppMode && wallet.kind === "wrong-network") {
