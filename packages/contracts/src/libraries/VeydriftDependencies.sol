@@ -167,8 +167,12 @@ library VeydriftDependencies {
     function requireMoonBuilding(
         MoonBuilding building,
         uint16 lunarBaseLevel,
+        uint16 roboticsFactoryLevel,
         uint16 hyperspaceLevel
     ) public pure {
+        if (building == MoonBuilding.Shipyard && roboticsFactoryLevel < 2) {
+            revert MissingDependency("ROBOTICS_FACTORY_2");
+        }
         if (building == MoonBuilding.JumpGate && lunarBaseLevel < 1) {
             revert MissingDependency("LUNAR_BASE_1");
         }

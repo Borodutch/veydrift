@@ -200,6 +200,7 @@ import {
   sendRequestResourceWithdrawalTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartMoonBuildingUpgradeTransaction,
+  sendStartMoonDefenseProductionTransaction,
   sendStartDefenseProductionTransaction,
   sendAcceptAllianceInviteTransaction,
   sendAllianceBatchKickTransaction,
@@ -6709,6 +6710,22 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     ));
   }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
 
+  const handleStartMoonDefense = useCallback((defenseId: number, label: string, quantity: number) => {
+    if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
+      setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
+      return;
+    }
+
+    void runMoonTransaction(`Build ${label}`, () => sendStartMoonDefenseProductionTransaction(
+      provider,
+      account,
+      moonContract,
+      moonState.homePlanetId ?? "",
+      defenseId,
+      quantity,
+    ));
+  }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
+
   const handleJumpGate = useCallback((destinationPlanetId: string, ships?: Partial<MissionShips>) => {
     if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
       setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
@@ -7378,6 +7395,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           onJumpGate={handleJumpGate}
           onRefresh={moonSection.refresh ?? refreshInfrastructureState}
           onStartBuilding={handleStartMoonBuilding}
+          onStartDefense={handleStartMoonDefense}
           selectedCoordinates={activePlanetCoords}
           transactionUnavailableReason={moonTransactionUnavailableReason}
         />

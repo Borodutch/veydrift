@@ -74,8 +74,9 @@ const buildingBaseCosts: readonly Cost[] = [
 
 const moonBuildingBaseCosts: readonly Cost[] = [
   [20_000n, 40_000n, 20_000n],
-  [20_000n, 40_000n, 20_000n],
+  [400n, 120n, 200n],
   [2_000_000n, 4_000_000n, 2_000_000n],
+  [400n, 200n, 100n],
 ];
 
 const defenseCosts: readonly Cost[] = [

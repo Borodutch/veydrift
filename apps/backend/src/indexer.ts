@@ -1623,6 +1623,10 @@ export class SettlementIndexer {
     return this.indexedLevel("contract_moon_building_levels", "moon_building_id", planetId, buildingId);
   }
 
+  private moonDefenseCountAsOfNow(planetId: string, defenseId: number): number {
+    return this.indexedLevel("contract_moon_defense_counts", "defense_id", planetId, defenseId);
+  }
+
   highscoreForWallet(wallet: `0x${string}`, planetIds?: string[]): HighscoreEntry {
     const settlement = this.walletSettlement(wallet);
     const ownedPlanets = (planetIds?.length
@@ -1722,7 +1726,7 @@ export class SettlementIndexer {
   }
 
   private indexedPlanetLevelRows(
-    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_ship_counts",
+    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_moon_defense_counts" | "contract_ship_counts",
     idColumn: "building_id" | "defense_id" | "moon_building_id" | "ship_id",
     valueColumn: "count" | "level",
     planetIds: readonly string[]
@@ -1770,6 +1774,10 @@ export class SettlementIndexer {
     return this.queueSettlement(`moon-building:${planetId}`).queue;
   }
 
+  moonDefenseQueue(planetId: string): QueueState | null {
+    return this.queueSettlement(`moon-defense:${planetId}`).queue;
+  }
+
   researchQueue(wallet: `0x${string}`): QueueState | null {
     return this.queueSettlement(`research:${wallet.toLowerCase()}`).queue;
   }
@@ -1797,7 +1805,13 @@ export class SettlementIndexer {
         level: planetId ? this.moonBuildingLevelAsOfNow(planetId, building.id) : 0,
         cost: zeroResources()
       })),
-      queue: planetId ? this.moonQueue(planetId) : null
+      queue: planetId ? this.moonQueue(planetId) : null,
+      defenses: moonDefenseRows.map((defense) => ({
+        ...defense,
+        count: planetId ? this.moonDefenseCountAsOfNow(planetId, defense.id) : 0,
+        cost: zeroResources()
+      })),
+      defenseQueue: planetId ? this.moonDefenseQueue(planetId) : null
     };
   }
 
@@ -2839,6 +2853,12 @@ export class SettlementIndexer {
         deuterium_cost TEXT NOT NULL,
         event_json TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS contract_moon_defense_counts (
+        planet_id TEXT NOT NULL,
+        defense_id INTEGER NOT NULL,
+        count INTEGER NOT NULL,
+        PRIMARY KEY (planet_id, defense_id)
+      );
       CREATE TABLE IF NOT EXISTS contract_moon_chance_reports (
         report_key TEXT PRIMARY KEY,
         target_planet_id TEXT NOT NULL,
@@ -3616,6 +3636,10 @@ export class SettlementIndexer {
         this.upsertIndexedLevel("contract_moon_building_levels", "moon_building_id", "level", planetId, building.id, building.level);
       }
       this.db.query("DELETE FROM contract_moon_building_queues WHERE planet_id = ?").run(planetId);
+      this.db.query("DELETE FROM contract_moon_defense_counts WHERE planet_id = ?").run(planetId);
+      for (const defense of moon.defenses) {
+        this.upsertIndexedLevel("contract_moon_defense_counts", "defense_id", "count", planetId, defense.id, defense.count);
+      }
       if (moon.queue?.active) {
         this.upsertCanonicalMoonQueue(planetId, moon.queue);
       }
@@ -3652,6 +3676,7 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM indexed_research_levels").run();
     this.db.query("DELETE FROM indexed_moon_building_levels").run();
     this.db.query("DELETE FROM contract_moon_building_levels").run();
+    this.db.query("DELETE FROM contract_moon_defense_counts").run();
     this.db.query("DELETE FROM contract_players").run();
     this.db.query("DELETE FROM contract_planets").run();
     this.db.query("DELETE FROM contract_planet_resources").run();
@@ -4779,6 +4804,8 @@ export class SettlementIndexer {
       this.db.query("DELETE FROM contract_moon_building_queues WHERE planet_id = ?").run(event.planetId);
       this.upsertIndexedLevelAtLeast("indexed_moon_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
       this.upsertIndexedLevelAtLeast("contract_moon_building_levels", "moon_building_id", "level", event.planetId, event.itemId, event.level);
+    } else if (event.queueKind === "moon-defense" && event.planetId && event.total !== undefined) {
+      this.upsertIndexedLevel("contract_moon_defense_counts", "defense_id", "count", event.planetId, event.itemId, event.total);
     } else if (event.queueKind === "defense" && event.planetId && event.total !== undefined) {
       this.upsertIndexedLevel("indexed_defense_counts", "defense_id", "count", event.planetId, event.itemId, event.total);
       this.upsertIndexedLevel("contract_defense_counts", "defense_id", "count", event.planetId, event.itemId, event.total);
@@ -5291,7 +5318,7 @@ export class SettlementIndexer {
   }
 
   private indexedLevel(
-    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
+    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_moon_defense_counts" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
     idColumn: string,
     planetId: string,
     itemId: number
@@ -5306,7 +5333,7 @@ export class SettlementIndexer {
   }
 
   private indexedLevelsById(
-    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
+    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_moon_defense_counts" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
     idColumn: string,
     valueColumn: "count" | "level",
     planetId: string
@@ -5328,7 +5355,7 @@ export class SettlementIndexer {
   }
 
   private upsertIndexedLevel(
-    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
+    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_moon_defense_counts" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
     idColumn: string,
     valueColumn: string,
     planetId: string,
@@ -7372,7 +7399,7 @@ function queueMatchesCompletion(event: IndexedQueueCompletedEvent, queue: QueueS
   if ((event.queueKind === "building" || event.queueKind === "moon-building" || event.queueKind === "research") && event.level !== undefined) {
     return queue.targetLevel === event.level;
   }
-  if ((event.queueKind === "defense" || event.queueKind === "ship") && event.quantity !== undefined) {
+  if ((event.queueKind === "defense" || event.queueKind === "ship" || event.queueKind === "moon-defense") && event.quantity !== undefined) {
     return queue.quantity === event.quantity;
   }
   return true;
@@ -7971,8 +7998,11 @@ function compareFleetMissionsActiveSoonestFirst(left: FleetMissionSummary, right
 
 const moonBuildingRows = [
   { id: 0, key: "lunarBase", label: "Lunar Base" },
-  { id: 2, key: "jumpGate", label: "Jump Gate" }
+  { id: 1, key: "roboticsFactory", label: "Robotics Factory" },
+  { id: 2, key: "jumpGate", label: "Jump Gate" },
+  { id: 3, key: "shipyard", label: "Shipyard" }
 ];
+const moonDefenseRows = Array.from({ length: 8 }, (_, id) => ({ id }));
 const riftResourceRows = [
   { key: "metal" as const, label: "Metal", resourceId: 0 },
   { key: "crystal" as const, label: "Crystal", resourceId: 1 },

@@ -13,8 +13,14 @@ import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
-import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
-import {MoonBuilding, Resource, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
+import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
+import {
+    Defense,
+    MoonBuilding,
+    Resource,
+    Ship,
+    Technology
+} from "../src/libraries/VeydriftTypes.sol";
 
 contract MoonMockResourceToken {
     mapping(address account => uint256 balance) public balanceOf;
@@ -187,8 +193,7 @@ contract VeydriftMoonSystemTest is Test {
         assertTrue(moon.exists);
         assertEq(moon.planetId, planetId);
         assertEq(moon.owner, player);
-        assertGe(moon.fields, 3);
-        assertLe(moon.fields, 8);
+        assertEq(moon.fields, 1);
         assertGe(moon.diameterKm, 3_466);
         assertLe(moon.diameterKm, 8_944);
 
@@ -602,20 +607,34 @@ contract VeydriftMoonSystemTest is Test {
         game.spendMoonResources(planetId, cost);
     }
 
-    function testReservedMoonBuildingSlotIsUnsupportedAndJumpGateStillWorks() public {
+    function testMoonFacilitiesUnlockWithMoonRoboticsAndFields() public {
         uint256 planetId = _startPlanet();
 
         _createMoon(planetId);
-        _fundPlanet(planetId, 3_000_000, 5_000_000, 3_000_000);
+        assertEq(moons.moon(planetId).fields, 1);
+        _fundPlanet(planetId, 10_000_000, 10_000_000, 10_000_000);
         _buildMoon(planetId, MoonBuilding.LunarBase);
+        assertEq(moons.moon(planetId).fields, 4);
+        assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.LunarBase), 1);
 
         vm.prank(player);
-        vm.expectRevert(VeydriftCatalog.InvalidId.selector);
-        moons.moonBuildingUpgradeCost(planetId, MoonBuilding.ReservedMoonBuilding1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftMoonSystem.MissingDependency.selector,
+                // Dependency ids are short ASCII tags that fit in bytes32.
+                // forge-lint: disable-next-line(unsafe-typecast)
+                bytes32("ROBOTICS_FACTORY_2")
+            )
+        );
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.Shipyard);
 
-        vm.prank(player);
-        vm.expectRevert(VeydriftCatalog.InvalidId.selector);
-        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.ReservedMoonBuilding1);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+        assertEq(moons.moon(planetId).fields, 7);
+        _buildMoon(planetId, MoonBuilding.Shipyard);
+        assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.RoboticsFactory), 2);
+        assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.Shipyard), 1);
 
         _setTechnologyLevel(player, Technology.Hyperspace, 7);
         vm.prank(player);
@@ -624,6 +643,78 @@ contract VeydriftMoonSystemTest is Test {
             moons.activeMoonBuildingConstruction(planetId);
         assertTrue(construction.active);
         assertEq(uint8(construction.building), uint8(MoonBuilding.JumpGate));
+    }
+
+    function testMoonFieldCapacityRequiresOpenFieldEvenForLunarBase() public {
+        uint256 planetId = _startPlanet();
+
+        _createMoon(planetId);
+        _fundPlanet(planetId, 10_000_000, 10_000_000, 10_000_000);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _setTechnologyLevel(player, Technology.Hyperspace, 7);
+        _buildMoon(planetId, MoonBuilding.JumpGate);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftMoonSystem.MoonFieldCapacityReached.selector);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.LunarBase);
+    }
+
+    function testMoonFacilitiesUseSingleActiveConstructionSlot() public {
+        uint256 planetId = _startPlanet();
+
+        _createMoon(planetId);
+        _fundPlanet(planetId, 1_000_000, 1_000_000, 1_000_000);
+
+        vm.prank(player);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.LunarBase);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftMoonSystem.ConstructionActive.selector);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.RoboticsFactory);
+    }
+
+    function testMoonDefenseConstructionUsesMoonShipyardAndSeparateCounts() public {
+        uint256 planetId = _startPlanet();
+
+        _createMoon(planetId);
+        _fundPlanet(planetId, 10_000_000, 10_000_000, 10_000_000);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.Shipyard);
+
+        vm.prank(player);
+        moons.startMoonDefenseProduction(planetId, Defense.RocketLauncher, 3);
+        VeydriftMoonSystem.MoonDefenseQueue memory queue = moons.activeMoonDefenseQueue(planetId);
+        assertTrue(queue.active);
+        assertEq(uint8(queue.defense), uint8(Defense.RocketLauncher));
+        assertEq(queue.quantity, 3);
+
+        vm.warp(queue.readyAt);
+        vm.prank(player);
+        moons.finishMoonDefenseProduction(planetId);
+        assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 3);
+        assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 0);
+    }
+
+    function testMoonDefenseRequiresMoonShipyard() public {
+        uint256 planetId = _startPlanet();
+
+        _createMoon(planetId);
+        _fundPlanet(planetId, 100_000, 100_000, 100_000);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftDependencies.MissingDependency.selector,
+                // Dependency ids are short ASCII tags that fit in bytes32.
+                // forge-lint: disable-next-line(unsafe-typecast)
+                bytes32("SHIPYARD")
+            )
+        );
+        moons.startMoonDefenseProduction(planetId, Defense.RocketLauncher, 1);
     }
 
     function testJumpGateRequiresOwnedReadyMoonGates() public {
@@ -845,6 +936,6 @@ contract VeydriftMoonSystemTest is Test {
             )
         );
         diameterKm = uint16(3_466 + (seed % 5_479));
-        fields = diameterKm / 1_000;
+        fields = 1;
     }
 }

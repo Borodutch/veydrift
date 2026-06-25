@@ -406,7 +406,9 @@ class MockChainReader implements ChainReader {
           crystal: "8000000",
           deuterium: "4000000"
         }
-      }
+      },
+      defenses: [],
+      defenseQueue: null
     };
   }
 

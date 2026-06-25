@@ -22,8 +22,9 @@ enum Building {
 
 enum MoonBuilding {
     LunarBase,
-    ReservedMoonBuilding1,
-    JumpGate
+    RoboticsFactory,
+    JumpGate,
+    Shipyard
 }
 
 enum Defense {

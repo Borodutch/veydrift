@@ -25,6 +25,7 @@ describe("canonical Veydrift contract-state schema", () => {
       "contract_moons",
       "contract_moon_building_levels",
       "contract_moon_building_queues",
+      "contract_moon_defense_counts",
       "contract_moon_chance_reports",
       "contract_debris_fields",
       "contract_fleet_missions",

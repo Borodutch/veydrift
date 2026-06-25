@@ -2081,6 +2081,8 @@ function indexedMoonNotReadyResponse(
     moon: null,
     buildings: indexedState?.buildings ?? [],
     queue: null,
+    defenses: indexedState?.defenses ?? [],
+    defenseQueue: null,
     detail,
     indexedNotReady: true,
     indexedNotReadyAt: new Date().toISOString(),

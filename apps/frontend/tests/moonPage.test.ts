@@ -181,6 +181,71 @@ describe("Moon page helpers", () => {
     expect(text).toContain("Moves fleets between owned moons when the gate is ready.");
   });
 
+  test("renders moon facilities and moon defenses separately", () => {
+    const page = MoonPage({
+      canTransact: true,
+      moonState: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        moon: {
+          exists: true,
+          planetId: "7",
+          owner: "0x1111111111111111111111111111111111111111",
+          fields: 4,
+          diameterKm: 8774,
+          createdAt: "1770000000",
+          jumpGateReadyAt: "0",
+        },
+        buildings: [{
+          id: 0,
+          key: "lunarBase",
+          label: "Lunar Base",
+          level: 1,
+          cost: { metal: "40000", crystal: "80000", deuterium: "40000" },
+        }, {
+          id: 1,
+          key: "roboticsFactory",
+          label: "Robotics Factory",
+          level: 2,
+          cost: { metal: "1600", crystal: "480", deuterium: "800" },
+        }, {
+          id: 3,
+          key: "shipyard",
+          label: "Shipyard",
+          level: 1,
+          cost: { metal: "800", crystal: "400", deuterium: "200" },
+        }],
+        queue: null,
+        defenses: [{
+          id: 0,
+          count: 3,
+          cost: { metal: "2000", crystal: "0", deuterium: "0" },
+          durationSeconds: 1440,
+        }],
+        defenseQueue: {
+          active: true,
+          kind: "moon-defense",
+          itemId: 0,
+          quantity: 1,
+          readyAt: "1770000300",
+          cost: { metal: "2000", crystal: "0", deuterium: "0" },
+        },
+      },
+      onStartBuilding: () => undefined,
+      onStartDefense: () => undefined,
+    });
+    const systemsPanel = componentNodes(page).find((node) => typeof node.type === "function" && node.type.name === "MoonSystemsPanel");
+
+    expect(systemsPanel?.props?.moonState?.buildings.map((building: { label: string }) => building.label)).toContain("Robotics Factory");
+    expect(systemsPanel?.props?.moonState?.buildings.map((building: { label: string }) => building.label)).toContain("Shipyard");
+    expect(systemsPanel?.props?.moonState?.defenses?.[0]).toMatchObject({ id: 0, count: 3 });
+    expect(systemsPanel?.props?.moonState?.defenseQueue).toMatchObject({
+      kind: "moon-defense",
+      itemId: 0,
+      quantity: 1,
+    });
+  });
+
   test("passes transaction sync copy into loaded moon systems while actions are gated", () => {
     const page = MoonPage({
       canTransact: false,
