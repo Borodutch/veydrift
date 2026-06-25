@@ -4777,6 +4777,95 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("applies live fleet mission events incrementally without full mission-log replay", async () => {
+    const database = new Database(":memory:");
+    const writer = new SettlementIndexer({
+      async listCurrentPlanets() { return [planet]; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return [moonChance]; },
+      async listSettledPlanetEvents() { return [planet]; },
+      async listCanonicalFleetMissions() { return []; }
+    }, 100n, { database });
+
+    await writer.rebuild();
+    const guardedWriter = writer as unknown as { replayFleetMissionRowsFromEventLogs: () => void };
+    guardedWriter.replayFleetMissionRowsFromEventLogs = () => {
+      throw new Error("live fleet events must not replay the full mission log table");
+    };
+
+    writer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xincremental-launch-2448",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(2448n), addressTopic(player), topic(0n)],
+      data: abiWords(BigInt(planet.planetId), 188n, 1800000000n, 1800000300n)
+    });
+    writer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xincremental-launch-2448",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(2448n)],
+      data: abiWords(10n, 20n, 30n, 4n)
+    });
+    writer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xincremental-launch-2448",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(2448n)],
+      data: abiWords(1n, ...Array.from({ length: 13 }, () => 0n))
+    });
+
+    expect(writer.fleetMission("2448")).toMatchObject({
+      missionId: "2448",
+      status: "Outbound",
+      missionType: "Transport",
+      cargo: { metal: "10", crystal: "20", deuterium: "30" },
+      ships: expect.objectContaining({ smallCargo: "1" }),
+      fuelCost: "4"
+    });
+
+    writer.applyLog({
+      blockNumber: "0x71",
+      transactionHash: "0xincremental-resolve-2448",
+      logIndex: "0x0",
+      topics: [fleetMissionResolvedTopic, topic(2448n)],
+      data: abiWords(1800000300n)
+    });
+    writer.applyLog({
+      blockNumber: "0x71",
+      transactionHash: "0xincremental-resolve-2448",
+      logIndex: "0x1",
+      topics: [fleetMissionReturnExposedTopic, topic(2448n), addressTopic(player), topic(2n)],
+      data: abiWords(BigInt(planet.planetId), 188n, 1800000300n, 10n, 20n, 30n)
+    });
+
+    expect(writer.fleetMission("2448")).toMatchObject({
+      missionId: "2448",
+      status: "Returning",
+      cargo: { metal: "10", crystal: "20", deuterium: "30" },
+      returnCargo: { metal: "10", crystal: "20", deuterium: "30" },
+      ships: expect.objectContaining({ smallCargo: "1" }),
+      fuelCost: "4"
+    });
+
+    writer.applyLog({
+      blockNumber: "0x72",
+      transactionHash: "0xincremental-return-2448",
+      logIndex: "0x0",
+      topics: [fleetMissionReturnedTopic, topic(2448n), addressTopic(player), topic(BigInt(planet.planetId))],
+      data: "0x"
+    });
+
+    expect(writer.fleetMission("2448")).toMatchObject({
+      missionId: "2448",
+      status: "Returned",
+      cargo: { metal: "10", crystal: "20", deuterium: "30" },
+      returnCargo: { metal: "10", crystal: "20", deuterium: "30" },
+      ships: expect.objectContaining({ smallCargo: "1" }),
+      fuelCost: "4"
+    });
+  });
+
   test("reader mission caches refresh after another process indexes resolved attack logs", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");

@@ -181,7 +181,7 @@ describe("ChainSyncService (polling)", () => {
       eventsReceived: 1,
       latestSyncedBlock: String(0x181n),
       liveListenerConnected: true,
-      pollingEnabled: false,
+      pollingEnabled: true,
       subscribedToLogs: true
     });
     expect(backfiller.ranges).toEqual([{ from: 100n, to: 0x180n }]);
