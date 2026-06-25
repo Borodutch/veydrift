@@ -5125,6 +5125,78 @@ describe("SettlementIndexer", () => {
     }
   });
 
+  test("duplicate fleet log repairs missing mission-event row", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    const chainReader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+    try {
+      const writer = new SettlementIndexer(chainReader, 100n, { databasePath });
+      writer.applyEvent(planet);
+      writer.applyLog({
+        blockNumber: "0x70",
+        transactionHash: "0xtransport4749",
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(4749n), addressTopic(player), topic(0n)],
+        data: abiWords(BigInt(planet.planetId), 40n, 1767225000n, 1767225500n, 0n)
+      });
+      writer.applyLog({
+        blockNumber: "0x70",
+        transactionHash: "0xtransport4749",
+        logIndex: "0x1",
+        topics: [fleetMissionCargoTopic, topic(4749n)],
+        data: abiWords(385n, 210n, 14n, 70n)
+      });
+      writer.applyLog({
+        blockNumber: "0x70",
+        transactionHash: "0xtransport4749",
+        logIndex: "0x2",
+        topics: [fleetMissionShipsTopic, topic(4749n)],
+        data: abiWords(1n, ...Array.from({ length: 13 }, () => 0n))
+      });
+
+      const returnedLog = {
+        blockNumber: "0x80",
+        transactionHash: "0xreturn4749",
+        logIndex: "0x0",
+        topics: [fleetMissionReturnedTopic, topic(4749n), addressTopic(player), topic(BigInt(planet.planetId))],
+        data: "0x"
+      };
+      const db = new Database(databasePath);
+      db.query(`
+        INSERT INTO indexed_event_logs (
+          event_id, transaction_hash, log_index, block_number, removed, event_json, received_at
+        )
+        VALUES (?, ?, ?, ?, 0, ?, ?)
+      `).run(
+        "0xreturn4749:0x0",
+        returnedLog.transactionHash,
+        returnedLog.logIndex,
+        "128",
+        JSON.stringify(returnedLog),
+        new Date().toISOString()
+      );
+      db.close();
+
+      const replayReader = new SettlementIndexer(chainReader, 100n, { databasePath, runStartupBackfill: false });
+      expect(replayReader.applyLog(returnedLog)).toMatchObject({ applied: true, duplicate: true });
+      expect(replayReader.fleetMission("4749")).toMatchObject({
+        missionId: "4749",
+        status: "Returned",
+        needsResolution: false
+      });
+
+      const repairedDb = new Database(databasePath);
+      expect(repairedDb.query("SELECT count(*) as count FROM indexed_mission_event_logs WHERE event_id = ?").get("0xreturn4749:0x0")).toMatchObject({ count: 1 });
+      repairedDb.close();
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("canonical mission event_json supplies terminal return fields when decoded mission logs are launch-era", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");
