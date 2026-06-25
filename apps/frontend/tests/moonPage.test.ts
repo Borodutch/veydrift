@@ -79,6 +79,8 @@ describe("Moon page helpers", () => {
     expect(text).toContain("Chicken ID");
     expect(text).toContain("Burn for Moon");
     expect(text).toContain("verifies this wallet owns the chicken");
+    expect(text).toContain("Testnet cap: 2 moons per account.");
+    expect(text).toContain("0 / 2 testnet Chicken moons used.");
     expect(text).not.toContain("No eligible Burning Chickens");
   });
 
@@ -142,7 +144,41 @@ describe("Moon page helpers", () => {
       selectedCoordinates: { galaxy: 1, system: 44, position: 8 },
     });
     expect(visibleText(page)).toContain("Moon limit reached");
+    expect(visibleText(page)).toContain("2 / 2 testnet Chicken moons used.");
+    expect(visibleText(page)).toContain("this wallet already has 2 of 2 testnet Chicken moons");
     expect(visibleText(page)).toContain("Burn for Moon");
+  });
+
+  test("previews moon structures before a moon is granted", () => {
+    const page = MoonPage({
+      moonState: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        moon: null,
+        buildings: [{
+          id: 0,
+          key: "lunarBase",
+          label: "Lunar Base",
+          level: 0,
+          cost: { metal: "20000", crystal: "40000", deuterium: "20000" },
+        }, {
+          id: 2,
+          key: "jumpGate",
+          label: "Jump Gate",
+          level: 0,
+          cost: { metal: "2000000", crystal: "4000000", deuterium: "2000000" },
+        }],
+        queue: null,
+      },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("No moon in orbit");
+    expect(text).toContain("Moon structures");
+    expect(text).toContain("Lunar Base");
+    expect(text).toContain("Adds moon fields so more lunar structures can be built.");
+    expect(text).toContain("Jump Gate");
+    expect(text).toContain("Moves fleets between owned moons when the gate is ready.");
   });
 
   test("passes transaction sync copy into loaded moon systems while actions are gated", () => {
