@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useMemo, useState } from "preact/hooks";
-import type { Coordinates, Planet, PublicStationedDefender } from "../types";
+import type { Coordinates, DebrisField, Planet, PublicStationedDefender } from "../types";
 import {
   DEFAULT_MISSION_SPEED_PERCENT,
   MISSION_SPEED_OPTIONS,
@@ -905,7 +905,7 @@ export function targetResourceIntel(target: Planet | undefined, travelSeconds: n
     current,
     projectedArrival: projected.resources,
     currentLootable: plunderableResources(current),
-    projectedArrivalLootable: plunderableResources(projected.resources),
+    projectedArrivalLootable: projected.resources ? plunderableResources(projected.resources) : null,
     projectionDetail: projected.detail,
   };
 }
@@ -1188,6 +1188,7 @@ export function NonAttackMissionIntelPanel({
           cargoSupported={cargoSupported}
           holdDepotLevel={holdDepotLevel}
           holdingBreakdown={holdingBreakdown}
+          targetDebrisField={target?.debrisField ?? null}
         />
       </div>
       {destinationIntelVisible ? (
@@ -1210,13 +1211,16 @@ function MissionPlanContent({
   cargoSupported,
   holdDepotLevel,
   holdingBreakdown,
+  targetDebrisField,
 }: {
   action: EnabledGalaxyAction;
   cargoCapacity: number;
   cargoSupported: boolean;
   holdDepotLevel: number;
   holdingBreakdown: AcsDefendFuelBreakdown | null;
+  targetDebrisField: DebrisField | null;
 }) {
+  const harvestDebris = action.kind === "harvest" ? targetDebrisSnapshot(targetDebrisField) : null;
   return (
     <div className="grid content-start gap-2 bg-signal/[0.04] p-3">
       <div className="min-w-0">
@@ -1227,6 +1231,12 @@ function MissionPlanContent({
       <div className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
         <CompactFactRow label="Target rule" value={missionTargetRule(action)} />
         <CompactFactRow label="Cargo" value={missionCargoRule(action, cargoSupported, cargoCapacity)} />
+        {harvestDebris ? (
+          <>
+            <CompactFactRow label="Debris" value={formatHarvestDebris(harvestDebris)} />
+            <CompactFactRow label="Coverage" value={harvestCoverageLabel(harvestDebris, cargoCapacity)} />
+          </>
+        ) : null}
         <CompactFactRow label="Timing" value={missionTimingRule(action, Boolean(holdingBreakdown))} />
         {holdingBreakdown ? (
           <>
@@ -1271,11 +1281,38 @@ function missionTargetRule(action: EnabledGalaxyAction): string {
 
 function missionCargoRule(action: EnabledGalaxyAction, cargoSupported: boolean, cargoCapacity: number): string {
   if (cargoSupported) return `Manual load / ${cargoCapacity.toLocaleString()} capacity`;
-  if (action.kind === "harvest") return "Recycler holds for debris";
+  if (action.kind === "harvest") return `${cargoCapacity.toLocaleString()} recycler capacity`;
   if (action.kind === "defenseHold" || action.kind === "acsDefend") return "Fuel and hold reserve";
   if (action.kind === "colonize") return "Colony ship only";
   if (action.kind === "missileAttack") return "No fleet cargo";
   return "No cargo input";
+}
+
+function targetDebrisSnapshot(field: DebrisField | null): MissionResourceSnapshot {
+  return {
+    metal: safeResourceNumber(field?.metal),
+    crystal: safeResourceNumber(field?.crystal),
+    deuterium: 0,
+  };
+}
+
+function harvestDebrisTotal(resources: MissionResourceSnapshot): number {
+  return resources.metal + resources.crystal;
+}
+
+function formatHarvestDebris(resources: MissionResourceSnapshot): string {
+  const total = harvestDebrisTotal(resources);
+  if (total <= 0) return "No indexed debris";
+  return `${formatResourceAmount(resources.metal)} M / ${formatResourceAmount(resources.crystal)} C (${formatResourceAmount(total)} total)`;
+}
+
+function harvestCoverageLabel(resources: MissionResourceSnapshot, cargoCapacity: number): string {
+  const total = harvestDebrisTotal(resources);
+  const capacity = Math.max(0, Math.trunc(cargoCapacity));
+  if (total <= 0) return "Nothing to collect";
+  if (capacity <= 0) return "Select recyclers to estimate";
+  if (capacity >= total) return `Can clear field (${formatResourceAmount(capacity)} capacity)`;
+  return `${formatResourceAmount(capacity)} / ${formatResourceAmount(total)} debris capacity`;
 }
 
 function missionTimingRule(action: EnabledGalaxyAction, hasHoldingBreakdown: boolean): string {
@@ -1443,16 +1480,16 @@ function ResourceTableRow({
 }) {
   const valueClass = tone === "signal" ? "text-signal" : "text-slate-200";
   return (
-    <div className="grid grid-cols-[4.75rem_repeat(3,minmax(0,1fr))] items-baseline gap-2 text-[11px] sm:grid-cols-[5.5rem_repeat(3,minmax(0,1fr))]">
+    <div className="grid grid-cols-[4.75rem_minmax(0,1fr)] items-baseline gap-2 text-[11px] sm:grid-cols-[5.5rem_minmax(0,1fr)]">
       <span className="truncate text-slate-500">{label}</span>
       {resources ? (
-        <>
-          <span className={`truncate text-right tabular-nums ${valueClass}`} title={`${resources.metal.toLocaleString()} metal`}>{formatResourceAmount(resources.metal)} M</span>
-          <span className={`truncate text-right tabular-nums ${valueClass}`} title={`${resources.crystal.toLocaleString()} crystal`}>{formatResourceAmount(resources.crystal)} C</span>
-          <span className={`truncate text-right tabular-nums ${valueClass}`} title={`${resources.deuterium.toLocaleString()} deuterium`}>{formatResourceAmount(resources.deuterium)} D</span>
-        </>
+        <span className="flex min-w-0 flex-wrap justify-end gap-x-2 gap-y-0.5 text-right">
+          <span className={`whitespace-nowrap tabular-nums ${valueClass}`} title={`${resources.metal.toLocaleString()} metal`}>{formatResourceAmount(resources.metal)} M</span>
+          <span className={`whitespace-nowrap tabular-nums ${valueClass}`} title={`${resources.crystal.toLocaleString()} crystal`}>{formatResourceAmount(resources.crystal)} C</span>
+          <span className={`whitespace-nowrap tabular-nums ${valueClass}`} title={`${resources.deuterium.toLocaleString()} deuterium`}>{formatResourceAmount(resources.deuterium)} D</span>
+        </span>
       ) : (
-        <span className="col-span-3 text-right text-slate-500">Unknown</span>
+        <span className="text-right text-slate-500">Unknown</span>
       )}
     </div>
   );
@@ -1776,11 +1813,11 @@ function projectedResourceSnapshot(
   target: Planet | undefined,
   current: MissionResourceSnapshot,
   travelSeconds: number,
-): { resources: MissionResourceSnapshot; detail: string } {
+): { resources: MissionResourceSnapshot | null; detail: string } {
   if (travelSeconds <= 0) {
     return {
-      resources: current,
-      detail: "Arrival projection matches current resources because selected travel time is zero.",
+      resources: null,
+      detail: "Select ships to calculate travel time and projected arrival resources.",
     };
   }
 

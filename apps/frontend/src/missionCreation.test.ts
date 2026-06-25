@@ -335,7 +335,7 @@ describe("mission creation", () => {
     expect(intel.projectionDetail).toContain("public building/resource preview math");
   });
 
-  test("keeps arrival resources unchanged for zero travel or no production data", () => {
+  test("requires a selected fleet travel time before showing arrival resources", () => {
     const target = targetPlanet({
       publicState: {
         resources: { metal: "1000", crystal: "500", deuterium: "200" },
@@ -349,7 +349,10 @@ describe("mission creation", () => {
       },
     });
 
-    expect(targetResourceIntel(target, 0).projectedArrival).toEqual({ metal: 1_000, crystal: 500, deuterium: 200 });
+    const zeroTravel = targetResourceIntel(target, 0);
+    expect(zeroTravel.projectedArrival).toBeNull();
+    expect(zeroTravel.projectedArrivalLootable).toBeNull();
+    expect(zeroTravel.projectionDetail).toContain("Select ships");
 
     const noProduction = targetResourceIntel(targetPlanet({
       publicState: {
@@ -600,6 +603,7 @@ describe("mission creation", () => {
 
   test("keeps non-attack mission panels visually shared but mission-specific", () => {
     const target = targetPlanet({
+      debrisField: { metal: 27_000, crystal: 9_000 },
       publicState: {
         resources: { metal: "1200", crystal: "800", deuterium: "400" },
         buildings: [],
@@ -664,7 +668,12 @@ describe("mission creation", () => {
 
     expect(harvestText).toContain("Debris sweep");
     expect(harvestText).toContain("Debris field target");
-    expect(harvestText).toContain("Recycler holds for debris");
+    expect(harvestText).toContain("2,000 recycler capacity");
+    expect(harvestText).toContain("Debris");
+    expect(harvestText).toContain("27,000 M");
+    expect(harvestText).toContain("9,000 C");
+    expect(harvestText).toContain("36,000 total");
+    expect(harvestText).toContain("2,000 / 36,000 debris capacity");
 
     expect(defendText).toContain("Station defense");
     expect(defendText).toContain("Arrive, hold, return");
@@ -676,6 +685,28 @@ describe("mission creation", () => {
     expect(deployText).toContain("One-way arrival");
     expect(deployText).not.toContain("Resources");
     expect(deployText).not.toContain("Forces");
+  });
+
+  test("shows no indexed debris state on Harvest mission setup when the target has no debris field", () => {
+    const target = targetPlanet({ debrisField: null, publicState: null });
+    const text = collectText(NonAttackMissionIntelPanel({
+      action: harvestAction,
+      cargoCapacity: 0,
+      cargoSupported: false,
+      coords: { galaxy: 7, system: 41, position: 6 },
+      destinationIntelVisible: true,
+      holdDepotLevel: 0,
+      holdingBreakdown: null,
+      resourceIntel: targetResourceIntel(target, 3_600),
+      stationedDefenderUnits: [],
+      target,
+      targetDefenseUnits: [],
+      targetFleetUnits: [],
+    })).join(" ");
+
+    expect(text).toContain("No indexed debris");
+    expect(text).toContain("Nothing to collect");
+    expect(text).not.toContain("Unknown");
   });
 
   test("keeps the legacy standalone outcome and destination panels available for non-attack surfaces", () => {

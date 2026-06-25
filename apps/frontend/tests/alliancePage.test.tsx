@@ -17,6 +17,7 @@ import {
   rosterPageCount,
   rosterPageRows,
   shouldShowAllianceInitialLoader,
+  shouldShowAllianceTransactionNotice,
   sortedAllianceDirectory,
   sortedRosterMembers,
 } from "../src/components/AlliancePage";
@@ -49,9 +50,26 @@ describe("AlliancePage loading display", () => {
 
   test("surfaces transaction sync copy on alliance pages while shared actions are gated", () => {
     expect(alliancePageSource).toContain("transactionUnavailableReason?: string | undefined;");
-    expect(alliancePageSource).toContain("{!canTransact && transactionUnavailableReason ? <Notice>{transactionUnavailableReason}</Notice> : null}");
+    expect(alliancePageSource).toContain("shouldShowAllianceTransactionNotice({");
+    expect(alliancePageSource).toContain("{!canTransact && showTransactionUnavailableNotice ? <Notice>{transactionUnavailableReason}</Notice> : null}");
     expect(inspectPagesSource).toContain("transactionUnavailableReason?: string | undefined;");
     expect(inspectPagesSource).toContain("{!canTransact && transactionUnavailableReason ? <Notice>{transactionUnavailableReason}</Notice> : null}");
+  });
+
+  test("deduplicates alliance transaction unavailable copy that matches the active action notice", () => {
+    const label = "Alliance join approval: syncing indexed state...";
+    expect(shouldShowAllianceTransactionNotice({
+      actionLabel: label,
+      transactionUnavailableReason: label,
+    })).toBe(false);
+    expect(shouldShowAllianceTransactionNotice({
+      actionLabel: label,
+      transactionUnavailableReason: "Alliance contract unavailable.",
+    })).toBe(true);
+    expect(shouldShowAllianceTransactionNotice({
+      transactionUnavailableReason: "Alliance contract unavailable.",
+    })).toBe(true);
+    expect(shouldShowAllianceTransactionNotice({ actionLabel: label })).toBe(false);
   });
 
   test("uses the shared loader for initial alliance state loading", () => {
@@ -183,6 +201,16 @@ describe("AlliancePage loading display", () => {
       canDismiss: false,
       reason: "Only officers and owners can dismiss applications.",
     });
+  });
+
+  test("renders join applications with the shared member-row player info treatment", () => {
+    expect(alliancePageSource).toContain("function PlayerRowInfo");
+    expect(alliancePageSource).toContain("<PlayerRowInfo");
+    expect(alliancePageSource).toContain('badge="Applicant"');
+    expect(alliancePageSource).toContain("totalScore={request.requesterTotalScore}");
+    expect(alliancePageSource).toContain('timestampLabel="Requested"');
+    expect(alliancePageSource).toContain("Score {formatScore(totalScore)} / {timestampLabel} {formatUserTimestamp(timestamp)}");
+    expect(alliancePageSource).toContain("md:grid-cols-[minmax(0,1fr)_auto]");
   });
 
   test("keeps valid invites acceptable while blocking stale acceptance reverts", () => {

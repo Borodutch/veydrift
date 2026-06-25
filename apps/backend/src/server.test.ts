@@ -4072,7 +4072,7 @@ describe("Veydrift backend", () => {
         { address: player, role: "owner", joinedAt: String(0x69801c81) }
       ],
       allianceJoinRequests: [
-        { allianceId: "1", requester: applicant, requestedAt: "1770003000" }
+        { allianceId: "1", requester: applicant, requesterTotalScore: "0", requestedAt: "1770003000" }
       ]
     });
   });
