@@ -5,6 +5,7 @@ import type { Coordinates, Planet } from "../types";
 import { isImageReady } from "../imageLoadState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
+import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 import { AfkFlair } from "./AfkFlair";
 
 export type PlanetMetaItem = {
@@ -92,6 +93,7 @@ export function WatchablePlanetRow({
             sizes="icon"
             src={planet.image}
           />
+          {planet.hasMoon ? <PlanetMoonIndicator compact /> : null}
         </div>
 
         <div className="min-w-0">

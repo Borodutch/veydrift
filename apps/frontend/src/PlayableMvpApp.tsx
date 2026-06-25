@@ -22,6 +22,7 @@ import { ShipyardPage } from "./components/ShipyardPage";
 import type { RequirementTarget } from "./components/RequirementFlairs";
 import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
+import { PlanetMoonIndicator } from "./components/PlanetMoonIndicator";
 import { MissionDetailPage } from "./components/MissionDetailPage";
 import {
   MissionControlPage,
@@ -499,7 +500,7 @@ export function raidTargetPlanetForMission(target: RaidTarget): Planet {
     temperature: { min: 0, max: 0 },
     diameter: 0,
     fields: 0,
-    hasMoon: false,
+    hasMoon: target.hasMoon,
     metalMultiplierBps: 10_000,
     crystalMultiplierBps: 10_000,
     deuteriumMultiplierBps: 10_000,
@@ -534,7 +535,7 @@ export function debrisTargetPlanetForMission(target: DebrisFinderTarget): Planet
     temperature: { min: 0, max: 0 },
     diameter: 0,
     fields: 0,
-    hasMoon: false,
+    hasMoon: target.hasMoon,
     metalMultiplierBps: 10_000,
     crystalMultiplierBps: 10_000,
     deuteriumMultiplierBps: 10_000,
@@ -7796,13 +7797,14 @@ function PlanetSelectorButton({
           <AlertTriangle size={12} strokeWidth={2.4} />
         </span>
       ) : null}
-      <span className="h-14 w-14 overflow-hidden rounded-full bg-black/30">
+      <span className="relative h-14 w-14 overflow-hidden rounded-full bg-black/30">
         <img
           alt=""
           className="h-full w-full object-cover"
           loading="lazy"
           src={planetImage(planet)}
         />
+        {planet.moon?.exists ? <PlanetMoonIndicator compact className="bottom-0.5 right-0.5 top-auto" /> : null}
       </span>
       <span className="block max-w-full truncate text-[0.68rem] font-medium leading-4 text-slate-200">
         {planetDisplayName(planet)}

@@ -2215,6 +2215,7 @@ function watchedPlanetPayload(
     occupiedBy: occupiedPlanetRef(planet, indexer, allianceIntel),
     publicState: publicPlanetStateRef(planet, indexer),
     debrisField: debrisFieldRef(indexer.debrisFieldsInSystem(planet.galaxy, planet.system).find((field) => field.position === planet.position)),
+    hasMoon: indexer.hasMoon(planet.planetId),
     moonChance: moonChanceReportRef(indexer.moonChanceReportsInSystem(planet.galaxy, planet.system).find((report) => report.position === planet.position))
   };
 }
@@ -2703,6 +2704,7 @@ type GalaxySystemPayload = Omit<SystemSnapshot, "planets"> & {
     occupiedBy: ReturnType<typeof occupiedPlanetRef>;
     publicState: ReturnType<typeof publicPlanetStateRef>;
     debrisField: ReturnType<typeof debrisFieldRef>;
+    hasMoon: boolean;
     moonChance: ReturnType<typeof moonChanceReportRef>;
   }>;
 };
@@ -2802,6 +2804,7 @@ function galaxySystemPayload({
       occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer, allianceIntel),
       publicState: publicPlanetStateRef(occupied.get(planet.position), indexer),
       debrisField: debrisFieldRef(debris.get(planet.position)),
+      hasMoon: occupied.get(planet.position) ? indexer?.hasMoon(occupied.get(planet.position)!.planetId) ?? false : false,
       moonChance: moonChanceReportRef(moonChance.get(planet.position))
     }))
   };
@@ -3112,7 +3115,7 @@ function debrisFieldRef(field: IndexedDebrisFieldEvent | undefined): { metal: st
   return field ? field.resources : null;
 }
 
-function indexedDebrisTargetRef(target: IndexedDebrisTarget) {
+function indexedDebrisTargetRef(target: IndexedDebrisTarget, indexer: SettlementIndexer) {
   return {
     planetId: target.planet.planetId,
     name: target.planet.name,
@@ -3123,6 +3126,7 @@ function indexedDebrisTargetRef(target: IndexedDebrisTarget) {
       position: target.position
     },
     archetype: planetArchetypeForTemperature(target.planet.temperature),
+    hasMoon: indexer.hasMoon(target.planet.planetId),
     debris: target.resources,
     updatedAtBlock: target.blockNumber,
     transactionHash: target.transactionHash
@@ -3386,6 +3390,7 @@ type RankedHighscorePlanet = {
     position: number;
   };
   archetype: ReturnType<typeof planetArchetypeForTemperature>;
+  hasMoon: boolean;
   tactical: {
     currentResources: Resources;
     raidableResources: Resources;
@@ -3822,6 +3827,7 @@ function rankedHighscorePlanets(
         position: planet.position
       },
       archetype: planetArchetypeForTemperature(planet.temperature),
+      hasMoon: indexer?.hasMoon(planet.planetId) ?? false,
       tactical
     };
   });
@@ -4006,7 +4012,7 @@ function indexedDebrisTargetsResponse(indexer: SettlementIndexer | undefined, ur
   const snapshot = indexer.snapshot();
   return indexedJsonResponse(
     {
-      targets: indexer.debrisTargets(limit).map(indexedDebrisTargetRef),
+      targets: indexer.debrisTargets(limit).map((target) => indexedDebrisTargetRef(target, indexer)),
       pagination: {
         page: 1,
         pageSize: limit

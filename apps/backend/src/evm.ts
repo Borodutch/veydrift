@@ -491,6 +491,7 @@ export type FleetMissionPlanetReference = {
   system: number;
   position: number;
   coordinates: string;
+  hasMoon?: boolean | undefined;
   // Real planet archetype (derived from the indexed temperature) so Mission Control can render the
   // same planet art the Galaxy view uses for thumbnails (VEY-403 / VEY-67), not a generic icon.
   archetype: PlanetArchetype;

@@ -1211,7 +1211,8 @@ export class SettlementIndexer {
         building: this.planetQueue(planet.planetId, "building"),
         defense: this.planetQueue(planet.planetId, "defense"),
         ship: this.planetQueue(planet.planetId, "ship")
-      }
+      },
+      this.hasMoon(planet.planetId)
     ));
 
     return {
@@ -1799,6 +1800,10 @@ export class SettlementIndexer {
       })),
       queue: planetId ? this.moonQueue(planetId) : null
     };
+  }
+
+  hasMoon(planetId: string): boolean {
+    return Boolean(this.moon(planetId));
   }
 
   riftState(wallet: `0x${string}`, planetId: string | null): RiftState {
@@ -7022,6 +7027,7 @@ export class SettlementIndexer {
       system: planet.system,
       position: planet.position,
       coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
+      hasMoon: this.hasMoon(planet.planetId),
       archetype: planetArchetypeForTemperature(planet.temperature),
       // VEY-KANEO-440: surface the Alliance Depot level (building id 13) so the ACS Defend compose UX
       // can preview how much holding fuel the defended planet's depot subsidizes.
@@ -7746,7 +7752,8 @@ function indexedManagedPlanet(
     building: null,
     defense: null,
     ship: null
-  }
+  },
+  hasMoon = false
 ): ManagedPlanet {
   const level = (id: number) => buildings.find((building) => building.id === id)?.level ?? 0;
 
@@ -7767,7 +7774,7 @@ function indexedManagedPlanet(
       terraformer: level(12)
     },
     queues,
-    moon: null
+    moon: hasMoon ? { exists: true } : null
   };
 }
 

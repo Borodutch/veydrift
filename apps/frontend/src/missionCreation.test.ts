@@ -217,6 +217,16 @@ describe("mission creation", () => {
     expect(images.some((image) => image.props?.src === "/assets/game/style-pass/generated/planets/hot-desert.webp")).toBe(true);
   });
 
+  test("renders a moon indicator on attack target planet art when a moon exists", () => {
+    const node = TargetIntelCard({
+      coords: { galaxy: 7, system: 41, position: 6 },
+      target: targetPlanet({ hasMoon: true }),
+    });
+
+    const indicator = findElements(node, "span").find((item) => item.props?.["data-planet-moon-indicator"] === "true");
+    expect(indicator?.props?.["aria-label"]).toBe("Moon present");
+  });
+
   test("keeps attack confirm visibly pending while transaction and indexing settle", () => {
     expect(missionConfirmButtonLabel({ actionPendingLabel: "Attack mission: syncing indexed state..." }))
       .toBe("Attack mission: syncing indexed state...");
@@ -1178,6 +1188,7 @@ function findElements(node: unknown, tag: string): FoundElement[] {
   const vnode = node as { type?: unknown; props?: Record<string, unknown> & { children?: unknown } };
   if (typeof vnode.type === "function") {
     const render = vnode.type as (props: Record<string, unknown>) => unknown;
+    if (render.name === "Icon") return [];
     return findElements(render({ ...(vnode.props ?? {}) }), tag);
   }
   const self = vnode.type === tag ? [vnode] : [];

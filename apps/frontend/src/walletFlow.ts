@@ -316,6 +316,7 @@ export type FleetMissionPlanetReference = {
   system: number;
   position: number;
   coordinates: string;
+  hasMoon?: boolean | undefined;
   // Real planet archetype (derived from the indexed temperature) so Mission Control can render the
   // same planet art the Galaxy view uses (VEY-403 / VEY-67). Optional for back-compat with feeds or
   // fixtures that predate the field; the card falls back to a coordinate-derived type when absent.
@@ -846,6 +847,7 @@ export type HighscorePlanet = {
     position: number;
   };
   archetype: PlanetType;
+  hasMoon?: boolean | undefined;
   tactical?: {
     currentResources?: OnChainResources;
     raidableResources: OnChainResources;
@@ -920,6 +922,7 @@ export type DebrisTargetResponse = {
     position: number;
   };
   archetype: PlanetType;
+  hasMoon?: boolean | undefined;
   debris: {
     metal: string;
     crystal: string;

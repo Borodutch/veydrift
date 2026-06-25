@@ -60,6 +60,7 @@ export type ApiPlanet = {
     crystal: string | number;
   } | null;
   moonChance?: MoonChanceReport | null;
+  hasMoon?: boolean | undefined;
 };
 
 export type SettlementPlanetIdentity = {
@@ -73,6 +74,9 @@ export type SettlementPlanetIdentity = {
   metalMultiplierBps: number;
   crystalMultiplierBps: number;
   deuteriumMultiplierBps: number;
+  moon?: {
+    exists: boolean;
+  } | null;
 };
 
 export type ApiSystemResponse = {
@@ -150,6 +154,7 @@ export function planetFromSettlementPlanet(planet: SettlementPlanetIdentity): Pl
       planetId: planet.planetId,
       owner: planet.owner,
     },
+    hasMoon: Boolean(planet.moon?.exists),
   });
 
   if (!parsed) {
@@ -182,6 +187,7 @@ export function mergePlanetWithSettlement(planet: Planet, settlement: Settlement
     fields: settlement.fields,
     temperature: { min: settlement.temperature - 20, max: settlement.temperature + 20 },
     diameter: Math.max(5_000, Math.round(Math.sqrt(settlement.fields) * 1_000)),
+    hasMoon: Boolean(settlement.moon?.exists) || planet.hasMoon,
     resources: {
       metal: Math.round(settlement.metalMultiplierBps / 50),
       crystal: Math.round(settlement.crystalMultiplierBps / 50),
@@ -236,7 +242,7 @@ function planetFromApi(planet: ApiPlanet): Planet | null {
     temperature: { min: temperature - 20, max: temperature + 20 },
     diameter: Math.max(5_000, fields * 72),
     fields,
-    hasMoon: false,
+    hasMoon: Boolean(planet.hasMoon),
     metalMultiplierBps,
     crystalMultiplierBps,
     deuteriumMultiplierBps,

@@ -32,6 +32,7 @@ import {
 import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton } from "./PageHeader";
+import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RaidTargetsSkeleton } from "./LoadingSkeletons";
 import { AfkFlair } from "./AfkFlair";
@@ -627,6 +628,7 @@ export function DebrisTargetRow({
             sizes="icon"
             src={planetImageForType(target.archetype)}
           />
+          {target.hasMoon ? <PlanetMoonIndicator compact /> : null}
         </span>
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -741,6 +743,7 @@ export function RaidTargetRow({
             sizes="icon"
             src={planetImageForType(target.archetype)}
           />
+          {target.hasMoon ? <PlanetMoonIndicator compact /> : null}
         </span>
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">

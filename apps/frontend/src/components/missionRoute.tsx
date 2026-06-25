@@ -5,6 +5,7 @@ import { buildInspectPath } from "../inspectRoutes";
 import { timestampToMs } from "../timestampFormat";
 import type { Coordinates, PlanetType } from "../types";
 import { type FleetMissionSummary, decodeColonizationTargetId } from "../walletFlow";
+import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 
 // Shared route element used by both Mission Control and the Mission Detail page (VEY-KANEO-426). It
 // renders a single origin -> target row: real planet art and a clickable name + commander on each
@@ -24,6 +25,7 @@ export type MissionEndpoint = {
   commanderWallet: string | null;
   coordinates: string | null;
   coords: Coordinates | null;
+  hasMoon: boolean;
   name: string;
 };
 
@@ -31,6 +33,7 @@ export type MissionPlanetIdentity = {
   archetype: PlanetType | null;
   coordinates: string;
   displayName: string;
+  hasMoon?: boolean | undefined;
   owner: string;
   ownerDisplayName: string | null;
 };
@@ -135,6 +138,7 @@ function EndpointPlanetImage({ endpoint }: { endpoint: MissionEndpoint }) {
         loading="lazy"
         src={planetImageForType(endpoint.archetype)}
       />
+      {endpoint.hasMoon ? <PlanetMoonIndicator compact /> : null}
     </span>
   );
 }
@@ -282,6 +286,7 @@ export function missionEndpoint(
     commanderWallet,
     coordinates,
     coords,
+    hasMoon: Boolean(ref?.hasMoon ?? identity?.hasMoon),
     name: rawName || (coordinates ? coordinates : colony ? "Uncharted" : `Planet #${planetId}`),
   };
 }
@@ -303,6 +308,7 @@ export function endpointFromPlanetId(planetId: string, lookup: ReadonlyMap<strin
     commanderWallet,
     coordinates,
     coords,
+    hasMoon: Boolean(identity?.hasMoon),
     name: identityName(identity) || coordinates || `Planet #${planetId}`,
   };
 }
