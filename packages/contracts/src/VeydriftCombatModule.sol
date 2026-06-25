@@ -513,7 +513,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
 
         uint256 finalAttacker = _attackerGroupUnits(missionId, mission);
         uint256 finalDefender = _defenderUnits(missionId, mission.targetPlanetId);
-        _repairDestroyedDefenses(mission.targetPlanetId, defenderDefenseDestroyed);
+        _repairDestroyedDefenses(mission.targetPlanetId, defenderDefenseDestroyed, settlement.seed);
         if (finalAttacker != 0 && finalDefender == 0) {
             settlement.outcome = BattleOutcome.AttackerWin;
         } else if (finalAttacker == 0 && finalDefender != 0) {
@@ -1171,13 +1171,16 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         }
     }
 
-    function _repairDestroyedDefenses(uint256 planetId, uint256 destroyedDefenses) private {
+    function _repairDestroyedDefenses(uint256 planetId, uint256 destroyedDefenses, uint256 seed)
+        private
+    {
         for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
             // destroyedDefenses stores eight uint32 lanes, one for each battlefield defense.
             // forge-lint: disable-next-line(unsafe-typecast)
             uint32 destroyed = uint32(destroyedDefenses >> (uint256(i) * 32));
             if (destroyed != 0) {
-                uint32 repaired = (destroyed * 7) / 10;
+                uint32 repaired =
+                    (i == 3 || i == 7) ? ((seed + i) % 10 < 7 ? 1 : 0) : (destroyed * 7) / 10;
                 if (repaired != 0) {
                     Defense defense = Defense(i);
                     _setPlanetDefenseCount(

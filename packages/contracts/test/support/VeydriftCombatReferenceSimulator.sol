@@ -105,7 +105,7 @@ library VeydriftCombatReferenceSimulator {
 
         uint256 finalAttackers = _attackerUnitTotal(result);
         uint256 finalDefenders = _defenderUnitTotal(result);
-        _repairDestroyedDefenses(result.defenderDefenses, destroyedDefenses);
+        _repairDestroyedDefenses(result.defenderDefenses, destroyedDefenses, input.seed);
         if (finalAttackers != 0 && finalDefenders == 0) {
             result.outcome = VeydriftGameStorage.BattleOutcome.AttackerWin;
         } else if (finalAttackers == 0 && finalDefenders != 0) {
@@ -807,17 +807,30 @@ library VeydriftCombatReferenceSimulator {
         }
     }
 
-    function _repairDestroyedDefenses(uint32[8] memory defenses, uint32[8] memory destroyedDefenses)
-        private
-        pure
-    {
+    function _repairDestroyedDefenses(
+        uint32[8] memory defenses,
+        uint32[8] memory destroyedDefenses,
+        uint256 seed
+    ) private pure {
         for (uint8 i = 0; i < 8;) {
-            uint32 repaired = (destroyedDefenses[i] * 7) / 10;
+            Defense defense = Defense(i);
+            uint32 repaired = _repairedDefenseCount(defense, destroyedDefenses[i], seed);
             defenses[i] += repaired;
             unchecked {
                 ++i;
             }
         }
+    }
+
+    function _repairedDefenseCount(Defense defense, uint32 destroyed, uint256 seed)
+        private
+        pure
+        returns (uint32)
+    {
+        if (destroyed == 0) return 0;
+        if (!VeydriftCatalog.isShieldDome(defense)) return (destroyed * 7) / 10;
+
+        return ((seed + uint8(defense)) % 10 < 7) ? 1 : 0;
     }
 
     function _battleDebris(

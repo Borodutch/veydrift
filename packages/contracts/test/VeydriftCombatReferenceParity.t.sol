@@ -376,8 +376,18 @@ contract VeydriftCombatReferenceParityTest is Test {
         _fulfillAttackBattleRandomness(missionId, randomWord);
         vm.recordLogs();
         game.resolveFleetMission(missionId);
-        Vm.Log[] memory entries = vm.getRecordedLogs();
+        actual = _actualBattleFromLogs(vm.getRecordedLogs(), missionId);
 
+        assertTrue(actual.battleFound, "battle event");
+        assertTrue(actual.lossesFound, "losses event");
+        assertTrue(actual.debrisFound, "debris event");
+    }
+
+    function _actualBattleFromLogs(Vm.Log[] memory entries, uint256 missionId)
+        private
+        pure
+        returns (ActualBattle memory actual)
+    {
         for (uint256 i = 0; i < entries.length;) {
             if (entries[i].topics.length != 0 && uint256(entries[i].topics[1]) == missionId) {
                 if (entries[i].topics[0] == ATTACK_BATTLE_RESOLVED_TOPIC) {
@@ -416,10 +426,6 @@ contract VeydriftCombatReferenceParityTest is Test {
                 ++i;
             }
         }
-
-        assertTrue(actual.battleFound, "battle event");
-        assertTrue(actual.lossesFound, "losses event");
-        assertTrue(actual.debrisFound, "debris event");
     }
 
     function _finishMissionReturnIfNeeded(uint256 missionId) private {
