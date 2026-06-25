@@ -5039,6 +5039,15 @@ describe("SettlementIndexer", () => {
         needsResolution: false
       });
 
+      const replayReader = new SettlementIndexer(chainReader, 100n, { databasePath });
+      expect(replayReader.allActiveFleetMissions().map((mission) => mission.missionId)).not.toContain("4749");
+      expect(replayReader.allCompletedFleetMissions().map((mission) => mission.missionId)).toContain("4749");
+      expect(replayReader.fleetMission("4749")).toMatchObject({
+        missionId: "4749",
+        status: "Returned",
+        needsResolution: false
+      });
+
       await writer.startFleetMissionStateHealOnce("test-fleet-heal");
       expect(canonicalReads).toBe(2);
     } finally {
