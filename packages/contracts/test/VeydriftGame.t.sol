@@ -5963,6 +5963,40 @@ contract VeydriftGameTest is Test {
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
     }
 
+    function testAttackBattleShieldDomeRepairUsesSeparateSeventyPercentRoll() public {
+        _assertShieldDomeRepairRollCoversBothOutcomes(Defense.SmallShieldDome);
+        _assertShieldDomeRepairRollCoversBothOutcomes(Defense.LargeShieldDome);
+    }
+
+    function testAttackBattleRecomputesDefenseShieldsEachRound() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.Destroyer, 1);
+        _setDefenseCount(targetPlanetId, Defense.SmallShieldDome, 1);
+        _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(targetPlanetId, 1_000_000, 1_000_000, 1_000_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.destroyer = 1;
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            780
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 780);
+        game.resolveFleetMission(missionId);
+
+        assertEq(game.defenseCount(targetPlanetId, Defense.SmallShieldDome), 1);
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+    }
+
     function testAttackBattleSelectsTargetsByIndividualUnitsInsteadOfGroups() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.Battleship, 1);
@@ -7204,6 +7238,63 @@ contract VeydriftGameTest is Test {
         _fulfillAttackBattleRandomness(missionId, randomWord);
         game.resolveFleetMission(missionId);
         return game.defenseCount(targetPlanetId, Defense.RocketLauncher);
+    }
+
+    function _assertShieldDomeRepairRollCoversBothOutcomes(Defense dome) internal {
+        bool observedRebuild;
+        bool observedNoRebuild;
+        uint32 maxCount = VeydriftCatalog.maxDefensePerPlanet(dome);
+
+        for (
+            uint256 randomWord = 1; randomWord <= 128 && (!observedRebuild || !observedNoRebuild);) {
+            uint256 snapshot = vm.snapshotState();
+            uint32 finalCount = _resolveDeathstarDomeFixture(dome, randomWord);
+            assertLe(finalCount, maxCount);
+            if (finalCount == 0) {
+                observedNoRebuild = true;
+            } else if (finalCount == 1) {
+                observedRebuild = true;
+            } else {
+                fail();
+            }
+            assertTrue(vm.revertToState(snapshot));
+            unchecked {
+                ++randomWord;
+            }
+        }
+
+        assertTrue(observedRebuild);
+        assertTrue(observedNoRebuild);
+    }
+
+    function _resolveDeathstarDomeFixture(Defense dome, uint256 randomWord)
+        internal
+        returns (uint32)
+    {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.Deathstar, 1);
+        _setDefenseCount(targetPlanetId, dome, 1);
+        _setResources(originPlanetId, 10_000_000, 10_000_000, 10_000_000);
+        _setResources(targetPlanetId, 10_000_000, 10_000_000, 10_000_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.deathstar = 1;
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            781
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, randomWord);
+        game.resolveFleetMission(missionId);
+
+        return game.defenseCount(targetPlanetId, dome);
     }
 
     function _attackRapidfireRetargetsIntoAcsDefenderShips(uint256 randomWord)
