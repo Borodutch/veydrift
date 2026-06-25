@@ -7676,10 +7676,10 @@ function unitCountSnapshotForPlanet(snapshots: Map<string, UnitCountSnapshot>, p
 
 function materializeBattleReportDefenderSnapshot(snapshot: UnitCountSnapshot | undefined): BattleReportDefenderSnapshot | null {
   if (!snapshot) return null;
-  const fleet = unitCountRows(snapshot.fleet);
-  const defenses = unitCountRows(snapshot.defenses);
-  if (fleet.length === 0 && defenses.length === 0) return null;
-  return { fleet, defenses };
+  return {
+    fleet: unitCountRows(snapshot.fleet),
+    defenses: unitCountRows(snapshot.defenses)
+  };
 }
 
 function unitCountRows(counts: Map<number, number>): Array<{ id: number; count: number }> {
