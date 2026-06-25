@@ -1591,6 +1591,7 @@ interface PlayableMvpAppProps {
   provider?: Eip1193Provider | undefined;
   account?: string | undefined;
   miniAppMode?: boolean | undefined;
+  onConnectWallet?: (() => void) | undefined;
   planet?: PlanetSummary | undefined;
 }
 
@@ -2683,7 +2684,7 @@ function writeInspectRoute(route: InspectRoute): void {
   }
 }
 
-export function PlayableMvpApp({ provider, account, miniAppMode = false, planet }: PlayableMvpAppProps = {}) {
+export function PlayableMvpApp({ provider, account, miniAppMode = false, onConnectWallet, planet }: PlayableMvpAppProps = {}) {
   const isWalletConnected = Boolean(provider && account);
   const [now, setNow] = useState(() => Date.now());
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigState>({ status: "loading" });
@@ -7676,6 +7677,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           active={page}
           canEditPlayerProfile={canSubmitProfileMutation}
           coordinates={homeCoordinateLabel}
+          onConnectWallet={onConnectWallet}
           onNavigate={handleNavigate}
           onUpdatePlayerProfile={handleUpdatePlayerProfile}
           planetPicker={mobilePlanetPicker}

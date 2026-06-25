@@ -102,6 +102,11 @@ export function shouldRetryRejectedRequestWithSettlement(wallet: WalletState): b
   return wallet.kind === "connected";
 }
 
+export function shouldShowPublicPlayableApp(wallet: WalletState, planet: PlanetState): boolean {
+  if (planet.kind === "success" || planet.kind === "already-settled") return false;
+  return wallet.kind === "disconnected" || wallet.kind === "no-wallet";
+}
+
 export function settlementErrorStateMessage(planet: Extract<PlanetState, { kind: "error" | "rejected" }>): {
   body: string;
   title: string;
@@ -809,6 +814,15 @@ export function FirstPlanetSettlementApp() {
         account={account}
         miniAppMode={miniAppMode}
         planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
+      />
+    );
+  }
+
+  if (shouldShowPublicPlayableApp(wallet, planet)) {
+    return (
+      <PlayableMvpApp
+        miniAppMode={miniAppMode}
+        onConnectWallet={connectWallet}
       />
     );
   }
