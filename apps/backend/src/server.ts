@@ -2092,9 +2092,15 @@ function indexedMoonNotReadyResponse(
     : "Moon indexed state is not available from this backend yet. Refresh shortly.";
   const body: IndexedMoonNotReadyBody = {
     wallet,
+    bodyKind: "moon",
     homePlanetId,
+    parentPlanetId: homePlanetId,
     moonAvailable: false,
     unavailableReason: detail,
+    resources: indexedState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
+    resourcesAsOfNow: indexedState?.resourcesAsOfNow ?? indexedState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
+    ships: indexedState?.ships ?? [],
+    defenses: indexedState?.defenses ?? [],
     moon: null,
     buildings: indexedState?.buildings ?? [],
     queue: null,
@@ -2246,6 +2252,7 @@ function indexedWalletPlanetState(indexer: SettlementIndexer, planet: ManagedPla
   const defenses = indexer.defenseRows(planet.planetId);
   const technologyLevels = indexer.technologyLevels(planet.owner);
   const currentPlanet = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
+  const moonState = indexer.moonState(planet.owner, planet.planetId);
 
   // The planet roster is a settled-snapshot surface: the external contract<->DB watchdog
   // (and any consumer keyed on lastSettledAt) treats `resources` as the value settled at
@@ -2256,7 +2263,21 @@ function indexedWalletPlanetState(indexer: SettlementIndexer, planet: ManagedPla
   // the accrued state because plunderable loot reflects the live balance, not the snapshot.
   return {
     ...planet,
+    bodyKind: "planet",
     resourcesAsOfNow: currentPlanet.resources,
+    moon: moonState.moon
+      ? {
+          bodyKind: "moon",
+          exists: true,
+          parentPlanetId: planet.planetId,
+          planetId: planet.planetId,
+          coordinates: planet.coordinates,
+          resources: moonState.resources,
+          resourcesAsOfNow: moonState.resourcesAsOfNow,
+          ships: moonState.ships,
+          defenses: moonState.defenses
+        }
+      : null,
     tactical: indexedPlanetTacticalSummary(currentPlanet, buildings, ships, defenses, technologyLevels)
   };
 }

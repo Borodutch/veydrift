@@ -18,6 +18,7 @@ import {
   defenseCompletionPlanetIdFor,
   failedBuildingFinishSyncReasonFor,
   galaxyMissionActionErrorLabel,
+  gameActionsAvailableForBody,
   homeGalaxySystemSyncKey,
   homePlanetIdentityRefreshKey,
   hasInfrastructureDisplayState,
@@ -53,6 +54,7 @@ import {
   researchStartPlanetIdFor,
   researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
+  resolvedOrbitBodyKind,
   raidTargetPlanetForMission,
   missionOriginResources,
   missionShipInventoryBlocker,
@@ -67,6 +69,7 @@ import {
   transactionUnavailableReasonFor,
   clearRecoveredWalletContractUnavailableAction,
   walletCurrentResourcesFor,
+  walletCurrentResourcesForActiveBody,
   walletQueuesForManagedPlanet,
   walletSettlementForManagedPlanet,
   walletSpendableResourcesFor,
@@ -211,6 +214,60 @@ describe("Playable MVP app display helpers", () => {
       crystal: 880,
       deuterium: 770,
     });
+  });
+
+  test("uses moon body resources and blocks planet game actions while a moon is selected", () => {
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const planet = {
+      ...indexedPlanet(wallet),
+      resourcesAsOfNow: {
+        metal: "9000",
+        crystal: "8000",
+        deuterium: "7000",
+      },
+      moon: {
+        exists: true,
+        bodyKind: "moon" as const,
+        parentPlanetId: "7",
+        planetId: "7",
+        coordinates: "2:44:9",
+        resources: {
+          metal: "100",
+          crystal: "200",
+          deuterium: "300",
+        },
+        resourcesAsOfNow: {
+          metal: "111",
+          crystal: "222",
+          deuterium: "333",
+        },
+        ships: [{ id: 1, count: 4, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+        defenses: [{ id: 2, count: 5, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      },
+    };
+
+    expect(resolvedOrbitBodyKind("moon", planet)).toBe("moon");
+    expect(resolvedOrbitBodyKind("moon", { ...planet, moon: null })).toBe("planet");
+    expect(walletCurrentResourcesForActiveBody({
+      activeBodyKind: "moon",
+      moonResourcesAsOfNow: planet.moon.resourcesAsOfNow,
+      planetResources: planet.resourcesAsOfNow,
+    })).toEqual({
+      metal: 111,
+      crystal: 222,
+      deuterium: 333,
+    });
+    expect(walletCurrentResourcesForActiveBody({
+      activeBodyKind: "planet",
+      moonResourcesAsOfNow: planet.moon.resourcesAsOfNow,
+      planetResources: planet.resourcesAsOfNow,
+    })).toEqual({
+      metal: 9000,
+      crystal: 8000,
+      deuterium: 7000,
+    });
+    expect(gameActionsAvailableForBody("moon", true)).toBe(false);
+    expect(gameActionsAvailableForBody("planet", true)).toBe(true);
   });
 
   test("scopes production queues to the newly selected planet without carrying old queues", () => {

@@ -2975,6 +2975,20 @@ describe("SettlementIndexer", () => {
     });
 
     expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      bodyKind: "moon",
+      parentPlanetId: planet.planetId,
+      resources: {
+        metal: "0",
+        crystal: "0",
+        deuterium: "0"
+      },
+      resourcesAsOfNow: {
+        metal: "0",
+        crystal: "0",
+        deuterium: "0"
+      },
+      ships: [],
+      defenses: [],
       moon: {
         exists: true,
         planetId: planet.planetId,

@@ -89,6 +89,8 @@ export type OnChainResources = {
   deuterium: string;
 };
 
+export type OrbitBodyKind = "planet" | "moon";
+
 export type OnChainEnergyBalance = {
   produced: string;
   required: string;
@@ -157,6 +159,7 @@ export type WalletSettlementResponse = {
 export type BackendIndexerState = NonNullable<WalletSettlementResponse["indexer"]>;
 
 export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet"]> & {
+  bodyKind?: "planet";
   // The roster's `resources` is the canonical settled snapshot at `lastSettledAt`;
   // `resourcesAsOfNow` is the live production-accrued balance (the chain's
   // `previewResources`). Live consumers should prefer `resourcesAsOfNow` and fall
@@ -182,7 +185,15 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
     ship: QueueStateResponse | null;
   };
   moon: {
+    bodyKind?: "moon";
     exists: boolean;
+    parentPlanetId?: string;
+    planetId?: string;
+    coordinates?: string;
+    resources?: OnChainResources;
+    resourcesAsOfNow?: OnChainResources;
+    ships?: ChainShipyardState["ships"];
+    defenses?: ChainDefenseState["defenses"];
   } | null;
   tactical?: {
     currentResources?: OnChainResources;
@@ -592,7 +603,9 @@ export type ChainInfrastructureState = {
 
 export type ChainMoonState = {
   wallet: string;
+  bodyKind?: "moon";
   homePlanetId: string | null;
+  parentPlanetId?: string | null;
   indexer?: BackendIndexerState | null;
   source?: "contract-state-indexer" | string;
   stale?: boolean;
@@ -601,6 +614,10 @@ export type ChainMoonState = {
   indexedNotReadyAt?: string;
   moonAvailable?: boolean;
   unavailableReason?: string;
+  resources?: OnChainResources | null;
+  resourcesAsOfNow?: OnChainResources | null;
+  ships?: ChainShipyardState["ships"];
+  defenses?: ChainDefenseState["defenses"];
   moon: {
     exists: boolean;
     planetId: string;

@@ -350,6 +350,29 @@ function MoonSystemsPanel({
       </section>
 
       <section className="rounded-md border border-white/10 bg-[#101624] p-4">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Moon Resources</h3>
+            <div className="mt-2 grid gap-2 sm:grid-cols-3">
+              {moonResourceRows(moonState).map((resource) => (
+                <div className="rounded border border-white/10 bg-black/15 p-3" key={resource.label}>
+                  <div className="text-[10px] font-semibold uppercase tracking-normal text-cyan-200/80">{resource.label}</div>
+                  <div className="mt-1 text-sm font-semibold text-slate-100">{resource.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-white">Moon Units</h3>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <MoonUnitList title="Ships" units={moonState?.ships ?? []} unitPrefix="Ship" />
+              <MoonUnitList title="Defenses" units={moonState?.defenses ?? []} unitPrefix="Defense" />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-md border border-white/10 bg-[#101624] p-4">
         {!canTransact && transactionUnavailableReason ? (
           <p className="mb-3 rounded border border-cyan-300/20 bg-cyan-300/10 px-2 py-1.5 text-xs text-cyan-100">
             {transactionUnavailableReason}
@@ -505,6 +528,49 @@ function MoonSystemsPanel({
       </section>
     </div>
   );
+}
+
+function moonResourceRows(moonState?: ChainMoonState | null | undefined): Array<{ label: string; value: string }> {
+  const resources = moonState?.resourcesAsOfNow ?? moonState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" };
+  return [
+    { label: "Metal", value: formatMoonAmount(resources.metal) },
+    { label: "Crystal", value: formatMoonAmount(resources.crystal) },
+    { label: "Deuterium", value: formatMoonAmount(resources.deuterium) },
+  ];
+}
+
+function MoonUnitList({
+  title,
+  units,
+  unitPrefix,
+}: {
+  title: string;
+  units: Array<{ id: number; count: number }>;
+  unitPrefix: string;
+}) {
+  const visibleUnits = units.filter((unit) => unit.count > 0);
+  return (
+    <div className="rounded border border-white/10 bg-black/15 p-3">
+      <div className="text-[10px] font-semibold uppercase tracking-normal text-cyan-200/80">{title}</div>
+      {visibleUnits.length > 0 ? (
+        <div className="mt-2 grid gap-1 text-xs text-slate-300">
+          {visibleUnits.map((unit) => (
+            <div className="flex items-center justify-between gap-2" key={unit.id}>
+              <span>{unitPrefix} #{unit.id}</span>
+              <span className="font-mono text-slate-100">{unit.count.toLocaleString()}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-xs text-slate-500">None stationed on this moon.</p>
+      )}
+    </div>
+  );
+}
+
+function formatMoonAmount(value: string | number): string {
+  const numeric = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numeric) ? numeric.toLocaleString() : String(value);
 }
 
 function GuidanceStep({ label, value }: { label: string; value: string }) {

@@ -1818,11 +1818,23 @@ export class SettlementIndexer {
 
   moonState(wallet: `0x${string}`, planetId: string | null): MoonState {
     const moon = planetId ? this.moon(planetId) : null;
+    const resources = zeroResources();
     return {
       wallet,
+      bodyKind: "moon",
       homePlanetId: planetId,
+      parentPlanetId: planetId,
       moonAvailable: true,
       ...(moon ? {} : { unavailableReason: "No moon exists for this home planet yet." }),
+      // VEY-KANEO-639: moon bodies are now modelled as selectable bodies with their
+      // own resource/unit slots. The current deployed contract has not introduced
+      // non-zero moon balances or moon-owned ship/defense tables yet, so the indexed
+      // moon body deliberately serves independent zero/empty state instead of
+      // aliasing the parent planet resources or unit rows.
+      resources,
+      resourcesAsOfNow: resources,
+      ships: [],
+      defenses: [],
       moon: moon
         ? {
             exists: true,
@@ -7992,6 +8004,7 @@ function indexedManagedPlanet(
 
   return {
     ...planet,
+    bodyKind: "planet",
     coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
     isHomePlanet: planet.planetId === homePlanetId,
     fieldsUsed: usedFieldsFromBuildingRows(buildings),

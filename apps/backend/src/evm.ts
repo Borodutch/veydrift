@@ -13,6 +13,8 @@ export type Resources = {
   deuterium: string;
 };
 
+export type OrbitBodyKind = "planet" | "moon";
+
 export type EnergyBalance = {
   produced: string;
   required: string;
@@ -47,6 +49,7 @@ export type PlanetState = Coordinates & {
 };
 
 export type ManagedPlanet = PlanetState & {
+  bodyKind: "planet";
   coordinates: string;
   isHomePlanet: boolean;
   fieldsUsed: number;
@@ -67,7 +70,15 @@ export type ManagedPlanet = PlanetState & {
     ship: QueueState | null;
   };
   moon: {
+    bodyKind: "moon";
     exists: boolean;
+    parentPlanetId: string;
+    planetId: string;
+    coordinates: string;
+    resources: Resources;
+    resourcesAsOfNow?: Resources;
+    ships: ShipyardState["ships"];
+    defenses: DefenseState["defenses"];
   } | null;
   tactical?: {
     raidableResources: Resources;
@@ -665,9 +676,15 @@ export type InfrastructureState = {
 
 export type MoonState = {
   wallet: Address;
+  bodyKind: "moon";
   homePlanetId: string | null;
+  parentPlanetId: string | null;
   moonAvailable: boolean;
   unavailableReason?: string;
+  resources: Resources;
+  resourcesAsOfNow?: Resources;
+  ships: ShipyardState["ships"];
+  defenses: DefenseState["defenses"];
   moon: {
     exists: boolean;
     planetId: string;
@@ -4637,11 +4654,18 @@ function emptyRiftState(wallet: Address, homePlanetId: string | null, unavailabl
 }
 
 function emptyMoonState(wallet: Address, homePlanetId: string | null, unavailableReason: string): MoonState {
+  const resources = zeroResources();
   return {
     wallet,
+    bodyKind: "moon",
     homePlanetId,
+    parentPlanetId: homePlanetId,
     moonAvailable: false,
     unavailableReason,
+    resources,
+    resourcesAsOfNow: resources,
+    ships: [],
+    defenses: [],
     moon: null,
     buildings: moonBuildingCatalog.map((building) => ({
       ...building,

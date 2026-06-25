@@ -58,6 +58,37 @@ describe("Moon page helpers", () => {
     expect(text).not.toContain("No moon in orbit");
   });
 
+  test("renders moon-owned resources and units instead of parent planet state", () => {
+    const page = MoonPage({
+      moonState: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        bodyKind: "moon",
+        homePlanetId: "7",
+        parentPlanetId: "7",
+        resources: { metal: "101", crystal: "202", deuterium: "303" },
+        resourcesAsOfNow: { metal: "111", crystal: "222", deuterium: "333" },
+        ships: [{ id: 1, count: 4, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+        defenses: [{ id: 2, count: 5, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+        moon: {
+          exists: true,
+          planetId: "7",
+          owner: "0x1111111111111111111111111111111111111111",
+          fields: 3,
+          diameterKm: 8774,
+          createdAt: "1770000000",
+          jumpGateReadyAt: "0",
+        },
+        buildings: [],
+        queue: null,
+      },
+    });
+    const systemsPanel = componentNodes(page).find((node) => typeof node.type === "function" && node.type.name === "MoonSystemsPanel");
+
+    expect(systemsPanel?.props?.moonState?.resourcesAsOfNow).toEqual({ metal: "111", crystal: "222", deuterium: "333" });
+    expect(systemsPanel?.props?.moonState?.ships).toEqual([{ id: 1, count: 4, cost: { metal: "0", crystal: "0", deuterium: "0" } }]);
+    expect(systemsPanel?.props?.moonState?.defenses).toEqual([{ id: 2, count: 5, cost: { metal: "0", crystal: "0", deuterium: "0" } }]);
+  });
+
   test("renders manual Burning Chicken token entry", () => {
     const page = MoonPage({
       burningChicken: {
