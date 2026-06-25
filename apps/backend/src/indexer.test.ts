@@ -3503,7 +3503,7 @@ describe("SettlementIndexer", () => {
         { address: officer, role: "officer", joinedAt: String(0x69801c83) }
       ],
       allianceJoinRequests: [
-        { allianceId: "1", requester: applicant, requestedAt: "1770003000" }
+        { allianceId: "1", requester: applicant, requesterTotalScore: "0", requestedAt: "1770003000" }
       ],
       diplomacy: [],
       activeWars: []

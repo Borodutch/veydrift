@@ -1150,6 +1150,7 @@ export class SettlementIndexer {
       allianceId: row.alliance_id,
       requester: row.requester.toLowerCase() as Address,
       requesterDisplayName: this.playerProfile(row.requester).displayName,
+      requesterTotalScore: this.walletTotalScore(row.requester.toLowerCase() as Address),
       requesterMembership: this.allianceMembership(row.requester.toLowerCase() as Address),
       requestedAt: row.requested_at
     }));
