@@ -490,7 +490,7 @@ describe("building detail helpers", () => {
       energyRequired: 11,
       level: 1,
       next: false,
-      production: { deltaFromPrevious: 33, resource: "metal", value: 33 },
+      production: { deltaFromPrevious: 32, resource: "metal", value: 32 },
     });
     expect(rows[1]).toMatchObject({
       cost: { metal: 90, crystal: 22, deuterium: 0 },
@@ -498,11 +498,11 @@ describe("building detail helpers", () => {
       energyRequired: 24,
       level: 2,
       next: true,
-      production: { deltaFromPrevious: 39, resource: "metal", value: 72 },
+      production: { deltaFromPrevious: 38, resource: "metal", value: 70 },
     });
     expect(rows[2]).toMatchObject({
       level: 3,
-      production: { deltaFromPrevious: 47, resource: "metal", value: 119 },
+      production: { deltaFromPrevious: 46, resource: "metal", value: 116 },
     });
     expect(rows.every((row) => typeof row.durationSeconds === "number" && row.durationSeconds > 0)).toBe(true);
   });

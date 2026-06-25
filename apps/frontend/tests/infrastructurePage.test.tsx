@@ -224,9 +224,9 @@ describe("Infrastructure page display helpers", () => {
     expect(text).toContain("24 required");
     expect(text).toContain("Build time");
     expect(text).toContain("Production output");
-    expect(text).toContain("33 Metal/h (+33/h)");
-    expect(text).toContain("72 Metal/h (+39/h)");
-    expect(text).toContain("119 Metal/h (+47/h)");
+    expect(text).toContain("32 Metal/h (+32/h)");
+    expect(text).toContain("70 Metal/h (+38/h)");
+    expect(text).toContain("116 Metal/h (+46/h)");
   });
 
   test("keeps double-digit level labels separate from current and next badges", () => {
@@ -543,9 +543,9 @@ describe("Infrastructure page display helpers", () => {
     );
 
     expect(rows).toContainEqual({
-      delta: "+39/h",
+      delta: "+38/h",
       label: "Metal output",
-      next: "81/h",
+      next: "80/h",
       value: "42/h",
     });
     expect(rows).toContainEqual({
@@ -572,6 +572,42 @@ describe("Infrastructure page display helpers", () => {
       undefined,
       { metal: 0, crystal: 30, deuterium: 0 },
     )).toBe("30/h");
+  });
+
+  test("uses selected colony production multipliers for backend-anchored mine detail deltas", () => {
+    const state = {
+      ...createInitialPlayableState(1_000),
+      buildings: {
+        ...createInitialPlayableState(1_000).buildings,
+        metalMine: 1,
+        solarPlant: 2,
+      },
+    };
+    const colonyProfile = {
+      metalMultiplierBps: 15_000,
+      crystalMultiplierBps: 8_500,
+      deuteriumMultiplierBps: 11_000,
+    };
+    const effect = buildingEffectMetrics(state.buildings, "metalMine", colonyProfile);
+    const productionUpgrade = buildingProductionUpgradeEffect(
+      state,
+      "metalMine",
+      colonyProfile,
+      { metal: 49, crystal: 0, deuterium: 0 },
+      effect,
+    );
+    const rows = detailEffectRows(
+      effect,
+      buildingEnergyDetail(state.buildings, "metalMine"),
+      productionUpgrade,
+    );
+
+    expect(rows).toContainEqual({
+      delta: "+59/h",
+      label: "Metal output",
+      next: "108/h",
+      value: "49/h",
+    });
   });
 
   test("shows Robotics Factory as a Veydrift construction-time divisor", () => {

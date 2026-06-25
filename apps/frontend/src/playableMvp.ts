@@ -1554,8 +1554,8 @@ export function productionCapacityPerHour(
   profile: PlanetProductionProfile = PLANET,
 ): Resources {
   return {
-    metal: scaledLevelValue(30, buildings.metalMine),
-    crystal: scaledLevelValue(20, buildings.crystalMine),
+    metal: scaleByBps(scaledLevelValue(30, buildings.metalMine), profile.metalMultiplierBps),
+    crystal: scaleByBps(scaledLevelValue(20, buildings.crystalMine), profile.crystalMultiplierBps),
     deuterium: scaleByBps(scaledLevelValue(10, buildings.deuteriumSynthesizer), profile.deuteriumMultiplierBps),
   };
 }

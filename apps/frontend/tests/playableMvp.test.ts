@@ -511,7 +511,7 @@ describe("playable MVP contract display helpers", () => {
       solarPlant: 1,
     };
     const profile = {
-      metalMultiplierBps: 12_000,
+      metalMultiplierBps: 15_000,
       crystalMultiplierBps: 8_500,
       deuteriumMultiplierBps: 11_000,
     };
@@ -520,14 +520,16 @@ describe("playable MVP contract display helpers", () => {
     const capacity = productionCapacityPerHour(buildings, profile);
     const effect = buildingEffectMetrics(buildings, "metalMine", profile);
 
-    expect(production.metal).toBe(33);
-    expect(capacity.metal).toBe(33);
+    expect(production.metal).toBe(49);
+    expect(capacity.metal).toBe(49);
     expect(effect.kind).toBe("production");
     if (effect.kind === "production") {
-      expect(effect.currentPerHour).toBe(33);
+      expect(effect.currentPerHour).toBe(49);
       expect(effect.nextPerHour).toBe(productionCapacityPerHour({ ...buildings, metalMine: 2 }, profile).metal);
       expect(effect.deltaPerHour).toBeGreaterThan(0);
     }
+
+    expect(productionCapacityPerHour({ ...buildings, crystalMine: 1 }, profile).crystal).toBe(18);
 
     expect(productionPerHour({
       ...state.buildings,
