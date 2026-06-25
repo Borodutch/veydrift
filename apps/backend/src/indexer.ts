@@ -1383,7 +1383,7 @@ export class SettlementIndexer {
   }
 
   battleReport(missionId: string): BattleReport | null {
-    const mission = this.fleetMission(missionId);
+    const mission = this.fleetMissionSummariesFromCanonicalRowsByIds([missionId])[0] ?? null;
     const reports = mission
       ? this.indexedBattleReportsForMissions([mission])
       : this.battleReportsForMissionIds([missionId]);
