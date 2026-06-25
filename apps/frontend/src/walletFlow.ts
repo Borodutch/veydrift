@@ -1032,13 +1032,8 @@ const ERC20_SELECTORS = {
   approve: "0x095ea7b3"
 } as const;
 const ERC721_SELECTORS = {
-  balanceOf: "0x70a08231",
   ownerOf: "0x6352211e",
-  supportsInterface: "0x01ffc9a7",
-  tokenOfOwnerByIndex: "0x2f745c59",
 } as const;
-const ERC721_ENUMERABLE_INTERFACE_ID = "0x780e9d63";
-const BASE_BLOCKSCOUT_API_URL = "https://base.blockscout.com/api/v2";
 const REJECTED_CODES = new Set([4001, "4001", "ACTION_REJECTED", "USER_REJECTED"]);
 
 export type BurningChickenConfig = {
@@ -2662,158 +2657,35 @@ export async function sendStartMoonBuildingUpgradeTransaction(
   });
 }
 
-export async function fetchBurningChickens(
+export async function fetchBurningChickenForOwner(
   account: string,
+  tokenId: string,
   config: BurningChickenConfig,
-): Promise<BurningChickenNft[]> {
-  const balanceHex = await callBaseMainnetContract(
-    config,
-    config.nftContractAddress,
-    encodeAddressCall(ERC721_SELECTORS.balanceOf, account),
-  );
-  const balance = decodeUintResult(balanceHex);
-  const chickens: BurningChickenNft[] = [];
-  if (balance === 0n) return chickens;
-
-  const enumerable = await supportsBurningChickenEnumerable(config);
-  if (!enumerable) {
-    return fetchBurningChickensFromBlockscout(account, config, balance);
+): Promise<BurningChickenNft> {
+  const normalizedTokenId = tokenId.trim();
+  if (!/^\d+$/.test(normalizedTokenId) || BigInt(normalizedTokenId) <= 0n) {
+    throw new Error("Enter a valid Chicken token ID.");
   }
 
-  for (let index = 0n; index < balance; index += 1n) {
-    const tokenHex = await callBaseMainnetContract(
-      config,
-      config.nftContractAddress,
-      encodeAddressUintCall(ERC721_SELECTORS.tokenOfOwnerByIndex, account, index),
-    );
-    const tokenId = decodeUintResult(tokenHex).toString();
-    chickens.push({
-      level: await fetchBurningChickenLevel(tokenId, config),
-      tokenId,
-    });
-  }
-
-  return chickens;
-}
-
-async function supportsBurningChickenEnumerable(config: BurningChickenConfig): Promise<boolean> {
+  let ownerHex: string;
   try {
-    const result = await callBaseMainnetContract(
+    ownerHex = await callBaseMainnetContract(
       config,
       config.nftContractAddress,
-      encodeBytes4Call(ERC721_SELECTORS.supportsInterface, ERC721_ENUMERABLE_INTERFACE_ID),
+      encodeUintCall(ERC721_SELECTORS.ownerOf, normalizedTokenId),
     );
-    return decodeBoolResult(result);
   } catch {
-    return false;
-  }
-}
-
-type BlockscoutNftInstance = {
-  id?: unknown;
-  metadata?: {
-    attributes?: Array<{
-      trait_type?: unknown;
-      value?: unknown;
-    }>;
-  } | null;
-  token_id?: unknown;
-};
-
-type BlockscoutNftInstancesResponse = {
-  items?: BlockscoutNftInstance[];
-  next_page_params?: Record<string, string | number | boolean | null> | null;
-};
-
-async function fetchBurningChickensFromBlockscout(
-  account: string,
-  config: BurningChickenConfig,
-  balance: bigint,
-): Promise<BurningChickenNft[]> {
-  const tokenById = new Map<string, BurningChickenNft>();
-  let params = new URLSearchParams({ holder_address_hash: account });
-
-  for (let page = 0; page < 50; page += 1) {
-    const url = `${BASE_BLOCKSCOUT_API_URL}/tokens/${encodeURIComponent(config.nftContractAddress)}/instances?${params.toString()}`;
-    const response = await fetch(url, { headers: { accept: "application/json" } });
-    if (!response.ok) {
-      throw new Error("Burning Chicken wallet lookup is temporarily unavailable.");
-    }
-
-    const body = await response.json() as BlockscoutNftInstancesResponse;
-    for (const item of body.items ?? []) {
-      const tokenId = blockscoutTokenId(item);
-      if (!tokenId || tokenById.has(tokenId)) continue;
-      tokenById.set(tokenId, {
-        level: blockscoutChickenLevel(item),
-        tokenId,
-      });
-    }
-
-    if (balance <= BigInt(tokenById.size)) break;
-    if (!body.next_page_params) break;
-    params = new URLSearchParams();
-    for (const [key, value] of Object.entries(body.next_page_params)) {
-      if (value !== null && value !== undefined) {
-        params.set(key, String(value));
-      }
-    }
+    throw new Error(`Chicken #${normalizedTokenId} was not found on Base mainnet.`);
   }
 
-  const ownedChickens = await filterOwnedBurningChickens([...tokenById.values()], account, config);
-  return ownedChickens.sort((left, right) => {
-    const leftId = BigInt(left.tokenId);
-    const rightId = BigInt(right.tokenId);
-    return leftId === rightId ? 0 : leftId > rightId ? -1 : 1;
-  });
-}
-
-function blockscoutTokenId(item: BlockscoutNftInstance): string | null {
-  const value = item.id ?? item.token_id;
-  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
-    return String(value);
-  }
-  if (typeof value === "string" && /^\d+$/.test(value) && BigInt(value) > 0n) {
-    return value;
-  }
-  return null;
-}
-
-function blockscoutChickenLevel(item: BlockscoutNftInstance): number | null {
-  const level = item.metadata?.attributes?.find((attribute) => attribute.trait_type === "Level")?.value;
-  if (typeof level === "number" && Number.isFinite(level)) return level;
-  if (typeof level === "string" && /^\d+$/.test(level)) return Number(level);
-  return null;
-}
-
-async function filterOwnedBurningChickens(
-  chickens: BurningChickenNft[],
-  account: string,
-  config: BurningChickenConfig,
-): Promise<BurningChickenNft[]> {
-  const accountLower = account.toLowerCase();
-  const owned: BurningChickenNft[] = [];
-  const batchSize = 8;
-
-  for (let start = 0; start < chickens.length; start += batchSize) {
-    const checks = await Promise.all(chickens.slice(start, start + batchSize).map(async (chicken) => {
-      try {
-        const ownerHex = await callBaseMainnetContract(
-          config,
-          config.nftContractAddress,
-          encodeUintCall(ERC721_SELECTORS.ownerOf, chicken.tokenId),
-        );
-        return decodeAddressResult(ownerHex).toLowerCase() === accountLower ? chicken : null;
-      } catch {
-        return null;
-      }
-    }));
-    for (const chicken of checks) {
-      if (chicken) owned.push(chicken);
-    }
+  if (decodeAddressResult(ownerHex).toLowerCase() !== account.toLowerCase()) {
+    throw new Error(`Chicken #${normalizedTokenId} is not owned by the connected wallet.`);
   }
 
-  return owned;
+  return {
+    level: await fetchBurningChickenLevel(normalizedTokenId, config),
+    tokenId: normalizedTokenId,
+  };
 }
 
 async function fetchBurningChickenLevel(

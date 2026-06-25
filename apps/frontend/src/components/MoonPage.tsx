@@ -3,7 +3,7 @@ import type { LucideIcon } from "lucide-preact";
 import { useState } from "preact/hooks";
 import type { Resources } from "../playableMvp";
 import type { MissionShips } from "../galaxyActions";
-import type { BurningChickenNft, ChainMoonState } from "../walletFlow";
+import type { ChainMoonState } from "../walletFlow";
 import type { Coordinates } from "../types";
 import { formatCost } from "../buildingDetails";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../moonActions";
@@ -16,10 +16,7 @@ import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailab
 interface MoonPageProps {
   action?: { status: "idle" | "pending" | "success" | "error"; label?: string } | undefined;
   burningChicken?: {
-    chickens: BurningChickenNft[];
     configured: boolean;
-    error?: string | undefined;
-    loading: boolean;
     maxMoonsPerPlayer: number;
     moonCount: number;
   } | undefined;
@@ -31,7 +28,6 @@ interface MoonPageProps {
   onBurnChicken?: ((tokenId: string) => void) | undefined;
   onJumpGate?: ((destinationPlanetId: string, ships?: Partial<MissionShips>) => void) | undefined;
   onRefresh?: (() => void) | undefined;
-  onRefreshChickens?: (() => void) | undefined;
   onStartBuilding?: ((buildingId: number, label: string) => void) | undefined;
   selectedCoordinates?: Coordinates | undefined;
   transactionUnavailableReason?: string | undefined;
@@ -48,7 +44,6 @@ export function MoonPage({
   onBurnChicken,
   onJumpGate,
   onRefresh,
-  onRefreshChickens,
   onStartBuilding,
   selectedCoordinates,
   transactionUnavailableReason,
@@ -72,7 +67,6 @@ export function MoonPage({
         canBurnChicken={canBurnChicken}
         hasMoon={hasMoon}
         onBurnChicken={onBurnChicken}
-        onRefreshChickens={onRefreshChickens}
         selectedCoordinates={selectedCoordinates}
         transactionUnavailableReason={transactionUnavailableReason}
       />
@@ -117,7 +111,6 @@ function ChickenBurnPanel({
   canBurnChicken,
   hasMoon,
   onBurnChicken,
-  onRefreshChickens,
   selectedCoordinates,
   transactionUnavailableReason,
 }: {
@@ -126,13 +119,11 @@ function ChickenBurnPanel({
   canBurnChicken?: boolean | undefined;
   hasMoon: boolean;
   onBurnChicken?: MoonPageProps["onBurnChicken"];
-  onRefreshChickens?: MoonPageProps["onRefreshChickens"];
   selectedCoordinates?: Coordinates | undefined;
   transactionUnavailableReason?: string | undefined;
 }) {
   const pending = action?.status === "pending";
   const configured = Boolean(burningChicken?.configured);
-  const chickens = burningChicken?.chickens ?? [];
   const moonLimitReached = Boolean(
     burningChicken && burningChicken.moonCount >= burningChicken.maxMoonsPerPlayer
   );
@@ -148,6 +139,12 @@ function ChickenBurnPanel({
   const targetLabel = selectedCoordinates
     ? `${selectedCoordinates.galaxy}:${selectedCoordinates.system}:${selectedCoordinates.position}`
     : "selected planet";
+  const submitChickenBurn = (event: Event) => {
+    event.preventDefault();
+    const form = event.currentTarget instanceof HTMLFormElement ? event.currentTarget : null;
+    const tokenId = String(new FormData(form ?? undefined).get("chickenTokenId") ?? "").trim();
+    onBurnChicken?.(tokenId);
+  };
 
   return (
     <section className="rounded-md border border-white/10 bg-[#101624] p-4">
@@ -158,35 +155,14 @@ function ChickenBurnPanel({
           </div>
           <h3 className="text-sm font-semibold text-white">Burning Chickens</h3>
           <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-400">
-            Burn an eligible chicken on Base mainnet to grant a moon to {targetLabel}. The moon appears here only after Veydrift indexed state confirms it.
+            Enter a Chicken ID to burn it on Base mainnet and grant a moon to {targetLabel}. Veydrift verifies this wallet owns the chicken before opening the transaction.
           </p>
         </div>
-        {onRefreshChickens ? (
-          <RefreshButton
-            loading={Boolean(burningChicken?.loading)}
-            onRefresh={onRefreshChickens}
-            title="Refresh Burning Chickens"
-          />
-        ) : null}
       </div>
-
-      {burningChicken?.loading ? (
-        <div className="mt-3">
-          <InlineSyncIndicator label={chickens.length > 0 ? "Refreshing Burning Chickens" : "Checking Burning Chickens"} />
-        </div>
-      ) : null}
 
       {!configured ? (
         <p className="mt-3 rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
           Burning Chicken burn config is not available yet.
-        </p>
-      ) : burningChicken?.error ? (
-        <p className="mt-3 rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
-          {burningChicken.error}
-        </p>
-      ) : chickens.length === 0 && !burningChicken?.loading ? (
-        <p className="mt-3 rounded border border-white/10 bg-black/15 px-3 py-2 text-xs text-slate-300">
-          No eligible Burning Chickens were found in this wallet on Base mainnet.
         </p>
       ) : null}
 
@@ -196,29 +172,26 @@ function ChickenBurnPanel({
         </p>
       ) : null}
 
-      {chickens.length > 0 ? (
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {chickens.map((chicken) => (
-            <div className="rounded border border-white/10 bg-black/15 p-3" key={chicken.tokenId}>
-              <div className="flex items-center justify-between gap-2">
-                <span className="min-w-0 truncate text-sm font-semibold text-slate-100">Chicken #{chicken.tokenId}</span>
-                <span className="shrink-0 rounded border border-amber-200/20 bg-amber-200/10 px-2 py-0.5 text-[11px] text-amber-100">
-                  {chicken.level === null ? "Level unknown" : `Level ${chicken.level}`}
-                </span>
-              </div>
-              <button
-                className="mt-3 h-8 w-full rounded border border-amber-200/20 bg-amber-200/10 text-xs font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={Boolean(disabledReason)}
-                onClick={() => onBurnChicken?.(chicken.tokenId)}
-                title={disabledReason}
-                type="button"
-              >
-                Burn for Moon
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
+      <form className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]" onSubmit={submitChickenBurn}>
+        <label className="grid gap-1 text-xs text-slate-300">
+          <span>Chicken ID</span>
+          <input
+            className="h-9 min-w-0 rounded border border-white/10 bg-black/20 px-3 text-sm text-slate-100 outline-none transition focus:border-amber-200/40"
+            inputMode="numeric"
+            name="chickenTokenId"
+            placeholder="91528"
+            type="text"
+          />
+        </label>
+        <button
+          className="h-9 self-end rounded border border-amber-200/20 bg-amber-200/10 px-4 text-xs font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={Boolean(disabledReason)}
+          title={disabledReason}
+          type="submit"
+        >
+          Burn for Moon
+        </button>
+      </form>
 
       {pending && action?.label ? (
         <p className="mt-3 text-xs text-cyan-100">{action.label}</p>

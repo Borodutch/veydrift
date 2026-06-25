@@ -21,7 +21,7 @@ import {
   encodeUintCall,
   ensureBaseSepoliaNetwork,
   ensureBaseMainnetNetwork,
-  fetchBurningChickens,
+  fetchBurningChickenForOwner,
   fetchAllianceState,
   fetchDefenseState,
   fetchFleetMissionArchive,
@@ -140,42 +140,21 @@ describe("walletFlow", () => {
     );
   });
 
-  test("discovers Burning Chickens through Blockscout when the NFT is not enumerable", async () => {
+  test("verifies a typed Burning Chicken token is owned by the connected wallet", async () => {
     const originalFetch = globalThis.fetch;
     const calls: string[] = [];
-    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      const url = String(input);
-      if (url.startsWith("https://base.blockscout.com/")) {
-        calls.push(url);
-        return new Response(JSON.stringify({
-          items: [{
-            id: "91528",
-            metadata: { attributes: [{ trait_type: "Level", value: 2 }] },
-          }],
-          next_page_params: null,
-        }), {
-          headers: { "content-type": "application/json" },
-          status: 200,
-        });
-      }
-
+    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { params?: Array<{ data?: string }> };
       const data = body.params?.[0]?.data ?? "";
       calls.push(data);
-      if (data.startsWith("0x70a08231")) {
-        return new Response(JSON.stringify({ result: "0x" + "1".padStart(64, "0") }), {
-          headers: { "content-type": "application/json" },
-          status: 200,
-        });
-      }
-      if (data.startsWith("0x01ffc9a7")) {
-        return new Response(JSON.stringify({ result: "0x" + "0".padStart(64, "0") }), {
-          headers: { "content-type": "application/json" },
-          status: 200,
-        });
-      }
       if (data.startsWith("0x6352211e")) {
         return new Response(JSON.stringify({ result: "0x" + account.toLowerCase().replace(/^0x/, "").padStart(64, "0") }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      }
+      if (data.startsWith("0x05c58df2")) {
+        return new Response(JSON.stringify({ result: "0x" + "2".padStart(64, "0") }), {
           headers: { "content-type": "application/json" },
           status: 200,
         });
@@ -187,19 +166,51 @@ describe("walletFlow", () => {
     }) as unknown as typeof fetch;
 
     try {
-      await expect(fetchBurningChickens(account, {
+      await expect(fetchBurningChickenForOwner(account, "91528", {
         burnContractAddress: contract,
         burnSelector: "0x6364233d",
         levelSelector: "0x05c58df2",
         nftContractAddress: contract,
         rpcUrl: "https://base.example.test",
-      })).resolves.toEqual([{ level: 2, tokenId: "91528" }]);
+      })).resolves.toEqual({ level: 2, tokenId: "91528" });
     } finally {
       globalThis.fetch = originalFetch;
     }
 
+    expect(calls.some((data) => data.startsWith("0x6352211e"))).toBe(true);
+    expect(calls.some((data) => data.startsWith("0x05c58df2"))).toBe(true);
     expect(calls.some((data) => data.startsWith("0x2f745c59"))).toBe(false);
-    expect(calls.some((data) => data.startsWith("https://base.blockscout.com/"))).toBe(true);
+    expect(calls.some((data) => data.startsWith("https://base.blockscout.com/"))).toBe(false);
+  });
+
+  test("rejects a typed Burning Chicken token owned by another wallet", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { params?: Array<{ data?: string }> };
+      const data = body.params?.[0]?.data ?? "";
+      if (data.startsWith("0x6352211e")) {
+        return new Response(JSON.stringify({ result: "0x" + "9999999999999999999999999999999999999999".padStart(64, "0") }), {
+          headers: { "content-type": "application/json" },
+          status: 200,
+        });
+      }
+      return new Response(JSON.stringify({ error: { message: "unexpected call" } }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchBurningChickenForOwner(account, "91528", {
+        burnContractAddress: contract,
+        burnSelector: "0x6364233d",
+        levelSelector: "0x05c58df2",
+        nftContractAddress: contract,
+        rpcUrl: "https://base.example.test",
+      })).rejects.toThrow("Chicken #91528 is not owned by the connected wallet.");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("switches to Base mainnet and sends Burning Chicken moon burn transactions", async () => {

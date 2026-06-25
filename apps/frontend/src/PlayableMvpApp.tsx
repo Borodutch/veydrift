@@ -171,7 +171,7 @@ import {
   fetchBattleReports,
   fetchAllianceState,
   fetchAttackProtectionStatus,
-  fetchBurningChickens,
+  fetchBurningChickenForOwner,
   fetchPlayerProfile,
   mergePlayerProfile,
   walletRequestErrorMessage,
@@ -226,7 +226,6 @@ import {
   type ChainAllianceState,
   type ChainInfrastructureState,
   type ChainMoonState,
-  type BurningChickenNft,
   type ChainResearchState,
   type ChainRiftState,
   type ChainShipyardState,
@@ -2702,9 +2701,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
   const [onChainSettlementState, setOnChainSettlementState] = useState<WalletSettlementResponse | undefined>();
   const [playerProfile, setPlayerProfile] = useState<PlayerProfile | undefined>();
   const [walletPlanets, setWalletPlanets] = useState<ManagedPlanetResponse[]>([]);
-  const [burningChickens, setBurningChickens] = useState<BurningChickenNft[]>([]);
-  const [burningChickensLoading, setBurningChickensLoading] = useState(false);
-  const [burningChickensError, setBurningChickensError] = useState<string | undefined>();
   const [watchedPlanets, setWatchedPlanets] = useState<WatchedPlanetsResponse | undefined>();
   const [watchedPlanetsLoading, setWatchedPlanetsLoading] = useState(false);
   const [watchedPlanetsError, setWatchedPlanetsError] = useState<string | undefined>();
@@ -3625,31 +3621,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
       }
     }
   }, [account, activePlanetId, apiBaseUrl, infrastructureChainState, moonState]);
-
-  const refreshBurningChickens = useCallback(async () => {
-    if (!account || !chickenBurnConfig) {
-      setBurningChickens([]);
-      setBurningChickensLoading(false);
-      setBurningChickensError(undefined);
-      return;
-    }
-
-    setBurningChickensLoading(true);
-    setBurningChickensError(undefined);
-    try {
-      const nextChickens = await fetchBurningChickens(account, chickenBurnConfig);
-      setBurningChickens(nextChickens);
-    } catch (error) {
-      console.error(error);
-      setBurningChickensError(error instanceof Error ? error.message : "Burning Chickens could not be loaded.");
-    } finally {
-      setBurningChickensLoading(false);
-    }
-  }, [account, chickenBurnConfig]);
-
-  useEffect(() => {
-    void refreshBurningChickens();
-  }, [refreshBurningChickens]);
 
   const refreshLiveInfrastructureState = useCallback(async () => {
     const requestId = beginRefreshRequest(infrastructureRefreshGate);
@@ -5596,9 +5567,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     const label = `Burn Chicken #${tokenId} for ${targetLabel}`;
     void runGatedTransaction(`moon:chicken-burn:${tokenId}`, async () => {
       const planetSwitchRequestId = planetSwitchGate.current;
-      setMoonAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
 
       try {
+        setMoonAction({ status: "pending", label: `Checking Chicken #${tokenId} ownership...` });
+        await fetchBurningChickenForOwner(account, tokenId, chickenBurnConfig);
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        setMoonAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
         const txHash = await sendBurningChickenMoonTransaction(
           provider,
           account,
@@ -5626,7 +5600,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         });
         await Promise.allSettled([
           refreshOnChainState(undefined, { force: true }),
-          refreshBurningChickens(),
         ]);
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         setMoonAction({ status: "success", label: `${label} confirmed.` });
@@ -5652,7 +5625,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     chickenBurnConfig,
     confirmSubmittedTransaction,
     provider,
-    refreshBurningChickens,
     refreshOnChainState,
     runGatedTransaction,
     setActivePlanetSectionStatus,
@@ -7387,10 +7359,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
         <MoonPage
           action={moonAction}
           burningChicken={{
-            chickens: burningChickens,
             configured: Boolean(chickenBurnConfig),
-            error: burningChickensError,
-            loading: burningChickensLoading,
             maxMoonsPerPlayer: maxChickenBurnMoonsPerPlayer,
             moonCount: walletMoonCount,
           }}
@@ -7402,7 +7371,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
           onBurnChicken={handleBurnChickenForMoon}
           onJumpGate={handleJumpGate}
           onRefresh={moonSection.refresh ?? refreshInfrastructureState}
-          onRefreshChickens={refreshBurningChickens}
           onStartBuilding={handleStartMoonBuilding}
           selectedCoordinates={activePlanetCoords}
           transactionUnavailableReason={moonTransactionUnavailableReason}
