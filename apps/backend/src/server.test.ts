@@ -4816,18 +4816,19 @@ describe("Veydrift backend", () => {
         deuterium: "4800"
       }
     });
-    // Ready queues are projected complete for public read state.
+    // Ready building/research queues are projected complete for public read state; unit counts stay
+    // aligned to the indexed contract ship/defense count rows until chain events update them.
     expect(occupiedPlanet.publicState.queues.building).toBeNull();
     expect(occupiedPlanet.publicState.queues.research).toBeNull();
     expect(occupiedPlanet.publicState.buildings).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 0, level: 2 })
     ]));
     expect(occupiedPlanet.publicState.fleet).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, count: 3 }),
+      expect.objectContaining({ id: 0, count: 2 }),
       expect.objectContaining({ id: 9, count: 5 })
     ]));
     expect(occupiedPlanet.publicState.defenses).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, count: 5 })
+      expect.objectContaining({ id: 0, count: 3 })
     ]));
     expect(occupiedPlanet.publicState.stationedDefenders).toEqual([
       expect.objectContaining({
