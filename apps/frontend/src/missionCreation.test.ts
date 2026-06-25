@@ -335,7 +335,7 @@ describe("mission creation", () => {
     expect(intel.projectionDetail).toContain("public building/resource preview math");
   });
 
-  test("keeps arrival resources unchanged for zero travel or no production data", () => {
+  test("requires a selected fleet travel time before showing arrival resources", () => {
     const target = targetPlanet({
       publicState: {
         resources: { metal: "1000", crystal: "500", deuterium: "200" },
@@ -349,7 +349,10 @@ describe("mission creation", () => {
       },
     });
 
-    expect(targetResourceIntel(target, 0).projectedArrival).toEqual({ metal: 1_000, crystal: 500, deuterium: 200 });
+    const zeroTravel = targetResourceIntel(target, 0);
+    expect(zeroTravel.projectedArrival).toBeNull();
+    expect(zeroTravel.projectedArrivalLootable).toBeNull();
+    expect(zeroTravel.projectionDetail).toContain("Select ships");
 
     const noProduction = targetResourceIntel(targetPlanet({
       publicState: {
