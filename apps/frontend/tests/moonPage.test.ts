@@ -57,12 +57,10 @@ describe("Moon page helpers", () => {
     expect(text).not.toContain("No moon in orbit");
   });
 
-  test("keeps loaded Burning Chickens visible during a background refresh", () => {
+  test("renders manual Burning Chicken token entry", () => {
     const page = MoonPage({
       burningChicken: {
-        chickens: [{ tokenId: "42", level: 7 }],
         configured: true,
-        loading: true,
         maxMoonsPerPlayer: 2,
         moonCount: 0,
       },
@@ -78,19 +76,16 @@ describe("Moon page helpers", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Refreshing Burning Chickens");
-    expect(text).toContain("Chicken # 42");
-    expect(text).toContain("Level 7");
+    expect(text).toContain("Chicken ID");
     expect(text).toContain("Burn for Moon");
+    expect(text).toContain("verifies this wallet owns the chicken");
     expect(text).not.toContain("No eligible Burning Chickens");
   });
 
-  test("renders a useful Burning Chicken empty state", () => {
+  test("renders Burning Chicken config unavailable state", () => {
     const page = MoonPage({
       burningChicken: {
-        chickens: [],
-        configured: true,
-        loading: false,
+        configured: false,
         maxMoonsPerPlayer: 2,
         moonCount: 0,
       },
@@ -104,43 +99,13 @@ describe("Moon page helpers", () => {
       selectedCoordinates: { galaxy: 1, system: 44, position: 8 },
     });
 
-    expect(visibleText(page)).toContain("No eligible Burning Chickens were found in this wallet on Base mainnet.");
-  });
-
-  test("does not render manual Chicken token entry on lookup errors", () => {
-    const page = MoonPage({
-      burningChicken: {
-        chickens: [],
-        configured: true,
-        error: "Burning Chicken wallet lookup is temporarily unavailable.",
-        loading: false,
-        maxMoonsPerPlayer: 2,
-        moonCount: 0,
-      },
-      canBurnChicken: true,
-      moonState: {
-        wallet: "0x1111111111111111111111111111111111111111",
-        homePlanetId: "7",
-        moon: null,
-        buildings: [],
-        queue: null,
-      },
-      selectedCoordinates: { galaxy: 1, system: 44, position: 8 },
-    });
-    const text = visibleText(page);
-
-    expect(text).toContain("Burning Chicken wallet lookup is temporarily unavailable.");
-    expect(text).not.toContain("Chicken token ID");
-    expect(text).not.toContain("Burn Token");
-    expect(text).not.toContain("execution reverted");
+    expect(visibleText(page)).toContain("Burning Chicken burn config is not available yet.");
   });
 
   test("disables chicken burns at the two-moon limit", () => {
     const page = MoonPage({
       burningChicken: {
-        chickens: [{ tokenId: "9", level: 2 }],
         configured: true,
-        loading: false,
         maxMoonsPerPlayer: 2,
         moonCount: 2,
       },
