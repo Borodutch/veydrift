@@ -1905,6 +1905,23 @@ export class SettlementIndexer {
         this.recordRemovedLog(`${eventId}:removed`, log);
         return { applied: false, duplicate: false, ignored: false, removed: true, snapshot: this.snapshot() };
       }
+      const repairedDerivedRows = this.repairDerivedRowsForExistingLog(eventId, parseEvent<IndexedRpcLog>(existing.event_json));
+      if (repairedDerivedRows > 0) {
+        if (isFleetMissionLog(log)) {
+          if (this.applyFleetMissionCompatibilityEvent(log) > 0) {
+            this.touch();
+          }
+        } else if (isBattleReportLog(log)) {
+          if (this.applyBattleCompatibilityEvent(log) > 0) {
+            this.touch();
+          }
+        } else if (isMoonChanceReportLog(log)) {
+          this.applyMoonChanceEvent(decodeMoonChanceReportLog(log));
+        } else if (isRandomnessFulfilledLog(log)) {
+          this.touch();
+        }
+        return { applied: true, duplicate: true, ignored: false, removed: false, snapshot: this.snapshot() };
+      }
       return { applied: false, duplicate: true, ignored: false, removed: false, snapshot: this.snapshot() };
     }
 
@@ -5697,6 +5714,33 @@ export class SettlementIndexer {
       VALUES (?, ?, ?, ?)
     `).run(eventId, blockNumberToDecimal(log.blockNumber), log.logIndex ?? "0x0", JSON.stringify(log));
     this.touchBattleReportReadModel();
+  }
+
+  private repairDerivedRowsForExistingLog(eventId: string, log: IndexedRpcLog): number {
+    if (log.removed) return 0;
+
+    let repairedRows = 0;
+    if (this.missionEventKind(log)) {
+      const existingMissionEvent = this.db
+        .query("SELECT 1 FROM indexed_mission_event_logs WHERE event_id = ?")
+        .get(eventId);
+      if (!existingMissionEvent) {
+        this.recordMissionEventLog(eventId, log);
+        repairedRows += 1;
+      }
+    }
+
+    if (this.isUnitCountSnapshotLog(log)) {
+      const existingUnitCountEvent = this.db
+        .query("SELECT 1 FROM indexed_unit_count_event_logs WHERE event_id = ?")
+        .get(eventId);
+      if (!existingUnitCountEvent) {
+        this.recordUnitCountEventLog(eventId, log);
+        repairedRows += 1;
+      }
+    }
+
+    return repairedRows;
   }
 
   private recordLogIfMissing(log: IndexedRpcLog): void {
