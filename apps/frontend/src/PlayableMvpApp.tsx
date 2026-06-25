@@ -43,6 +43,7 @@ import {
   type InspectRoute,
   type PlanetDetailBackRoute,
 } from "./inspectRoutes";
+import { resetDocumentTitle } from "./pageTitle";
 import { ShareDialog } from "./components/ShareDialog";
 import {
   buildingKeyForContractId,
@@ -2671,6 +2672,7 @@ function replaceLegacyHashEntityRoute(): boolean {
   const canonicalPath = canonicalEntityPathForLegacyHashLocation(window.location);
   if (!canonicalPath) return false;
   window.history.replaceState(null, "", canonicalPath);
+  resetDocumentTitle();
   return true;
 }
 
@@ -2681,6 +2683,7 @@ function writeInspectRoute(route: InspectRoute): void {
   if (currentPath !== path) {
     window.history.pushState(null, "", path);
   }
+  resetDocumentTitle();
 }
 
 export function PlayableMvpApp({ provider, account, miniAppMode = false, planet }: PlayableMvpAppProps = {}) {
@@ -3186,6 +3189,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, planet 
     if (typeof window === "undefined") return;
     const handleRouteChange = () => {
       replaceLegacyHashEntityRoute();
+      resetDocumentTitle();
       applyInspectRoute(parseInspectRouteFromLocation(window.location));
     };
     handleRouteChange();
