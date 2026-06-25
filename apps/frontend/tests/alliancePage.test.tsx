@@ -185,6 +185,16 @@ describe("AlliancePage loading display", () => {
     });
   });
 
+  test("renders join applications with the shared member-row player info treatment", () => {
+    expect(alliancePageSource).toContain("function PlayerRowInfo");
+    expect(alliancePageSource).toContain("<PlayerRowInfo");
+    expect(alliancePageSource).toContain('badge="Applicant"');
+    expect(alliancePageSource).toContain("totalScore={request.requesterTotalScore}");
+    expect(alliancePageSource).toContain('timestampLabel="Requested"');
+    expect(alliancePageSource).toContain("Score {formatScore(totalScore)} / {timestampLabel} {formatUserTimestamp(timestamp)}");
+    expect(alliancePageSource).toContain("md:grid-cols-[minmax(0,1fr)_auto]");
+  });
+
   test("keeps valid invites acceptable while blocking stale acceptance reverts", () => {
     const invite = allianceInvite("7");
     const state = unaffiliatedAllianceState({

@@ -809,6 +809,7 @@ export type AllianceState = {
     allianceId: string;
     requester: Address;
     requesterDisplayName?: string | null;
+    requesterTotalScore?: string;
     requesterMembership?: {
       allianceId: string;
       role: AllianceRoleName;

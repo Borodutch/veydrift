@@ -754,6 +754,7 @@ export type ChainAllianceState = {
     allianceId: string;
     requester: string;
     requesterDisplayName?: string | null;
+    requesterTotalScore?: string;
     requesterMembership?: {
       allianceId: string;
       role: AllianceRole;
