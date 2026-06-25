@@ -185,7 +185,7 @@ export class ChainSyncService {
       subscribedAddresses: this.subscribedAddresses(),
       subscribedToHeads: this.connected,
       subscribedToLogs: this.liveListenerConnected || this.connected,
-      pollingEnabled: Boolean(this.options.logBackfiller) && !this.liveListenerConnected
+      pollingEnabled: Boolean(this.options.logBackfiller) && Boolean(this.pollTimer)
     };
   }
 
@@ -202,9 +202,10 @@ export class ChainSyncService {
     this.stopped = false;
     if (this.startLiveListener()) {
       this.activeSource = "viem_ws";
-      // Catch up any missed range before relying on the live subscription. Future websocket logs fill
-      // cursor gaps on demand; the interval is only a fallback when websocket setup fails.
-      void this.poll();
+      // Keep HTTP catch-up polling alive even when the websocket subscription is connected. Viem WS
+      // delivers live logs quickly; the poll loop independently closes missed ranges and retries RPC
+      // gaps without requiring a heavyweight state sync.
+      this.startPollingLoop();
       return;
     }
 
@@ -369,8 +370,12 @@ export class ChainSyncService {
   }
 
   private startFallbackPolling(): void {
-    if (this.pollTimer) return;
     this.activeSource = "fallback_poll";
+    this.startPollingLoop();
+  }
+
+  private startPollingLoop(): void {
+    if (this.pollTimer) return;
     // Kick an immediate poll (anchors the cursor at head) then run on the interval. void: the loop
     // catches its own errors and never rejects, so an unhandled rejection can't escape here.
     void this.poll();

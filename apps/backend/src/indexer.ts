@@ -1391,7 +1391,11 @@ export class SettlementIndexer {
   }
 
   battleReport(missionId: string): BattleReport | null {
-    return this.indexedBattleReports().find((report) => report.missionId === missionId) ?? null;
+    const mission = this.fleetMission(missionId);
+    const reports = mission
+      ? this.indexedBattleReportsForMissions([mission])
+      : this.battleReportsForMissionIds([missionId]);
+    return reports.find((report) => report.missionId === missionId) ?? null;
   }
 
   battleReports(): BattleReport[] {
@@ -2649,6 +2653,8 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS indexed_mission_event_logs_kind_block_idx
         ON indexed_mission_event_logs (event_kind, block_number);
+      CREATE INDEX IF NOT EXISTS indexed_mission_event_logs_kind_topic1_block_idx
+        ON indexed_mission_event_logs (event_kind, json_extract(event_json, '$.topics[1]'), block_number);
       CREATE TABLE IF NOT EXISTS indexed_unit_count_event_logs (
         event_id TEXT PRIMARY KEY,
         block_number TEXT NOT NULL,
@@ -3791,6 +3797,55 @@ export class SettlementIndexer {
     }
   }
 
+  private upsertEventDerivedFleetMissionRowsFromLogs(logs: IndexedRpcLog[]): FleetMissionSummary[] {
+    const partialMissions = [...decodeFleetMissionLogs(logs).values()];
+    if (partialMissions.length === 0) return [];
+
+    const upsertedMissions: FleetMissionSummary[] = [];
+    let replayedFleetRows = 0;
+    for (const partial of partialMissions) {
+      const existing = this.fleetMissionSummaryFromContractRow(partial.missionId);
+      const mission = mergeFleetMissionSummary(existing, partial);
+      if (!isEventDerivedFleetMissionRowReady(existing, mission)) continue;
+      replayedFleetRows += this.upsertEventDerivedFleetMissionRow(mission);
+      upsertedMissions.push(mission);
+    }
+
+    if (replayedFleetRows > 0) {
+      this.setMetadata("lastFleetMissionEventReplayAt", new Date().toISOString());
+      this.touchMissionReadModel();
+      this.touch();
+    }
+    return upsertedMissions;
+  }
+
+  private fleetMissionSummaryFromContractRow(missionId: string): FleetMissionSummary | null {
+    const row = this.db.query(`
+      SELECT *
+      FROM contract_fleet_missions
+      WHERE mission_id = ?
+    `).get(missionId) as ContractFleetMissionRow | null;
+    return row ? this.canonicalFleetMissionSummary(row) : null;
+  }
+
+  private eventDerivedFleetMissionForMissionId(missionId: string): FleetMissionSummary | null {
+    const mission = decodeFleetMissionLogs(this.fleetMissionEventLogsForMissionIds([missionId])).get(missionId) ?? null;
+    return isStoredFleetMissionSummary(mission) ? mission : null;
+  }
+
+  private fleetMissionEventLogsForMissionIds(missionIds: Iterable<string>): IndexedRpcLog[] {
+    const missionTopics = [...new Set([...missionIds].filter((missionId) => missionId.length > 0).map(fleetMissionIdTopic))];
+    if (missionTopics.length === 0) return [];
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'fleet'
+        AND json_extract(event_json, '$.topics[1]') IN (${missionTopics.map(() => "?").join(",")})
+      ORDER BY CAST(block_number AS INTEGER) ASC
+    `).all(...missionTopics) as EventRow[];
+    return sortedEventRows(rows);
+  }
+
   private upsertEventDerivedFleetMissionRow(mission: FleetMissionSummary): number {
     const statusId = fleetMissionStatusId(mission.status);
     const missionTypeId = fleetMissionTypeId(mission.missionType);
@@ -4410,6 +4465,11 @@ export class SettlementIndexer {
   private applyFleetMissionCompatibilityEvent(log: IndexedRpcLog): number {
     let mutationsApplied = 0;
     const txLogs = this.indexedLogsForTransaction(log.transactionHash);
+    const missionId = fleetMissionLogMissionId(log);
+    const missionLogs = missionId
+      ? this.fleetMissionEventLogsForMissionIds([missionId])
+      : (txLogs.length > 0 ? txLogs.filter(isFleetMissionLog) : [log]);
+    const upsertedMissions = this.upsertEventDerivedFleetMissionRowsFromLogs(missionLogs);
     const missions = decodeCompleteFleetMissionLogs(txLogs);
     for (const mission of missions) {
       const mutationKey = `legacy:fleet-launch:${mission.missionId}`;
@@ -4426,21 +4486,25 @@ export class SettlementIndexer {
       }
     }
     if (isFleetMissionReturnedLog(log)) {
-      mutationsApplied += this.applyReturnedFleetCompatibilityEvent(log);
+      mutationsApplied += this.applyReturnedFleetCompatibilityEvent(
+        log,
+        upsertedMissions.find((mission) => mission.missionId === fleetMissionLogMissionId(log))
+      );
     }
-    this.replayFleetMissionRowsFromEventLogs();
     return mutationsApplied;
   }
 
-  private applyReturnedFleetCompatibilityEvent(log: IndexedRpcLog): number {
+  private applyReturnedFleetCompatibilityEvent(log: IndexedRpcLog, appliedMission?: FleetMissionSummary): number {
     const missionId = fleetMissionLogMissionId(log);
     if (!missionId) return 0;
 
-    const decoded = this.decodedMissionLogs();
-    const mission = decoded.eventMissions.find((candidate) => candidate.missionId === missionId);
+    const mission = appliedMission
+      ?? this.fleetMissionSummaryFromContractRow(missionId)
+      ?? this.eventDerivedFleetMissionForMissionId(missionId);
     if (!mission || mission.status !== "Returned") return 0;
 
-    const mutations = this.returnedFleetCreditMutations(mission, decoded.battleReports)
+    const reportMissionIds = [mission.missionId, mission.attackGroupId].filter((value): value is string => Boolean(value));
+    const mutations = this.returnedFleetCreditMutations(mission, this.battleReportsForMissionIds(reportMissionIds))
       .filter((mutation) => !this.hasReturnSettlementUnitCountChanged(log, "ship", mutation.planetId, mutation.itemId));
     return this.applyLegacyUnitMutationsOnce(`legacy:fleet-return:${missionId}`, mutations, log);
   }
@@ -4465,7 +4529,7 @@ export class SettlementIndexer {
     const launched = this.launchedShipMutations(mission);
     if (launched.length === 0) return [];
 
-    if (mission.recallCost !== null || legacyReturnCreditableMissionTypes.has(mission.missionType)) return launched;
+    if (usefulString(mission.recallCost) || legacyReturnCreditableMissionTypes.has(mission.missionType)) return launched;
 
     if (mission.missionType !== "Attack" && mission.missionType !== "AcsAttack" && mission.missionType !== "Intercept") {
       return [];
@@ -6477,16 +6541,14 @@ export class SettlementIndexer {
       return cached.battleReports;
     }
 
-    // Enrich each report with its ACS attack group participants + per-participant loot, joining the
-    // decoded battle reports against the fleet-mission read model (which carries joinedAttackMissionIds
-    // and each joiner's resulting return-leg cargo). Solo attacks come back with a single participant.
-    // The defender snapshot is reconstructed from historical absolute ship/defense count events before
-    // the battle report log, so the UI can show battle-time units without substituting current defenses.
+    // Enrich each report with ACS participants, but keep the broad list cheap: reconstructing historical
+    // defender snapshots for every archived report requires broad unit-log scans and makes public reads
+    // contend with ingestion. Targeted mission/detail reads attach snapshots through
+    // indexedBattleReportsForMissions().
     const reportsWithParticipants = attachAttackGroupParticipants(this.decodedBattleReportsOnly(), summaries);
-    const defenderSnapshots = this.battleTimeDefenderSnapshots(reportsWithParticipants);
     const reports = reportsWithParticipants.map((report) => ({
       ...report,
-      defenderSnapshot: defenderSnapshots.get(report.missionId) ?? null
+      defenderSnapshot: null
     }));
     if (cached && cached.missionGeneration === this.missionGeneration && cached.summaries === summaries) {
       cached.battleReportGeneration = this.battleReportGeneration;
@@ -6564,12 +6626,14 @@ export class SettlementIndexer {
     const uniqueMissionIds = [...new Set([...missionIds].filter((missionId) => missionId.length > 0))].sort((left, right) => Number(left) - Number(right));
     if (uniqueMissionIds.length === 0) return [];
 
+    const missionTopics = uniqueMissionIds.map(fleetMissionIdTopic);
     const battleRows = this.db.query(`
       SELECT event_json
       FROM indexed_mission_event_logs
       WHERE event_kind = 'battle'
+        AND json_extract(event_json, '$.topics[1]') IN (${missionTopics.map(() => "?").join(",")})
       ORDER BY CAST(block_number AS INTEGER) ASC
-    `).all() as EventRow[];
+    `).all(...missionTopics) as EventRow[];
     const logs = sortedEventRows(battleRows);
     return uniqueMissionIds
       .map((missionId) => decodeBattleReportLogs(logs, missionId))
@@ -7280,8 +7344,8 @@ function fleetMissionStatusId(label: string): number | null {
 
 function fleetMissionStatusProgressRank(status: string): number {
   if (status === "Outbound") return 1;
-  if (status === "Returning" || status === "Recalled") return 2;
-  if (status === "Resolved") return 3;
+  if (status === "Resolved") return 2;
+  if (status === "Returning" || status === "Recalled") return 3;
   if (status === "Returned") return 4;
   return 0;
 }
@@ -7379,6 +7443,79 @@ function parseCanonicalFleetMissionEvent(value: string | null): FleetMissionSumm
   if (!payload || typeof payload !== "object") return null;
   const mission = "mission" in payload ? payload.mission : payload;
   return isStoredFleetMissionSummary(mission) ? mission : null;
+}
+
+function mergeFleetMissionSummary(
+  existing: FleetMissionSummary | null,
+  partial: Partial<FleetMissionSummary> & { missionId: string }
+): FleetMissionSummary | null {
+  const merged = {
+    ...(existing ?? {}),
+    ...definedFleetMissionFields(partial),
+    missionId: partial.missionId,
+    cargo: mergeResources(existing?.cargo, partial.cargo),
+    returnCargo: partial.returnCargo ?? existing?.returnCargo ?? null,
+    ships: mergeShips(existing?.ships, partial.ships),
+    recallCost: partial.recallCost ?? existing?.recallCost ?? null,
+    attackGroupId: partial.attackGroupId ?? existing?.attackGroupId ?? null,
+    joinedAttackMissionIds: mergeStringSets(existing?.joinedAttackMissionIds, partial.joinedAttackMissionIds),
+    defendsMissionId: partial.defendsMissionId ?? existing?.defendsMissionId ?? null,
+    counterplayDefenderMissionIds: mergeStringSets(existing?.counterplayDefenderMissionIds, partial.counterplayDefenderMissionIds),
+    defenseHoldUntil: partial.defenseHoldUntil ?? existing?.defenseHoldUntil,
+    needsResolution: partial.needsResolution ?? existing?.needsResolution ?? false,
+    fuelCost: mergeDefaultedString(existing?.fuelCost, partial.fuelCost),
+    launchBlockNumber: mergeDefaultedString(existing?.launchBlockNumber, partial.launchBlockNumber),
+    randomnessRequestId: usefulString(partial.randomnessRequestId) ? partial.randomnessRequestId : existing?.randomnessRequestId
+  };
+  return isStoredFleetMissionSummary(merged) ? merged : null;
+}
+
+function isEventDerivedFleetMissionRowReady(existing: FleetMissionSummary | null, mission: FleetMissionSummary | null): mission is FleetMissionSummary {
+  return Boolean(
+    mission
+    && isStoredFleetMissionSummary(mission)
+    && typeof mission.fuelCost === "string"
+    && mission.fuelCost.length > 0
+    && (
+      existing
+      || mission.launchBlockNumber !== "0"
+    )
+  );
+}
+
+function definedFleetMissionFields(
+  mission: Partial<FleetMissionSummary>
+): Partial<FleetMissionSummary> {
+  return Object.fromEntries(
+    Object.entries(mission).filter(([, value]) => value !== undefined)
+  ) as Partial<FleetMissionSummary>;
+}
+
+function mergeResources(existing: Resources | undefined, partial: Resources | undefined): Resources {
+  if (!existing) return partial ?? zeroResources();
+  if (!partial) return existing;
+  if (partial.metal === "0" && partial.crystal === "0" && partial.deuterium === "0") return existing;
+  return partial;
+}
+
+function mergeShips(existing: Record<string, string> | undefined, partial: Record<string, string> | undefined): Record<string, string> {
+  if (!existing) return partial ?? {};
+  if (!partial || Object.keys(partial).length === 0) return existing;
+  return partial;
+}
+
+function mergeStringSets(left: readonly string[] | undefined, right: readonly string[] | undefined): string[] {
+  return [...new Set([...(left ?? []), ...(right ?? [])])];
+}
+
+function mergeDefaultedString(existing: string | undefined, partial: string | undefined): string | undefined {
+  if (partial === undefined) return existing;
+  if (existing !== undefined && partial === "0") return existing;
+  return partial;
+}
+
+function usefulString(value: string | null | undefined): value is string {
+  return value !== undefined && value !== null && value !== "" && value !== "0";
 }
 
 function eventDerivedFuelCost(row: ContractFleetMissionRow, mission: FleetMissionSummary | null | undefined): string {
@@ -7904,6 +8041,14 @@ function fleetMissionLogMissionId(log: RpcLog): string | null {
     return BigInt(log.topics[1] ?? "0x0").toString();
   } catch {
     return null;
+  }
+}
+
+function fleetMissionIdTopic(missionId: string): string {
+  try {
+    return `0x${BigInt(missionId).toString(16).padStart(64, "0")}`;
+  } catch {
+    return missionId;
   }
 }
 
