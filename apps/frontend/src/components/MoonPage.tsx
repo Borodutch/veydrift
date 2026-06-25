@@ -124,8 +124,10 @@ function ChickenBurnPanel({
 }) {
   const pending = action?.status === "pending";
   const configured = Boolean(burningChicken?.configured);
+  const capCount = burningChicken?.moonCount ?? 0;
+  const capMax = burningChicken?.maxMoonsPerPlayer ?? 2;
   const moonLimitReached = Boolean(
-    burningChicken && burningChicken.moonCount >= burningChicken.maxMoonsPerPlayer
+    burningChicken && capCount >= capMax
   );
   const disabledReason = chickenBurnDisabledReason({
     canBurnChicken,
@@ -138,8 +140,6 @@ function ChickenBurnPanel({
   const targetLabel = selectedCoordinates
     ? `${selectedCoordinates.galaxy}:${selectedCoordinates.system}:${selectedCoordinates.position}`
     : "selected planet";
-  const capCount = burningChicken?.moonCount ?? 0;
-  const capMax = burningChicken?.maxMoonsPerPlayer ?? 2;
   const submitChickenBurn = (event: Event) => {
     event.preventDefault();
     const form = event.currentTarget instanceof HTMLFormElement ? event.currentTarget : null;
@@ -169,7 +169,7 @@ function ChickenBurnPanel({
 
       {configured ? (
         <p className="mt-3 rounded border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
-          Testnet cap: {capMax} moons per account. {capCount} / {capMax} testnet Chicken moons used.
+          During testnet, each account can receive only {capMax} Chicken moons. {capCount} / {capMax} testnet Chicken moons used.
         </p>
       ) : null}
 

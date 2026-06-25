@@ -79,7 +79,7 @@ describe("Moon page helpers", () => {
     expect(text).toContain("Chicken ID");
     expect(text).toContain("Burn for Moon");
     expect(text).toContain("verifies this wallet owns the chicken");
-    expect(text).toContain("Testnet cap: 2 moons per account.");
+    expect(text).toContain("During testnet, each account can receive only 2 Chicken moons.");
     expect(text).toContain("0 / 2 testnet Chicken moons used.");
     expect(text).not.toContain("No eligible Burning Chickens");
   });
