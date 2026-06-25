@@ -2655,6 +2655,8 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS indexed_unit_count_event_logs_position_idx
         ON indexed_unit_count_event_logs (block_number, log_index);
+      CREATE INDEX IF NOT EXISTS indexed_unit_count_event_logs_topic1_block_idx
+        ON indexed_unit_count_event_logs (json_extract(event_json, '$.topics[1]'), block_number, log_index);
       CREATE TABLE IF NOT EXISTS indexed_planet_queues (
         queue_key TEXT PRIMARY KEY,
         kind TEXT NOT NULL,
@@ -6764,12 +6766,26 @@ export class SettlementIndexer {
     if (reports.length === 0) return new Map();
 
     const reportsByPosition = [...reports].sort(compareRpcLogPosition);
-    const rows = this.db.query(`
-      SELECT event_json
-      FROM indexed_unit_count_event_logs
-      WHERE CAST(block_number AS INTEGER) <= ?
-      ORDER BY CAST(block_number AS INTEGER) ASC
-    `).all(maxReportBlockNumber(reportsByPosition).toString()) as EventRow[];
+    const maxBlockNumber = maxReportBlockNumber(reportsByPosition).toString();
+    const targetPlanetTopics = [...new Set(
+      reportsByPosition
+        .map((report) => report.targetPlanetId)
+        .filter((planetId): planetId is string => Boolean(planetId))
+        .map(fleetMissionIdTopic)
+    )];
+    if (targetPlanetTopics.length === 0) return new Map();
+
+    const rows: EventRow[] = [];
+    for (let offset = 0; offset < targetPlanetTopics.length; offset += 250) {
+      const chunk = targetPlanetTopics.slice(offset, offset + 250);
+      rows.push(...this.db.query(`
+        SELECT event_json
+        FROM indexed_unit_count_event_logs
+        WHERE json_extract(event_json, '$.topics[1]') IN (${chunk.map(() => "?").join(",")})
+          AND CAST(block_number AS INTEGER) <= ?
+        ORDER BY CAST(block_number AS INTEGER) ASC, CAST(log_index AS INTEGER) ASC
+      `).all(...chunk, maxBlockNumber) as EventRow[]);
+    }
     const logs = sortedEventRows(rows);
     const snapshots = new Map<string, BattleReportDefenderSnapshot>();
     const currentByPlanet = new Map<string, UnitCountSnapshot>();
