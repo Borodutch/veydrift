@@ -9,6 +9,7 @@ import {
   shouldAutoConnectFarcasterWallet,
   shouldRetryFarcasterWalletProviderProbe,
   shouldRetryRejectedRequestWithSettlement,
+  shouldShowPublicPlayableApp,
   waitForIndexedSettledPlanet,
   walletConnectionAccounts,
 } from "../src/FirstPlanetSettlementApp";
@@ -29,6 +30,17 @@ describe("settlement screen mode", () => {
   test("shows only the core pre-settlement actions after state is known", () => {
     expect(preSettlementMode({ kind: "disconnected" }, { kind: "idle" })).toBe("connect");
     expect(preSettlementMode(connected, { kind: "not-settled" })).toBe("settle");
+  });
+
+  test("routes logged-out viewers to public game pages but keeps unsettled wallets on settlement", () => {
+    expect(shouldShowPublicPlayableApp({ kind: "disconnected" }, { kind: "idle" })).toBe(true);
+    expect(shouldShowPublicPlayableApp({ kind: "no-wallet" }, { kind: "idle" })).toBe(true);
+    expect(shouldShowPublicPlayableApp(connected, { kind: "not-settled" })).toBe(false);
+    expect(shouldShowPublicPlayableApp(connected, { kind: "checking" })).toBe(false);
+    expect(shouldShowPublicPlayableApp(connected, { kind: "already-settled", planet: {
+      label: "Prime",
+      source: "chain",
+    } })).toBe(false);
   });
 
   test("keeps no-wallet copy wallet-neutral outside Mini App mode", () => {
