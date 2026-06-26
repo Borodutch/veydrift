@@ -5374,19 +5374,28 @@ export class SettlementIndexer {
     if ((event.queueKind !== "defense" && event.queueKind !== "ship") || !event.planetId) {
       return false;
     }
+    if (event.canonicalSnapshot || event.backlog?.length) {
+      return false;
+    }
 
     const row = this.db.query(`
       SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, backlog_json
       FROM contract_production_queues
       WHERE queue_key = ?
     `).get(queueKey(event)) as QueueRow | null;
-    if (!row || row.item_id === event.itemId) {
+    if (
+      !row
+      || (row.item_id === event.itemId && (event.queueKind !== "defense" || !row.backlog_json))
+    ) {
       return false;
     }
 
     const backlog = row.backlog_json ? parseEvent<QueueState[]>(row.backlog_json) : [];
     const activeQueue = this.productionQueueFromRow(row);
     const nextBacklog = this.sanitizedProductionBacklog(row.queue_kind, activeQueue, Array.isArray(backlog) ? backlog : []);
+    if (row.item_id === event.itemId && (event.queueKind !== "defense" || nextBacklog.length === 0)) {
+      return false;
+    }
     const nextEntry = queueStateFromEvent(event);
     this.mergeProductionBacklogEntry(nextBacklog, nextEntry);
     const sanitizedBacklog = this.sanitizedProductionBacklog(row.queue_kind, activeQueue, nextBacklog);

@@ -3394,6 +3394,60 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("appends same defense queue events behind an existing indexed backlog", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    indexer.applyLog({
+      blockNumber: "0xa0",
+      transactionHash: "0xqueue-active-rocket",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(2n, 1770001000n, 4000n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0xa1",
+      transactionHash: "0xqueue-ion-backlog",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(5n)],
+      data: abiWords(3n, 1770001600n, 6000n, 18000n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0xa2",
+      transactionHash: "0xqueue-rocket-after-ion",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(4n, 1770002200n, 8000n, 0n, 0n)
+    });
+
+    expect(indexer.playerQueues(player, planet.planetId).defense).toMatchObject({
+      kind: "defense",
+      itemId: 0,
+      quantity: 2,
+      readyAt: "1770001000",
+      backlog: [
+        {
+          kind: "defense",
+          itemId: 5,
+          quantity: 3,
+          readyAt: "1770001600",
+          cost: { metal: "6000", crystal: "18000", deuterium: "0" }
+        },
+        {
+          kind: "defense",
+          itemId: 0,
+          quantity: 4,
+          readyAt: "1770002200",
+          cost: { metal: "8000", crystal: "0", deuterium: "0" }
+        }
+      ]
+    });
+  });
+
   test("deduplicates identical defense queue backlog events", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
