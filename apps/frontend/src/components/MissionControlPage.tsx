@@ -605,7 +605,11 @@ export function missionLifecycleActions({
       enabled: canTransact && recallable,
       kind: "recall",
       label: "Recall fleet",
-      reason: recallable ? walletReason(canTransact, transactionUnavailableReason) : "The recall cutoff has passed (within 60s of arrival).",
+      reason: recallable
+        ? walletReason(canTransact, transactionUnavailableReason)
+        : mission.missionType === "DefenseHold"
+          ? "The stationed defense hold has ended."
+          : "The recall cutoff has passed (within 60s of arrival).",
     });
   }
 
@@ -930,6 +934,9 @@ function activeMissionHeaderTiming(mission: FleetMissionSummary, now: number, no
   if (returning) {
     return { label: "Returns", value: noFleetReturned ? "No fleet returned" : missionEndpointTiming(mission.returnAt, now) };
   }
+  if (mission.missionType === "DefenseHold" && isDefenseHoldStationed(mission, now)) {
+    return { label: "Holds", value: missionEndpointTiming(defenseHoldRecallUntil(mission), now) };
+  }
   return { label: "ETA", value: missionEndpointTiming(mission.arrivalAt, now) };
 }
 
@@ -1026,6 +1033,9 @@ export function missionStatusPill(mission: FleetMissionSummary, now: number): Mi
   // keeper). A leg whose clock has passed but whose backend status has not advanced is mid-settlement,
   // so the pill reads "Resolving" until the chain reflects it — not a finished "Arrived"/"Returned".
   if (mission.status === "Outbound") {
+    if (mission.missionType === "DefenseHold" && isDefenseHoldStationed(mission, now)) {
+      return { label: "Stationed", tone: "border-violet-300/25 bg-violet-300/10 text-violet-100" };
+    }
     return isMissionDue(mission, now)
       ? { label: "Resolving", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" }
       : { label: "En route", tone: "border-cyan-300/25 bg-cyan-300/10 text-cyan-100" };
@@ -2057,7 +2067,7 @@ function Notice({ children, tone }: { children: preact.ComponentChildren; tone: 
 }
 
 function isMissionDue(mission: FleetMissionSummary, now: number): boolean {
-  return mission.status === "Outbound" && Number(mission.arrivalAt) * 1_000 <= now;
+  return mission.status === "Outbound" && missionDueAtMs(mission) <= now;
 }
 
 // VEY-KANEO-479: an Attack/Harvest fleet's resolution is keeper-driven and, for attacks, gated on the
@@ -2084,8 +2094,30 @@ function isMissionReadyToResolve(mission: FleetMissionSummary, now: number): boo
 const FLEET_RECALL_CUTOFF_SECONDS = 60;
 
 export function isFleetRecallable(mission: FleetMissionSummary, now: number): boolean {
+  if (mission.missionType === "DefenseHold") {
+    return mission.status === "Outbound" && now < defenseHoldRecallUntilMs(mission);
+  }
   return mission.status === "Outbound"
     && now <= (Number(mission.arrivalAt) - FLEET_RECALL_CUTOFF_SECONDS) * 1_000;
+}
+
+function missionDueAtMs(mission: FleetMissionSummary): number {
+  if (mission.missionType === "DefenseHold") return defenseHoldRecallUntilMs(mission);
+  return Number(mission.arrivalAt) * 1_000;
+}
+
+function defenseHoldRecallUntil(mission: FleetMissionSummary): string {
+  return mission.defenseHoldUntil ?? mission.returnAt;
+}
+
+function defenseHoldRecallUntilMs(mission: FleetMissionSummary): number {
+  return Number(defenseHoldRecallUntil(mission)) * 1_000;
+}
+
+function isDefenseHoldStationed(mission: FleetMissionSummary, now: number): boolean {
+  return mission.status === "Outbound"
+    && Number(mission.arrivalAt) * 1_000 <= now
+    && now < defenseHoldRecallUntilMs(mission);
 }
 
 function isMissionReturned(mission: FleetMissionSummary, now: number): boolean {
@@ -2280,6 +2312,9 @@ export function missionDisplayStatusLabel(mission: FleetMissionSummary, now: num
   if (mission.status === "Outbound" && isMissionDue(mission, now)) {
     if (mission.resolutionBlocker === "randomness_pending") return "awaiting randomness";
     return "resolving";
+  }
+  if (mission.status === "Outbound" && mission.missionType === "DefenseHold" && isDefenseHoldStationed(mission, now)) {
+    return "stationed";
   }
   if ((mission.status === "Returning" || mission.status === "Recalled") && isMissionReturned(mission, now)) {
     return "resolving";

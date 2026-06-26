@@ -48,6 +48,7 @@ const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
@@ -4325,6 +4326,64 @@ describe("SettlementIndexer", () => {
       allianceDepotLevel: 2
     });
     expect(surviving.ships).toMatchObject({ smallCargo: "2", lightFighter: "5" });
+  });
+
+  test("keeps an arrived DefenseHold recallable in outgoing visibility until its hold expires", () => {
+    const originalDateNow = Date.now;
+    Date.now = () => 4_000_000_000_000;
+    try {
+      const ally = "0x4444444444444444444444444444444444444444" as Address;
+      const indexer = new SettlementIndexer({
+        async listDebrisFieldEvents() { return []; },
+        async listMoonChanceReportEvents() { return []; },
+        async listSettledPlanetEvents() { return []; }
+      }, 100n);
+      indexer.applyEvent(planet);
+      indexer.applyEvent({ ...planet, planetId: "12", owner: ally, name: "Ally Base", galaxy: 3, system: 12, position: 4 });
+      indexer.applyLog({
+        blockNumber: "0x94",
+        transactionHash: "0xdefense-hold",
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(6115n), addressTopic(ally), topic(9n)],
+        data: abiWords(12n, 7n, 3999996400n, 4000010800n, 0n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x94",
+        transactionHash: "0xdefense-hold",
+        logIndex: "0x1",
+        topics: [defenseHoldStationedTopic, topic(6115n), addressTopic(ally), topic(7n)],
+        data: abiWords(12n, 3999996400n, 4000007200n, 4000010800n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x94",
+        transactionHash: "0xdefense-hold",
+        logIndex: "0x2",
+        topics: [fleetMissionCargoTopic, topic(6115n)],
+        data: abiWords(0n, 0n, 0n, 100n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x94",
+        transactionHash: "0xdefense-hold",
+        logIndex: "0x3",
+        topics: [fleetMissionShipsTopic, topic(6115n)],
+        data: abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n, 1n, 0n, 0n, 0n, 0n, 0n, 0n)
+      });
+
+      const visibility = indexer.fleetMissionVisibility(ally);
+      const stationed = visibility.outgoing.find((mission) => mission.missionId === "6115");
+      expect(stationed).toMatchObject({
+        missionId: "6115",
+        missionType: "DefenseHold",
+        status: "Outbound",
+        defenseHoldUntil: "4000007200",
+        needsResolution: false,
+        recallCost: "25"
+      });
+      expect(stationed?.asOfNow?.arrived).toBe(true);
+      expect(stationed?.asOfNow?.returned).toBe(false);
+    } finally {
+      Date.now = originalDateNow;
+    }
   });
 
   // VEY-KANEO-471: the QA staging harness injects one fully-populated synthetic incoming attack so the

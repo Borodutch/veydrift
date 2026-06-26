@@ -321,8 +321,12 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToDefenseHoldModule();
     }
 
-    function recallFleetMission(uint256) external {
+    function recallFleetMission(uint256 missionId) external {
         _touchPlayer(msg.sender);
+        FleetMission storage mission = _fleetMissions[missionId];
+        if (mission.missionType == FleetMissionType.DefenseHold) {
+            _delegateToDefenseHoldModule();
+        }
         _delegateToPlayModule();
     }
 

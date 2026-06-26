@@ -285,6 +285,60 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         );
     }
 
+    /// @notice Recall a DefenseHold fleet while it is still flying out or actively stationed.
+    ///         The facade routes only DefenseHold recalls here; the existing recall selector stays
+    ///         stable for wallets while stationed fleets avoid the generic "already arrived" path.
+    function recallFleetMission(uint256 missionId) external {
+        FleetMission storage mission = _fleetMissions[missionId];
+        _requireActiveMissionOwner(mission);
+        if (mission.status == FleetMissionStatus.Returning) revert FleetAlreadyReturning();
+        if (mission.status != FleetMissionStatus.Outbound) {
+            revert FleetMissionNotResolved(mission.returnAt);
+        }
+
+        _settleDueCombatArrivals(msg.sender);
+        _requireNoPendingMissionResolutionForPlanet(mission.originPlanetId);
+        _requireNoPendingMissionResolutionForPlanet(mission.targetPlanetId);
+
+        uint64 holdUntil = _defenseHoldUntil[missionId];
+        uint64 currentTime = _currentTimestamp();
+        if (holdUntil != 0 && currentTime >= holdUntil) {
+            revert FleetMissionNotResolved(mission.returnAt);
+        }
+
+        _settleResources(mission.originPlanetId);
+        uint128 recallCost = _fleetRecallCost(mission.fuelCost);
+        _spend(mission.originPlanetId, Resources({metal: 0, crystal: 0, deuterium: recallCost}));
+
+        uint256 returnSeconds = currentTime < mission.arrivalAt
+            ? VeydriftAntiRaidPrimitives.recallReturnSeconds(currentTime - mission.departureAt)
+            : uint256(mission.returnAt)
+                - (holdUntil == 0 ? uint256(mission.arrivalAt) : uint256(holdUntil));
+        mission.status = FleetMissionStatus.Recalled;
+        mission.returnAt = (uint256(currentTime) + returnSeconds).toUint64();
+
+        VeydriftDefenseHoldStorage.endHold(
+            _stationedDefenseMissions[mission.targetPlanetId],
+            _stationedDefenseMissionIndex[mission.targetPlanetId],
+            _defenseHoldUntil,
+            missionId
+        );
+
+        emit FleetMissionRecalled(missionId, msg.sender, mission.returnAt, recallCost);
+        emit DefenseHoldEnded(missionId, mission.targetPlanetId, FleetMissionStatus.Recalled);
+        emit FleetMissionReturnExposed(
+            missionId,
+            mission.owner,
+            FleetMissionStatus.Recalled,
+            mission.originPlanetId,
+            mission.targetPlanetId,
+            mission.returnAt,
+            mission.cargo.metal,
+            mission.cargo.crystal,
+            mission.cargo.deuterium
+        );
+    }
+
     /// @notice Send a stationed DefenseHold fleet home once its hold window has elapsed. The facade
     ///         routes only DefenseHold missions here; surviving ships fly back with their cargo.
     function resolveFleetMission(uint256 missionId) external {
@@ -326,6 +380,22 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         Planet storage planetRef = _planets[planetId];
         if (planetRef.owner == address(0)) revert NoPlanet();
         if (planetRef.owner != msg.sender) revert NotPlanetOwner();
+    }
+
+    function _requireActiveMissionOwner(FleetMission storage mission) private view {
+        if (
+            mission.status == FleetMissionStatus.None
+                || mission.status == FleetMissionStatus.Returned
+        ) {
+            revert FleetInactive();
+        }
+        if (mission.owner != msg.sender) revert FleetNotOwner();
+    }
+
+    function _fleetRecallCost(uint128 fuelCost) private pure returns (uint128) {
+        if (fuelCost == 0) return 0;
+        uint128 cost = _toUint128((uint256(fuelCost) * FLEET_RECALL_COST_BPS) / BPS);
+        return cost == 0 ? 1 : cost;
     }
 
     function _requireOwnedBody(uint256 planetId, bool isMoon) private view {
