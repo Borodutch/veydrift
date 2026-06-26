@@ -1520,8 +1520,9 @@ export class SettlementIndexer {
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
     const counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId);
+    const completedQueueQuantities = this.completedQueueQuantities(`ship:${planetId}`);
     return deriveShipRows(
-      (id) => counts.get(id) ?? 0,
+      (id) => (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0),
       this.planet(planetId)?.temperature,
       durationLevels
     );
@@ -1581,8 +1582,9 @@ export class SettlementIndexer {
 
   defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
     const counts = this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId);
+    const completedQueueQuantities = this.completedQueueQuantities(`defense:${planetId}`);
     return deriveDefenseRows(
-      (id) => counts.get(id) ?? 0,
+      (id) => (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0),
       durationLevels
     );
   }
@@ -1744,7 +1746,7 @@ export class SettlementIndexer {
   responseCacheVersion(): string {
     // Reader workers do not receive the writer worker's in-memory `stateGeneration`, so route-level
     // caches must include a token persisted into the shared WAL database.
-    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}`;
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}`;
   }
 
   missionResponseCacheVersion(): string {
@@ -1753,6 +1755,33 @@ export class SettlementIndexer {
 
   indexedStateCacheVersion(): string {
     return this.metadata(indexedStateVersionMetadataKey) ?? this.stateGeneration.toString();
+  }
+
+  private productionQueueProjectionCacheVersion(nowSec = nowSeconds()): string {
+    const rows = this.db.query(`
+      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, backlog_json
+      FROM contract_production_queues
+      WHERE queue_kind IN ('ship', 'defense')
+    `).all() as QueueRow[];
+
+    let completed = 0;
+    let nextReadyAt: number | null = null;
+    for (const row of rows) {
+      const queue = this.productionQueueFromRow(row);
+      if (row.backlog_json) {
+        const backlog = parseEvent<QueueState[]>(row.backlog_json);
+        const sanitizedBacklog = this.sanitizedProductionBacklog(row.queue_kind, queue, Array.isArray(backlog) ? backlog : []);
+        if (sanitizedBacklog.length > 0) queue.backlog = sanitizedBacklog;
+      }
+      const settlement = settleQueueAsOfNow(queue, nowSec);
+      completed += settlement.completed.length;
+      const readyAt = Number(settlement.queue?.readyAt);
+      if (Number.isFinite(readyAt) && readyAt > nowSec) {
+        nextReadyAt = nextReadyAt === null ? readyAt : Math.min(nextReadyAt, readyAt);
+      }
+    }
+
+    return `pq:${completed}:${nextReadyAt ?? "none"}`;
   }
 
   checkpointWal(mode: "PASSIVE" | "TRUNCATE" = "PASSIVE"): Array<{ busy: number; log: number; checkpointed: number }> {

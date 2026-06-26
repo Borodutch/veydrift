@@ -2880,7 +2880,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.fleetSlots(player)).toEqual({ active: 5, limit: 5 });
   });
 
-  test("projects elapsed research queues while unit rows stay contract-aligned", () => {
+  test("projects elapsed production and research queues into served rows and wallet highscore", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -2930,17 +2930,22 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)).toMatchObject({
       id: 0,
-      count: 9
+      count: 23
     });
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)).toMatchObject({
       id: 0,
-      count: 9
+      count: 23
     });
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)).toMatchObject({
       id: 1,
-      count: 8
+      count: 13
     });
     expect(indexer.technologyLevels(player)).toMatchObject({ "4": 2 });
+    expect(indexer.highscoreForWallet(player).score).toMatchObject({
+      defense: "16",
+      fleet: "36",
+      fleetCount: "9"
+    });
   });
 
   test("indexes moon creation and moon building queues", () => {
@@ -6111,7 +6116,7 @@ describe("SettlementIndexer", () => {
     ]);
   });
 
-  test("unit rows stay contract-aligned while highscores ignore stale queue artifacts", () => {
+  test("served unit rows project elapsed queues while highscores ignore stale queue artifacts", () => {
     const shalex = "0x4065de123cf18e9c4ab7da18db21518285ea164e" as Address;
     const noseals = "0x01bf1238aadc0f32d7881b90dc3c57247dff9ba9" as Address;
     const shipPlanet: SettledPlanetEvent = {
@@ -6197,11 +6202,13 @@ describe("SettlementIndexer", () => {
     expect(indexer.shipRows("24").filter((ship) => ship.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
       { id: 0, count: 5 },
       { id: 1, count: 3 },
+      { id: 3, count: 1 },
       { id: 5, count: 2 },
       { id: 9, count: 4 }
     ]);
     expect(indexer.defenseRows("146").filter((defense) => defense.count > 0).map(({ id, count }) => ({ id, count }))).toEqual([
-      { id: 0, count: 17 }
+      { id: 0, count: 17 },
+      { id: 1, count: 10 }
     ]);
 
     const shalexScore = indexer.highscoreForWallet(shalex);
