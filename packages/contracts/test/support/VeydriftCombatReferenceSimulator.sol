@@ -108,6 +108,8 @@ library VeydriftCombatReferenceSimulator {
         _repairDestroyedDefenses(result.defenderDefenses, destroyedDefenses, input.seed);
         if (finalAttackers != 0 && finalDefenders == 0) {
             result.outcome = VeydriftGameStorage.BattleOutcome.AttackerWin;
+            result.defenderShips[uint8(Ship.SolarSatellite)] = 0;
+            result.defenderShips[uint8(Ship.Crawler)] = 0;
         } else if (finalAttackers == 0 && finalDefenders != 0) {
             result.outcome = VeydriftGameStorage.BattleOutcome.DefenderWin;
         } else {
