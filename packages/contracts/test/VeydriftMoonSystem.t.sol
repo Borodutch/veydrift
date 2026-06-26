@@ -680,6 +680,7 @@ contract VeydriftMoonSystemTest is Test {
 
         _createMoon(planetId);
         _fundPlanet(planetId, 1_000_000, 1_000_000, 1_000_000);
+        _grantMoonResources(planetId, 1_000_000, 1_000_000, 1_000_000);
 
         vm.prank(player);
         moons.startMoonBuildingUpgrade(planetId, MoonBuilding.LunarBase);

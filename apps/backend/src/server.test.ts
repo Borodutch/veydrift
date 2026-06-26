@@ -222,6 +222,7 @@ class MockChainReader implements ChainReader {
   async getWalletPlanets(wallet: Address): Promise<WalletPlanets> {
     const managedPlanet: ManagedPlanet = {
       ...planet,
+      bodyKind: "planet",
       coordinates: "2:44:9",
       isHomePlanet: true,
       fieldsUsed: 3,
@@ -242,7 +243,15 @@ class MockChainReader implements ChainReader {
         ship: null
       },
       moon: {
-        exists: true
+        bodyKind: "moon",
+        exists: true,
+        parentPlanetId: planet.planetId,
+        planetId: planet.planetId,
+        coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
+        resources: { metal: "101", crystal: "202", deuterium: "303" },
+        resourcesAsOfNow: { metal: "101", crystal: "202", deuterium: "303" },
+        ships: [],
+        defenses: []
       }
     };
     return {
@@ -361,8 +370,14 @@ class MockChainReader implements ChainReader {
   async getMoonState(wallet: Address): Promise<MoonState> {
     return {
       wallet,
+      bodyKind: "moon",
       homePlanetId: planet.planetId,
+      parentPlanetId: planet.planetId,
       moonAvailable: true,
+      resources: { metal: "101", crystal: "202", deuterium: "303" },
+      resourcesAsOfNow: { metal: "101", crystal: "202", deuterium: "303" },
+      ships: [],
+      defenses: [],
       moon: {
         exists: true,
         planetId: planet.planetId,
@@ -408,7 +423,6 @@ class MockChainReader implements ChainReader {
           deuterium: "4000000"
         }
       },
-      defenses: [],
       technologyLevels: {},
       defenseQueue: null
     };

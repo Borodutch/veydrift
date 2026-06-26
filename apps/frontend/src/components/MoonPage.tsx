@@ -458,7 +458,7 @@ function MoonSystemsPanel({
           </div>
         </div>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {moonState?.defenses.map((defense) => {
+          {(moonState?.defenses ?? []).map((defense) => {
             const catalog = defenseCatalog.find((item) => item.id === defense.id);
             const label = catalog?.label ?? `Defense ${defense.id}`;
             return (

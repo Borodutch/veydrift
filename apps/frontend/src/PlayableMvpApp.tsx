@@ -726,9 +726,11 @@ export function infrastructureStateForRefreshApplication({
   if (applyResourceState || !current) return next;
   return {
     ...next,
-    planetLastSettledAt: current.planetLastSettledAt,
+    ...(current.planetLastSettledAt === undefined
+      ? {}
+      : { planetLastSettledAt: current.planetLastSettledAt }),
     resources: current.resources,
-    resourcesAsOfNow: current.resourcesAsOfNow,
+    ...(current.resourcesAsOfNow === undefined ? {} : { resourcesAsOfNow: current.resourcesAsOfNow }),
   };
 }
 

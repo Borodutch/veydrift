@@ -1223,17 +1223,33 @@ export class SettlementIndexer {
 
   walletPlanets(wallet: `0x${string}`): WalletPlanets {
     const settlement = this.walletSettlement(wallet);
-    const planets = this.settledPlanetsForOwner(wallet).map((planet) => indexedManagedPlanet(
-      planet,
-      settlement.homePlanetId,
-      this.infrastructureRows(planet.planetId),
-      {
-        building: this.planetQueue(planet.planetId, "building"),
-        defense: this.planetQueue(planet.planetId, "defense"),
-        ship: this.planetQueue(planet.planetId, "ship")
-      },
-      this.hasMoon(planet.planetId)
-    ));
+    const planets = this.settledPlanetsForOwner(wallet).map((planet) => {
+      const moonState = this.moonState(planet.owner, planet.planetId);
+      const moonSummary = moonState.moon
+        ? {
+            bodyKind: "moon" as const,
+            exists: true,
+            parentPlanetId: planet.planetId,
+            planetId: planet.planetId,
+            coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
+            resources: moonState.resources,
+            ...(moonState.resourcesAsOfNow ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {}),
+            ships: moonState.ships,
+            defenses: moonState.defenses
+          }
+        : null;
+      return indexedManagedPlanet(
+        planet,
+        settlement.homePlanetId,
+        this.infrastructureRows(planet.planetId),
+        {
+          building: this.planetQueue(planet.planetId, "building"),
+          defense: this.planetQueue(planet.planetId, "defense"),
+          ship: this.planetQueue(planet.planetId, "ship")
+        },
+        moonSummary
+      );
+    });
 
     return {
       wallet,
@@ -1859,7 +1875,6 @@ export class SettlementIndexer {
       resources,
       resourcesAsOfNow: resources,
       ships: planetId ? this.moonShipRows(planetId) : [],
-      defenses: planetId ? this.moonDefenseRows(planetId) : [],
       moon: moon
         ? {
             exists: true,
@@ -8170,7 +8185,7 @@ function indexedManagedPlanet(
     defense: null,
     ship: null
   },
-  hasMoon = false
+  moon: ManagedPlanet["moon"] = null
 ): ManagedPlanet {
   const level = (id: number) => buildings.find((building) => building.id === id)?.level ?? 0;
 
@@ -8192,7 +8207,7 @@ function indexedManagedPlanet(
       terraformer: level(12)
     },
     queues,
-    moon: hasMoon ? { exists: true } : null
+    moon
   };
 }
 

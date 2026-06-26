@@ -748,10 +748,6 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         return _moonShipCounts[planetId][ship];
     }
 
-    function moonDefenseCount(uint256 planetId, Defense defense) external view returns (uint32) {
-        return _moonDefenseCounts[planetId][defense];
-    }
-
     function moonChanceRandomness(uint256 outcomeId)
         external
         view

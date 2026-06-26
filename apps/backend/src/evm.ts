@@ -1,7 +1,7 @@
 import { solarSatelliteEnergy } from "@veydrift/universe";
 import type { BackendConfig } from "./config";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
-import { deriveDefenseRows, usedFieldsFromBuildingRows } from "./readModels";
+import { deriveDefenseRows, deriveShipRows, usedFieldsFromBuildingRows } from "./readModels";
 import type { Coordinates, PlanetArchetype } from "./universe";
 import { planetMetadata, planetMultipliers } from "./universe";
 
@@ -721,12 +721,6 @@ export type MoonState = {
   }>;
   queue: QueueState | null;
   technologyLevels: Record<string, number>;
-  defenses: Array<{
-    id: number;
-    count: number;
-    cost: Resources;
-    durationSeconds?: number;
-  }>;
   defenseQueue: QueueState | null;
 };
 
@@ -1985,23 +1979,30 @@ export class VeydriftGameReader implements ChainReader {
         };
       }
 
-      const [buildings, queue, defenses, defenseQueue, technologyLevels] = await Promise.all([
+      const [resources, ships, defenses, buildings, queue, defenseQueue, technologyLevels] = await Promise.all([
+        this.readMoonResourcesCall("0x1f20b321", [encodeUint(planetId)]),
+        this.readMoonShipRows(planetId),
+        this.readMoonDefenseRows(planetId),
         this.readMoonBuildingRows(planetId),
         this.readMoonQueue(planetId),
-        this.readMoonDefenseRows(planetId),
         this.readMoonDefenseQueue(planetId),
         this.readTechnologyLevels(wallet)
       ]);
 
       return {
         wallet,
+        bodyKind: "moon",
         homePlanetId: settlement.homePlanetId,
+        parentPlanetId: settlement.homePlanetId,
         moonAvailable: true,
+        resources,
+        resourcesAsOfNow: resources,
+        ships,
+        defenses,
         moon,
         buildings,
         queue,
         technologyLevels,
-        defenses,
         defenseQueue
       };
     } catch (error) {
@@ -3506,6 +3507,17 @@ export class VeydriftGameReader implements ChainReader {
     );
   }
 
+  private async readMoonShipRows(planetId: bigint): Promise<MoonState["ships"]> {
+    const counts = new Map<number, number>();
+    await Promise.all(
+      supportedShipIds.map(async (id) => {
+        const count = await this.readMoonUintCall("0xdc02fa88", [encodeUint(planetId), encodeUint(BigInt(id))]);
+        counts.set(id, Number(count));
+      })
+    );
+    return deriveShipRows((id) => counts.get(id) ?? 0);
+  }
+
   private async readMoonBuildingHighscoreRows(
     planetId: bigint,
     wallet: Address
@@ -3662,13 +3674,14 @@ export class VeydriftGameReader implements ChainReader {
       this.readPlanetQueue("0xb8e835ab", planetId, "building"),
       this.readPlanetQueue("0x5758361d", planetId, "defense"),
       this.readShipQueue(planetId),
-      this.readMoonSummary(planetId)
+      this.readMoonSummary(planet)
     ]);
     const level = (id: number) => buildings.find((building) => building.id === id)?.level ?? 0;
     const fieldsUsed = usedFieldsFromBuildingRows(buildings);
 
     return {
       ...planet,
+      bodyKind: "planet",
       coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
       isHomePlanet: planet.planetId === homePlanetId,
       fieldsUsed,
@@ -3737,11 +3750,28 @@ export class VeydriftGameReader implements ChainReader {
     }
   }
 
-  private async readMoonSummary(planetId: bigint): Promise<{ exists: boolean } | null> {
+  private async readMoonSummary(planet: PlanetState): Promise<ManagedPlanet["moon"]> {
     if (!this.moonContractAddress) return null;
+    const planetId = BigInt(planet.planetId);
     try {
       const moon = await this.readMoon(planetId);
-      return { exists: moon.exists };
+      if (!moon.exists) return null;
+      const [resources, ships, defenses] = await Promise.all([
+        this.readMoonResourcesCall("0x1f20b321", [encodeUint(planetId)]),
+        this.readMoonShipRows(planetId),
+        this.readMoonDefenseRows(planetId)
+      ]);
+      return {
+        bodyKind: "moon",
+        exists: true,
+        parentPlanetId: planet.planetId,
+        planetId: planet.planetId,
+        coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
+        resources,
+        resourcesAsOfNow: resources,
+        ships,
+        defenses
+      };
     } catch (error) {
       if (isRpcRevert(error)) return null;
       throw error;
@@ -4696,7 +4726,6 @@ function emptyMoonState(wallet: Address, homePlanetId: string | null, unavailabl
     resources,
     resourcesAsOfNow: resources,
     ships: [],
-    defenses: [],
     moon: null,
     buildings: moonBuildingCatalog.map((building) => ({
       ...building,

@@ -2100,7 +2100,6 @@ function indexedMoonNotReadyResponse(
     resources: indexedState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
     resourcesAsOfNow: indexedState?.resourcesAsOfNow ?? indexedState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
     ships: indexedState?.ships ?? [],
-    defenses: indexedState?.defenses ?? [],
     moon: null,
     buildings: indexedState?.buildings ?? [],
     queue: null,
@@ -2261,23 +2260,25 @@ function indexedWalletPlanetState(indexer: SettlementIndexer, planet: ManagedPla
   // balance separately as `resourcesAsOfNow` — the same split the infrastructure/shipyard/
   // research endpoints already use (VEY-KANEO-464/488). Tactical/raidable still derive from
   // the accrued state because plunderable loot reflects the live balance, not the snapshot.
+  const moonSummary = moonState.moon
+    ? {
+        bodyKind: "moon" as const,
+        exists: true,
+        parentPlanetId: planet.planetId,
+        planetId: planet.planetId,
+        coordinates: planet.coordinates,
+        resources: moonState.resources,
+        ...(moonState.resourcesAsOfNow ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {}),
+        ships: moonState.ships,
+        defenses: moonState.defenses
+      }
+    : null;
+
   return {
     ...planet,
     bodyKind: "planet",
     resourcesAsOfNow: currentPlanet.resources,
-    moon: moonState.moon
-      ? {
-          bodyKind: "moon",
-          exists: true,
-          parentPlanetId: planet.planetId,
-          planetId: planet.planetId,
-          coordinates: planet.coordinates,
-          resources: moonState.resources,
-          resourcesAsOfNow: moonState.resourcesAsOfNow,
-          ships: moonState.ships,
-          defenses: moonState.defenses
-        }
-      : null,
+    moon: moonSummary,
     tactical: indexedPlanetTacticalSummary(currentPlanet, buildings, ships, defenses, technologyLevels)
   };
 }
