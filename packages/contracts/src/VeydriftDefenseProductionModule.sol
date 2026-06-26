@@ -14,6 +14,95 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
 
     constructor() VeydriftResourceReserves(address(0)) {}
 
+    function spendMoonResources(uint256 planetId, Resources calldata cost) external {
+        if (msg.sender != _moonSystem) revert Unauthorized(msg.sender);
+        Resources storage available = _moonResources[planetId];
+        if (
+            available.metal < cost.metal || available.crystal < cost.crystal
+                || available.deuterium < cost.deuterium
+        ) {
+            revert InsufficientResources(available.metal, available.crystal, available.deuterium);
+        }
+        available.metal -= cost.metal;
+        available.crystal -= cost.crystal;
+        available.deuterium -= cost.deuterium;
+        _decreaseInternalResources(cost);
+        _emitMoonResourcesChanged(planetId);
+    }
+
+    function moveMoonGateShips(
+        uint256 originPlanetId,
+        uint256 destinationPlanetId,
+        address owner_,
+        MissionShips calldata ships
+    ) external {
+        if (msg.sender != _moonSystem) revert Unauthorized(msg.sender);
+        if (
+            _planets[originPlanetId].owner != owner_
+                || _planets[destinationPlanetId].owner != owner_
+        ) {
+            revert NotPlanetOwner();
+        }
+        uint256 shipTotal;
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
+            Ship ship = Ship(i);
+            if (ship != Ship.SolarSatellite) {
+                uint32 quantity = _missionShipQuantity(ships, ship);
+                if (quantity != 0) {
+                    uint32 available = _moonShipCounts[originPlanetId][ship];
+                    if (available < quantity) revert InsufficientShips(ship, available, quantity);
+                    shipTotal += quantity;
+                    _debitMoonShips(originPlanetId, ship, quantity);
+                    _creditMoonShips(destinationPlanetId, ship, quantity);
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        if (shipTotal == 0) revert InvalidQuantity();
+    }
+
+    function resolveFleetMission(uint256 missionId) external {
+        FleetMission storage mission = _fleetMissions[missionId];
+        if (mission.status != FleetMissionStatus.Outbound) return;
+        if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
+
+        _moonResources[mission.targetPlanetId] =
+            _add(_moonResources[mission.targetPlanetId], mission.cargo);
+        _emitMoonResourcesChanged(mission.targetPlanetId);
+        if (mission.missionType == FleetMissionType.Transport) {
+            mission.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
+            mission.status = FleetMissionStatus.Returning;
+        } else {
+            _creditMoonMissionShips(mission.targetPlanetId, mission.ships);
+            mission.status = FleetMissionStatus.Resolved;
+            mission.returnAt = _currentTimestamp();
+            activeFleetMissionCount[mission.owner] -= 1;
+            _untrackMissionResolution(missionId, mission);
+        }
+
+        emit FleetMissionResolved(missionId, msg.sender, mission.missionType, mission.returnAt);
+        if (mission.status == FleetMissionStatus.Returning) {
+            emit FleetMissionReturnExposed(
+                missionId,
+                mission.owner,
+                FleetMissionStatus.Returning,
+                mission.originPlanetId,
+                mission.targetPlanetId,
+                mission.returnAt,
+                mission.cargo.metal,
+                mission.cargo.crystal,
+                mission.cargo.deuterium
+            );
+        }
+    }
+
+    function untrackResolvedFleetMission(uint256 missionId) external {
+        if (msg.sender != address(this)) revert Unauthorized(msg.sender);
+        _untrackMissionResolution(missionId, _fleetMissions[missionId]);
+    }
+
     function startDefenseProduction(uint256 planetId, Defense defense, uint32 quantity) external {
         _requirePlanetOwner(planetId);
         _settleDueColonizeArrivals(msg.sender);
@@ -343,5 +432,59 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
 
     function _currentTimestamp() private view returns (uint64) {
         return uint64(block.timestamp);
+    }
+
+    function _creditMoonMissionShips(uint256 planetId, MissionShips memory ships) private {
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
+            Ship ship = Ship(i);
+            _creditMoonShips(planetId, ship, _missionShipQuantityMem(ships, ship));
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _missionShipQuantity(MissionShips calldata ships, Ship ship)
+        private
+        pure
+        returns (uint32)
+    {
+        if (ship == Ship.SmallCargo) return ships.smallCargo;
+        if (ship == Ship.LightFighter) return ships.lightFighter;
+        if (ship == Ship.Recycler) return ships.recycler;
+        if (ship == Ship.ColonyShip) return ships.colonyShip;
+        if (ship == Ship.LargeCargo) return ships.largeCargo;
+        if (ship == Ship.HeavyFighter) return ships.heavyFighter;
+        if (ship == Ship.Cruiser) return ships.cruiser;
+        if (ship == Ship.Battleship) return ships.battleship;
+        if (ship == Ship.Bomber) return ships.bomber;
+        if (ship == Ship.Destroyer) return ships.destroyer;
+        if (ship == Ship.Deathstar) return ships.deathstar;
+        if (ship == Ship.Battlecruiser) return ships.battlecruiser;
+        if (ship == Ship.Reaper) return ships.reaper;
+        if (ship == Ship.Pathfinder) return ships.pathfinder;
+        return 0;
+    }
+
+    function _missionShipQuantityMem(MissionShips memory ships, Ship ship)
+        private
+        pure
+        returns (uint32)
+    {
+        if (ship == Ship.SmallCargo) return ships.smallCargo;
+        if (ship == Ship.LightFighter) return ships.lightFighter;
+        if (ship == Ship.Recycler) return ships.recycler;
+        if (ship == Ship.ColonyShip) return ships.colonyShip;
+        if (ship == Ship.LargeCargo) return ships.largeCargo;
+        if (ship == Ship.HeavyFighter) return ships.heavyFighter;
+        if (ship == Ship.Cruiser) return ships.cruiser;
+        if (ship == Ship.Battleship) return ships.battleship;
+        if (ship == Ship.Bomber) return ships.bomber;
+        if (ship == Ship.Destroyer) return ships.destroyer;
+        if (ship == Ship.Deathstar) return ships.deathstar;
+        if (ship == Ship.Battlecruiser) return ships.battlecruiser;
+        if (ship == Ship.Reaper) return ships.reaper;
+        if (ship == Ship.Pathfinder) return ships.pathfinder;
+        return 0;
     }
 }

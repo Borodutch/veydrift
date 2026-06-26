@@ -353,6 +353,9 @@ function MoonSystemsPanel({
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <div>
             <h3 className="text-sm font-semibold text-white">Moon Resources</h3>
+            <p className="mt-1 text-xs text-slate-400">
+              Moons keep a separate balance. Transport resources here before starting moon structures.
+            </p>
             <div className="mt-2 grid gap-2 sm:grid-cols-3">
               {moonResourceRows(moonState).map((resource) => (
                 <div className="rounded border border-white/10 bg-black/15 p-3" key={resource.label}>
@@ -364,6 +367,9 @@ function MoonSystemsPanel({
           </div>
           <div>
             <h3 className="text-sm font-semibold text-white">Moon Units</h3>
+            <p className="mt-1 text-xs text-slate-400">
+              Jump Gate moves stationed moon ships only; it never carries resources or spends deuterium.
+            </p>
             <div className="mt-2 grid gap-2 sm:grid-cols-2">
               <MoonUnitList title="Ships" units={moonState?.ships ?? []} unitPrefix="Ship" />
               <MoonUnitList title="Defenses" units={moonState?.defenses ?? []} unitPrefix="Defense" />
@@ -510,6 +516,9 @@ function MoonSystemsPanel({
       <section className="rounded-md border border-white/10 bg-[#101624] p-4">
         <div>
           <h3 className="text-sm font-semibold text-white">Jump Gate</h3>
+          <p className="mt-1 text-xs text-slate-400">
+            Requires owned moons with ready Jump Gates at both ends. Enter ship counts only; use Transport or Deploy missions for resources.
+          </p>
           <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_6rem_6rem_auto]">
             <input className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100" inputMode="numeric" onInput={(event) => setJumpDestination(event.currentTarget.value)} placeholder="Destination planet ID" value={jumpDestination} />
             <input className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100" inputMode="numeric" onInput={(event) => setJumpSmallCargo(event.currentTarget.value)} placeholder="Small" value={jumpSmallCargo} />
@@ -627,11 +636,11 @@ function MoonMetric({
   );
 }
 
-function resourcesFromChain(resources: ChainMoonState["buildings"][number]["cost"]): Resources {
+function resourcesFromChain(resources: ChainMoonState["resources"] | ChainMoonState["buildings"][number]["cost"] | null | undefined): Resources {
   return {
-    metal: Number(resources.metal),
-    crystal: Number(resources.crystal),
-    deuterium: Number(resources.deuterium),
+    metal: Number(resources?.metal ?? 0),
+    crystal: Number(resources?.crystal ?? 0),
+    deuterium: Number(resources?.deuterium ?? 0),
   };
 }
 

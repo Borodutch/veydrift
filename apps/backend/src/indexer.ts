@@ -25,6 +25,7 @@ import {
   decodeMoonChanceReportLog,
   decodeMoonResourcesSettledLog,
   decodeMoonShipCountChangedLog,
+  decodeMoonResourcesChangedLog,
   decodePlanetSettledLog,
   decodePlanetRenamedLog,
   decodeFleetMissionLogs,
@@ -44,6 +45,7 @@ import {
   isInterplanetaryMissileAttackLog,
   isAllianceLog,
   isMoonCreatedLog,
+  isMoonResourcesChangedLog,
   isMoonChanceReportLog,
   isMoonDefenseCountChangedLog,
   isMoonResourcesSettledLog,
@@ -77,6 +79,7 @@ import {
   type IndexedMoonCreatedEvent,
   type IndexedMoonDefenseCountChangedEvent,
   type IndexedMoonShipCountChangedEvent,
+  type IndexedMoonResourcesChangedEvent,
   type IndexedRiftResourceEvent,
   type IndexedShipCountChangedEvent,
   type IndexedDefenseCountChangedEvent,
@@ -1921,6 +1924,7 @@ export class SettlementIndexer {
         level: planetId ? this.moonBuildingLevelAsOfNow(planetId, building.id) : 0,
         cost: zeroResources()
       })),
+      fleet: planetId ? this.moonShipRows(planetId) : [],
       queue: planetId ? this.moonQueue(planetId) : null,
       technologyLevels: this.technologyLevels(wallet),
       defenses: moonDefenseRows.map((defense) => ({
@@ -2097,6 +2101,10 @@ export class SettlementIndexer {
     }
     if (isShipCountChangedLog(log)) {
       this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isMoonResourcesChangedLog(log)) {
+      this.applyMoonResourcesChangedEvent(decodeMoonResourcesChangedLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isDefenseCountChangedLog(log)) {
@@ -3033,12 +3041,6 @@ export class SettlementIndexer {
         deuterium_cost TEXT NOT NULL,
         event_json TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS contract_moon_defense_counts (
-        planet_id TEXT NOT NULL,
-        defense_id INTEGER NOT NULL,
-        count INTEGER NOT NULL,
-        PRIMARY KEY (planet_id, defense_id)
-      );
       CREATE TABLE IF NOT EXISTS contract_moon_chance_reports (
         report_key TEXT PRIMARY KEY,
         target_planet_id TEXT NOT NULL,
@@ -3420,6 +3422,8 @@ export class SettlementIndexer {
         this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
       } else if (isShipCountChangedLog(log)) {
         this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
+      } else if (isMoonResourcesChangedLog(log)) {
+        this.applyMoonResourcesChangedEvent(decodeMoonResourcesChangedLog(log));
       } else if (isDefenseCountChangedLog(log)) {
         this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
       } else if (isMoonShipCountChangedLog(log)) {
@@ -3462,11 +3466,11 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_planet_resources").run();
     this.db.query("DELETE FROM contract_debris_fields").run();
     this.db.query("DELETE FROM contract_moon_chance_reports").run();
+    this.db.query("DELETE FROM contract_moon_resources").run();
+    this.db.query("DELETE FROM contract_moon_ship_counts").run();
     this.db.query("DELETE FROM contract_building_levels").run();
     this.db.query("DELETE FROM contract_defense_counts").run();
     this.db.query("DELETE FROM contract_ship_counts").run();
-    this.db.query("DELETE FROM contract_moon_resources").run();
-    this.db.query("DELETE FROM contract_moon_ship_counts").run();
     this.db.query("DELETE FROM contract_moon_defense_counts").run();
     this.db.query("DELETE FROM indexed_legacy_unit_mutations").run();
     this.db.query("DELETE FROM contract_technology_levels").run();
@@ -3492,6 +3496,8 @@ export class SettlementIndexer {
       this.applyDebrisEvent(decodeDebrisFieldLog(log));
     } else if (isShipCountChangedLog(log)) {
       this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
+    } else if (isMoonResourcesChangedLog(log)) {
+      this.applyMoonResourcesChangedEvent(decodeMoonResourcesChangedLog(log));
     } else if (isDefenseCountChangedLog(log)) {
       this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
     } else if (isMoonShipCountChangedLog(log)) {
@@ -3964,12 +3970,12 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_planet_resources").run();
     this.db.query("DELETE FROM contract_debris_fields").run();
     this.db.query("DELETE FROM contract_moon_chance_reports").run();
+    this.db.query("DELETE FROM contract_moon_resources").run();
+    this.db.query("DELETE FROM contract_moon_ship_counts").run();
     this.db.query("DELETE FROM contract_building_levels").run();
     this.db.query("DELETE FROM contract_defense_counts").run();
     this.db.query("DELETE FROM contract_ship_counts").run();
-    this.db.query("DELETE FROM contract_moon_resources").run();
     this.db.query("DELETE FROM contract_moon_defense_counts").run();
-    this.db.query("DELETE FROM contract_moon_ship_counts").run();
     this.db.query("DELETE FROM contract_technology_levels").run();
     this.db.query("DELETE FROM contract_production_queues").run();
     this.db.query("DELETE FROM contract_moon_building_queues").run();
@@ -4541,6 +4547,18 @@ export class SettlementIndexer {
     );
   }
 
+  private applyMoonResourcesChangedEvent(event: IndexedMoonResourcesChangedEvent): void {
+    this.upsertMoonResourceSnapshot(
+      event.planetId,
+      event.resources,
+      "0",
+      event.transactionHash,
+      event.blockNumber,
+      event.logIndex
+    );
+    this.touch();
+  }
+
   private withKnownPlanetResources(event: SettledPlanetEvent): SettledPlanetEvent {
     if (!isZeroResourcePlaceholder(event)) return event;
 
@@ -4769,6 +4787,18 @@ export class SettlementIndexer {
   }
 
   private applyShipCountChangedEvent(event: IndexedShipCountChangedEvent): void {
+    if (event.eventName === "MoonShipCountChanged") {
+      this.upsertIndexedLevel(
+        "contract_moon_ship_counts",
+        "ship_id",
+        "count",
+        event.planetId,
+        event.shipId,
+        event.total
+      );
+      this.touch();
+      return;
+    }
     this.upsertIndexedLevel(
       "indexed_ship_counts",
       "ship_id",

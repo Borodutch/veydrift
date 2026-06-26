@@ -59,7 +59,7 @@ import {
   verifyWatchedPlanetSignature,
   type PlayerProfile
 } from "./playerProfiles";
-import { deriveInfrastructureFields, isCombatShipId } from "./readModels";
+import { deriveInfrastructureFields, isCombatShipId, zeroResources } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
 import { responseCachePath, SharedResponseCache } from "./sharedResponseCache";
 import {
@@ -2101,6 +2101,7 @@ function indexedMoonNotReadyResponse(
     resourcesAsOfNow: indexedState?.resourcesAsOfNow ?? indexedState?.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
     ships: indexedState?.ships ?? [],
     moon: null,
+    fleet: indexedState?.fleet ?? [],
     buildings: indexedState?.buildings ?? [],
     queue: null,
     technologyLevels: indexedState?.technologyLevels ?? {},

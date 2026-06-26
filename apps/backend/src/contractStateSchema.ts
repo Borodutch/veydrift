@@ -183,6 +183,8 @@ export const canonicalContractTables = [
   "contract_defense_counts",
   "contract_defense_queues",
   "contract_moons",
+  "contract_moon_resources",
+  "contract_moon_ship_counts",
   "contract_moon_building_levels",
   "contract_moon_building_queues",
   "contract_moon_defense_counts",
