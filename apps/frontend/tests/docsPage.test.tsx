@@ -43,6 +43,10 @@ energy scale = produced / required
     const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
     expect(appSource).toContain('window.location.pathname.startsWith("/docs")');
     expect(appSource).toContain("return <DocsApp />");
+
+    const serveSource = readFileSync(new URL("../scripts/serve.mjs", import.meta.url), "utf8");
+    expect(serveSource).toContain('pathname === "/docs" || pathname.startsWith("/docs/")');
+    expect(serveSource).toContain('return responseFor(Bun.file(staticFileUrl("/index.html")), "/index.html")');
   });
 
   test("renders route navigation, readable tables, anchors, and AI reference link", () => {
