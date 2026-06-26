@@ -25,10 +25,7 @@ export function DocsPage({ pathname = "/docs" }: DocsPageProps) {
             Veydrift Docs
           </a>
           <nav className="flex items-center gap-2 text-xs">
-            <a className="rounded border border-white/10 px-3 py-1.5 text-slate-300 hover:bg-white/10 hover:text-white" href="/docs">
-              Docs
-            </a>
-            <a className="inline-flex items-center gap-1 rounded border border-cyan-300/30 bg-cyan-300/10 px-3 py-1.5 font-semibold text-cyan-100 hover:bg-cyan-300/20" href="/docs/ai">
+            <a className="inline-flex items-center gap-1 rounded border border-cyan-300/30 bg-cyan-300/10 px-3 py-1.5 font-semibold text-cyan-100 hover:bg-cyan-300/20" href="/docs.md">
               <Bot className="h-3.5 w-3.5" />
               AI Reference
             </a>

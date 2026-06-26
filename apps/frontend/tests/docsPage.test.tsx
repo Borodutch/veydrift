@@ -34,11 +34,11 @@ energy scale = produced / required
     expect(parsed.nodes.some((node) => node.type === "list" && node.ordered)).toBe(true);
   });
 
-  test("resolves public docs and AI-reference routes", () => {
+  test("resolves public docs routes and raw Markdown reference", () => {
     expect(docsSlugFromPath("/docs")).toBe("beginner");
-    expect(docsSlugFromPath("/docs/ai")).toBe("ai");
-    expect(docsSlugFromPath("/docs/agents")).toBe("ai");
-    expect(docsPageForSlug("ai").title).toBe("Veydrift AI Reference");
+    expect(docsSlugFromPath("/docs/formulas")).toBe("formulas");
+    expect(docsSlugFromPath("/docs/ai")).toBe("beginner");
+    expect(docsPageForSlug("ai").title).toBe("Beginner Tutorial");
 
     const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
     expect(appSource).toContain('window.location.pathname.startsWith("/docs")');
@@ -47,6 +47,13 @@ energy scale = produced / required
     const serveSource = readFileSync(new URL("../scripts/serve.mjs", import.meta.url), "utf8");
     expect(serveSource).toContain('pathname === "/docs" || pathname.startsWith("/docs/")');
     expect(serveSource).toContain('return responseFor(Bun.file(staticFileUrl("/index.html")), "/index.html")');
+    expect(serveSource).toContain('".md": "text/markdown; charset=utf-8"');
+
+    const rawDocs = readFileSync(new URL("../public/docs.md", import.meta.url), "utf8");
+    expect(rawDocs).toContain("# Veydrift Documentation");
+    expect(rawDocs).toContain("GitHub: https://github.com/Borodutch/veydrift");
+    expect(rawDocs).toContain("Combat example:");
+    expect(rawDocs).not.toContain("Veydrift AI Reference");
   });
 
   test("renders route navigation, readable tables, anchors, and AI reference link", () => {
@@ -58,18 +65,21 @@ energy scale = produced / required
     const tree = DocsPage({ pathname: "/docs" });
     const links = elementNodes(tree).filter((node) => node.type === "a");
 
-    expect(links.some((node) => node.props?.href === "/docs/ai")).toBe(true);
+    expect(links.some((node) => node.props?.href === "/docs.md")).toBe(true);
+    expect(links.some((node) => node.props?.href === "/docs" && node.props?.children === "Docs")).toBe(false);
   });
 
-  test("gameplay navigation exposes a discoverable Docs entry", () => {
-    const source = readFileSync(new URL("../src/components/NavBar.tsx", import.meta.url), "utf8");
+  test("gameplay navigation exposes docs from the top bar, not the sidebar", () => {
+    const navSource = readFileSync(new URL("../src/components/NavBar.tsx", import.meta.url), "utf8");
+    const topBarSource = readFileSync(new URL("../src/components/TopBar.tsx", import.meta.url), "utf8");
 
-    expect(source).toContain('<NavLink href="/docs" icon={BookOpen} label="Docs" />');
-    expect(source).toContain('<MobileLink href="/docs" icon={BookOpen} label="Docs" />');
+    expect(navSource).not.toContain('href="/docs"');
+    expect(topBarSource).toContain('aria-label="Veydrift documentation"');
+    expect(topBarSource).toContain('href="/docs"');
   });
 
   test("docs content covers the required source files and excludes prohibited public references", () => {
-    expect(docsPages.map((page) => page.slug)).toEqual(["beginner", "concepts", "catalogs", "formulas", "mechanics", "ai"]);
+    expect(docsPages.map((page) => page.slug)).toEqual(["beginner", "concepts", "catalogs", "formulas", "mechanics"]);
     for (const file of collectDocsFiles()) {
       const markdown = readFileSync(file, "utf8");
       expect(markdown.length).toBeGreaterThan(500);

@@ -8,13 +8,13 @@ describe("TopBar", () => {
     const resourceRow = elementNodes(topBar).find(
       (node) =>
         typeof node.props?.className === "string" &&
-        node.props.className.includes("grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_1.75rem]")
+        node.props.className.includes("grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_repeat(2,1.75rem)]")
     );
     const supportLink = linkWithLabel(topBar, "Telegram support");
 
     expect(resourceRow?.props?.className).toContain("sm:flex-wrap");
     expect(resourceRow?.props?.className).toContain("gap-0.5");
-    expect(resourceRow?.props?.className).toContain("_1.75rem]");
+    expect(resourceRow?.props?.className).toContain("_repeat(2,1.75rem)]");
     expect(buttonsWithText(topBar, "Collect")).toHaveLength(0);
     expect(supportLink?.props?.className).toContain("h-7 w-7");
     expect(supportLink?.props?.className).toContain("sm:hidden");
