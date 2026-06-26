@@ -423,6 +423,13 @@ export type TargetCombatIntel = {
 export type MissionDetailResponse = {
   mission: FleetMissionSummary;
   battleReport: BattleReport | null;
+  battleReportMaterialization?: {
+    status: "missing" | "pending" | "ready" | "failed";
+    attempts?: number;
+    durationMs?: number | null;
+    error?: string | null;
+    updatedAt?: string;
+  };
   // Public target fighting-strength snapshot for the mission target. Null means the target planet is
   // not charted in the indexed state; undefined only appears with older API responses.
   targetCombatIntel?: TargetCombatIntel | null;

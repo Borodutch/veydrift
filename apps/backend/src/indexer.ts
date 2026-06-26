@@ -246,6 +246,17 @@ type EventRow = {
   event_json: string;
 };
 
+type BattleReportReadModelRow = {
+  mission_id: string;
+  status: "pending" | "ready" | "failed";
+  report_json: string | null;
+  error: string | null;
+  attempts: number;
+  duration_ms: number | null;
+  block_number: string | null;
+  updated_at: string;
+};
+
 type AllianceDiplomacyRow = {
   alliance_id: string;
   other_alliance_id: string;
@@ -1384,12 +1395,34 @@ export class SettlementIndexer {
     return [...defenders.values()].sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
   }
 
-  battleReport(missionId: string): BattleReport | null {
+  battleReport(missionId: string, options: { includeRawFallback?: boolean } = {}): BattleReport | null {
     const mission = this.fleetMissionSummariesFromCanonicalRowsByIds([missionId])[0] ?? null;
     const reports = mission
-      ? this.indexedBattleReportsForMissions([mission])
-      : this.battleReportsForMissionIds([missionId]);
+      ? this.indexedBattleReportsForMissions([mission], options)
+      : this.battleReportsForMissionIds([missionId], options);
     return reports.find((report) => report.missionId === missionId) ?? null;
+  }
+
+  battleReportMaterializationStatus(missionId: string): {
+    status: "missing" | "pending" | "ready" | "failed";
+    attempts?: number;
+    durationMs?: number | null;
+    error?: string | null;
+    updatedAt?: string;
+  } {
+    const row = this.db.query(`
+      SELECT status, attempts, duration_ms, error, updated_at
+      FROM indexed_battle_report_read_models
+      WHERE mission_id = ?
+    `).get(missionId) as Pick<BattleReportReadModelRow, "status" | "attempts" | "duration_ms" | "error" | "updated_at"> | null;
+    if (!row) return { status: "missing" };
+    return {
+      status: row.status,
+      attempts: row.attempts,
+      durationMs: row.duration_ms,
+      error: row.error,
+      updatedAt: row.updated_at
+    };
   }
 
   battleReports(limit = 100): BattleReport[] {
@@ -2659,6 +2692,18 @@ export class SettlementIndexer {
         ON indexed_mission_event_logs (event_kind, block_number);
       CREATE INDEX IF NOT EXISTS indexed_mission_event_logs_kind_topic1_block_idx
         ON indexed_mission_event_logs (event_kind, json_extract(event_json, '$.topics[1]'), block_number);
+      CREATE TABLE IF NOT EXISTS indexed_battle_report_read_models (
+        mission_id TEXT PRIMARY KEY,
+        status TEXT NOT NULL,
+        report_json TEXT,
+        error TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        duration_ms INTEGER,
+        block_number TEXT,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS indexed_battle_report_read_models_status_idx
+        ON indexed_battle_report_read_models (status, updated_at);
       CREATE TABLE IF NOT EXISTS indexed_unit_count_event_logs (
         event_id TEXT PRIMARY KEY,
         block_number TEXT NOT NULL,
@@ -3092,6 +3137,93 @@ export class SettlementIndexer {
         insert.run(row.event_id, eventKind, blockNumberToDecimal(log.blockNumber), row.event_json);
       }
     })();
+  }
+
+  backfillBattleReportReadModels(limit = 500): number {
+    const boundedLimit = Math.max(1, Math.min(2_000, Math.trunc(limit) || 500));
+    const rows = this.db.query(`
+      SELECT json_extract(event_json, '$.topics[1]') AS mission_topic,
+        MAX(CAST(block_number AS INTEGER)) AS latest_block
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'battle'
+        AND json_extract(event_json, '$.topics[1]') IS NOT NULL
+      GROUP BY mission_topic
+      ORDER BY latest_block DESC
+      LIMIT ?
+    `).all(boundedLimit) as Array<{ mission_topic: string | null }>;
+
+    let materialized = 0;
+    for (const row of rows) {
+      const missionId = missionIdFromTopic(row.mission_topic);
+      if (!missionId) continue;
+      const status = this.battleReportMaterializationStatus(missionId);
+      if (status.status === "ready") continue;
+      if (this.materializeBattleReportReadModel(missionId, "backfill")) materialized += 1;
+    }
+    return materialized;
+  }
+
+  private markBattleReportMaterializationPending(missionId: string, blockNumber: string): void {
+    this.db.query(`
+      INSERT INTO indexed_battle_report_read_models (
+        mission_id, status, report_json, error, attempts, duration_ms, block_number, updated_at
+      )
+      VALUES (?, 'pending', NULL, NULL, 0, NULL, ?, ?)
+      ON CONFLICT(mission_id) DO UPDATE SET
+        status = CASE
+          WHEN indexed_battle_report_read_models.status = 'ready' THEN indexed_battle_report_read_models.status
+          ELSE 'pending'
+        END,
+        error = NULL,
+        block_number = excluded.block_number,
+        updated_at = excluded.updated_at
+    `).run(missionId, blockNumber, new Date().toISOString());
+  }
+
+  private materializeBattleReportReadModel(missionId: string, reason: "ingest" | "backfill" | "repair"): boolean {
+    const started = performance.now();
+    const previous = this.battleReportMaterializationStatus(missionId);
+    try {
+      const report = this.materializedBattleReportFromLogs(missionId);
+      if (!report) return false;
+      const durationMs = Math.max(0, Math.round(performance.now() - started));
+      const updatedAt = new Date().toISOString();
+      this.db.query(`
+        INSERT INTO indexed_battle_report_read_models (
+          mission_id, status, report_json, error, attempts, duration_ms, block_number, updated_at
+        )
+        VALUES (?, 'ready', ?, NULL, 1, ?, ?, ?)
+        ON CONFLICT(mission_id) DO UPDATE SET
+          status = 'ready',
+          report_json = excluded.report_json,
+          error = NULL,
+          attempts = indexed_battle_report_read_models.attempts + 1,
+          duration_ms = excluded.duration_ms,
+          block_number = excluded.block_number,
+          updated_at = excluded.updated_at
+      `).run(missionId, JSON.stringify(report), durationMs, report.blockNumber, updatedAt);
+      this.touchBattleReportReadModel();
+      console.info(`[battle-report-materializer] ${reason} mission=${missionId} status=ready durationMs=${durationMs}`);
+      return previous.status !== "ready";
+    } catch (error) {
+      const durationMs = Math.max(0, Math.round(performance.now() - started));
+      const message = reasonText(error);
+      this.db.query(`
+        INSERT INTO indexed_battle_report_read_models (
+          mission_id, status, report_json, error, attempts, duration_ms, block_number, updated_at
+        )
+        VALUES (?, 'failed', NULL, ?, 1, ?, NULL, ?)
+        ON CONFLICT(mission_id) DO UPDATE SET
+          status = 'failed',
+          error = excluded.error,
+          attempts = indexed_battle_report_read_models.attempts + 1,
+          duration_ms = excluded.duration_ms,
+          updated_at = excluded.updated_at
+      `).run(missionId, message, durationMs, new Date().toISOString());
+      this.touchBattleReportReadModel();
+      console.warn(`[battle-report-materializer] ${reason} mission=${missionId} status=failed durationMs=${durationMs}: ${message}`);
+      return false;
+    }
   }
 
   private backfillUnitCountEventLogs(): void {
@@ -5730,6 +5862,7 @@ export class SettlementIndexer {
       }
       this.decodedBattleReportCache = null;
       this.battleReportsByMissionIdCache = null;
+      this.recentBattleReportsCache.clear();
     }
     return version;
   }
@@ -5756,6 +5889,8 @@ export class SettlementIndexer {
       };
     }
     this.decodedBattleReportCache = null;
+    this.battleReportsByMissionIdCache = null;
+    this.recentBattleReportsCache.clear();
   }
 
   private recordLog(eventId: string, log: IndexedRpcLog): boolean {
@@ -5787,7 +5922,15 @@ export class SettlementIndexer {
       INSERT OR REPLACE INTO indexed_mission_event_logs (event_id, event_kind, block_number, event_json)
       VALUES (?, ?, ?, ?)
     `).run(eventId, eventKind, blockNumberToDecimal(log.blockNumber), JSON.stringify(log));
+    if (eventKind === "battle") {
+      const missionId = battleLogMissionId(log);
+      if (missionId) this.markBattleReportMaterializationPending(missionId, blockNumberToDecimal(log.blockNumber));
+    }
     this.touchMissionReadModel();
+    if (eventKind === "battle") {
+      const missionId = battleLogMissionId(log);
+      if (missionId) this.materializeBattleReportReadModel(missionId, "ingest");
+    }
   }
 
   private recordUnitCountEventLog(eventId: string, log: IndexedRpcLog): void {
@@ -6648,7 +6791,10 @@ export class SettlementIndexer {
     return reports;
   }
 
-  private indexedBattleReportsForMissions(missions: readonly FleetMissionSummary[]): BattleReport[] {
+  private indexedBattleReportsForMissions(
+    missions: readonly FleetMissionSummary[],
+    options: { includeRawFallback?: boolean } = {}
+  ): BattleReport[] {
     if (missions.length === 0) return [];
 
     const missionIds = new Set<string>();
@@ -6661,7 +6807,7 @@ export class SettlementIndexer {
     }
 
     const matchingReportsById = new Map<string, BattleReport>();
-    for (const report of this.battleReportsForMissionIds(missionIds)) {
+    for (const report of this.battleReportsForMissionIds(missionIds, options)) {
       matchingReportsById.set(report.missionId, report);
       for (const participant of report.participants) {
         if (missionIds.has(participant.missionId)) {
@@ -6687,6 +6833,25 @@ export class SettlementIndexer {
       ...report,
       defenderSnapshot: defenderSnapshots.get(report.missionId) ?? null
     }));
+  }
+
+  private materializedBattleReportFromLogs(missionId: string): BattleReport | null {
+    const rawReports = this.rawBattleReportsForMissionIds([missionId]);
+    const report = rawReports.find((candidate) => candidate.missionId === missionId) ?? null;
+    if (!report) return null;
+
+    const reportMissionIds = new Set<string>([missionId, report.missionId]);
+    if (report.attackGroupId) reportMissionIds.add(report.attackGroupId);
+    for (const participant of report.participants) {
+      reportMissionIds.add(participant.missionId);
+    }
+    const summaries = this.fleetMissionSummariesFromCanonicalRowsByIds(reportMissionIds);
+    const withParticipants = attachAttackGroupParticipants([report], summaries);
+    const defenderSnapshots = this.battleTimeDefenderSnapshots(withParticipants);
+    return {
+      ...withParticipants[0]!,
+      defenderSnapshot: defenderSnapshots.get(report.missionId) ?? null
+    };
   }
 
   private attachBattleReportParticipantsWithoutSnapshots(reports: readonly BattleReport[]): BattleReport[] {
@@ -6728,9 +6893,49 @@ export class SettlementIndexer {
     return summaries;
   }
 
-  private battleReportsForMissionIds(missionIds: Iterable<string>): BattleReport[] {
+  private battleReportsForMissionIds(
+    missionIds: Iterable<string>,
+    options: { includeRawFallback?: boolean } = {}
+  ): BattleReport[] {
     this.currentMissionReadModelDbVersion();
     this.currentBattleReportReadModelDbVersion();
+    const uniqueMissionIds = [...new Set([...missionIds].filter((missionId) => missionId.length > 0))].sort((left, right) => Number(left) - Number(right));
+    if (uniqueMissionIds.length === 0) return [];
+
+    const reportsByMissionId = new Map<string, BattleReport>();
+    const missingMissionIds: string[] = [];
+    for (const missionId of uniqueMissionIds) {
+      const row = this.db.query(`
+        SELECT report_json
+        FROM indexed_battle_report_read_models
+        WHERE mission_id = ? AND status = 'ready' AND report_json IS NOT NULL
+      `).get(missionId) as Pick<BattleReportReadModelRow, "report_json"> | null;
+      if (!row?.report_json) {
+        missingMissionIds.push(missionId);
+        continue;
+      }
+      try {
+        reportsByMissionId.set(missionId, parseEvent<BattleReport>(row.report_json));
+      } catch {
+        missingMissionIds.push(missionId);
+      }
+    }
+
+    if (options.includeRawFallback !== false) {
+      for (const report of this.rawBattleReportsForMissionIds(missingMissionIds)) {
+        reportsByMissionId.set(report.missionId, report);
+      }
+    }
+
+    return [...reportsByMissionId.values()].sort((left, right) => {
+      const leftBlock = BigInt(left.blockNumber);
+      const rightBlock = BigInt(right.blockNumber);
+      if (leftBlock === rightBlock) return 0;
+      return leftBlock < rightBlock ? 1 : -1;
+    });
+  }
+
+  private rawBattleReportsForMissionIds(missionIds: Iterable<string>): BattleReport[] {
     const uniqueMissionIds = [...new Set([...missionIds].filter((missionId) => missionId.length > 0))].sort((left, right) => Number(left) - Number(right));
     if (uniqueMissionIds.length === 0) return [];
 
@@ -8373,4 +8578,14 @@ function latestEventBlock(events: Array<{ blockNumber: string }>): string | null
   }
 
   return latest?.toString() ?? null;
+}
+
+function reasonText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
 }

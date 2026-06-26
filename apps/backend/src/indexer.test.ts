@@ -4963,6 +4963,10 @@ describe("SettlementIndexer", () => {
         topics: [combatLossesTopic, topic(1776n)],
         data: abiWords(0n, 0n, 0n, 0n, 0n, 0n)
       });
+      expect(writer.battleReportMaterializationStatus("1776")).toMatchObject({
+        status: "ready",
+        error: null
+      });
       writer.applyLog({
         blockNumber: "0x90",
         transactionHash: "0xreturn1776",
@@ -4992,6 +4996,10 @@ describe("SettlementIndexer", () => {
         loot: { metal: "3098", crystal: "1448", deuterium: "454" },
         attackerLosses: { metal: "0", crystal: "0", deuterium: "0" },
         defenderLosses: { metal: "0", crystal: "0", deuterium: "0" }
+      });
+      expect(reader.battleReportMaterializationStatus("1776")).toMatchObject({
+        status: "ready",
+        error: null
       });
     } finally {
       rmSync(dir, { force: true, recursive: true });

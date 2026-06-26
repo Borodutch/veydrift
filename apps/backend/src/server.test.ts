@@ -83,6 +83,7 @@ const fleetMissionRecalledTopic = "0x2c9b31f1abc732f3b6d28e7724439ea4713ae516632
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
 const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const allianceCreatedTopic = "0x4a2634d9b86143d681c41580ee71aad7571fc28bc42c855fcd354bfee4485372";
@@ -2256,9 +2257,15 @@ describe("Veydrift backend", () => {
       data: abiWords(100n, 50n, 0n, 900n, 250n, 0n)
     });
 
+    expect(indexer.battleReportMaterializationStatus("89")).toMatchObject({
+      status: "ready",
+      error: null
+    });
+
     const afterReportResponse = await handler(new Request("http://localhost/mission/89"));
     const afterReportBody = await afterReportResponse.json();
     expect(afterReportResponse.status).toBe(200);
+    expect(afterReportBody.battleReportMaterialization).toEqual({ status: "ready" });
     expect(afterReportBody.battleReport).toMatchObject({
       missionId: "89",
       outcome: "AttackerWin",
@@ -2266,6 +2273,62 @@ describe("Veydrift backend", () => {
       attackerLosses: { metal: "100", crystal: "50", deuterium: "0" },
       defenderLosses: { metal: "900", crystal: "250", deuterium: "0" }
     });
+  });
+
+  test("returns a fast explicit processing state while battle report materialization is pending", async () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    for (const log of completedFleetMissionLogs({ missionId: 91n, owner: attacker, originPlanetId: 7n, targetPlanetId: 9n })) {
+      indexer.applyLog(log);
+    }
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xbattleresolved-91",
+      logIndex: "0x0",
+      removed: false,
+      topics: [attackBattleResolvedTopic, topic(91n), addressTopic(attacker), topic(9n)],
+      data: abiWords(1n, 2n, 12345n, 100n, 50n, 10n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xcombatlosses-91",
+      logIndex: "0x0",
+      removed: false,
+      topics: [combatLossesTopic, topic(91n)],
+      data: abiWords(100n, 50n, 0n, 900n, 250n, 0n)
+    });
+    (indexer as any).db.query(`
+      UPDATE indexed_battle_report_read_models
+      SET status = 'pending',
+        report_json = NULL,
+        error = NULL,
+        attempts = 0,
+        duration_ms = NULL,
+        block_number = '145',
+        updated_at = '2026-06-25T00:00:00.000Z'
+      WHERE mission_id = '91'
+    `).run();
+
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    });
+    const response = await handler(new Request("http://localhost/battle-report/91"));
+    const body = await response.json();
+
+    expect(response.status).toBe(202);
+    expect(body).toMatchObject({
+      error: "battle_report_processing",
+      materialization: { status: "pending" }
+    });
+
+    const missionResponse = await handler(new Request("http://localhost/mission/91"));
+    const missionBody = await missionResponse.json();
+    expect(missionResponse.status).toBe(200);
+    expect(missionBody.battleReport).toBeNull();
+    expect(missionBody.battleReportMaterialization).toMatchObject({ status: "pending" });
   });
 
   test("refreshes warmed shipyard and defense API caches after unit-count logs are indexed", async () => {

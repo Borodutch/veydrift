@@ -136,7 +136,13 @@ export function MissionDetailPage({
             onSelectPlayer={onSelectPlayer}
           />
           <TargetCombatIntelPanel intel={detail?.targetCombatIntel} mission={mission} now={now} />
-          <MissionBattleReport defenderState={detail?.defenderPlanetState ?? undefined} mission={mission} now={now} report={report} />
+          <MissionBattleReport
+            defenderState={detail?.defenderPlanetState ?? undefined}
+            materialization={detail?.battleReportMaterialization}
+            mission={mission}
+            now={now}
+            report={report}
+          />
         </>
       ) : (
         <Notice>No mission selected.</Notice>
@@ -378,11 +384,13 @@ function RouteLegTiming({
 
 function MissionBattleReport({
   defenderState,
+  materialization,
   mission,
   now,
   report,
 }: {
   defenderState?: DefenderPlanetState | undefined;
+  materialization?: MissionDetailResponse["battleReportMaterialization"] | undefined;
   mission: FleetMissionSummary;
   now: number;
   report?: BattleReport | undefined;
@@ -392,6 +400,20 @@ function MissionBattleReport({
   }
 
   if (!report) {
+    if (materialization?.status === "pending") {
+      return (
+        <Notice tone="warning">
+          Battle report is processing. Refresh shortly.
+        </Notice>
+      );
+    }
+    if (materialization?.status === "failed") {
+      return (
+        <Notice tone="warning">
+          Battle report processing failed. The backend will retry after report logs are replayed.
+        </Notice>
+      );
+    }
     if (mission.needsResolution) {
       return (
         <Notice tone="warning">
