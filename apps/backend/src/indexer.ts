@@ -1395,11 +1395,11 @@ export class SettlementIndexer {
     return [...defenders.values()].sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
   }
 
-  battleReport(missionId: string): BattleReport | null {
+  battleReport(missionId: string, options: { includeRawFallback?: boolean } = {}): BattleReport | null {
     const mission = this.fleetMissionSummariesFromCanonicalRowsByIds([missionId])[0] ?? null;
     const reports = mission
-      ? this.indexedBattleReportsForMissions([mission])
-      : this.battleReportsForMissionIds([missionId]);
+      ? this.indexedBattleReportsForMissions([mission], options)
+      : this.battleReportsForMissionIds([missionId], options);
     return reports.find((report) => report.missionId === missionId) ?? null;
   }
 
@@ -6791,7 +6791,10 @@ export class SettlementIndexer {
     return reports;
   }
 
-  private indexedBattleReportsForMissions(missions: readonly FleetMissionSummary[]): BattleReport[] {
+  private indexedBattleReportsForMissions(
+    missions: readonly FleetMissionSummary[],
+    options: { includeRawFallback?: boolean } = {}
+  ): BattleReport[] {
     if (missions.length === 0) return [];
 
     const missionIds = new Set<string>();
@@ -6804,7 +6807,7 @@ export class SettlementIndexer {
     }
 
     const matchingReportsById = new Map<string, BattleReport>();
-    for (const report of this.battleReportsForMissionIds(missionIds)) {
+    for (const report of this.battleReportsForMissionIds(missionIds, options)) {
       matchingReportsById.set(report.missionId, report);
       for (const participant of report.participants) {
         if (missionIds.has(participant.missionId)) {
@@ -6890,7 +6893,10 @@ export class SettlementIndexer {
     return summaries;
   }
 
-  private battleReportsForMissionIds(missionIds: Iterable<string>): BattleReport[] {
+  private battleReportsForMissionIds(
+    missionIds: Iterable<string>,
+    options: { includeRawFallback?: boolean } = {}
+  ): BattleReport[] {
     this.currentMissionReadModelDbVersion();
     this.currentBattleReportReadModelDbVersion();
     const uniqueMissionIds = [...new Set([...missionIds].filter((missionId) => missionId.length > 0))].sort((left, right) => Number(left) - Number(right));
@@ -6915,8 +6921,10 @@ export class SettlementIndexer {
       }
     }
 
-    for (const report of this.rawBattleReportsForMissionIds(missingMissionIds)) {
-      reportsByMissionId.set(report.missionId, report);
+    if (options.includeRawFallback !== false) {
+      for (const report of this.rawBattleReportsForMissionIds(missingMissionIds)) {
+        reportsByMissionId.set(report.missionId, report);
+      }
     }
 
     return [...reportsByMissionId.values()].sort((left, right) => {

@@ -737,17 +737,16 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         // main attack mission. When this mission has no report of its own but belongs to an attack
         // group, fall back to the group's report so a joiner's mission detail still shows the shared
         // outcome and the per-participant loot split (VEY-KANEO-432).
+        const battleReportMaterialization = battleReportMaterializationStatusForMission(indexer, mission);
+        const includeRawReportFallback = battleReportMaterialization.status === "missing";
         const battleReport =
-          indexer.battleReport(missionId)
-          ?? (mission.attackGroupId ? indexer.battleReport(mission.attackGroupId) : null);
-        const battleReportMaterialization = battleReport
-          ? { status: "ready" as const }
-          : battleReportMaterializationStatusForMission(indexer, mission);
+          indexer.battleReport(missionId, { includeRawFallback: includeRawReportFallback })
+          ?? (mission.attackGroupId ? indexer.battleReport(mission.attackGroupId, { includeRawFallback: includeRawReportFallback }) : null);
         return Response.json(
           {
             mission,
             battleReport,
-            battleReportMaterialization,
+            battleReportMaterialization: battleReport ? { status: "ready" as const } : battleReportMaterialization,
             targetCombatIntel: targetCombatIntelForMission(indexer, mission),
             // The defender's surviving fleet/defenses are not in the on-chain combat log, but the
             // indexer tracks the target planet's ship/defense composition (ShipCountChanged + defense
@@ -773,12 +772,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         parseMissionId(missionId);
         if (!indexer) return indexedReadNotReadyResponse("battle report", indexer, { missionId });
         const snapshot = indexer.snapshot();
-        const report = indexer.battleReport(missionId);
-        if (report) {
-          return Response.json(report, {
-            headers: indexedStateHeaders(indexedStateLabel(snapshot))
-          });
-        }
         const mission = indexer.fleetMission(missionId);
         const materialization = mission ? battleReportMaterializationStatusForMission(indexer, mission) : indexer.battleReportMaterializationStatus(missionId);
         if (materialization.status === "pending" || materialization.status === "failed") {
@@ -793,6 +786,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             },
             { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: materialization.status === "pending" ? 202 : 503 }
           );
+        }
+        const report = indexer.battleReport(missionId);
+        if (report) {
+          return Response.json(report, {
+            headers: indexedStateHeaders(indexedStateLabel(snapshot))
+          });
         }
         if (mission && !expectsBattleReport(mission)) {
           return Response.json(
