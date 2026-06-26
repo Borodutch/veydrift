@@ -25,6 +25,7 @@ import {
   decodeMoonChanceReportLog,
   decodeMoonResourcesSettledLog,
   decodeMoonShipCountChangedLog,
+  decodeMoonResourcesChangedLog,
   decodePlanetSettledLog,
   decodePlanetRenamedLog,
   decodeFleetMissionLogs,
@@ -44,6 +45,7 @@ import {
   isInterplanetaryMissileAttackLog,
   isAllianceLog,
   isMoonCreatedLog,
+  isMoonResourcesChangedLog,
   isMoonChanceReportLog,
   isMoonDefenseCountChangedLog,
   isMoonResourcesSettledLog,
@@ -77,6 +79,7 @@ import {
   type IndexedMoonCreatedEvent,
   type IndexedMoonDefenseCountChangedEvent,
   type IndexedMoonShipCountChangedEvent,
+  type IndexedMoonResourcesChangedEvent,
   type IndexedRiftResourceEvent,
   type IndexedShipCountChangedEvent,
   type IndexedDefenseCountChangedEvent,
@@ -1609,11 +1612,14 @@ export class SettlementIndexer {
       : zeroResources();
   }
 
-  // Served ship counts mirror the indexed contract count rows exactly. The contract may lazily settle
-  // due queue output during a later mutating action, but the backend must not pre-project those units
-  // into API counts before the corresponding chain event updates the indexed rows.
   availableShipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
-    return this.shipRows(planetId, durationLevels);
+    const counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId);
+    const completedQueueQuantities = this.completedQueueQuantities(`ship:${planetId}`);
+    return deriveShipRows(
+      (id) => (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0),
+      this.planet(planetId)?.temperature,
+      durationLevels
+    );
   }
 
   // NOTE: the combat-triggered bounded per-planet canonical reconcile (planetReconcileBlock /
@@ -1790,7 +1796,7 @@ export class SettlementIndexer {
   responseCacheVersion(): string {
     // Reader workers do not receive the writer worker's in-memory `stateGeneration`, so route-level
     // caches must include a token persisted into the shared WAL database.
-    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}`;
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}`;
   }
 
   missionResponseCacheVersion(): string {
@@ -1799,6 +1805,33 @@ export class SettlementIndexer {
 
   indexedStateCacheVersion(): string {
     return this.metadata(indexedStateVersionMetadataKey) ?? this.stateGeneration.toString();
+  }
+
+  private productionQueueProjectionCacheVersion(nowSec = nowSeconds()): string {
+    const rows = this.db.query(`
+      SELECT queue_kind, item_id, target_level, quantity, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, backlog_json
+      FROM contract_production_queues
+      WHERE queue_kind IN ('ship', 'defense')
+    `).all() as QueueRow[];
+
+    let completed = 0;
+    let nextReadyAt: number | null = null;
+    for (const row of rows) {
+      const queue = this.productionQueueFromRow(row);
+      if (row.backlog_json) {
+        const backlog = parseEvent<QueueState[]>(row.backlog_json);
+        const sanitizedBacklog = this.sanitizedProductionBacklog(row.queue_kind, queue, Array.isArray(backlog) ? backlog : []);
+        if (sanitizedBacklog.length > 0) queue.backlog = sanitizedBacklog;
+      }
+      const settlement = settleQueueAsOfNow(queue, nowSec);
+      completed += settlement.completed.length;
+      const readyAt = Number(settlement.queue?.readyAt);
+      if (Number.isFinite(readyAt) && readyAt > nowSec) {
+        nextReadyAt = nextReadyAt === null ? readyAt : Math.min(nextReadyAt, readyAt);
+      }
+    }
+
+    return `pq:${completed}:${nextReadyAt ?? "none"}`;
   }
 
   checkpointWal(mode: "PASSIVE" | "TRUNCATE" = "PASSIVE"): Array<{ busy: number; log: number; checkpointed: number }> {
@@ -1891,6 +1924,7 @@ export class SettlementIndexer {
         level: planetId ? this.moonBuildingLevelAsOfNow(planetId, building.id) : 0,
         cost: zeroResources()
       })),
+      fleet: planetId ? this.moonShipRows(planetId) : [],
       queue: planetId ? this.moonQueue(planetId) : null,
       technologyLevels: this.technologyLevels(wallet),
       defenses: moonDefenseRows.map((defense) => ({
@@ -2067,6 +2101,10 @@ export class SettlementIndexer {
     }
     if (isShipCountChangedLog(log)) {
       this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isMoonResourcesChangedLog(log)) {
+      this.applyMoonResourcesChangedEvent(decodeMoonResourcesChangedLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isDefenseCountChangedLog(log)) {
@@ -3003,12 +3041,6 @@ export class SettlementIndexer {
         deuterium_cost TEXT NOT NULL,
         event_json TEXT NOT NULL
       );
-      CREATE TABLE IF NOT EXISTS contract_moon_defense_counts (
-        planet_id TEXT NOT NULL,
-        defense_id INTEGER NOT NULL,
-        count INTEGER NOT NULL,
-        PRIMARY KEY (planet_id, defense_id)
-      );
       CREATE TABLE IF NOT EXISTS contract_moon_chance_reports (
         report_key TEXT PRIMARY KEY,
         target_planet_id TEXT NOT NULL,
@@ -3390,6 +3422,8 @@ export class SettlementIndexer {
         this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
       } else if (isShipCountChangedLog(log)) {
         this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
+      } else if (isMoonResourcesChangedLog(log)) {
+        this.applyMoonResourcesChangedEvent(decodeMoonResourcesChangedLog(log));
       } else if (isDefenseCountChangedLog(log)) {
         this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
       } else if (isMoonShipCountChangedLog(log)) {
@@ -3432,11 +3466,11 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_planet_resources").run();
     this.db.query("DELETE FROM contract_debris_fields").run();
     this.db.query("DELETE FROM contract_moon_chance_reports").run();
+    this.db.query("DELETE FROM contract_moon_resources").run();
+    this.db.query("DELETE FROM contract_moon_ship_counts").run();
     this.db.query("DELETE FROM contract_building_levels").run();
     this.db.query("DELETE FROM contract_defense_counts").run();
     this.db.query("DELETE FROM contract_ship_counts").run();
-    this.db.query("DELETE FROM contract_moon_resources").run();
-    this.db.query("DELETE FROM contract_moon_ship_counts").run();
     this.db.query("DELETE FROM contract_moon_defense_counts").run();
     this.db.query("DELETE FROM indexed_legacy_unit_mutations").run();
     this.db.query("DELETE FROM contract_technology_levels").run();
@@ -3462,6 +3496,8 @@ export class SettlementIndexer {
       this.applyDebrisEvent(decodeDebrisFieldLog(log));
     } else if (isShipCountChangedLog(log)) {
       this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
+    } else if (isMoonResourcesChangedLog(log)) {
+      this.applyMoonResourcesChangedEvent(decodeMoonResourcesChangedLog(log));
     } else if (isDefenseCountChangedLog(log)) {
       this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
     } else if (isMoonShipCountChangedLog(log)) {
@@ -3934,12 +3970,12 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_planet_resources").run();
     this.db.query("DELETE FROM contract_debris_fields").run();
     this.db.query("DELETE FROM contract_moon_chance_reports").run();
+    this.db.query("DELETE FROM contract_moon_resources").run();
+    this.db.query("DELETE FROM contract_moon_ship_counts").run();
     this.db.query("DELETE FROM contract_building_levels").run();
     this.db.query("DELETE FROM contract_defense_counts").run();
     this.db.query("DELETE FROM contract_ship_counts").run();
-    this.db.query("DELETE FROM contract_moon_resources").run();
     this.db.query("DELETE FROM contract_moon_defense_counts").run();
-    this.db.query("DELETE FROM contract_moon_ship_counts").run();
     this.db.query("DELETE FROM contract_technology_levels").run();
     this.db.query("DELETE FROM contract_production_queues").run();
     this.db.query("DELETE FROM contract_moon_building_queues").run();
@@ -4511,6 +4547,18 @@ export class SettlementIndexer {
     );
   }
 
+  private applyMoonResourcesChangedEvent(event: IndexedMoonResourcesChangedEvent): void {
+    this.upsertMoonResourceSnapshot(
+      event.planetId,
+      event.resources,
+      "0",
+      event.transactionHash,
+      event.blockNumber,
+      event.logIndex
+    );
+    this.touch();
+  }
+
   private withKnownPlanetResources(event: SettledPlanetEvent): SettledPlanetEvent {
     if (!isZeroResourcePlaceholder(event)) return event;
 
@@ -4739,6 +4787,18 @@ export class SettlementIndexer {
   }
 
   private applyShipCountChangedEvent(event: IndexedShipCountChangedEvent): void {
+    if (event.eventName === "MoonShipCountChanged") {
+      this.upsertIndexedLevel(
+        "contract_moon_ship_counts",
+        "ship_id",
+        "count",
+        event.planetId,
+        event.shipId,
+        event.total
+      );
+      this.touch();
+      return;
+    }
     this.upsertIndexedLevel(
       "indexed_ship_counts",
       "ship_id",

@@ -29,6 +29,7 @@ const moonDefenseCountChangedTopic = "0x0bf9a31209477c6f81619cdd411e232ee9a5b64e
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b81cef83ac57cb84b4f";
 const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
+const moonResourcesChangedTopic = "0xd1823653b6a3910ee502390b5bf01f05a3b571dc81899a6ac3af3f01fae05c26";
 const moonBuildingStartedTopic = "0x6b41aeb096e643752dad879b8f3875d8657186226c3cf8b6e7a38c27292f215a";
 const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed6eb0ebee81c917b575ed3a";
 const moonDefenseQueuedTopic = "0xa53d76ce638ebf6aee45c30e9622beeafc4e9c2c9bcd3122a72a3a7e00500637";
@@ -2883,7 +2884,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.fleetSlots(player)).toEqual({ active: 5, limit: 5 });
   });
 
-  test("projects elapsed research queues while unit rows stay contract-aligned", () => {
+  test("projects elapsed research queues while available ship rows include lazy-completed queues", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -2937,7 +2938,7 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)).toMatchObject({
       id: 0,
-      count: 9
+      count: 23
     });
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)).toMatchObject({
       id: 1,
@@ -3106,6 +3107,53 @@ describe("SettlementIndexer", () => {
         expect.objectContaining({ id: 0, count: 3 })
       ])
     });
+  });
+
+  test("indexes independent moon resources and moon fleet counts", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xmoon",
+      logIndex: "0x0",
+      topics: [
+        moonCreatedTopic,
+        addressTopic(player),
+        topic(7n)
+      ],
+      data: abiWords(2n, 44n, 9n, 12n, 8777n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x88",
+      transactionHash: "0xmoonresources",
+      logIndex: "0x0",
+      topics: [moonResourcesChangedTopic, topic(7n)],
+      data: abiWords(123n, 456n, 789n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x89",
+      transactionHash: "0xmoonship",
+      logIndex: "0x0",
+      topics: [moonShipCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(5n)
+    });
+
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      resources: {
+        metal: "123",
+        crystal: "456",
+        deuterium: "789"
+      },
+      fleet: expect.arrayContaining([
+        expect.objectContaining({ id: 0, count: 5 })
+      ])
+    });
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
   });
 
   test("persists every production queue kind from indexed contract events", () => {

@@ -128,7 +128,9 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             cargo: cargo,
             ships: ships,
             randomnessRequestId: 0,
-            lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0})
+            lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0}),
+            originIsMoon: false,
+            targetIsMoon: false
         });
 
         VeydriftDefenseHoldStorage.beginHold(
@@ -151,6 +153,119 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             0
         );
         emit FleetMissionCargo(missionId, cargo.metal, cargo.crystal, cargo.deuterium, fuelCost);
+        emit FleetMissionShips(
+            missionId,
+            ships.smallCargo,
+            ships.lightFighter,
+            ships.recycler,
+            ships.colonyShip,
+            ships.largeCargo,
+            ships.heavyFighter,
+            ships.cruiser,
+            ships.battleship,
+            ships.bomber,
+            ships.destroyer,
+            ships.deathstar,
+            ships.battlecruiser,
+            ships.reaper,
+            ships.pathfinder
+        );
+    }
+
+    function launchBodyFleetMission(
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        FleetMissionType missionType,
+        MissionShips calldata ships,
+        Resources calldata cargo,
+        uint16 speedPercent,
+        bool originIsMoon,
+        bool targetIsMoon
+    ) external returns (uint256 missionId) {
+        if (missionType != FleetMissionType.Transport && missionType != FleetMissionType.Deploy) {
+            revert InvalidMissionType(missionType);
+        }
+        if (originPlanetId == targetPlanetId && originIsMoon == targetIsMoon) revert SamePlanet();
+        _requireOwnedBody(originPlanetId, originIsMoon);
+        _requireOwnedBody(targetPlanetId, targetIsMoon);
+        _settleDueCombatArrivals(msg.sender);
+        _requireNoPendingMissionResolutionForPlanet(originPlanetId);
+        _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
+        if (!originIsMoon) _settleResources(originPlanetId);
+        if (!targetIsMoon) _settleResources(targetPlanetId);
+
+        uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
+            _technologyLevels[msg.sender][Technology.Computer]
+        );
+        if (activeFleetMissionCount[msg.sender] >= fleetSlots) {
+            revert FleetSlotLimitReached(fleetSlots);
+        }
+
+        (uint256 capacity, uint256 slowestSpeed) = _missionMovement(msg.sender, ships);
+        if (capacity == 0) revert InvalidQuantity();
+        _requireBodyMissionShips(originPlanetId, originIsMoon, ships);
+
+        uint256 travelDistance = _planetDistance(originPlanetId, targetPlanetId);
+        uint128 fuelCost = _toUint128(
+            _ogameMissionFuelCost(msg.sender, ships, travelDistance, speedPercent, slowestSpeed)
+        );
+        uint256 committedCapacity =
+            uint256(cargo.metal) + cargo.crystal + cargo.deuterium + fuelCost;
+        if (committedCapacity > capacity) {
+            revert CargoCapacityExceeded(capacity, committedCapacity);
+        }
+
+        _spendBodyResources(
+            originPlanetId,
+            originIsMoon,
+            Resources({
+                metal: cargo.metal,
+                crystal: cargo.crystal,
+                deuterium: _toUint128(uint256(cargo.deuterium) + fuelCost)
+            })
+        );
+        _increaseInternalResources(cargo);
+        _debitBodyMissionShips(originPlanetId, originIsMoon, ships);
+
+        uint64 departureAt = _currentTimestamp();
+        uint256 travelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(
+            travelDistance, slowestSpeed, speedPercent, FLEET_UNIVERSE_SPEED
+        );
+        uint64 arrivalAt = (uint256(departureAt) + travelSeconds).toUint64();
+        uint64 returnAt = (uint256(arrivalAt) + travelSeconds).toUint64();
+        missionId = nextFleetId++;
+        activeFleetMissionCount[msg.sender] += 1;
+        _fleetMissions[missionId] = FleetMission({
+            status: FleetMissionStatus.Outbound,
+            missionType: missionType,
+            owner: msg.sender,
+            originPlanetId: originPlanetId,
+            targetPlanetId: targetPlanetId,
+            departureAt: departureAt,
+            arrivalAt: arrivalAt,
+            returnAt: returnAt,
+            fuelCost: fuelCost,
+            cargo: cargo,
+            ships: ships,
+            randomnessRequestId: 0,
+            lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0}),
+            originIsMoon: originIsMoon,
+            targetIsMoon: targetIsMoon
+        });
+        _trackMissionResolution(missionId, _fleetMissions[missionId]);
+
+        emit FleetMissionLaunched(
+            missionId,
+            msg.sender,
+            missionType,
+            originPlanetId,
+            targetPlanetId,
+            arrivalAt,
+            returnAt,
+            0
+        );
+        emit FleetMissionCargo(missionId, cargo.metal, cargo.crystal, cargo.deuterium, fuelCost);
+        emit FleetMissionBodies(missionId, originIsMoon, targetIsMoon);
         emit FleetMissionShips(
             missionId,
             ships.smallCargo,
@@ -213,6 +328,22 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         if (planetRef.owner != msg.sender) revert NotPlanetOwner();
     }
 
+    function _requireOwnedBody(uint256 planetId, bool isMoon) private view {
+        _requirePlanetOwner(planetId);
+        if (isMoon && !_moonExistsForOwner(planetId, msg.sender)) revert NoPlanet();
+    }
+
+    function _moonExistsForOwner(uint256 planetId, address owner_) private view returns (bool) {
+        address moonSystem = _moonSystem;
+        if (moonSystem == address(0)) return false;
+        (bool ok, bytes memory data) =
+            moonSystem.staticcall(abi.encodeWithSignature("moon(uint256)", planetId));
+        if (!ok || data.length < 96) return false;
+        (bool exists,, address moonOwner,,,,) =
+            abi.decode(data, (bool, uint256, address, uint16, uint16, uint64, uint64));
+        return exists && moonOwner == owner_;
+    }
+
     function _requireShips(uint256 planetId, Ship ship, uint32 quantity) private view {
         uint32 available = _shipCounts[planetId][ship];
         if (available < quantity) revert InsufficientShips(ship, available, quantity);
@@ -229,10 +360,50 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         }
     }
 
+    function _requireBodyMissionShips(uint256 planetId, bool isMoon, MissionShips calldata ships)
+        private
+        view
+    {
+        if (!isMoon) {
+            _requireMissionShips(planetId, ships);
+            return;
+        }
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
+            Ship ship = Ship(i);
+            uint32 quantity = _missionShipQuantity(ships, ship);
+            if (quantity != 0) {
+                uint32 available = _moonShipCounts[planetId][ship];
+                if (available < quantity) revert InsufficientShips(ship, available, quantity);
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     function _debitMissionShips(uint256 planetId, MissionShips calldata ships) private {
         for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             Ship ship = Ship(i);
             _debitPlanetShips(planetId, ship, _missionShipQuantity(ships, ship));
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function _debitBodyMissionShips(uint256 planetId, bool isMoon, MissionShips calldata ships)
+        private
+    {
+        if (!isMoon) {
+            _debitMissionShips(planetId, ships);
+            return;
+        }
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
+            Ship ship = Ship(i);
+            uint32 quantity = _missionShipQuantity(ships, ship);
+            if (quantity != 0) {
+                _debitMoonShips(planetId, ship, quantity);
+            }
             unchecked {
                 ++i;
             }
@@ -370,6 +541,25 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         available.deuterium -= cost.deuterium;
         _decreaseInternalResources(cost);
         _emitPlanetSettled(planetId);
+    }
+
+    function _spendBodyResources(uint256 planetId, bool isMoon, Resources memory cost) private {
+        if (!isMoon) {
+            _spend(planetId, cost);
+            return;
+        }
+        Resources storage available = _moonResources[planetId];
+        if (
+            available.metal < cost.metal || available.crystal < cost.crystal
+                || available.deuterium < cost.deuterium
+        ) {
+            revert InsufficientResources(available.metal, available.crystal, available.deuterium);
+        }
+        available.metal -= cost.metal;
+        available.crystal -= cost.crystal;
+        available.deuterium -= cost.deuterium;
+        _decreaseInternalResources(cost);
+        _emitMoonResourcesChanged(planetId);
     }
 
     function _cappedResourceIncrease(

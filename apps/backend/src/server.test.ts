@@ -387,6 +387,7 @@ class MockChainReader implements ChainReader {
         createdAt: "1770000100",
         jumpGateReadyAt: "1770007200"
       },
+      fleet: [],
       buildings: [
         {
           id: 0,
@@ -5757,6 +5758,73 @@ describe("Veydrift backend", () => {
 
     const fresh = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`))).json();
     expect(fresh.ships).toContainEqual(expect.objectContaining({ id: 0, count: 0 }));
+  });
+
+  test("projects lazy-completed shipyard counts after readyAt without mutating indexed counts", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-lazy-shipyard-"));
+    const databasePath = join(dir, "index.sqlite");
+    const beforeReadyAt = 1_770_007_680;
+    const readyAt = beforeReadyAt + 60;
+    const chainReader = new MockChainReader();
+    chainReader.getShipyardState = (async () => {
+      throw new Error("shipyard page must be served from the indexed DB, never a live eth_call");
+    }) as ChainReader["getShipyardState"];
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm shipyard endpoint should not rebuild from chain");
+    };
+
+    try {
+      setSystemTime(new Date(beforeReadyAt * 1_000));
+      const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock, { databasePath });
+      indexer.applyEvent({
+        ...planet,
+        eventName: "PlanetStarted",
+        transactionHash: "0xabc",
+        blockNumber: "123"
+      });
+      indexer.applyLog({
+        blockNumber: "0x7d",
+        transactionHash: "0xship-queued",
+        logIndex: "0x0",
+        topics: [shipQueuedTopic, topic(7n), topic(1n)],
+        data: abiWords(3n, BigInt(readyAt), 9000n, 3000n, 0n)
+      });
+      const handler = createRequestHandler({
+        config: { ...configuredTestConfig, indexDbPath: databasePath },
+        chainReader,
+        enableResponseCache: true,
+        prewarmResponseCache: false,
+        indexer
+      });
+
+      const beforeVersion = indexer.responseCacheVersion();
+      const warmed = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`))).json() as ShipyardState;
+      expect(warmed.ships).toContainEqual(expect.objectContaining({ id: 1, count: 0 }));
+      expect(warmed.queue).toMatchObject({ itemId: 1, quantity: 3, readyAt: String(readyAt) });
+
+      setSystemTime(new Date((readyAt + 1) * 1_000));
+
+      const afterVersion = indexer.responseCacheVersion();
+      const fresh = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard?planetId=7`))).json() as ShipyardState;
+      expect(afterVersion).not.toBe(beforeVersion);
+      expect(fresh.ships).toContainEqual(expect.objectContaining({ id: 1, count: 3 }));
+      expect(fresh.queue).toBeNull();
+
+      const db = new Database(databasePath);
+      try {
+        const stored = db.query(`
+          SELECT count
+          FROM contract_ship_counts
+          WHERE planet_id = '7' AND ship_id = 1
+        `).get() as { count: number } | null;
+        expect(stored?.count ?? 0).toBe(0);
+      } finally {
+        db.close();
+      }
+    } finally {
+      setSystemTime(new Date(1_770_007_680_000));
+      rmSync(dir, { force: true, recursive: true });
+    }
   });
 
   test("invalidates reader-worker shipyard response cache from the shared indexed-state version", async () => {

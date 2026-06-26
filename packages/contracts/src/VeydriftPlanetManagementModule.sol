@@ -299,14 +299,14 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         _landFleetReturn(missionId, mission);
     }
 
-    /// @dev Credits a matured return leg's cargo + ships back to its origin planet and untracks the
+    /// @dev Credits a matured return leg's cargo + ships back to its origin body and untracks the
     ///      mission (VEY-KANEO-468 Phase 2c: deferred from arrival to return-completion so the leg
     ///      stays enumerable for the lazy return settler). Caller must have already confirmed the
     ///      mission is Returning/Recalled, its `returnAt` has elapsed, and no unresolved combat
     ///      arrival is pending on the origin planet (the combat-snapshot integrity gate).
     function _landFleetReturn(uint256 missionId, FleetMission storage mission) private {
-        _creditResources(mission.originPlanetId, mission.cargo);
-        _creditMissionShips(mission.originPlanetId, mission.ships);
+        _creditBodyResources(mission.originPlanetId, mission.originIsMoon, mission.cargo);
+        _creditBodyMissionShips(mission.originPlanetId, mission.originIsMoon, mission.ships);
         mission.status = FleetMissionStatus.Returned;
         activeFleetMissionCount[mission.owner] -= 1;
         IVeydriftResolvedMissionUntracker(address(this)).untrackResolvedFleetMission(missionId);
@@ -669,6 +669,40 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
         _creditPlanetShips(planetId, Ship.Battlecruiser, ships.battlecruiser);
         _creditPlanetShips(planetId, Ship.Reaper, ships.reaper);
         _creditPlanetShips(planetId, Ship.Pathfinder, ships.pathfinder);
+    }
+
+    function _creditBodyResources(uint256 planetId, bool isMoon, Resources memory resources)
+        private
+    {
+        if (!isMoon) {
+            _creditResources(planetId, resources);
+            return;
+        }
+        _moonResources[planetId] = _add(_moonResources[planetId], resources);
+        _emitMoonResourcesChanged(planetId);
+    }
+
+    function _creditBodyMissionShips(uint256 planetId, bool isMoon, MissionShips memory ships)
+        private
+    {
+        if (!isMoon) {
+            _creditMissionShips(planetId, ships);
+            return;
+        }
+        _creditMoonShips(planetId, Ship.SmallCargo, ships.smallCargo);
+        _creditMoonShips(planetId, Ship.LightFighter, ships.lightFighter);
+        _creditMoonShips(planetId, Ship.Recycler, ships.recycler);
+        _creditMoonShips(planetId, Ship.ColonyShip, ships.colonyShip);
+        _creditMoonShips(planetId, Ship.LargeCargo, ships.largeCargo);
+        _creditMoonShips(planetId, Ship.HeavyFighter, ships.heavyFighter);
+        _creditMoonShips(planetId, Ship.Cruiser, ships.cruiser);
+        _creditMoonShips(planetId, Ship.Battleship, ships.battleship);
+        _creditMoonShips(planetId, Ship.Bomber, ships.bomber);
+        _creditMoonShips(planetId, Ship.Destroyer, ships.destroyer);
+        _creditMoonShips(planetId, Ship.Deathstar, ships.deathstar);
+        _creditMoonShips(planetId, Ship.Battlecruiser, ships.battlecruiser);
+        _creditMoonShips(planetId, Ship.Reaper, ships.reaper);
+        _creditMoonShips(planetId, Ship.Pathfinder, ships.pathfinder);
     }
 
     function _addWithCap(uint128 current, uint128 addition, uint128 cap)

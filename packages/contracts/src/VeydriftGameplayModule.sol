@@ -9,7 +9,7 @@ import {VeydriftDefenseHoldStorage} from "./libraries/VeydriftDefenseHoldStorage
 import {VeydriftFleetFuel} from "./libraries/VeydriftFleetFuel.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {IVeydriftAttackRandomnessEngine} from "./interfaces/IVeydriftAttackRandomnessEngine.sol";
-import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
+import {Building, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftCounterplayAllianceSystem {
     function counterplayDefenseFuelContext(
@@ -271,7 +271,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             cargo: cargo,
             ships: ships,
             randomnessRequestId: randomnessRequestId,
-            lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0})
+            lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0}),
+            originIsMoon: false,
+            targetIsMoon: false
         });
         _trackMissionResolution(missionId, _fleetMissions[missionId]);
         if (missionType == FleetMissionType.Attack) {
@@ -419,7 +421,9 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             cargo: cargo,
             ships: ships,
             randomnessRequestId: attackMissionId,
-            lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0})
+            lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0}),
+            originIsMoon: false,
+            targetIsMoon: false
         });
         _fleetCounterplayMissions[attackMissionId].push(missionId);
         _trackCounterplayMissionResolution(attackMissionId, _fleetMissions[missionId]);
@@ -472,28 +476,26 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         FleetMission storage mission = _fleetMissions[missionId];
         _requireActiveMissionOwner(mission);
         if (mission.status == FleetMissionStatus.Returning) revert FleetAlreadyReturning();
-        if (mission.status == FleetMissionStatus.Recalled) revert FleetAlreadyReturning();
         if (mission.status != FleetMissionStatus.Outbound) {
             revert FleetMissionNotResolved(mission.returnAt);
         }
         _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(mission.originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(mission.targetPlanetId);
-        if (_currentTimestamp() >= mission.arrivalAt) revert FleetAlreadyArrived();
+        uint64 currentTime = _currentTimestamp();
+        if (currentTime >= mission.arrivalAt) revert FleetAlreadyArrived();
         uint64 recallDeadline = mission.arrivalAt - FLEET_RECALL_CUTOFF_SECONDS;
-        if (_currentTimestamp() > recallDeadline) revert FleetRecallCutoffPassed(recallDeadline);
+        if (currentTime > recallDeadline) revert FleetRecallCutoffPassed(recallDeadline);
 
         _settleResources(mission.originPlanetId);
         uint128 recallCost = _fleetRecallCost(mission.fuelCost);
         _spend(mission.originPlanetId, Resources({metal: 0, crystal: 0, deuterium: recallCost}));
 
         uint64 elapsed = uint64(
-            VeydriftAntiRaidPrimitives.recallReturnSeconds(
-                _currentTimestamp() - mission.departureAt
-            )
+            VeydriftAntiRaidPrimitives.recallReturnSeconds(currentTime - mission.departureAt)
         );
         mission.status = FleetMissionStatus.Recalled;
-        mission.returnAt = uint64(_currentTimestamp() + elapsed);
+        mission.returnAt = uint64(currentTime + elapsed);
         _untrackMissionResolution(missionId, mission);
         if (_isCounterplayMissionType(mission.missionType)) {
             _untrackCounterplayMissionResolution(mission.randomnessRequestId, mission);
@@ -516,9 +518,11 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function resolveFleetMission(uint256 missionId) external {
         FleetMission storage mission = _fleetMissions[missionId];
         if (mission.status != FleetMissionStatus.Outbound) return;
-        if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
+        uint64 currentTime = _currentTimestamp();
+        if (currentTime < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
+        FleetMissionType missionType = mission.missionType;
 
-        if (mission.missionType == FleetMissionType.Attack) {
+        if (missionType == FleetMissionType.Attack) {
             _settleAttackTargetSnapshot(mission.targetPlanetId, mission.arrivalAt);
             // OGame-style ACS Defend: pull every fleet stationed over this attack's arrival into the
             // attack's counterplay roster so the battle machinery fights them as defenders.
@@ -532,30 +536,26 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         } else {
             _settleResources(mission.targetPlanetId);
         }
-        if (
-            mission.missionType == FleetMissionType.Transport
-                || mission.missionType == FleetMissionType.Deploy
-        ) {
+        if (missionType == FleetMissionType.Transport || missionType == FleetMissionType.Deploy) {
             // Both transport and deploy credit the target's cargo on arrival; share the credit + the
             // single authoritative `_emitPlanetSettled` (VEY-KANEO-475) and branch only on the
             // mission-type-specific bookkeeping that follows.
             _planets[mission.targetPlanetId].resources =
                 _add(_planets[mission.targetPlanetId].resources, mission.cargo);
             _emitPlanetSettled(mission.targetPlanetId);
-            if (mission.missionType == FleetMissionType.Transport) {
+            if (missionType == FleetMissionType.Transport) {
                 mission.cargo = Resources({metal: 0, crystal: 0, deuterium: 0});
                 mission.status = FleetMissionStatus.Returning;
             } else {
                 _creditMissionShips(mission.targetPlanetId, mission.ships);
                 mission.status = FleetMissionStatus.Resolved;
-                mission.returnAt = _currentTimestamp();
+                mission.returnAt = currentTime;
                 activeFleetMissionCount[mission.owner] -= 1;
                 // Deploy is terminal at arrival (ships stay at target, no return leg): untrack now.
                 _untrackMissionResolution(missionId, mission);
             }
         } else if (
-            mission.missionType == FleetMissionType.Attack
-                || mission.missionType == FleetMissionType.Harvest
+            missionType == FleetMissionType.Attack || missionType == FleetMissionType.Harvest
         ) {
             _delegateToCombatModule();
             // Lazy reconcile (VEY-KANEO-468 Phase 2c): untrack only the terminal no-survivor
@@ -571,7 +571,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             mission.status = FleetMissionStatus.Returning;
         }
 
-        emit FleetMissionResolved(missionId, msg.sender, mission.missionType, mission.returnAt);
+        emit FleetMissionResolved(missionId, msg.sender, missionType, mission.returnAt);
         if (mission.status == FleetMissionStatus.Returning) {
             emit FleetMissionReturnExposed(
                 missionId,
@@ -585,19 +585,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
                 mission.cargo.deuterium
             );
         }
-    }
-
-    /// @notice Self-only sink (VEY-KANEO-468 Phase 2c): untracks a fully-completed mission from the
-    ///         resolution maps. The untrack machinery already lives in this module, so routing the
-    ///         deferred return-completion untrack here keeps it out of the bytecode-tight
-    ///         planet-management module while sharing one implementation.
-    function untrackResolvedFleetMission(uint256 missionId) external {
-        if (msg.sender != address(this)) revert Unauthorized(msg.sender);
-        _untrackMissionResolution(missionId, _fleetMissions[missionId]);
-    }
-
-    function launchInterplanetaryMissileAttack(uint256, uint256, Defense, uint32) external {
-        _delegateToCombatModule();
     }
 
     function _requirePlanetOwner(uint256 planetId) private view {
