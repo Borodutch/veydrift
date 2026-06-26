@@ -23,7 +23,7 @@ function parseArgs(argv) {
 }
 
 function git(args) {
-  return execFileSync("git", args, { encoding: "utf8" }).trim();
+  return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
 function diffNames(range) {
@@ -66,7 +66,11 @@ function changedFiles({ base, head = "HEAD", eventName = "local" } = {}) {
   }
 
   if (diffBase && !zeroSha(diffBase)) {
-    return diffNames(`${diffBase}..${diffHead}`);
+    try {
+      return diffNames(`${diffBase}..${diffHead}`);
+    } catch {
+      return ["package.json"];
+    }
   }
 
   return [];
