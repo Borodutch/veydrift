@@ -11,7 +11,7 @@ import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { GalaxyActionButtons, type AttackProtectionStatus, type GalaxyActionState, formatAttackBlockReason } from "./GalaxyView";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
-import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
+import { MoonImage, PlanetMoonIndicator } from "./PlanetMoonIndicator";
 
 interface Props {
   account?: string | undefined;
@@ -282,12 +282,19 @@ export function PlanetDetail({
               </span>
             ) : null}
           </div>
-          {planet.hasMoon && (
-            <div className="flex items-center gap-2 rounded border border-white/10 bg-white/5 px-3 py-2">
-              <div className="h-8 w-8 rounded-full bg-slate-600/30" />
-              <span className="text-sm text-slate-400">{planet.moonName}</span>
+          {planet.hasMoon ? (
+            <div className="rounded border border-white/10 bg-white/5 px-3 py-2">
+              <div className="flex items-center gap-2">
+                <span className="h-8 w-8 overflow-hidden rounded-full border border-cyan-100/30 bg-black/40">
+                  <MoonImage className="h-full w-full object-cover" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-cyan-100">{planet.moonName ?? "Moon"}</span>
+                  <span className="block text-xs text-slate-500">Nested moon body</span>
+                </span>
+              </div>
             </div>
-          )}
+          ) : null}
         </div>
 
         {/* Planet summary */}

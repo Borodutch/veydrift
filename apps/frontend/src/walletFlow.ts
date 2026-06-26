@@ -651,6 +651,12 @@ export type ChainMoonState = {
     durationSeconds?: number;
   }>;
   defenseQueue?: QueueStateResponse | null;
+  jumpGateDestinations?: Array<{
+    planetId: string;
+    label?: string | null;
+    coordinates?: string | null;
+    jumpGateReadyAt?: string | null;
+  }>;
 };
 
 export type ChainResearchState = {

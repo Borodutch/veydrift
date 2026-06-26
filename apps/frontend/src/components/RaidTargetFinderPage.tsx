@@ -32,7 +32,7 @@ import {
 import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton } from "./PageHeader";
-import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
+import { PlanetMoonIndicator, PlanetMoonSubsection } from "./PlanetMoonIndicator";
 import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RaidTargetsSkeleton } from "./LoadingSkeletons";
 import { AfkFlair } from "./AfkFlair";
@@ -668,6 +668,12 @@ export function DebrisTargetRow({
               <span><span className="text-slate-600">ETA </span>{etaLabel(target.etaSeconds, now)}</span>
             </span>
           </div>
+          {target.hasMoon ? (
+            <PlanetMoonSubsection
+              detail="Nested under debris parent"
+              label="Moon"
+            />
+          ) : null}
         </div>
       </div>
       <span className="hidden text-right font-mono text-slate-400 sm:block" title="Distance from your active planet">{distanceLabel(target.distance)}</span>
@@ -836,6 +842,12 @@ export function RaidTargetRow({
             </span>
           </div>
           <PlanetMissionLines className="mt-1" planetId={target.planetId} subtext={missionSubtext} />
+          {target.hasMoon ? (
+            <PlanetMoonSubsection
+              detail="Nested under this raid target"
+              label="Moon"
+            />
+          ) : null}
         </div>
       </div>
 

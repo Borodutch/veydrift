@@ -217,6 +217,17 @@ export type IndexedMoonCreatedEvent = {
   fields: number;
   diameterKm: number;
   createdAt: string;
+  jumpGateReadyAt?: string;
+};
+
+export type IndexedMoonJumpGateEvent = {
+  eventName: "JumpGateJumped";
+  transactionHash: string;
+  blockNumber: string;
+  player: Address;
+  originMoonPlanetId: string;
+  destinationMoonPlanetId: string;
+  nextReadyAt: string;
 };
 
 export type IndexedRiftResourceEvent = {
@@ -740,6 +751,12 @@ export type MoonState = {
   queue: QueueState | null;
   technologyLevels: Record<string, number>;
   defenseQueue: QueueState | null;
+  jumpGateDestinations?: Array<{
+    planetId: string;
+    label?: string | null;
+    coordinates?: string | null;
+    jumpGateReadyAt?: string | null;
+  }>;
 };
 
 export type ResearchState = {
@@ -4710,6 +4727,7 @@ const moonBuildingStartedTopic = "0x6b41aeb096e643752dad879b8f3875d8657186226c3c
 const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed6eb0ebee81c917b575ed3a";
 const moonDefenseQueuedTopic = "0xa53d76ce638ebf6aee45c30e9622beeafc4e9c2c9bcd3122a72a3a7e00500637";
 const moonDefenseCompletedTopic = "0xb84a089b29951e8696b0ef11e5766578a0e1348284a93e4731fcb416d0536a70";
+const jumpGateJumpedTopic = "0xf255456c5522e3e1e2a8063b9e1e2f5cd7243315601b1e8aef2893fe9efc3da6";
 const allianceCreatedTopic = "0x4a2634d9b86143d681c41580ee71aad7571fc28bc42c855fcd354bfee4485372";
 const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425e5b688ec918c2f58df7360e";
 const allianceInviteCreatedTopic = "0x2ebeddd3f0119f5464f0f6acb95cbc1477a11e19b059f3234bbb0a671cf2b4bd";
@@ -4894,6 +4912,10 @@ export function isIndexedQueueCompletedLog(log: RpcLog): boolean {
 
 export function isMoonCreatedLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === moonCreatedTopic;
+}
+
+export function isMoonJumpGateLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === jumpGateJumpedTopic;
 }
 
 export function isRiftResourceLog(log: RpcLog): boolean {
@@ -5333,6 +5355,19 @@ export function decodeMoonCreatedLog(log: RpcLog): IndexedMoonCreatedEvent {
     fields: Number(decodeUintWord(wordAt(words, 3))),
     diameterKm: Number(decodeUintWord(wordAt(words, 4))),
     createdAt: BigInt(log.blockNumber).toString()
+  };
+}
+
+export function decodeMoonJumpGateLog(log: RpcLog): IndexedMoonJumpGateEvent {
+  const words = splitWords(log.data);
+  return {
+    eventName: "JumpGateJumped",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    player: decodeAddressWord(topicAt(log.topics, 1)),
+    originMoonPlanetId: decodeUint(topicAt(log.topics, 2)).toString(),
+    destinationMoonPlanetId: decodeUint(topicAt(log.topics, 3)).toString(),
+    nextReadyAt: decodeUintWord(wordAt(words, 0)).toString()
   };
 }
 

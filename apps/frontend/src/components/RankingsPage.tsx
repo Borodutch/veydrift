@@ -7,7 +7,7 @@ import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
-import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
+import { PlanetMoonIndicator, PlanetMoonSubsection } from "./PlanetMoonIndicator";
 import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RankingsRowsSkeleton } from "./LoadingSkeletons";
 import { AfkFlair } from "./AfkFlair";
@@ -601,6 +601,12 @@ function RankingRow({
                 </span>
               </button>
               <PlanetMissionLines className="pl-2 sm:pl-[34px]" planetId={planet.planetId} subtext={missionLines} />
+              {planet.hasMoon ? (
+                <PlanetMoonSubsection
+                  detail="Nested under parent planet"
+                  label="Moon"
+                />
+              ) : null}
               </div>
             );
           })}

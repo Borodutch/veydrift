@@ -746,6 +746,15 @@
       "512": "/assets/game/sizes/512/style-pass/generated/defenses/small-shield-dome.webp"
     }
   },
+  "/assets/game/style-pass/generated/moons/cratered-cyan-moon.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/moons/cratered-cyan-moon.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/moons/cratered-cyan-moon.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/moons/cratered-cyan-moon.webp"
+    }
+  },
   "/assets/game/style-pass/generated/planets/cold-tundra.webp": {
     "width": 1024,
     "height": 1024,

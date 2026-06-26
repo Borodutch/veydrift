@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { MoonPage, moonBuildingRequirementRows, moonFieldSummary, queueReady } from "../src/components/MoonPage";
+import { MoonPage, moonBuildingRequirementRows, moonFieldSummary, moonJumpGateAvailable, moonJumpGateDestinations, moonJumpGateStatus, queueReady } from "../src/components/MoonPage";
 import type { ChainMoonState } from "../src/walletFlow";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../src/moonActions";
+
+const moonPageSource = await Bun.file(new URL("../src/components/MoonPage.tsx", import.meta.url)).text();
 
 describe("Moon page helpers", () => {
   test("accepts only positive integer moon ids", () => {
@@ -87,6 +89,76 @@ describe("Moon page helpers", () => {
     expect(systemsPanel?.props?.moonState?.resourcesAsOfNow).toEqual({ metal: "111", crystal: "222", deuterium: "333" });
     expect(systemsPanel?.props?.moonState?.ships).toEqual([{ id: 1, count: 4, cost: { metal: "0", crystal: "0", deuterium: "0" } }]);
     expect(systemsPanel?.props?.moonState?.defenses).toEqual([{ id: 2, count: 5, cost: { metal: "0", crystal: "0", deuterium: "0" } }]);
+  });
+
+  test("hides Burning Chickens when the selected planet already has a moon", () => {
+    const page = MoonPage({
+      burningChicken: {
+        configured: true,
+        maxMoonsPerPlayer: 2,
+        moonCount: 1,
+      },
+      canBurnChicken: true,
+      moonState: loadedMoonState({
+        moon: {
+          exists: true,
+          planetId: "7",
+          owner: "0x1111111111111111111111111111111111111111",
+          fields: 3,
+          diameterKm: 8774,
+          createdAt: "1770000000",
+          jumpGateReadyAt: "0",
+        },
+      }),
+    });
+
+    expect(visibleText(page)).not.toContain("Burning Chickens");
+    expect(visibleText(page)).not.toContain("Burn for Moon");
+  });
+
+  test("integrates moon resources and stationed units into the overview instead of a Moon Units section", () => {
+    expect(moonPageSource).toContain("Stationed Units");
+    expect(moonPageSource).toContain("moonState?.ships ?? moonState?.fleet ?? []");
+    expect(moonPageSource).toContain("unitKind === \"ship\" ? shipAsset(unit.id) : defenseAsset(unit.id)");
+    expect(moonPageSource).not.toContain("<h3 className=\"text-sm font-semibold text-white\">Moon Units</h3>");
+  });
+
+  test("shows Jump Gate destinations only when another ready moon gate is available", () => {
+    const baseMoonState = loadedMoonState({
+      moon: {
+        exists: true,
+        planetId: "7",
+        owner: "0x1111111111111111111111111111111111111111",
+        fields: 3,
+        diameterKm: 8774,
+        createdAt: "1770000000",
+        jumpGateReadyAt: "0",
+      },
+      buildings: [{
+        id: 2,
+        key: "jumpGate",
+        label: "Jump Gate",
+        level: 1,
+        cost: { metal: "2000000", crystal: "4000000", deuterium: "2000000" },
+      }],
+    });
+    const withoutDestinations = moonJumpGateDestinations(baseMoonState);
+
+    expect(withoutDestinations).toEqual([]);
+    expect(moonJumpGateAvailable(baseMoonState.moon!, baseMoonState, withoutDestinations)).toBe(false);
+    expect(moonJumpGateStatus(baseMoonState.moon!, baseMoonState, withoutDestinations)).toBe("Needs another moon");
+
+    const readyMoonState = {
+      ...baseMoonState,
+      jumpGateDestinations: [{ planetId: "9", label: "Ice Moon", coordinates: "1:44:9", jumpGateReadyAt: "0" }],
+    };
+    const withDestinations = moonJumpGateDestinations(readyMoonState);
+
+    expect(withDestinations).toEqual([{ planetId: "9", label: "Ice Moon", coordinates: "1:44:9", jumpGateReadyAt: "0" }]);
+    expect(moonJumpGateAvailable(readyMoonState.moon!, readyMoonState, withDestinations)).toBe(true);
+    expect(moonJumpGateStatus(readyMoonState.moon!, readyMoonState, withDestinations)).toBe("1 destination");
+    expect(moonPageSource).toContain("Destination moon");
+    expect(moonPageSource).toContain("Deploy");
   });
 
   test("renders manual Burning Chicken token entry", () => {

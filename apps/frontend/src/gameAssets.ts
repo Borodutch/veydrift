@@ -11,6 +11,13 @@ export type GameAssetMapping<Key extends string> = {
 const SHIP_BASE = "/assets/game/style-pass/generated/ships";
 const DEFENSE_BASE = "/assets/game/style-pass/generated/defenses";
 const RESEARCH_BASE = "/assets/game/style-pass/generated/research";
+const MOON_BASE = "/assets/game/style-pass/generated/moons";
+
+export const moonAsset = {
+  key: "crateredCyanMoon",
+  src: `${MOON_BASE}/cratered-cyan-moon.webp`,
+  status: "generated-preview",
+} as const;
 
 export const shipAssetManifest = [
   { key: "smallCargo", src: `${SHIP_BASE}/small-cargo.webp`, category: "ship", status: "production" },

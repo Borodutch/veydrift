@@ -1,4 +1,4 @@
-import { Flame, Moon, Orbit } from "lucide-preact";
+import { Flame, Orbit } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import { useState } from "preact/hooks";
 import type { Resources } from "../playableMvp";
@@ -6,13 +6,16 @@ import type { MissionShips } from "../galaxyActions";
 import type { ChainMoonState } from "../walletFlow";
 import type { Coordinates } from "../types";
 import { formatCost } from "../buildingDetails";
-import { defenseCatalog } from "../playableMvp";
+import { buildingCatalog, defenseCatalog, shipCatalog } from "../playableMvp";
+import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../moonActions";
 import { formatUserTimestamp } from "../timestampFormat";
 import { PageHeader, RefreshButton } from "./PageHeader";
 import { InlineSyncIndicator } from "./VeydriftLoader";
 import { MoonSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
+import { MoonImage } from "./PlanetMoonIndicator";
+import { OptimizedImage } from "./OptimizedImage";
 
 interface MoonPageProps {
   action?: { status: "idle" | "pending" | "success" | "error"; label?: string } | undefined;
@@ -68,15 +71,17 @@ export function MoonPage({
         title="Moon"
       />
 
-      <ChickenBurnPanel
-        action={action}
-        burningChicken={burningChicken}
-        canBurnChicken={canBurnChicken}
-        hasMoon={hasMoon}
-        onBurnChicken={onBurnChicken}
-        selectedCoordinates={selectedCoordinates}
-        transactionUnavailableReason={transactionUnavailableReason}
-      />
+      {!hasMoon ? (
+        <ChickenBurnPanel
+          action={action}
+          burningChicken={burningChicken}
+          canBurnChicken={canBurnChicken}
+          hasMoon={hasMoon}
+          onBurnChicken={onBurnChicken}
+          selectedCoordinates={selectedCoordinates}
+          transactionUnavailableReason={transactionUnavailableReason}
+        />
+      ) : null}
 
       {hasMoon && moon ? (
         <>
@@ -260,7 +265,7 @@ function NoMoonGuidance({
       <div className="grid gap-4">
         <div className="min-w-0">
           <div className="mb-3 grid h-10 w-10 place-items-center rounded border border-cyan-200/20 bg-cyan-200/10 text-cyan-200">
-            <Moon aria-hidden="true" size={20} strokeWidth={1.8} />
+            <MoonImage className="h-full w-full object-cover" />
           </div>
           <h3 className="text-base font-semibold text-white">No moon in orbit</h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
@@ -338,41 +343,46 @@ function MoonSystemsPanel({
   const fieldSummary = moonFieldSummary(moon, moonState);
   const buildingQueueReady = queueReady(moonState?.queue);
   const defenseQueueReady = queueReady(moonState?.defenseQueue);
+  const jumpGateDestinations = moonJumpGateDestinations(moonState);
+  const jumpGateAvailable = moonJumpGateAvailable(moon, moonState, jumpGateDestinations);
 
   return (
     <div className="grid gap-4">
-      <section className="rounded-md border border-white/10 bg-[#101624] p-4">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <MoonMetric icon={Moon} label="Diameter" value={moon.diameterKm.toLocaleString() + " km"} />
-          <MoonMetric icon={Orbit} label="Fields" value={moon.fields.toLocaleString()} />
-          <MoonMetric icon={Orbit} label="Jump Gate" value={formatMoonReadyAt(moon.jumpGateReadyAt)} />
-        </div>
-      </section>
-
-      <section className="rounded-md border border-white/10 bg-[#101624] p-4">
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <div>
-            <h3 className="text-sm font-semibold text-white">Moon Resources</h3>
-            <p className="mt-1 text-xs text-slate-400">
-              Moons keep a separate balance. Transport resources here before starting moon structures.
-            </p>
-            <div className="mt-2 grid gap-2 sm:grid-cols-3">
-              {moonResourceRows(moonState).map((resource) => (
-                <div className="rounded border border-white/10 bg-black/15 p-3" key={resource.label}>
-                  <div className="text-[10px] font-semibold uppercase tracking-normal text-cyan-200/80">{resource.label}</div>
-                  <div className="mt-1 text-sm font-semibold text-slate-100">{resource.value}</div>
-                </div>
-              ))}
+      <section className="overflow-hidden rounded-md border border-white/10 bg-[#101624]">
+        <div className="grid lg:grid-cols-[minmax(220px,0.8fr)_minmax(0,1.2fr)]">
+          <div className="relative min-h-56 overflow-hidden bg-black/40">
+            <MoonImage className="absolute inset-0 h-full w-full object-cover" loading="eager" />
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_45%_25%,transparent,rgba(5,7,13,0.18)_42%,rgba(5,7,13,0.86)_100%)]" />
+            <div className="absolute bottom-3 left-3 rounded border border-cyan-200/25 bg-black/55 px-2 py-1 text-xs font-semibold text-cyan-100">
+              Moon orbiting planet #{moon.planetId}
             </div>
           </div>
-          <div>
-            <h3 className="text-sm font-semibold text-white">Moon Units</h3>
-            <p className="mt-1 text-xs text-slate-400">
-              Jump Gate moves stationed moon ships only; it never carries resources or spends deuterium.
-            </p>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              <MoonUnitList title="Ships" units={moonState?.ships ?? []} unitPrefix="Ship" />
-              <MoonUnitList title="Defenses" units={moonState?.defenses ?? []} unitPrefix="Defense" />
+          <div className="grid gap-4 p-4">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <MoonMetric icon={Orbit} label="Diameter" value={moon.diameterKm.toLocaleString() + " km"} />
+              <MoonMetric icon={Orbit} label="Fields" value={`${fieldSummary.used} / ${fieldSummary.capacity}`} />
+              <MoonMetric icon={Orbit} label="Jump Gate" value={moonJumpGateStatus(moon, moonState, jumpGateDestinations)} />
+            </div>
+            <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+              <div>
+                <h3 className="text-sm font-semibold text-white">Resources</h3>
+                <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                  {moonResourceRows(moonState).map((resource) => (
+                    <div className="rounded border border-white/10 bg-black/15 p-3" key={resource.label}>
+                      <div className="text-[10px] font-semibold uppercase tracking-normal text-cyan-200/80">{resource.label}</div>
+                      <div className="mt-1 text-sm font-semibold text-slate-100">{resource.value}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-white">Stationed Units</h3>
+                <p className="mt-1 text-xs text-slate-400">Moon fleets and defenses stay separate from the parent planet.</p>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  <MoonUnitList title="Ships" units={moonState?.ships ?? moonState?.fleet ?? []} unitKind="ship" />
+                  <MoonUnitList title="Defenses" units={moonState?.defenses ?? []} unitKind="defense" />
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -401,12 +411,17 @@ function MoonSystemsPanel({
             const requirements = moonBuildingRequirementRows(building, moon, moonState);
             return (
               <div className="rounded border border-white/10 bg-black/15 p-3" key={building.key}>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="min-w-0 truncate text-sm font-semibold text-slate-100">{building.label}</span>
-                  <span className="shrink-0 text-xs text-signal">L{building.level}</span>
+                <div className="flex items-start gap-2">
+                  <CatalogImage alt="" src={moonBuildingAsset(building.key)} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate text-sm font-semibold text-slate-100">{building.label}</span>
+                      <span className="shrink-0 text-xs text-signal">L{building.level}</span>
+                    </div>
+                    <div className="mt-2 text-xs text-slate-400">{formatCost(resourcesFromChain(building.cost))}</div>
+                    <div className="mt-1 text-xs text-slate-500">{moonBuildingEffect(building.key)}</div>
+                  </div>
                 </div>
-                <div className="mt-2 text-xs text-slate-400">{formatCost(resourcesFromChain(building.cost))}</div>
-                <div className="mt-1 text-xs text-slate-500">{moonBuildingEffect(building.key)}</div>
                 <RequirementRows rows={requirements} />
                 {onStartBuilding ? (
                   <button
@@ -457,9 +472,9 @@ function MoonSystemsPanel({
       <section className="rounded-md border border-white/10 bg-[#101624] p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-white">Moon Defenses</h3>
+            <h3 className="text-sm font-semibold text-white">Moon Shipyard and Defenses</h3>
             <p className="text-xs text-slate-400">
-              Defenses use the moon Shipyard and stay separate from planet defenses.
+              Moon defenses use the same compact catalog pattern as the planet Defenses screen.
             </p>
           </div>
         </div>
@@ -469,14 +484,19 @@ function MoonSystemsPanel({
             const label = catalog?.label ?? `Defense ${defense.id}`;
             return (
               <div className="rounded border border-white/10 bg-black/15 p-3" key={defense.id}>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="min-w-0 truncate text-sm font-semibold text-slate-100">{label}</span>
-                  <span className="shrink-0 text-xs text-signal">x{defense.count}</span>
+                <div className="flex items-start gap-2">
+                  <CatalogImage alt="" src={defenseAsset(defense.id)} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate text-sm font-semibold text-slate-100">{label}</span>
+                      <span className="shrink-0 text-xs text-signal">x{defense.count}</span>
+                    </div>
+                    <div className="mt-2 text-xs text-slate-400">{formatCost(resourcesFromChain(defense.cost))}</div>
+                    {defense.durationSeconds ? (
+                      <div className="mt-1 text-xs text-slate-500">Build time {formatDurationSeconds(defense.durationSeconds)}</div>
+                    ) : null}
+                  </div>
                 </div>
-                <div className="mt-2 text-xs text-slate-400">{formatCost(resourcesFromChain(defense.cost))}</div>
-                {defense.durationSeconds ? (
-                  <div className="mt-1 text-xs text-slate-500">Build time {formatDurationSeconds(defense.durationSeconds)}</div>
-                ) : null}
                 {onStartDefense ? (
                   <button
                     className="mt-3 h-8 w-full rounded border border-cyan-200/20 bg-cyan-200/10 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
@@ -513,14 +533,26 @@ function MoonSystemsPanel({
         ) : null}
       </section>
 
+      {jumpGateAvailable ? (
       <section className="rounded-md border border-white/10 bg-[#101624] p-4">
         <div>
           <h3 className="text-sm font-semibold text-white">Jump Gate</h3>
           <p className="mt-1 text-xs text-slate-400">
-            Requires owned moons with ready Jump Gates at both ends. Enter ship counts only; use Transport or Deploy missions for resources.
+            Deploy stationed moon ships to another owned moon with a ready Jump Gate. Resources stay on the origin moon.
           </p>
           <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_6rem_6rem_auto]">
-            <input className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100" inputMode="numeric" onInput={(event) => setJumpDestination(event.currentTarget.value)} placeholder="Destination planet ID" value={jumpDestination} />
+            <select
+              className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100"
+              onChange={(event) => setJumpDestination(event.currentTarget.value)}
+              value={jumpDestination}
+            >
+              <option value="">Destination moon</option>
+              {jumpGateDestinations.map((destination) => (
+                <option key={destination.planetId} value={destination.planetId}>
+                  {destination.label?.trim() || destination.coordinates?.trim() || `Moon #${destination.planetId}`}
+                </option>
+              ))}
+            </select>
             <input className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100" inputMode="numeric" onInput={(event) => setJumpSmallCargo(event.currentTarget.value)} placeholder="Small" value={jumpSmallCargo} />
             <input className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100" inputMode="numeric" onInput={(event) => setJumpLargeCargo(event.currentTarget.value)} placeholder="Large" value={jumpLargeCargo} />
             <button
@@ -530,11 +562,12 @@ function MoonSystemsPanel({
               title={!canTransact ? transactionUnavailableReason : undefined}
               type="button"
             >
-              Jump
+              Deploy
             </button>
           </div>
         </div>
       </section>
+      ) : null}
     </div>
   );
 }
@@ -551,11 +584,11 @@ function moonResourceRows(moonState?: ChainMoonState | null | undefined): Array<
 function MoonUnitList({
   title,
   units,
-  unitPrefix,
+  unitKind,
 }: {
   title: string;
   units: Array<{ id: number; count: number }>;
-  unitPrefix: string;
+  unitKind: "ship" | "defense";
 }) {
   const visibleUnits = units.filter((unit) => unit.count > 0);
   return (
@@ -564,8 +597,9 @@ function MoonUnitList({
       {visibleUnits.length > 0 ? (
         <div className="mt-2 grid gap-1 text-xs text-slate-300">
           {visibleUnits.map((unit) => (
-            <div className="flex items-center justify-between gap-2" key={unit.id}>
-              <span>{unitPrefix} #{unit.id}</span>
+            <div className="grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-2" key={unit.id}>
+              <CatalogImage alt="" compact src={unitKind === "ship" ? shipAsset(unit.id) : defenseAsset(unit.id)} />
+              <span className="min-w-0 truncate">{unitKind === "ship" ? shipLabel(unit.id) : moonDefenseLabel(unit.id)}</span>
               <span className="font-mono text-slate-100">{unit.count.toLocaleString()}</span>
             </div>
           ))}
@@ -575,6 +609,81 @@ function MoonUnitList({
       )}
     </div>
   );
+}
+
+function CatalogImage({
+  alt,
+  compact = false,
+  src,
+}: {
+  alt: string;
+  compact?: boolean | undefined;
+  src: string;
+}) {
+  return (
+    <span className={`${compact ? "h-6 w-6" : "h-11 w-11"} shrink-0 overflow-hidden rounded border border-white/10 bg-black/30`}>
+      <OptimizedImage
+        alt={alt}
+        className="h-full w-full object-cover"
+        loading="lazy"
+        sizes="icon"
+        src={src}
+      />
+    </span>
+  );
+}
+
+function shipLabel(id: number): string {
+  return shipCatalog.find((ship) => ship.id === id)?.label ?? `Ship ${id}`;
+}
+
+function shipAsset(id: number): string {
+  const ship = shipCatalog.find((item) => item.id === id);
+  return ship ? shipAssetByKey[ship.key] : shipAssetByKey.smallCargo;
+}
+
+function defenseAsset(id: number): string {
+  const defense = defenseCatalog.find((item) => item.id === id);
+  return defense ? defenseAssetByKey[defense.key] : defenseAssetByKey.rocketLauncher;
+}
+
+function moonBuildingAsset(key: ChainMoonState["buildings"][number]["key"]): string {
+  const fallback = "/assets/game/style-pass/generated/buildings/terraformer-mid.webp";
+  if (key === "lunarBase") return buildingCatalog.find((item) => item.key === "terraformer")?.asset ?? fallback;
+  if (key === "roboticsFactory") return buildingCatalog.find((item) => item.key === "roboticsFactory")?.asset ?? fallback;
+  if (key === "shipyard") return buildingCatalog.find((item) => item.key === "shipyard")?.asset ?? fallback;
+  return buildingCatalog.find((item) => item.key === "interdimensionalRiftStabilizer")?.asset ?? fallback;
+}
+
+type MoonJumpGateDestination = NonNullable<ChainMoonState["jumpGateDestinations"]>[number];
+
+export function moonJumpGateDestinations(moonState: ChainMoonState | null | undefined): MoonJumpGateDestination[] {
+  return (moonState?.jumpGateDestinations ?? []).filter((destination) => (
+    isPositiveIntegerInput(destination.planetId)
+      && formatMoonReadyAt(destination.jumpGateReadyAt) === "Ready"
+  ));
+}
+
+export function moonJumpGateAvailable(
+  moon: NonNullable<ChainMoonState["moon"]>,
+  moonState: ChainMoonState | null | undefined,
+  destinations: MoonJumpGateDestination[],
+): boolean {
+  const hasBuiltGate = (moonState?.buildings ?? []).some((building) => building.key === "jumpGate" && building.level > 0);
+  return hasBuiltGate && formatMoonReadyAt(moon.jumpGateReadyAt) === "Ready" && destinations.length > 0;
+}
+
+export function moonJumpGateStatus(
+  moon: NonNullable<ChainMoonState["moon"]>,
+  moonState: ChainMoonState | null | undefined,
+  destinations: MoonJumpGateDestination[],
+): string {
+  const hasBuiltGate = (moonState?.buildings ?? []).some((building) => building.key === "jumpGate" && building.level > 0);
+  if (!hasBuiltGate) return "Not built";
+  const readyLabel = formatMoonReadyAt(moon.jumpGateReadyAt);
+  if (readyLabel !== "Ready") return readyLabel;
+  if (destinations.length === 0) return "Needs another moon";
+  return `${destinations.length} destination${destinations.length === 1 ? "" : "s"}`;
 }
 
 function formatMoonAmount(value: string | number): string {
