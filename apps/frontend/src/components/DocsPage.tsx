@@ -1,4 +1,4 @@
-import { BookOpen, Bot, Hash } from "lucide-preact";
+import { BookOpen, Bot, GitFork, Hash } from "lucide-preact";
 import { docsPageForSlug, docsPages, docsSlugFromPath } from "../docs/docsSource";
 import { InlineMarkdown } from "../docs/inlineMarkdown";
 import { parseMarkdown, type MarkdownNode } from "../docs/markdown";
@@ -25,6 +25,17 @@ export function DocsPage({ pathname = "/docs" }: DocsPageProps) {
             Veydrift Docs
           </a>
           <nav className="flex items-center gap-2 text-xs">
+            <a
+              aria-label="Veydrift GitHub repository"
+              className="inline-flex items-center gap-1 rounded border border-white/15 bg-white/[0.06] px-3 py-1.5 font-semibold text-slate-200 hover:bg-white/10 hover:text-white"
+              href="https://github.com/Borodutch/veydrift"
+              rel="noopener noreferrer"
+              target="_blank"
+              title="Veydrift GitHub repository"
+            >
+              <GitFork className="h-3.5 w-3.5" />
+              GitHub
+            </a>
             <a className="inline-flex items-center gap-1 rounded border border-cyan-300/30 bg-cyan-300/10 px-3 py-1.5 font-semibold text-cyan-100 hover:bg-cyan-300/20" href="/docs.md">
               <Bot className="h-3.5 w-3.5" />
               AI Reference

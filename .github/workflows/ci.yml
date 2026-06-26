@@ -8,85 +8,36 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(github.event_name == 'pull_request' && github.event.pull_request.user.login == 'backmeupplz' && vars.VEYDRIFT_LOCAL_CI_RUNNER_LABELS || '["ubuntu-latest"]') }}
     permissions:
       contents: read
     timeout-minutes: 10
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - name: Configure git default branch
-        run: git config --global init.defaultBranch main
-
       - name: Check out repository
         uses: actions/checkout@v5
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Determine changed areas
         id: scope
-        shell: bash
         env:
           BASE_REF: ${{ github.base_ref }}
           EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          HEAD_REF: ${{ github.sha }}
         run: |
-          set -euo pipefail
-
-          if [[ "$EVENT_NAME" != "pull_request" ]]; then
-            {
-              echo "frontend=true"
-              echo "backend=true"
-              echo "universe=true"
-              echo "contracts=true"
-              echo "circuits=true"
-              echo "full_build=true"
-            } >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git fetch --no-tags --depth=1 origin "$BASE_REF"
-          changed="$(git diff --name-only "origin/$BASE_REF"...HEAD)"
-
-          matches() {
-            grep -Eq "$1" <<< "$changed"
-          }
-
-          repo_wide='^(\.github/workflows/ci\.yml|package\.json|bun\.lockb)$'
-          if matches "$repo_wide"; then
-            frontend=true
-            backend=true
-            universe=true
-            contracts=true
-            circuits=true
-          else
-            frontend=false
-            backend=false
-            universe=false
-            contracts=false
-            circuits=false
-
-            if matches '^(apps/frontend|packages/universe)/'; then frontend=true; fi
-            if matches '^(apps/backend|packages/universe)/'; then backend=true; fi
-            if matches '^packages/universe/'; then universe=true; fi
-            if matches '^packages/contracts/'; then contracts=true; fi
-            if matches '^packages/circuits/'; then circuits=true; fi
-          fi
-
-          {
-            echo "frontend=$frontend"
-            echo "backend=$backend"
-            echo "universe=$universe"
-            echo "contracts=$contracts"
-            echo "circuits=$circuits"
-            echo "full_build=false"
-          } >> "$GITHUB_OUTPUT"
+          node scripts/ci-scope.mjs --github-output "$GITHUB_OUTPUT"
 
       - name: Set up Bun
+        if: steps.scope.outputs.any_package_check == 'true'
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.1.42
 
       - name: Cache Bun packages
+        if: steps.scope.outputs.any_package_check == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
@@ -110,61 +61,17 @@ jobs:
             foundry-${{ runner.os }}-
 
       - name: Install dependencies
+        if: steps.scope.outputs.any_package_check == 'true'
         run: bun install --frozen-lockfile
 
       - name: Run scoped checks
-        shell: bash
+        env:
+          CI_SCOPE_FRONTEND: ${{ steps.scope.outputs.frontend }}
+          CI_SCOPE_BACKEND: ${{ steps.scope.outputs.backend }}
+          CI_SCOPE_UNIVERSE: ${{ steps.scope.outputs.universe }}
+          CI_SCOPE_CONTRACTS: ${{ steps.scope.outputs.contracts }}
+          CI_SCOPE_CIRCUITS: ${{ steps.scope.outputs.circuits }}
+          CI_SCOPE_STORAGE_LAYOUT: ${{ steps.scope.outputs.storage_layout }}
+          CI_SCOPE_FULL_BUILD: ${{ steps.scope.outputs.full_build }}
         run: |
-          set -euo pipefail
-
-          w='warn'
-          e='error'
-          pattern="(^|[^[:alpha:]])(${w}ing|${w}:|${e}:)"
-
-          run_logged() {
-            local label="$1"
-            shift
-            local log="$RUNNER_TEMP/${label}.log"
-            "$@" 2>&1 | tee "$log"
-
-            if grep -Eiq "$pattern" "$log"; then
-              echo "::$e::${label} output contains flagged output."
-              exit 1
-            fi
-          }
-
-          if [[ "${{ steps.scope.outputs.universe }}" == "true" ]]; then
-            run_logged universe-check bun run check:universe
-            run_logged universe-test bun run test:universe
-          fi
-
-          if [[ "${{ steps.scope.outputs.backend }}" == "true" ]]; then
-            run_logged backend-check bun run check:backend
-            run_logged backend-test bun run test:backend
-          fi
-
-          if [[ "${{ steps.scope.outputs.frontend }}" == "true" ]]; then
-            run_logged frontend-precheck bash -lc 'cd apps/frontend && bun scripts/generate-image-variants.mjs'
-            run_logged frontend-typecheck bash -lc 'cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json'
-          fi
-
-          if [[ "${{ steps.scope.outputs.circuits }}" == "true" ]]; then
-            run_logged circuits-check bun run check:circuits
-          fi
-
-          if [[ "${{ steps.scope.outputs.contracts }}" == "true" ]]; then
-            run_logged contracts-check bun run check:contracts
-            run_logged contracts-test bun run test:contracts
-          fi
-
-          if [[ "${{ steps.scope.outputs.full_build }}" == "true" ]]; then
-            run_logged build bun run build
-          fi
-
-          if [[ "${{ steps.scope.outputs.frontend }}" != "true" \
-            && "${{ steps.scope.outputs.backend }}" != "true" \
-            && "${{ steps.scope.outputs.universe }}" != "true" \
-            && "${{ steps.scope.outputs.contracts }}" != "true" \
-            && "${{ steps.scope.outputs.circuits }}" != "true" ]]; then
-            echo "No package checks needed for this change."
-          fi
+          node scripts/ci-run-scoped-checks.mjs
