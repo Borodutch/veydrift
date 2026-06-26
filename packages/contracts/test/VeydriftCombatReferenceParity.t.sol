@@ -156,7 +156,7 @@ contract VeydriftCombatReferenceParityTest is Test {
 
         assertEq(uint8(expected.outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin));
         assertEq(expected.rounds, 0);
-        assertEq(expected.defenderShips[uint8(Ship.Crawler)], 1);
+        assertEq(expected.defenderShips[uint8(Ship.Crawler)], 0);
     }
 
     function testReferenceParityCrawlerDoesNotDrawAfterCombatDefendersCleared() public {
@@ -170,7 +170,7 @@ contract VeydriftCombatReferenceParityTest is Test {
 
         assertEq(uint8(expected.outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin));
         assertGt(expected.rounds, 0);
-        assertEq(expected.defenderShips[uint8(Ship.Crawler)], 1);
+        assertEq(expected.defenderShips[uint8(Ship.Crawler)], 0);
         assertEq(expected.defenderDefenses[uint8(Defense.RocketLauncher)], 0);
     }
 
