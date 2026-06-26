@@ -4914,19 +4914,19 @@ describe("Veydrift backend", () => {
         deuterium: "4800"
       }
     });
-    // Ready building/research queues are projected complete for public read state; unit counts stay
-    // aligned to the indexed contract ship/defense count rows until chain events update them.
+    // Ready building/research/unit queues are projected complete for public read state; contract
+    // events still remain the persisted source, and this is request-local read projection.
     expect(occupiedPlanet.publicState.queues.building).toBeNull();
     expect(occupiedPlanet.publicState.queues.research).toBeNull();
     expect(occupiedPlanet.publicState.buildings).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 0, level: 2 })
     ]));
     expect(occupiedPlanet.publicState.fleet).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, count: 2 }),
+      expect.objectContaining({ id: 0, count: 3 }),
       expect.objectContaining({ id: 9, count: 5 })
     ]));
     expect(occupiedPlanet.publicState.defenses).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 0, count: 3 })
+      expect.objectContaining({ id: 0, count: 5 })
     ]));
     expect(occupiedPlanet.publicState.stationedDefenders).toEqual([
       expect.objectContaining({
@@ -7062,6 +7062,88 @@ describe("Veydrift backend", () => {
       id: 0,
       count: 1
     }));
+  });
+
+  test("serves lazy-completed ship and defense queues as present in indexed reads", async () => {
+    const chainReader = new MockChainReader();
+    chainReader.getShipyardState = async () => {
+      throw new Error("shipyard page must not use live reads for lazy projection");
+    };
+    chainReader.getDefenseState = async () => {
+      throw new Error("defenses page must not use live reads for lazy projection");
+    };
+    chainReader.listSettledPlanetEvents = async () => {
+      throw new Error("warm unit endpoints should not rebuild from chain");
+    };
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "123"
+    });
+    const now = Math.floor(Date.now() / 1_000);
+    indexer.applyLog({
+      blockNumber: "0x7d",
+      transactionHash: "0xship-base",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(4n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x7e",
+      transactionHash: "0xship-active-ready",
+      logIndex: "0x0",
+      topics: [shipQueuedTopic, topic(7n), topic(2n)],
+      data: abiWords(1n, BigInt(now - 120), 100n, 100n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x7f",
+      transactionHash: "0xship-backlog-ready",
+      logIndex: "0x0",
+      topics: [shipQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(3n, BigInt(now - 60), 1n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xdefense-base",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(10n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xdefense-active-ready",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(1n)],
+      data: abiWords(2n, BigInt(now - 120), 100n, 100n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x82",
+      transactionHash: "0xdefense-backlog-ready",
+      logIndex: "0x0",
+      topics: [defenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(5n, BigInt(now - 60), 1n, 0n, 0n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const shipyardBody = await (await handler(new Request(`http://localhost/wallet/${player}/shipyard`))).json();
+    const defensesBody = await (await handler(new Request(`http://localhost/wallet/${player}/defenses`))).json();
+
+    expect(shipyardBody.queue).toBeNull();
+    expect(shipyardBody.ships.filter((ship: { count: number }) => ship.count > 0).map(({ id, count }: { id: number; count: number }) => ({ id, count }))).toEqual([
+      { id: 0, count: 7 },
+      { id: 2, count: 1 }
+    ]);
+    expect(defensesBody.queue).toBeNull();
+    expect(defensesBody.defenses.filter((defense: { count: number }) => defense.count > 0).map(({ id, count }: { id: number; count: number }) => ({ id, count }))).toEqual([
+      { id: 0, count: 15 },
+      { id: 1, count: 2 }
+    ]);
   });
 
   test("keeps selected planet id in warm indexed shipyard responses", async () => {
