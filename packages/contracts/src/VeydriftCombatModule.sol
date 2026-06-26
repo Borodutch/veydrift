@@ -546,8 +546,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         view
         returns (uint256 units)
     {
-        for (uint8 i = 0; i <= MAX_SHIP_ID;) {
-            if (_isPlanetCombatShip(Ship(i))) {
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
+            if (i != uint8(Ship.SolarSatellite)) {
                 units += _shipCounts[planetId][Ship(i)];
             }
             unchecked {
@@ -578,10 +578,6 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
                 ++i;
             }
         }
-    }
-
-    function _isPlanetCombatShip(Ship ship) private pure returns (bool) {
-        return uint8(ship) <= uint8(Ship.Pathfinder) && ship != Ship.SolarSatellite;
     }
 
     function _battleRoundSnapshot(uint256 attackMissionId, FleetMission storage mission)

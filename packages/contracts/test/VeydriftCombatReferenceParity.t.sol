@@ -154,9 +154,7 @@ contract VeydriftCombatReferenceParityTest is Test {
         VeydriftCombatReferenceSimulator.BattleResult memory expected =
             _assertReferenceParity(fixture, 651);
 
-        assertEq(
-            uint8(expected.outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin)
-        );
+        assertEq(uint8(expected.outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin));
         assertEq(expected.rounds, 0);
         assertEq(expected.defenderShips[uint8(Ship.Crawler)], 1);
     }
@@ -170,9 +168,7 @@ contract VeydriftCombatReferenceParityTest is Test {
         VeydriftCombatReferenceSimulator.BattleResult memory expected =
             _assertReferenceParity(fixture, 652);
 
-        assertEq(
-            uint8(expected.outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin)
-        );
+        assertEq(uint8(expected.outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin));
         assertGt(expected.rounds, 0);
         assertEq(expected.defenderShips[uint8(Ship.Crawler)], 1);
         assertEq(expected.defenderDefenses[uint8(Defense.RocketLauncher)], 0);
