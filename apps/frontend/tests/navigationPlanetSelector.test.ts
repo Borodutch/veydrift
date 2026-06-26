@@ -27,6 +27,14 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).not.toContain("<option");
   });
 
+  test("contains mobile planet picker horizontal overflow inside its own scroller", () => {
+    expect(playableSource).toContain('aria-label="Select planet" className="min-w-0 max-w-full overflow-x-auto overscroll-x-contain"');
+    expect(playableSource).toContain('className="flex w-max min-w-full gap-2 pb-1"');
+    expect(playableSource).toContain('className="playable-starfield relative isolate min-h-dvh overflow-hidden bg-[#05070f] text-slate-100"');
+    expect(playableSource).toContain('className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6"');
+    expect(playableSource).not.toContain("flex min-w-max gap-2 pb-1");
+  });
+
   test("shows the planet picker for single-planet wallets across viewports", () => {
     // The picker must render for any wallet with at least one planet
     // (not gated behind walletPlanets.length > 1).
