@@ -1,5 +1,5 @@
 import preact from "@preact/preset-vite";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineConfig, type Plugin } from "vite";
 import {
@@ -35,10 +35,39 @@ export default defineConfig(({ mode }) => {
     plugins: [
       preact(),
       htmlEnvDefaults(htmlEnv),
+      docsMarkdownAsset(),
       farcasterManifest(mode, htmlEnv),
     ],
   };
 });
+
+const docsMarkdownUrl = new URL("./src/docs/content/docs.md", import.meta.url);
+
+function docsMarkdownAsset(): Plugin {
+  return {
+    name: "veydrift-docs-markdown-asset",
+    configureServer(server) {
+      server.middlewares.use((request, response, next) => {
+        const pathname = request.url ? new URL(request.url, "http://localhost").pathname : "";
+        if (pathname !== "/docs.md") {
+          next();
+          return;
+        }
+
+        response.statusCode = 200;
+        response.setHeader("content-type", "text/markdown; charset=utf-8");
+        response.end(readFileSync(docsMarkdownUrl));
+      });
+    },
+    generateBundle() {
+      this.emitFile({
+        type: "asset",
+        fileName: "docs.md",
+        source: readFileSync(docsMarkdownUrl, "utf8"),
+      });
+    },
+  };
+}
 
 function htmlEnvDefaults(env: MiniAppSurface): Plugin {
   const miniAppEmbed = JSON.stringify(buildMiniAppEmbed(env, "launch_miniapp"));

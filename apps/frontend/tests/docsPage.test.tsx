@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DocsPage } from "../src/components/DocsPage";
 import { docsPageForSlug, docsPages, docsSlugFromPath } from "../src/docs/docsSource";
@@ -49,15 +49,26 @@ energy scale = produced / required
     expect(serveSource).toContain('return responseFor(Bun.file(staticFileUrl("/index.html")), "/index.html")');
     expect(serveSource).toContain('".md": "text/markdown; charset=utf-8"');
 
-    const rawDocs = readFileSync(new URL("../public/docs.md", import.meta.url), "utf8");
+    const rawDocs = readFileSync(new URL("../src/docs/content/docs.md", import.meta.url), "utf8");
     expect(rawDocs).toContain("# Veydrift Documentation");
     expect(rawDocs).toContain("GitHub: https://github.com/Borodutch/veydrift");
     expect(rawDocs).toContain("Combat example:");
     expect(rawDocs).not.toContain("Veydrift AI Reference");
+    expect(existsSync(new URL("../public/docs.md", import.meta.url))).toBe(false);
+
+    const viteConfigSource = readFileSync(new URL("../vite.config.ts", import.meta.url), "utf8");
+    expect(viteConfigSource).toContain("src/docs/content/docs.md");
+    expect(viteConfigSource).toContain('fileName: "docs.md"');
+
+    const docsSource = readFileSync(new URL("../src/docs/docsSource.ts", import.meta.url), "utf8");
+    expect(docsSource).toContain('import docsMarkdown from "./content/docs.md?raw"');
+    expect(docsSource).not.toContain("beginner.md?raw");
+    expect(docsSource).not.toContain("formulas.md?raw");
   });
 
   test("renders route navigation, readable tables, anchors, and AI reference link", () => {
-    const formulas = readDocsContent("formulas.md");
+    const rawDocs = readFileSync(new URL("../src/docs/content/docs.md", import.meta.url), "utf8");
+    const formulas = markdownSectionForHeading(rawDocs, "Formulas");
     const parsed = parseMarkdown(formulas);
     expect(parsed.headings.some((heading) => heading.id === "production")).toBe(true);
     expect(parsed.nodes.some((node) => node.type === "code" && node.value.includes("available cargo"))).toBe(true);
@@ -80,7 +91,9 @@ energy scale = produced / required
 
   test("docs content covers the required source files and excludes prohibited public references", () => {
     expect(docsPages.map((page) => page.slug)).toEqual(["beginner", "concepts", "catalogs", "formulas", "mechanics"]);
-    for (const file of collectDocsFiles()) {
+    const docsFiles = collectDocsFiles();
+    expect(docsFiles.map((file) => file.split("/").at(-1))).toEqual(["docs.md"]);
+    for (const file of docsFiles) {
       const markdown = readFileSync(file, "utf8");
       expect(markdown.length).toBeGreaterThan(500);
       expect(/\bogame\b/i.test(markdown)).toBe(false);
@@ -91,10 +104,6 @@ energy scale = produced / required
 });
 
 const DOCS_CONTENT_ROOT = new URL("../src/docs/content", import.meta.url).pathname;
-
-function readDocsContent(file: string): string {
-  return readFileSync(join(DOCS_CONTENT_ROOT, file), "utf8");
-}
 
 function collectDocsFiles(dir = DOCS_CONTENT_ROOT): string[] {
   const files: string[] = [];
@@ -107,6 +116,16 @@ function collectDocsFiles(dir = DOCS_CONTENT_ROOT): string[] {
     }
   }
   return files;
+}
+
+function markdownSectionForHeading(markdown: string, heading: string): string {
+  const lines = markdown.split(/\r?\n/);
+  const start = lines.findIndex((line) => line.trim() === `## ${heading}`);
+  if (start === -1) return markdown;
+
+  const next = lines.findIndex((line, index) => index > start && /^##\s+/.test(line));
+  const end = next === -1 ? lines.length : next;
+  return `${lines.slice(start, end).join("\n").trim()}\n`;
 }
 
 function elementNodes(node: ComponentChildren): VNode[] {
