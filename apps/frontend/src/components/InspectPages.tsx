@@ -7,7 +7,7 @@ import { fleetMissionDistance } from "../fleetMissionRules";
 import type { Coordinates } from "../types";
 import { formatUserTimestamp } from "../timestampFormat";
 import { formatScore as formatCanonicalScore, scoreComparisonLabel } from "../attackProtectionLabels";
-import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
+import { PlanetMoonIndicator, PlanetMoonSubsection } from "./PlanetMoonIndicator";
 import {
   fetchHighscores,
   fetchPlayerProfile,
@@ -252,6 +252,12 @@ function PlayerPlanetRow({
             </span>
           ))}
         </span>
+        {planet.moon?.exists ? (
+          <PlanetMoonSubsection
+            detail="Nested under this planet"
+            label="Moon"
+          />
+        ) : null}
       </span>
     </button>
   );

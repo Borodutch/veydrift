@@ -10,6 +10,9 @@ const overviewSource = await Bun.file(new URL("../src/components/OverviewPage.ts
 const galaxySource = await Bun.file(new URL("../src/components/GalaxyView.tsx", import.meta.url)).text();
 const missionCreationSource = await Bun.file(new URL("../src/components/MissionCreationPage.tsx", import.meta.url)).text();
 const planetDetailSource = await Bun.file(new URL("../src/components/PlanetDetail.tsx", import.meta.url)).text();
+const gameAssetsSource = await Bun.file(new URL("../src/gameAssets.ts", import.meta.url)).text();
+const moonIndicatorSource = await Bun.file(new URL("../src/components/PlanetMoonIndicator.tsx", import.meta.url)).text();
+const rankingsSource = await Bun.file(new URL("../src/components/RankingsPage.tsx", import.meta.url)).text();
 const topBarSource = await Bun.file(new URL("../src/components/TopBar.tsx", import.meta.url)).text();
 const stylesSource = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
 
@@ -64,6 +67,16 @@ describe("navigation and planet selector UI source contracts", () => {
 
   test("renders planet selector thumbnails as circles", () => {
     expect(playableSource).toContain("h-14 w-14 overflow-hidden rounded-full bg-black/30");
+  });
+
+  test("nests moon picker controls under parent planet items with generated moon imagery", () => {
+    expect(playableSource).toContain("data-planet-selector-item={planet.planetId}");
+    expect(playableSource).toContain('data-planet-selector-moon="true"');
+    expect(playableSource).toContain("<PlanetSelectorMoonButton");
+    expect(playableSource).not.toContain("planets.flatMap((planet) => planetSelectorButtons");
+    expect(gameAssetsSource).toContain("cratered-cyan-moon.webp");
+    expect(moonIndicatorSource).toContain('data-planet-moon-subsection="true"');
+    expect(rankingsSource).toContain("<PlanetMoonSubsection");
   });
 
   test("keeps planet selector selected and keyboard focus states subtle", () => {

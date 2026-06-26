@@ -5,7 +5,7 @@ import type { Coordinates, Planet } from "../types";
 import { isImageReady } from "../imageLoadState";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
-import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
+import { PlanetMoonIndicator, PlanetMoonSubsection } from "./PlanetMoonIndicator";
 import { AfkFlair } from "./AfkFlair";
 
 export type PlanetMetaItem = {
@@ -116,6 +116,12 @@ export function WatchablePlanetRow({
               </Fragment>
             ))}
           </div>
+          {planet.hasMoon ? (
+            <PlanetMoonSubsection
+              detail="Nested under this planet"
+              label={planet.moonName ?? "Moon"}
+            />
+          ) : null}
         </div>
       </button>
 

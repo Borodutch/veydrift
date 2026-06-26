@@ -22,7 +22,7 @@ import { ShipyardPage } from "./components/ShipyardPage";
 import type { RequirementTarget } from "./components/RequirementFlairs";
 import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
-import { PlanetMoonIndicator } from "./components/PlanetMoonIndicator";
+import { MoonImage, PlanetMoonIndicator } from "./components/PlanetMoonIndicator";
 import { MissionDetailPage } from "./components/MissionDetailPage";
 import {
   MissionControlPage,
@@ -34,7 +34,7 @@ import { BattleReportsPage } from "./components/BattleReportsPage";
 import { RankingsPage } from "./components/RankingsPage";
 import { RaidTargetFinderPage } from "./components/RaidTargetFinderPage";
 import { AllianceInspectPage, PlayerInspectPage } from "./components/InspectPages";
-import { AlertTriangle, Moon as MoonIcon } from "lucide-preact";
+import { AlertTriangle } from "lucide-preact";
 import {
   buildInspectPath,
   canonicalEntityPathForLegacyHashLocation,
@@ -7952,13 +7952,16 @@ function PlanetSelector({
     return (
       <section aria-label="Select planet" className="min-w-0 max-w-full overflow-x-auto overscroll-x-contain">
         <div className="flex w-max min-w-full gap-2 pb-1">
-          {planets.flatMap((planet) => planetSelectorButtons({
-            fleetVisibility,
-            onSelect,
-            planet,
-            selectedBodyKind,
-            selectedPlanet,
-          }))}
+          {planets.map((planet) => (
+            <PlanetSelectorItem
+              fleetVisibility={fleetVisibility}
+              key={planet.planetId}
+              onSelect={onSelect}
+              planet={planet}
+              selectedBodyKind={selectedBodyKind}
+              selectedPlanet={selectedPlanet}
+            />
+          ))}
         </div>
       </section>
     );
@@ -7967,19 +7970,22 @@ function PlanetSelector({
   return (
     <aside aria-label="Select planet" className="hidden w-28 shrink-0 border-l border-white/10 bg-[#07111d]/92 p-2 shadow-2xl shadow-black/20 backdrop-blur-xl lg:flex lg:flex-col">
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-        {planets.flatMap((planet) => planetSelectorButtons({
-          fleetVisibility,
-          onSelect,
-          planet,
-          selectedBodyKind,
-          selectedPlanet,
-        }))}
+        {planets.map((planet) => (
+          <PlanetSelectorItem
+            fleetVisibility={fleetVisibility}
+            key={planet.planetId}
+            onSelect={onSelect}
+            planet={planet}
+            selectedBodyKind={selectedBodyKind}
+            selectedPlanet={selectedPlanet}
+          />
+        ))}
       </div>
     </aside>
   );
 }
 
-function planetSelectorButtons({
+function PlanetSelectorItem({
   fleetVisibility,
   onSelect,
   planet,
@@ -7994,29 +8000,27 @@ function planetSelectorButtons({
 }) {
   const selectedPlanetBody = planet.planetId === selectedPlanet.planetId && selectedBodyKind === "planet";
   const selectedMoonBody = planet.planetId === selectedPlanet.planetId && selectedBodyKind === "moon";
-  const buttons = [
-    <PlanetSelectorButton
-      bodyKind="planet"
-      hasIncomingAttack={planetHasIncomingAttack(fleetVisibility, planet.planetId)}
-      key={`${planet.planetId}:planet`}
-      onSelect={onSelect}
-      planet={planet}
-      selected={selectedPlanetBody}
-    />
-  ];
-  if (planet.moon?.exists) {
-    buttons.push(
+  return (
+    <div
+      className="grid w-20 shrink-0 gap-1"
+      data-planet-selector-item={planet.planetId}
+    >
       <PlanetSelectorButton
-        bodyKind="moon"
-        hasIncomingAttack={false}
-        key={`${planet.planetId}:moon`}
+        bodyKind="planet"
+        hasIncomingAttack={planetHasIncomingAttack(fleetVisibility, planet.planetId)}
         onSelect={onSelect}
         planet={planet}
-        selected={selectedMoonBody}
+        selected={selectedPlanetBody}
       />
-    );
-  }
-  return buttons;
+      {planet.moon?.exists ? (
+        <PlanetSelectorMoonButton
+          onSelect={onSelect}
+          planet={planet}
+          selected={selectedMoonBody}
+        />
+      ) : null}
+    </div>
+  );
 }
 
 function PlanetSelectorButton({
@@ -8057,26 +8061,55 @@ function PlanetSelectorButton({
           <AlertTriangle size={12} strokeWidth={2.4} />
         </span>
       ) : null}
-      {bodyKind === "moon" ? (
-        <span className="grid h-14 w-14 place-items-center rounded-full border border-cyan-200/25 bg-slate-900 text-cyan-100">
-          <MoonIcon aria-hidden="true" size={28} strokeWidth={1.7} />
-        </span>
-      ) : (
-        <span className="relative h-14 w-14 overflow-hidden rounded-full bg-black/30">
-          <img
-            alt=""
-            className="h-full w-full object-cover"
-            loading="lazy"
-            src={planetImage(planet)}
-          />
-          {planet.moon?.exists ? <PlanetMoonIndicator compact className="bottom-0.5 right-0.5 top-auto" /> : null}
-        </span>
-      )}
+      <span className="relative h-14 w-14 overflow-hidden rounded-full bg-black/30">
+        <img
+          alt=""
+          className="h-full w-full object-cover"
+          loading="lazy"
+          src={planetImage(planet)}
+        />
+        {planet.moon?.exists ? <PlanetMoonIndicator compact className="bottom-0.5 right-0.5 top-auto" /> : null}
+      </span>
       <span className="block max-w-full truncate text-[0.68rem] font-medium leading-4 text-slate-200">
-        {bodyKind === "moon" ? "Moon" : planetDisplayName(planet)}
+        {planetDisplayName(planet)}
       </span>
       <span className="block max-w-full truncate font-mono text-[0.6rem] leading-3 text-slate-400">
         {planet.coordinates}
+      </span>
+    </button>
+  );
+}
+
+function PlanetSelectorMoonButton({
+  onSelect,
+  planet,
+  selected,
+}: {
+  onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
+  planet: ManagedPlanetResponse;
+  selected: boolean;
+}) {
+  const label = `Select ${planetDisplayName(planet)} moon at ${planet.coordinates}`;
+  return (
+    <button
+      aria-current={selected ? "true" : undefined}
+      aria-label={label}
+      className={`grid w-full grid-cols-[1.25rem_minmax(0,1fr)] items-center gap-1 rounded border px-1.5 py-1 text-left transition focus:outline-none ${
+        selected
+          ? "border-cyan-200/45 bg-cyan-200/[0.10] text-cyan-100"
+          : "border-cyan-200/15 bg-cyan-200/[0.055] text-slate-300 hover:border-cyan-200/35 hover:bg-cyan-200/[0.09]"
+      }`}
+      data-planet-selector-moon="true"
+      onClick={() => onSelect(planet.planetId, "moon")}
+      title={label}
+      type="button"
+    >
+      <span className="h-5 w-5 overflow-hidden rounded-full border border-cyan-100/30 bg-black/40">
+        <MoonImage className="h-full w-full object-cover" />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-[0.62rem] font-semibold leading-3">Moon</span>
+        <span className="block truncate font-mono text-[0.55rem] leading-3 text-slate-500">{planet.coordinates}</span>
       </span>
     </button>
   );
