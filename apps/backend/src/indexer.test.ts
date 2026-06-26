@@ -2884,7 +2884,7 @@ describe("SettlementIndexer", () => {
     expect(indexer.fleetSlots(player)).toEqual({ active: 5, limit: 5 });
   });
 
-  test("projects elapsed research queues while unit rows stay contract-aligned", () => {
+  test("projects elapsed research queues while available ship rows include lazy-completed queues", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -2938,7 +2938,7 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 0)).toMatchObject({
       id: 0,
-      count: 9
+      count: 23
     });
     expect(indexer.defenseRows(planet.planetId).find((defense) => defense.id === 1)).toMatchObject({
       id: 1,
