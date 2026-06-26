@@ -260,6 +260,11 @@ contract VeydriftGameTest is Test {
         uint128 crystal,
         uint128 deuterium
     );
+    event DefenseHoldEnded(
+        uint256 indexed missionId,
+        uint256 indexed defenderPlanetId,
+        VeydriftGameStorage.FleetMissionStatus status
+    );
     event InterplanetaryMissileAttack(
         address indexed attacker,
         uint256 indexed originPlanetId,
@@ -5255,6 +5260,51 @@ contract VeydriftGameTest is Test {
             abi.encodeWithSelector(VeydriftGameStorage.DefenseHoldStillActive.selector, holdUntil)
         );
         game.resolveFleetMission(holdMissionId);
+    }
+
+    function testDefenseHoldCanBeRecalledWhileStationed() public {
+        (address ally,, uint256 targetPlanetId, uint256 allyPlanetId) = _seedDefenseHold();
+        _setShipCount(allyPlanetId, Ship.Battleship, 1);
+        _setResources(allyPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        _setResources(targetPlanetId, 1_000_000, 1_000_000, 1_000_000);
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.battleship = 1;
+        vm.prank(ally);
+        uint256 holdMissionId = game.launchDefenseHold(
+            allyPlanetId, targetPlanetId, defenders, _noCargo(), 100, 4 hours
+        );
+        (, uint64 holdArrivalAt, uint64 originalReturnAt,) = _fleetMission(holdMissionId);
+        uint64 holdUntil = holdArrivalAt + 4 hours;
+        uint64 recallAt = holdArrivalAt + 1 hours;
+        uint64 expectedReturnAt = recallAt + (originalReturnAt - holdUntil);
+
+        vm.warp(recallAt);
+        vm.expectEmit(true, true, false, false, address(game));
+        emit FleetMissionRecalled(holdMissionId, ally, expectedReturnAt, 0);
+        vm.expectEmit(true, true, true, true, address(game));
+        emit DefenseHoldEnded(
+            holdMissionId, targetPlanetId, VeydriftGameStorage.FleetMissionStatus.Recalled
+        );
+        vm.expectEmit(true, true, true, false, address(game));
+        emit FleetMissionReturnExposed(
+            holdMissionId,
+            ally,
+            VeydriftGameStorage.FleetMissionStatus.Recalled,
+            allyPlanetId,
+            targetPlanetId,
+            expectedReturnAt,
+            0,
+            0,
+            0
+        );
+        vm.prank(ally);
+        game.recallFleetMission(holdMissionId);
+
+        (VeydriftGameStorage.FleetMissionStatus status,, uint64 returnAt,) =
+            _fleetMission(holdMissionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Recalled));
+        assertEq(returnAt, expectedReturnAt);
     }
 
     function testDefenseHoldRejectsUnauthorizedTarget() public {

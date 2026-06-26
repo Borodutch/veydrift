@@ -877,6 +877,46 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("50 deuterium");
   });
 
+  test("VEY-KANEO-648: stationed DefenseHold remains recallable on Mission Control after arrival", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const stationed: FleetMissionSummary = {
+      ...mission("6115", "DefenseHold", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 3_600_000),
+      defenseHoldUntil: Math.floor((now + 2 * 3_600_000) / 1_000).toString(),
+      returnAt: Math.floor((now + 3 * 3_600_000) / 1_000).toString(),
+      recallCost: "25",
+    };
+
+    const text = collectText(MissionControlPage(missionControlProps(now, {
+      outgoing: [stationed],
+    }))).join(" ");
+
+    expect(text).toContain("Stationed");
+    expect(text).toContain("Holds");
+    expect(text).toContain("Recall fleet");
+    expect(text).not.toContain("Resolving");
+    expect(text).not.toContain("The recall cutoff has passed");
+  });
+
+  test("VEY-KANEO-648: Mission Detail agrees stationed DefenseHold is recallable until hold expiry", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: {
+        ...mission("6115", "DefenseHold", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 3_600_000),
+        defenseHoldUntil: Math.floor((now + 2 * 3_600_000) / 1_000).toString(),
+        returnAt: Math.floor((now + 3 * 3_600_000) / 1_000).toString(),
+        recallCost: "25",
+      },
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).toContain("Available Orders");
+    expect(text).toContain("Recall fleet");
+    expect(text).toContain("Recall cost");
+    expect(text).toContain("25 deuterium");
+    expect(text).not.toContain("resolving");
+    expect(text).not.toContain("Not recallable");
+  });
+
   test("renders the round-by-round block only when indexed round snapshots exist", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage({
@@ -1646,7 +1686,7 @@ const ownerVisibility: FleetMissionVisibilityResponse = {
   wallet: "0x1111111111111111111111111111111111111111",
   homePlanetId: "7",
   incoming: [],
-  outgoing: ["42", "43", "51", "52", "60", "62", "64"].map((id) => mission(id, "Attack", "Outbound")),
+  outgoing: ["42", "43", "51", "52", "60", "62", "64", "6115"].map((id) => mission(id, "Attack", "Outbound")),
   returning: ["61", "63"].map((id) => mission(id, "Attack", "Returning")),
   joinableAttacks: [],
   completedMissions: [],

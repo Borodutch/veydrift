@@ -4392,11 +4392,15 @@ export function missionBattleRandomnessRequestId(
 // commits the word. `fulfilledRandomnessRequestIds` is null when no randomness data is available (e.g.
 // the engine is not configured); in that case readiness falls back to the plain arrival check.
 export function fleetMissionNeedsResolution(
-  mission: Pick<FleetMissionSummary, "status" | "arrivalAt" | "missionType" | "randomnessRequestId">,
+  mission: Pick<FleetMissionSummary, "status" | "arrivalAt" | "returnAt" | "missionType" | "randomnessRequestId"> & Pick<Partial<FleetMissionSummary>, "defenseHoldUntil">,
   nowSeconds: number,
   fulfilledRandomnessRequestIds: ReadonlySet<string> | null
 ): boolean {
-  if (mission.status !== "Outbound" || Number(mission.arrivalAt) > nowSeconds) return false;
+  if (mission.status !== "Outbound") return false;
+  const dueAt = mission.missionType === "DefenseHold"
+    ? Number(mission.defenseHoldUntil ?? mission.returnAt)
+    : Number(mission.arrivalAt);
+  if (dueAt > nowSeconds) return false;
   const requestId = missionBattleRandomnessRequestId(mission);
   if (requestId !== null && fulfilledRandomnessRequestIds !== null) {
     return fulfilledRandomnessRequestIds.has(requestId);
