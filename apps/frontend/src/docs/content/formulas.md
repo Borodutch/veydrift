@@ -81,7 +81,7 @@ Battle resolution uses six rounds, unit-weighted target selection, refreshed shi
 
 ## Protection And Bashing
 
-Protection score uses indexed score components from economy, research, fleet, and defense. New or low-score protection blocks attacks outside allowed score thresholds unless an explicit exception applies. The bashing window is evaluated by attacker, defender, and planet over 24 hours.
+Score uses the contract-parity `_totalUserScore` components used by attack protection: technology levels, owned planets, building levels, defenses, and ships. New or low-score protection blocks attacks outside allowed score thresholds unless an explicit exception applies. The bashing window is evaluated by attacker, defender, and planet over 24 hours.
 
 ## Moon Chance And Jump Gates
 

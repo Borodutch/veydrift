@@ -41,9 +41,9 @@ export type HighscoreEntry = {
   planetCount: number;
   score: ScoreBreakdown;
   // Mirror of the contract's VeydriftGameStorage._totalUserScore (building/tech/ship/defense LEVELS
-  // weighted by enum id), which is what the on-chain attack-protection gate
-  // (VeydriftAntiRaidPrimitives.isScoreProtected) uses. DISTINCT from score.total (the resource-based
-  // display leaderboard). Attack-protection must compare on this scale, otherwise the 50k/500k newbie
+  // weighted by enum id), which is what the on-chain attack-protection gate and player-facing Score use.
+  // DISTINCT from score.total (the resource-based category breakdown). Attack-protection must compare
+  // on this scale, otherwise the 50k/500k newbie
   // thresholds make every player read as a newbie (VEY-KANEO-489 follow-up).
   totalUserScore: string;
 };
@@ -132,9 +132,9 @@ const researchBaseCosts: readonly Cost[] = [
 export const highscoreFormula = {
   pointsDivisor: pointsDivisor.toString(),
   target:
-    "Classic non-lifeform highscore parity: total, economy, research points, research levels, current military points, current fleet points, ship count, and defense points.",
+    "Contract-parity player score plus classic non-lifeform category breakdowns: economy, research points, research levels, current military points, current fleet points, ship count, and defense points.",
   summary:
-    "Veydrift score uses one point per 1,000 resources of completed canonical owned state: planet and moon buildings as economy, research globally, current military, current fleet, and current defenses. Destroyed ships and defenses leave the current-state rankings when contract state removes them.",
+    "Veydrift Score uses the contract-parity totalUserScore formula: technology levels, owned planets, building levels, current ships, and current defenses. Category breakdowns still use completed canonical owned state: planet and moon buildings as economy, research globally, current military, current fleet, and current defenses.",
   excludedCategories: [
     "Military built, military destroyed, military lost, and honor rankings are intentionally excluded until Veydrift exposes per-wallet historical combat and honor ledgers.",
   ],
@@ -183,7 +183,7 @@ export function calculateHighscore(input: HighscoreInput): HighscoreEntry {
   ), 0n);
   const total = economy + research + military;
 
-  // Contract-parity protection score (VeydriftGameStorage._totalUserScore): NOT resource-based.
+  // Contract-parity Score (VeydriftGameStorage._totalUserScore): NOT resource-based.
   // Weights mirror the contract exactly — tech (id+1)*15, +1000 per owned planet, building (id+1)*10,
   // defense (id+1)*2, ship (id+1)*4. Moon buildings are intentionally excluded (the contract's
   // _totalUserScore loops the Building enum on _ownedPlanetIds only). Computed here from the same

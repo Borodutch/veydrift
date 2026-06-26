@@ -6,7 +6,7 @@ import { descriptionLinkParts, isSafeDescriptionUrl, type DescriptionLinkPart } 
 import { fleetMissionDistance } from "../fleetMissionRules";
 import type { Coordinates } from "../types";
 import { formatUserTimestamp } from "../timestampFormat";
-import { formatProtectionScore, protectionScoreComparisonLabel } from "../attackProtectionLabels";
+import { formatScore as formatCanonicalScore, scoreComparisonLabel } from "../attackProtectionLabels";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 import {
   fetchHighscores,
@@ -449,7 +449,7 @@ function PublicAllianceInspectSummary({
         </p>
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
-        <CompactStat label="Total Score" value={formatScore(alliance.totalMemberScore)} />
+        <CompactStat label="Score" value={formatScore(alliance.totalMemberScore)} />
       </div>
     </div>
   );
@@ -744,8 +744,7 @@ function formatScore(value: string | undefined): string {
 export function playerInspectScoreItems(highscore: HighscoreEntry | null): Array<{ label: string; value: string }> {
   if (!highscore) return [];
   return [
-    { label: "Total", value: formatScore(highscore.score.total) },
-    ...(highscore.totalUserScore ? [{ label: "Protection Score", value: formatScore(highscore.totalUserScore) }] : []),
+    { label: "Score", value: formatScore(highscore.totalUserScore ?? highscore.score.total) },
     { label: "Economy", value: formatScore(highscore.score.economy) },
     { label: "Military", value: formatScore(highscore.score.military) },
     { label: "Fleet", value: formatScore(highscore.score.fleet) },
@@ -791,9 +790,9 @@ export function playerPlanetTacticalSignals(
   const protectionSignal = attackProtection && !attackProtection.allowed && attackProtection.blockedReason !== "none"
     ? [{ label: "Protection", value: attackProtection.blockedReasonLabel ?? "Protected" }]
     : [];
-  const protectionScoreLabel = protectionScoreComparisonLabel(attackProtection?.scoreComparison)
-    ?? (attackProtection?.scoreComparison?.defenderScore ? `Protection score ${formatProtectionScore(attackProtection.scoreComparison.defenderScore)}` : null);
-  const protectionScoreSignal = protectionScoreLabel ? [{ label: "Protection score", value: protectionScoreLabel }] : [];
+  const scoreComparisonText = scoreComparisonLabel(attackProtection?.scoreComparison)
+    ?? (attackProtection?.scoreComparison?.defenderScore ? `Score ${formatCanonicalScore(attackProtection.scoreComparison.defenderScore)}` : null);
+  const scoreComparisonSignal = scoreComparisonText ? [{ label: "Score", value: scoreComparisonText }] : [];
   const warSignal = attackProtection?.atWar
     ? [{ label: "War", value: attackProtection.targetAlliance?.tag ? `[${attackProtection.targetAlliance.tag}]` : "Active" }]
     : [];
@@ -802,7 +801,7 @@ export function playerPlanetTacticalSignals(
     { label: "Distance", value: originCoords ? fleetMissionDistance(originCoords, planet).toLocaleString("en-US") : "Home planet unavailable" },
     { label: "Resources", value: formatResources(planet.tactical?.raidableResources ?? planet.resources) },
     ...protectionSignal,
-    ...protectionScoreSignal,
+    ...scoreComparisonSignal,
     ...warSignal,
     { label: "Ships", value: planetTacticalUnitSignal(planet.tactical?.ships) },
     { label: "Defenses", value: planetTacticalUnitSignal(planet.tactical?.defenses) },

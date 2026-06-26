@@ -765,7 +765,7 @@ function DirectorySection({
                   </p>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
                     <span>{memberCountLabel(alliance.memberCount)}</span>
-                    <span>Total score {formatScore(alliance.totalMemberScore)}</span>
+                    <span>Score {formatScore(alliance.totalMemberScore)}</span>
                     <span>Owner {playerLabel(alliance.ownerDisplayName, alliance.owner)}</span>
                     <span>Created {formatUserTimestamp(alliance.createdAt)}</span>
                   </div>
@@ -933,7 +933,7 @@ export function AllianceSummary({
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
         <MiniStat label="Members" value={memberCountLabel(alliance.memberCount)} />
-        <MiniStat label="Total Score" value={formatScore(alliance.totalMemberScore)} />
+        <MiniStat label="Score" value={formatScore(alliance.totalMemberScore)} />
         <MiniStat label="Created" value={formatUserTimestamp(alliance.createdAt)} />
       </div>
       <button
@@ -1909,7 +1909,7 @@ function PlayerProfilePanel({ profile, onClose }: { profile: PlayerProfileState;
           <>
             <div className="grid grid-cols-2 gap-2">
               <MiniStat label="Planets" value={String(profile.planets?.planets.length ?? 0)} />
-              <MiniStat label="Total Score" value={formatScore(profile.highscore?.score.total)} />
+              <MiniStat label="Score" value={formatScore(profile.highscore?.totalUserScore ?? profile.highscore?.score.total)} />
             </div>
             {profile.planets?.planets.length ? (
               <div className="grid gap-2">

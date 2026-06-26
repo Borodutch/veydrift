@@ -66,7 +66,8 @@ describe("RaidTargetFinderPage", () => {
     const disabledAttack = buttonWithText(disabled, "Attack");
     expect(disabledAttack?.props?.disabled).toBe(true);
     expect(disabledAttack?.props?.title).toBe("Attack blocked by score protection");
-    expect(visibleText(disabled)).toContain("Protection score 25,437 vs 7,340");
+    expect(visibleText(disabled)).toContain("Score 25,437 vs 7,340");
+    expect(visibleText(disabled)).not.toContain("Protection score");
   });
 
   test("row top-level cells match the desktop header order before actions", () => {

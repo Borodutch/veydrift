@@ -84,6 +84,7 @@ type LandingHighscoreEntry = {
   score: {
     total: string;
   };
+  totalUserScore?: string;
   wallet?: string;
 };
 
@@ -690,7 +691,7 @@ export function topAlliancesFromHighscores(entries: readonly LandingHighscoreEnt
   for (const entry of entries) {
     if (!entry.alliance) continue;
     const existing = byId.get(entry.alliance.allianceId);
-    const score = safeLandingBigInt(entry.score.total);
+    const score = safeLandingBigInt(entry.totalUserScore ?? entry.score.total);
     if (!existing) {
       byId.set(entry.alliance.allianceId, {
         members: 0,
@@ -749,7 +750,7 @@ function landingAllianceEmptyCopy(status: LandingLoadStatus): string {
 function landingAllianceBoardLabel(status: LandingLoadStatus): string {
   if (status === "loading") return "Syncing";
   if (status === "offline") return "Offline";
-  return "Total score";
+  return "Score";
 }
 
 function landingCommanderCount(count: number): string {

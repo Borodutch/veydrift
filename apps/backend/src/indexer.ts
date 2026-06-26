@@ -1205,7 +1205,7 @@ export class SettlementIndexer {
 
   private walletTotalScore(wallet: Address): string {
     try {
-      return this.highscoreForWallet(wallet).score.total;
+      return this.highscoreForWallet(wallet).totalUserScore;
     } catch {
       return "0";
     }
