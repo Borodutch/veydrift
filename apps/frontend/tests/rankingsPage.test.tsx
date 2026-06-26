@@ -40,7 +40,8 @@ describe("RankingsPage", () => {
     expect(text).toContain("Commander");
     expect(text).toContain("Score");
     expect(text).toContain("# 1");
-    expect(text).toContain("1,500");
+    expect(text).toContain("25,437");
+    expect(text).not.toContain("1,500");
     expect(text).not.toContain("Planet 7");
     expect(text).not.toContain("Total");
     expect(buttonWithTitle(table, "Open [2:44:9]")).toBeTruthy();
@@ -327,7 +328,8 @@ describe("RankingsPage", () => {
 
     expect(row?.props?.className).toContain("bg-red-300");
     expect(visibleText(row)).toContain("Protected");
-    expect(visibleText(row)).toContain("Protection score 25,437 vs 7,340");
+    expect(visibleText(row)).toContain("Score 25,437 vs 7,340");
+    expect(visibleText(row)).not.toContain("Protection score");
   });
 
   test("renders an AFK flair for inactive ranking defenders", () => {
@@ -698,6 +700,7 @@ function rankingEntry(overrides: Partial<HighscoreEntry> = {}): HighscoreEntry {
       researchLevels: "12",
       total: "1500",
     },
+    totalUserScore: "25437",
     wallet: "0x1111111111111111111111111111111111111111",
     ...overrides,
   };

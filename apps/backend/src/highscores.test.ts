@@ -116,7 +116,7 @@ describe("highscore formulas", () => {
     });
   });
 
-  test("totalUserScore mirrors the contract _totalUserScore weights (not the display total)", () => {
+  test("totalUserScore mirrors the contract _totalUserScore weights (not the resource category total)", () => {
     // Contract VeydriftGameStorage._totalUserScore: tech (id+1)*15, +1000 per planet,
     // building (id+1)*10, defense (id+1)*2, ship (id+1)*4. Moon buildings excluded.
     const entry = calculateHighscore({

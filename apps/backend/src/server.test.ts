@@ -3700,6 +3700,7 @@ describe("Veydrift backend", () => {
       blockedReason: "score_protection",
       blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
       defenderInactive: false,
+      relation: "weaker",
       scoreComparison: {
         scoreType: "contract_total_user_score",
         attackerScore: attackerScore.totalUserScore,

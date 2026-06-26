@@ -5,7 +5,7 @@ import { fleetMissionDistance } from "../fleetMissionRules";
 import { activeMissionsByPlanetId, countPlanetsWithActiveMissions, planetMissionSubtext } from "../planetMissionSubtext";
 import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
-import { formatProtectionScore, protectionScoreComparisonLabel } from "../attackProtectionLabels";
+import { scoreComparisonLabel } from "../attackProtectionLabels";
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
@@ -108,7 +108,7 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
   const currentPlayerEntry = currentWallet
     ? entries.find((entry) => entry.wallet.toLowerCase() === currentWallet.toLowerCase()) ?? null
     : null;
-  const currentPlayerScore = currentPlayerEntry?.score[active] ?? null;
+  const currentPlayerScore = currentPlayerEntry ? rankingDisplayScore(currentPlayerEntry, active) : null;
   // VEY-KANEO-448: discoverability signal so the enriched per-planet mission subtext is never buried in
   // a long rank-ordered page (mirrors the Raid Target Finder footer). Counts visible planets that carry
   // at least one active mission line, using the same owner (entry wallet) the rows classify against.
@@ -446,10 +446,10 @@ function RankingRow({
       && entry.attackProtection.blockedReason !== "same_alliance"
   );
   const isAfk = entry.attackProtection?.defenderInactive === true;
-  const protectionScoreText = entry.attackProtection?.scoreComparison
-    ? protectionScoreComparisonLabel(entry.attackProtection.scoreComparison)
+  const scoreComparisonText = entry.attackProtection?.scoreComparison
+    ? scoreComparisonLabel(entry.attackProtection.scoreComparison)
     : entry.totalUserScore
-      ? `Protection score ${formatProtectionScore(entry.totalUserScore)}`
+      ? `Score ${formatScore(entry.totalUserScore)}`
       : null;
   const rowTone = isCurrentPlayer
     ? "border-cyan-300/25 bg-cyan-300/[0.09] shadow-[inset_3px_0_0_rgba(103,232,249,0.7)]"
@@ -538,18 +538,18 @@ function RankingRow({
             ) : null}
           </span>
           <span className="mt-0.5 block font-mono text-xs font-semibold text-cyan-100 sm:hidden">
-            Score {formatScore(entry.score[active])}
+            Score {formatScore(rankingDisplayScore(entry, active))}
           </span>
-          {protectionScoreText ? (
+          {scoreComparisonText && entry.attackProtection?.scoreComparison ? (
             <span className="mt-0.5 block font-mono text-[10px] font-semibold text-slate-500 sm:hidden">
-              {protectionScoreText}
+              {scoreComparisonText}
             </span>
           ) : null}
         </span>
       </span>
       <span className="hidden text-right font-mono sm:block">
-        <span className="block font-semibold text-cyan-100">{formatScore(entry.score[active])}</span>
-        {protectionScoreText ? <span className="block text-[10px] font-semibold text-slate-500">{protectionScoreText}</span> : null}
+        <span className="block font-semibold text-cyan-100">{formatScore(rankingDisplayScore(entry, active))}</span>
+        {scoreComparisonText && entry.attackProtection?.scoreComparison ? <span className="block text-[10px] font-semibold text-slate-500">{scoreComparisonText}</span> : null}
       </span>
       {rankedPlanets.length > 0 ? (
         <div className="col-start-1 col-end-3 mt-2 min-w-0 max-w-full overflow-hidden space-y-1 sm:col-start-2 sm:col-end-4">
@@ -636,6 +636,10 @@ function formatScore(value: string): string {
   } catch {
     return value;
   }
+}
+
+function rankingDisplayScore(entry: HighscoreEntry, category: HighscoreCategory): string {
+  return category === "total" ? entry.totalUserScore ?? entry.score.total : entry.score[category];
 }
 
 function compactScore(value: string): string {

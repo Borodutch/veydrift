@@ -8,8 +8,7 @@ describe("inspect pages", () => {
     const items = playerInspectScoreItems(highscoreEntry({ totalUserScore: "25437" }));
 
     expect(items.map((item) => item.label)).toEqual([
-      "Total",
-      "Protection Score",
+      "Score",
       "Economy",
       "Military",
       "Fleet",
@@ -19,8 +18,8 @@ describe("inspect pages", () => {
       "Ships",
     ]);
     expect(items.map((item) => item.label)).not.toContain("Wallet");
-    expect(items.find((item) => item.label === "Total")?.value).toBe("4,400");
-    expect(items.find((item) => item.label === "Protection Score")?.value).toBe("25,437");
+    expect(items.map((item) => item.label)).not.toContain("Protection Score");
+    expect(items.find((item) => item.label === "Score")?.value).toBe("25,437");
     expect(items.find((item) => item.label === "Ships")?.value).toBe("42");
   });
 
@@ -46,7 +45,8 @@ describe("inspect pages", () => {
     expect(signals).toContainEqual({ label: "Distance", value: "1,010" });
     expect(signals).toContainEqual({ label: "Resources", value: "8K M / 1K C / 200 D" });
     expect(signals).toContainEqual({ label: "Protection", value: "Attack blocked by score protection." });
-    expect(signals).toContainEqual({ label: "Protection score", value: "Protection score 25,437 vs 7,340" });
+    expect(signals).toContainEqual({ label: "Score", value: "Score 25,437 vs 7,340" });
+    expect(signals.some((signal) => signal.label === "Protection score" || signal.value.includes("Protection score"))).toBe(false);
     expect(signals).toContainEqual({ label: "Ships", value: "3 units / 12K power" });
     expect(signals).toContainEqual({ label: "Defenses", value: "5 units / 4K power" });
     expect(signals).toContainEqual({ label: "Queues", value: "Building, Defense" });
