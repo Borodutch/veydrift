@@ -1520,9 +1520,8 @@ export class SettlementIndexer {
 
   shipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
     const counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId);
-    const completedQueueQuantities = this.completedQueueQuantities(`ship:${planetId}`);
     return deriveShipRows(
-      (id) => (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0),
+      (id) => counts.get(id) ?? 0,
       this.planet(planetId)?.temperature,
       durationLevels
     );
@@ -1564,11 +1563,14 @@ export class SettlementIndexer {
     );
   }
 
-  // Served ship counts mirror the indexed contract count rows exactly. The contract may lazily settle
-  // due queue output during a later mutating action, but the backend must not pre-project those units
-  // into API counts before the corresponding chain event updates the indexed rows.
   availableShipRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): ShipyardState["ships"] {
-    return this.shipRows(planetId, durationLevels);
+    const counts = this.indexedLevelsById("contract_ship_counts", "ship_id", "count", planetId);
+    const completedQueueQuantities = this.completedQueueQuantities(`ship:${planetId}`);
+    return deriveShipRows(
+      (id) => (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0),
+      this.planet(planetId)?.temperature,
+      durationLevels
+    );
   }
 
   // NOTE: the combat-triggered bounded per-planet canonical reconcile (planetReconcileBlock /
@@ -1582,9 +1584,8 @@ export class SettlementIndexer {
 
   defenseRows(planetId: string, durationLevels?: { shipyardLevel: number; naniteLevel: number }): DefenseState["defenses"] {
     const counts = this.indexedLevelsById("contract_defense_counts", "defense_id", "count", planetId);
-    const completedQueueQuantities = this.completedQueueQuantities(`defense:${planetId}`);
     return deriveDefenseRows(
-      (id) => (counts.get(id) ?? 0) + (completedQueueQuantities.get(id) ?? 0),
+      (id) => counts.get(id) ?? 0,
       durationLevels
     );
   }
