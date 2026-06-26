@@ -408,6 +408,7 @@ class MockChainReader implements ChainReader {
         }
       },
       defenses: [],
+      technologyLevels: {},
       defenseQueue: null
     };
   }

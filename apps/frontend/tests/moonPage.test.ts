@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { MoonPage } from "../src/components/MoonPage";
+import { MoonPage, moonBuildingRequirementRows, moonFieldSummary, queueReady } from "../src/components/MoonPage";
+import type { ChainMoonState } from "../src/walletFlow";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../src/moonActions";
 
 describe("Moon page helpers", () => {
@@ -246,6 +247,80 @@ describe("Moon page helpers", () => {
     });
   });
 
+  test("previews moon fields and building requirements from indexed moon state", () => {
+    const moonState = loadedMoonState({
+      moon: {
+        exists: true,
+        planetId: "7",
+        owner: "0x1111111111111111111111111111111111111111",
+        fields: 4,
+        diameterKm: 8774,
+        createdAt: "1770000000",
+        jumpGateReadyAt: "0",
+      },
+      buildings: [{
+        id: 0,
+        key: "lunarBase",
+        label: "Lunar Base",
+        level: 1,
+        cost: { metal: "40000", crystal: "80000", deuterium: "40000" },
+      }, {
+        id: 1,
+        key: "roboticsFactory",
+        label: "Robotics Factory",
+        level: 1,
+        cost: { metal: "1600", crystal: "480", deuterium: "800" },
+      }, {
+        id: 2,
+        key: "jumpGate",
+        label: "Jump Gate",
+        level: 0,
+        cost: { metal: "2000000", crystal: "4000000", deuterium: "2000000" },
+      }, {
+        id: 3,
+        key: "shipyard",
+        label: "Shipyard",
+        level: 0,
+        cost: { metal: "800", crystal: "400", deuterium: "200" },
+      }],
+      technologyLevels: { "8": 6 },
+    });
+
+    expect(moonFieldSummary(moonState.moon!, moonState)).toEqual({ capacity: 4, used: 2, open: 2 });
+    expect(moonBuildingRequirementRows(moonState.buildings[3], moonState.moon!, moonState)).toContainEqual({
+      label: "Robotics Factory 2",
+      met: false,
+      status: "L1 / 2",
+    });
+    expect(moonBuildingRequirementRows(moonState.buildings[2], moonState.moon!, moonState)).toContainEqual({
+      label: "Hyperspace 7",
+      met: false,
+      status: "L6 / 7",
+    });
+  });
+
+  test("marks ready moon queues available for completion only after backend readiness", () => {
+    expect(queueReady({
+      active: true,
+      kind: "moon-building",
+      itemId: 0,
+      targetLevel: 2,
+      readyAt: "1770000300",
+      cost: { metal: "40000", crystal: "80000", deuterium: "40000" },
+      asOfNow: { secondsRemaining: 0, complete: true },
+    })).toBe(true);
+
+    expect(queueReady({
+      active: true,
+      kind: "moon-defense",
+      itemId: 0,
+      quantity: 1,
+      readyAt: "1770000300",
+      cost: { metal: "2000", crystal: "0", deuterium: "0" },
+      asOfNow: { secondsRemaining: 12, complete: false },
+    })).toBe(false);
+  });
+
   test("passes transaction sync copy into loaded moon systems while actions are gated", () => {
     const page = MoonPage({
       canTransact: false,
@@ -303,6 +378,19 @@ describe("Moon page helpers", () => {
     expect(text).not.toContain("No moon in orbit");
   });
 });
+
+function loadedMoonState(overrides: Partial<ChainMoonState> = {}): ChainMoonState {
+  return {
+    wallet: "0x1111111111111111111111111111111111111111",
+    homePlanetId: "7",
+    moon: null,
+    buildings: [],
+    queue: null,
+    defenses: [],
+    defenseQueue: null,
+    ...overrides,
+  };
+}
 
 function visibleText(node: ComponentChildren): string {
   return textParts(node).join(" ").replace(/\s+/g, " ").trim();

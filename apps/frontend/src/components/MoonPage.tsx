@@ -27,6 +27,8 @@ interface MoonPageProps {
   loading?: boolean | undefined;
   moonState?: ChainMoonState | null | undefined;
   onBurnChicken?: ((tokenId: string) => void) | undefined;
+  onFinishBuilding?: ((label: string) => void) | undefined;
+  onFinishDefense?: ((label: string) => void) | undefined;
   onJumpGate?: ((destinationPlanetId: string, ships?: Partial<MissionShips>) => void) | undefined;
   onRefresh?: (() => void) | undefined;
   onStartBuilding?: ((buildingId: number, label: string) => void) | undefined;
@@ -44,6 +46,8 @@ export function MoonPage({
   loading,
   moonState,
   onBurnChicken,
+  onFinishBuilding,
+  onFinishDefense,
   onJumpGate,
   onRefresh,
   onStartBuilding,
@@ -86,6 +90,8 @@ export function MoonPage({
             canTransact={canTransact}
             moon={moon}
             moonState={moonState}
+            onFinishBuilding={onFinishBuilding}
+            onFinishDefense={onFinishDefense}
             onJumpGate={onJumpGate}
             onStartBuilding={onStartBuilding}
             onStartDefense={onStartDefense}
@@ -305,6 +311,8 @@ function MoonSystemsPanel({
   moon,
   moonState,
   onJumpGate,
+  onFinishBuilding,
+  onFinishDefense,
   onStartBuilding,
   onStartDefense,
   transactionUnavailableReason,
@@ -314,6 +322,8 @@ function MoonSystemsPanel({
   moon: NonNullable<ChainMoonState["moon"]>;
   moonState?: ChainMoonState | null | undefined;
   onJumpGate?: MoonPageProps["onJumpGate"];
+  onFinishBuilding?: MoonPageProps["onFinishBuilding"];
+  onFinishDefense?: MoonPageProps["onFinishDefense"];
   onStartBuilding?: MoonPageProps["onStartBuilding"];
   onStartDefense?: MoonPageProps["onStartDefense"];
   transactionUnavailableReason?: string | undefined;
@@ -325,6 +335,9 @@ function MoonSystemsPanel({
   const jumpDestinationReady = isPositiveIntegerInput(jumpDestination);
   const jumpShips = parseMoonJumpShips(jumpSmallCargo, jumpLargeCargo);
   const jumpCargoValid = jumpShips !== null;
+  const fieldSummary = moonFieldSummary(moon, moonState);
+  const buildingQueueReady = queueReady(moonState?.queue);
+  const defenseQueueReady = queueReady(moonState?.defenseQueue);
 
   return (
     <div className="grid gap-4">
@@ -346,7 +359,7 @@ function MoonSystemsPanel({
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-white">Moon Structures</h3>
             <p className="text-xs text-slate-400">
-              Lunar Base expands fields. Jump Gate supports fleet movement between owned moons.
+              Lunar Base expands fields. Jump Gate supports fleet movement between owned moons. {fieldSummary.used} / {fieldSummary.capacity} fields used.
             </p>
           </div>
           <span className="rounded border border-white/10 bg-black/20 px-2 py-1 text-[11px] text-slate-400">
@@ -355,27 +368,31 @@ function MoonSystemsPanel({
         </div>
 
         <div className="mt-3 grid gap-2 sm:grid-cols-3">
-          {moonState?.buildings.map((building) => (
-            <div className="rounded border border-white/10 bg-black/15 p-3" key={building.key}>
-              <div className="flex items-center justify-between gap-2">
-                <span className="min-w-0 truncate text-sm font-semibold text-slate-100">{building.label}</span>
-                <span className="shrink-0 text-xs text-signal">L{building.level}</span>
+          {moonState?.buildings.map((building) => {
+            const requirements = moonBuildingRequirementRows(building, moon, moonState);
+            return (
+              <div className="rounded border border-white/10 bg-black/15 p-3" key={building.key}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate text-sm font-semibold text-slate-100">{building.label}</span>
+                  <span className="shrink-0 text-xs text-signal">L{building.level}</span>
+                </div>
+                <div className="mt-2 text-xs text-slate-400">{formatCost(resourcesFromChain(building.cost))}</div>
+                <div className="mt-1 text-xs text-slate-500">{moonBuildingEffect(building.key)}</div>
+                <RequirementRows rows={requirements} />
+                {onStartBuilding ? (
+                  <button
+                    className="mt-3 h-8 w-full rounded border border-cyan-200/20 bg-cyan-200/10 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={!canTransact || pending || (moonState?.queue?.active && !buildingQueueReady)}
+                    onClick={() => onStartBuilding(building.id, building.label)}
+                    title={!canTransact ? transactionUnavailableReason : activeQueueTitle(moonState?.queue)}
+                    type="button"
+                  >
+                    Upgrade
+                  </button>
+                ) : null}
               </div>
-              <div className="mt-2 text-xs text-slate-400">{formatCost(resourcesFromChain(building.cost))}</div>
-              <div className="mt-1 text-xs text-slate-500">{moonBuildingEffect(building.key)}</div>
-              {onStartBuilding ? (
-                <button
-                  className="mt-3 h-8 w-full rounded border border-cyan-200/20 bg-cyan-200/10 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={!canTransact || pending || moonState?.queue?.active}
-                  onClick={() => onStartBuilding(building.id, building.label)}
-                  title={!canTransact ? transactionUnavailableReason : undefined}
-                  type="button"
-                >
-                  Upgrade
-                </button>
-              ) : null}
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {moonState?.queue?.active ? (
@@ -385,6 +402,17 @@ function MoonSystemsPanel({
               {moonState.queue.targetLevel ? "L" + moonState.queue.targetLevel : ""} / ready{" "}
               {formatMoonReadyAt(moonState.queue.readyAt)}
             </span>
+            {buildingQueueReady && onFinishBuilding ? (
+              <button
+                className="h-8 rounded border border-amber-200/30 bg-amber-200/10 px-3 text-xs font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!canTransact || pending}
+                onClick={() => onFinishBuilding(moonBuildingLabel(moonState.queue?.itemId))}
+                title={!canTransact ? transactionUnavailableReason : undefined}
+                type="button"
+              >
+                Complete
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -423,9 +451,9 @@ function MoonSystemsPanel({
                 {onStartDefense ? (
                   <button
                     className="mt-3 h-8 w-full rounded border border-cyan-200/20 bg-cyan-200/10 text-xs font-semibold text-cyan-100 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={!canTransact || pending || moonState?.defenseQueue?.active}
+                    disabled={!canTransact || pending || (moonState?.defenseQueue?.active && !defenseQueueReady)}
                     onClick={() => onStartDefense(defense.id, label, 1)}
-                    title={!canTransact ? transactionUnavailableReason : undefined}
+                    title={!canTransact ? transactionUnavailableReason : activeQueueTitle(moonState?.defenseQueue)}
                     type="button"
                   >
                     Build 1
@@ -441,6 +469,17 @@ function MoonSystemsPanel({
               Defense queue: {moonDefenseLabel(moonState.defenseQueue.itemId)} x{moonState.defenseQueue.quantity ?? 0} / ready{" "}
               {formatMoonReadyAt(moonState.defenseQueue.readyAt)}
             </span>
+            {defenseQueueReady && onFinishDefense ? (
+              <button
+                className="h-8 rounded border border-amber-200/30 bg-amber-200/10 px-3 text-xs font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!canTransact || pending}
+                onClick={() => onFinishDefense(moonDefenseLabel(moonState.defenseQueue?.itemId))}
+                title={!canTransact ? transactionUnavailableReason : undefined}
+                type="button"
+              >
+                Complete
+              </button>
+            ) : null}
           </div>
         ) : null}
       </section>
@@ -528,6 +567,100 @@ function resourcesFromChain(resources: ChainMoonState["buildings"][number]["cost
     crystal: Number(resources.crystal),
     deuterium: Number(resources.deuterium),
   };
+}
+
+type MoonBuilding = ChainMoonState["buildings"][number];
+type RequirementRow = {
+  label: string;
+  met: boolean;
+  status: string;
+};
+
+function RequirementRows({ rows }: { rows: RequirementRow[] }) {
+  return (
+    <div className="mt-2 grid gap-1">
+      {rows.map((row) => (
+        <div className="flex items-center justify-between gap-2 text-[11px]" key={row.label}>
+          <span className={row.met ? "text-slate-400" : "text-amber-200"}>{row.label}</span>
+          <span className={row.met ? "text-emerald-200" : "text-amber-200"}>{row.status}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function moonBuildingRequirementRows(
+  building: MoonBuilding,
+  moon: NonNullable<ChainMoonState["moon"]>,
+  moonState: ChainMoonState | null | undefined,
+): RequirementRow[] {
+  const levels = moonBuildingLevels(moonState);
+  const fieldSummary = moonFieldSummary(moon, moonState);
+  const rows: RequirementRow[] = [{
+    label: "Open field",
+    met: fieldSummary.open > 0,
+    status: `${fieldSummary.open} open`,
+  }];
+
+  if (building.key === "shipyard") {
+    const robotics = levels.roboticsFactory;
+    rows.push({
+      label: "Robotics Factory 2",
+      met: robotics >= 2,
+      status: `L${robotics} / 2`,
+    });
+  }
+
+  if (building.key === "jumpGate") {
+    const lunarBase = levels.lunarBase;
+    const hyperspace = moonState?.technologyLevels?.["8"] ?? 0;
+    rows.push({
+      label: "Lunar Base 1",
+      met: lunarBase >= 1,
+      status: `L${lunarBase} / 1`,
+    }, {
+      label: "Hyperspace 7",
+      met: hyperspace >= 7,
+      status: `L${hyperspace} / 7`,
+    });
+  }
+
+  return rows;
+}
+
+function moonBuildingLevels(moonState: ChainMoonState | null | undefined): Record<MoonBuilding["key"], number> {
+  const levels = {
+    lunarBase: 0,
+    roboticsFactory: 0,
+    jumpGate: 0,
+    shipyard: 0,
+  };
+  for (const building of moonState?.buildings ?? []) {
+    levels[building.key] = building.level;
+  }
+  return levels;
+}
+
+export function moonFieldSummary(
+  moon: NonNullable<ChainMoonState["moon"]>,
+  moonState: ChainMoonState | null | undefined,
+): { capacity: number; used: number; open: number } {
+  const capacity = moon.fields;
+  const used = (moonState?.buildings ?? []).reduce((sum, building) => sum + building.level, 0);
+  return {
+    capacity,
+    used,
+    open: Math.max(0, capacity - used),
+  };
+}
+
+export function queueReady(queue: ChainMoonState["queue"] | undefined): boolean {
+  return Boolean(queue?.active && queue.asOfNow?.complete === true);
+}
+
+function activeQueueTitle(queue: ChainMoonState["queue"] | undefined): string | undefined {
+  if (!queue?.active || queueReady(queue)) return undefined;
+  return "Moon queue is active.";
 }
 
 function moonBuildingEffect(key: ChainMoonState["buildings"][number]["key"]): string {

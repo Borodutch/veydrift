@@ -1807,6 +1807,7 @@ export class SettlementIndexer {
         cost: zeroResources()
       })),
       queue: planetId ? this.moonQueue(planetId) : null,
+      technologyLevels: this.technologyLevels(wallet),
       defenses: moonDefenseRows.map((defense) => ({
         ...defense,
         count: planetId ? this.moonDefenseCountAsOfNow(planetId, defense.id) : 0,

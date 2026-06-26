@@ -685,6 +685,7 @@ export type MoonState = {
     cost: Resources;
   }>;
   queue: QueueState | null;
+  technologyLevels: Record<string, number>;
   defenses: Array<{
     id: number;
     count: number;
@@ -1939,11 +1940,12 @@ export class VeydriftGameReader implements ChainReader {
         };
       }
 
-      const [buildings, queue, defenses, defenseQueue] = await Promise.all([
+      const [buildings, queue, defenses, defenseQueue, technologyLevels] = await Promise.all([
         this.readMoonBuildingRows(planetId),
         this.readMoonQueue(planetId),
         this.readMoonDefenseRows(planetId),
-        this.readMoonDefenseQueue(planetId)
+        this.readMoonDefenseQueue(planetId),
+        this.readTechnologyLevels(wallet)
       ]);
 
       return {
@@ -1953,6 +1955,7 @@ export class VeydriftGameReader implements ChainReader {
         moon,
         buildings,
         queue,
+        technologyLevels,
         defenses,
         defenseQueue
       };
@@ -4646,6 +4649,7 @@ function emptyMoonState(wallet: Address, homePlanetId: string | null, unavailabl
       cost: zeroResources()
     })),
     queue: null,
+    technologyLevels: {},
     defenses: deriveDefenseRows(() => 0).filter((defense) => defense.id <= 7),
     defenseQueue: null
   };

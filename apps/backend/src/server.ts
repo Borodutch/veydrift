@@ -2081,6 +2081,7 @@ function indexedMoonNotReadyResponse(
     moon: null,
     buildings: indexedState?.buildings ?? [],
     queue: null,
+    technologyLevels: indexedState?.technologyLevels ?? {},
     defenses: indexedState?.defenses ?? [],
     defenseQueue: null,
     detail,
