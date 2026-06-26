@@ -715,13 +715,21 @@ export function recordedResourceSnapshotFreshness(
 }
 
 export function infrastructureStateForRefreshApplication({
+  applyResourceState,
+  current,
   next,
 }: {
   applyResourceState: boolean;
   current: ChainInfrastructureState | null;
   next: ChainInfrastructureState;
 }): ChainInfrastructureState {
-  return next;
+  if (applyResourceState || !current) return next;
+  return {
+    ...next,
+    planetLastSettledAt: current.planetLastSettledAt,
+    resources: current.resources,
+    resourcesAsOfNow: current.resourcesAsOfNow,
+  };
 }
 
 export function buildingCompletionAutoRefreshDelayMs(
@@ -2198,9 +2206,10 @@ export async function loadWalletPlanetSyncSnapshot(
   const loadFleetMissionVisibility = loaders.fetchFleetMissionVisibility ?? fetchFleetMissionVisibility;
   const loadWalletSettlement = loaders.fetchWalletSettlement ?? fetchWalletSettlement;
   const readPlanetId = options.forceHomePlanet || options.forceWalletPlanets ? undefined : activePlanetId;
-  if (readPlanetId !== undefined) {
+  const overviewPlanetId = options.forceHomePlanet ? undefined : activePlanetId;
+  if (!options.forceWalletPlanets) {
     try {
-      return await loadOverviewSnapshot(apiBaseUrl, account, readPlanetId, {
+      return await loadOverviewSnapshot(apiBaseUrl, account, overviewPlanetId, {
         timeoutMs: INITIAL_OVERVIEW_SNAPSHOT_TIMEOUT_MS,
       });
     } catch (error) {
