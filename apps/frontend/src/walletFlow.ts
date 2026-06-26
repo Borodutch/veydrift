@@ -605,12 +605,20 @@ export type ChainMoonState = {
   } | null;
   buildings: Array<{
     id: number;
-    key: "lunarBase" | "jumpGate";
+    key: "lunarBase" | "roboticsFactory" | "jumpGate" | "shipyard";
     label: string;
     level: number;
     cost: OnChainResources;
   }>;
   queue: QueueStateResponse | null;
+  technologyLevels?: Record<string, number>;
+  defenses: Array<{
+    id: number;
+    count: number;
+    cost: OnChainResources;
+    durationSeconds?: number;
+  }>;
+  defenseQueue?: QueueStateResponse | null;
 };
 
 export type ChainResearchState = {
@@ -1013,9 +1021,11 @@ const COLONIZE_MISSION_TYPE = 2;
 export const DEFENSE_HOLD_MISSION_TYPE = 9;
 const MOON_SELECTORS = {
   finishMoonBuildingUpgrade: "0x713b9e66",
+  finishMoonDefenseProduction: "0x1e3c6f05",
   jumpGateJump: "0x36aaf8f8",
   jumpGateJumpShips: "0x3095d992",
-  startMoonBuildingUpgrade: "0x715e1b1a"
+  startMoonBuildingUpgrade: "0x715e1b1a",
+  startMoonDefenseProduction: "0x31779b60"
 } as const;
 const ALLIANCE_SELECTORS = {
   createAlliance: "0x944cde0e",
@@ -2680,6 +2690,47 @@ export async function sendStartMoonBuildingUpgradeTransaction(
     from: account,
     to: contractAddress,
     data: encodeGameCall(MOON_SELECTORS.startMoonBuildingUpgrade, [planetId, buildingId])
+  });
+}
+
+export async function sendFinishMoonBuildingUpgradeTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string,
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(MOON_SELECTORS.finishMoonBuildingUpgrade, [planetId])
+  });
+}
+
+export async function sendStartMoonDefenseProductionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string,
+  defenseId: number,
+  quantity: number
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(MOON_SELECTORS.startMoonDefenseProduction, [planetId, defenseId, quantity])
+  });
+}
+
+export async function sendFinishMoonDefenseProductionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  planetId: string,
+): Promise<string> {
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeGameCall(MOON_SELECTORS.finishMoonDefenseProduction, [planetId])
   });
 }
 

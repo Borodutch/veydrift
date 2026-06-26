@@ -68,8 +68,8 @@ describe("highscore formulas", () => {
       technologies: [],
     });
 
-    expect(entry.score.economy).toBe("1961");
-    expect(entry.score.total).toBe("1961");
+    expect(entry.score.economy).toBe("1881");
+    expect(entry.score.total).toBe("1881");
   });
 
   test("drops current military and fleet-count points when units are gone", () => {

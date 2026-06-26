@@ -199,8 +199,11 @@ import {
   sendDepositResourceTransaction,
   sendRenamePlanetTransaction,
   sendRequestResourceWithdrawalTransaction,
+  sendFinishMoonBuildingUpgradeTransaction,
+  sendFinishMoonDefenseProductionTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartMoonBuildingUpgradeTransaction,
+  sendStartMoonDefenseProductionTransaction,
   sendStartDefenseProductionTransaction,
   sendAcceptAllianceInviteTransaction,
   sendAllianceBatchKickTransaction,
@@ -6710,6 +6713,50 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     ));
   }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
 
+  const handleFinishMoonBuilding = useCallback((label: string) => {
+    if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
+      setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
+      return;
+    }
+
+    void runMoonTransaction(`Complete ${label}`, () => sendFinishMoonBuildingUpgradeTransaction(
+      provider,
+      account,
+      moonContract,
+      moonState.homePlanetId ?? "",
+    ));
+  }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
+
+  const handleStartMoonDefense = useCallback((defenseId: number, label: string, quantity: number) => {
+    if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
+      setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
+      return;
+    }
+
+    void runMoonTransaction(`Build ${label}`, () => sendStartMoonDefenseProductionTransaction(
+      provider,
+      account,
+      moonContract,
+      moonState.homePlanetId ?? "",
+      defenseId,
+      quantity,
+    ));
+  }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
+
+  const handleFinishMoonDefense = useCallback((label: string) => {
+    if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
+      setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
+      return;
+    }
+
+    void runMoonTransaction(`Complete ${label}`, () => sendFinishMoonDefenseProductionTransaction(
+      provider,
+      account,
+      moonContract,
+      moonState.homePlanetId ?? "",
+    ));
+  }, [account, moonContract, moonState?.homePlanetId, provider, runMoonTransaction]);
+
   const handleJumpGate = useCallback((destinationPlanetId: string, ships?: Partial<MissionShips>) => {
     if (!provider || !account || !moonContract || !moonState?.homePlanetId) {
       setMoonAction({ status: "error", label: "Wallet, moon contract, or home planet is unavailable." });
@@ -7376,9 +7423,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           loading={moonLoading || moonSection.status.loading}
           moonState={moonState}
           onBurnChicken={handleBurnChickenForMoon}
+          onFinishBuilding={handleFinishMoonBuilding}
+          onFinishDefense={handleFinishMoonDefense}
           onJumpGate={handleJumpGate}
           onRefresh={moonSection.refresh ?? refreshInfrastructureState}
           onStartBuilding={handleStartMoonBuilding}
+          onStartDefense={handleStartMoonDefense}
           selectedCoordinates={activePlanetCoords}
           transactionUnavailableReason={moonTransactionUnavailableReason}
         />

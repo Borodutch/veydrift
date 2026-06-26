@@ -1,7 +1,7 @@
 import { solarSatelliteEnergy } from "@veydrift/universe";
 import type { BackendConfig } from "./config";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
-import { usedFieldsFromBuildingRows } from "./readModels";
+import { deriveDefenseRows, usedFieldsFromBuildingRows } from "./readModels";
 import type { Coordinates, PlanetArchetype } from "./universe";
 import { planetMetadata, planetMultipliers } from "./universe";
 
@@ -167,10 +167,10 @@ export type PlayerQueues = {
 };
 
 export type IndexedQueueStartedEvent = {
-  eventName: "BuildingStarted" | "DefenseQueued" | "ShipQueued" | "ResearchQueued" | "MoonBuildingStarted";
+  eventName: "BuildingStarted" | "DefenseQueued" | "ShipQueued" | "ResearchQueued" | "MoonBuildingStarted" | "MoonDefenseQueued";
   transactionHash: string;
   blockNumber: string;
-  queueKind: "building" | "defense" | "ship" | "research" | "moon-building";
+  queueKind: "building" | "defense" | "ship" | "research" | "moon-building" | "moon-defense";
   planetId?: string;
   owner?: Address;
   itemId: number;
@@ -182,10 +182,10 @@ export type IndexedQueueStartedEvent = {
 };
 
 export type IndexedQueueCompletedEvent = {
-  eventName: "BuildingCompleted" | "DefenseCompleted" | "ShipCompleted" | "ResearchCompleted" | "MoonBuildingCompleted";
+  eventName: "BuildingCompleted" | "DefenseCompleted" | "ShipCompleted" | "ResearchCompleted" | "MoonBuildingCompleted" | "MoonDefenseCompleted";
   transactionHash: string;
   blockNumber: string;
-  queueKind: "building" | "defense" | "ship" | "research" | "moon-building";
+  queueKind: "building" | "defense" | "ship" | "research" | "moon-building" | "moon-defense";
   planetId?: string;
   owner?: Address;
   itemId: number;
@@ -685,6 +685,14 @@ export type MoonState = {
     cost: Resources;
   }>;
   queue: QueueState | null;
+  technologyLevels: Record<string, number>;
+  defenses: Array<{
+    id: number;
+    count: number;
+    cost: Resources;
+    durationSeconds?: number;
+  }>;
+  defenseQueue: QueueState | null;
 };
 
 export type ResearchState = {
@@ -1932,9 +1940,12 @@ export class VeydriftGameReader implements ChainReader {
         };
       }
 
-      const [buildings, queue] = await Promise.all([
+      const [buildings, queue, defenses, defenseQueue, technologyLevels] = await Promise.all([
         this.readMoonBuildingRows(planetId),
-        this.readMoonQueue(planetId)
+        this.readMoonQueue(planetId),
+        this.readMoonDefenseRows(planetId),
+        this.readMoonDefenseQueue(planetId),
+        this.readTechnologyLevels(wallet)
       ]);
 
       return {
@@ -1943,7 +1954,10 @@ export class VeydriftGameReader implements ChainReader {
         moonAvailable: true,
         moon,
         buildings,
-        queue
+        queue,
+        technologyLevels,
+        defenses,
+        defenseQueue
       };
     } catch (error) {
       if (isRpcRevert(error)) {
@@ -3042,6 +3056,39 @@ export class VeydriftGameReader implements ChainReader {
       readyAt: active ? decodeUintWord(wordAt(words, 3)).toString() : null,
       cost: decodeResources(words.slice(4, 7))
     };
+  }
+
+  private async readMoonDefenseQueue(planetId: bigint): Promise<QueueState> {
+    const words = splitWords(await this.moonCall("0x5171acb6", [encodeUint(planetId)]));
+    const active = decodeBoolWord(wordAt(words, 0));
+    return {
+      active,
+      kind: active ? "moon-defense" : null,
+      ...(active ? { itemId: Number(decodeUintWord(wordAt(words, 1))) } : {}),
+      quantity: Number(decodeUintWord(wordAt(words, 2))),
+      readyAt: active ? decodeUintWord(wordAt(words, 3)).toString() : null,
+      cost: decodeResources(words.slice(4, 7))
+    };
+  }
+
+  private async readMoonDefenseRows(planetId: bigint): Promise<MoonState["defenses"]> {
+    const shipyardLevel = Number(
+      await this.readMoonUintCall("0x4e6a984f", [encodeUint(planetId), encodeUint(3n)])
+    );
+    const rows = await Promise.all(
+      deriveDefenseRows(() => 0, { shipyardLevel, naniteLevel: 0 })
+        .filter((defense) => defense.id <= 7)
+        .map(async (defense) => ({
+          ...defense,
+          count: Number(
+            await this.readMoonUintCall("0x58221551", [
+              encodeUint(planetId),
+              encodeUint(BigInt(defense.id))
+            ])
+          )
+        }))
+    );
+    return rows;
   }
 
   private async readBuildingStartedAt(planetId: bigint, queue: QueueState): Promise<string | null> {
@@ -4493,7 +4540,9 @@ const riftResourceCatalog: Array<Pick<RiftResourceState, "key" | "label" | "reso
 ];
 const moonBuildingCatalog: Array<Pick<MoonState["buildings"][number], "id" | "key" | "label">> = [
   { id: 0, key: "lunarBase", label: "Lunar Base" },
-  { id: 2, key: "jumpGate", label: "Jump Gate" }
+  { id: 1, key: "roboticsFactory", label: "Robotics Factory" },
+  { id: 2, key: "jumpGate", label: "Jump Gate" },
+  { id: 3, key: "shipyard", label: "Shipyard" }
 ];
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const colonyCreatedTopic = "0xd7d717f6607ff051c7f2247d5c490eb9ece607b9ee7c7eee946898025815cfc0";
@@ -4541,6 +4590,8 @@ const moonDestructionFinalizedTopic = "0xdac71b69e1912e36573457fd7e6227e8b5ac86e
 const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
 const moonBuildingStartedTopic = "0x6b41aeb096e643752dad879b8f3875d8657186226c3cf8b6e7a38c27292f215a";
 const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed6eb0ebee81c917b575ed3a";
+const moonDefenseQueuedTopic = "0xa53d76ce638ebf6aee45c30e9622beeafc4e9c2c9bcd3122a72a3a7e00500637";
+const moonDefenseCompletedTopic = "0xb84a089b29951e8696b0ef11e5766578a0e1348284a93e4731fcb416d0536a70";
 const allianceCreatedTopic = "0x4a2634d9b86143d681c41580ee71aad7571fc28bc42c855fcd354bfee4485372";
 const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425e5b688ec918c2f58df7360e";
 const allianceInviteCreatedTopic = "0x2ebeddd3f0119f5464f0f6acb95cbc1477a11e19b059f3234bbb0a671cf2b4bd";
@@ -4597,7 +4648,10 @@ function emptyMoonState(wallet: Address, homePlanetId: string | null, unavailabl
       level: 0,
       cost: zeroResources()
     })),
-    queue: null
+    queue: null,
+    technologyLevels: {},
+    defenses: deriveDefenseRows(() => 0).filter((defense) => defense.id <= 7),
+    defenseQueue: null
   };
 }
 
@@ -4683,7 +4737,8 @@ export function isIndexedQueueStartedLog(log: RpcLog): boolean {
     || topic === defenseQueuedTopic
     || topic === shipQueuedTopic
     || topic === researchQueuedTopic
-    || topic === moonBuildingStartedTopic;
+    || topic === moonBuildingStartedTopic
+    || topic === moonDefenseQueuedTopic;
 }
 
 export function isIndexedQueueCompletedLog(log: RpcLog): boolean {
@@ -4692,7 +4747,8 @@ export function isIndexedQueueCompletedLog(log: RpcLog): boolean {
     || topic === defenseCompletedTopic
     || topic === shipCompletedTopic
     || topic === researchCompletedTopic
-    || topic === moonBuildingCompletedTopic;
+    || topic === moonBuildingCompletedTopic
+    || topic === moonDefenseCompletedTopic;
 }
 
 export function isMoonCreatedLog(log: RpcLog): boolean {
@@ -4942,6 +4998,17 @@ export function decodeIndexedQueueStartedLog(log: RpcLog): IndexedQueueStartedEv
     };
   }
 
+  if (topic === moonDefenseQueuedTopic) {
+    return {
+      ...base,
+      eventName: "MoonDefenseQueued",
+      queueKind: "moon-defense",
+      planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+      itemId: Number(decodeUint(topicAt(log.topics, 2))),
+      quantity: Number(decodeUintWord(wordAt(words, 0)))
+    };
+  }
+
   const planetId = decodeUint(topicAt(log.topics, 1)).toString();
   const itemId = Number(decodeUint(topicAt(log.topics, 2)));
   if (topic === buildingStartedTopic) {
@@ -5003,6 +5070,18 @@ export function decodeIndexedQueueCompletedLog(log: RpcLog): IndexedQueueComplet
       planetId: decodeUint(topicAt(log.topics, 1)).toString(),
       itemId: Number(decodeUint(topicAt(log.topics, 2))),
       level: Number(decodeUintWord(wordAt(words, 0)))
+    };
+  }
+
+  if (topic === moonDefenseCompletedTopic) {
+    return {
+      ...base,
+      eventName: "MoonDefenseCompleted",
+      queueKind: "moon-defense",
+      planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+      itemId: Number(decodeUint(topicAt(log.topics, 2))),
+      quantity: Number(decodeUintWord(wordAt(words, 0))),
+      total: Number(decodeUintWord(wordAt(words, 1)))
     };
   }
 

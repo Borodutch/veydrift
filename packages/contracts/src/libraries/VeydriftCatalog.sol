@@ -78,7 +78,11 @@ library VeydriftCatalog {
         returns (uint128, uint128, uint128)
     {
         if (building == MoonBuilding.LunarBase) return (20_000, 40_000, 20_000);
+        if (building == MoonBuilding.RoboticsFactory) {
+            return buildingBaseCost(Building.RoboticsFactory);
+        }
         if (building == MoonBuilding.JumpGate) return (2_000_000, 4_000_000, 2_000_000);
+        if (building == MoonBuilding.Shipyard) return buildingBaseCost(Building.Shipyard);
         revert InvalidId();
     }
 

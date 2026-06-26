@@ -28,6 +28,8 @@ const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b
 const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
 const moonBuildingStartedTopic = "0x6b41aeb096e643752dad879b8f3875d8657186226c3cf8b6e7a38c27292f215a";
 const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed6eb0ebee81c917b575ed3a";
+const moonDefenseQueuedTopic = "0xa53d76ce638ebf6aee45c30e9622beeafc4e9c2c9bcd3122a72a3a7e00500637";
+const moonDefenseCompletedTopic = "0xb84a089b29951e8696b0ef11e5766578a0e1348284a93e4731fcb416d0536a70";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
 const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
@@ -3004,6 +3006,46 @@ describe("SettlementIndexer", () => {
       queue: null,
       buildings: expect.arrayContaining([
         expect.objectContaining({ id: 2, level: 1 })
+      ])
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x8a",
+      transactionHash: "0xmoondefense",
+      logIndex: "0x0",
+      topics: [
+        moonDefenseQueuedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(3n, 1770001800n, 6_000n, 0n, 0n)
+    });
+
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      defenseQueue: {
+        kind: "moon-defense",
+        itemId: 0,
+        quantity: 3,
+        readyAt: "1770001800"
+      }
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x8b",
+      transactionHash: "0xmoondefensedone",
+      logIndex: "0x0",
+      topics: [
+        moonDefenseCompletedTopic,
+        topic(7n),
+        topic(0n)
+      ],
+      data: abiWords(3n, 3n)
+    });
+
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      defenseQueue: null,
+      defenses: expect.arrayContaining([
+        expect.objectContaining({ id: 0, count: 3 })
       ])
     });
   });
