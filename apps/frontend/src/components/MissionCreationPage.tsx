@@ -271,6 +271,7 @@ export function MissionCreationPage({
   const availableShips = useMemo(() => missionShipOptionsForAction(action, effectiveShipyardState), [action, effectiveShipyardState]);
   const destinationIntelVisible = shouldShowDestinationIntel(action);
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
+  const normalizedCargo = cargoSupported ? normalizeCargoDraft(cargo) : undefined;
   const lootRatioSupported = !joinAttackMode && !acsDefendMode && action.mode === "mission" && action.kind === "attack";
   const lootRatioActive = lootRatioSupported && !greedyLootEnabled;
   const displayedLootRatio = lootRatioActive ? lootRatio : GREEDY_LOOT_RATIO;
@@ -338,6 +339,7 @@ export function MissionCreationPage({
   const blockedReason = missionDraftBlocker({
     acsArrivalTooSlow,
     action,
+    cargo: normalizedCargo,
     cargoCapacity,
     cargoSupported,
     cargoTotal,
@@ -649,7 +651,7 @@ export function MissionCreationPage({
             onClick={() => onConfirm({
               speedPercent,
               ships,
-              cargo: cargoSupported ? normalizeCargoDraft(cargo) : undefined,
+              cargo: normalizedCargo,
               lootRatio: lootRatioActive ? { ...lootRatio } : undefined,
               primaryTargetId,
               quantity,
@@ -754,6 +756,7 @@ function MissionFormSection({
 export function missionDraftBlocker({
   acsArrivalTooSlow = false,
   action,
+  cargo,
   cargoCapacity,
   cargoSupported,
   cargoTotal,
@@ -774,6 +777,7 @@ export function missionDraftBlocker({
   // hostile attack lands (the on-chain FleetAlreadyArrived backstop, surfaced before submit).
   acsArrivalTooSlow?: boolean | undefined;
   action: EnabledGalaxyAction;
+  cargo?: MissionCargoDraft | undefined;
   cargoCapacity: number;
   cargoSupported: boolean;
   cargoTotal: number;
@@ -816,10 +820,35 @@ export function missionDraftBlocker({
   }
   if (cargoSupported && cargoTotal > cargoCapacity) return "Cargo exceeds available capacity.";
   if (cargoSupported && cargoTotal < 0) return "Cargo cannot be negative.";
+  const cargoOverdraft = cargoSupported ? cargoResourceOverdraft(cargo, resources, fuelCost) : undefined;
+  if (cargoOverdraft) return cargoOverdraft;
   if (lootRatioActive && lootRatioTotal !== LOOT_RATIO_TOTAL_PERCENT) {
     return `Loot ratio must total ${LOOT_RATIO_TOTAL_PERCENT}%.`;
   }
   return undefined;
+}
+
+function cargoResourceOverdraft(
+  cargo: MissionCargoDraft | undefined,
+  resources: MissionResourceSnapshot | undefined,
+  fuelCost: number,
+): string | undefined {
+  if (!cargo || !resources) return undefined;
+  const missing = RESOURCE_KEYS
+    .map((key) => {
+      const cargoAmount = resourceDraftNumber(cargo[key]);
+      const requested = cargoAmount + (key === "deuterium" ? Math.max(0, Math.trunc(fuelCost)) : 0);
+      const available = Math.max(0, Math.trunc(resources[key] ?? 0));
+      if (requested <= available) return null;
+      const detail = key === "deuterium" && fuelCost > 0
+        ? `${requested.toLocaleString()} required (${Math.max(0, Math.trunc(fuelCost)).toLocaleString()} fuel + ${cargoAmount.toLocaleString()} cargo)`
+        : `${requested.toLocaleString()} selected`;
+      return `${resourceLabel(key)} ${detail} / ${available.toLocaleString()} available`;
+    })
+    .filter((row): row is string => Boolean(row));
+
+  if (missing.length <= 0) return undefined;
+  return `Cargo exceeds available resources: ${missing.join(", ")}.`;
 }
 
 export function staleSelectedShipQuantityBlocker(
