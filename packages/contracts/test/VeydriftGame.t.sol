@@ -6028,7 +6028,7 @@ contract VeydriftGameTest is Test {
 
         assertEq(uint8(outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin));
         assertEq(rounds, 0);
-        assertEq(game.shipCount(targetPlanetId, Ship.Crawler), 1);
+        assertEq(game.shipCount(targetPlanetId, Ship.Crawler), 0);
         (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
     }
@@ -6064,7 +6064,7 @@ contract VeydriftGameTest is Test {
 
         assertEq(uint8(outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin));
         assertGt(rounds, 0);
-        assertEq(game.shipCount(targetPlanetId, Ship.Crawler), 1);
+        assertEq(game.shipCount(targetPlanetId, Ship.Crawler), 0);
         assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 0);
     }
 
