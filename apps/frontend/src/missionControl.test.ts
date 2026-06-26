@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
 import { MissionControlPage, StationedDefenseSection, allActiveMissionRows, buildMissionControlViewQuery, missionPlanetCoordinateKey, missionReport, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
+import { MissionRouteCell, missionEndpoint, type MissionPlanetIdentity } from "./components/missionRoute";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
@@ -1331,6 +1332,30 @@ describe("Mission Control battle reports", () => {
     const sources = planetImages.map((node) => node.props?.src);
     expect(sources).toContain(planetImageForType("temperate-ocean"));
     expect(sources).toContain(planetImageForType(targetType));
+  });
+
+  test("renders moon indicators on route endpoint planet art when identity has a moon", () => {
+    const owner = "0x1111111111111111111111111111111111111111";
+    const lookup = new Map<string, MissionPlanetIdentity>([[
+      "7",
+      {
+        archetype: "temperate-ocean",
+        coordinates: "1:2:3",
+        displayName: "Luna Gate",
+        hasMoon: true,
+        owner,
+        ownerDisplayName: "Vey",
+      },
+    ]]);
+    const routeMission = mission("moon-route", "Attack", "Outbound", owner, "7", "9");
+    const tree = MissionRouteCell({
+      direction: "outbound",
+      origin: missionEndpoint(routeMission, "origin", lookup),
+      target: missionEndpoint(routeMission, "target", lookup),
+    });
+
+    const indicator = findElements(tree, "span").find((item) => item.props?.["data-planet-moon-indicator"] === "true");
+    expect(indicator?.props?.["aria-label"]).toBe("Moon present");
   });
 
   // VEY-403: the mission card route is a directional, progress-filled arrow plus real planet art for

@@ -32,6 +32,7 @@ import { shortAddress, type ChainShipyardState } from "../walletFlow";
 import { formatDuration } from "../durationFormat";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { PageHeader } from "./PageHeader";
+import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 
 export type CombatTechLevels = {
   weapons: number;
@@ -1077,12 +1078,15 @@ function TargetIdentityContent({
   return (
     <>
       {target?.image ? (
-        <img
-          alt=""
-          className={imageClassName}
-          loading="lazy"
-          src={target.image}
-        />
+        <span className={`relative block overflow-hidden ${imageClassName}`}>
+          <img
+            alt=""
+            className="h-full w-full object-cover"
+            loading="lazy"
+            src={target.image}
+          />
+          {target.hasMoon ? <PlanetMoonIndicator compact /> : null}
+        </span>
       ) : (
         <div className={placeholderClassName}>
           No image
@@ -1415,12 +1419,15 @@ function TargetDecisionTable({ coords, target }: { coords: Coordinates; target: 
   return (
     <div className="grid gap-3 p-3 sm:grid-cols-[3.75rem_minmax(0,1fr)]">
       {target?.image ? (
-        <img
-          alt=""
-          className="h-16 w-16 rounded-md border border-white/10 object-cover sm:h-14 sm:w-14"
-          loading="lazy"
-          src={target.image}
-        />
+        <span className="relative block h-16 w-16 overflow-hidden rounded-md border border-white/10 sm:h-14 sm:w-14">
+          <img
+            alt=""
+            className="h-full w-full object-cover"
+            loading="lazy"
+            src={target.image}
+          />
+          {target.hasMoon ? <PlanetMoonIndicator compact /> : null}
+        </span>
       ) : (
         <div className="grid h-16 w-16 place-items-center rounded-md border border-white/10 bg-white/[0.03] text-[11px] text-slate-500 sm:h-14 sm:w-14">
           No image

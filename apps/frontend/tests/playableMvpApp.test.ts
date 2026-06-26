@@ -3107,6 +3107,7 @@ function raidTarget(overrides: Partial<RaidTarget> = {}): RaidTarget {
     owner: "0x3333333333333333333333333333333333333333",
     ownerDisplayName: "Raider",
     alliance: null,
+    hasMoon: false,
     distance: 42,
     loot: 0,
     grossLoot: 0,

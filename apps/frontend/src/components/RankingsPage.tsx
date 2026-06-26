@@ -7,6 +7,7 @@ import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
+import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RankingsRowsSkeleton } from "./LoadingSkeletons";
 import { AfkFlair } from "./AfkFlair";
@@ -565,6 +566,7 @@ function RankingRow({
                     sizes="icon"
                     src={planetImageForType(planet.archetype)}
                   />
+                  {planet.hasMoon ? <PlanetMoonIndicator compact /> : null}
                 </span>
                 <span className="min-w-0 truncate text-slate-200">
                   {isHomePlanet ? (

@@ -77,6 +77,7 @@ export type RaidTarget = {
   owner: string;
   ownerDisplayName: string | null;
   alliance: RaidTargetAlliance | null;
+  hasMoon: boolean;
   // Flight distance from the viewer's active planet, or null when no origin is known.
   distance: number | null;
   // Raidable resource total (metal + crystal + deuterium) as a finite number.
@@ -126,6 +127,7 @@ export type DebrisFinderTarget = {
   coordinates: Coordinates;
   archetype: PlanetType;
   owner: string;
+  hasMoon: boolean;
   metal: number;
   crystal: number;
   total: number;
@@ -397,6 +399,7 @@ export function buildRaidTargets({
         owner: entry.wallet,
         ownerDisplayName: entry.displayName ?? null,
         alliance,
+        hasMoon: Boolean(planet.hasMoon),
         distance: origin ? fleetMissionDistance(origin, planet.coordinates) : null,
         loot: safeNumber(tactical?.raidableResourceTotal),
         grossLoot: safeNumber(tactical?.grossResourceTotal),
@@ -576,6 +579,7 @@ export function buildDebrisTargets({
       coordinates: target.coordinates,
       archetype: target.archetype,
       owner: target.owner,
+      hasMoon: Boolean(target.hasMoon),
       metal,
       crystal,
       total,
