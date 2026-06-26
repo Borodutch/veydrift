@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import type { ComponentChildren, VNode } from "preact";
-import { MissionControlPage, StationedDefenseSection, formatMissionTime, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseLoot, returnPhaseLosses } from "../src/components/MissionControlPage";
+import { MissionControlPage, StationedDefenseSection, formatMissionTime, missionControlRefreshButtonState, missionDisplayStatusLabel, missionLifecycleActions, missionStatusPill, returnPhaseHarvestedResources, returnPhaseLoot, returnPhaseLosses } from "../src/components/MissionControlPage";
 import { encodeColonizationTargetId } from "../src/walletFlow";
 import type { BattleReport, FleetMissionSummary, ManagedPlanetResponse } from "../src/walletFlow";
 
@@ -810,6 +810,63 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Loot 1,200 M / 300 C / 0 D");
   });
 
+  test("shows harvested debris from return cargo on a returning harvest mission card", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [mission({
+          missionId: "56",
+          missionType: "Harvest",
+          status: "Returning",
+          cargo: { metal: "0", crystal: "0", deuterium: "0" },
+          returnCargo: { metal: "1200", crystal: "300", deuterium: "0" },
+          ships: { recycler: "1" },
+        })],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Cargo Empty");
+    expect(text).toContain("Debris collected 1,200 M / 300 C / 0 D");
+    expect(text).not.toContain("Loot 1,200 M / 300 C / 0 D");
+  });
+
+  test("shows harvested debris on completed harvest mission cards", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet,
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [mission({
+          missionId: "57",
+          missionType: "Harvest",
+          status: "Returned",
+          cargo: { metal: "0", crystal: "0", deuterium: "0" },
+          returnCargo: { metal: "400", crystal: "50", deuterium: "0" },
+          ships: { recycler: "1" },
+        })],
+        battleReports: [],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Harvest");
+    expect(text).toContain("Debris collected 400 M / 50 C / 0 D");
+  });
+
   test("shows a joined attack participant's grabbed loot on the returning mission card", () => {
     const wallet = "0x1111111111111111111111111111111111111111";
     const page = missionControlPage({
@@ -898,6 +955,35 @@ describe("MissionControlPage", () => {
     expect(returnPhaseLoot(mission({ missionId: "55", status: "Returned" }), lootByMissionId)).toBe(loot);
     // No matching report -> no loot line at all (e.g. a returning transport).
     expect(returnPhaseLoot(mission({ missionId: "999", status: "Returned" }), lootByMissionId)).toBeUndefined();
+  });
+
+  test("withholds harvested debris until a harvest fleet leaves its outbound leg", () => {
+    const harvested = { metal: "1200", crystal: "300", deuterium: "0" };
+
+    expect(returnPhaseHarvestedResources(mission({
+      missionId: "56",
+      missionType: "Harvest",
+      status: "Outbound",
+      returnCargo: harvested,
+    }))).toBeUndefined();
+    expect(returnPhaseHarvestedResources(mission({
+      missionId: "56",
+      missionType: "Harvest",
+      status: "Returning",
+      returnCargo: harvested,
+    }))).toBe(harvested);
+    expect(returnPhaseHarvestedResources(mission({
+      missionId: "56",
+      missionType: "Harvest",
+      status: "Returned",
+      returnCargo: harvested,
+    }))).toBe(harvested);
+    expect(returnPhaseHarvestedResources(mission({
+      missionId: "56",
+      missionType: "Transport",
+      status: "Returned",
+      returnCargo: harvested,
+    }))).toBeUndefined();
   });
 
   // VEY-KANEO-495: a resolved attack must show what it cost on its own card. Before this the card
