@@ -5128,6 +5128,7 @@ describe("SettlementIndexer", () => {
         topics: [combatLossesTopic, topic(1776n)],
         data: abiWords(0n, 0n, 0n, 0n, 0n, 0n)
       });
+      await writer.drainBattleReportMaterializationQueue();
       expect(writer.battleReportMaterializationStatus("1776")).toMatchObject({
         status: "ready",
         error: null

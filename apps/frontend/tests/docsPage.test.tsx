@@ -66,7 +66,7 @@ energy scale = produced / required
     expect(docsSource).not.toContain("formulas.md?raw");
   });
 
-  test("renders route navigation, readable tables, anchors, and AI reference link", () => {
+  test("renders route navigation, readable tables, anchors, GitHub link, and AI reference link", () => {
     const rawDocs = readFileSync(new URL("../src/docs/content/docs.md", import.meta.url), "utf8");
     const formulas = markdownSectionForHeading(rawDocs, "Formulas");
     const parsed = parseMarkdown(formulas);
@@ -75,7 +75,11 @@ energy scale = produced / required
 
     const tree = DocsPage({ pathname: "/docs" });
     const links = elementNodes(tree).filter((node) => node.type === "a");
+    const githubLink = links.find((node) => node.props?.["aria-label"] === "Veydrift GitHub repository");
 
+    expect(githubLink?.props?.href).toBe("https://github.com/Borodutch/veydrift");
+    expect(githubLink?.props?.target).toBe("_blank");
+    expect(githubLink?.props?.rel).toBe("noopener noreferrer");
     expect(links.some((node) => node.props?.href === "/docs.md")).toBe(true);
     expect(links.some((node) => node.props?.href === "/docs" && node.props?.children === "Docs")).toBe(false);
   });
