@@ -1048,6 +1048,7 @@ describe("mission creation", () => {
   test("blocks cargo drafts that exceed selected ship capacity", () => {
     expect(missionDraftBlocker({
       action: attackAction,
+      cargo: { metal: "101", crystal: "0", deuterium: "0" },
       cargoCapacity: 100,
       cargoSupported: true,
       cargoTotal: 101,
@@ -1059,6 +1060,38 @@ describe("mission creation", () => {
       selectedShipCount: 1,
       totalCargoCapacity: 150,
     })).toBe("Cargo exceeds available capacity.");
+  });
+
+  test("blocks transport cargo drafts that exceed origin resources", () => {
+    expect(missionDraftBlocker({
+      action: transportAction,
+      cargo: { metal: "751", crystal: "50", deuterium: "0" },
+      cargoCapacity: 2_000,
+      cargoSupported: true,
+      cargoTotal: 801,
+      fleetSlots: { active: 0, limit: 1 },
+      fuelCost: 100,
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 1,
+      resources: { metal: 750, crystal: 1_000, deuterium: 1_000 },
+      selectedShipCount: 1,
+      totalCargoCapacity: 2_100,
+    })).toBe("Cargo exceeds available resources: Metal 751 selected / 750 available.");
+
+    expect(missionDraftBlocker({
+      action: transportAction,
+      cargo: { metal: "0", crystal: "0", deuterium: "200" },
+      cargoCapacity: 2_000,
+      cargoSupported: true,
+      cargoTotal: 200,
+      fleetSlots: { active: 0, limit: 1 },
+      fuelCost: 900,
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 1,
+      resources: { metal: 1_000, crystal: 1_000, deuterium: 1_000 },
+      selectedShipCount: 1,
+      totalCargoCapacity: 2_100,
+    })).toBe("Cargo exceeds available resources: Deuterium 1,100 required (900 fuel + 200 cargo) / 1,000 available.");
   });
 
   test("blocks attacks whose custom loot ratio does not total 100%", () => {
