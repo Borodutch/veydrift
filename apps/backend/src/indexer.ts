@@ -7281,8 +7281,10 @@ export class SettlementIndexer {
     let logIndex = 0;
 
     for (const report of reportsByPosition) {
-      while (logIndex < logs.length && compareRpcLogPosition(logs[logIndex]!, report) < 0) {
-        this.applyUnitCountSnapshotLog(currentByPlanet, logs[logIndex]!);
+      while (logIndex < logs.length) {
+        const log = logs[logIndex]!;
+        if (compareRpcLogPosition(log, report) >= 0 || sameRpcTransaction(log, report)) break;
+        this.applyUnitCountSnapshotLog(currentByPlanet, log);
         logIndex += 1;
       }
 
@@ -8193,6 +8195,10 @@ function maxReportBlockNumber(reports: readonly BattleReport[]): bigint {
     const block = BigInt(report.blockNumber);
     return block > max ? block : max;
   }, 0n);
+}
+
+function sameRpcTransaction(left: Pick<IndexedRpcLog, "transactionHash">, right: Pick<IndexedRpcLog, "transactionHash">): boolean {
+  return left.transactionHash.toLowerCase() === right.transactionHash.toLowerCase();
 }
 
 function sortRpcLogs(logs: readonly RpcLog[]): RpcLog[] {
