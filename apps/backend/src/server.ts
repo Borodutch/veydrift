@@ -4152,12 +4152,10 @@ function indexedAttackProtectionResponse(
   const planetsByOwner = indexer.settledPlanetsByOwner();
   const attacker = indexer.highscoreForWallet(wallet, (planetsByOwner.get(wallet.toLowerCase()) ?? []).map((planet) => planet.planetId));
   const defender = indexer.highscoreForWallet(target.owner, (planetsByOwner.get(target.owner.toLowerCase()) ?? []).map((planet) => planet.planetId));
-  const attackerScore = BigInt(attacker.score.total);
-  const defenderScore = BigInt(defender.score.total);
   // VEY-KANEO-489 follow-up: the score-protection gate must use the contract's _totalUserScore
   // (HighscoreEntry.totalUserScore), NOT the resource-based category total above. The category total is
   // on a ~hundreds scale, so against the contract's 50k/500k thresholds every player read as a newbie
-  // and the UI false-flagged score_protection. relation label keeps the category total.
+  // and the UI false-flagged score_protection. User-facing relation labels use the same Score scale.
   const attackerProtectionScore = BigInt(attacker.totalUserScore);
   const defenderProtectionScore = BigInt(defender.totalUserScore);
   const attackerKey = wallet.toLowerCase();
@@ -4227,7 +4225,11 @@ function indexedAttackProtectionResponse(
     allowed: blockedReason === "none",
     blockedReason,
     blockedReasonLabel: blockedReason === "none" ? null : attackBlockReasonLabel(blockedReason),
-    relation: defenderScore > attackerScore ? "stronger" : defenderScore < attackerScore ? "weaker" : "peer",
+    relation: defenderProtectionScore > attackerProtectionScore
+      ? "stronger"
+      : defenderProtectionScore < attackerProtectionScore
+        ? "weaker"
+        : "peer",
     defenderHonorStatus: "neutral",
     plunderBps: scoreProtected ? 0 : 5000,
     defenderInactive,
