@@ -7950,8 +7950,8 @@ function PlanetSelector({
 
   if (layout === "mobile") {
     return (
-      <section aria-label="Select planet" className="overflow-x-auto">
-        <div className="flex min-w-max gap-2 pb-1">
+      <section aria-label="Select planet" className="min-w-0 max-w-full overflow-x-auto overscroll-x-contain">
+        <div className="flex w-max min-w-full gap-2 pb-1">
           {planets.flatMap((planet) => planetSelectorButtons({
             fleetVisibility,
             onSelect,
