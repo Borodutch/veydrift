@@ -38,6 +38,23 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         _spaceDockSystem = nextSpaceDockSystem;
     }
 
+    function spendMoonResources(uint256 planetId, Resources calldata cost) external {
+        _delegateToDefenseProductionModule();
+    }
+
+    function moveMoonGateShips(
+        uint256 originPlanetId,
+        uint256 destinationPlanetId,
+        address owner_,
+        MissionShips calldata ships
+    ) external {
+        _delegateToDefenseProductionModule();
+    }
+
+    function untrackResolvedFleetMission(uint256 missionId) external {
+        _delegateToDefenseProductionModule();
+    }
+
     function startShipProduction(uint256 planetId, Ship ship, uint32 quantity) external {
         _requirePlanetOwner(planetId);
         _settleDueColonizeArrivals(msg.sender);
@@ -293,6 +310,12 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     function resolveFleetMission(uint256 missionId) external {
         FleetMission storage mission = _fleetMissions[missionId];
         if (mission.status != FleetMissionStatus.Outbound) return;
+        if (
+            (mission.missionType == FleetMissionType.Transport
+                    || mission.missionType == FleetMissionType.Deploy) && mission.targetIsMoon
+        ) {
+            _delegateToDefenseProductionModule();
+        }
         if (mission.missionType != FleetMissionType.Colonize) {
             revert InvalidMissionType(mission.missionType);
         }
@@ -410,7 +433,9 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
             cargo: cargo,
             ships: ships,
             randomnessRequestId: 0,
-            lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0})
+            lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0}),
+            originIsMoon: false,
+            targetIsMoon: false
         });
         emit FleetMissionLaunched(
             missionId,

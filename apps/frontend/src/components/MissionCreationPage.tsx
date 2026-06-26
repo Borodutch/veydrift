@@ -59,6 +59,8 @@ export type MissionLaunchDraft = {
   lootRatio?: MissionLootRatioDraft | undefined;
   primaryTargetId?: number | undefined;
   quantity?: number | undefined;
+  originIsMoon?: boolean | undefined;
+  targetIsMoon?: boolean | undefined;
   // VEY-KANEO-440: chosen hold window (seconds) for a proactive DefenseHold stationing mission.
   holdSeconds?: number | undefined;
 };
@@ -91,6 +93,13 @@ type ShipOption = {
 
 type MissionShipInventorySnapshot = {
   ships: Array<{ id: number; count: number }>;
+};
+
+export type MissionBodySelection = {
+  originMoonAvailable: boolean;
+  targetMoonAvailable: boolean;
+  originMoonResources?: MissionResourceSnapshot | undefined;
+  originMoonShipyardState?: ChainShipyardState | null | undefined;
 };
 
 export type UnitItem = {
@@ -188,6 +197,7 @@ export function MissionCreationPage({
   action,
   actionPending,
   actionPendingLabel,
+  bodySelection,
   coords,
   defenseHoldContext,
   defenseHoldMode = false,
@@ -212,6 +222,7 @@ export function MissionCreationPage({
   action: EnabledGalaxyAction;
   actionPending: boolean;
   actionPendingLabel?: string | undefined;
+  bodySelection?: MissionBodySelection | undefined;
   coords: Coordinates;
   // VEY-KANEO-440: render a proactive DefenseHold compose — adds a player-chosen hold-duration selector
   // and a travel + holding-fuel + Alliance Depot preview, stationing the fleet at the target planet.
@@ -242,6 +253,8 @@ export function MissionCreationPage({
   const [primaryTargetId, setPrimaryTargetId] = useState(action.mode === "missile" ? action.primaryTargetId : 0);
   const [quantity, setQuantity] = useState(action.mode === "missile" ? action.quantity : 1);
   const [holdHours, setHoldHours] = useState<number>(DEFAULT_DEFENSE_HOLD_HOURS);
+  const [originIsMoon, setOriginIsMoon] = useState(false);
+  const [targetIsMoon, setTargetIsMoon] = useState(false);
 
   const distance = originCoords ? fleetMissionDistance(originCoords, coords) : 0;
   const travelSeconds = action.mode === "missile" ? 0 : fleetMissionTravelSeconds(distance, ships, driveLevels, speedPercent);
@@ -249,8 +262,13 @@ export function MissionCreationPage({
   const totalCargoCapacity = action.mode === "missile" ? 0 : fleetMissionCargoCapacity(ships);
   const cargoCapacity = action.mode === "missile" ? 0 : fleetMissionAvailableCargoCapacity(ships, distance, driveLevels, speedPercent);
   const selectedShipCount = action.mode === "missile" ? 0 : fleetMissionShipCount(ships);
-  const availableShips = useMemo(() => missionShipOptionsForAction(action, shipyardState), [action, shipyardState]);
   const cargoSupported = action.mode === "mission" && (action.kind === "transport" || action.kind === "deploy");
+  const bodySelectionSupported = cargoSupported && Boolean(bodySelection) && (bodySelection?.originMoonAvailable || bodySelection?.targetMoonAvailable);
+  const effectiveOriginIsMoon = Boolean(bodySelectionSupported && originIsMoon);
+  const effectiveTargetIsMoon = Boolean(bodySelectionSupported && targetIsMoon);
+  const effectiveResources = effectiveOriginIsMoon ? bodySelection?.originMoonResources : resources;
+  const effectiveShipyardState = effectiveOriginIsMoon ? bodySelection?.originMoonShipyardState ?? null : shipyardState;
+  const availableShips = useMemo(() => missionShipOptionsForAction(action, effectiveShipyardState), [action, effectiveShipyardState]);
   const destinationIntelVisible = shouldShowDestinationIntel(action);
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
   const lootRatioSupported = !joinAttackMode && !acsDefendMode && action.mode === "mission" && action.kind === "attack";
@@ -277,8 +295,8 @@ export function MissionCreationPage({
     [target, travelSeconds],
   );
   const staleShipQuantityBlocker = useMemo(
-    () => staleSelectedShipQuantityBlocker(action, ships, shipyardState),
-    [action, ships, shipyardState],
+    () => staleSelectedShipQuantityBlocker(action, ships, effectiveShipyardState),
+    [action, effectiveShipyardState, ships],
   );
   const maxLootForecast = useMemo(
     () => forecastRaidLoot(resourceIntel.projectedArrivalLootable, cargoCapacity, greedyLootEnabled ? null : lootRatio),
@@ -323,27 +341,29 @@ export function MissionCreationPage({
     cargoCapacity,
     cargoSupported,
     cargoTotal,
-    fleetSlots: shipyardState?.fleetSlots,
-    fleetSlotsUnavailableReason: shipyardState?.fleetLaunchAvailable === false
-      ? shipyardState.fleetLaunchUnavailableReason ?? shipyardState.unavailableReason ?? "Fleet slot state is still syncing."
+    fleetSlots: effectiveShipyardState?.fleetSlots,
+    fleetSlotsUnavailableReason: effectiveShipyardState?.fleetLaunchAvailable === false
+      ? effectiveShipyardState.fleetLaunchUnavailableReason ?? effectiveShipyardState.unavailableReason ?? "Fleet slot state is still syncing."
       : undefined,
     fuelCost: effectiveFuelCost,
     lootRatioActive,
     lootRatioTotal,
     originCoords,
     quantity,
-    resources,
+    resources: effectiveResources,
     selectedShipCount,
     staleShipQuantityBlocker,
-    submitBlocker,
+    submitBlocker: effectiveOriginIsMoon && !bodySelection?.originMoonShipyardState
+      ? "Moon fleet state is still loading."
+      : submitBlocker,
     totalCargoCapacity,
   });
   const visibleBlockedReason = actionPending ? undefined : blockedReason;
 
   const maxCargoResources = {
-    metal: Math.max(0, Math.trunc(resources?.metal ?? 0)),
-    crystal: Math.max(0, Math.trunc(resources?.crystal ?? 0)),
-    deuterium: Math.max(0, Math.trunc((resources?.deuterium ?? 0) - fuelCost)),
+    metal: Math.max(0, Math.trunc(effectiveResources?.metal ?? 0)),
+    crystal: Math.max(0, Math.trunc(effectiveResources?.crystal ?? 0)),
+    deuterium: Math.max(0, Math.trunc((effectiveResources?.deuterium ?? 0) - fuelCost)),
   };
   const setShipQuantity = (key: MissionShipKey, value: number, owned: number) => setShips((current) => ({
     ...current,
@@ -381,6 +401,28 @@ export function MissionCreationPage({
 
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start">
         <section className="grid gap-3">
+          {bodySelectionSupported ? (
+            <MissionFormSection title="Bodies" eyebrow="Route">
+              <BodySelectionRow
+                moonAvailable={Boolean(bodySelection?.originMoonAvailable)}
+                moonLabel="Origin moon"
+                onChange={setOriginIsMoon}
+                planetLabel="Origin planet"
+                value={effectiveOriginIsMoon}
+              />
+              <BodySelectionRow
+                moonAvailable={Boolean(bodySelection?.targetMoonAvailable)}
+                moonLabel="Destination moon"
+                onChange={setTargetIsMoon}
+                planetLabel="Destination planet"
+                value={effectiveTargetIsMoon}
+              />
+              <p className="text-xs text-slate-500">
+                Moon bodies keep independent resources and fleets. Jump Gates move moon fleets only and do not carry resources.
+              </p>
+            </MissionFormSection>
+          ) : null}
+
           {lootRatioSupported ? (
             <AttackIntelPanel
               battleForecast={battleForecast}
@@ -450,7 +492,7 @@ export function MissionCreationPage({
               {availableShips.length > 0 ? (
                 <div className="grid gap-2">
                   {availableShips.map((ship) => {
-                    const owned = shipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0;
+                    const owned = effectiveShipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0;
                     return (
                       <ShipQuantityRow
                         key={ship.key}
@@ -611,6 +653,8 @@ export function MissionCreationPage({
               lootRatio: lootRatioActive ? { ...lootRatio } : undefined,
               primaryTargetId,
               quantity,
+              originIsMoon: effectiveOriginIsMoon,
+              targetIsMoon: effectiveTargetIsMoon,
               holdSeconds: defenseHoldActive ? defenseHoldSeconds : undefined,
             })}
             type="button"
@@ -625,6 +669,51 @@ export function MissionCreationPage({
         </aside>
       </div>
     </section>
+  );
+}
+
+function BodySelectionRow({
+  moonAvailable,
+  moonLabel,
+  onChange,
+  planetLabel,
+  value,
+}: {
+  moonAvailable: boolean;
+  moonLabel: string;
+  onChange: (value: boolean) => void;
+  planetLabel: string;
+  value: boolean;
+}) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      <button
+        aria-pressed={!value}
+        className={`h-9 rounded border px-3 text-xs font-semibold transition ${
+          !value
+            ? "border-signal/45 bg-signal/15 text-signal"
+            : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white"
+        }`}
+        onClick={() => onChange(false)}
+        type="button"
+      >
+        {planetLabel}
+      </button>
+      <button
+        aria-pressed={value}
+        className={`h-9 rounded border px-3 text-xs font-semibold transition ${
+          value
+            ? "border-signal/45 bg-signal/15 text-signal"
+            : "border-white/10 bg-white/[0.03] text-slate-400 hover:border-white/20 hover:text-white disabled:cursor-not-allowed disabled:opacity-55"
+        }`}
+        disabled={!moonAvailable}
+        onClick={() => onChange(true)}
+        title={moonAvailable ? moonLabel : `${moonLabel} unavailable for this route.`}
+        type="button"
+      >
+        {moonLabel}
+      </button>
+    </div>
   );
 }
 

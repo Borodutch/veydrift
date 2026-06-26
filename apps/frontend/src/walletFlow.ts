@@ -265,6 +265,8 @@ export type FleetMissionSummary = {
   owner: string;
   originPlanetId: string;
   targetPlanetId: string;
+  originIsMoon?: boolean;
+  targetIsMoon?: boolean;
   originPlanet?: FleetMissionPlanetReference | null;
   targetPlanet?: FleetMissionPlanetReference | null;
   arrivalAt: string;
@@ -632,6 +634,13 @@ export type ChainMoonState = {
     label: string;
     level: number;
     cost: OnChainResources;
+  }>;
+  fleet?: Array<{
+    id: number;
+    count: number;
+    cost: OnChainResources;
+    energyPerUnit?: string;
+    durationSeconds?: number;
   }>;
   queue: QueueStateResponse | null;
   technologyLevels?: Record<string, number>;
@@ -1024,6 +1033,7 @@ const GAME_SELECTORS = {
   // VEY-KANEO-440/441: ACS Defend stationing. Selector for
   // launchDefenseHold(uint256,uint256,(uint32 x14 MissionShips),(uint128 x3 Resources),uint16,uint256).
   launchDefenseHold: "0xd3ad415f",
+  launchBodyFleetMission: "0x0d0a9b08",
   launchFleetMission: "0x60eac16f",
   resolveFleetMission: "0xde09e7cf",
   startBuildingUpgrade: "0x165715e3",
@@ -1318,6 +1328,7 @@ const fleetMissionTransactionSelectors = new Set<string>([
   GAME_SELECTORS.completeFleetMissionReturn,
   GAME_SELECTORS.joinAttackMission,
   GAME_SELECTORS.launchAttackMission,
+  GAME_SELECTORS.launchBodyFleetMission,
   GAME_SELECTORS.launchFleetMission,
   GAME_SELECTORS.recallFleetMission,
   GAME_SELECTORS.resolveFleetMission,
@@ -1831,6 +1842,52 @@ export function encodeLaunchFleetMissionCall({
     cargo?.deuterium ?? 0,
     speedPercent,
     randomnessRequestId,
+  ]);
+}
+
+export function encodeLaunchBodyFleetMissionCall({
+  originPlanetId,
+  targetPlanetId,
+  missionType,
+  ships,
+  cargo,
+  speedPercent = 100,
+  originIsMoon,
+  targetIsMoon,
+}: {
+  originPlanetId: bigint | number | string;
+  targetPlanetId: bigint | number | string;
+  missionType: number;
+  ships: MissionShips;
+  cargo?: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
+  speedPercent?: number | undefined;
+  originIsMoon: boolean;
+  targetIsMoon: boolean;
+}): string {
+  return encodeGameCall(GAME_SELECTORS.launchBodyFleetMission, [
+    originPlanetId,
+    targetPlanetId,
+    missionType,
+    ships.smallCargo,
+    ships.lightFighter,
+    ships.recycler,
+    ships.colonyShip,
+    ships.largeCargo,
+    ships.heavyFighter,
+    ships.cruiser,
+    ships.battleship,
+    ships.bomber,
+    ships.destroyer,
+    ships.deathstar,
+    ships.battlecruiser,
+    ships.reaper,
+    ships.pathfinder,
+    cargo?.metal ?? 0,
+    cargo?.crystal ?? 0,
+    cargo?.deuterium ?? 0,
+    speedPercent,
+    originIsMoon ? 1 : 0,
+    targetIsMoon ? 1 : 0,
   ]);
 }
 
@@ -2875,6 +2932,21 @@ export async function sendLaunchFleetMissionTransaction(
   params: Parameters<typeof encodeLaunchFleetMissionCall>[0]
 ): Promise<string> {
   const data = encodeLaunchFleetMissionCall(params);
+
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data
+  });
+}
+
+export async function sendLaunchBodyFleetMissionTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  contractAddress: string,
+  params: Parameters<typeof encodeLaunchBodyFleetMissionCall>[0]
+): Promise<string> {
+  const data = encodeLaunchBodyFleetMissionCall(params);
 
   return sendWalletTransaction(provider, account, {
     from: account,

@@ -178,7 +178,7 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function untrackResolvedFleetMission(uint256) external {
         if (msg.sender != address(this)) revert Unauthorized(msg.sender);
-        _delegateToPlayModule();
+        _delegateToColonizationModule();
     }
 
     function startResearch(uint256, Technology) external {
@@ -213,9 +213,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function spendMoonResources(uint256 planetId, Resources calldata cost) external {
-        if (msg.sender != _moonSystem) revert Unauthorized(msg.sender);
-        _settleResources(planetId);
-        _spend(planetId, cost);
+        _delegateToColonizationModule();
     }
 
     function moveMoonGateShips(
@@ -224,35 +222,7 @@ contract VeydriftGame is VeydriftResourceReserves {
         address owner_,
         MissionShips calldata ships
     ) external {
-        if (msg.sender != _moonSystem) revert Unauthorized(msg.sender);
-        if (
-            _planets[originPlanetId].owner != owner_
-                || _planets[destinationPlanetId].owner != owner_
-        ) {
-            revert NotPlanetOwner();
-        }
-        uint256 shipTotal;
-        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
-            Ship ship = Ship(i);
-            if (ship != Ship.SolarSatellite) {
-                uint32 quantity = _missionShipQuantity(ships, ship);
-                if (quantity != 0) {
-                    uint32 available = _shipCounts[originPlanetId][ship];
-                    if (available < quantity) revert InsufficientShips(ship, available, quantity);
-                    shipTotal += quantity;
-                    // Both quantities are known non-zero here, so call the count sink directly and
-                    // avoid pulling the credit/debit wrapper bodies into this size-critical contract.
-                    _setPlanetShipCount(originPlanetId, ship, available - quantity);
-                    _setPlanetShipCount(
-                        destinationPlanetId, ship, _shipCounts[destinationPlanetId][ship] + quantity
-                    );
-                }
-            }
-            unchecked {
-                ++i;
-            }
-        }
-        if (shipTotal == 0) revert InvalidQuantity();
+        _delegateToColonizationModule();
     }
 
     function renamePlanet(uint256, string calldata) external {
@@ -282,6 +252,20 @@ contract VeydriftGame is VeydriftResourceReserves {
             return _launchColonizeMission();
         }
         _delegateToPlayModule();
+    }
+
+    function launchBodyFleetMission(
+        uint256,
+        uint256,
+        FleetMissionType,
+        MissionShips calldata,
+        Resources calldata,
+        uint16,
+        bool,
+        bool
+    ) external returns (uint256) {
+        _touchPlayer(msg.sender);
+        _delegateToDefenseHoldModule();
     }
 
     function launchFleetMission(
@@ -348,8 +332,14 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function resolveFleetMission(uint256 missionId) external {
-        FleetMissionType missionType = _fleetMissions[missionId].missionType;
-        if (missionType == FleetMissionType.Colonize) {
+        FleetMission storage mission = _fleetMissions[missionId];
+        FleetMissionType missionType = mission.missionType;
+        if (
+            missionType == FleetMissionType.Colonize
+                || ((missionType == FleetMissionType.Transport
+                        || missionType == FleetMissionType.Deploy)
+                    && mission.targetIsMoon)
+        ) {
             _delegateToColonizationModule();
         }
         if (missionType == FleetMissionType.DefenseHold) {
