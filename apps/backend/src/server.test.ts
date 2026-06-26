@@ -2189,7 +2189,14 @@ describe("Veydrift backend", () => {
       data: abiWords(3n, 3n)
     });
     // A resolved attack mission (id 1) against planet 9, plus its indexed battle report logs.
-    for (const log of completedFleetMissionLogs({ missionId: 1n, owner: attacker, originPlanetId: 7n, targetPlanetId: 9n })) {
+    for (const log of activeFleetMissionLogs({
+      arrivalAt: 1_700_000_000n,
+      missionId: 1n,
+      missionTypeId: 3n,
+      owner: attacker,
+      originPlanetId: 7n,
+      targetPlanetId: 9n
+    })) {
       indexer.applyLog(log);
     }
     indexer.applyLog({
@@ -2208,6 +2215,7 @@ describe("Veydrift backend", () => {
       topics: [combatLossesTopic, topic(1n)],
       data: abiWords(100n, 50n, 0n, 900n, 250n, 0n)
     });
+    await indexer.drainBattleReportMaterializationQueue();
 
     const response = await createRequestHandler({
       config: configuredTestConfig,
@@ -2239,7 +2247,14 @@ describe("Veydrift backend", () => {
       transactionHash: "0xtargetplanet",
       blockNumber: "100"
     });
-    for (const log of completedFleetMissionLogs({ missionId: 89n, owner: attacker, originPlanetId: 7n, targetPlanetId: 9n })) {
+    for (const log of activeFleetMissionLogs({
+      arrivalAt: 1_700_000_000n,
+      missionId: 89n,
+      missionTypeId: 3n,
+      owner: attacker,
+      originPlanetId: 7n,
+      targetPlanetId: 9n
+    })) {
       indexer.applyLog(log);
     }
     const handler = createRequestHandler({
@@ -2252,7 +2267,7 @@ describe("Veydrift backend", () => {
     const beforeReportResponse = await handler(new Request("http://localhost/mission/89"));
     const beforeReportBody = await beforeReportResponse.json();
     expect(beforeReportResponse.status).toBe(200);
-    expect(beforeReportBody.mission).toMatchObject({ missionId: "89", status: "Returned" });
+    expect(beforeReportBody.mission).toMatchObject({ missionId: "89", status: "Outbound" });
     expect(beforeReportBody.battleReport).toBeNull();
 
     indexer.applyLog({
@@ -2271,6 +2286,7 @@ describe("Veydrift backend", () => {
       topics: [combatLossesTopic, topic(89n)],
       data: abiWords(100n, 50n, 0n, 900n, 250n, 0n)
     });
+    await indexer.drainBattleReportMaterializationQueue();
 
     expect(indexer.battleReportMaterializationStatus("89")).toMatchObject({
       status: "ready",
@@ -2290,11 +2306,112 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("non-combat mission detail skips battle report lookup on cold read", async () => {
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    for (const log of completedFleetMissionLogs({ missionId: 6395n, missionTypeId: 0n, owner: player, originPlanetId: 7n, targetPlanetId: 8n })) {
+      indexer.applyLog(log);
+    }
+
+    let battleReportCalls = 0;
+    let materializationCalls = 0;
+    indexer.battleReport = () => {
+      battleReportCalls += 1;
+      throw new Error("non-combat detail should not read battle reports");
+    };
+    indexer.battleReportMaterializationStatus = () => {
+      materializationCalls += 1;
+      throw new Error("non-combat detail should not read battle report materialization");
+    };
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    })(new Request("http://localhost/mission/6395"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.mission).toMatchObject({ missionId: "6395", missionType: "Transport", status: "Returned" });
+    expect(body.battleReport).toBeNull();
+    expect(body.battleReportMaterialization).toEqual({ status: "missing" });
+    expect(battleReportCalls).toBe(0);
+    expect(materializationCalls).toBe(0);
+  });
+
+  test("persists battle report read model asynchronously and resolves ACS participant ids after restart", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-battle-report-read-model-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const participant = "0x4444444444444444444444444444444444444444" as Address;
+
+    try {
+      const writer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, { databasePath });
+      await writer.rebuild();
+      for (const log of activeFleetMissionLogs({ missionId: 500n, missionTypeId: 3n, owner: attacker, originPlanetId: 7n, targetPlanetId: 9n })) {
+        writer.applyLog(log);
+      }
+      for (const log of activeFleetMissionLogs({ missionId: 501n, missionTypeId: 8n, owner: participant, originPlanetId: 8n, targetPlanetId: 9n })) {
+        if (log.topics[0] === fleetMissionLaunchedTopic) {
+          writer.applyLog({ ...log, data: abiWords(8n, 9n, 1_800_000_501n, 1_800_000_801n, 500n) });
+        } else {
+          writer.applyLog(log);
+        }
+      }
+
+      writer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xbattleresolved-500",
+        logIndex: "0x0",
+        removed: false,
+        topics: [attackBattleResolvedTopic, topic(500n), addressTopic(attacker), topic(9n)],
+        data: abiWords(1n, 2n, 12345n, 100n, 50n, 10n)
+      });
+
+      expect(writer.battleReportMaterializationStatus("500")).toMatchObject({ status: "pending" });
+
+      writer.applyLog({
+        blockNumber: "0x91",
+        transactionHash: "0xcombatlosses-500",
+        logIndex: "0x0",
+        removed: false,
+        topics: [combatLossesTopic, topic(500n)],
+        data: abiWords(100n, 50n, 0n, 900n, 250n, 0n)
+      });
+      await writer.drainBattleReportMaterializationQueue();
+
+      expect(writer.battleReportMaterializationStatus("500")).toMatchObject({ status: "ready" });
+      expect(writer.battleReportMaterializationStatus("501")).toMatchObject({ status: "ready" });
+
+      const reader = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, {
+        databasePath,
+        runStartupBackfill: false
+      });
+      const report = reader.battleReport("501", { includeRawFallback: false });
+
+      expect(report).toMatchObject({
+        missionId: "500",
+        attackGroupId: "500",
+        loot: { metal: "100", crystal: "50", deuterium: "10" }
+      });
+      expect(report?.participants.map((entry) => entry.missionId).sort()).toEqual(["500", "501"]);
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("returns a fast explicit processing state while battle report materialization is pending", async () => {
     const attacker = "0x3333333333333333333333333333333333333333" as Address;
     const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
-    for (const log of completedFleetMissionLogs({ missionId: 91n, owner: attacker, originPlanetId: 7n, targetPlanetId: 9n })) {
+    for (const log of activeFleetMissionLogs({
+      arrivalAt: 1_700_000_000n,
+      missionId: 91n,
+      missionTypeId: 3n,
+      owner: attacker,
+      originPlanetId: 7n,
+      targetPlanetId: 9n
+    })) {
       indexer.applyLog(log);
     }
     indexer.applyLog({
@@ -2313,6 +2430,7 @@ describe("Veydrift backend", () => {
       topics: [combatLossesTopic, topic(91n)],
       data: abiWords(100n, 50n, 0n, 900n, 250n, 0n)
     });
+    await indexer.drainBattleReportMaterializationQueue();
     (indexer as any).db.query(`
       UPDATE indexed_battle_report_read_models
       SET status = 'pending',
@@ -2475,6 +2593,7 @@ describe("Veydrift backend", () => {
         topics: [fleetMissionReturnedTopic, topic(1777n), addressTopic(player), topic(7n)],
         data: "0x"
       });
+      await writer.drainBattleReportMaterializationQueue();
 
       const afterReportResponse = await handler(new Request("http://localhost/mission/1777"));
       const afterReportBody = await afterReportResponse.json();
@@ -2516,7 +2635,14 @@ describe("Veydrift backend", () => {
       topics: [planetDefenseCountChangedTopic, topic(92n), topic(0n)],
       data: abiWords(37n)
     });
-    for (const log of completedFleetMissionLogs({ missionId: 1240n, owner: attacker, originPlanetId: 7n, targetPlanetId: 92n })) {
+    for (const log of activeFleetMissionLogs({
+      arrivalAt: 1_700_000_000n,
+      missionId: 1240n,
+      missionTypeId: 3n,
+      owner: attacker,
+      originPlanetId: 7n,
+      targetPlanetId: 92n
+    })) {
       indexer.applyLog(log);
     }
     indexer.applyLog({
@@ -2543,6 +2669,7 @@ describe("Veydrift backend", () => {
       topics: [planetDefenseCountChangedTopic, topic(92n), topic(0n)],
       data: abiWords(4n)
     });
+    await indexer.drainBattleReportMaterializationQueue();
 
     const response = await createRequestHandler({
       config: configuredTestConfig,
@@ -2869,12 +2996,19 @@ describe("Veydrift backend", () => {
       transactionHash: "0xtargetplanet",
       blockNumber: "100"
     });
-    for (const log of completedFleetMissionLogs({ missionId: 1n, owner: attacker, originPlanetId: 7n, targetPlanetId: 9n })) {
+    for (const log of activeFleetMissionLogs({
+      arrivalAt: 1_700_000_000n,
+      missionId: 1n,
+      missionTypeId: 3n,
+      owner: attacker,
+      originPlanetId: 7n,
+      targetPlanetId: 9n
+    })) {
       indexer.applyLog(log);
     }
     indexer.applyLog(fleetMissionLog({
       topics: [fleetMissionLaunchedTopic, topic(41n), addressTopic(defender), topic(9n)],
-      data: abiWords(12n, 9n, 1_800_000_000n, 1_800_000_600n, 0n),
+      data: abiWords(12n, 9n, 1_700_000_000n, 1_700_000_600n, 0n),
       logIndex: 411
     }));
     indexer.applyLog(fleetMissionLog({
@@ -2903,6 +3037,7 @@ describe("Veydrift backend", () => {
       topics: [combatRoundResolvedTopic, topic(1n), topic(1n)],
       data: abiWords(0n, 15n, 9000n, 7000n, 0n, 0n)
     });
+    await indexer.drainBattleReportMaterializationQueue();
 
     const response = await createRequestHandler({
       config: configuredTestConfig,
@@ -2919,7 +3054,7 @@ describe("Veydrift backend", () => {
         missionId: "41",
         defender,
         ships: expect.objectContaining({ lightFighter: "15" }),
-        holdUntil: "1800000600"
+        holdUntil: "1700000600"
       })
     ]);
   });

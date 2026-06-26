@@ -733,15 +733,22 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: 404 }
           );
         }
+        const expectsReport = expectsBattleReport(mission);
         // A joined ACS fleet never emits its own battle report — the resolved combat is keyed to the
         // main attack mission. When this mission has no report of its own but belongs to an attack
         // group, fall back to the group's report so a joiner's mission detail still shows the shared
-        // outcome and the per-participant loot split (VEY-KANEO-432).
-        const battleReportMaterialization = battleReportMaterializationStatusForMission(indexer, mission);
-        const includeRawReportFallback = battleReportMaterialization.status === "missing";
-        const battleReport =
-          indexer.battleReport(missionId, { includeRawFallback: includeRawReportFallback })
-          ?? (mission.attackGroupId ? indexer.battleReport(mission.attackGroupId, { includeRawFallback: includeRawReportFallback }) : null);
+        // outcome and the per-participant loot split (VEY-KANEO-432). Non-report missions skip this
+        // entirely so a cold Transport/DefenseHold detail cannot warm the battle-report read model.
+        const battleReportMaterialization = expectsReport
+          ? battleReportMaterializationStatusForMission(indexer, mission)
+          : { status: "missing" as const };
+        const includeRawReportFallback = expectsReport && battleReportMaterialization.status === "missing";
+        const battleReport = expectsReport
+          ? (
+            indexer.battleReport(missionId, { includeRawFallback: includeRawReportFallback })
+            ?? (mission.attackGroupId ? indexer.battleReport(mission.attackGroupId, { includeRawFallback: includeRawReportFallback }) : null)
+          )
+          : null;
         return Response.json(
           {
             mission,
@@ -2350,7 +2357,7 @@ function indexedFleetVisibility(
 function expectsBattleReport(mission: FleetMissionSummary): boolean {
   if (!["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(mission.missionType)) return false;
   if (mission.status === "Recalled") return false;
-  if (mission.status === "Returned" && mission.recallCost !== null) return false;
+  if (mission.status === "Returned" && mission.recallCost !== null && mission.returnCargo === null) return false;
   if (mission.status === "Outbound" && Number(mission.arrivalAt) > Math.floor(Date.now() / 1_000)) return false;
   return true;
 }

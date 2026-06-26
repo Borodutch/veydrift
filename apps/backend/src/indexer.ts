@@ -519,6 +519,9 @@ export class SettlementIndexer {
     }
     | null = null;
   private battleReportGeneration = 0;
+  private pendingBattleReportMaterializationIds = new Set<string>();
+  private battleReportMaterializationScheduled = false;
+  private battleReportMaterializationQueue: Promise<void> = Promise.resolve();
   private missionReferenceCache:
     | {
       source: FleetMissionSummary[];
@@ -1428,7 +1431,7 @@ export class SettlementIndexer {
     const reports = mission
       ? this.indexedBattleReportsForMissions([mission], options)
       : this.battleReportsForMissionIds([missionId], options);
-    return reports.find((report) => report.missionId === missionId) ?? null;
+    return reports.find((report) => associatedBattleReportMissionIds(report).includes(missionId)) ?? null;
   }
 
   battleReportMaterializationStatus(missionId: string): {
@@ -1455,6 +1458,10 @@ export class SettlementIndexer {
 
   battleReports(limit = 100): BattleReport[] {
     return this.recentBattleReports(limit);
+  }
+
+  async drainBattleReportMaterializationQueue(): Promise<void> {
+    await this.battleReportMaterializationQueue;
   }
 
   // Every active mission across the universe (all players), for the Mission Control "All" active tab.
@@ -1798,11 +1805,11 @@ export class SettlementIndexer {
   responseCacheVersion(): string {
     // Reader workers do not receive the writer worker's in-memory `stateGeneration`, so route-level
     // caches must include a token persisted into the shared WAL database.
-    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}`;
+    return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}`;
   }
 
   missionResponseCacheVersion(): string {
-    return this.currentMissionReadModelDbVersion();
+    return `${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}`;
   }
 
   indexedStateCacheVersion(): string {
@@ -3321,7 +3328,7 @@ export class SettlementIndexer {
       if (!report) return false;
       const durationMs = Math.max(0, Math.round(performance.now() - started));
       const updatedAt = new Date().toISOString();
-      this.db.query(`
+      const writeReadyReport = this.db.query(`
         INSERT INTO indexed_battle_report_read_models (
           mission_id, status, report_json, error, attempts, duration_ms, block_number, updated_at
         )
@@ -3334,7 +3341,13 @@ export class SettlementIndexer {
           duration_ms = excluded.duration_ms,
           block_number = excluded.block_number,
           updated_at = excluded.updated_at
-      `).run(missionId, JSON.stringify(report), durationMs, report.blockNumber, updatedAt);
+      `);
+      const reportJson = JSON.stringify(report);
+      this.db.transaction(() => {
+        for (const associatedMissionId of associatedBattleReportMissionIds(report)) {
+          writeReadyReport.run(associatedMissionId, reportJson, durationMs, report.blockNumber, updatedAt);
+        }
+      })();
       this.touchBattleReportReadModel();
       console.info(`[battle-report-materializer] ${reason} mission=${missionId} status=ready durationMs=${durationMs}`);
       return previous.status !== "ready";
@@ -3588,6 +3601,34 @@ export class SettlementIndexer {
     }
 
     return false;
+  }
+
+  private scheduleBattleReportMaterialization(missionId: string): void {
+    this.pendingBattleReportMaterializationIds.add(missionId);
+    if (this.battleReportMaterializationScheduled) return;
+
+    this.battleReportMaterializationScheduled = true;
+    this.battleReportMaterializationQueue = this.battleReportMaterializationQueue
+      .then(async () => {
+        await Promise.resolve();
+        while (this.pendingBattleReportMaterializationIds.size > 0) {
+          const missionIds = [...this.pendingBattleReportMaterializationIds];
+          this.pendingBattleReportMaterializationIds.clear();
+          for (const pendingMissionId of missionIds) {
+            this.materializeBattleReportReadModel(pendingMissionId, "ingest");
+          }
+        }
+      })
+      .catch((error) => {
+        console.warn(`[battle-report-materializer] async queue failed: ${reasonText(error)}`);
+      })
+      .finally(() => {
+        this.battleReportMaterializationScheduled = false;
+        if (this.pendingBattleReportMaterializationIds.size > 0) {
+          const nextMissionId = this.pendingBattleReportMaterializationIds.values().next().value;
+          if (nextMissionId) this.scheduleBattleReportMaterialization(nextMissionId);
+        }
+      });
   }
 
   private async readCanonicalState(planets: SettledPlanetEvent[]): Promise<CanonicalReconciliationState> {
@@ -6187,7 +6228,7 @@ export class SettlementIndexer {
     this.touchMissionReadModel();
     if (eventKind === "battle") {
       const missionId = battleLogMissionId(log);
-      if (missionId) this.materializeBattleReportReadModel(missionId, "ingest");
+      if (missionId) this.scheduleBattleReportMaterialization(missionId);
     }
   }
 
@@ -7105,6 +7146,13 @@ export class SettlementIndexer {
     if (report.attackGroupId) reportMissionIds.add(report.attackGroupId);
     for (const participant of report.participants) {
       reportMissionIds.add(participant.missionId);
+    }
+    const seedSummaries = this.fleetMissionSummariesFromCanonicalRowsByIds(reportMissionIds);
+    for (const summary of seedSummaries) {
+      if (summary.attackGroupId) reportMissionIds.add(summary.attackGroupId);
+      for (const joinedMissionId of summary.joinedAttackMissionIds ?? []) {
+        reportMissionIds.add(joinedMissionId);
+      }
     }
     const summaries = this.fleetMissionSummariesFromCanonicalRowsByIds(reportMissionIds);
     const withParticipants = attachAttackGroupParticipants([report], summaries);
@@ -8643,6 +8691,14 @@ function battleLogMissionId(log: RpcLog): string | null {
   } catch {
     return null;
   }
+}
+
+function associatedBattleReportMissionIds(report: BattleReport): string[] {
+  return [...new Set([
+    report.missionId,
+    report.attackGroupId,
+    ...report.participants.map((participant) => participant.missionId)
+  ].filter((missionId): missionId is string => Boolean(missionId)))];
 }
 
 function isFleetMissionReturnedLog(log: RpcLog): boolean {
