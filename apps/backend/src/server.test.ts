@@ -387,6 +387,7 @@ class MockChainReader implements ChainReader {
         createdAt: "1770000100",
         jumpGateReadyAt: "1770007200"
       },
+      fleet: [],
       buildings: [
         {
           id: 0,

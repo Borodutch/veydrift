@@ -228,6 +228,8 @@ abstract contract VeydriftGameStorage {
         MissionShips ships;
         uint256 randomnessRequestId;
         LootRatio lootRatio;
+        bool originIsMoon;
+        bool targetIsMoon;
     }
 
     struct AttackWindow {
@@ -299,6 +301,8 @@ abstract contract VeydriftGameStorage {
         _phalanxMissionIndexBySystem;
     mapping(uint256 planetId => DefenseQueue[] queue) internal _defenseQueueBacklogs;
     mapping(uint256 planetId => ShipQueue[] queue) internal _shipQueueBacklogs;
+    mapping(uint256 planetId => Resources resources) internal _moonResources;
+    mapping(uint256 planetId => mapping(Ship ship => uint32 count)) internal _moonShipCounts;
     // OGame-style ACS Defend (DefenseHold): fleets stationed at a planet for a chosen hold window
     // automatically defend any attack that lands while they are holding.
     mapping(uint256 defenderPlanetId => uint256[] missionIds) internal _stationedDefenseMissions;
@@ -511,6 +515,7 @@ abstract contract VeydriftGameStorage {
         uint128 deuterium,
         uint128 fuelCost
     );
+    event FleetMissionBodies(uint256 indexed missionId, bool originIsMoon, bool targetIsMoon);
     event FleetMissionLootRatio(
         uint256 indexed missionId, uint16 metalBps, uint16 crystalBps, uint16 deuteriumBps
     );
@@ -580,6 +585,10 @@ abstract contract VeydriftGameStorage {
     event PlanetDefenseCountChanged(
         uint256 indexed planetId, Defense indexed defense, uint32 total
     );
+    event MoonResourcesChanged(
+        uint256 indexed planetId, uint128 metal, uint128 crystal, uint128 deuterium
+    );
+    event MoonShipCountChanged(uint256 indexed planetId, Ship indexed ship, uint32 total);
     event FleetMissionReturnExposed(
         uint256 indexed missionId,
         address indexed owner,
@@ -732,6 +741,8 @@ abstract contract VeydriftGameStorage {
         keccak256("PlanetShipCountChanged(uint256,uint8,uint32)");
     bytes32 private constant _DEFENSE_COUNT_CHANGED_TOPIC =
         keccak256("PlanetDefenseCountChanged(uint256,uint8,uint32)");
+    bytes32 private constant _MOON_SHIP_COUNT_CHANGED_TOPIC =
+        keccak256("MoonShipCountChanged(uint256,uint8,uint32)");
 
     /// @dev Writes `total` into a `mapping(uint256 planetId => mapping(uintEnum unit => uint32))` at
     ///      `baseSlot` and emits a matching `(planetId indexed, unit indexed, uint32 total)` log. The
@@ -782,6 +793,26 @@ abstract contract VeydriftGameStorage {
         _setPlanetShipCount(planetId, ship, _shipCounts[planetId][ship] - quantity);
     }
 
+    function _setMoonShipCount(uint256 planetId, Ship ship, uint32 total) internal {
+        uint256 baseSlot;
+        assembly {
+            baseSlot := _moonShipCounts.slot
+        }
+        _writeUnitCount(
+            baseSlot, _MOON_SHIP_COUNT_CHANGED_TOPIC, planetId, uint256(uint8(ship)), total
+        );
+    }
+
+    function _creditMoonShips(uint256 planetId, Ship ship, uint32 quantity) internal {
+        if (quantity == 0) return;
+        _setMoonShipCount(planetId, ship, _moonShipCounts[planetId][ship] + quantity);
+    }
+
+    function _debitMoonShips(uint256 planetId, Ship ship, uint32 quantity) internal {
+        if (quantity == 0) return;
+        _setMoonShipCount(planetId, ship, _moonShipCounts[planetId][ship] - quantity);
+    }
+
     /// @dev Overwrites a planet's stored defense count and emits the resulting total. Single
     ///      defense-count mutation sink, mirroring `_setPlanetShipCount`.
     function _setPlanetDefenseCount(uint256 planetId, Defense defense, uint32 total) internal {
@@ -822,6 +853,11 @@ abstract contract VeydriftGameStorage {
         emit PlanetSettled(
             planetId, balance.metal, balance.crystal, balance.deuterium, planetRef.lastSettledAt
         );
+    }
+
+    function _emitMoonResourcesChanged(uint256 planetId) internal {
+        Resources storage balance = _moonResources[planetId];
+        emit MoonResourcesChanged(planetId, balance.metal, balance.crystal, balance.deuterium);
     }
 
     function _recordAttack(address attacker, uint256 targetPlanetId) internal {

@@ -265,21 +265,33 @@
       "type": "mapping(uint256 => struct ShipQueue[])"
     },
     {
-      "label": "_stationedDefenseMissions",
+      "label": "_moonResources",
       "offset": 0,
       "slot": "46",
+      "type": "mapping(uint256 => struct Resources)"
+    },
+    {
+      "label": "_moonShipCounts",
+      "offset": 0,
+      "slot": "47",
+      "type": "mapping(uint256 => mapping(enum Ship => uint32))"
+    },
+    {
+      "label": "_stationedDefenseMissions",
+      "offset": 0,
+      "slot": "48",
       "type": "mapping(uint256 => uint256[])"
     },
     {
       "label": "_stationedDefenseMissionIndex",
       "offset": 0,
-      "slot": "47",
+      "slot": "49",
       "type": "mapping(uint256 => mapping(uint256 => uint256))"
     },
     {
       "label": "_defenseHoldUntil",
       "offset": 0,
-      "slot": "48",
+      "slot": "50",
       "type": "mapping(uint256 => uint64)"
     }
   ],
@@ -528,6 +540,18 @@
         "offset": 0,
         "slot": "10",
         "type": "LootRatio"
+      },
+      {
+        "label": "originIsMoon",
+        "offset": 0,
+        "slot": "11",
+        "type": "bool"
+      },
+      {
+        "label": "targetIsMoon",
+        "offset": 1,
+        "slot": "11",
+        "type": "bool"
       }
     ],
     "LootRatio": [

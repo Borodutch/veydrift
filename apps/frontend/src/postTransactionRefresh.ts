@@ -98,6 +98,8 @@ export type PendingMissionLaunchInput = {
   owner: string;
   originPlanetId: string;
   targetPlanetId: string;
+  originIsMoon?: boolean | undefined;
+  targetIsMoon?: boolean | undefined;
   missionType: string;
   ships: Record<string, number | string | undefined>;
   cargo?: Partial<Record<"metal" | "crystal" | "deuterium", number | string | undefined>> | undefined;
@@ -338,6 +340,8 @@ export function pendingMissionLaunch(input: PendingMissionLaunchInput): FleetMis
     owner: input.owner,
     originPlanetId: input.originPlanetId,
     targetPlanetId: input.targetPlanetId,
+    originIsMoon: Boolean(input.originIsMoon),
+    targetIsMoon: Boolean(input.targetIsMoon),
     originPlanet: input.originPlanet ?? null,
     targetPlanet: input.targetPlanet ?? null,
     arrivalAt: String(arrivalSeconds),

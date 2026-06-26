@@ -190,6 +190,7 @@ import {
   sendCreateColonyTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchAttackMissionTransaction,
+  sendLaunchBodyFleetMissionTransaction,
   sendLaunchDefenseHoldTransaction,
   sendLaunchFleetMissionTransaction,
   sendJoinAttackMissionTransaction,
@@ -334,6 +335,44 @@ export function missionOriginResources({
     metal: safeResourceNumber(planetResources.metal) ?? 0,
     crystal: safeResourceNumber(planetResources.crystal) ?? 0,
     deuterium: safeResourceNumber(planetResources.deuterium) ?? 0,
+  };
+}
+
+function missionMoonResources(moonState: ChainMoonState | null | undefined): PlayableState["resources"] | undefined {
+  if (!moonState?.moon?.exists) return undefined;
+  const resources = moonState.resources;
+  return {
+    metal: safeResourceNumber(resources?.metal) ?? 0,
+    crystal: safeResourceNumber(resources?.crystal) ?? 0,
+    deuterium: safeResourceNumber(resources?.deuterium) ?? 0,
+  };
+}
+
+function missionMoonShipyardState({
+  moonState,
+  shipyardState,
+}: {
+  moonState: ChainMoonState | null | undefined;
+  shipyardState: ChainShipyardState | null;
+}): ChainShipyardState | null {
+  if (!moonState?.moon?.exists) return null;
+  const stale = moonState.stale ?? shipyardState?.stale;
+  return {
+    wallet: moonState.wallet,
+    homePlanetId: moonState.homePlanetId,
+    planetId: moonState.moon.planetId,
+    productionAvailable: true,
+    resources: moonState.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
+    ...(shipyardState?.fleetSlots ? { fleetSlots: shipyardState.fleetSlots } : {}),
+    ...(shipyardState?.fleetLaunchAvailable !== undefined ? { fleetLaunchAvailable: shipyardState.fleetLaunchAvailable } : {}),
+    ...(shipyardState?.fleetLaunchUnavailableReason ? { fleetLaunchUnavailableReason: shipyardState.fleetLaunchUnavailableReason } : {}),
+    ...(shipyardState?.unavailableReason ? { unavailableReason: shipyardState.unavailableReason } : {}),
+    ...(stale !== undefined ? { stale } : {}),
+    shipyardLevel: 0,
+    naniteLevel: 0,
+    technologyLevels: shipyardState?.technologyLevels ?? {},
+    ships: moonState.fleet ?? [],
+    queue: null,
   };
 }
 
@@ -2419,6 +2458,8 @@ type PendingMissionLaunchContext = {
   cargo?: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
   fuelCost?: number | undefined;
   driveLevels: FleetDriveLevels;
+  originIsMoon?: boolean | undefined;
+  targetIsMoon?: boolean | undefined;
 };
 
 function pendingMissionLaunchForDraft(
@@ -2436,6 +2477,8 @@ function pendingMissionLaunchForDraft(
     owner: context.account,
     originPlanetId: context.originPlanetId,
     targetPlanetId: context.targetPlanetId,
+    originIsMoon: context.originIsMoon,
+    targetIsMoon: context.targetIsMoon,
     missionType: context.missionType,
     ships: context.draft.ships,
     cargo: context.cargo,
@@ -6587,6 +6630,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
       targetPlanet,
       targetPlanetId,
       targetCoords,
+      originIsMoon,
+      targetIsMoon,
       validateAttackProtection,
       validateShipInventory,
     }: {
@@ -6595,6 +6640,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
       targetPlanet?: Planet | undefined;
       targetPlanetId: string;
       targetCoords: Coordinates;
+      originIsMoon?: boolean | undefined;
+      targetIsMoon?: boolean | undefined;
       validateAttackProtection?: { targetPlanetId: string } | undefined;
       validateShipInventory?: { originPlanetId: string; ships: MissionShips } | undefined;
     }) => ({
@@ -6610,6 +6657,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
         draft,
         cargo,
         driveLevels,
+        originIsMoon,
+        targetIsMoon,
       }),
       syncMissionLaunch: true,
       validateShipInventory,
@@ -6727,7 +6776,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
         })));
       return;
     }
-    const cargo = action.kind === "transport" || action.kind === "deploy"
+    const supportsBodyMission = action.kind === "transport" || action.kind === "deploy";
+    const originIsMoon = supportsBodyMission && draft.originIsMoon === true;
+    const targetIsMoon = supportsBodyMission && draft.targetIsMoon === true;
+    const cargo = supportsBodyMission
       ? missionCargoFromDraft(draft.cargo) ?? transportCargoForSelectedPlanet(
           missionOriginPlanet,
           draft.ships,
@@ -6736,26 +6788,32 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           draft.speedPercent,
         )
       : undefined;
-    const runMission = () => runGalaxyTransaction(`${action.label} mission`, () => sendLaunchFleetMissionTransaction(
-      provider,
-      account,
-      gameContract,
-      {
-        originPlanetId,
-        targetPlanetId,
-        missionType: missionTypeId(action.mission),
-        ships: draft.ships,
-        speedPercent: draft.speedPercent,
-        cargo,
-      },
+    const launchParams = {
+      originPlanetId,
+      targetPlanetId,
+      missionType: missionTypeId(action.mission),
+      ships: draft.ships,
+      speedPercent: draft.speedPercent,
+      cargo,
+    };
+    const runMission = () => runGalaxyTransaction(`${action.label} mission`, () => (
+      originIsMoon || targetIsMoon
+        ? sendLaunchBodyFleetMissionTransaction(provider, account, gameContract, {
+            ...launchParams,
+            originIsMoon,
+            targetIsMoon,
+          })
+        : sendLaunchFleetMissionTransaction(provider, account, gameContract, launchParams)
     ), pendingLaunchOptions({
       cargo,
       missionType: backendMissionTypeLabel(action.mission),
       targetPlanet: target,
       targetPlanetId,
       targetCoords: coords,
+      originIsMoon,
+      targetIsMoon,
       validateAttackProtection: action.kind === "attack" ? { targetPlanetId } : undefined,
-      validateShipInventory: { originPlanetId, ships: draft.ships },
+      validateShipInventory: originIsMoon ? undefined : { originPlanetId, ships: draft.ships },
     }));
     closeMissionCreationWhenComplete(runMission());
   }, [
@@ -7332,12 +7390,29 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
         ?? pendingMissionOriginPlanet?.coordinates
         ?? homePlanetIdentity?.name;
       const pendingMissionOriginResources = missionResourcesForOrigin(pendingMissionOriginPlanet);
+      const pendingMissionOriginMoonLoaded = Boolean(
+        pendingMissionOriginPlanet?.moon?.exists
+          && moonState?.moon?.exists
+          && moonState.moon.planetId === pendingMissionOriginPlanet.planetId
+      );
+      const pendingMissionBodySelection = pendingGalaxyMission.action.mode === "mission"
+        && (pendingGalaxyMission.action.kind === "transport" || pendingGalaxyMission.action.kind === "deploy")
+        ? {
+            originMoonAvailable: pendingMissionOriginMoonLoaded,
+            targetMoonAvailable: Boolean(pendingGalaxyMission.target?.hasMoon),
+            originMoonResources: pendingMissionOriginMoonLoaded ? missionMoonResources(moonState) : undefined,
+            originMoonShipyardState: pendingMissionOriginMoonLoaded
+              ? missionMoonShipyardState({ moonState, shipyardState })
+              : null,
+          }
+        : undefined;
       return (
         <MissionCreationPage
           action={pendingGalaxyMission.action}
           actionPending={galaxyAction.status === "pending"}
           actionPendingLabel={galaxyAction.status === "pending" ? galaxyAction.label : undefined}
           attackerCombatTechLevels={attackerCombatTechLevels}
+          bodySelection={pendingMissionBodySelection}
           coords={pendingGalaxyMission.coords}
           defenseHoldContext={pendingGalaxyMission.action.kind === "defenseHold"
             ? { depotLevel: allianceDepotLevelFromPlanet(pendingGalaxyMission.target) }
