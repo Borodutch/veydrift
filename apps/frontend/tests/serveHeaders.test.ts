@@ -14,6 +14,10 @@ describe("frontend static server headers", () => {
     expect(cacheControl("/assets/index-a1b2c3.js")).toBe("public, max-age=31536000, immutable");
   });
 
+  test("serves raw docs markdown with a markdown content type", () => {
+    expect(responseHeadersFor("/docs.md")["content-type"]).toBe("text/markdown; charset=utf-8");
+  });
+
   test("falls back quickly when mission share metadata is slow", async () => {
     const originalFetch = globalThis.fetch;
     const originalTimeout = process.env.VEYDRIFT_OG_METADATA_TIMEOUT_MS;
