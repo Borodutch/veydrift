@@ -34,7 +34,7 @@ import { BattleReportsPage } from "./components/BattleReportsPage";
 import { RankingsPage } from "./components/RankingsPage";
 import { RaidTargetFinderPage } from "./components/RaidTargetFinderPage";
 import { AllianceInspectPage, PlayerInspectPage } from "./components/InspectPages";
-import { AlertTriangle } from "lucide-preact";
+import { AlertTriangle, Moon as MoonIcon } from "lucide-preact";
 import {
   buildInspectPath,
   canonicalEntityPathForLegacyHashLocation,
@@ -244,6 +244,7 @@ import {
   type GlobalMissionArchiveResponse,
   type MissionDetailResponse,
   type OnChainResources,
+  type OrbitBodyKind,
   type PendingWithdrawal,
   type ManagedPlanetResponse,
   type PlanetSummary,
@@ -644,6 +645,44 @@ export function selectedPlanetIdForWalletRead({
   });
 }
 
+export function resolvedOrbitBodyKind(
+  selectedBodyKind: OrbitBodyKind,
+  selectedPlanet: Pick<ManagedPlanetResponse, "moon"> | undefined,
+): OrbitBodyKind {
+  return selectedBodyKind === "moon" && selectedPlanet?.moon?.exists ? "moon" : "planet";
+}
+
+export function gameActionsAvailableForBody(activeBodyKind: OrbitBodyKind, inputsAvailable: boolean): boolean {
+  return activeBodyKind === "planet" && inputsAvailable;
+}
+
+export function walletCurrentResourcesForActiveBody({
+  activeBodyKind,
+  infrastructureResources,
+  infrastructureResourcesAsOfNow,
+  moonResources,
+  moonResourcesAsOfNow,
+  planetResources,
+}: {
+  activeBodyKind: OrbitBodyKind;
+  infrastructureResources?: OnChainResources | null | undefined;
+  infrastructureResourcesAsOfNow?: OnChainResources | null | undefined;
+  moonResources?: OnChainResources | null | undefined;
+  moonResourcesAsOfNow?: OnChainResources | null | undefined;
+  planetResources?: OnChainResources | null | undefined;
+}): Resources | undefined {
+  if (activeBodyKind === "moon") {
+    return walletCurrentResourcesFor({
+      settlementResources: moonResourcesAsOfNow ?? moonResources,
+    });
+  }
+  return walletCurrentResourcesFor({
+    settlementResources: planetResources,
+    infrastructureResourcesAsOfNow,
+    infrastructureResources,
+  });
+}
+
 export function shouldApplyResourceSnapshot(
   current: ResourceSnapshotFreshness,
   next: ResourceSnapshotFreshness,
@@ -676,13 +715,23 @@ export function recordedResourceSnapshotFreshness(
 }
 
 export function infrastructureStateForRefreshApplication({
+  applyResourceState,
+  current,
   next,
 }: {
   applyResourceState: boolean;
   current: ChainInfrastructureState | null;
   next: ChainInfrastructureState;
 }): ChainInfrastructureState {
-  return next;
+  if (applyResourceState || !current) return next;
+  return {
+    ...next,
+    ...(current.planetLastSettledAt === undefined
+      ? {}
+      : { planetLastSettledAt: current.planetLastSettledAt }),
+    resources: current.resources,
+    ...(current.resourcesAsOfNow === undefined ? {} : { resourcesAsOfNow: current.resourcesAsOfNow }),
+  };
 }
 
 export function buildingCompletionAutoRefreshDelayMs(
@@ -2159,9 +2208,10 @@ export async function loadWalletPlanetSyncSnapshot(
   const loadFleetMissionVisibility = loaders.fetchFleetMissionVisibility ?? fetchFleetMissionVisibility;
   const loadWalletSettlement = loaders.fetchWalletSettlement ?? fetchWalletSettlement;
   const readPlanetId = options.forceHomePlanet || options.forceWalletPlanets ? undefined : activePlanetId;
-  if (readPlanetId !== undefined) {
+  const overviewPlanetId = options.forceHomePlanet ? undefined : activePlanetId;
+  if (!options.forceWalletPlanets) {
     try {
-      return await loadOverviewSnapshot(apiBaseUrl, account, readPlanetId, {
+      return await loadOverviewSnapshot(apiBaseUrl, account, overviewPlanetId, {
         timeoutMs: INITIAL_OVERVIEW_SNAPSHOT_TIMEOUT_MS,
       });
     } catch (error) {
@@ -2715,6 +2765,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
   const [watchedPlanetsPage, setWatchedPlanetsPage] = useState(1);
   const [watchBusyPlanetId, setWatchBusyPlanetId] = useState<string | undefined>();
   const [selectedPlanetId, setSelectedPlanetId] = useState<string | undefined>();
+  const [selectedBodyKind, setSelectedBodyKind] = useState<OrbitBodyKind>("planet");
   const resolvedSelectedPlanetId = useMemo(() => selectedPlanetIdFromRoster({
     homePlanetId: onChainSettlementState?.homePlanetId,
     planets: walletPlanets,
@@ -2726,6 +2777,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     [resolvedSelectedPlanetId, walletPlanets]
   );
   const activePlanetId = selectedManagedPlanet?.planetId ?? onChainSettlementState?.homePlanetId ?? undefined;
+  const selectedMoonBody = selectedManagedPlanet?.moon?.exists ? selectedManagedPlanet.moon : null;
+  const activeBodyKind = resolvedOrbitBodyKind(selectedBodyKind, selectedManagedPlanet);
   const walletMoonCount = useMemo(
     () => walletPlanets.filter((item) => item.moon?.exists).length,
     [walletPlanets],
@@ -3267,6 +3320,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     setPlayerProfile(undefined);
     setPlanetSectionStore({});
     setSelectedPlanetId(undefined);
+    setSelectedBodyKind("planet");
     setWalletPlanets([]);
     setOnChainQueues(undefined);
     setFleetVisibility(undefined);
@@ -3520,7 +3574,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
   const chickenBurnConfig = useMemo(() => {
     return runtimeConfig.status === "ready" ? burningChickenConfig(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
-  const gameActionInputsAvailable = Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId));
+  const gameActionInputsAvailable = gameActionsAvailableForBody(activeBodyKind, Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId)));
   const allianceActionInputsAvailable = Boolean(provider && account && allianceContract);
   const moonActionInputsAvailable = Boolean(provider && account && moonContract && (activePlanetId ?? onChainSettlement?.homePlanetId));
 
@@ -4760,13 +4814,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
   // backend value has loaded; skeleton loaders cover the initial load and React
   // Query keeps the last value during a background refresh.
   const rates = useMemo(() => {
+    if (activeBodyKind === "moon") {
+      return { metal: 0, crystal: 0, deuterium: 0 };
+    }
     const production = infrastructureChainState?.productionPerHour;
     return {
       metal: production ? Number(production.metal) : 0,
       crystal: production ? Number(production.crystal) : 0,
       deuterium: production ? Number(production.deuterium) : 0,
     };
-  }, [infrastructureChainState?.productionPerHour]);
+  }, [activeBodyKind, infrastructureChainState?.productionPerHour]);
   // VEY-KANEO-481: production rate that feeds the "affordable in …" ETA on disabled
   // build/research/defense/shipyard actions. Only defined once the backend production
   // rate has loaded so the ETA never renders the stalled copy during the initial load.
@@ -4774,13 +4831,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
   // VEY-KANEO-465: storage caps are backend-derived (`storageCaps` on
   // /infrastructure) — no client recomputation.
   const caps = useMemo(() => {
+    if (activeBodyKind === "moon") {
+      return { metal: 0, crystal: 0, deuterium: 0 };
+    }
     const nextCaps = infrastructureChainState?.storageCaps;
     return {
       metal: nextCaps ? Number(nextCaps.metal) : 0,
       crystal: nextCaps ? Number(nextCaps.crystal) : 0,
       deuterium: nextCaps ? Number(nextCaps.deuterium) : 0,
     };
-  }, [infrastructureChainState?.storageCaps]);
+  }, [activeBodyKind, infrastructureChainState?.storageCaps]);
   // VEY-KANEO-465: display backend-derived resource state only — the frontend no
   // longer projects/accrues resources against its own clock, takes an
   // element-wise minimum of two snapshots, or freezes a free-running projection.
@@ -4797,12 +4857,20 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
   // back to the raw settled `resources` snapshot — still a backend value and never
   // an over-report — so affordability stays safe.
   const backendSpendableResources = useMemo(() => {
-    return walletCurrentResourcesFor({
-      settlementResources: onChainSettlement?.planet?.resourcesAsOfNow ?? onChainSettlement?.planet?.resources,
+    return walletCurrentResourcesForActiveBody({
+      activeBodyKind,
+      moonResourcesAsOfNow: moonState?.resourcesAsOfNow ?? selectedMoonBody?.resourcesAsOfNow,
+      moonResources: moonState?.resources ?? selectedMoonBody?.resources,
+      planetResources: onChainSettlement?.planet?.resourcesAsOfNow ?? onChainSettlement?.planet?.resources,
       infrastructureResourcesAsOfNow: infrastructureChainState?.resourcesAsOfNow,
       infrastructureResources: infrastructureChainState?.resources,
     });
   }, [
+    activeBodyKind,
+    moonState?.resourcesAsOfNow,
+    moonState?.resources,
+    selectedMoonBody?.resourcesAsOfNow,
+    selectedMoonBody?.resources,
     onChainSettlement?.planet?.resourcesAsOfNow,
     onChainSettlement?.planet?.resources,
     infrastructureChainState?.resourcesAsOfNow,
@@ -4818,10 +4886,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
   // spendable balance is available.
   const missionResourcesForOrigin = useCallback((originPlanet: ManagedPlanetResponse | undefined) => missionOriginResources({
     isWalletConnected,
-    spendableResources: originPlanet?.planetId === activePlanetId ? spendableResources : undefined,
+    spendableResources: activeBodyKind === "planet" && originPlanet?.planetId === activePlanetId ? spendableResources : undefined,
     // Prefer the live settled-to-now balance over the settled snapshot (VEY-KANEO-488).
     planetResources: originPlanet?.resourcesAsOfNow ?? originPlanet?.resources,
-  }), [activePlanetId, isWalletConnected, spendableResources]);
+  }), [activeBodyKind, activePlanetId, isWalletConnected, spendableResources]);
   const originMissionResources = useMemo(
     () => missionResourcesForOrigin(selectedManagedPlanet),
     [missionResourcesForOrigin, selectedManagedPlanet]
@@ -6232,9 +6300,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     ));
   }, [account, gameContract, provider, riftState?.resources, runRiftTransaction]);
 
-  const handleSelectManagedPlanet = useCallback((planetId: string) => {
-    if (planetId === activePlanetId) return;
+  const handleSelectManagedPlanet = useCallback((planetId: string, bodyKind: OrbitBodyKind = "planet") => {
     const nextPlanet = walletPlanets.find((planet) => planet.planetId === planetId);
+    const nextBodyKind: OrbitBodyKind = bodyKind === "moon" && nextPlanet?.moon?.exists ? "moon" : "planet";
+    if (planetId === activePlanetId && nextBodyKind === activeBodyKind) return;
     markFreshStateWrite(planetSwitchGate);
     markFreshStateWrite(onChainRefreshGate);
     markFreshStateWrite(infrastructureRefreshGate);
@@ -6245,6 +6314,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     latestOnChainResourceSnapshot.current = { planetId, lastSettledAt: null };
     latestInfrastructureResourceSnapshot.current = { planetId, lastSettledAt: null };
     setSelectedPlanetId(planetId);
+    setSelectedBodyKind(nextBodyKind);
+    if (nextBodyKind === "moon") {
+      setPage("moon");
+    }
     applyOnChainSettlementSnapshot(walletSettlementForManagedPlanet(onChainSettlement, nextPlanet));
     const nextQueues = walletQueuesForManagedPlanet(onChainQueues, nextPlanet);
     setOnChainQueuesState(nextQueues);
@@ -6293,6 +6366,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     }
   }, [
     account,
+    activeBodyKind,
     activePlanetId,
     apiBaseUrl,
     applyOnChainSettlementSnapshot,
@@ -7110,6 +7184,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
       layout="mobile"
       onSelect={handleSelectManagedPlanet}
       planets={walletPlanets}
+      selectedBodyKind={activeBodyKind}
       selectedPlanetId={activePlanetId}
     />
   ) : null;
@@ -7128,6 +7203,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
       layout="sidebar"
       onSelect={handleSelectManagedPlanet}
       planets={walletPlanets}
+      selectedBodyKind={activeBodyKind}
       selectedPlanetId={activePlanetId}
     />
   ) : null;
@@ -7138,7 +7214,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
   const battleReportsShareUrl = typeof window === "undefined"
     ? ""
     : `${window.location.origin}${buildInspectPath({ kind: "page", page: "battle-reports" })}`;
-  const gameTransactionInputsAvailable = Boolean(provider && account && gameContract);
+  const gameTransactionInputsAvailable = gameActionsAvailableForBody(activeBodyKind, Boolean(provider && account && gameContract));
   const allianceTransactionInputsAvailable = Boolean(provider && account && allianceContract);
   const moonTransactionInputsAvailable = Boolean(provider && account && moonContract);
   const chickenBurnTransactionInputsAvailable = Boolean(provider && account && chickenBurnConfig);
@@ -7366,6 +7442,30 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           onBack={handlePlanetDetailBack}
           shipyardState={missionActionShipyardState}
           transactionUnavailableReason={gameTransactionUnavailableReason}
+        />
+      );
+    }
+
+    if (activeBodyKind === "moon" && (page === "overview" || page === "infrastructure" || page === "defenses" || page === "shipyard")) {
+      return (
+        <MoonPage
+          action={moonAction}
+          burningChicken={{
+            configured: Boolean(chickenBurnConfig),
+            maxMoonsPerPlayer: maxChickenBurnMoonsPerPlayer,
+            moonCount: walletMoonCount,
+          }}
+          canBurnChicken={chickenBurnTransactionInputsAvailable && !transactionActionPending}
+          canTransact={canSubmitMoonTransaction}
+          error={moonSection.status.error ?? moonError}
+          loading={moonLoading || moonSection.status.loading}
+          moonState={moonState}
+          onBurnChicken={handleBurnChickenForMoon}
+          onJumpGate={handleJumpGate}
+          onRefresh={moonSection.refresh ?? refreshInfrastructureState}
+          onStartBuilding={handleStartMoonBuilding}
+          selectedCoordinates={activePlanetCoords}
+          transactionUnavailableReason={moonTransactionUnavailableReason}
         />
       );
     }
@@ -7760,12 +7860,14 @@ function PlanetSelector({
   layout,
   onSelect,
   planets,
+  selectedBodyKind,
   selectedPlanetId,
 }: {
   fleetVisibility: FleetMissionVisibilityResponse | undefined;
   layout: "mobile" | "sidebar";
-  onSelect: (planetId: string) => void;
+  onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planets: ManagedPlanetResponse[];
+  selectedBodyKind: OrbitBodyKind;
   selectedPlanetId: string | undefined;
 }) {
   const selectedPlanet = planets.find((planet) => planet.planetId === selectedPlanetId) ?? planets[0];
@@ -7775,18 +7877,13 @@ function PlanetSelector({
     return (
       <section aria-label="Select planet" className="overflow-x-auto">
         <div className="flex min-w-max gap-2 pb-1">
-          {planets.map((planet) => {
-            const selected = planet.planetId === selectedPlanet.planetId;
-            return (
-              <PlanetSelectorButton
-                hasIncomingAttack={planetHasIncomingAttack(fleetVisibility, planet.planetId)}
-                key={planet.planetId}
-                onSelect={onSelect}
-                planet={planet}
-                selected={selected}
-              />
-            );
-          })}
+          {planets.flatMap((planet) => planetSelectorButtons({
+            fleetVisibility,
+            onSelect,
+            planet,
+            selectedBodyKind,
+            selectedPlanet,
+          }))}
         </div>
       </section>
     );
@@ -7795,35 +7892,73 @@ function PlanetSelector({
   return (
     <aside aria-label="Select planet" className="hidden w-28 shrink-0 border-l border-white/10 bg-[#07111d]/92 p-2 shadow-2xl shadow-black/20 backdrop-blur-xl lg:flex lg:flex-col">
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-        {planets.map((planet) => {
-          const selected = planet.planetId === selectedPlanet.planetId;
-          return (
-            <PlanetSelectorButton
-              hasIncomingAttack={planetHasIncomingAttack(fleetVisibility, planet.planetId)}
-              key={planet.planetId}
-              onSelect={onSelect}
-              planet={planet}
-              selected={selected}
-            />
-          );
-        })}
+        {planets.flatMap((planet) => planetSelectorButtons({
+          fleetVisibility,
+          onSelect,
+          planet,
+          selectedBodyKind,
+          selectedPlanet,
+        }))}
       </div>
     </aside>
   );
 }
 
+function planetSelectorButtons({
+  fleetVisibility,
+  onSelect,
+  planet,
+  selectedBodyKind,
+  selectedPlanet,
+}: {
+  fleetVisibility: FleetMissionVisibilityResponse | undefined;
+  onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
+  planet: ManagedPlanetResponse;
+  selectedBodyKind: OrbitBodyKind;
+  selectedPlanet: ManagedPlanetResponse;
+}) {
+  const selectedPlanetBody = planet.planetId === selectedPlanet.planetId && selectedBodyKind === "planet";
+  const selectedMoonBody = planet.planetId === selectedPlanet.planetId && selectedBodyKind === "moon";
+  const buttons = [
+    <PlanetSelectorButton
+      bodyKind="planet"
+      hasIncomingAttack={planetHasIncomingAttack(fleetVisibility, planet.planetId)}
+      key={`${planet.planetId}:planet`}
+      onSelect={onSelect}
+      planet={planet}
+      selected={selectedPlanetBody}
+    />
+  ];
+  if (planet.moon?.exists) {
+    buttons.push(
+      <PlanetSelectorButton
+        bodyKind="moon"
+        hasIncomingAttack={false}
+        key={`${planet.planetId}:moon`}
+        onSelect={onSelect}
+        planet={planet}
+        selected={selectedMoonBody}
+      />
+    );
+  }
+  return buttons;
+}
+
 function PlanetSelectorButton({
+  bodyKind,
   hasIncomingAttack,
   onSelect,
   planet,
   selected,
 }: {
+  bodyKind: OrbitBodyKind;
   hasIncomingAttack: boolean;
-  onSelect: (planetId: string) => void;
+  onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planet: ManagedPlanetResponse;
   selected: boolean;
 }) {
-  const label = `${hasIncomingAttack ? "Incoming attack warning. " : ""}Select ${planetDisplayName(planet)} at ${planet.coordinates}`;
+  const bodyLabel = bodyKind === "moon" ? "moon" : "planet";
+  const label = `${hasIncomingAttack ? "Incoming attack warning. " : ""}Select ${planetDisplayName(planet)} ${bodyLabel} at ${planet.coordinates}`;
   return (
     <button
       aria-current={selected ? "true" : undefined}
@@ -7835,7 +7970,7 @@ function PlanetSelectorButton({
           ? "border-cyan-300/35 bg-cyan-300/[0.07] shadow-[inset_0_0_0_1px_rgba(128,241,255,0.10)]"
           : "border-white/10 bg-white/[0.045] hover:border-cyan-200/40 hover:bg-white/[0.075]"
       }`}
-      onClick={() => onSelect(planet.planetId)}
+      onClick={() => onSelect(planet.planetId, bodyKind)}
       type="button"
     >
       {hasIncomingAttack ? (
@@ -7847,17 +7982,23 @@ function PlanetSelectorButton({
           <AlertTriangle size={12} strokeWidth={2.4} />
         </span>
       ) : null}
-      <span className="relative h-14 w-14 overflow-hidden rounded-full bg-black/30">
-        <img
-          alt=""
-          className="h-full w-full object-cover"
-          loading="lazy"
-          src={planetImage(planet)}
-        />
-        {planet.moon?.exists ? <PlanetMoonIndicator compact className="bottom-0.5 right-0.5 top-auto" /> : null}
-      </span>
+      {bodyKind === "moon" ? (
+        <span className="grid h-14 w-14 place-items-center rounded-full border border-cyan-200/25 bg-slate-900 text-cyan-100">
+          <MoonIcon aria-hidden="true" size={28} strokeWidth={1.7} />
+        </span>
+      ) : (
+        <span className="relative h-14 w-14 overflow-hidden rounded-full bg-black/30">
+          <img
+            alt=""
+            className="h-full w-full object-cover"
+            loading="lazy"
+            src={planetImage(planet)}
+          />
+          {planet.moon?.exists ? <PlanetMoonIndicator compact className="bottom-0.5 right-0.5 top-auto" /> : null}
+        </span>
+      )}
       <span className="block max-w-full truncate text-[0.68rem] font-medium leading-4 text-slate-200">
-        {planetDisplayName(planet)}
+        {bodyKind === "moon" ? "Moon" : planetDisplayName(planet)}
       </span>
       <span className="block max-w-full truncate font-mono text-[0.6rem] leading-3 text-slate-400">
         {planet.coordinates}

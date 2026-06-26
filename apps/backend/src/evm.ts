@@ -1,7 +1,7 @@
 import { solarSatelliteEnergy } from "@veydrift/universe";
 import type { BackendConfig } from "./config";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
-import { deriveDefenseRows, usedFieldsFromBuildingRows } from "./readModels";
+import { deriveDefenseRows, deriveShipRows, usedFieldsFromBuildingRows } from "./readModels";
 import type { Coordinates, PlanetArchetype } from "./universe";
 import { planetMetadata, planetMultipliers } from "./universe";
 
@@ -12,6 +12,8 @@ export type Resources = {
   crystal: string;
   deuterium: string;
 };
+
+export type OrbitBodyKind = "planet" | "moon";
 
 export type EnergyBalance = {
   produced: string;
@@ -47,6 +49,7 @@ export type PlanetState = Coordinates & {
 };
 
 export type ManagedPlanet = PlanetState & {
+  bodyKind: "planet";
   coordinates: string;
   isHomePlanet: boolean;
   fieldsUsed: number;
@@ -67,7 +70,15 @@ export type ManagedPlanet = PlanetState & {
     ship: QueueState | null;
   };
   moon: {
+    bodyKind: "moon";
     exists: boolean;
+    parentPlanetId: string;
+    planetId: string;
+    coordinates: string;
+    resources: Resources;
+    resourcesAsOfNow?: Resources;
+    ships: ShipyardState["ships"];
+    defenses: DefenseState["defenses"];
   } | null;
   tactical?: {
     raidableResources: Resources;
@@ -230,6 +241,24 @@ export type IndexedShipCountChangedEvent = {
 
 export type IndexedDefenseCountChangedEvent = {
   eventName: "PlanetDefenseCountChanged";
+  transactionHash: string;
+  blockNumber: string;
+  planetId: string;
+  defenseId: number;
+  total: number;
+};
+
+export type IndexedMoonShipCountChangedEvent = {
+  eventName: "MoonShipCountChanged";
+  transactionHash: string;
+  blockNumber: string;
+  planetId: string;
+  shipId: number;
+  total: number;
+};
+
+export type IndexedMoonDefenseCountChangedEvent = {
+  eventName: "MoonDefenseCountChanged";
   transactionHash: string;
   blockNumber: string;
   planetId: string;
@@ -665,9 +694,15 @@ export type InfrastructureState = {
 
 export type MoonState = {
   wallet: Address;
+  bodyKind: "moon";
   homePlanetId: string | null;
+  parentPlanetId: string | null;
   moonAvailable: boolean;
   unavailableReason?: string;
+  resources: Resources;
+  resourcesAsOfNow?: Resources;
+  ships: ShipyardState["ships"];
+  defenses: DefenseState["defenses"];
   moon: {
     exists: boolean;
     planetId: string;
@@ -686,12 +721,6 @@ export type MoonState = {
   }>;
   queue: QueueState | null;
   technologyLevels: Record<string, number>;
-  defenses: Array<{
-    id: number;
-    count: number;
-    cost: Resources;
-    durationSeconds?: number;
-  }>;
   defenseQueue: QueueState | null;
 };
 
@@ -906,6 +935,16 @@ export type SettledPlanetEvent = PlanetState & {
 
 export type PlanetSettledEvent = {
   eventName: "PlanetSettled";
+  transactionHash: string;
+  blockNumber: string;
+  logIndex: string;
+  planetId: string;
+  lastSettledAt: string;
+  resources: Resources;
+};
+
+export type MoonResourcesSettledEvent = {
+  eventName: "MoonResourcesSettled";
   transactionHash: string;
   blockNumber: string;
   logIndex: string;
@@ -1940,23 +1979,30 @@ export class VeydriftGameReader implements ChainReader {
         };
       }
 
-      const [buildings, queue, defenses, defenseQueue, technologyLevels] = await Promise.all([
+      const [resources, ships, defenses, buildings, queue, defenseQueue, technologyLevels] = await Promise.all([
+        this.readMoonResourcesCall("0x1f20b321", [encodeUint(planetId)]),
+        this.readMoonShipRows(planetId),
+        this.readMoonDefenseRows(planetId),
         this.readMoonBuildingRows(planetId),
         this.readMoonQueue(planetId),
-        this.readMoonDefenseRows(planetId),
         this.readMoonDefenseQueue(planetId),
         this.readTechnologyLevels(wallet)
       ]);
 
       return {
         wallet,
+        bodyKind: "moon",
         homePlanetId: settlement.homePlanetId,
+        parentPlanetId: settlement.homePlanetId,
         moonAvailable: true,
+        resources,
+        resourcesAsOfNow: resources,
+        ships,
+        defenses,
         moon,
         buildings,
         queue,
         technologyLevels,
-        defenses,
         defenseQueue
       };
     } catch (error) {
@@ -3461,6 +3507,17 @@ export class VeydriftGameReader implements ChainReader {
     );
   }
 
+  private async readMoonShipRows(planetId: bigint): Promise<MoonState["ships"]> {
+    const counts = new Map<number, number>();
+    await Promise.all(
+      supportedShipIds.map(async (id) => {
+        const count = await this.readMoonUintCall("0xdc02fa88", [encodeUint(planetId), encodeUint(BigInt(id))]);
+        counts.set(id, Number(count));
+      })
+    );
+    return deriveShipRows((id) => counts.get(id) ?? 0);
+  }
+
   private async readMoonBuildingHighscoreRows(
     planetId: bigint,
     wallet: Address
@@ -3617,13 +3674,14 @@ export class VeydriftGameReader implements ChainReader {
       this.readPlanetQueue("0xb8e835ab", planetId, "building"),
       this.readPlanetQueue("0x5758361d", planetId, "defense"),
       this.readShipQueue(planetId),
-      this.readMoonSummary(planetId)
+      this.readMoonSummary(planet)
     ]);
     const level = (id: number) => buildings.find((building) => building.id === id)?.level ?? 0;
     const fieldsUsed = usedFieldsFromBuildingRows(buildings);
 
     return {
       ...planet,
+      bodyKind: "planet",
       coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
       isHomePlanet: planet.planetId === homePlanetId,
       fieldsUsed,
@@ -3692,11 +3750,28 @@ export class VeydriftGameReader implements ChainReader {
     }
   }
 
-  private async readMoonSummary(planetId: bigint): Promise<{ exists: boolean } | null> {
+  private async readMoonSummary(planet: PlanetState): Promise<ManagedPlanet["moon"]> {
     if (!this.moonContractAddress) return null;
+    const planetId = BigInt(planet.planetId);
     try {
       const moon = await this.readMoon(planetId);
-      return { exists: moon.exists };
+      if (!moon.exists) return null;
+      const [resources, ships, defenses] = await Promise.all([
+        this.readMoonResourcesCall("0x1f20b321", [encodeUint(planetId)]),
+        this.readMoonShipRows(planetId),
+        this.readMoonDefenseRows(planetId)
+      ]);
+      return {
+        bodyKind: "moon",
+        exists: true,
+        parentPlanetId: planet.planetId,
+        planetId: planet.planetId,
+        coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
+        resources,
+        resourcesAsOfNow: resources,
+        ships,
+        defenses
+      };
     } catch (error) {
       if (isRpcRevert(error)) return null;
       throw error;
@@ -4547,6 +4622,7 @@ const moonBuildingCatalog: Array<Pick<MoonState["buildings"][number], "id" | "ke
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
 const colonyCreatedTopic = "0xd7d717f6607ff051c7f2247d5c490eb9ece607b9ee7c7eee946898025815cfc0";
 const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
+const moonResourcesSettledTopic = "0xb20fd9e652e1b740544f362fb3047c43a7bf0d6c7fbf0f5cab5f1f939aac6917";
 const planetRenamedTopic = "0x2b772c1fa271aad466ce009b6b5824b2ad6ccd942d21efc686513ffa8eb166cd";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
@@ -4559,6 +4635,8 @@ const researchCompletedTopic = "0x93dffeb1ed0a05133592cf6d82b9a200c2ac72b521497b
 const debrisFieldUpdatedTopic = "0x49f79a15c2a0409be62598b886efd90e25154bb9156b4bd64df41fd515aa4909";
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3";
+const moonShipCountChangedTopic = "0xbd55c2b529f64f3a888d38432d6c54b03515f3de3f0114255cb36620f5df1257";
+const moonDefenseCountChangedTopic = "0x0bf9a31209477c6f81619cdd411e232ee9a5b64ec763c598ce43d938cc6194a2";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
@@ -4637,11 +4715,17 @@ function emptyRiftState(wallet: Address, homePlanetId: string | null, unavailabl
 }
 
 function emptyMoonState(wallet: Address, homePlanetId: string | null, unavailableReason: string): MoonState {
+  const resources = zeroResources();
   return {
     wallet,
+    bodyKind: "moon",
     homePlanetId,
+    parentPlanetId: homePlanetId,
     moonAvailable: false,
     unavailableReason,
+    resources,
+    resourcesAsOfNow: resources,
+    ships: [],
     moon: null,
     buildings: moonBuildingCatalog.map((building) => ({
       ...building,
@@ -4711,6 +4795,10 @@ export function isPlanetSettledLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === planetSettledTopic;
 }
 
+export function isMoonResourcesSettledLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === moonResourcesSettledTopic;
+}
+
 export function isPlanetRenamedLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === planetRenamedTopic;
 }
@@ -4725,6 +4813,14 @@ export function isShipCountChangedLog(log: RpcLog): boolean {
 
 export function isDefenseCountChangedLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === planetDefenseCountChangedTopic;
+}
+
+export function isMoonShipCountChangedLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === moonShipCountChangedTopic;
+}
+
+export function isMoonDefenseCountChangedLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === moonDefenseCountChangedTopic;
 }
 
 export function isInterplanetaryMissileAttackLog(log: RpcLog): boolean {
@@ -4903,6 +4999,20 @@ export function decodePlanetSettledLog(log: RpcLog): PlanetSettledEvent {
   };
 }
 
+export function decodeMoonResourcesSettledLog(log: RpcLog): MoonResourcesSettledEvent {
+  const words = splitWords(log.data);
+
+  return {
+    eventName: "MoonResourcesSettled",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    logIndex: (log as RpcLog & { logIndex?: string }).logIndex ?? "0x0",
+    planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+    resources: decodeResources(words.slice(0, 3)),
+    lastSettledAt: decodeUintWord(wordAt(words, 3)).toString()
+  };
+}
+
 export function decodeShipCountChangedLog(log: RpcLog): IndexedShipCountChangedEvent {
   const words = splitWords(log.data);
 
@@ -4916,11 +5026,37 @@ export function decodeShipCountChangedLog(log: RpcLog): IndexedShipCountChangedE
   };
 }
 
+export function decodeMoonShipCountChangedLog(log: RpcLog): IndexedMoonShipCountChangedEvent {
+  const words = splitWords(log.data);
+
+  return {
+    eventName: "MoonShipCountChanged",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+    shipId: Number(decodeUint(topicAt(log.topics, 2))),
+    total: Number(decodeUintWord(wordAt(words, 0)))
+  };
+}
+
 export function decodeDefenseCountChangedLog(log: RpcLog): IndexedDefenseCountChangedEvent {
   const words = splitWords(log.data);
 
   return {
     eventName: "PlanetDefenseCountChanged",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    planetId: decodeUint(topicAt(log.topics, 1)).toString(),
+    defenseId: Number(decodeUint(topicAt(log.topics, 2))),
+    total: Number(decodeUintWord(wordAt(words, 0)))
+  };
+}
+
+export function decodeMoonDefenseCountChangedLog(log: RpcLog): IndexedMoonDefenseCountChangedEvent {
+  const words = splitWords(log.data);
+
+  return {
+    eventName: "MoonDefenseCountChanged",
     transactionHash: log.transactionHash,
     blockNumber: BigInt(log.blockNumber).toString(),
     planetId: decodeUint(topicAt(log.topics, 1)).toString(),
