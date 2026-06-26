@@ -28,6 +28,13 @@ describe("Telegram support links", () => {
     expect(link?.props?.target).toBe("_blank");
     expect(link?.props?.rel).toBe("noopener noreferrer");
   });
+
+  test("playable top bar includes the docs help button", () => {
+    const link = linksIn(renderTopBar()).find((item) => item.props?.["aria-label"] === "Veydrift documentation");
+
+    expect(link?.props?.href).toBe("/docs");
+    expect(link?.props?.title).toBe("Veydrift documentation");
+  });
 });
 
 function renderTopBar(): ComponentChildren {
@@ -55,7 +62,7 @@ function elementNodes(node: ComponentChildren): VNode[] {
 
   const vnode = node as VNode;
   if (typeof vnode.type === "function") {
-    return elementNodes(vnode.type(vnode.props));
+    return [vnode];
   }
 
   return [vnode, ...elementNodes(vnode.props?.children as ComponentChildren)];

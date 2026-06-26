@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
-import { ArrowLeftRight, BookOpen, Check, Crosshair, Factory, FlaskConical, Menu, Moon, Orbit, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
+import { ArrowLeftRight, Check, Crosshair, Factory, FlaskConical, Menu, Moon, Orbit, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
 
 import {
   playerDisplayLabel,
@@ -420,7 +420,6 @@ export function NavBar({
                 onClick={() => onNavigate(page.key)}
               />
             ))}
-            <NavLink href="/docs" icon={BookOpen} label="Docs" />
           </div>
 
           {accountSummary("sticky bottom-3 shrink-0 rounded-md border border-white/10 bg-[#07101d]/95 p-2 shadow-2xl shadow-black/30 backdrop-blur")}
@@ -478,42 +477,12 @@ export function NavBar({
                   onClick={() => handleMobileNavigate(page.key)}
                 />
               ))}
-              <MobileLink href="/docs" icon={BookOpen} label="Docs" />
             </nav>
           </div>
         )}
       </div>
       {playerEditorDialog}
     </>
-  );
-}
-
-function NavLink({ href, icon: Icon, label }: { href: string; icon: LucideIcon; label: string }) {
-  return (
-    <a
-      className="group flex h-9 w-full items-center gap-2 rounded px-2 text-left text-sm font-medium text-slate-300 transition hover:bg-white/10 hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/60"
-      href={href}
-    >
-      <Icon
-        aria-hidden="true"
-        className="shrink-0 text-slate-500 transition group-hover:text-cyan-200"
-        size={16}
-        strokeWidth={2}
-      />
-      <span className="truncate">{label}</span>
-    </a>
-  );
-}
-
-function MobileLink({ href, icon: Icon, label }: { href: string; icon: LucideIcon; label: string }) {
-  return (
-    <a
-      className="flex min-h-16 flex-col items-center justify-center gap-1 rounded border border-white/10 bg-white/[0.03] px-1.5 py-2 text-[11px] font-semibold text-slate-300 transition hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-cyan-300/60"
-      href={href}
-    >
-      <Icon aria-hidden="true" size={16} strokeWidth={2} />
-      <span className="max-w-full truncate">{label}</span>
-    </a>
   );
 }
 

@@ -1,7 +1,6 @@
 # Beginner Tutorial
 
-> [!TIP]
-> You can read Veydrift docs without connecting a wallet. A wallet is only needed when you settle, build, research, launch missions, or manage an alliance.
+GitHub: https://github.com/Borodutch/veydrift
 
 ## What Veydrift Is
 
@@ -65,6 +64,4 @@ Open Galaxy or Raid Finder to choose a target. The mission composer previews rou
 
 - Do not send all cargo capacity as resources. Fuel is deducted from available cargo.
 - Do not assume a transaction updated the page until indexed state refreshes.
-- Do not attack protected or recently hit planets; protection and bashing checks can block launches.
 - Do not build only mines without energy. Underpowered mines produce less.
-- Do not burn a Chicken for a moon unless the selected planet and account cap are eligible.

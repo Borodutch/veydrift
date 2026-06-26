@@ -1,11 +1,10 @@
-import ai from "./content/ai.md?raw";
 import beginner from "./content/beginner.md?raw";
 import catalogs from "./content/catalogs.md?raw";
 import concepts from "./content/concepts.md?raw";
 import formulas from "./content/formulas.md?raw";
 import mechanics from "./content/mechanics.md?raw";
 
-export type DocsPageSlug = "beginner" | "concepts" | "catalogs" | "formulas" | "mechanics" | "ai";
+export type DocsPageSlug = "beginner" | "concepts" | "catalogs" | "formulas" | "mechanics";
 
 export type DocsPageSource = {
   slug: DocsPageSlug;
@@ -51,13 +50,6 @@ export const docsPages: DocsPageSource[] = [
     description: "What each transaction does and what state changes after indexing.",
     markdown: mechanics,
   },
-  {
-    slug: "ai",
-    title: "Veydrift AI Reference",
-    eyebrow: "Shareable",
-    description: "A concise rules reference users can give to AI assistants.",
-    markdown: ai,
-  },
 ];
 
 export function docsPageForSlug(slug: string | undefined): DocsPageSource {
@@ -67,7 +59,6 @@ export function docsPageForSlug(slug: string | undefined): DocsPageSource {
 export function docsSlugFromPath(pathname: string): DocsPageSlug {
   const normalized = pathname.replace(/\/+$/, "");
   const tail = normalized.split("/").filter(Boolean).at(-1);
-  if (tail === "agents") return "ai";
   if (tail && docsPages.some((page) => page.slug === tail)) return tail as DocsPageSlug;
   return "beginner";
 }

@@ -75,13 +75,63 @@ Attack loot is limited by available cargo and the target's plunderable resources
 effective attack = base attack * (1 + weapons level * 10%)
 effective shield = base shield * (1 + shielding level * 10%)
 effective hull = base hull * (1 + armor level * 10%)
+combat preview power = effective attack + effective shield + floor(effective hull / 10)
+rounds = at most 6
+targeted units = min(target unit count, assigned shots)
+shots per target = ceil(assigned shots / targeted units)
+damage = effective attack * shots per target
+no loss if effective attack <= effective shield / 100
+no loss if damage <= effective shield
+hull damage = damage - effective shield
+destroyed immediately if hull damage >= effective hull
+explosion chance bps = floor(hull damage * 10,000 / effective hull) when hull damage > 30% hull
+normal defense repair = floor(destroyed defenses * 70 / 100)
+small or large shield dome repair = 70% chance to repair one destroyed dome
+debris metal = floor((attacker metal losses + defender metal losses) * 30 / 100)
+debris crystal = floor((attacker crystal losses + defender crystal losses) * 30 / 100)
 ```
 
-Battle resolution uses six rounds, unit-weighted target selection, refreshed shields, hull damage, explosion checks, rapidfire where cataloged, debris creation, and post-battle defense repair.
+Each surviving unit fires once per round before round losses are applied. Shots are distributed across the opposing side by live unit counts. If 100 shots fire into a defender with 80 Rocket Launchers and 20 Light Lasers, about 80 shots target Rocket Launchers and 20 target Light Lasers, with deterministic randomness deciding the remainder. Shields refresh every round, so damage does not carry over between rounds unless it destroys a unit in that round.
+
+Rapidfire can create extra shots after the normal shot assignment. A rapidfire value of `N` gives each selected shot a `(N - 1) / N` chance to create another shot, chained up to the contract limit. For example, Cruiser rapidfire `10` against Rocket Launchers means each Cruiser shot that selects a Rocket Launcher has a 90% chance to generate one more shot against the defender pool.
+
+Combat example:
+
+```text
+Attacker: 1 Cruiser, Weapons 0
+Defender: 10 Rocket Launchers, Shielding 0, Armor 0
+
+Cruiser attack = 400
+Rocket Launcher shield = 20
+Rocket Launcher hull = (2,000 metal + 0 crystal) / 10 = 200
+
+Round 1 normal shots:
+1 Cruiser fires 1 shot.
+All 10 defender units are Rocket Launchers, so the shot targets a Rocket Launcher.
+damage = 400
+damage > shield, hull damage = 400 - 20 = 380
+380 >= 200 hull, so 1 Rocket Launcher is destroyed.
+
+Rapidfire:
+Cruiser has rapidfire 10 against Rocket Launcher.
+The selected shot has a 90% chance to add another shot.
+If that extra shot occurs, it can destroy another Rocket Launcher using the same damage math.
+
+Defender fire:
+The round snapshot fires before losses are applied, so all 10 Rocket Launchers still fire in round 1.
+Each Rocket Launcher has attack 80. Their assigned shots target the Cruiser.
+Cruiser shield = 50; Cruiser hull = (20,000 metal + 7,000 crystal) / 10 = 2,700.
+Each launcher shot deals 80, so each shot passes shield but only deals 30 hull damage.
+30 is below 30% of Cruiser hull, so no explosion check happens from a single launcher shot.
+
+After the round:
+Destroyed Rocket Launchers are removed, then 70% of destroyed normal defenses repair after battle.
+If 2 Rocket Launchers were destroyed and the defender does not win earlier, floor(2 * 70 / 100) = 1 repairs.
+```
 
 ## Protection And Bashing
 
-Score uses the contract-parity `_totalUserScore` components used by attack protection: technology levels, owned planets, building levels, defenses, and ships. New or low-score protection blocks attacks outside allowed score thresholds unless an explicit exception applies. The bashing window is evaluated by attacker, defender, and planet over 24 hours.
+Score uses the same contract formula for ranking and attack protection: economy, research, fleet, and defense components are indexed into one player score. New or low-score protection blocks attacks outside allowed score thresholds unless an explicit exception applies. The bashing window is evaluated by attacker, defender, and planet over 24 hours.
 
 ## Moon Chance And Jump Gates
 
