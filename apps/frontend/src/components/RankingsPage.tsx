@@ -5,6 +5,7 @@ import { fleetMissionDistance } from "../fleetMissionRules";
 import { activeMissionsByPlanetId, countPlanetsWithActiveMissions, planetMissionSubtext } from "../planetMissionSubtext";
 import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
+import { formatProtectionScore, protectionScoreComparisonLabel } from "../attackProtectionLabels";
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
@@ -445,6 +446,11 @@ function RankingRow({
       && entry.attackProtection.blockedReason !== "same_alliance"
   );
   const isAfk = entry.attackProtection?.defenderInactive === true;
+  const protectionScoreText = entry.attackProtection?.scoreComparison
+    ? protectionScoreComparisonLabel(entry.attackProtection.scoreComparison)
+    : entry.totalUserScore
+      ? `Protection score ${formatProtectionScore(entry.totalUserScore)}`
+      : null;
   const rowTone = isCurrentPlayer
     ? "border-cyan-300/25 bg-cyan-300/[0.09] shadow-[inset_3px_0_0_rgba(103,232,249,0.7)]"
     : isAttackProtected
@@ -534,9 +540,17 @@ function RankingRow({
           <span className="mt-0.5 block font-mono text-xs font-semibold text-cyan-100 sm:hidden">
             Score {formatScore(entry.score[active])}
           </span>
+          {protectionScoreText ? (
+            <span className="mt-0.5 block font-mono text-[10px] font-semibold text-slate-500 sm:hidden">
+              {protectionScoreText}
+            </span>
+          ) : null}
         </span>
       </span>
-      <span className="hidden text-right font-mono font-semibold text-cyan-100 sm:block">{formatScore(entry.score[active])}</span>
+      <span className="hidden text-right font-mono sm:block">
+        <span className="block font-semibold text-cyan-100">{formatScore(entry.score[active])}</span>
+        {protectionScoreText ? <span className="block text-[10px] font-semibold text-slate-500">{protectionScoreText}</span> : null}
+      </span>
       {rankedPlanets.length > 0 ? (
         <div className="col-start-1 col-end-3 mt-2 min-w-0 max-w-full overflow-hidden space-y-1 sm:col-start-2 sm:col-end-4">
           <div className="grid grid-cols-[22px_minmax(0,1fr)] items-center gap-1 px-2 text-[10px] font-semibold uppercase tracking-normal text-slate-500 sm:grid-cols-[26px_minmax(0,1fr)_56px_88px_82px] sm:gap-2">

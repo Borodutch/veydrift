@@ -848,6 +848,7 @@ export type HighscoreEntry = {
     blockedReason: "none" | "bashing_limit" | "score_protection" | "same_alliance";
     blockedReasonLabel: string | null;
     defenderInactive?: boolean;
+    scoreComparison?: AttackProtectionScoreComparison;
     atWar?: boolean;
     targetAlliance?: {
       allianceId: string;
@@ -861,6 +862,16 @@ export type HighscoreEntry = {
   planets?: HighscorePlanet[];
   planetCount: number;
   score: Record<HighscoreCategory, string>;
+  totalUserScore?: string;
+};
+
+export type AttackProtectionScoreComparison = {
+  scoreType: "contract_total_user_score";
+  attackerScore: string;
+  defenderScore: string;
+  attackerVisibleScore: string;
+  defenderVisibleScore: string;
+  protected: boolean;
 };
 
 export type AttackProtectionStatus = {
@@ -873,6 +884,7 @@ export type AttackProtectionStatus = {
   defenderHonorStatus?: "neutral" | "honorable" | "bandit";
   plunderBps?: number;
   defenderInactive?: boolean;
+  scoreComparison?: AttackProtectionScoreComparison;
   transportAllowed?: boolean;
   transportBlockReason?: "none" | "own_planet" | "same_alliance" | "not_allied";
   transportBlockReasonLabel?: string | null;

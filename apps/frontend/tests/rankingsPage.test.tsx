@@ -309,6 +309,14 @@ describe("RankingsPage", () => {
         allowed: false,
         blockedReason: "score_protection",
         blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+        scoreComparison: {
+          scoreType: "contract_total_user_score",
+          attackerScore: "25437",
+          defenderScore: "7340",
+          attackerVisibleScore: "7539",
+          defenderVisibleScore: "278",
+          protected: false,
+        },
       },
     });
     const table = RankingsTable({
@@ -319,6 +327,7 @@ describe("RankingsPage", () => {
 
     expect(row?.props?.className).toContain("bg-red-300");
     expect(visibleText(row)).toContain("Protected");
+    expect(visibleText(row)).toContain("Protection score 25,437 vs 7,340");
   });
 
   test("renders an AFK flair for inactive ranking defenders", () => {

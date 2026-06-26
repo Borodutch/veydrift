@@ -3183,6 +3183,7 @@ function raidTarget(overrides: Partial<RaidTarget> = {}): RaidTarget {
       isSameAlliance: false,
       blockedReason: "none",
       blockedReasonLabel: null,
+      scoreComparison: null,
       defenderInactive: false,
     },
     inbound: { count: 0, nextArrivalAtMs: null },

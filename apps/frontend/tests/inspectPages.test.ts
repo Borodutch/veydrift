@@ -5,10 +5,11 @@ import type { HighscoreEntry, ManagedPlanetResponse } from "../src/walletFlow";
 
 describe("inspect pages", () => {
   test("builds compact player score summary without wallet duplication", () => {
-    const items = playerInspectScoreItems(highscoreEntry());
+    const items = playerInspectScoreItems(highscoreEntry({ totalUserScore: "25437" }));
 
     expect(items.map((item) => item.label)).toEqual([
       "Total",
+      "Protection Score",
       "Economy",
       "Military",
       "Fleet",
@@ -19,6 +20,7 @@ describe("inspect pages", () => {
     ]);
     expect(items.map((item) => item.label)).not.toContain("Wallet");
     expect(items.find((item) => item.label === "Total")?.value).toBe("4,400");
+    expect(items.find((item) => item.label === "Protection Score")?.value).toBe("25,437");
     expect(items.find((item) => item.label === "Ships")?.value).toBe("42");
   });
 
@@ -30,12 +32,21 @@ describe("inspect pages", () => {
         allowed: false,
         blockedReason: "score_protection",
         blockedReasonLabel: "Attack blocked by score protection.",
+        scoreComparison: {
+          scoreType: "contract_total_user_score",
+          attackerScore: "25437",
+          defenderScore: "7340",
+          attackerVisibleScore: "7539",
+          defenderVisibleScore: "278",
+          protected: false,
+        },
       },
     );
 
     expect(signals).toContainEqual({ label: "Distance", value: "1,010" });
     expect(signals).toContainEqual({ label: "Resources", value: "8K M / 1K C / 200 D" });
     expect(signals).toContainEqual({ label: "Protection", value: "Attack blocked by score protection." });
+    expect(signals).toContainEqual({ label: "Protection score", value: "Protection score 25,437 vs 7,340" });
     expect(signals).toContainEqual({ label: "Ships", value: "3 units / 12K power" });
     expect(signals).toContainEqual({ label: "Defenses", value: "5 units / 4K power" });
     expect(signals).toContainEqual({ label: "Queues", value: "Building, Defense" });

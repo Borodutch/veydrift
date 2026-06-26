@@ -29,6 +29,7 @@ import {
   galaxyActionsForSlot,
   type GalaxyAction,
 } from "../galaxyActions";
+import { protectionScoreComparisonLabel } from "../attackProtectionLabels";
 import {
   commitCoordinateDraft,
   coordinateDraftAfterExternalValueChange,
@@ -108,6 +109,10 @@ export type AttackProtectionStatus = {
   defenderHonorStatus?: "neutral" | "honorable" | "bandit";
   plunderBps?: number;
   defenderInactive?: boolean;
+  scoreComparison?: {
+    attackerScore: string;
+    defenderScore: string;
+  };
   transportAllowed?: boolean;
   transportBlockReason?: "none" | "own_planet" | "same_alliance" | "not_allied";
   transportBlockReasonLabel?: string | null;
@@ -805,6 +810,7 @@ function GalaxySlot({
   const moonChanceLabel = formatMoonChanceLabel(planet.moonChance);
   const attackBlockLabel = formatAttackBlockReason(attackProtection);
   const attackRuleLabels = formatAttackRuleLabels(attackProtection);
+  const protectionScoreLabel = protectionScoreComparisonLabel(attackProtection?.scoreComparison);
   const watched = Boolean(planet.occupiedBy?.planetId && watchedPlanetIds.includes(planet.occupiedBy.planetId));
   const meta: PlanetMetaItem[] = [
     { label: formatGalaxyHeatLabel(planet.temperature) },
@@ -812,6 +818,7 @@ function GalaxySlot({
     ...(planet.hasMoon ? [{ label: "Moon" }] : []),
     ...(attackProtection?.defenderInactive ? [{ label: "Inactive", tone: "warning" as const }] : []),
     ...(attackBlockLabel ? [{ label: attackBlockLabel, tone: "warning" as const }] : []),
+    ...(protectionScoreLabel ? [{ label: protectionScoreLabel, tone: "info" as const }] : []),
     ...attackRuleLabels.map((label) => ({ label, tone: "info" as const })),
     ...(debrisLabel ? [{ label: debrisLabel, tone: "warning" as const }] : []),
     ...(moonChanceLabel ? [{ label: moonChanceLabel, tone: "info" as const }] : []),

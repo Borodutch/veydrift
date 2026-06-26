@@ -3428,7 +3428,7 @@ type RankedHighscoreEntry = HighscoreEntry & {
   rank: number;
 };
 
-type RankedHighscoreAttackProtection = Pick<AttackProtectionStatus, "allowed" | "atWar" | "blockedReason" | "blockedReasonLabel" | "defenderInactive" | "targetAlliance">;
+type RankedHighscoreAttackProtection = Pick<AttackProtectionStatus, "allowed" | "atWar" | "blockedReason" | "blockedReasonLabel" | "defenderInactive" | "scoreComparison" | "targetAlliance">;
 
 type RankedHighscorePlanet = {
   planetId: string;
@@ -3705,9 +3705,16 @@ function rankedHighscoreIndexedProtectionLookup(
   const nowSeconds = Math.floor(Date.now() / 1_000);
   for (const row of rankedRows) {
     const defenderInactive = indexedDefenderInactive(playerActivity.get(row.wallet.toLowerCase()), nowSeconds);
+    const rowAlliance = row.alliance ?? null;
+    const atWar = indexer?.allianceRelationship(attackerAlliance?.allianceId, rowAlliance?.allianceId) === "war";
+    const scoreProtected = !defenderInactive
+      && !atWar
+      && isIndexedScoreProtected(attackerScore, BigInt(row.totalUserScore));
+    const scoreComparison = attackProtectionScoreComparison(attacker, row, scoreProtected);
     const status = indexedScoreProtectionStatus(
       attackerScore,
       BigInt(row.totalUserScore),
+      scoreComparison,
       attackerAlliance,
       indexer,
       normalizedCurrentWallet,
@@ -3725,6 +3732,7 @@ function rankedHighscoreIndexedProtectionLookup(
             blockedReason: "bashing_limit",
             blockedReasonLabel: attackBlockReasonLabel("bashing_limit"),
             defenderInactive,
+            scoreComparison,
             ...(row.alliance ? { targetAlliance: row.alliance } : {})
           }
         : status);
@@ -3737,6 +3745,7 @@ function rankedHighscoreIndexedProtectionLookup(
 function indexedScoreProtectionStatus(
   attackerScore: bigint,
   defenderScore: bigint,
+  scoreComparison: NonNullable<AttackProtectionStatus["scoreComparison"]>,
   attackerAlliance: AllianceIdentity | null,
   indexer: SettlementIndexer | undefined,
   currentWallet: string,
@@ -3750,6 +3759,7 @@ function indexedScoreProtectionStatus(
       blockedReason: "none",
       blockedReasonLabel: null,
       defenderInactive,
+      scoreComparison,
       ...(defenderAlliance ? { targetAlliance: defenderAlliance } : {})
     };
   }
@@ -3765,6 +3775,7 @@ function indexedScoreProtectionStatus(
       blockedReason: "same_alliance",
       blockedReasonLabel: attackBlockReasonLabel("same_alliance"),
       defenderInactive,
+      scoreComparison,
       targetAlliance: defenderAlliance
     };
   }
@@ -3776,6 +3787,7 @@ function indexedScoreProtectionStatus(
       blockedReason: "none",
       blockedReasonLabel: null,
       defenderInactive,
+      scoreComparison,
       ...(atWar ? { atWar: true } : {}),
       ...(defenderAlliance ? { targetAlliance: defenderAlliance } : {})
     };
@@ -3786,7 +3798,23 @@ function indexedScoreProtectionStatus(
     blockedReason: "score_protection",
     blockedReasonLabel: attackBlockReasonLabel("score_protection"),
     defenderInactive,
+    scoreComparison,
     ...(defenderAlliance ? { targetAlliance: defenderAlliance } : {})
+  };
+}
+
+function attackProtectionScoreComparison(
+  attacker: Pick<HighscoreEntry, "score" | "totalUserScore">,
+  defender: Pick<HighscoreEntry, "score" | "totalUserScore">,
+  protectedByScore: boolean
+): NonNullable<AttackProtectionStatus["scoreComparison"]> {
+  return {
+    scoreType: "contract_total_user_score",
+    attackerScore: attacker.totalUserScore,
+    defenderScore: defender.totalUserScore,
+    attackerVisibleScore: attacker.score.total,
+    defenderVisibleScore: defender.score.total,
+    protected: protectedByScore
   };
 }
 
@@ -4158,6 +4186,7 @@ function indexedAttackProtectionResponse(
   const scoreProtected = !defenderInactive
     && !atWar
     && isIndexedScoreProtected(attackerProtectionScore, defenderProtectionScore);
+  const scoreComparison = attackProtectionScoreComparison(attacker, defender, scoreProtected);
   // VEY-KANEO-489: also replay the per-(attacker, planet) bashing window the contract enforces. Self
   // attacks are rejected upstream by the contract and carry no window; a self-target read just returns
   // an empty launch history. same_alliance and score protection are checked first to match the
@@ -4201,6 +4230,7 @@ function indexedAttackProtectionResponse(
     transportAllowed,
     transportBlockReason,
     transportBlockReasonLabel: transportBlockReasonLabel(transportBlockReason),
+    scoreComparison,
     ...(atWar ? { atWar: true } : {}),
     ...(defenderAlliance ? { targetAlliance: defenderAlliance } : {}),
     source: indexedSource
