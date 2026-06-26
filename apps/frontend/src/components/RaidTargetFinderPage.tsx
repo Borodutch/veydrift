@@ -6,6 +6,7 @@ import { activeMissionsByPlanetId, planetMissionSubtext } from "../planetMission
 import type { Coordinates } from "../types";
 import { fetchHighscores, fetchRaidFinderDebrisTargets, shortAddress, type ChainShipyardState, type DebrisTargetResponse, type FleetMissionSummary, type HighscoreEntry } from "../walletFlow";
 import type { FleetMissionVisibilityResponse } from "../walletFlow";
+import { formatProtectionScore, protectionScoreComparisonLabel } from "../attackProtectionLabels";
 import {
   DEFAULT_DEBRIS_TARGET_SORT,
   DEFAULT_RAID_TARGET_FILTERS,
@@ -722,6 +723,8 @@ export function RaidTargetRow({
 }) {
   const commanderLabel = target.ownerDisplayName?.trim() || shortAddress(target.owner);
   const alliance = target.alliance;
+  const protectionScoreText = protectionScoreComparisonLabel(target.protection.scoreComparison)
+    ?? (target.protection.scoreComparison?.defenderScore ? `Protection score ${formatProtectionScore(target.protection.scoreComparison.defenderScore)}` : null);
   const rowTone = target.protection.isProtected
     ? "border-red-300/15 bg-red-300/[0.04]"
     : target.protection.isAtWar
@@ -761,7 +764,7 @@ export function RaidTargetRow({
             {target.protection.isProtected ? (
               <span
                 className="inline-flex shrink-0 items-center gap-1 rounded border border-red-200/30 bg-red-200/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none text-red-100"
-                title={target.protection.blockedReasonLabel ?? "Attack blocked by protection rules"}
+                title={[target.protection.blockedReasonLabel ?? "Attack blocked by protection rules", protectionScoreText].filter(Boolean).join(" ")}
               >
                 <ShieldAlert aria-hidden="true" size={10} /> Protected
               </span>
@@ -816,6 +819,7 @@ export function RaidTargetRow({
             >
               {commanderLabel}
             </button>
+            {protectionScoreText ? <span className="font-mono text-[10px] text-slate-500">{protectionScoreText}</span> : null}
             <span className="flex flex-wrap gap-x-2 font-mono text-[10px] sm:hidden">
               <span className="text-slate-400" title="Distance from your active planet">
                 <span className="text-slate-600">Dist </span>

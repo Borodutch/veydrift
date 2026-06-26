@@ -3699,14 +3699,33 @@ describe("Veydrift backend", () => {
       allowed: false,
       blockedReason: "score_protection",
       blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
-      defenderInactive: false
+      defenderInactive: false,
+      scoreComparison: {
+        scoreType: "contract_total_user_score",
+        attackerScore: attackerScore.totalUserScore,
+        defenderScore: defenderScore.totalUserScore,
+        attackerVisibleScore: attackerScore.score.total,
+        defenderVisibleScore: defenderScore.score.total,
+        protected: true
+      }
     });
     expect(rankingsResponse.status).toBe(200);
-    expect(rankingsBody.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
+    const rankedDefender = rankingsBody.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player) as (HighscoreEntry & {
+      attackProtection?: Partial<AttackProtectionStatus>;
+    }) | undefined;
+    expect(rankedDefender?.attackProtection).toMatchObject({
       allowed: false,
       blockedReason: "score_protection",
       blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
-      defenderInactive: false
+      defenderInactive: false,
+      scoreComparison: {
+        scoreType: "contract_total_user_score",
+        attackerScore: attackerScore.totalUserScore,
+        defenderScore: rankedDefender?.totalUserScore,
+        attackerVisibleScore: attackerScore.score.total,
+        defenderVisibleScore: rankedDefender?.score.total,
+        protected: true
+      }
     });
   });
 
@@ -3947,11 +3966,15 @@ describe("Veydrift backend", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
+    expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toMatchObject({
       allowed: false,
       blockedReason: "bashing_limit",
       blockedReasonLabel: "Attack blocked: bashing limit reached for this attacker, defender, and planet in the current 24-hour window.",
-      defenderInactive: false
+      defenderInactive: false,
+      scoreComparison: {
+        scoreType: "contract_total_user_score",
+        protected: false
+      }
     });
   });
 
@@ -3995,11 +4018,15 @@ describe("Veydrift backend", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
+    expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toMatchObject({
       allowed: true,
       blockedReason: "none",
       blockedReasonLabel: null,
-      defenderInactive: true
+      defenderInactive: true,
+      scoreComparison: {
+        scoreType: "contract_total_user_score",
+        protected: false
+      }
     });
   });
 
@@ -7661,7 +7688,15 @@ describe("Veydrift backend", () => {
       allowed: true,
       blockedReason: "none",
       blockedReasonLabel: null,
-      defenderInactive: false
+      defenderInactive: false,
+      scoreComparison: {
+        scoreType: "contract_total_user_score",
+        attackerScore: "1039",
+        defenderScore: "1039",
+        attackerVisibleScore: "15",
+        defenderVisibleScore: "15",
+        protected: false
+      }
     });
     expect(body.currentPlayer).toMatchObject({
       wallet: owners[2],
@@ -7923,7 +7958,15 @@ describe("Veydrift backend", () => {
       allowed: false,
       blockedReason: "score_protection",
       blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
-      defenderInactive: false
+      defenderInactive: false,
+      scoreComparison: {
+        scoreType: "contract_total_user_score",
+        attackerScore: "51033",
+        defenderScore: "1039",
+        attackerVisibleScore: "50009",
+        defenderVisibleScore: "8095",
+        protected: true
+      }
     });
   });
 
@@ -7983,7 +8026,15 @@ describe("Veydrift backend", () => {
       allowed: false,
       blockedReason: "score_protection",
       blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
-      defenderInactive: false
+      defenderInactive: false,
+      scoreComparison: {
+        scoreType: "contract_total_user_score",
+        attackerScore: "51033",
+        defenderScore: "1039",
+        attackerVisibleScore: "50009",
+        defenderVisibleScore: "8095",
+        protected: true
+      }
     });
   });
 

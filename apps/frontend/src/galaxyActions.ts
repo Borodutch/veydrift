@@ -20,6 +20,10 @@ export type GalaxyAttackProtectionStatus = {
   allowed: boolean;
   blockedReason: "none" | "bashing_limit" | "score_protection" | "same_alliance";
   blockedReasonLabel: string | null;
+  scoreComparison?: {
+    attackerScore: string;
+    defenderScore: string;
+  };
   atWar?: boolean;
   transportAllowed?: boolean;
   transportBlockReason?: "none" | "own_planet" | "same_alliance" | "not_allied";

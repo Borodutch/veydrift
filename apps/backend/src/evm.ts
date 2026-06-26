@@ -922,6 +922,15 @@ export type TransportBlockReason = "none" | "own_planet" | "same_alliance" | "no
 export type AttackRelation = "peer" | "stronger" | "weaker";
 export type HonorStatus = "neutral" | "honorable" | "bandit";
 
+export type AttackProtectionScoreComparison = {
+  scoreType: "contract_total_user_score";
+  attackerScore: string;
+  defenderScore: string;
+  attackerVisibleScore: string;
+  defenderVisibleScore: string;
+  protected: boolean;
+};
+
 export type AttackProtectionStatus = {
   wallet: Address;
   targetPlanetId: string;
@@ -935,6 +944,7 @@ export type AttackProtectionStatus = {
   transportAllowed?: boolean;
   transportBlockReason?: TransportBlockReason;
   transportBlockReasonLabel?: string | null;
+  scoreComparison?: AttackProtectionScoreComparison;
   atWar?: boolean;
   targetAlliance?: AllianceIdentity | null;
 };

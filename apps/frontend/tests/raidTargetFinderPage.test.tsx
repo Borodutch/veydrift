@@ -51,11 +51,22 @@ describe("RaidTargetFinderPage", () => {
       missionSubtext: { lines: [], overflow: 0 },
       now: 1_770_000_000_000,
       onAttackTarget: (target) => selected.push(target.planetId),
-      target: raidTarget({ planetId: "10" }),
+      target: raidTarget({
+        planetId: "10",
+        protection: {
+          isProtected: true,
+          isSameAlliance: false,
+          blockedReason: "score_protection",
+          blockedReasonLabel: "Attack blocked by score protection",
+          scoreComparison: { attackerScore: "25437", defenderScore: "7340" },
+          defenderInactive: false,
+        },
+      }),
     });
     const disabledAttack = buttonWithText(disabled, "Attack");
     expect(disabledAttack?.props?.disabled).toBe(true);
     expect(disabledAttack?.props?.title).toBe("Attack blocked by score protection");
+    expect(visibleText(disabled)).toContain("Protection score 25,437 vs 7,340");
   });
 
   test("row top-level cells match the desktop header order before actions", () => {
@@ -129,7 +140,7 @@ function raidTarget(overrides: Partial<RaidTarget> = {}): RaidTarget {
     defensePower: 0,
     defenseCount: 0,
     defenseUnits: [],
-    protection: { isProtected: false, isSameAlliance: false, blockedReason: "none", blockedReasonLabel: null, defenderInactive: false },
+    protection: { isProtected: false, isSameAlliance: false, blockedReason: "none", blockedReasonLabel: null, scoreComparison: null, defenderInactive: false },
     inbound: { count: 0, nextArrivalAtMs: null },
     ...overrides,
   };

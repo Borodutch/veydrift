@@ -235,7 +235,19 @@ describe("buildRaidTargets", () => {
         entry({
           wallet: "0xprotected",
           planets: [planet({ planetId: "p" })],
-          attackProtection: { allowed: false, blockedReason: "score_protection", blockedReasonLabel: "Too strong" },
+          attackProtection: {
+            allowed: false,
+            blockedReason: "score_protection",
+            blockedReasonLabel: "Too strong",
+            scoreComparison: {
+              scoreType: "contract_total_user_score",
+              attackerScore: "25437",
+              defenderScore: "7340",
+              attackerVisibleScore: "7539",
+              defenderVisibleScore: "278",
+              protected: false,
+            },
+          },
         }),
         entry({
           wallet: "0xally",
@@ -252,6 +264,7 @@ describe("buildRaidTargets", () => {
     const [protectedTarget, ally, open] = targets as [RaidTarget, RaidTarget, RaidTarget];
     expect(protectedTarget.protection.isProtected).toBe(true);
     expect(protectedTarget.protection.isSameAlliance).toBe(false);
+    expect(protectedTarget.protection.scoreComparison).toEqual({ attackerScore: "25437", defenderScore: "7340" });
     expect(ally.protection.isSameAlliance).toBe(true);
     expect(ally.protection.isProtected).toBe(false);
     expect(open.protection.isProtected).toBe(false);
@@ -400,6 +413,7 @@ describe("sortRaidTargets", () => {
         isAtWar: false,
         blockedReason: "none",
         blockedReasonLabel: null,
+        scoreComparison: null,
         defenderInactive: false,
       },
       inbound: { count: 0, nextArrivalAtMs: null },

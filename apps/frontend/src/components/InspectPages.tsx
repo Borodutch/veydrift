@@ -6,6 +6,7 @@ import { descriptionLinkParts, isSafeDescriptionUrl, type DescriptionLinkPart } 
 import { fleetMissionDistance } from "../fleetMissionRules";
 import type { Coordinates } from "../types";
 import { formatUserTimestamp } from "../timestampFormat";
+import { formatProtectionScore, protectionScoreComparisonLabel } from "../attackProtectionLabels";
 import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
 import {
   fetchHighscores,
@@ -744,6 +745,7 @@ export function playerInspectScoreItems(highscore: HighscoreEntry | null): Array
   if (!highscore) return [];
   return [
     { label: "Total", value: formatScore(highscore.score.total) },
+    ...(highscore.totalUserScore ? [{ label: "Protection Score", value: formatScore(highscore.totalUserScore) }] : []),
     { label: "Economy", value: formatScore(highscore.score.economy) },
     { label: "Military", value: formatScore(highscore.score.military) },
     { label: "Fleet", value: formatScore(highscore.score.fleet) },
@@ -789,6 +791,9 @@ export function playerPlanetTacticalSignals(
   const protectionSignal = attackProtection && !attackProtection.allowed && attackProtection.blockedReason !== "none"
     ? [{ label: "Protection", value: attackProtection.blockedReasonLabel ?? "Protected" }]
     : [];
+  const protectionScoreLabel = protectionScoreComparisonLabel(attackProtection?.scoreComparison)
+    ?? (attackProtection?.scoreComparison?.defenderScore ? `Protection score ${formatProtectionScore(attackProtection.scoreComparison.defenderScore)}` : null);
+  const protectionScoreSignal = protectionScoreLabel ? [{ label: "Protection score", value: protectionScoreLabel }] : [];
   const warSignal = attackProtection?.atWar
     ? [{ label: "War", value: attackProtection.targetAlliance?.tag ? `[${attackProtection.targetAlliance.tag}]` : "Active" }]
     : [];
@@ -797,6 +802,7 @@ export function playerPlanetTacticalSignals(
     { label: "Distance", value: originCoords ? fleetMissionDistance(originCoords, planet).toLocaleString("en-US") : "Home planet unavailable" },
     { label: "Resources", value: formatResources(planet.tactical?.raidableResources ?? planet.resources) },
     ...protectionSignal,
+    ...protectionScoreSignal,
     ...warSignal,
     { label: "Ships", value: planetTacticalUnitSignal(planet.tactical?.ships) },
     { label: "Defenses", value: planetTacticalUnitSignal(planet.tactical?.defenses) },

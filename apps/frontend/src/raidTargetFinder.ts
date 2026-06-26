@@ -47,6 +47,10 @@ export type RaidTargetProtection = {
   isAtWar: boolean;
   blockedReason: "none" | "bashing_limit" | "score_protection" | "same_alliance";
   blockedReasonLabel: string | null;
+  scoreComparison: {
+    attackerScore: string;
+    defenderScore: string;
+  } | null;
   defenderInactive: boolean;
 };
 
@@ -297,6 +301,17 @@ function classifyProtection(entry: HighscoreEntry): RaidTargetProtection {
     isAtWar,
     blockedReason,
     blockedReasonLabel: protection?.blockedReasonLabel ?? null,
+    scoreComparison: protection?.scoreComparison
+      ? {
+          attackerScore: protection.scoreComparison.attackerScore,
+          defenderScore: protection.scoreComparison.defenderScore,
+        }
+      : entry.totalUserScore
+        ? {
+            attackerScore: "",
+            defenderScore: entry.totalUserScore,
+          }
+        : null,
     defenderInactive: protection?.defenderInactive === true,
   };
 }
