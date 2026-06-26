@@ -20,8 +20,11 @@ import {
   decodeIndexedQueueCompletedLog,
   decodeIndexedQueueStartedLog,
   decodeInterplanetaryMissileAttackLog,
+  decodeMoonDefenseCountChangedLog,
   decodeMoonCreatedLog,
   decodeMoonChanceReportLog,
+  decodeMoonResourcesSettledLog,
+  decodeMoonShipCountChangedLog,
   decodePlanetSettledLog,
   decodePlanetRenamedLog,
   decodeFleetMissionLogs,
@@ -42,6 +45,9 @@ import {
   isAllianceLog,
   isMoonCreatedLog,
   isMoonChanceReportLog,
+  isMoonDefenseCountChangedLog,
+  isMoonResourcesSettledLog,
+  isMoonShipCountChangedLog,
   isPlanetSettledLog,
   isPlanetRenamedLog,
   isRiftResourceLog,
@@ -69,6 +75,8 @@ import {
   type IndexedQueueStartedEvent,
   type IndexedAllianceEvent,
   type IndexedMoonCreatedEvent,
+  type IndexedMoonDefenseCountChangedEvent,
+  type IndexedMoonShipCountChangedEvent,
   type IndexedRiftResourceEvent,
   type IndexedShipCountChangedEvent,
   type IndexedDefenseCountChangedEvent,
@@ -77,6 +85,7 @@ import {
   type ManagedPlanet,
   type MoonState,
   type MoonChanceReportEvent,
+  type MoonResourcesSettledEvent,
   type PlanetSettledEvent,
   type PlanetRenamedEvent,
   type PlayerQueues,
@@ -1214,17 +1223,33 @@ export class SettlementIndexer {
 
   walletPlanets(wallet: `0x${string}`): WalletPlanets {
     const settlement = this.walletSettlement(wallet);
-    const planets = this.settledPlanetsForOwner(wallet).map((planet) => indexedManagedPlanet(
-      planet,
-      settlement.homePlanetId,
-      this.infrastructureRows(planet.planetId),
-      {
-        building: this.planetQueue(planet.planetId, "building"),
-        defense: this.planetQueue(planet.planetId, "defense"),
-        ship: this.planetQueue(planet.planetId, "ship")
-      },
-      this.hasMoon(planet.planetId)
-    ));
+    const planets = this.settledPlanetsForOwner(wallet).map((planet) => {
+      const moonState = this.moonState(planet.owner, planet.planetId);
+      const moonSummary = moonState.moon
+        ? {
+            bodyKind: "moon" as const,
+            exists: true,
+            parentPlanetId: planet.planetId,
+            planetId: planet.planetId,
+            coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
+            resources: moonState.resources,
+            ...(moonState.resourcesAsOfNow ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {}),
+            ships: moonState.ships,
+            defenses: moonState.defenses
+          }
+        : null;
+      return indexedManagedPlanet(
+        planet,
+        settlement.homePlanetId,
+        this.infrastructureRows(planet.planetId),
+        {
+          building: this.planetQueue(planet.planetId, "building"),
+          defense: this.planetQueue(planet.planetId, "defense"),
+          ship: this.planetQueue(planet.planetId, "ship")
+        },
+        moonSummary
+      );
+    });
 
     return {
       wallet,
@@ -1563,6 +1588,27 @@ export class SettlementIndexer {
     );
   }
 
+  private moonShipRows(planetId: string): ShipyardState["ships"] {
+    const counts = this.indexedLevelsById("contract_moon_ship_counts", "ship_id", "count", planetId);
+    return deriveShipRows(
+      (id) => counts.get(id) ?? 0,
+      this.planet(planetId)?.temperature
+    );
+  }
+
+  private moonDefenseRows(planetId: string): DefenseState["defenses"] {
+    const counts = this.indexedLevelsById("contract_moon_defense_counts", "defense_id", "count", planetId);
+    return deriveDefenseRows((id) => counts.get(id) ?? 0);
+  }
+
+  private moonResources(planetId: string | null): Resources {
+    if (!planetId) return zeroResources();
+    const row = this.moonResourceSnapshot(planetId);
+    return row
+      ? { metal: row.metal, crystal: row.crystal, deuterium: row.deuterium }
+      : zeroResources();
+  }
+
   // Served ship counts mirror the indexed contract count rows exactly. The contract may lazily settle
   // due queue output during a later mutating action, but the backend must not pre-project those units
   // into API counts before the corresponding chain event updates the indexed rows.
@@ -1818,11 +1864,17 @@ export class SettlementIndexer {
 
   moonState(wallet: `0x${string}`, planetId: string | null): MoonState {
     const moon = planetId ? this.moon(planetId) : null;
+    const resources = this.moonResources(planetId);
     return {
       wallet,
+      bodyKind: "moon",
       homePlanetId: planetId,
+      parentPlanetId: planetId,
       moonAvailable: true,
       ...(moon ? {} : { unavailableReason: "No moon exists for this home planet yet." }),
+      resources,
+      resourcesAsOfNow: resources,
+      ships: planetId ? this.moonShipRows(planetId) : [],
       moon: moon
         ? {
             exists: true,
@@ -1914,6 +1966,19 @@ export class SettlementIndexer {
     return this.snapshot();
   }
 
+  applyMoonResourcesSettledEvent(event: MoonResourcesSettledEvent): IndexerSnapshot {
+    this.upsertMoonResourceSnapshot(
+      event.planetId,
+      event.resources,
+      event.lastSettledAt,
+      event.transactionHash,
+      event.blockNumber,
+      event.logIndex
+    );
+    this.touch();
+    return this.snapshot();
+  }
+
   applyDebrisEvent(event: DebrisFieldEvent): IndexerSnapshot {
     this.upsertDebris(event);
     this.touch();
@@ -1988,6 +2053,10 @@ export class SettlementIndexer {
       this.applyPlanetSettledEvent(decodePlanetSettledLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
+    if (isMoonResourcesSettledLog(log)) {
+      this.applyMoonResourcesSettledEvent(decodeMoonResourcesSettledLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
     if (isPlanetRenamedLog(log)) {
       this.applyPlanetRenamedEvent(decodePlanetRenamedLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
@@ -2002,6 +2071,14 @@ export class SettlementIndexer {
     }
     if (isDefenseCountChangedLog(log)) {
       this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isMoonShipCountChangedLog(log)) {
+      this.applyMoonShipCountChangedEvent(decodeMoonShipCountChangedLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isMoonDefenseCountChangedLog(log)) {
+      this.applyMoonDefenseCountChangedEvent(decodeMoonDefenseCountChangedLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isInterplanetaryMissileAttackLog(log)) {
@@ -2888,6 +2965,28 @@ export class SettlementIndexer {
         jump_gate_ready_at TEXT,
         event_json TEXT
       );
+      CREATE TABLE IF NOT EXISTS contract_moon_resources (
+        planet_id TEXT PRIMARY KEY,
+        metal TEXT NOT NULL,
+        crystal TEXT NOT NULL,
+        deuterium TEXT NOT NULL,
+        last_settled_at TEXT NOT NULL,
+        transaction_hash TEXT NOT NULL,
+        block_number TEXT NOT NULL,
+        log_index TEXT NOT NULL DEFAULT '0x0'
+      );
+      CREATE TABLE IF NOT EXISTS contract_moon_ship_counts (
+        planet_id TEXT NOT NULL,
+        ship_id INTEGER NOT NULL,
+        count INTEGER NOT NULL,
+        PRIMARY KEY (planet_id, ship_id)
+      );
+      CREATE TABLE IF NOT EXISTS contract_moon_defense_counts (
+        planet_id TEXT NOT NULL,
+        defense_id INTEGER NOT NULL,
+        count INTEGER NOT NULL,
+        PRIMARY KEY (planet_id, defense_id)
+      );
       CREATE TABLE IF NOT EXISTS contract_moon_building_levels (
         planet_id TEXT NOT NULL,
         moon_building_id INTEGER NOT NULL,
@@ -3280,6 +3379,8 @@ export class SettlementIndexer {
         this.applyEvent(decodeSettledPlanetLog(log));
       } else if (isPlanetSettledLog(log)) {
         this.applyPlanetSettledEvent(decodePlanetSettledLog(log));
+      } else if (isMoonResourcesSettledLog(log)) {
+        this.applyMoonResourcesSettledEvent(decodeMoonResourcesSettledLog(log));
       } else if (isIndexedQueueStartedLog(log)) {
         const event = decodeIndexedQueueStartedLog(log);
         if (!this.queueStartProvenCompleted(event)) {
@@ -3291,6 +3392,10 @@ export class SettlementIndexer {
         this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
       } else if (isDefenseCountChangedLog(log)) {
         this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
+      } else if (isMoonShipCountChangedLog(log)) {
+        this.applyMoonShipCountChangedEvent(decodeMoonShipCountChangedLog(log));
+      } else if (isMoonDefenseCountChangedLog(log)) {
+        this.applyMoonDefenseCountChangedEvent(decodeMoonDefenseCountChangedLog(log));
       } else if (isAllianceLog(log)) {
         this.applyAllianceEvent(decodeAllianceLog(log));
       }
@@ -3330,6 +3435,9 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_building_levels").run();
     this.db.query("DELETE FROM contract_defense_counts").run();
     this.db.query("DELETE FROM contract_ship_counts").run();
+    this.db.query("DELETE FROM contract_moon_resources").run();
+    this.db.query("DELETE FROM contract_moon_ship_counts").run();
+    this.db.query("DELETE FROM contract_moon_defense_counts").run();
     this.db.query("DELETE FROM indexed_legacy_unit_mutations").run();
     this.db.query("DELETE FROM contract_technology_levels").run();
     this.db.query("DELETE FROM contract_production_queues").run();
@@ -3346,6 +3454,8 @@ export class SettlementIndexer {
       this.applyEvent(decodeSettledPlanetLog(log));
     } else if (isPlanetSettledLog(log)) {
       this.applyPlanetSettledEvent(decodePlanetSettledLog(log));
+    } else if (isMoonResourcesSettledLog(log)) {
+      this.applyMoonResourcesSettledEvent(decodeMoonResourcesSettledLog(log));
     } else if (isPlanetRenamedLog(log)) {
       this.applyPlanetRenamedEvent(decodePlanetRenamedLog(log));
     } else if (isDebrisFieldLog(log)) {
@@ -3354,6 +3464,10 @@ export class SettlementIndexer {
       this.applyShipCountChangedEvent(decodeShipCountChangedLog(log));
     } else if (isDefenseCountChangedLog(log)) {
       this.applyDefenseCountChangedEvent(decodeDefenseCountChangedLog(log));
+    } else if (isMoonShipCountChangedLog(log)) {
+      this.applyMoonShipCountChangedEvent(decodeMoonShipCountChangedLog(log));
+    } else if (isMoonDefenseCountChangedLog(log)) {
+      this.applyMoonDefenseCountChangedEvent(decodeMoonDefenseCountChangedLog(log));
     } else if (isInterplanetaryMissileAttackLog(log)) {
       this.applyInterplanetaryMissileAttackCompatibilityEvent(decodeInterplanetaryMissileAttackLog(log));
     } else if (isIndexedQueueStartedLog(log)) {
@@ -3823,6 +3937,9 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_building_levels").run();
     this.db.query("DELETE FROM contract_defense_counts").run();
     this.db.query("DELETE FROM contract_ship_counts").run();
+    this.db.query("DELETE FROM contract_moon_resources").run();
+    this.db.query("DELETE FROM contract_moon_defense_counts").run();
+    this.db.query("DELETE FROM contract_moon_ship_counts").run();
     this.db.query("DELETE FROM contract_technology_levels").run();
     this.db.query("DELETE FROM contract_production_queues").run();
     this.db.query("DELETE FROM contract_moon_building_queues").run();
@@ -4339,6 +4456,61 @@ export class SettlementIndexer {
     );
   }
 
+  private moonResourceSnapshot(planetId: string): PlanetResourceRow | null {
+    return this.db.query(`
+      SELECT metal, crystal, deuterium, last_settled_at, transaction_hash, block_number, log_index
+      FROM contract_moon_resources
+      WHERE planet_id = ?
+    `).get(planetId) as PlanetResourceRow | null;
+  }
+
+  private upsertMoonResourceSnapshot(
+    planetId: string,
+    resources: ResourceColumns,
+    lastSettledAt: string,
+    transactionHash: string,
+    blockNumber: string,
+    logIndex = "0x0"
+  ): void {
+    const existing = this.db
+      .query("SELECT block_number, log_index FROM contract_moon_resources WHERE planet_id = ?")
+      .get(planetId) as Pick<PlanetResourceRow, "block_number" | "log_index"> | null;
+    if (existing) {
+      try {
+        const incomingBlock = BigInt(blockNumber);
+        const existingBlock = BigInt(existing.block_number);
+        if (incomingBlock < existingBlock) return;
+        if (incomingBlock === existingBlock && BigInt(logIndex) < BigInt(existing.log_index)) return;
+      } catch {
+        // Keep the same malformed-label tolerance as planet resource snapshots.
+      }
+    }
+
+    this.db.query(`
+      INSERT INTO contract_moon_resources (
+        planet_id, metal, crystal, deuterium, last_settled_at, transaction_hash, block_number, log_index
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(planet_id) DO UPDATE SET
+        metal = excluded.metal,
+        crystal = excluded.crystal,
+        deuterium = excluded.deuterium,
+        last_settled_at = excluded.last_settled_at,
+        transaction_hash = excluded.transaction_hash,
+        block_number = excluded.block_number,
+        log_index = excluded.log_index
+    `).run(
+      planetId,
+      resources.metal,
+      resources.crystal,
+      resources.deuterium,
+      lastSettledAt,
+      transactionHash,
+      blockNumber,
+      logIndex
+    );
+  }
+
   private withKnownPlanetResources(event: SettledPlanetEvent): SettledPlanetEvent {
     if (!isZeroResourcePlaceholder(event)) return event;
 
@@ -4586,6 +4758,18 @@ export class SettlementIndexer {
     this.touch();
   }
 
+  private applyMoonShipCountChangedEvent(event: IndexedMoonShipCountChangedEvent): void {
+    this.upsertIndexedLevel(
+      "contract_moon_ship_counts",
+      "ship_id",
+      "count",
+      event.planetId,
+      event.shipId,
+      event.total
+    );
+    this.touch();
+  }
+
   // The contract emits PlanetDefenseCountChanged with the planet's resulting defense total on every
   // defense mutation the production queue doesn't already cover — combat defense losses, post-combat
   // repair, and interplanetary-missile silo/interception/primary hits (VEY-KANEO-462). Indexing it keeps
@@ -4602,6 +4786,18 @@ export class SettlementIndexer {
     );
     this.upsertIndexedLevel(
       "contract_defense_counts",
+      "defense_id",
+      "count",
+      event.planetId,
+      event.defenseId,
+      event.total
+    );
+    this.touch();
+  }
+
+  private applyMoonDefenseCountChangedEvent(event: IndexedMoonDefenseCountChangedEvent): void {
+    this.upsertIndexedLevel(
+      "contract_moon_defense_counts",
       "defense_id",
       "count",
       event.planetId,
@@ -5456,7 +5652,7 @@ export class SettlementIndexer {
   }
 
   private indexedLevel(
-    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_moon_defense_counts" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
+    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_moon_defense_counts" | "contract_moon_ship_counts" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
     idColumn: string,
     planetId: string,
     itemId: number
@@ -5471,7 +5667,7 @@ export class SettlementIndexer {
   }
 
   private indexedLevelsById(
-    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_moon_defense_counts" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
+    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_moon_defense_counts" | "contract_moon_ship_counts" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
     idColumn: string,
     valueColumn: "count" | "level",
     planetId: string
@@ -5493,7 +5689,7 @@ export class SettlementIndexer {
   }
 
   private upsertIndexedLevel(
-    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_moon_defense_counts" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
+    table: "contract_building_levels" | "contract_defense_counts" | "contract_moon_building_levels" | "contract_moon_defense_counts" | "contract_moon_ship_counts" | "contract_ship_counts" | "indexed_building_levels" | "indexed_defense_counts" | "indexed_moon_building_levels" | "indexed_ship_counts",
     idColumn: string,
     valueColumn: string,
     planetId: string,
@@ -6018,8 +6214,11 @@ export class SettlementIndexer {
       }
 
       if (isPlanetSettledLog(log)) return this.ownerForPlanetActivity(decodePlanetSettledLog(log).planetId);
+      if (isMoonResourcesSettledLog(log)) return this.ownerForPlanetActivity(decodeMoonResourcesSettledLog(log).planetId);
       if (isShipCountChangedLog(log)) return this.ownerForPlanetActivity(decodeShipCountChangedLog(log).planetId);
       if (isDefenseCountChangedLog(log)) return this.ownerForPlanetActivity(decodeDefenseCountChangedLog(log).planetId);
+      if (isMoonShipCountChangedLog(log)) return this.ownerForPlanetActivity(decodeMoonShipCountChangedLog(log).planetId);
+      if (isMoonDefenseCountChangedLog(log)) return this.ownerForPlanetActivity(decodeMoonDefenseCountChangedLog(log).planetId);
       if (isMoonCreatedLog(log)) return decodeMoonCreatedLog(log).owner;
 
       if (isFleetMissionLog(log)) {
@@ -7986,12 +8185,13 @@ function indexedManagedPlanet(
     defense: null,
     ship: null
   },
-  hasMoon = false
+  moon: ManagedPlanet["moon"] = null
 ): ManagedPlanet {
   const level = (id: number) => buildings.find((building) => building.id === id)?.level ?? 0;
 
   return {
     ...planet,
+    bodyKind: "planet",
     coordinates: `${planet.galaxy}:${planet.system}:${planet.position}`,
     isHomePlanet: planet.planetId === homePlanetId,
     fieldsUsed: usedFieldsFromBuildingRows(buildings),
@@ -8007,7 +8207,7 @@ function indexedManagedPlanet(
       terraformer: level(12)
     },
     queues,
-    moon: hasMoon ? { exists: true } : null
+    moon
   };
 }
 
