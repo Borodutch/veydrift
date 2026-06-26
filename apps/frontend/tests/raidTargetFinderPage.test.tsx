@@ -64,9 +64,12 @@ describe("RaidTargetFinderPage", () => {
       }),
     });
     const disabledAttack = buttonWithText(disabled, "Attack");
+    const protectedBadge = elementWithExactText(disabled, "Protected");
     expect(disabledAttack?.props?.disabled).toBe(true);
     expect(disabledAttack?.props?.title).toBe("Attack blocked by score protection");
-    expect(visibleText(disabled)).toContain("Score 25,437 vs 7,340");
+    expect(protectedBadge?.props?.title).toBe("Attack blocked by score protection");
+    expect(visibleText(disabled)).not.toContain("Score 25,437 vs 7,340");
+    expect(visibleText(disabled)).not.toContain("Score ");
     expect(visibleText(disabled)).not.toContain("Protection score");
   });
 
@@ -200,4 +203,8 @@ function directElementChildren(node: ComponentChildren): VNode[] {
 
 function buttonWithText(node: ComponentChildren, text: string): VNode | undefined {
   return elementNodes(node).find((item) => item.type === "button" && visibleText(item).includes(text));
+}
+
+function elementWithExactText(node: ComponentChildren, text: string): VNode | undefined {
+  return elementNodes(node).find((item) => visibleText(item).trim() === text);
 }
