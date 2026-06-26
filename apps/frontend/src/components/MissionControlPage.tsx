@@ -801,6 +801,7 @@ function ActiveMissionList({
               canTransact={canTransact}
               context={context}
               direction={direction}
+              harvested={returnPhaseHarvestedResources(mission)}
               key={`${context}:${mission.missionId}`}
               loot={returnPhaseLoot(mission, lootByMissionId)}
               losses={returnPhaseLosses(mission, lossesByMissionId)}
@@ -826,6 +827,7 @@ function MissionRow({
   canTransact,
   context,
   direction,
+  harvested,
   loot,
   losses,
   mission,
@@ -841,6 +843,7 @@ function MissionRow({
   canTransact: boolean;
   context: ActiveMissionContext;
   direction: string;
+  harvested?: FleetMissionSummary["returnCargo"] | undefined;
   loot?: BattleReport["loot"] | undefined;
   losses?: MissionLossSummary | undefined;
   mission: FleetMissionSummary;
@@ -912,7 +915,7 @@ function MissionRow({
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
       direction={missionRouteLeg(mission.status)}
-      fleet={<MissionFleet cargo={mission.cargo} loot={loot} losses={losses} missionType={mission.missionType} ships={mission.ships} />}
+      fleet={<MissionFleet cargo={mission.cargo} harvested={harvested} loot={loot} losses={losses} missionType={mission.missionType} ships={mission.ships} />}
       groupId={mission.attackGroupId}
       headerTiming={activeMissionHeaderTiming(mission, now, noFleetReturned)}
       missionId={mission.missionId}
@@ -947,12 +950,14 @@ function activeMissionHeaderTiming(mission: FleetMissionSummary, now: number, no
 // home with a resolved report.
 function MissionFleet({
   cargo,
+  harvested,
   loot,
   losses,
   missionType,
   ships,
 }: {
   cargo?: FleetMissionSummary["cargo"] | undefined;
+  harvested?: FleetMissionSummary["returnCargo"] | undefined;
   loot?: BattleReport["loot"] | undefined;
   losses?: MissionLossSummary | undefined;
   missionType?: string | undefined;
@@ -969,6 +974,7 @@ function MissionFleet({
     <div className="space-y-1">
       <FleetIcons ships={ships} />
       {cargo ? <p className="text-[11px] text-slate-500">Cargo {formatCargo(cargo)}</p> : null}
+      {harvested ? <p className="text-[11px] text-slate-500">Debris collected {formatCargo(harvested)}</p> : null}
       {loot ? <p className="text-[11px] text-slate-500">Loot {formatCargo(loot)}</p> : null}
       {losses ? (
         <>
@@ -997,6 +1003,14 @@ export function returnPhaseLoot(
 ): BattleReport["loot"] | undefined {
   if (mission.status === "Outbound") return undefined;
   return lootByMissionId.get(mission.missionId);
+}
+
+export function returnPhaseHarvestedResources(
+  mission: FleetMissionSummary,
+): FleetMissionSummary["returnCargo"] | undefined {
+  if (mission.missionType !== "Harvest") return undefined;
+  if (mission.status === "Outbound") return undefined;
+  return mission.returnCargo ?? undefined;
 }
 
 // VEY-KANEO-495: fleet losses are known the moment combat resolves, but — like loot — they belong to
@@ -1679,6 +1693,7 @@ function PastMissionTable({
               >
                 {pageRows.map((row) => row.kind === "mission" ? (
                   <PastMissionSummaryRow
+                    harvested={returnPhaseHarvestedResources(row.mission)}
                     key={`past-mission:${row.mission.missionId}`}
                     loot={returnPhaseLoot(row.mission, lootByMissionId)}
                     losses={returnPhaseLosses(row.mission, lossesByMissionId)}
@@ -1717,6 +1732,7 @@ function PastMissionTable({
 }
 
 function PastMissionSummaryRow({
+  harvested,
   loot,
   losses,
   mission,
@@ -1726,6 +1742,7 @@ function PastMissionSummaryRow({
   wallet,
   walletPlanetIds,
 }: {
+  harvested?: FleetMissionSummary["returnCargo"] | undefined;
   loot?: BattleReport["loot"] | undefined;
   losses?: MissionLossSummary | undefined;
   mission: FleetMissionSummary;
@@ -1754,7 +1771,7 @@ function PastMissionSummaryRow({
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
       direction={missionRouteLeg(mission.status)}
-      fleet={<MissionFleet cargo={mission.cargo} loot={loot} losses={losses} missionType={mission.missionType} ships={mission.ships} />}
+      fleet={<MissionFleet cargo={mission.cargo} harvested={harvested} loot={loot} losses={losses} missionType={mission.missionType} ships={mission.ships} />}
       groupId={mission.attackGroupId}
       missionId={mission.missionId}
       origin={origin}
