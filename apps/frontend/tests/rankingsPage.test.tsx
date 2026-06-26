@@ -304,7 +304,7 @@ describe("RankingsPage", () => {
     expect(visibleText(row)).toContain("Ally [VDFT]");
   });
 
-  test("tints score-protected ranking rows red", () => {
+  test("tints score-protected ranking rows red without rendering numeric protection scores", () => {
     const protectedEntry = rankingEntry({
       attackProtection: {
         allowed: false,
@@ -328,7 +328,9 @@ describe("RankingsPage", () => {
 
     expect(row?.props?.className).toContain("bg-red-300");
     expect(visibleText(row)).toContain("Protected");
-    expect(visibleText(row)).toContain("Score 25,437 vs 7,340");
+    expect(visibleText(row)).toContain("25,437");
+    expect(visibleText(row)).not.toContain("Score 25,437 vs 7,340");
+    expect(visibleText(row)).not.toContain("7,340");
     expect(visibleText(row)).not.toContain("Protection score");
   });
 
