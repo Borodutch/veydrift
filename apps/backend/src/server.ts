@@ -740,10 +740,14 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const battleReport =
           indexer.battleReport(missionId)
           ?? (mission.attackGroupId ? indexer.battleReport(mission.attackGroupId) : null);
+        const battleReportMaterialization = battleReport
+          ? { status: "ready" as const }
+          : battleReportMaterializationStatusForMission(indexer, mission);
         return Response.json(
           {
             mission,
             battleReport,
+            battleReportMaterialization,
             targetCombatIntel: targetCombatIntelForMission(indexer, mission),
             // The defender's surviving fleet/defenses are not in the on-chain combat log, but the
             // indexer tracks the target planet's ship/defense composition (ShipCountChanged + defense
@@ -776,6 +780,20 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           });
         }
         const mission = indexer.fleetMission(missionId);
+        const materialization = mission ? battleReportMaterializationStatusForMission(indexer, mission) : indexer.battleReportMaterializationStatus(missionId);
+        if (materialization.status === "pending" || materialization.status === "failed") {
+          return Response.json(
+            {
+              error: materialization.status === "pending" ? "battle_report_processing" : "battle_report_materialization_failed",
+              detail: materialization.status === "pending"
+                ? "Battle report materialization is still processing. Retry shortly; this endpoint will not block on report construction."
+                : "Battle report materialization failed and will be retried when report logs are indexed or replayed.",
+              materialization,
+              source: indexedSource
+            },
+            { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: materialization.status === "pending" ? 202 : 503 }
+          );
+        }
         if (mission && !expectsBattleReport(mission)) {
           return Response.json(
             {
@@ -2313,6 +2331,12 @@ function expectsBattleReport(mission: FleetMissionSummary): boolean {
   if (mission.status === "Returned" && mission.recallCost !== null) return false;
   if (mission.status === "Outbound" && Number(mission.arrivalAt) > Math.floor(Date.now() / 1_000)) return false;
   return true;
+}
+
+function battleReportMaterializationStatusForMission(indexer: SettlementIndexer, mission: FleetMissionSummary): ReturnType<SettlementIndexer["battleReportMaterializationStatus"]> {
+  const direct = indexer.battleReportMaterializationStatus(mission.missionId);
+  if (direct.status !== "missing" || !mission.attackGroupId) return direct;
+  return indexer.battleReportMaterializationStatus(mission.attackGroupId);
 }
 
 function indexedMissionArchive(

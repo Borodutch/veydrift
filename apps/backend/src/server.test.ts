@@ -2256,15 +2256,49 @@ describe("Veydrift backend", () => {
       data: abiWords(100n, 50n, 0n, 900n, 250n, 0n)
     });
 
+    expect(indexer.battleReportMaterializationStatus("89")).toMatchObject({
+      status: "ready",
+      error: null
+    });
+
     const afterReportResponse = await handler(new Request("http://localhost/mission/89"));
     const afterReportBody = await afterReportResponse.json();
     expect(afterReportResponse.status).toBe(200);
+    expect(afterReportBody.battleReportMaterialization).toEqual({ status: "ready" });
     expect(afterReportBody.battleReport).toMatchObject({
       missionId: "89",
       outcome: "AttackerWin",
       loot: { metal: "100", crystal: "50", deuterium: "10" },
       attackerLosses: { metal: "100", crystal: "50", deuterium: "0" },
       defenderLosses: { metal: "900", crystal: "250", deuterium: "0" }
+    });
+  });
+
+  test("returns a fast explicit processing state while battle report materialization is pending", async () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    for (const log of completedFleetMissionLogs({ missionId: 91n, owner: attacker, originPlanetId: 7n, targetPlanetId: 9n })) {
+      indexer.applyLog(log);
+    }
+    (indexer as any).db.query(`
+      INSERT INTO indexed_battle_report_read_models (
+        mission_id, status, report_json, error, attempts, duration_ms, block_number, updated_at
+      )
+      VALUES ('91', 'pending', NULL, NULL, 0, NULL, '145', '2026-06-25T00:00:00.000Z')
+    `).run();
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    })(new Request("http://localhost/battle-report/91"));
+    const body = await response.json();
+
+    expect(response.status).toBe(202);
+    expect(body).toMatchObject({
+      error: "battle_report_processing",
+      materialization: { status: "pending" }
     });
   });
 
