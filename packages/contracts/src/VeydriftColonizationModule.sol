@@ -38,20 +38,15 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         _spaceDockSystem = nextSpaceDockSystem;
     }
 
-    function spendMoonResources(uint256 planetId, Resources calldata cost) external {
+    function spendMoonResources(uint256, Resources calldata) external {
         _delegateToDefenseProductionModule();
     }
 
-    function moveMoonGateShips(
-        uint256 originPlanetId,
-        uint256 destinationPlanetId,
-        address owner_,
-        MissionShips calldata ships
-    ) external {
+    function moveMoonGateShips(uint256, uint256, address, MissionShips calldata) external {
         _delegateToDefenseProductionModule();
     }
 
-    function untrackResolvedFleetMission(uint256 missionId) external {
+    function untrackResolvedFleetMission(uint256) external {
         _delegateToDefenseProductionModule();
     }
 

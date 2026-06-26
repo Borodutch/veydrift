@@ -212,16 +212,11 @@ contract VeydriftGame is VeydriftResourceReserves {
         _allianceSystem = nextAllianceSystem;
     }
 
-    function spendMoonResources(uint256 planetId, Resources calldata cost) external {
+    function spendMoonResources(uint256, Resources calldata) external {
         _delegateToColonizationModule();
     }
 
-    function moveMoonGateShips(
-        uint256 originPlanetId,
-        uint256 destinationPlanetId,
-        address owner_,
-        MissionShips calldata ships
-    ) external {
+    function moveMoonGateShips(uint256, uint256, address, MissionShips calldata) external {
         _delegateToColonizationModule();
     }
 
