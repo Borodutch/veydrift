@@ -87,6 +87,10 @@ function responseFor(file, pathname) {
   return new Response(file, { headers });
 }
 
+function docsAppRouteForPathname(pathname) {
+  return pathname === "/docs" || pathname.startsWith("/docs/");
+}
+
 function shareRouteForPathname(pathname) {
   const mission = pathname.match(/^\/mission\/([0-9]+)$/);
   if (mission) return { kind: "mission", id: mission[1] };
@@ -627,6 +631,10 @@ if (import.meta.main) {
 
       if (await file.exists()) {
         return responseFor(file, route);
+      }
+
+      if (docsAppRouteForPathname(route)) {
+        return responseFor(Bun.file(staticFileUrl("/index.html")), "/index.html");
       }
 
       return new Response("Not found", { status: 404 });
