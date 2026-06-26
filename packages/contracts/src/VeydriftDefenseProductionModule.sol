@@ -119,8 +119,8 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
         _spend(planetId, totalCost);
 
         uint256 currentTime = _currentTimestamp();
-        if (activeQueue.active && activeQueue.defense != defense) {
-            DefenseQueue[] storage backlog = _defenseQueueBacklogs[planetId];
+        DefenseQueue[] storage backlog = _defenseQueueBacklogs[planetId];
+        if (activeQueue.active && (activeQueue.defense != defense || backlog.length != 0)) {
             uint256 baseReadyAt =
                 backlog.length == 0 ? activeQueue.readyAt : backlog[backlog.length - 1].readyAt;
             if (baseReadyAt < currentTime) baseReadyAt = currentTime;
