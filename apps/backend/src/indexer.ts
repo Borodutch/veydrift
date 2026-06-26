@@ -23,6 +23,7 @@ import {
   decodeMoonDefenseCountChangedLog,
   decodeMoonCreatedLog,
   decodeMoonChanceReportLog,
+  decodeMoonJumpGateLog,
   decodeMoonResourcesSettledLog,
   decodeMoonShipCountChangedLog,
   decodeMoonResourcesChangedLog,
@@ -45,6 +46,7 @@ import {
   isInterplanetaryMissileAttackLog,
   isAllianceLog,
   isMoonCreatedLog,
+  isMoonJumpGateLog,
   isMoonResourcesChangedLog,
   isMoonChanceReportLog,
   isMoonDefenseCountChangedLog,
@@ -78,6 +80,7 @@ import {
   type IndexedAllianceEvent,
   type IndexedMoonCreatedEvent,
   type IndexedMoonDefenseCountChangedEvent,
+  type IndexedMoonJumpGateEvent,
   type IndexedMoonShipCountChangedEvent,
   type IndexedMoonResourcesChangedEvent,
   type IndexedRiftResourceEvent,
@@ -1907,6 +1910,7 @@ export class SettlementIndexer {
   moonState(wallet: `0x${string}`, planetId: string | null): MoonState {
     const moon = planetId ? this.moon(planetId) : null;
     const resources = this.moonResources(planetId);
+    const jumpGateDestinations = this.moonJumpGateDestinations(wallet, planetId);
     return {
       wallet,
       bodyKind: "moon",
@@ -1925,7 +1929,7 @@ export class SettlementIndexer {
             fields: moon.fields,
             diameterKm: moon.diameterKm,
             createdAt: moon.createdAt,
-            jumpGateReadyAt: "0"
+            jumpGateReadyAt: moon.jumpGateReadyAt ?? "0"
           }
         : null,
       buildings: moonBuildingRows.map((building) => ({
@@ -1941,8 +1945,38 @@ export class SettlementIndexer {
         count: planetId ? this.moonDefenseCountAsOfNow(planetId, defense.id) : 0,
         cost: zeroResources()
       })),
-      defenseQueue: planetId ? this.moonDefenseQueue(planetId) : null
+      defenseQueue: planetId ? this.moonDefenseQueue(planetId) : null,
+      jumpGateDestinations
     };
+  }
+
+  private moonJumpGateDestinations(
+    wallet: `0x${string}`,
+    currentPlanetId: string | null
+  ): NonNullable<MoonState["jumpGateDestinations"]> {
+    if (!currentPlanetId) return [];
+    const rows = this.db.query(`
+      SELECT m.event_json
+      FROM indexed_moons m
+      JOIN contract_moon_building_levels b
+        ON b.planet_id = m.planet_id
+        AND b.moon_building_id = 2
+        AND b.level > 0
+      WHERE m.owner = lower(?)
+        AND m.planet_id != ?
+      ORDER BY CAST(m.planet_id AS INTEGER) ASC
+    `).all(wallet, currentPlanetId) as MoonRow[];
+
+    return rows.map((row) => {
+      const moon = parseEvent<IndexedMoonCreatedEvent>(row.event_json);
+      const coordinates = `${moon.galaxy}:${moon.system}:${moon.position}`;
+      return {
+        planetId: moon.planetId,
+        label: `Moon ${coordinates}`,
+        coordinates,
+        jumpGateReadyAt: moon.jumpGateReadyAt ?? "0"
+      };
+    });
   }
 
   hasMoon(planetId: string): boolean {
@@ -2144,6 +2178,10 @@ export class SettlementIndexer {
     }
     if (isMoonCreatedLog(log)) {
       this.applyMoonCreatedEvent(decodeMoonCreatedLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isMoonJumpGateLog(log)) {
+      this.applyMoonJumpGateEvent(decodeMoonJumpGateLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isRiftResourceLog(log)) {
@@ -3445,6 +3483,8 @@ export class SettlementIndexer {
         this.applyMoonShipCountChangedEvent(decodeMoonShipCountChangedLog(log));
       } else if (isMoonDefenseCountChangedLog(log)) {
         this.applyMoonDefenseCountChangedEvent(decodeMoonDefenseCountChangedLog(log));
+      } else if (isMoonJumpGateLog(log)) {
+        this.applyMoonJumpGateEvent(decodeMoonJumpGateLog(log));
       } else if (isAllianceLog(log)) {
         this.applyAllianceEvent(decodeAllianceLog(log));
       }
@@ -3529,6 +3569,8 @@ export class SettlementIndexer {
       this.applyQueueCompletedEvent(decodeIndexedQueueCompletedLog(log));
     } else if (isMoonCreatedLog(log)) {
       this.applyMoonCreatedEvent(decodeMoonCreatedLog(log));
+    } else if (isMoonJumpGateLog(log)) {
+      this.applyMoonJumpGateEvent(decodeMoonJumpGateLog(log));
     } else if (isRiftResourceLog(log)) {
       this.applyRiftResourceEvent(decodeRiftResourceLog(log));
     } else if (isAllianceLog(log)) {
@@ -5851,8 +5893,30 @@ export class SettlementIndexer {
         fields = excluded.fields,
         diameter_km = excluded.diameter_km,
         event_json = excluded.event_json
-    `).run(event.planetId, event.owner, event.fields, event.diameterKm, JSON.stringify(event));
+    `).run(
+      event.planetId,
+      event.owner,
+      event.fields,
+      event.diameterKm,
+      JSON.stringify({ ...event, jumpGateReadyAt: event.jumpGateReadyAt ?? "0" })
+    );
     this.touch();
+  }
+
+  private applyMoonJumpGateEvent(event: IndexedMoonJumpGateEvent): void {
+    this.updateMoonJumpGateReadyAt(event.originMoonPlanetId, event.nextReadyAt);
+    this.updateMoonJumpGateReadyAt(event.destinationMoonPlanetId, event.nextReadyAt);
+    this.touch();
+  }
+
+  private updateMoonJumpGateReadyAt(planetId: string, jumpGateReadyAt: string): void {
+    const moon = this.moon(planetId);
+    if (!moon) return;
+    this.db.query(`
+      UPDATE indexed_moons
+      SET event_json = ?
+      WHERE planet_id = ?
+    `).run(JSON.stringify({ ...moon, jumpGateReadyAt }), planetId);
   }
 
   private applyRiftResourceEvent(event: IndexedRiftResourceEvent): void {
@@ -6332,6 +6396,7 @@ export class SettlementIndexer {
       if (isMoonShipCountChangedLog(log)) return this.ownerForPlanetActivity(decodeMoonShipCountChangedLog(log).planetId);
       if (isMoonDefenseCountChangedLog(log)) return this.ownerForPlanetActivity(decodeMoonDefenseCountChangedLog(log).planetId);
       if (isMoonCreatedLog(log)) return decodeMoonCreatedLog(log).owner;
+      if (isMoonJumpGateLog(log)) return decodeMoonJumpGateLog(log).player;
 
       if (isFleetMissionLog(log)) {
         const mission = [...decodeFleetMissionLogs([log]).values()][0];

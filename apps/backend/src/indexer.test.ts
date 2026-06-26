@@ -34,6 +34,7 @@ const moonBuildingStartedTopic = "0x6b41aeb096e643752dad879b8f3875d8657186226c3c
 const moonBuildingCompletedTopic = "0x59b630c46c04307254808aac61ea2de2a7e6fbf5ed6eb0ebee81c917b575ed3a";
 const moonDefenseQueuedTopic = "0xa53d76ce638ebf6aee45c30e9622beeafc4e9c2c9bcd3122a72a3a7e00500637";
 const moonDefenseCompletedTopic = "0xb84a089b29951e8696b0ef11e5766578a0e1348284a93e4731fcb416d0536a70";
+const jumpGateJumpedTopic = "0xf255456c5522e3e1e2a8063b9e1e2f5cd7243315601b1e8aef2893fe9efc3da6";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
 const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
@@ -3155,6 +3156,86 @@ describe("SettlementIndexer", () => {
       ])
     });
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
+  });
+
+  test("returns owned moon Jump Gate destinations from indexed moon state", () => {
+    const destinationPlanet: SettledPlanetEvent = {
+      ...planet,
+      transactionHash: "0xabc-destination",
+      planetId: "9",
+      position: 11
+    };
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyEvent(destinationPlanet);
+
+    for (const [planetRef, fields, diameter] of [[planet, 12n, 8777n], [destinationPlanet, 10n, 7120n]] as const) {
+      indexer.applyLog({
+        blockNumber: "0x87",
+        transactionHash: `0xmoon${planetRef.planetId}`,
+        logIndex: "0x0",
+        topics: [
+          moonCreatedTopic,
+          addressTopic(player),
+          topic(BigInt(planetRef.planetId))
+        ],
+        data: abiWords(BigInt(planetRef.galaxy), BigInt(planetRef.system), BigInt(planetRef.position), fields, diameter)
+      });
+      indexer.applyLog({
+        blockNumber: "0x88",
+        transactionHash: `0xmoongate${planetRef.planetId}`,
+        logIndex: "0x0",
+        topics: [
+          moonBuildingCompletedTopic,
+          topic(BigInt(planetRef.planetId)),
+          topic(2n)
+        ],
+        data: abiWords(1n)
+      });
+    }
+
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      moon: {
+        jumpGateReadyAt: "0"
+      },
+      jumpGateDestinations: [
+        {
+          planetId: destinationPlanet.planetId,
+          label: "Moon 2:44:11",
+          coordinates: "2:44:11",
+          jumpGateReadyAt: "0"
+        }
+      ]
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x89",
+      transactionHash: "0xjumpgate",
+      logIndex: "0x0",
+      topics: [
+        jumpGateJumpedTopic,
+        addressTopic(player),
+        topic(BigInt(planet.planetId)),
+        topic(BigInt(destinationPlanet.planetId))
+      ],
+      data: abiWords(1770007200n)
+    });
+
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      moon: {
+        jumpGateReadyAt: "1770007200"
+      },
+      jumpGateDestinations: [
+        {
+          planetId: destinationPlanet.planetId,
+          jumpGateReadyAt: "1770007200"
+        }
+      ]
+    });
   });
 
   test("persists every production queue kind from indexed contract events", () => {
