@@ -5954,6 +5954,76 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(targetPlanetId).resources.metal, 10_000);
     }
 
+    function testAttackBattleCrawlerOnlyDefenderDoesNotForceDraw() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.Battleship, 100);
+        _setShipCount(targetPlanetId, Ship.Crawler, 1);
+        _setResources(originPlanetId, 10_000_000, 10_000_000, 10_000_000);
+        _setResources(targetPlanetId, 10_000_000, 10_000_000, 10_000_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 100;
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            651
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 651);
+
+        vm.recordLogs();
+        game.resolveFleetMission(missionId);
+        (VeydriftGameStorage.BattleOutcome outcome, uint8 rounds) =
+            _attackBattleOutcomeFromRecordedLogs(missionId);
+
+        assertEq(uint8(outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin));
+        assertEq(rounds, 0);
+        assertEq(game.shipCount(targetPlanetId, Ship.Crawler), 1);
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
+    }
+
+    function testAttackBattleCrawlerDoesNotDrawAfterCombatDefendersCleared() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.Battleship, 100);
+        _setShipCount(targetPlanetId, Ship.Crawler, 1);
+        _setDefenseCount(targetPlanetId, Defense.RocketLauncher, 1);
+        _setResources(originPlanetId, 10_000_000, 10_000_000, 10_000_000);
+        _setResources(targetPlanetId, 10_000_000, 10_000_000, 10_000_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 100;
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            652
+        );
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 652);
+
+        vm.recordLogs();
+        game.resolveFleetMission(missionId);
+        (VeydriftGameStorage.BattleOutcome outcome, uint8 rounds) =
+            _attackBattleOutcomeFromRecordedLogs(missionId);
+
+        assertEq(uint8(outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin));
+        assertGt(rounds, 0);
+        assertEq(game.shipCount(targetPlanetId, Ship.Crawler), 1);
+        assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 0);
+    }
+
     function testAttackBattleAppliesFleetAndDefenseLosses() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.Battleship, 1);
@@ -7764,6 +7834,33 @@ contract VeydriftGameTest is Test {
                     (VeydriftGameStorage.BattleOutcome, uint8, uint256, uint128, uint128, uint128)
                 );
                 return rounds;
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        revert("AttackBattleResolved not recorded");
+    }
+
+    function _attackBattleOutcomeFromRecordedLogs(uint256 missionId)
+        internal
+        view
+        returns (VeydriftGameStorage.BattleOutcome outcome, uint8 rounds)
+    {
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        bytes32 battleResolvedTopic = keccak256(
+            "AttackBattleResolved(uint256,address,uint256,uint8,uint8,uint256,uint128,uint128,uint128)"
+        );
+        for (uint256 i = 0; i < entries.length;) {
+            if (
+                entries[i].topics.length != 0 && entries[i].topics[0] == battleResolvedTopic
+                    && uint256(entries[i].topics[1]) == missionId
+            ) {
+                (outcome, rounds,,,,) = abi.decode(
+                    entries[i].data,
+                    (VeydriftGameStorage.BattleOutcome, uint8, uint256, uint128, uint128, uint128)
+                );
+                return (outcome, rounds);
             }
             unchecked {
                 ++i;

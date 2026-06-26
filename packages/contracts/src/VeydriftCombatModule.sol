@@ -546,7 +546,7 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         view
         returns (uint256 units)
     {
-        for (uint8 i = 0; i <= MAX_SHIP_ID;) {
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
             if (i != uint8(Ship.SolarSatellite)) {
                 units += _shipCounts[planetId][Ship(i)];
             }

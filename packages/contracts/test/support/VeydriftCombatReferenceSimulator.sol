@@ -166,6 +166,12 @@ library VeydriftCombatReferenceSimulator {
         if (targetTotal == 0) return losses;
 
         for (uint8 i = 0; i < 16;) {
+            if (!_isPlanetCombatShipId(i)) {
+                unchecked {
+                    ++i;
+                }
+                continue;
+            }
             uint32 count = result.defenderShips[i];
             if (count != 0) {
                 losses = _add(
@@ -215,6 +221,12 @@ library VeydriftCombatReferenceSimulator {
             }
         }
         for (uint8 i = 0; i < 16;) {
+            if (!_isPlanetCombatShipId(i)) {
+                unchecked {
+                    ++i;
+                }
+                continue;
+            }
             uint32 count = result.counterplayShips[i];
             if (count != 0) {
                 losses = _add(
@@ -421,6 +433,12 @@ library VeydriftCombatReferenceSimulator {
         uint8 unit
     ) private pure returns (VeydriftGameStorage.Resources memory losses) {
         for (uint8 i = 0; i < 16;) {
+            if (!_isPlanetCombatShipId(i)) {
+                unchecked {
+                    ++i;
+                }
+                continue;
+            }
             uint32 count = targets[i];
             if (count != 0) {
                 uint256 targetLane = _targetLane(laneBase, 0, i);
@@ -684,6 +702,12 @@ library VeydriftCombatReferenceSimulator {
         uint8 chain
     ) private pure returns (uint256 generated) {
         for (uint8 shipId = 0; shipId < 16;) {
+            if (!_isPlanetCombatShipId(shipId)) {
+                unchecked {
+                    ++shipId;
+                }
+                continue;
+            }
             generated += _unitExtraShots(
                 ships[shipId],
                 VeydriftCatalog.shipRapidfireAgainstShip(firingShip, Ship(shipId)),
@@ -864,13 +888,17 @@ library VeydriftCombatReferenceSimulator {
 
     function _defenderUnitTotal(BattleResult memory result) private pure returns (uint256 total) {
         for (uint8 i = 0; i < 16;) {
-            total += result.defenderShips[i];
+            if (_isPlanetCombatShipId(i)) {
+                total += result.defenderShips[i];
+            }
             unchecked {
                 ++i;
             }
         }
         for (uint8 i = 0; i < 16;) {
-            total += result.counterplayShips[i];
+            if (_isPlanetCombatShipId(i)) {
+                total += result.counterplayShips[i];
+            }
             unchecked {
                 ++i;
             }
@@ -881,6 +909,10 @@ library VeydriftCombatReferenceSimulator {
                 ++i;
             }
         }
+    }
+
+    function _isPlanetCombatShipId(uint8 shipId) private pure returns (bool) {
+        return shipId <= uint8(Ship.Pathfinder) && shipId != uint8(Ship.SolarSatellite);
     }
 
     function _copyShips(uint32[16] memory ships) private pure returns (uint32[16] memory copy) {
