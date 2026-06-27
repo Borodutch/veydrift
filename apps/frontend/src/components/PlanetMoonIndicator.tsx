@@ -1,23 +1,32 @@
 import type { ComponentChildren } from "preact";
 import { moonAsset } from "../gameAssets";
+import type { SizePreset } from "../utils/imageSizes";
 import { OptimizedImage } from "./OptimizedImage";
 
 export function MoonImage({
   alt = "",
   className = "",
+  height,
   loading = "lazy",
+  sizes = "icon",
+  width,
 }: {
   alt?: string | undefined;
   className?: string | undefined;
+  height?: number | undefined;
   loading?: "eager" | "lazy" | undefined;
+  sizes?: SizePreset | string | undefined;
+  width?: number | undefined;
 }) {
   return (
     <OptimizedImage
       alt={alt}
       className={className}
+      {...(height === undefined ? {} : { height })}
       loading={loading}
-      sizes="icon"
+      sizes={sizes}
       src={moonAsset.src}
+      {...(width === undefined ? {} : { width })}
     />
   );
 }

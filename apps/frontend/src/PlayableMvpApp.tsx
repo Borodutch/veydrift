@@ -7091,6 +7091,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     setInspectedAllianceId(null);
     setMissionDetailId(null);
     setMissionReportId(null);
+    if (target !== "moon") {
+      setSelectedBodyKind("planet");
+    }
     setPage(target);
     setSelectedCoords(undefined);
     writeInspectRoute({ kind: "page", page: target });
@@ -7517,30 +7520,6 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           onBack={handlePlanetDetailBack}
           shipyardState={missionActionShipyardState}
           transactionUnavailableReason={gameTransactionUnavailableReason}
-        />
-      );
-    }
-
-    if (activeBodyKind === "moon" && (page === "overview" || page === "infrastructure" || page === "defenses" || page === "shipyard")) {
-      return (
-        <MoonPage
-          action={moonAction}
-          burningChicken={{
-            configured: Boolean(chickenBurnConfig),
-            maxMoonsPerPlayer: maxChickenBurnMoonsPerPlayer,
-            moonCount: walletMoonCount,
-          }}
-          canBurnChicken={chickenBurnTransactionInputsAvailable && !transactionActionPending}
-          canTransact={canSubmitMoonTransaction}
-          error={moonSection.status.error ?? moonError}
-          loading={moonLoading || moonSection.status.loading}
-          moonState={moonState}
-          onBurnChicken={handleBurnChickenForMoon}
-          onJumpGate={handleJumpGate}
-          onRefresh={moonSection.refresh ?? refreshInfrastructureState}
-          onStartBuilding={handleStartMoonBuilding}
-          selectedCoordinates={activePlanetCoords}
-          transactionUnavailableReason={moonTransactionUnavailableReason}
         />
       );
     }

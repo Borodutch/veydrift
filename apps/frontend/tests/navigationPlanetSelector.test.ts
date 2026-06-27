@@ -79,6 +79,13 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(rankingsSource).toContain("<PlanetMoonSubsection");
   });
 
+  test("normal navigation from a selected moon returns to the parent planet context", () => {
+    expect(playableSource).toContain('if (target !== "moon")');
+    expect(playableSource).toContain('setSelectedBodyKind("planet")');
+    expect(playableSource).not.toContain('activeBodyKind === "moon" && (page === "overview" || page === "infrastructure" || page === "defenses" || page === "shipyard")');
+    expect(playableSource).toContain('if (page === "moon")');
+  });
+
   test("keeps planet selector selected and keyboard focus states subtle", () => {
     expect(playableSource).toContain("veydrift-planet-selector-button");
     expect(playableSource).toContain("border-cyan-300/35 bg-cyan-300/[0.07]");

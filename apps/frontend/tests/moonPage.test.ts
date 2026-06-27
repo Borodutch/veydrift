@@ -350,6 +350,21 @@ describe("Moon page helpers", () => {
     });
   });
 
+  test("uses shared planet production and inspect layout patterns for moon systems", () => {
+    expect(moonPageSource).toContain("InspectTwoColumnLayout");
+    expect(moonPageSource).toContain("InspectCatalogTile");
+    expect(moonPageSource).toContain("InspectDetailShell");
+    expect(moonPageSource).toContain("ProductionCatalog");
+    expect(moonPageSource).toContain("MoonStructuresSection");
+    expect(moonPageSource).toContain("MoonShipyardSection");
+    expect(moonPageSource).toContain("MoonDefenseSection");
+    expect(moonPageSource).toContain("Moon Structures");
+    expect(moonPageSource).toContain("Moon Shipyard");
+    expect(moonPageSource).toContain("Moon Defenses");
+    expect(moonPageSource).not.toContain("Moon Shipyard and Defenses");
+    expect(moonPageSource).toContain('sizes="(min-width: 1280px) 38vw, (min-width: 768px) 46vw, 100vw"');
+  });
+
   test("previews moon fields and building requirements from indexed moon state", () => {
     const moonState = loadedMoonState({
       moon: {
