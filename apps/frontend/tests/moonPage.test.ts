@@ -126,6 +126,18 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).toContain("Moon orbiting {moonOrbitParentLabel(parentPlanetLabel, moon.planetId)}");
   });
 
+  test("uses the larger page title styling without redundant section helper copy", () => {
+    expect(moonPageSource).toContain('titleSize="xl"');
+    expect(moonPageSource).toContain('<h3 className="text-base font-semibold text-white">Moon Structures</h3>');
+    expect(moonPageSource).toContain('<h3 className="text-base font-semibold text-white">Moon Shipyard</h3>');
+    expect(moonPageSource).toContain('<h3 className="text-base font-semibold text-white">Moon Defenses</h3>');
+    expect(moonPageSource).not.toContain("Lunar Base expands fields. Jump Gate supports fleet movement between owned moons.");
+    expect(moonPageSource).not.toContain("Enter a Chicken ID to burn it on Base mainnet");
+    expect(moonPageSource).not.toContain("Burn a verified Chicken to grant a moon to this planet");
+    expect(moonPageSource).not.toContain("same selectable catalog pattern as the planet Shipyard");
+    expect(moonPageSource).not.toContain("same selectable catalog and detail controls as the planet Defenses screen");
+  });
+
   test("shows Jump Gate destinations only when another ready moon gate is available", () => {
     const baseMoonState = loadedMoonState({
       moon: {
@@ -179,13 +191,12 @@ describe("Moon page helpers", () => {
         buildings: [],
         queue: null,
       },
-      selectedCoordinates: { galaxy: 1, system: 44, position: 8 },
     });
     const text = visibleText(page);
 
     expect(text).toContain("Chicken ID");
     expect(text).toContain("Burn for Moon");
-    expect(text).toContain("verifies this wallet owns the chicken");
+    expect(text).not.toContain("verifies this wallet owns the chicken");
     expect(text).toContain("During testnet, each account can receive only 2 Chicken moons.");
     expect(text).toContain("0 / 2 testnet Chicken moons used.");
     expect(text).not.toContain("No eligible Burning Chickens");
