@@ -680,6 +680,60 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Losses 100 M / 50 C / 0 D / 900 M / 250 C / 0 D");
   });
 
+  test("renders returned moon-target missions distinctly in the completed archive", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      missionArchive: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        rows: [{
+          kind: "mission",
+          mission: mission({
+            missionId: "92",
+            missionType: "Attack",
+            status: "Returned",
+            targetPlanet: {
+              planetId: "9",
+              owner: "0x9999999999999999999999999999999999999999",
+              ownerDisplayName: "Orion",
+              name: "Red Haven",
+              galaxy: 4,
+              system: 55,
+              position: 11,
+              coordinates: "4:55:11",
+              hasMoon: true,
+            },
+            targetIsMoon: true,
+          }),
+          report: { ...battleReport("92"), targetIsMoon: true },
+        }],
+        pagination: {
+          page: 1,
+          pageSize: 25,
+          totalEntries: 1,
+          totalPages: 1,
+          hasPreviousPage: false,
+          hasNextPage: false,
+        },
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Past missions");
+    expect(text).toContain("Moon of Red Haven");
+    expect(text).not.toContain(" Moon at planet #9");
+  });
+
   test("renders a standalone battle report row when no completed mission matches", () => {
     const page = missionControlPage({
       fleetVisibility: {

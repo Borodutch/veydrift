@@ -176,12 +176,17 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
     expect(text).toContain("combat intelligence can't be derived");
   });
 
-  test("shows the defender's indexed fleet and defenses composition", () => {
-    const defenderPlanetState: DefenderPlanetState = {
-      fleet: [{ id: 1, count: 12 }], // Light Fighter
-      defenses: [{ id: 4, count: 3 }], // Gauss Cannon
+  test("shows the battle-time defender fleet and defenses composition", () => {
+    const detail = {
+      mission: combatMission(),
+      battleReport: battleReport({
+        defenderSnapshot: {
+          fleet: [{ id: 1, count: 12 }], // Light Fighter
+          defenses: [{ id: 4, count: 3 }], // Gauss Cannon
+        },
+      }),
+      defenderPlanetState: null,
     };
-    const detail = { mission: combatMission(), battleReport: battleReport(), defenderPlanetState };
     const text = renderDetailText(detail);
     const unitTitles = renderDetailUnitTitles(detail);
 
@@ -190,15 +195,19 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
     expect(text).not.toContain(OLD_PLACEHOLDER);
   });
 
-  test("shows None when the defender planet had no fleet or defenses", () => {
-    const defenderPlanetState: DefenderPlanetState = { fleet: [], defenses: [] };
+  test("shows None when the battle-time defender snapshot had no fleet or defenses", () => {
     const text = renderDetailText({
       mission: combatMission(),
-      battleReport: battleReport({ rounds: 0, defenderLosses: { metal: "0", crystal: "0", deuterium: "0" } }),
-      defenderPlanetState,
+      battleReport: battleReport({
+        rounds: 0,
+        defenderLosses: { metal: "0", crystal: "0", deuterium: "0" },
+        defenderSnapshot: { fleet: [], defenses: [] },
+      }),
+      defenderPlanetState: null,
     });
 
-    expect(text).toContain("Fleet / defenses None");
+    expect(text).toContain("Battle-time fleet None");
+    expect(text).toContain("Battle-time defenses None");
     expect(text).not.toContain(OLD_PLACEHOLDER);
   });
 
@@ -227,10 +236,10 @@ describe("MissionDetailPage defender Fleet / Defenses block", () => {
     expect(text).not.toContain("Fleet / defenses None");
   });
 
-  test("keeps a precise caveat (not the old blanket placeholder) when the target planet isn't charted", () => {
+  test("keeps a precise caveat (not the old blanket placeholder) when no battle-time composition was captured", () => {
     const text = renderDetailText({ mission: combatMission(), battleReport: battleReport(), defenderPlanetState: null });
 
-    expect(text).toContain("isn't charted in the indexed state");
+    expect(text).toContain("Exact unit composition was not captured in indexed history");
     expect(text).not.toContain(OLD_PLACEHOLDER);
   });
 
@@ -314,6 +323,43 @@ describe("MissionDetailPage ACS attack group (VEY-KANEO-432)", () => {
 });
 
 describe("MissionDetailPage Route timing copy", () => {
+  test("renders selected moon bodies distinctly in the route hero", () => {
+    const text = renderDetailText({
+      mission: combatMission({
+        originIsMoon: true,
+        targetIsMoon: true,
+        originPlanet: {
+          planetId: "7",
+          owner: "0x1111111111111111111111111111111111111111",
+          ownerDisplayName: "Astra",
+          name: "New Eos",
+          galaxy: 2,
+          system: 44,
+          position: 9,
+          coordinates: "2:44:9",
+          hasMoon: true,
+        },
+        targetPlanet: {
+          planetId: "9",
+          owner: "0x9999999999999999999999999999999999999999",
+          ownerDisplayName: "Orion",
+          name: "Red Haven",
+          galaxy: 4,
+          system: 55,
+          position: 11,
+          coordinates: "4:55:11",
+          hasMoon: true,
+        },
+      }),
+      battleReport: battleReport({ targetIsMoon: true }),
+      defenderPlanetState: null,
+    });
+
+    expect(text).toContain("Moon of New Eos");
+    expect(text).toContain("Moon of Red Haven");
+    expect(text).not.toContain(" Moon at planet #9");
+  });
+
   // VEY-405: a completed leg should collapse to a single past-tense word — "Returned"
   // for the origin, "Arrived" for the target — dropping the RETURN/ARRIVAL caption, the
   // timestamp, and the generic building-queue "(Ready)" suffix entirely.
