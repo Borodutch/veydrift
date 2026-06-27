@@ -484,6 +484,8 @@ export type BattleReport = {
   missionId: string;
   attacker: string;
   targetPlanetId: string;
+  originIsMoon?: boolean;
+  targetIsMoon?: boolean;
   outcome: BattleOutcomeName;
   rounds: number;
   randomSeed: string;

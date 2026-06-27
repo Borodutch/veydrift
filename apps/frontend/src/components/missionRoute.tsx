@@ -278,6 +278,8 @@ export function missionEndpoint(
       ? { galaxy: colony.galaxy, position: colony.position, system: colony.system }
       : parseCoordinateString(coordinates);
   const rawName = ref?.name?.trim() || identityName(identity);
+  const isMoon = side === "origin" ? Boolean(mission.originIsMoon) : Boolean(mission.targetIsMoon);
+  const name = rawName || (coordinates ? coordinates : colony ? "Uncharted" : `Planet #${planetId}`);
   const commanderWallet = ref?.owner ?? identity?.owner ?? (side === "origin" ? mission.owner : null);
   const commanderDisplay = ref?.ownerDisplayName?.trim() || identity?.ownerDisplayName?.trim() || null;
   return {
@@ -286,8 +288,8 @@ export function missionEndpoint(
     commanderWallet,
     coordinates,
     coords,
-    hasMoon: Boolean(ref?.hasMoon ?? identity?.hasMoon),
-    name: rawName || (coordinates ? coordinates : colony ? "Uncharted" : `Planet #${planetId}`),
+    hasMoon: isMoon || Boolean(ref?.hasMoon ?? identity?.hasMoon),
+    name: isMoon ? moonEndpointName(name, planetId) : name,
   };
 }
 
@@ -318,6 +320,11 @@ export function endpointFromPlanetId(planetId: string, lookup: ReadonlyMap<strin
 function identityName(identity: MissionPlanetIdentity | undefined): string | null {
   if (!identity) return null;
   return /^Planet \[/.test(identity.displayName) ? null : identity.displayName;
+}
+
+function moonEndpointName(baseName: string, planetId: string): string {
+  if (!baseName || /^Planet #/.test(baseName)) return `Moon at planet #${planetId}`;
+  return `Moon of ${baseName}`;
 }
 
 function parseCoordinateString(value: string | null): Coordinates | null {

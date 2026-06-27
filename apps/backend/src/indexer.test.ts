@@ -49,6 +49,7 @@ const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
+const fleetMissionBodiesTopic = "0xfa464e2180f08e3e4d8c4247566d0616a5e1ab845d1678c47fedae6d44e9c502";
 const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
@@ -5240,6 +5241,13 @@ describe("SettlementIndexer", () => {
         topics: [fleetMissionShipsTopic, topic(1776n)],
         data: abiWords(1n, ...Array.from({ length: 13 }, () => 0n))
       });
+      writer.applyLog({
+        blockNumber: "0x70",
+        transactionHash: "0xlaunch1776",
+        logIndex: "0x3",
+        topics: [fleetMissionBodiesTopic, topic(1776n)],
+        data: abiWords(0n, 1n)
+      });
 
       const reader = new SettlementIndexer(chainReader, 100n, { databasePath, runStartupBackfill: false });
       expect(reader.fleetMission("1776")).toMatchObject({
@@ -5294,6 +5302,8 @@ describe("SettlementIndexer", () => {
       });
       expect(reader.battleReport("1776")).toMatchObject({
         missionId: "1776",
+        originIsMoon: false,
+        targetIsMoon: true,
         loot: { metal: "3098", crystal: "1448", deuterium: "454" },
         attackerLosses: { metal: "0", crystal: "0", deuterium: "0" },
         defenderLosses: { metal: "0", crystal: "0", deuterium: "0" }

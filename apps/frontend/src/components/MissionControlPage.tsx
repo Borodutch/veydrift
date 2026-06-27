@@ -1792,7 +1792,7 @@ function PastBattleReportRow({
   planetLookup: ReadonlyMap<string, MissionPlanetIdentity>;
   report: BattleReport;
 }) {
-  const target = endpointFromPlanetId(report.targetPlanetId, planetLookup);
+  const target = battleReportTargetEndpoint(report, planetLookup);
   const origin: MissionEndpoint = {
     archetype: null,
     commanderName: shortHash(report.attacker),
@@ -1844,6 +1844,16 @@ function PastBattleReportRow({
       target={target}
     />
   );
+}
+
+function battleReportTargetEndpoint(report: BattleReport, planetLookup: ReadonlyMap<string, MissionPlanetIdentity>): MissionEndpoint {
+  const target = endpointFromPlanetId(report.targetPlanetId, planetLookup);
+  if (!report.targetIsMoon) return target;
+  return {
+    ...target,
+    hasMoon: true,
+    name: target.name ? `Moon of ${target.name}` : `Moon at planet #${report.targetPlanetId}`,
+  };
 }
 
 // Sum each participant's loot share into the combined ACS group total (BigInt to stay exact for the

@@ -1885,6 +1885,24 @@ describe("ACS attack group participants", () => {
     ]);
   });
 
+  test("carries body flags from the main attack mission into battle reports", () => {
+    const missions: FleetMissionSummary[] = [
+      makeSummary({
+        missionId: "77",
+        originIsMoon: true,
+        targetIsMoon: true
+      })
+    ];
+
+    const [enriched] = attachAttackGroupParticipants([makeReport({ missionId: "77" })], missions);
+
+    expect(enriched).toMatchObject({
+      missionId: "77",
+      originIsMoon: true,
+      targetIsMoon: true
+    });
+  });
+
   test("scales to an arbitrary number of joiners", () => {
     const joinerIds = Array.from({ length: 6 }, (_, index) => String(200 + index));
     const missions: FleetMissionSummary[] = [
