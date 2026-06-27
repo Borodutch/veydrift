@@ -139,7 +139,6 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     error MoonFieldCapacityReached();
     error NoMoon(uint256 planetId);
     error NoPlanet();
-    error NotGame(address account);
     error NotMoonOwner();
     error JumpGateMissing(uint256 planetId);
     error JumpGateNotReady(uint256 planetId, uint64 readyAt);
@@ -313,28 +312,6 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     {
         _requireMoonExists(planetId);
         _setMoonDefenseCount(planetId, defense, total);
-    }
-
-    function applyMoonCombatDefenseDelta(
-        uint256 planetId,
-        uint32[8] calldata losses,
-        uint32[8] calldata repairs
-    ) external {
-        if (msg.sender != address(game)) revert NotGame(msg.sender);
-        _requireMoonExists(planetId);
-        for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
-            uint32 lost = losses[i];
-            uint32 repaired = repairs[i];
-            if (lost != 0 || repaired != 0) {
-                Defense defense = Defense(i);
-                uint32 current = _moonDefenseCounts[planetId][defense];
-                uint32 afterLoss = current > lost ? current - lost : 0;
-                _setMoonDefenseCount(planetId, defense, afterLoss + repaired);
-            }
-            unchecked {
-                ++i;
-            }
-        }
     }
 
     function setMoonChanceReporter(address nextReporter) external onlyOwner {

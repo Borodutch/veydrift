@@ -75,6 +75,63 @@ library VeydriftRaidStorage {
         );
     }
 
+    function raidMoon(
+        VeydriftGameStorage.Resources storage balance,
+        uint256 planetId,
+        uint256 capacity,
+        uint16 plunderRateBps,
+        uint16 metalBps,
+        uint16 crystalBps,
+        uint16 deuteriumBps
+    ) public returns (uint128 metal, uint128 crystal, uint128 deuterium) {
+        (metal, crystal, deuterium) = _raidBalance(
+            balance, capacity, plunderRateBps, metalBps, crystalBps, deuteriumBps
+        );
+        emit VeydriftGameStorage.MoonResourcesChanged(
+            planetId, balance.metal, balance.crystal, balance.deuterium
+        );
+    }
+
+    function _raidBalance(
+        VeydriftGameStorage.Resources storage balance,
+        uint256 capacity,
+        uint16 plunderRateBps,
+        uint16 metalBps,
+        uint16 crystalBps,
+        uint16 deuteriumBps
+    ) private returns (uint128 metal, uint128 crystal, uint128 deuterium) {
+        uint256 metalCap = (uint256(balance.metal) * plunderRateBps) / BPS;
+        uint256 crystalCap = (uint256(balance.crystal) * plunderRateBps) / BPS;
+        uint256 deuteriumCap = (uint256(balance.deuterium) * plunderRateBps) / BPS;
+
+        uint256 m;
+        uint256 c;
+        uint256 d;
+        if (uint256(metalBps) + crystalBps + deuteriumBps != 0) {
+            uint256 metalTarget = (capacity * metalBps) / BPS;
+            uint256 crystalTarget = (capacity * crystalBps) / BPS;
+            m = _min(metalTarget, metalCap);
+            c = _min(crystalTarget, crystalCap);
+            d = _min(capacity - metalTarget - crystalTarget, deuteriumCap);
+        }
+
+        uint256 remaining = capacity - m - c - d;
+        uint256 give = _min(remaining, metalCap - m);
+        m += give;
+        remaining -= give;
+        give = _min(remaining, crystalCap - c);
+        c += give;
+        remaining -= give;
+        d += _min(remaining, deuteriumCap - d);
+
+        metal = m.toUint128();
+        crystal = c.toUint128();
+        deuterium = d.toUint128();
+        balance.metal -= metal;
+        balance.crystal -= crystal;
+        balance.deuterium -= deuterium;
+    }
+
     function _min(uint256 a, uint256 b) private pure returns (uint256) {
         return a < b ? a : b;
     }

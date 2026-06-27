@@ -22,7 +22,6 @@ import {
     IVeydriftResourceProjectionGame,
     VeydriftResourceProjectionLens
 } from "../src/VeydriftResourceProjectionLens.sol";
-import {VeydriftSpaceDockSystem} from "../src/VeydriftSpaceDockSystem.sol";
 import {VeydriftAntiRaidPrimitives} from "../src/libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftRaidStorage} from "../src/libraries/VeydriftRaidStorage.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
@@ -6840,46 +6839,6 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             0
         );
-    }
-
-    function testAttackForwardsCombatLossesToConfiguredSpaceDock() public {
-        address defender = address(0xDEF);
-        vm.deal(defender, 1 ether);
-        VeydriftSpaceDockSystem spaceDock = new VeydriftSpaceDockSystem(address(game), admin);
-
-        vm.prank(player);
-        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
-        vm.prank(defender);
-        uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
-        _setPlanetCoordinates(originPlanetId, 1, 100, 8);
-        _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
-        _setShipCount(originPlanetId, Ship.Destroyer, 40);
-        _setShipCount(targetPlanetId, Ship.LightFighter, 40);
-        _setResources(originPlanetId, 5_000_000, 5_000_000, 5_000_000);
-        vm.prank(admin);
-        spaceDock.setSpaceDockLevel(targetPlanetId, 1);
-        vm.prank(admin);
-        spaceDock.transferOwnership(address(game));
-        vm.prank(admin);
-        game.setSpaceDockSystem(address(spaceDock));
-
-        VeydriftGameStorage.MissionShips memory attackShips;
-        attackShips.destroyer = 40;
-        vm.prank(player);
-        uint256 missionId = game.launchFleetMission(
-            originPlanetId,
-            targetPlanetId,
-            VeydriftGameStorage.FleetMissionType.Attack,
-            attackShips,
-            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
-            0
-        );
-        (, uint64 arrivalAt,,) = _fleetMission(missionId);
-        vm.warp(arrivalAt);
-        _fulfillAttackBattleRandomness(missionId, 5);
-        game.resolveFleetMission(missionId);
-
-        assertGt(spaceDock.repairableShipCount(targetPlanetId, Ship.LightFighter), 0);
     }
 
     function testMissionLaunchRejectsFuelAndInFlightCommitments() public {

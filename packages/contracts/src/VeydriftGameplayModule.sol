@@ -518,23 +518,20 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function resolveFleetMission(uint256 missionId) external {
         FleetMission storage mission = _fleetMissions[missionId];
         if (mission.status != FleetMissionStatus.Outbound) return;
-        uint64 currentTime = _currentTimestamp();
-        if (currentTime < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
+        if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
         FleetMissionType missionType = mission.missionType;
 
         if (missionType == FleetMissionType.Attack) {
-            if (!mission.targetIsMoon) {
-                _settleAttackTargetSnapshot(mission.targetPlanetId, mission.arrivalAt);
-                // OGame-style ACS Defend: pull every fleet stationed over this attack's arrival into the
-                // attack's counterplay roster so the battle machinery fights them as defenders.
-                VeydriftDefenseHoldStorage.linkQualifiedDefenders(
-                    _stationedDefenseMissions[mission.targetPlanetId],
-                    _fleetCounterplayMissions[missionId],
-                    _fleetMissions,
-                    _defenseHoldUntil,
-                    mission.arrivalAt
-                );
-            }
+            _settleAttackTargetSnapshot(mission.targetPlanetId, mission.arrivalAt);
+            // OGame-style ACS Defend: pull every fleet stationed over this attack's arrival into the
+            // attack's counterplay roster so the battle machinery fights them as defenders.
+            VeydriftDefenseHoldStorage.linkQualifiedDefenders(
+                _stationedDefenseMissions[mission.targetPlanetId],
+                _fleetCounterplayMissions[missionId],
+                _fleetMissions,
+                _defenseHoldUntil,
+                mission.arrivalAt
+            );
         } else {
             _settleResources(mission.targetPlanetId);
         }
@@ -551,7 +548,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             } else {
                 _creditMissionShips(mission.targetPlanetId, mission.ships);
                 mission.status = FleetMissionStatus.Resolved;
-                mission.returnAt = currentTime;
+                mission.returnAt = _currentTimestamp();
                 activeFleetMissionCount[mission.owner] -= 1;
                 // Deploy is terminal at arrival (ships stay at target, no return leg): untrack now.
                 _untrackMissionResolution(missionId, mission);

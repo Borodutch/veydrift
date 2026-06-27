@@ -1008,37 +1008,6 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(parentAfter.resources.metal, parentBefore.resources.metal);
         assertEq(parentAfter.resources.crystal, parentBefore.resources.crystal);
         assertEq(parentAfter.resources.deuterium, parentBefore.resources.deuterium);
-        assertEq(parentAfter.lastSettledAt, parentBefore.lastSettledAt);
-    }
-
-    function testMoonAttackMutatesMoonDefensesNotPlanetDefenses() public {
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
-        _fundPlanet(originPlanetId, 100_000, 100_000, 100_000);
-        _setShipCount(originPlanetId, Ship.Battleship, 100);
-        _setMoonDefenseCount(targetPlanetId, Defense.RocketLauncher, 100);
-
-        VeydriftGameStorage.MissionShips memory ships;
-        ships.battleship = 100;
-
-        vm.prank(player);
-        uint256 missionId = game.launchBodyFleetMission(
-            originPlanetId,
-            targetPlanetId,
-            VeydriftGameStorage.FleetMissionType.Attack,
-            ships,
-            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
-            100,
-            false,
-            true
-        );
-
-        (, uint64 arrivalAt,,) = _fleetMission(missionId);
-        vm.warp(arrivalAt);
-        _fulfillAttackBattleRandomness(missionId, 660);
-        game.resolveFleetMission(missionId);
-
-        assertLt(moons.moonDefenseCount(targetPlanetId, Defense.RocketLauncher), 100);
-        assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 0);
     }
 
     // VEY-KANEO-468: a due moon-building construction completes lazily on the next moon interaction,
