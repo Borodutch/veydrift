@@ -634,6 +634,7 @@ export type ChainMoonState = {
     label: string;
     level: number;
     cost: OnChainResources;
+    durationSeconds?: number;
   }>;
   fleet?: Array<{
     id: number;
