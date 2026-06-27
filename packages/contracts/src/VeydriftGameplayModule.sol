@@ -518,8 +518,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     function resolveFleetMission(uint256 missionId) external {
         FleetMission storage mission = _fleetMissions[missionId];
         if (mission.status != FleetMissionStatus.Outbound) return;
-        uint64 currentTime = _currentTimestamp();
-        if (currentTime < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
+        if (_currentTimestamp() < mission.arrivalAt) revert FleetNotArrived(mission.arrivalAt);
         FleetMissionType missionType = mission.missionType;
 
         if (missionType == FleetMissionType.Attack) {
@@ -549,7 +548,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             } else {
                 _creditMissionShips(mission.targetPlanetId, mission.ships);
                 mission.status = FleetMissionStatus.Resolved;
-                mission.returnAt = currentTime;
+                mission.returnAt = _currentTimestamp();
                 activeFleetMissionCount[mission.owner] -= 1;
                 // Deploy is terminal at arrival (ships stay at target, no return leg): untrack now.
                 _untrackMissionResolution(missionId, mission);

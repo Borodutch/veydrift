@@ -2,6 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
@@ -64,6 +65,7 @@ contract VeydriftMoonSystemTest is Test {
     );
     event MoonShipCountChanged(uint256 indexed planetId, Ship indexed ship, uint32 total);
     event MoonDefenseCountChanged(uint256 indexed planetId, Defense indexed defense, uint32 total);
+    event FleetMissionBodies(uint256 indexed missionId, bool originIsMoon, bool targetIsMoon);
 
     event MoonChanceRequested(
         uint256 indexed outcomeId,
@@ -942,6 +944,102 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(_moonShipCount(planetId, Ship.SmallCargo), 1);
     }
 
+    function testMoonAttackLaunchStoresMoonBodyFlags() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
+        _fundMoon(originPlanetId, 20_000, 20_000, 20_000);
+        _setMoonShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setNextFleetId(900);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+
+        vm.recordLogs();
+        vm.prank(player);
+        uint256 missionId = game.launchBodyFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            true,
+            true
+        );
+
+        assertEq(missionId, 900);
+        _assertFleetMissionBodiesLog(vm.getRecordedLogs(), missionId, true, true);
+        assertEq(_moonShipCount(originPlanetId, Ship.SmallCargo), 0);
+    }
+
+    function testMoonAttackRaidsMoonResourcesWithoutTouchingParentPlanet() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
+        _fundMoon(originPlanetId, 20_000, 20_000, 20_000);
+        _fundMoon(targetPlanetId, 10_000, 4_000, 2_000);
+        _fundPlanet(targetPlanetId, 111_000, 222_000, 333_000);
+        _setMoonShipCount(originPlanetId, Ship.SmallCargo, 1);
+
+        VeydriftGameStorage.Planet memory parentBefore = game.planet(targetPlanetId);
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+
+        vm.prank(player);
+        uint256 missionId = game.launchBodyFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            true,
+            true
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 659);
+        game.resolveFleetMission(missionId);
+
+        (,,, VeydriftGameStorage.Resources memory attackCargo) = _fleetMission(missionId);
+        VeydriftGameStorage.Resources memory moonAfter = _moonResources(targetPlanetId);
+        VeydriftGameStorage.Planet memory parentAfter = game.planet(targetPlanetId);
+
+        assertGt(attackCargo.metal + attackCargo.crystal + attackCargo.deuterium, 0);
+        assertLt(moonAfter.metal + moonAfter.crystal + moonAfter.deuterium, 16_000);
+        assertEq(parentAfter.resources.metal, parentBefore.resources.metal);
+        assertEq(parentAfter.resources.crystal, parentBefore.resources.crystal);
+        assertEq(parentAfter.resources.deuterium, parentBefore.resources.deuterium);
+    }
+
+    function testMoonAttackMutatesMoonDefensesNotPlanetDefenses() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
+        _fundPlanet(originPlanetId, 100_000, 100_000, 100_000);
+        _setShipCount(originPlanetId, Ship.Battleship, 100);
+        _setMoonDefenseCount(targetPlanetId, Defense.RocketLauncher, 100);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 100;
+
+        vm.prank(player);
+        uint256 missionId = game.launchBodyFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            false,
+            true
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 659);
+        game.resolveFleetMission(missionId);
+
+        assertLt(moons.moonDefenseCount(targetPlanetId, Defense.RocketLauncher), 100);
+        assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 0);
+    }
+
     // VEY-KANEO-468: a due moon-building construction completes lazily on the next moon interaction,
     // with no finishMoonBuildingUpgrade tx required.
     function testMoonBuildingSettlesLazilyWithoutFinishTx() public {
@@ -975,6 +1073,21 @@ contract VeydriftMoonSystemTest is Test {
     function _startPlanet() internal returns (uint256 planetId) {
         vm.prank(player);
         planetId = game.startPlanet{value: 0.05 ether}();
+    }
+
+    function _seedMoonAttackPlanets()
+        internal
+        returns (uint256 originPlanetId, uint256 targetPlanetId, address defender)
+    {
+        defender = address(0xDEF);
+        vm.deal(defender, 1 ether);
+        originPlanetId = _startPlanet();
+        vm.prank(defender);
+        targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetLocation(originPlanetId, player, 1, 100, 8);
+        _setPlanetLocation(targetPlanetId, defender, 1, 100, 9);
+        _createMoon(originPlanetId);
+        _createMoon(targetPlanetId);
     }
 
     function _createMoon(uint256 planetId) internal returns (VeydriftMoonSystem.Moon memory) {
@@ -1014,6 +1127,33 @@ contract VeydriftMoonSystemTest is Test {
         vm.store(address(game), bytes32(uint256(11)), bytes32(nextFleetId));
     }
 
+    function _assertFleetMissionBodiesLog(
+        Vm.Log[] memory logs,
+        uint256 missionId,
+        bool expectedOriginIsMoon,
+        bool expectedTargetIsMoon
+    ) internal view {
+        bytes32 bodiesTopic = keccak256("FleetMissionBodies(uint256,bool,bool)");
+        for (uint256 i = 0; i < logs.length;) {
+            Vm.Log memory entry = logs[i];
+            if (
+                entry.emitter != address(game) || entry.topics.length < 2
+                    || entry.topics[0] != bodiesTopic || uint256(entry.topics[1]) != missionId
+            ) {
+                unchecked {
+                    ++i;
+                }
+                continue;
+            }
+
+            (bool originIsMoon, bool targetIsMoon) = abi.decode(entry.data, (bool, bool));
+            assertEq(originIsMoon, expectedOriginIsMoon);
+            assertEq(targetIsMoon, expectedTargetIsMoon);
+            return;
+        }
+        revert("FleetMissionBodies not recorded");
+    }
+
     function _storeFleetMission(
         uint256 missionId,
         VeydriftGameStorage.FleetMissionStatus status,
@@ -1047,6 +1187,18 @@ contract VeydriftMoonSystemTest is Test {
         )
     {
         (status,,,,,, arrivalAt, returnAt,, cargo,) = game.fleetMission(missionId);
+    }
+
+    function _fulfillAttackBattleRandomness(uint256 missionId, uint256 randomWord) internal {
+        (, VeydriftGameStorage.FleetMissionType missionType,,,,,,,,, uint256 requestId) =
+            game.fleetMission(missionId);
+        if (missionType != VeydriftGameStorage.FleetMissionType.Attack) return;
+
+        RandomnessEngine.Request memory request = randomness.request(requestId);
+        if (request.fulfilledAt != 0) return;
+
+        vm.prank(fulfiller);
+        randomness.fulfillRandomness(requestId, randomWord);
     }
 
     function _fundPlanet(uint256 planetId, uint128 metal, uint128 crystal, uint128 deuterium)

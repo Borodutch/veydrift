@@ -26,6 +26,7 @@ import type { GalaxyAction } from "./galaxyActions";
 import type { Planet } from "./types";
 
 const missionCreationSource = await Bun.file(new URL("./components/MissionCreationPage.tsx", import.meta.url)).text();
+const playableMvpAppSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
 
 const attackAction: Extract<GalaxyAction, { enabled: true }> = {
   enabled: true,
@@ -225,6 +226,42 @@ describe("mission creation", () => {
 
     const indicator = findElements(node, "span").find((item) => item.props?.["data-planet-moon-indicator"] === "true");
     expect(indicator?.props?.["aria-label"]).toBe("Moon present");
+  });
+
+  test("supports moon body selection for attack missions without reusing parent planet intel", () => {
+    expect(missionCreationSource).toContain("const bodyMissionSupported = action.mode === \"mission\" && (action.kind === \"attack\" || cargoSupported);");
+    expect(playableMvpAppSource).toContain("pendingGalaxyMission.action.kind === \"attack\"");
+    expect(playableMvpAppSource).toContain("const supportsBodyMission = supportsCargoMission || action.kind === \"attack\";");
+    expect(playableMvpAppSource).toContain("draft.lootRatio && !originIsMoon && !targetIsMoon");
+
+    const target = targetPlanet({
+      hasMoon: true,
+      publicState: {
+        resources: { metal: "100000", crystal: "80000", deuterium: "60000" },
+        buildings: null,
+        fleet: [{ id: 7, count: 25 }],
+        defenses: [{ id: 0, count: 200 }],
+        stationedDefenders: [],
+        research: null,
+        productionPerHour: null,
+        storageCaps: null,
+        queues: null,
+      },
+    });
+
+    const moonResourceIntel = targetResourceIntel(target, 600, true);
+    const moonBattleForecast = publicTargetBattleForecast(
+      { ...attackAction.ships, lightFighter: 10 },
+      target,
+      undefined,
+      true,
+    );
+
+    expect(moonResourceIntel.current).toBeNull();
+    expect(moonResourceIntel.projectedArrivalLootable).toBeNull();
+    expect(moonResourceIntel.projectionDetail).toContain("Moon resource intel");
+    expect(moonBattleForecast.defenderPower).toBeNull();
+    expect(moonBattleForecast.detail).toContain("Moon fleet and defense intel");
   });
 
   test("keeps attack confirm visibly pending while transaction and indexing settle", () => {

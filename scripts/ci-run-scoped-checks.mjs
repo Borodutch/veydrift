@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { computeScope } from "./ci-scope.mjs";
 
 function parseArgs(argv) {
@@ -45,7 +46,19 @@ function scopeFromEnvOrGit(args) {
   return computeScope({ base: args.base, head: args.head, eventName: args.event || "local" });
 }
 
-const flaggedOutput = /(^|[^a-z])(warning|warn:|error:)/im;
+const flaggedOutput = /(^|[^a-z])(warning|warn:|error:)/i;
+const allowedFlaggedOutputLines = [
+  /^Missing dependencies found\. Installing now\.\.\.$/,
+];
+
+export function outputContainsFlaggedOutput(output) {
+  return output
+    .split(/\r?\n/)
+    .some((line) => {
+      if (allowedFlaggedOutputLines.some((pattern) => pattern.test(line.trim()))) return false;
+      return flaggedOutput.test(line);
+    });
+}
 
 function runLogged(label, command, args) {
   console.log(`\n== ${label} ==`);
@@ -62,48 +75,54 @@ function runLogged(label, command, args) {
     process.exit(result.status || 1);
   }
 
-  if (flaggedOutput.test(output)) {
+  if (outputContainsFlaggedOutput(output)) {
     console.error(`::error::${label} output contains flagged output.`);
     process.exit(1);
   }
 }
 
-const args = parseArgs(process.argv.slice(2));
-const scope = scopeFromEnvOrGit(args);
+function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const scope = scopeFromEnvOrGit(args);
 
-if (scope.universe) {
-  runLogged("universe-check", "bun", ["run", "check:universe"]);
-  runLogged("universe-test", "bun", ["run", "test:universe"]);
-}
+  if (scope.universe) {
+    runLogged("universe-check", "bun", ["run", "check:universe"]);
+    runLogged("universe-test", "bun", ["run", "test:universe"]);
+  }
 
-if (scope.backend) {
-  runLogged("backend-check", "bun", ["run", "check:backend"]);
-  runLogged("backend-test", "bun", ["run", "test:backend"]);
-}
+  if (scope.backend) {
+    runLogged("backend-check", "bun", ["run", "check:backend"]);
+    runLogged("backend-test", "bun", ["run", "test:backend"]);
+  }
 
-if (scope.frontend) {
-  runLogged("frontend-precheck", "bash", ["-lc", "cd apps/frontend && bun scripts/generate-image-variants.mjs"]);
-  runLogged("frontend-typecheck", "bash", ["-lc", "cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json"]);
-}
+  if (scope.frontend) {
+    runLogged("frontend-precheck", "bash", ["-lc", "cd apps/frontend && bun scripts/generate-image-variants.mjs"]);
+    runLogged("frontend-typecheck", "bash", ["-lc", "cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json"]);
+  }
 
-if (scope.circuits) {
-  runLogged("circuits-check", "bun", ["run", "check:circuits"]);
-}
+  if (scope.circuits) {
+    runLogged("circuits-check", "bun", ["run", "check:circuits"]);
+  }
 
-if (scope.contracts) {
-  runLogged("contracts-fast-check", "bun", ["run", "check:contracts:fast"]);
-  runLogged("contracts-test", "bun", ["run", "test:contracts"]);
-  if (scope.storage_layout) {
-    runLogged("contracts-storage-check", "bun", ["run", "check:contracts:storage"]);
-  } else {
-    console.log("\n== contracts-storage-check ==\nSkipped: no storage-relevant contract files changed.");
+  if (scope.contracts) {
+    runLogged("contracts-fast-check", "bun", ["run", "check:contracts:fast"]);
+    runLogged("contracts-test", "bun", ["run", "test:contracts"]);
+    if (scope.storage_layout) {
+      runLogged("contracts-storage-check", "bun", ["run", "check:contracts:storage"]);
+    } else {
+      console.log("\n== contracts-storage-check ==\nSkipped: no storage-relevant contract files changed.");
+    }
+  }
+
+  if (scope.full_build) {
+    runLogged("build", "bun", ["run", "build"]);
+  }
+
+  if (!scope.frontend && !scope.backend && !scope.universe && !scope.contracts && !scope.circuits && !scope.full_build) {
+    console.log("No package checks needed for this change.");
   }
 }
 
-if (scope.full_build) {
-  runLogged("build", "bun", ["run", "build"]);
-}
-
-if (!scope.frontend && !scope.backend && !scope.universe && !scope.contracts && !scope.circuits && !scope.full_build) {
-  console.log("No package checks needed for this change.");
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
 }

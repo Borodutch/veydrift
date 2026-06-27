@@ -6749,7 +6749,12 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
       })));
       return;
     }
-    if (action.kind === "attack" && draft.lootRatio) {
+    const supportsCargoMission = action.kind === "transport" || action.kind === "deploy";
+    const supportsBodyMission = supportsCargoMission || action.kind === "attack";
+    const originIsMoon = supportsBodyMission && draft.originIsMoon === true;
+    const targetIsMoon = supportsBodyMission && draft.targetIsMoon === true;
+
+    if (action.kind === "attack" && draft.lootRatio && !originIsMoon && !targetIsMoon) {
       const { metal, crystal, deuterium } = draft.lootRatio;
       closeMissionCreationWhenComplete(runGalaxyTransaction(`${action.label} mission`, () => sendLaunchAttackMissionTransaction(
           provider,
@@ -6776,10 +6781,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
         })));
       return;
     }
-    const supportsBodyMission = action.kind === "transport" || action.kind === "deploy";
-    const originIsMoon = supportsBodyMission && draft.originIsMoon === true;
-    const targetIsMoon = supportsBodyMission && draft.targetIsMoon === true;
-    const cargo = supportsBodyMission
+    const cargo = supportsCargoMission
       ? missionCargoFromDraft(draft.cargo) ?? transportCargoForSelectedPlanet(
           missionOriginPlanet,
           draft.ships,
@@ -7399,7 +7401,11 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           && moonState.moon.planetId === pendingMissionOriginPlanet.planetId
       );
       const pendingMissionBodySelection = pendingGalaxyMission.action.mode === "mission"
-        && (pendingGalaxyMission.action.kind === "transport" || pendingGalaxyMission.action.kind === "deploy")
+        && (
+          pendingGalaxyMission.action.kind === "attack"
+            || pendingGalaxyMission.action.kind === "transport"
+            || pendingGalaxyMission.action.kind === "deploy"
+        )
         ? {
             originMoonAvailable: pendingMissionOriginMoonLoaded,
             targetMoonAvailable: Boolean(pendingGalaxyMission.target?.hasMoon),
