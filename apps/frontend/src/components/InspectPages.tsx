@@ -6,7 +6,7 @@ import { descriptionLinkParts, isSafeDescriptionUrl, type DescriptionLinkPart } 
 import { fleetMissionDistance } from "../fleetMissionRules";
 import type { Coordinates } from "../types";
 import { formatUserTimestamp } from "../timestampFormat";
-import { formatScore as formatCanonicalScore, scoreComparisonLabel } from "../attackProtectionLabels";
+import { formatScore as formatCanonicalScore } from "../attackProtectionLabels";
 import { PlanetMoonIndicator, PlanetMoonSubsection } from "./PlanetMoonIndicator";
 import {
   fetchHighscores,
@@ -793,9 +793,10 @@ export function playerPlanetTacticalSignals(
   const protectionSignal = attackProtection && !attackProtection.allowed && attackProtection.blockedReason !== "none"
     ? [{ label: "Protection", value: attackProtection.blockedReasonLabel ?? "Protected" }]
     : [];
-  const scoreComparisonText = scoreComparisonLabel(attackProtection?.scoreComparison)
-    ?? (attackProtection?.scoreComparison?.defenderScore ? `Score ${formatCanonicalScore(attackProtection.scoreComparison.defenderScore)}` : null);
-  const scoreComparisonSignal = scoreComparisonText ? [{ label: "Score", value: scoreComparisonText }] : [];
+  const targetScoreText = attackProtection?.scoreComparison?.defenderScore
+    ? formatCanonicalScore(attackProtection.scoreComparison.defenderScore)
+    : null;
+  const scoreSignal = targetScoreText ? [{ label: "Score", value: targetScoreText }] : [];
   const warSignal = attackProtection?.atWar
     ? [{ label: "War", value: attackProtection.targetAlliance?.tag ? `[${attackProtection.targetAlliance.tag}]` : "Active" }]
     : [];
@@ -804,7 +805,7 @@ export function playerPlanetTacticalSignals(
     { label: "Distance", value: originCoords ? fleetMissionDistance(originCoords, planet).toLocaleString("en-US") : "Home planet unavailable" },
     { label: "Resources", value: formatResources(planet.tactical?.raidableResources ?? planet.resources) },
     ...protectionSignal,
-    ...scoreComparisonSignal,
+    ...scoreSignal,
     ...warSignal,
     { label: "Ships", value: planetTacticalUnitSignal(planet.tactical?.ships) },
     { label: "Defenses", value: planetTacticalUnitSignal(planet.tactical?.defenses) },
