@@ -193,10 +193,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         }
         _requireMissionShips(originPlanetId, ships);
 
-        if (missionType == FleetMissionType.Transport) {
-            _requireTransportTarget(targetPlanetId);
-        }
-        if (missionType == FleetMissionType.Deploy) {
+        if (missionType == FleetMissionType.Transport || missionType == FleetMissionType.Deploy) {
             _requirePlanetOwner(targetPlanetId);
         }
 
@@ -321,14 +318,6 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         }
         if (data.length < 32) return AttackBlockReason.None;
         (reason,,) = abi.decode(data, (AttackBlockReason, uint8, uint16));
-    }
-
-    function _requireTransportTarget(uint256 targetPlanetId) private view {
-        if (_planets[targetPlanetId].owner == msg.sender) return;
-        if (_attackBlockReason(msg.sender, targetPlanetId) == AttackBlockReason.SameAlliance) {
-            return;
-        }
-        revert NotPlanetOwner();
     }
 
     function _joinAttackMission(

@@ -1420,7 +1420,7 @@ function missionPlanDetail(action: EnabledGalaxyAction): string {
 }
 
 function missionTargetRule(action: EnabledGalaxyAction): string {
-  if (action.kind === "transport") return "Own or alliance planet";
+  if (action.kind === "transport") return "Own planet";
   if (action.kind === "harvest") return "Debris field target";
   if (action.kind === "defenseHold" || action.kind === "acsDefend") return "Own or alliance planet";
   if (action.kind === "deploy") return "Own planets only";

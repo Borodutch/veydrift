@@ -3489,7 +3489,7 @@ contract VeydriftGameTest is Test {
         );
     }
 
-    function testTransportCanTargetSameAlliancePlanet() public {
+    function testTransportRejectsSameAlliancePlanet() public {
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
         _joinAlliance(player, defender);
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
@@ -3501,7 +3501,8 @@ contract VeydriftGameTest is Test {
             VeydriftGameStorage.Resources({metal: 100, crystal: 0, deuterium: 0});
 
         vm.prank(player);
-        uint256 missionId = game.launchFleetMission(
+        vm.expectRevert(VeydriftGameStorage.NotPlanetOwner.selector);
+        game.launchFleetMission(
             originPlanetId,
             targetPlanetId,
             VeydriftGameStorage.FleetMissionType.Transport,
@@ -3509,9 +3510,6 @@ contract VeydriftGameTest is Test {
             cargo,
             0
         );
-
-        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(missionId);
-        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
     }
 
     function testTransportRejectsNonAllianceForeignPlanet() public {

@@ -3797,7 +3797,7 @@ describe("Veydrift backend", () => {
       transportAllowed: false,
       transportBlockReason: "not_allied",
       transportBlockReasonLabel:
-        "Transport blocked: target must be one of your planets or an alliance member's planet."
+        "Transport blocked: target must be one of your planets."
     });
   });
 
@@ -3996,9 +3996,9 @@ describe("Veydrift backend", () => {
       allowed: false,
       blockedReason: "same_alliance",
       blockedReasonLabel: "Attack blocked: target belongs to your alliance.",
-      transportAllowed: true,
-      transportBlockReason: "same_alliance",
-      transportBlockReasonLabel: null
+      transportAllowed: false,
+      transportBlockReason: "not_allied",
+      transportBlockReasonLabel: "Transport blocked: target must be one of your planets."
     });
   });
 

@@ -128,9 +128,6 @@ export function galaxyActionsForSlot({
   // already surfaces this through the attack guard (you cannot attack an ally), so reuse that signal
   // rather than re-deriving alliance membership here.
   const isAllyTarget = attackProtection?.blockedReason === "same_alliance";
-  const isTransportTarget = isOwnTarget
-    || attackProtection?.transportAllowed === true
-    || (attackProtection?.transportAllowed === undefined && isAllyTarget);
 
   if (!isOccupied) {
     return [
@@ -199,17 +196,9 @@ export function galaxyActionsForSlot({
   }
 
   const attackBlocker = commonBlocker ?? attackProtectionBlocker(attackProtection) ?? firstAvailableFleetShipBlocker(shipyardState);
-  const transportBlocker = commonBlocker ?? firstAvailableCargoShipBlocker(shipyardState);
   const missileBlocker = commonBlocker ?? interplanetaryMissileBlocker(defenseState);
 
   return [
-    ...(isTransportTarget ? [
-      enabledOrDisabled({
-        blocker: transportBlocker,
-        enabled: transportAction(firstAvailableCargoShips(shipyardState)),
-        disabled: transportDisabledAction(),
-      }),
-    ] : []),
     ...(isAllyTarget ? [defenseHoldAction(commonBlocker, shipyardState)] : []),
     enabledOrDisabled({
       blocker: attackBlocker,
