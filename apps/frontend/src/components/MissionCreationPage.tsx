@@ -263,7 +263,8 @@ export function MissionCreationPage({
   const cargoCapacity = action.mode === "missile" ? 0 : fleetMissionAvailableCargoCapacity(ships, distance, driveLevels, speedPercent);
   const selectedShipCount = action.mode === "missile" ? 0 : fleetMissionShipCount(ships);
   const cargoSupported = action.mode === "mission" && (action.kind === "transport" || action.kind === "deploy");
-  const bodySelectionSupported = cargoSupported && Boolean(bodySelection) && (bodySelection?.originMoonAvailable || bodySelection?.targetMoonAvailable);
+  const bodyMissionSupported = action.mode === "mission" && (action.kind === "attack" || cargoSupported);
+  const bodySelectionSupported = bodyMissionSupported && Boolean(bodySelection) && (bodySelection?.originMoonAvailable || bodySelection?.targetMoonAvailable);
   const effectiveOriginIsMoon = Boolean(bodySelectionSupported && originIsMoon);
   const effectiveTargetIsMoon = Boolean(bodySelectionSupported && targetIsMoon);
   const effectiveResources = effectiveOriginIsMoon ? bodySelection?.originMoonResources : resources;
@@ -272,28 +273,35 @@ export function MissionCreationPage({
   const destinationIntelVisible = shouldShowDestinationIntel(action);
   const cargoTotal = resourceDraftNumber(cargo.metal) + resourceDraftNumber(cargo.crystal) + resourceDraftNumber(cargo.deuterium);
   const normalizedCargo = cargoSupported ? normalizeCargoDraft(cargo) : undefined;
-  const lootRatioSupported = !joinAttackMode && !acsDefendMode && action.mode === "mission" && action.kind === "attack";
+  const bodyAttackSelected = action.mode === "mission" && action.kind === "attack" && (effectiveOriginIsMoon || effectiveTargetIsMoon);
+  const lootRatioSupported = !bodyAttackSelected && !joinAttackMode && !acsDefendMode && action.mode === "mission" && action.kind === "attack";
   const lootRatioActive = lootRatioSupported && !greedyLootEnabled;
   const displayedLootRatio = lootRatioActive ? lootRatio : GREEDY_LOOT_RATIO;
   const lootRatioTotal = displayedLootRatio.metal + displayedLootRatio.crystal + displayedLootRatio.deuterium;
   const timingSummary = missionTimingSummary(travelSeconds, nowMs);
-  const stationedDefenders = action.kind === "attack" && action.mode === "mission"
+  const stationedDefenders = action.kind === "attack" && action.mode === "mission" && !effectiveTargetIsMoon
     ? target?.publicState?.stationedDefenders ?? []
     : [];
   const stationedDefenderRows = stationedDefenderAttackWarningRows(stationedDefenders);
-  const targetFleetUnits = useMemo(() => compositionUnits(target?.publicState?.fleet, shipCatalog, shipAssetByKey), [target?.publicState?.fleet]);
-  const targetDefenseUnits = useMemo(() => compositionUnits(target?.publicState?.defenses, defenseCatalog, defenseAssetByKey), [target?.publicState?.defenses]);
+  const targetFleetUnits = useMemo(
+    () => effectiveTargetIsMoon ? [] : compositionUnits(target?.publicState?.fleet, shipCatalog, shipAssetByKey),
+    [effectiveTargetIsMoon, target?.publicState?.fleet],
+  );
+  const targetDefenseUnits = useMemo(
+    () => effectiveTargetIsMoon ? [] : compositionUnits(target?.publicState?.defenses, defenseCatalog, defenseAssetByKey),
+    [effectiveTargetIsMoon, target?.publicState?.defenses],
+  );
   const stationedDefenderUnits = useMemo(
     () => stationedDefenderCompositionUnits(stationedDefenders),
     [stationedDefenders],
   );
   const battleForecast = useMemo(
-    () => publicTargetBattleForecast(ships, target, attackerCombatTechLevels),
-    [attackerCombatTechLevels, ships, target],
+    () => publicTargetBattleForecast(ships, target, attackerCombatTechLevels, effectiveTargetIsMoon),
+    [attackerCombatTechLevels, effectiveTargetIsMoon, ships, target],
   );
   const resourceIntel = useMemo(
-    () => targetResourceIntel(target, travelSeconds),
-    [target, travelSeconds],
+    () => targetResourceIntel(target, travelSeconds, effectiveTargetIsMoon),
+    [effectiveTargetIsMoon, target, travelSeconds],
   );
   const staleShipQuantityBlocker = useMemo(
     () => staleSelectedShipQuantityBlocker(action, ships, effectiveShipyardState),
@@ -1007,7 +1015,16 @@ export function forecastRaidLoot(
   return result;
 }
 
-export function targetResourceIntel(target: Planet | undefined, travelSeconds: number): TargetResourceIntel {
+export function targetResourceIntel(target: Planet | undefined, travelSeconds: number, targetIsMoon = false): TargetResourceIntel {
+  if (targetIsMoon) {
+    return {
+      current: null,
+      projectedArrival: null,
+      currentLootable: null,
+      projectedArrivalLootable: null,
+      projectionDetail: "Moon resource intel is unavailable, so parent planet loot is not shown for this target.",
+    };
+  }
   const current = publicResourceSnapshot(target);
   if (!current) {
     return {
@@ -1033,6 +1050,7 @@ export function publicTargetBattleForecast(
   ships: MissionShips,
   target: Planet | undefined,
   attackerTechLevels: CombatTechLevels = ZERO_COMBAT_TECH_LEVELS,
+  targetIsMoon = false,
 ): BattleForecastState {
   const normalizedAttackerTechLevels = normalizeCombatTechLevels(attackerTechLevels);
   const defenderTechLevels = targetCombatTechLevels(target);
@@ -1048,6 +1066,16 @@ export function publicTargetBattleForecast(
       kind: "uncertain",
       label: "Uncertain",
       detail: "Select ships to preview the attack against public destination intel.",
+      attackerPower,
+      defenderPower: null,
+      ...forecastTech,
+    };
+  }
+  if (targetIsMoon) {
+    return {
+      kind: "uncertain",
+      label: "Uncertain",
+      detail: "Moon fleet and defense intel is unavailable, so parent planet defenses are not used for this preview.",
       attackerPower,
       defenderPower: null,
       ...forecastTech,

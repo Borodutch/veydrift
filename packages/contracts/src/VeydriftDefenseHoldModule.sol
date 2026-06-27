@@ -20,6 +20,10 @@ interface IVeydriftDefenseHoldAllianceSystem {
     ) external view returns (bool canCoordinate, uint128 netHoldingFuelCost, uint128 depotSupport);
 }
 
+interface IVeydriftDefenseHoldRandomnessEngine {
+    function requestRandomness(bytes32 purposeHash) external returns (uint256 requestId);
+}
+
 /// @notice Delegatecall target implementing OGame-style ACS Defend (DefenseHold): station a fleet at
 ///         a planet for a chosen hold window so it automatically defends any attack that lands while
 ///         it is holding, then flies home. Kept in its own module so the size-constrained gameplay
@@ -182,12 +186,20 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         bool originIsMoon,
         bool targetIsMoon
     ) external returns (uint256 missionId) {
-        if (missionType != FleetMissionType.Transport && missionType != FleetMissionType.Deploy) {
+        if (
+            missionType != FleetMissionType.Transport && missionType != FleetMissionType.Deploy
+                && missionType != FleetMissionType.Attack
+        ) {
             revert InvalidMissionType(missionType);
         }
         if (originPlanetId == targetPlanetId && originIsMoon == targetIsMoon) revert SamePlanet();
         _requireOwnedBody(originPlanetId, originIsMoon);
-        _requireOwnedBody(targetPlanetId, targetIsMoon);
+        if (missionType == FleetMissionType.Attack) {
+            _requireAttackTargetBody(targetPlanetId, targetIsMoon);
+            _enforceAttackProtection(msg.sender, targetPlanetId);
+        } else {
+            _requireOwnedBody(targetPlanetId, targetIsMoon);
+        }
         _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
@@ -234,6 +246,10 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         uint64 arrivalAt = (uint256(departureAt) + travelSeconds).toUint64();
         uint64 returnAt = (uint256(arrivalAt) + travelSeconds).toUint64();
         missionId = nextFleetId++;
+        uint256 randomnessRequestId;
+        if (missionType == FleetMissionType.Attack) {
+            randomnessRequestId = _requestAttackBattleRandomness(missionId);
+        }
         activeFleetMissionCount[msg.sender] += 1;
         _fleetMissions[missionId] = FleetMission({
             status: FleetMissionStatus.Outbound,
@@ -247,12 +263,15 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             fuelCost: fuelCost,
             cargo: cargo,
             ships: ships,
-            randomnessRequestId: 0,
+            randomnessRequestId: randomnessRequestId,
             lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0}),
             originIsMoon: originIsMoon,
             targetIsMoon: targetIsMoon
         });
         _trackMissionResolution(missionId, _fleetMissions[missionId]);
+        if (missionType == FleetMissionType.Attack) {
+            _recordAttack(msg.sender, targetPlanetId);
+        }
 
         emit FleetMissionLaunched(
             missionId,
@@ -262,7 +281,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             targetPlanetId,
             arrivalAt,
             returnAt,
-            0
+            randomnessRequestId
         );
         emit FleetMissionCargo(missionId, cargo.metal, cargo.crystal, cargo.deuterium, fuelCost);
         emit FleetMissionBodies(missionId, originIsMoon, targetIsMoon);
@@ -401,6 +420,11 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
     function _requireOwnedBody(uint256 planetId, bool isMoon) private view {
         _requirePlanetOwner(planetId);
         if (isMoon && !_moonExistsForOwner(planetId, msg.sender)) revert NoPlanet();
+    }
+
+    function _requireAttackTargetBody(uint256 planetId, bool isMoon) private view {
+        if (_planets[planetId].owner == address(0)) revert NoPlanet();
+        if (isMoon && !_moonExistsForOwner(planetId, _planets[planetId].owner)) revert NoPlanet();
     }
 
     function _moonExistsForOwner(uint256 planetId, address owner_) private view returns (bool) {
@@ -547,6 +571,29 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         if (ship == Ship.Reaper) return ships.reaper;
         if (ship == Ship.Pathfinder) return ships.pathfinder;
         return 0;
+    }
+
+    function _enforceAttackProtection(address attacker, uint256 targetPlanetId) private view {
+        if (_planets[targetPlanetId].owner == attacker) revert SelfAttack();
+        (bool ok, bytes memory data) =
+            address(this).staticcall(abi.encodeWithSelector(0x8a6b2246, attacker, targetPlanetId));
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(data, 32), mload(data))
+            }
+        }
+        if (data.length < 32) return;
+        (AttackBlockReason reason,,) = abi.decode(data, (AttackBlockReason, uint8, uint16));
+        if (reason == AttackBlockReason.BashingLimit) revert AttackBashingLimitReached();
+        if (reason == AttackBlockReason.ScoreProtection) revert AttackScoreProtection();
+        if (reason == AttackBlockReason.SameAlliance) revert SameAllianceAttack();
+    }
+
+    function _requestAttackBattleRandomness(uint256 missionId) private returns (uint256 requestId) {
+        address randomnessEngine = _randomnessEngine;
+        if (randomnessEngine == address(0)) revert RandomnessEngineUnset();
+        return IVeydriftDefenseHoldRandomnessEngine(randomnessEngine)
+            .requestRandomness(_attackBattlePurposeHash(missionId));
     }
 
     function _planetDistance(uint256 originPlanetId, uint256 destinationPlanetId)

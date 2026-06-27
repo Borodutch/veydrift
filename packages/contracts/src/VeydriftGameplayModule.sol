@@ -523,16 +523,18 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         FleetMissionType missionType = mission.missionType;
 
         if (missionType == FleetMissionType.Attack) {
-            _settleAttackTargetSnapshot(mission.targetPlanetId, mission.arrivalAt);
-            // OGame-style ACS Defend: pull every fleet stationed over this attack's arrival into the
-            // attack's counterplay roster so the battle machinery fights them as defenders.
-            VeydriftDefenseHoldStorage.linkQualifiedDefenders(
-                _stationedDefenseMissions[mission.targetPlanetId],
-                _fleetCounterplayMissions[missionId],
-                _fleetMissions,
-                _defenseHoldUntil,
-                mission.arrivalAt
-            );
+            if (!mission.targetIsMoon) {
+                _settleAttackTargetSnapshot(mission.targetPlanetId, mission.arrivalAt);
+                // OGame-style ACS Defend: pull every fleet stationed over this attack's arrival into the
+                // attack's counterplay roster so the battle machinery fights them as defenders.
+                VeydriftDefenseHoldStorage.linkQualifiedDefenders(
+                    _stationedDefenseMissions[mission.targetPlanetId],
+                    _fleetCounterplayMissions[missionId],
+                    _fleetMissions,
+                    _defenseHoldUntil,
+                    mission.arrivalAt
+                );
+            }
         } else {
             _settleResources(mission.targetPlanetId);
         }
