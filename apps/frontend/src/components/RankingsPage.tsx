@@ -602,10 +602,7 @@ function RankingRow({
               </button>
               <PlanetMissionLines className="pl-2 sm:pl-[34px]" planetId={planet.planetId} subtext={missionLines} />
               {planet.hasMoon ? (
-                <PlanetMoonSubsection
-                  detail="Nested under parent planet"
-                  label="Moon"
-                />
+                <PlanetMoonSubsection label="Moon" />
               ) : null}
               </div>
             );

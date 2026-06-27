@@ -56,7 +56,7 @@ export function PlanetMoonIndicator({
 
 export function PlanetMoonSubsection({
   action,
-  detail = "Child moon body",
+  detail,
   label = "Moon",
 }: {
   action?: ComponentChildren;
@@ -73,7 +73,7 @@ export function PlanetMoonSubsection({
       </span>
       <span className="min-w-0">
         <span className="block truncate text-[11px] font-semibold text-cyan-100">{label}</span>
-        <span className="block truncate text-[10px] text-slate-400">{detail}</span>
+        {detail ? <span className="block truncate text-[10px] text-slate-400">{detail}</span> : null}
       </span>
       {action}
     </div>

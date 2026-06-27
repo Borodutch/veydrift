@@ -253,10 +253,7 @@ function PlayerPlanetRow({
           ))}
         </span>
         {planet.moon?.exists ? (
-          <PlanetMoonSubsection
-            detail="Nested under this planet"
-            label="Moon"
-          />
+          <PlanetMoonSubsection label="Moon" />
         ) : null}
       </span>
     </button>

@@ -575,6 +575,24 @@
       "512": "/assets/game/sizes/512/style-pass/generated/buildings/interdimensional-rift-stabilizer-mid.webp"
     }
   },
+  "/assets/game/style-pass/generated/buildings/jump-gate.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/jump-gate.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/jump-gate.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/jump-gate.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/buildings/lunar-base.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/lunar-base.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/lunar-base.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/lunar-base.webp"
+    }
+  },
   "/assets/game/style-pass/generated/buildings/metal-mine-mid.webp": {
     "width": 1024,
     "height": 1024,

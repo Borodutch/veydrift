@@ -9,7 +9,6 @@ import { formatCost } from "../buildingDetails";
 import { formatDuration } from "../durationFormat";
 import { buildingCatalog, defenseCatalog, shipCatalog, shipyardCatalog } from "../playableMvp";
 import type { DefenseKey, ShipKey } from "../playableMvp";
-import { defenseAssetByKey, shipAssetByKey } from "../gameAssets";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../moonActions";
 import { formatUserTimestamp } from "../timestampFormat";
 import {
@@ -26,7 +25,6 @@ import { InlineSyncIndicator } from "./VeydriftLoader";
 import { MoonSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 import { MoonImage } from "./PlanetMoonIndicator";
-import { OptimizedImage } from "./OptimizedImage";
 import {
   parseProductionQuantity,
   ProductionCatalog,
@@ -57,6 +55,7 @@ interface MoonPageProps {
   onRefresh?: (() => void) | undefined;
   onStartBuilding?: ((buildingId: number, label: string) => void) | undefined;
   onStartDefense?: ((defenseId: number, label: string, quantity: number) => void) | undefined;
+  parentPlanetLabel?: string | undefined;
   selectedCoordinates?: Coordinates | undefined;
   transactionUnavailableReason?: string | undefined;
 }
@@ -76,6 +75,7 @@ export function MoonPage({
   onRefresh,
   onStartBuilding,
   onStartDefense,
+  parentPlanetLabel,
   selectedCoordinates,
   transactionUnavailableReason,
 }: MoonPageProps) {
@@ -121,6 +121,7 @@ export function MoonPage({
             onJumpGate={onJumpGate}
             onStartBuilding={onStartBuilding}
             onStartDefense={onStartDefense}
+            parentPlanetLabel={parentPlanetLabel}
             transactionUnavailableReason={transactionUnavailableReason}
           />
         </>
@@ -341,6 +342,7 @@ function MoonSystemsPanel({
   onFinishDefense,
   onStartBuilding,
   onStartDefense,
+  parentPlanetLabel,
   transactionUnavailableReason,
 }: {
   action?: MoonPageProps["action"];
@@ -352,6 +354,7 @@ function MoonSystemsPanel({
   onFinishDefense?: MoonPageProps["onFinishDefense"];
   onStartBuilding?: MoonPageProps["onStartBuilding"];
   onStartDefense?: MoonPageProps["onStartDefense"];
+  parentPlanetLabel?: string | undefined;
   transactionUnavailableReason?: string | undefined;
 }) {
   const [jumpDestination, setJumpDestination] = useState("");
@@ -381,35 +384,25 @@ function MoonSystemsPanel({
               width={1254}
             />
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_45%_25%,transparent,rgba(5,7,13,0.18)_42%,rgba(5,7,13,0.86)_100%)]" />
-            <div className="absolute bottom-3 left-3 rounded border border-cyan-200/25 bg-black/55 px-2 py-1 text-xs font-semibold text-cyan-100">
-              Moon orbiting planet #{moon.planetId}
+            <div className="absolute bottom-3 left-3 max-w-[calc(100%-1.5rem)] truncate rounded border border-cyan-200/25 bg-black/55 px-2 py-1 text-xs font-semibold text-cyan-100">
+              Moon orbiting {moonOrbitParentLabel(parentPlanetLabel, moon.planetId)}
             </div>
           </div>
           <div className="grid gap-4 p-4">
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-2 sm:grid-cols-3">
               <MoonMetric icon={Orbit} label="Diameter" value={moon.diameterKm.toLocaleString() + " km"} />
               <MoonMetric icon={Orbit} label="Fields" value={`${fieldSummary.used} / ${fieldSummary.capacity}`} />
               <MoonMetric icon={Orbit} label="Jump Gate" value={moonJumpGateStatus(moon, moonState, jumpGateDestinations)} />
             </div>
-            <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-              <div>
-                <h3 className="text-sm font-semibold text-white">Resources</h3>
-                <div className="mt-2 grid gap-2 sm:grid-cols-3">
-                  {moonResourceRows(moonState).map((resource) => (
-                    <div className="rounded border border-white/10 bg-black/15 p-3" key={resource.label}>
-                      <div className="text-[10px] font-semibold uppercase tracking-normal text-cyan-200/80">{resource.label}</div>
-                      <div className="mt-1 text-sm font-semibold text-slate-100">{resource.value}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-white">Stationed Units</h3>
-                <p className="mt-1 text-xs text-slate-400">Moon fleets and defenses stay separate from the parent planet.</p>
-                <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                  <MoonUnitList title="Ships" units={moonState?.ships ?? moonState?.fleet ?? []} unitKind="ship" />
-                  <MoonUnitList title="Defenses" units={moonState?.defenses ?? []} unitKind="defense" />
-                </div>
+            <div>
+              <h3 className="text-sm font-semibold text-white">Resources</h3>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {moonResourceRows(moonState).map((resource) => (
+                  <div className="min-w-24 rounded border border-white/10 bg-black/15 px-2.5 py-1.5" key={resource.label}>
+                    <div className="text-[10px] font-semibold uppercase tracking-normal text-cyan-200/80">{resource.label}</div>
+                    <div className="text-sm font-semibold text-slate-100">{resource.value}</div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
@@ -528,9 +521,6 @@ function MoonStructuresSection({
             Lunar Base expands fields. Jump Gate supports fleet movement between owned moons. {fieldSummary.used} / {fieldSummary.capacity} fields used.
           </p>
         </div>
-        <span className="rounded border border-white/10 bg-black/20 px-2 py-1 text-[11px] text-slate-400">
-          Created {formatMoonReadyAt(moon.createdAt)}
-        </span>
       </div>
 
       {!canTransact && transactionUnavailableReason ? (
@@ -623,10 +613,11 @@ function MoonStructureDetailPanel({
 }) {
   const requirements = moonBuildingRequirementRows(building, moon, moonState);
   const queueBlocked = Boolean(moonState?.queue?.active && !queueReady(moonState.queue));
-  const disabled = !canTransact || pending || queueBlocked;
+  const requirementsMissing = requirements.some((row) => !row.met);
+  const disabled = !canTransact || pending || queueBlocked || requirementsMissing;
   const disabledReason = !canTransact
     ? transactionUnavailableReason
-    : activeQueueTitle(moonState?.queue);
+    : activeQueueTitle(moonState?.queue) ?? firstMissingRequirementLabel(requirements);
 
   return (
     <InspectDetailShell>
@@ -668,7 +659,7 @@ function MoonStructureDetailPanel({
 
       <div className="mt-4 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
         <p className={`text-sm font-semibold ${disabled ? "text-slate-400" : "text-emerald-200"}`}>
-          {disabledReason ?? (requirements.some((row) => !row.met) ? "Requirements not met" : "Ready to upgrade")}
+          {disabledReason ?? "Ready to upgrade"}
         </p>
       </div>
 
@@ -805,36 +796,6 @@ function moonResourceRows(moonState?: ChainMoonState | null | undefined): Array<
     { label: "Crystal", value: formatMoonAmount(resources.crystal) },
     { label: "Deuterium", value: formatMoonAmount(resources.deuterium) },
   ];
-}
-
-function MoonUnitList({
-  title,
-  units,
-  unitKind,
-}: {
-  title: string;
-  units: Array<{ id: number; count: number }>;
-  unitKind: "ship" | "defense";
-}) {
-  const visibleUnits = units.filter((unit) => unit.count > 0);
-  return (
-    <div className="rounded border border-white/10 bg-black/15 p-3">
-      <div className="text-[10px] font-semibold uppercase tracking-normal text-cyan-200/80">{title}</div>
-      {visibleUnits.length > 0 ? (
-        <div className="mt-2 grid gap-1 text-xs text-slate-300">
-          {visibleUnits.map((unit) => (
-            <div className="grid grid-cols-[1.5rem_minmax(0,1fr)_auto] items-center gap-2" key={unit.id}>
-              <CatalogImage alt="" compact src={unitKind === "ship" ? shipAsset(unit.id) : defenseAsset(unit.id)} />
-              <span className="min-w-0 truncate">{unitKind === "ship" ? shipLabel(unit.id) : moonDefenseLabel(unit.id)}</span>
-              <span className="font-mono text-slate-100">{unit.count.toLocaleString()}</span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="mt-2 text-xs text-slate-500">None stationed on this moon.</p>
-      )}
-    </div>
-  );
 }
 
 function moonShipProductionItems({
@@ -1119,48 +1080,12 @@ function moonTechnologyLevelsByKey(levels: Record<string, number> | undefined): 
   );
 }
 
-function CatalogImage({
-  alt,
-  compact = false,
-  src,
-}: {
-  alt: string;
-  compact?: boolean | undefined;
-  src: string;
-}) {
-  return (
-    <span className={`${compact ? "h-6 w-6" : "h-11 w-11"} shrink-0 overflow-hidden rounded border border-white/10 bg-black/30`}>
-      <OptimizedImage
-        alt={alt}
-        className="h-full w-full object-cover"
-        loading="lazy"
-        sizes="icon"
-        src={src}
-      />
-    </span>
-  );
-}
-
-function shipLabel(id: number): string {
-  return shipCatalog.find((ship) => ship.id === id)?.label ?? `Ship ${id}`;
-}
-
-function shipAsset(id: number): string {
-  const ship = shipCatalog.find((item) => item.id === id);
-  return ship ? shipAssetByKey[ship.key] : shipAssetByKey.smallCargo;
-}
-
-function defenseAsset(id: number): string {
-  const defense = defenseCatalog.find((item) => item.id === id);
-  return defense ? defenseAssetByKey[defense.key] : defenseAssetByKey.rocketLauncher;
-}
-
 function moonBuildingAsset(key: ChainMoonState["buildings"][number]["key"]): string {
   const fallback = "/assets/game/style-pass/generated/buildings/terraformer-mid.webp";
-  if (key === "lunarBase") return buildingCatalog.find((item) => item.key === "terraformer")?.asset ?? fallback;
+  if (key === "lunarBase") return "/assets/game/style-pass/generated/buildings/lunar-base.webp";
   if (key === "roboticsFactory") return buildingCatalog.find((item) => item.key === "roboticsFactory")?.asset ?? fallback;
   if (key === "shipyard") return buildingCatalog.find((item) => item.key === "shipyard")?.asset ?? fallback;
-  return buildingCatalog.find((item) => item.key === "interdimensionalRiftStabilizer")?.asset ?? fallback;
+  return "/assets/game/style-pass/generated/buildings/jump-gate.webp";
 }
 
 type MoonJumpGateDestination = NonNullable<ChainMoonState["jumpGateDestinations"]>[number];
@@ -1241,8 +1166,8 @@ function MoonMetric({
   value: string;
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-3 rounded border border-white/10 bg-black/15 p-3">
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded border border-cyan-200/20 bg-cyan-200/10 text-cyan-200">
+    <div className="flex min-w-0 items-center gap-2 rounded border border-white/10 bg-black/15 px-2.5 py-2">
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded border border-cyan-200/20 bg-cyan-200/10 text-cyan-200">
         <Icon aria-hidden="true" size={17} strokeWidth={1.8} />
       </span>
       <div className="min-w-0">
@@ -1280,6 +1205,14 @@ export function moonBuildingRequirementRows(
     met: fieldSummary.open > 0,
     status: `${fieldSummary.open} open`,
   }];
+
+  if (building.key !== "lunarBase" && levels.lunarBase === 0) {
+    rows.push({
+      label: "Lunar Base first",
+      met: false,
+      status: "Build Lunar Base",
+    });
+  }
 
   if (building.key === "shipyard") {
     const robotics = levels.roboticsFactory;
@@ -1324,7 +1257,8 @@ export function moonFieldSummary(
   moon: NonNullable<ChainMoonState["moon"]>,
   moonState: ChainMoonState | null | undefined,
 ): { capacity: number; used: number; open: number } {
-  const capacity = moon.fields;
+  const lunarBaseLevel = moonBuildingLevels(moonState).lunarBase;
+  const capacity = lunarBaseLevel === 0 ? Math.min(moon.fields, 1) : moon.fields;
   const used = (moonState?.buildings ?? []).reduce((sum, building) => sum + building.level, 0);
   return {
     capacity,
@@ -1360,6 +1294,16 @@ function moonBuildingLabel(itemId: number | undefined): string {
 
 function moonDefenseLabel(itemId: number | undefined): string {
   return defenseCatalog.find((defense) => defense.id === itemId)?.label ?? "Moon defense";
+}
+
+function firstMissingRequirementLabel(rows: RequirementRow[]): string | undefined {
+  const row = rows.find((candidate) => !candidate.met);
+  return row ? `${row.label}: ${row.status}` : undefined;
+}
+
+function moonOrbitParentLabel(parentPlanetLabel: string | undefined, planetId: string): string {
+  const trimmed = parentPlanetLabel?.trim();
+  return trimmed || `parent planet #${planetId}`;
 }
 
 function formatMoonReadyAt(value: string | null | undefined): string {

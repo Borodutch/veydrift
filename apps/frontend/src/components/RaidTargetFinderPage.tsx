@@ -669,10 +669,7 @@ export function DebrisTargetRow({
             </span>
           </div>
           {target.hasMoon ? (
-            <PlanetMoonSubsection
-              detail="Nested under debris parent"
-              label="Moon"
-            />
+            <PlanetMoonSubsection label="Moon" />
           ) : null}
         </div>
       </div>
@@ -843,10 +840,7 @@ export function RaidTargetRow({
           </div>
           <PlanetMissionLines className="mt-1" planetId={target.planetId} subtext={missionSubtext} />
           {target.hasMoon ? (
-            <PlanetMoonSubsection
-              detail="Nested under this raid target"
-              label="Moon"
-            />
+            <PlanetMoonSubsection label="Moon" />
           ) : null}
         </div>
       </div>
