@@ -4,7 +4,6 @@ import { useState } from "preact/hooks";
 import type { Resources } from "../playableMvp";
 import type { MissionShips } from "../galaxyActions";
 import type { ChainMoonState } from "../walletFlow";
-import type { Coordinates } from "../types";
 import { formatCost } from "../buildingDetails";
 import { formatDuration } from "../durationFormat";
 import { buildingCatalog, defenseCatalog, shipCatalog, shipyardCatalog } from "../playableMvp";
@@ -56,7 +55,6 @@ interface MoonPageProps {
   onStartBuilding?: ((buildingId: number, label: string) => void) | undefined;
   onStartDefense?: ((defenseId: number, label: string, quantity: number) => void) | undefined;
   parentPlanetLabel?: string | undefined;
-  selectedCoordinates?: Coordinates | undefined;
   transactionUnavailableReason?: string | undefined;
 }
 
@@ -76,7 +74,6 @@ export function MoonPage({
   onStartBuilding,
   onStartDefense,
   parentPlanetLabel,
-  selectedCoordinates,
   transactionUnavailableReason,
 }: MoonPageProps) {
   const moon = moonState?.moon;
@@ -90,6 +87,7 @@ export function MoonPage({
       <PageHeader
         actions={onRefresh ? <RefreshButton loading={isLoading} onRefresh={onRefresh} title="Refresh moon state" /> : undefined}
         title="Moon"
+        titleSize="xl"
       />
 
       {!hasMoon ? (
@@ -99,7 +97,6 @@ export function MoonPage({
           canBurnChicken={canBurnChicken}
           hasMoon={hasMoon}
           onBurnChicken={onBurnChicken}
-          selectedCoordinates={selectedCoordinates}
           transactionUnavailableReason={transactionUnavailableReason}
         />
       ) : null}
@@ -148,7 +145,6 @@ function ChickenBurnPanel({
   canBurnChicken,
   hasMoon,
   onBurnChicken,
-  selectedCoordinates,
   transactionUnavailableReason,
 }: {
   action?: MoonPageProps["action"];
@@ -156,7 +152,6 @@ function ChickenBurnPanel({
   canBurnChicken?: boolean | undefined;
   hasMoon: boolean;
   onBurnChicken?: MoonPageProps["onBurnChicken"];
-  selectedCoordinates?: Coordinates | undefined;
   transactionUnavailableReason?: string | undefined;
 }) {
   const pending = action?.status === "pending";
@@ -174,9 +169,6 @@ function ChickenBurnPanel({
     pending,
     transactionUnavailableReason,
   });
-  const targetLabel = selectedCoordinates
-    ? `${selectedCoordinates.galaxy}:${selectedCoordinates.system}:${selectedCoordinates.position}`
-    : "selected planet";
   const submitChickenBurn = (event: Event) => {
     event.preventDefault();
     const form = event.currentTarget instanceof HTMLFormElement ? event.currentTarget : null;
@@ -191,10 +183,7 @@ function ChickenBurnPanel({
           <div className="mb-3 grid h-10 w-10 place-items-center rounded border border-amber-200/20 bg-amber-200/10 text-amber-200">
             <Flame aria-hidden="true" size={20} strokeWidth={1.8} />
           </div>
-          <h3 className="text-sm font-semibold text-white">Burning Chickens</h3>
-          <p className="mt-1 max-w-2xl text-xs leading-5 text-slate-400">
-            Enter a Chicken ID to burn it on Base mainnet and grant a moon to {targetLabel}. Veydrift verifies this wallet owns the chicken before opening the transaction.
-          </p>
+          <h3 className="text-base font-semibold text-white">Burning Chickens</h3>
         </div>
       </div>
 
@@ -290,14 +279,11 @@ function NoMoonGuidance({
             <MoonImage className="h-full w-full object-cover" />
           </div>
           <h3 className="text-base font-semibold text-white">No moon in orbit</h3>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
-            Burn a verified Chicken to grant a moon to this planet, then build moon structures.
-          </p>
           {reason ? <p className="mt-2 text-xs text-slate-500">{reason}</p> : null}
         </div>
 
         <div>
-          <h4 className="text-xs font-semibold uppercase tracking-normal text-cyan-200/80">Moon structures</h4>
+          <h4 className="text-base font-semibold text-white">Moon structures</h4>
           <div className="mt-2 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
             {previewBuildings.map((building) => (
               <GuidanceStep key={building.label} label={building.label} value={building.description} />
@@ -395,7 +381,7 @@ function MoonSystemsPanel({
               <MoonMetric icon={Orbit} label="Jump Gate" value={moonJumpGateStatus(moon, moonState, jumpGateDestinations)} />
             </div>
             <div>
-              <h3 className="text-sm font-semibold text-white">Resources</h3>
+              <h3 className="text-base font-semibold text-white">Resources</h3>
               <div className="mt-2 flex flex-wrap gap-2">
                 {moonResourceRows(moonState).map((resource) => (
                   <div className="min-w-24 rounded border border-white/10 bg-black/15 px-2.5 py-1.5" key={resource.label}>
@@ -443,10 +429,7 @@ function MoonSystemsPanel({
       {jumpGateAvailable ? (
       <section className="rounded-md border border-white/10 bg-[#101624] p-4">
         <div>
-          <h3 className="text-sm font-semibold text-white">Jump Gate</h3>
-          <p className="mt-1 text-xs text-slate-400">
-            Deploy stationed moon ships to another owned moon with a ready Jump Gate. Resources stay on the origin moon.
-          </p>
+          <h3 className="text-base font-semibold text-white">Jump Gate</h3>
           <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_6rem_6rem_auto]">
             <select
               className="h-9 rounded border border-white/10 bg-black/20 px-2 text-sm text-slate-100"
@@ -516,11 +499,11 @@ function MoonStructuresSection({
     <section className="grid gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-white">Moon Structures</h3>
-          <p className="text-xs text-slate-400">
-            Lunar Base expands fields. Jump Gate supports fleet movement between owned moons. {fieldSummary.used} / {fieldSummary.capacity} fields used.
-          </p>
+          <h3 className="text-base font-semibold text-white">Moon Structures</h3>
         </div>
+        <span className="rounded border border-cyan-200/20 bg-cyan-200/10 px-2 py-1 text-xs font-semibold text-cyan-100">
+          {fieldSummary.used} / {fieldSummary.capacity} fields
+        </span>
       </div>
 
       {!canTransact && transactionUnavailableReason ? (
@@ -698,10 +681,7 @@ function MoonShipyardSection({
   return (
     <section className="grid gap-3">
       <div className="min-w-0">
-        <h3 className="text-sm font-semibold text-white">Moon Shipyard</h3>
-        <p className="text-xs text-slate-400">
-          Stationed moon ships use the same selectable catalog pattern as the planet Shipyard.
-        </p>
+        <h3 className="text-base font-semibold text-white">Moon Shipyard</h3>
       </div>
       <ProductionCatalog
         actionPending={false}
@@ -742,10 +722,7 @@ function MoonDefenseSection({
   return (
     <section className="grid gap-3">
       <div className="min-w-0">
-        <h3 className="text-sm font-semibold text-white">Moon Defenses</h3>
-        <p className="text-xs text-slate-400">
-          Moon defenses use the same selectable catalog and detail controls as the planet Defenses screen.
-        </p>
+        <h3 className="text-base font-semibold text-white">Moon Defenses</h3>
       </div>
 
       {moonState?.defenseQueue?.active ? (
