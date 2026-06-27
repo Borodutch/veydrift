@@ -7007,6 +7007,8 @@ export class SettlementIndexer {
         blockNumber: canonicalEventMission.blockNumber,
         launchBlockNumber: canonicalEventMission.launchBlockNumber,
         needsResolution: canonicalEventMission.needsResolution,
+        ...(canonicalEventMission.originIsMoon !== undefined ? { originIsMoon: canonicalEventMission.originIsMoon } : {}),
+        ...(canonicalEventMission.targetIsMoon !== undefined ? { targetIsMoon: canonicalEventMission.targetIsMoon } : {}),
         ...(canonicalEventMission.defenseHoldUntil ? { defenseHoldUntil: canonicalEventMission.defenseHoldUntil } : {}),
         ...(canonicalEventMission.randomnessRequestId ? { randomnessRequestId: canonicalEventMission.randomnessRequestId } : {})
       }

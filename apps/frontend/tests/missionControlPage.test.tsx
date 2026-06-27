@@ -223,13 +223,13 @@ describe("MissionControlPage", () => {
     expect(text).toContain("ETA");
     expect(text).toContain("Returns");
     // Hostile inbound missions read "Incoming attack"; the player's own launches stay bare.
-    expect(text).toContain("Incoming attack # 8");
-    expect(text).not.toContain("Attack # 8");
+    expect(text).toContain("Incoming attack #8");
+    expect(text).not.toContain("Attack #8");
     expect(text).toContain("Hostile inbound");
     // Route endpoints render as clickable planet names (coords live in the link title).
     expect(text).toContain("New Eos");
     expect(text).toContain("Planet #9");
-    expect(text).toContain("Transport # 9");
+    expect(text).toContain("Transport #9");
     // VEY-KANEO-465: the manual "Land fleet" action is gone; returns land automatically.
     expect(text).not.toContain("Land fleet");
     // Every card exposes the single shared "Open" action into the mission detail screen.
@@ -514,8 +514,8 @@ describe("MissionControlPage", () => {
     });
     const text = visibleText(page);
 
-    expect(text).toContain("Shareable battle report");
-    expect(text).toContain("Group attack # 12");
+    expect(text).toContain("Shareable mission report");
+    expect(text).toContain("Group attack #12");
     expect(text).toContain("Battle time");
     expect(text).toContain("Commanders");
     expect(text).toContain("Coordinates");
@@ -704,6 +704,27 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Open");
     expect(text).not.toContain("Open mission");
     expect(text).not.toContain("Open report");
+  });
+
+  test("renders standalone moon-target battle reports distinctly from parent-planet reports", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [{ ...battleReport("91"), targetIsMoon: true }],
+      },
+      walletPlanets: [managedPlanet({ planetId: "7", coordinates: "2:44:9", name: "New Eos" })],
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Battle report");
+    expect(text).toContain("Moon of New Eos");
+    expect(text).not.toContain(" Moon of Planet #7");
   });
 
   test("keeps active missions' battle reports out of Past Missions until the fleet lands (VEY-KANEO-434)", () => {

@@ -593,6 +593,8 @@ export type BattleReport = {
   missionId: string;
   attacker: Address;
   targetPlanetId: string;
+  originIsMoon?: boolean;
+  targetIsMoon?: boolean;
   outcome: BattleOutcomeName;
   rounds: number;
   randomSeed: string;
@@ -4552,6 +4554,8 @@ export function attachAttackGroupParticipants(
 
     return {
       ...report,
+      originIsMoon: Boolean(mainMission?.originIsMoon ?? report.originIsMoon),
+      targetIsMoon: Boolean(mainMission?.targetIsMoon ?? report.targetIsMoon),
       attackGroupId: joinedMissionIds.length > 0 ? (mainMission?.attackGroupId ?? report.missionId) : null,
       participants
     };
