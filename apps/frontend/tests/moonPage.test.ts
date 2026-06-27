@@ -116,11 +116,14 @@ describe("Moon page helpers", () => {
     expect(visibleText(page)).not.toContain("Burn for Moon");
   });
 
-  test("integrates moon resources and stationed units into the overview instead of a Moon Units section", () => {
-    expect(moonPageSource).toContain("Stationed Units");
+  test("keeps moon resources compact and leaves units to shipyard and defense surfaces", () => {
     expect(moonPageSource).toContain("moonState?.ships ?? moonState?.fleet ?? []");
-    expect(moonPageSource).toContain("unitKind === \"ship\" ? shipAsset(unit.id) : defenseAsset(unit.id)");
+    expect(moonPageSource).toContain("MoonShipyardSection");
+    expect(moonPageSource).toContain("MoonDefenseSection");
+    expect(moonPageSource).not.toContain("Stationed Units");
     expect(moonPageSource).not.toContain("<h3 className=\"text-sm font-semibold text-white\">Moon Units</h3>");
+    expect(moonPageSource).not.toContain("Created {formatMoonReadyAt(moon.createdAt)}");
+    expect(moonPageSource).toContain("Moon orbiting {moonOrbitParentLabel(parentPlanetLabel, moon.planetId)}");
   });
 
   test("shows Jump Gate destinations only when another ready moon gate is available", () => {
@@ -363,6 +366,8 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).toContain("Moon Defenses");
     expect(moonPageSource).not.toContain("Moon Shipyard and Defenses");
     expect(moonPageSource).toContain('sizes="(min-width: 1280px) 38vw, (min-width: 768px) 46vw, 100vw"');
+    expect(moonPageSource).toContain("lunar-base.webp");
+    expect(moonPageSource).toContain("jump-gate.webp");
   });
 
   test("previews moon fields and building requirements from indexed moon state", () => {
@@ -414,6 +419,40 @@ describe("Moon page helpers", () => {
       label: "Hyperspace 7",
       met: false,
       status: "L6 / 7",
+    });
+  });
+
+  test("softly requires Lunar Base as the first moon build", () => {
+    const moonState = loadedMoonState({
+      moon: {
+        exists: true,
+        planetId: "7",
+        owner: "0x1111111111111111111111111111111111111111",
+        fields: 4,
+        diameterKm: 8774,
+        createdAt: "1770000000",
+        jumpGateReadyAt: "0",
+      },
+      buildings: [{
+        id: 0,
+        key: "lunarBase",
+        label: "Lunar Base",
+        level: 0,
+        cost: { metal: "20000", crystal: "40000", deuterium: "20000" },
+      }, {
+        id: 1,
+        key: "roboticsFactory",
+        label: "Robotics Factory",
+        level: 0,
+        cost: { metal: "400", crystal: "120", deuterium: "200" },
+      }],
+    });
+
+    expect(moonFieldSummary(moonState.moon!, moonState)).toEqual({ capacity: 1, used: 0, open: 1 });
+    expect(moonBuildingRequirementRows(moonState.buildings[1], moonState.moon!, moonState)).toContainEqual({
+      label: "Lunar Base first",
+      met: false,
+      status: "Build Lunar Base",
     });
   });
 

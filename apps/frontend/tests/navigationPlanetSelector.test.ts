@@ -76,6 +76,7 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).not.toContain("planets.flatMap((planet) => planetSelectorButtons");
     expect(gameAssetsSource).toContain("cratered-cyan-moon.webp");
     expect(moonIndicatorSource).toContain('data-planet-moon-subsection="true"');
+    expect(moonIndicatorSource).not.toContain("Child moon body");
     expect(rankingsSource).toContain("<PlanetMoonSubsection");
   });
 

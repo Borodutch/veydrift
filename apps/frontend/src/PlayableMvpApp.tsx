@@ -7583,6 +7583,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           onRefresh={moonSection.refresh ?? refreshInfrastructureState}
           onStartBuilding={handleStartMoonBuilding}
           onStartDefense={handleStartMoonDefense}
+          parentPlanetLabel={selectedManagedPlanet?.name ?? selectedManagedPlanet?.coordinates}
           selectedCoordinates={activePlanetCoords}
           transactionUnavailableReason={moonTransactionUnavailableReason}
         />

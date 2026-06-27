@@ -118,7 +118,6 @@ export function WatchablePlanetRow({
           </div>
           {planet.hasMoon ? (
             <PlanetMoonSubsection
-              detail="Nested under this planet"
               label={planet.moonName ?? "Moon"}
             />
           ) : null}
