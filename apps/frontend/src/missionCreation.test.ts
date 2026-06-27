@@ -708,7 +708,7 @@ describe("mission creation", () => {
 
     expect(transportText).toContain("Target");
     expect(transportText).toContain("Transport run");
-    expect(transportText).toContain("Own or alliance planet");
+    expect(transportText).toContain("Own planet");
     expect(transportText).toContain("Manual load / 4,000 capacity");
     expect(transportText).toContain("Resources");
     expect(transportText).not.toContain("Max carry");

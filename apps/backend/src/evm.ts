@@ -5853,7 +5853,7 @@ export function attackBlockReasonLabel(reason: AttackBlockReason): string | null
 
 export function transportBlockReasonLabel(reason: TransportBlockReason): string | null {
   if (reason === "not_allied") {
-    return "Transport blocked: target must be one of your planets or an alliance member's planet.";
+    return "Transport blocked: target must be one of your planets.";
   }
   return null;
 }

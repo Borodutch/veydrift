@@ -4219,10 +4219,8 @@ function indexedAttackProtectionResponse(
         : "none";
   const transportBlockReason = attackerKey === defenderKey
     ? "own_planet"
-    : sameAlliance
-      ? "same_alliance"
-      : "not_allied";
-  const transportAllowed = transportBlockReason === "own_planet" || transportBlockReason === "same_alliance";
+    : "not_allied";
+  const transportAllowed = transportBlockReason === "own_planet";
 
   const body: AttackProtectionStatus & {
     source: typeof indexedSource;
