@@ -5,7 +5,7 @@ import { galaxyActionsForSlot, type GalaxyAction } from "../galaxyActions";
 import { playableApiUrl } from "../runtimeConfig";
 import { shortAddress, type ChainDefenseState, type ChainShipyardState } from "../walletFlow";
 import { isImageReady } from "../imageLoadState";
-import { scoreComparisonLabel } from "../attackProtectionLabels";
+import { formatScore } from "../attackProtectionLabels";
 import { buildingCatalog, defenseCatalog, researchCatalog, shipCatalog, solarSatelliteEnergy } from "../playableMvp";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { GalaxyActionButtons, type AttackProtectionStatus, type GalaxyActionState, formatAttackBlockReason } from "./GalaxyView";
@@ -244,7 +244,9 @@ export function PlanetDetail({
     shipyardState,
   });
   const attackBlockLabel = formatAttackBlockReason(attackProtection ?? undefined);
-  const scoreComparisonText = scoreComparisonLabel(attackProtection?.scoreComparison);
+  const targetScoreText = attackProtection?.scoreComparison?.defenderScore
+    ? formatScore(attackProtection.scoreComparison.defenderScore)
+    : null;
 
   return (
     <div className="flex flex-col gap-4 p-4 sm:p-6">
@@ -317,10 +319,10 @@ export function PlanetDetail({
                       <span className="text-red-100">{attackBlockLabel}</span>
                     </>
                   ) : null}
-                  {scoreComparisonText ? (
+                  {targetScoreText ? (
                     <>
                       <span className="text-slate-700">|</span>
-                      <span className="font-mono text-cyan-100">{scoreComparisonText}</span>
+                      <span className="font-mono text-cyan-100">Score {targetScoreText}</span>
                     </>
                   ) : null}
                 </div>

@@ -1,8 +1,3 @@
-export type ProtectionScoreComparisonLike = {
-  attackerScore?: string | null;
-  defenderScore?: string | null;
-};
-
 export function formatScore(value: string | null | undefined): string {
   if (!value) return "0";
   try {
@@ -10,9 +5,4 @@ export function formatScore(value: string | null | undefined): string {
   } catch {
     return value;
   }
-}
-
-export function scoreComparisonLabel(comparison: ProtectionScoreComparisonLike | null | undefined): string | null {
-  if (!comparison?.attackerScore || !comparison.defenderScore) return null;
-  return `Score ${formatScore(comparison.attackerScore)} vs ${formatScore(comparison.defenderScore)}`;
 }

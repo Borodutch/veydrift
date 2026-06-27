@@ -29,7 +29,6 @@ import {
   galaxyActionsForSlot,
   type GalaxyAction,
 } from "../galaxyActions";
-import { scoreComparisonLabel } from "../attackProtectionLabels";
 import {
   commitCoordinateDraft,
   coordinateDraftAfterExternalValueChange,
@@ -810,7 +809,6 @@ function GalaxySlot({
   const moonChanceLabel = formatMoonChanceLabel(planet.moonChance);
   const attackBlockLabel = formatAttackBlockReason(attackProtection);
   const attackRuleLabels = formatAttackRuleLabels(attackProtection);
-  const scoreComparisonText = scoreComparisonLabel(attackProtection?.scoreComparison);
   const watched = Boolean(planet.occupiedBy?.planetId && watchedPlanetIds.includes(planet.occupiedBy.planetId));
   const meta: PlanetMetaItem[] = [
     { label: formatGalaxyHeatLabel(planet.temperature) },
@@ -818,7 +816,6 @@ function GalaxySlot({
     ...(planet.hasMoon ? [{ label: "Moon" }] : []),
     ...(attackProtection?.defenderInactive ? [{ label: "Inactive", tone: "warning" as const }] : []),
     ...(attackBlockLabel ? [{ label: attackBlockLabel, tone: "warning" as const }] : []),
-    ...(scoreComparisonText ? [{ label: scoreComparisonText, tone: "info" as const }] : []),
     ...attackRuleLabels.map((label) => ({ label, tone: "info" as const })),
     ...(debrisLabel ? [{ label: debrisLabel, tone: "warning" as const }] : []),
     ...(moonChanceLabel ? [{ label: moonChanceLabel, tone: "info" as const }] : []),
