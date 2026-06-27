@@ -314,6 +314,23 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         _setMoonDefenseCount(planetId, defense, total);
     }
 
+    function applyMoonCombatDefenseLosses(uint256 planetId, uint256 losses) external {
+        if (msg.sender != address(game)) revert NotOwner(msg.sender);
+        for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
+            Defense defense = Defense(i);
+            uint32 current = _moonDefenseCounts[planetId][defense];
+            uint256 shift = uint256(i) * 32;
+            // forge-lint: disable-next-line(unsafe-typecast)
+            uint32 lost = uint32(losses >> shift);
+            if (lost != 0) {
+                _setMoonDefenseCount(planetId, defense, current > lost ? current - lost : 0);
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     function setMoonChanceReporter(address nextReporter) external onlyOwner {
         if (nextReporter == address(0)) revert ZeroAddress();
         address oldReporter = moonChanceReporter;
@@ -856,6 +873,15 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
 
     function moonDefenseCount(uint256 planetId, Defense defense) external view returns (uint32) {
         return _moonDefenseCounts[planetId][defense];
+    }
+
+    function moonDefensePacked(uint256 planetId) external view returns (uint256 packed) {
+        for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
+            packed += uint256(_moonDefenseCounts[planetId][Defense(i)]) << (uint256(i) * 32);
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function moonBuildingUpgradeCost(uint256 planetId, MoonBuilding building)
