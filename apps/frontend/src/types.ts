@@ -13,6 +13,7 @@ export interface Planet {
   debrisField: DebrisField | null;
   moonChance: MoonChanceReport | null;
   publicState?: PublicPlanetState | null;
+  publicMoonState?: PublicMoonState | null;
   resources: Resources;
   temperature: { min: number; max: number };
   diameter: number;
@@ -22,6 +23,14 @@ export interface Planet {
   metalMultiplierBps?: number;
   crystalMultiplierBps?: number;
   deuteriumMultiplierBps?: number;
+}
+
+export interface PublicMoonState {
+  resources?: {
+    metal: string;
+    crystal: string;
+    deuterium: string;
+  } | null;
 }
 
 export interface PublicPlanetState {

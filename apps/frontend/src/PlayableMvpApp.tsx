@@ -423,17 +423,7 @@ export type OnChainRefreshPlan = {
 };
 
 function raidTargetFullResources(target: RaidTarget): { metal: string; crystal: string; deuterium: string } | null {
-  if (target.currentResources) return target.currentResources;
-  const raidableResources = target.raidableResources;
-  if (!raidableResources) return null;
-  const metal = safeResourceNumber(raidableResources.metal) ?? 0;
-  const crystal = safeResourceNumber(raidableResources.crystal) ?? 0;
-  const deuterium = safeResourceNumber(raidableResources.deuterium) ?? 0;
-  return {
-    metal: String(Math.max(0, Math.trunc(metal * 2))),
-    crystal: String(Math.max(0, Math.trunc(crystal * 2))),
-    deuterium: String(Math.max(0, Math.trunc(deuterium * 2))),
-  };
+  return target.currentResources;
 }
 
 function combatTechLevelForKey(
@@ -544,6 +534,9 @@ export function raidTargetPlanetForMission(target: RaidTarget): Planet {
     diameter: 0,
     fields: 0,
     hasMoon: target.hasMoon,
+    publicMoonState: target.moonResources
+      ? { resources: target.moonResources }
+      : null,
     metalMultiplierBps: 10_000,
     crystalMultiplierBps: 10_000,
     deuteriumMultiplierBps: 10_000,

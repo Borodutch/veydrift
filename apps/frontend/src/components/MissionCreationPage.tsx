@@ -1017,6 +1017,18 @@ export function forecastRaidLoot(
 
 export function targetResourceIntel(target: Planet | undefined, travelSeconds: number, targetIsMoon = false): TargetResourceIntel {
   if (targetIsMoon) {
+    const current = publicMoonResourceSnapshot(target);
+    if (current) {
+      return {
+        current,
+        projectedArrival: travelSeconds > 0 ? current : null,
+        currentLootable: plunderableResources(current),
+        projectedArrivalLootable: travelSeconds > 0 ? plunderableResources(current) : null,
+        projectionDetail: travelSeconds > 0
+          ? "Moon arrival projection uses the current public moon resource snapshot until moon production data is available."
+          : "Select ships to calculate travel time; current public moon resources are shown now.",
+      };
+    }
     return {
       current: null,
       projectedArrival: null,
@@ -1959,6 +1971,16 @@ function publicResourceSnapshot(target: Planet | undefined): MissionResourceSnap
     metal: Math.max(0, Math.trunc(target.resources.metal)),
     crystal: Math.max(0, Math.trunc(target.resources.crystal)),
     deuterium: Math.max(0, Math.trunc(target.resources.deuterium)),
+  };
+}
+
+function publicMoonResourceSnapshot(target: Planet | undefined): MissionResourceSnapshot | null {
+  const moonResources = target?.publicMoonState?.resources;
+  if (!moonResources) return null;
+  return {
+    metal: safeResourceNumber(moonResources.metal),
+    crystal: safeResourceNumber(moonResources.crystal),
+    deuterium: safeResourceNumber(moonResources.deuterium),
   };
 }
 
