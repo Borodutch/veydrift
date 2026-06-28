@@ -1948,6 +1948,45 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("filters completed mission archives by mission number before pagination", async () => {
+    const chainReader = new class extends MockChainReader {
+      override async getFleetMissionVisibility(): Promise<never> {
+        throw new Error("mission archive search must not call chain reader");
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "100"
+    });
+    for (const missionId of [112n, 212n, 330n]) {
+      for (const log of completedFleetMissionLogs({ missionId, owner: player, originPlanetId: 7n, targetPlanetId: 8n })) {
+        indexer.applyLog(log);
+      }
+    }
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    })(new Request(`http://localhost/wallet/${player}/missions?status=completed&missionNumber=%2312&page=1&pageSize=1`));
+
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(body.pagination).toEqual({
+      page: 1,
+      pageSize: 1,
+      totalEntries: 2,
+      totalPages: 2,
+      hasPreviousPage: false,
+      hasNextPage: true
+    });
+    expect(body.rows).toHaveLength(1);
+    expect(["112", "212"]).toContain(body.rows[0].mission.missionId);
+  });
+
   test("serves paginated incoming attack archive from the indexed read model", async () => {
     const attacker = "0x5555555555555555555555555555555555555555" as Address;
     const chainReader = new class extends MockChainReader {

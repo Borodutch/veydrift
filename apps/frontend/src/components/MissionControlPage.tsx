@@ -73,6 +73,7 @@ interface MissionControlPageProps {
   missionArchive?: FleetMissionArchiveResponse | undefined;
   missionArchiveError?: string | undefined;
   missionArchiveLoading?: boolean | undefined;
+  missionNumberSearch?: string | undefined;
   now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   // VEY-KANEO-440: opens the player's own planet detail, where the Defend control is always shown
   // (enabled+explained where eligible, or disabled+explained on the launch planet itself).
@@ -83,6 +84,7 @@ interface MissionControlPageProps {
   onGlobalMissionArchivePageChange?: ((page: number) => void) | undefined;
   onIncomingAttackArchivePageChange?: ((page: number) => void) | undefined;
   onMissionArchivePageChange?: ((page: number) => void) | undefined;
+  onMissionNumberSearchChange?: ((value: string) => void) | undefined;
   onRecall: (missionId: string) => void;
   onRefresh: () => void;
   reportMissionId?: string | undefined;
@@ -108,6 +110,7 @@ export function MissionControlPage({
   missionArchive,
   missionArchiveError,
   missionArchiveLoading = false,
+  missionNumberSearch = "",
   now,  onCounterplay,
   onDefendPlanet,
   onJoinAttack,
@@ -116,6 +119,7 @@ export function MissionControlPage({
   onGlobalMissionArchivePageChange,
   onIncomingAttackArchivePageChange,
   onMissionArchivePageChange,
+  onMissionNumberSearchChange,
   onRecall,
   onRefresh,
   planetArchetypesByCoordinate = EMPTY_PLANET_ARCHETYPE_LOOKUP,
@@ -135,6 +139,11 @@ export function MissionControlPage({
   // Universe-wide active rows for the "All" tab: the player's own/alliance missions keep their exact
   // classification (direction + lifecycle actions); every other active mission renders read-only.
   const allActiveRows = allActiveMissionRows(allActiveMissions, activeMissionRows);
+  const missionNumberQuery = normalizeMissionNumberSearch(missionNumberSearch);
+  const missionNumberSearchActive = missionNumberQuery.length > 0;
+  const filteredMyMissionRows = filterActiveMissionRowsByMissionNumber(myMissionRows, missionNumberQuery);
+  const filteredAllianceMissionRows = filterActiveMissionRowsByMissionNumber(allianceMissionRows, missionNumberQuery);
+  const filteredAllActiveRows = filterActiveMissionRowsByMissionNumber(allActiveRows, missionNumberQuery);
   const allMissions = uniqueMissions([...incoming, ...outgoing, ...returning, ...joinableAttacks, ...completedMissions]);
   // While a mission is still active (Outbound / Returning / Recalled) it must appear ONLY in the
   // active section. Its battle report — which can already exist for a fleet that fought and is flying
@@ -186,6 +195,9 @@ export function MissionControlPage({
   const walletPlanetIds = walletPlanetIdSet(walletPlanets, planetLookup, walletAddress);
   const rawIncomingAttackPastRows = rawIncomingAttackArchiveRows ?? incomingAttackPastMissionRows(pastMissionRows, walletAddress, walletPlanetIds);
   const incomingAttackRows = dedupePastMissionRows(rawIncomingAttackPastRows, activeMissionIds);
+  const filteredPastMissionRows = filterPastMissionRowsByMissionNumber(pastMissionRows, missionNumberQuery);
+  const filteredGlobalPastMissionRows = filterPastMissionRowsByMissionNumber(globalPastMissionRows, missionNumberQuery);
+  const filteredIncomingAttackRows = filterPastMissionRowsByMissionNumber(incomingAttackRows, missionNumberQuery);
   const incomingAttackPastCollapsedCount = rawIncomingAttackPastRows.length - incomingAttackRows.length;
   const activeCount = activeMissionRows.length;
   const initialLoading = loading && !fleetVisibility;
@@ -199,7 +211,15 @@ export function MissionControlPage({
   return (
     <section className="grid gap-4">
       <PageHeader
-        actions={<RefreshButton loading={loading || missionArchiveLoading} onRefresh={onRefresh} title="Refresh missions" />}
+        actions={(
+          <>
+            <MissionNumberSearchInput
+              onChange={onMissionNumberSearchChange}
+              value={missionNumberSearch}
+            />
+            <RefreshButton loading={loading || missionArchiveLoading} onRefresh={onRefresh} title="Refresh missions" />
+          </>
+        )}
         title="Mission Control"
       />
 
@@ -230,12 +250,14 @@ export function MissionControlPage({
           <ActiveMissionSection
             activePage={view.activePage}
             activeTab={view.activeTab}
-            allRows={allActiveRows}
-            allianceRows={allianceMissionRows}
+            allRows={filteredAllActiveRows}
+            allianceRows={filteredAllianceMissionRows}
             canTransact={canTransact}
             lootByMissionId={lootByMissionId}
             lossesByMissionId={lossesByMissionId}
-            myRows={myMissionRows}
+            missionNumberSearchActive={missionNumberSearchActive}
+            missionNumberSearchLabel={missionNumberQuery}
+            myRows={filteredMyMissionRows}
             now={now}
             onCounterplay={onCounterplay}
             onJoinAttack={onJoinAttack}
@@ -262,14 +284,14 @@ export function MissionControlPage({
             allError={globalMissionArchiveError}
             allLoading={globalMissionArchiveLoading}
             allPagination={globalMissionArchive?.pagination}
-            allRows={globalPastMissionRows}
+            allRows={filteredGlobalPastMissionRows}
             collapsedCount={pastCollapsedCount}
             error={missionArchiveError}
             incomingAttackCollapsedCount={incomingAttackPastCollapsedCount}
             incomingAttackError={incomingAttackArchiveError}
             incomingAttackLoading={incomingAttackArchiveLoading}
             incomingAttackPagination={incomingAttackArchive?.pagination}
-            incomingAttackRows={incomingAttackRows}
+            incomingAttackRows={filteredIncomingAttackRows}
             loading={missionArchiveLoading}
             lootByMissionId={lootByMissionId}
             lossesByMissionId={lossesByMissionId}
@@ -282,7 +304,9 @@ export function MissionControlPage({
             pastPage={view.pastPage}
             pastTab={view.pastTab}
             planetLookup={planetLookup}
-            rows={pastMissionRows}
+            missionNumberSearchActive={missionNumberSearchActive}
+            missionNumberSearchLabel={missionNumberQuery}
+            rows={filteredPastMissionRows}
             wallet={walletAddress}
             walletPlanetIds={walletPlanetIds}
           />
@@ -670,6 +694,8 @@ function ActiveMissionSection({
   canTransact,
   lootByMissionId,
   lossesByMissionId,
+  missionNumberSearchActive,
+  missionNumberSearchLabel,
   myRows,
   now,  onCounterplay,
   onJoinAttack,
@@ -687,6 +713,8 @@ function ActiveMissionSection({
   canTransact: boolean;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
+  missionNumberSearchActive: boolean;
+  missionNumberSearchLabel: string;
   myRows: ActiveMissionRow[];
   now: number;  onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onJoinAttack: (missionId: string, targetPlanetId: string, targetCoords: { galaxy: number; system: number; position: number } | null) => void;
@@ -712,6 +740,7 @@ function ActiveMissionSection({
     wallet,
     walletPlanetIds,
   };
+  const searchEmptyLabel = missionSearchEmptyLabel(missionNumberSearchLabel);
   return (
     <section className="min-w-0 overflow-hidden rounded-lg border border-white/10 bg-[#101624]" data-active-tab={activeTab}>
       <div className="flex flex-col gap-2 border-b border-white/10 bg-black/20 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
@@ -734,11 +763,45 @@ function ActiveMissionSection({
       {ACTIVE_MISSION_TABS.map((tab) => (
         <div data-active-tab-panel={tab.key} hidden={tab.key !== activeTab} key={tab.key} role="tabpanel">
           {/* Only the initially-visible tab restores its remembered page; the hidden tabs start at 0. */}
-          <ActiveMissionList emptyLabel={tab.emptyLabel} initialPage={tab.key === activeTab ? activePage : 0} rows={rowsByTab[tab.key]} {...sharedRowProps} />
+          <ActiveMissionList
+            emptyLabel={missionNumberSearchActive ? searchEmptyLabel : tab.emptyLabel}
+            initialPage={tab.key === activeTab ? activePage : 0}
+            rows={rowsByTab[tab.key]}
+            {...sharedRowProps}
+          />
         </div>
       ))}
     </section>
   );
+}
+
+function MissionNumberSearchInput({
+  onChange,
+  value,
+}: {
+  onChange?: ((value: string) => void) | undefined;
+  value: string;
+}) {
+  return (
+    <label className="flex min-w-[13rem] max-w-full flex-1 items-center gap-2 rounded-md border border-white/10 bg-[#080d18]/95 px-3 py-2 text-xs text-slate-400 sm:flex-none">
+      <span className="whitespace-nowrap font-semibold uppercase tracking-[0.12em] text-slate-500">Mission #</span>
+      <input
+        aria-label="Search missions by number"
+        className="h-5 min-w-0 flex-1 bg-transparent font-mono text-sm text-white outline-none placeholder:text-slate-600"
+        inputMode="numeric"
+        onInput={(event) => onChange?.(event.currentTarget.value)}
+        placeholder="1473"
+        type="search"
+        value={value}
+      />
+    </label>
+  );
+}
+
+function missionSearchEmptyLabel(missionNumberSearchLabel: string): string {
+  return missionNumberSearchLabel
+    ? `No missions match #${missionNumberSearchLabel}.`
+    : "No missions match this number.";
 }
 
 function ActiveMissionList({
@@ -1525,6 +1588,8 @@ function PastMissionSection({
   loading,
   lootByMissionId,
   lossesByMissionId,
+  missionNumberSearchActive,
+  missionNumberSearchLabel,
   now,
   onAllPageChange,
   onIncomingAttackPageChange,
@@ -1553,6 +1618,8 @@ function PastMissionSection({
   loading: boolean;
   lootByMissionId: ReadonlyMap<string, BattleReport["loot"]>;
   lossesByMissionId: ReadonlyMap<string, MissionLossSummary>;
+  missionNumberSearchActive: boolean;
+  missionNumberSearchLabel: string;
   now: number;
   onAllPageChange?: ((page: number) => void) | undefined;
   onIncomingAttackPageChange?: ((page: number) => void) | undefined;
@@ -1566,10 +1633,11 @@ function PastMissionSection({
   wallet?: string | undefined;
   walletPlanetIds: ReadonlySet<string>;
 }) {
+  const searchEmptyLabel = missionSearchEmptyLabel(missionNumberSearchLabel);
   const dataByTab: Record<PastMissionTabKey, PastMissionTabData> = {
     all: {
       collapsedCount: allCollapsedCount,
-      emptyLabel: "No completed missions in the universe yet.",
+      emptyLabel: missionNumberSearchActive ? searchEmptyLabel : "No completed missions in the universe yet.",
       error: allError,
       loading: allLoading,
       onPageChange: onAllPageChange,
@@ -1578,7 +1646,7 @@ function PastMissionSection({
     },
     incomingAttacks: {
       collapsedCount: incomingAttackCollapsedCount,
-      emptyLabel: "No completed incoming attacks are visible for this wallet yet.",
+      emptyLabel: missionNumberSearchActive ? searchEmptyLabel : "No completed incoming attacks are visible for this wallet yet.",
       error: incomingAttackError,
       loading: incomingAttackLoading,
       onPageChange: onIncomingAttackPageChange,
@@ -1587,7 +1655,7 @@ function PastMissionSection({
     },
     mine: {
       collapsedCount,
-      emptyLabel: "No completed missions are visible for this wallet yet.",
+      emptyLabel: missionNumberSearchActive ? searchEmptyLabel : "No completed missions are visible for this wallet yet.",
       error,
       loading,
       onPageChange,
@@ -2216,6 +2284,25 @@ function chronologicalPastMissionRows(completedMissions: FleetMissionSummary[], 
 
 function pastRowMissionId(row: PastMissionRow): string {
   return row.kind === "battleReport" ? row.report.missionId : row.mission.missionId;
+}
+
+export function normalizeMissionNumberSearch(value: string): string {
+  return value.replace(/\D+/g, "");
+}
+
+export function missionIdMatchesMissionNumberSearch(missionId: string, missionNumberSearch: string): boolean {
+  const normalized = normalizeMissionNumberSearch(missionNumberSearch);
+  return normalized.length === 0 || missionId.includes(normalized);
+}
+
+function filterActiveMissionRowsByMissionNumber(rows: ActiveMissionRow[], missionNumberSearch: string): ActiveMissionRow[] {
+  if (!missionNumberSearch) return rows;
+  return rows.filter((row) => missionIdMatchesMissionNumberSearch(row.mission.missionId, missionNumberSearch));
+}
+
+function filterPastMissionRowsByMissionNumber(rows: PastMissionRow[], missionNumberSearch: string): PastMissionRow[] {
+  if (!missionNumberSearch) return rows;
+  return rows.filter((row) => missionIdMatchesMissionNumberSearch(pastRowMissionId(row), missionNumberSearch));
 }
 
 function dedupePastMissionRows(

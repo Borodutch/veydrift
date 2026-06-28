@@ -2377,6 +2377,7 @@ function indexedMissionArchive(
   const rows = filterMissionArchiveRows(
     chronologicalMissionArchiveRows(archive.completedMissions, archive.battleReports),
     url.searchParams.get("filter"),
+    url.searchParams.get("missionNumber"),
     wallet,
     archive.ownedPlanetIds
   );
@@ -2404,10 +2405,21 @@ function indexedMissionArchive(
 function filterMissionArchiveRows(
   rows: FleetMissionArchiveEntry[],
   filter: string | null,
+  missionNumber: string | null,
   wallet: `0x${string}`,
   ownedPlanetIds: ReadonlySet<string>
 ): FleetMissionArchiveEntry[] {
-  if (filter !== "incomingAttacks") return rows;
+  const scopedRows = filter === "incomingAttacks"
+    ? filterIncomingAttackMissionArchiveRows(rows, wallet, ownedPlanetIds)
+    : rows;
+  return filterMissionArchiveRowsByNumber(scopedRows, missionNumber);
+}
+
+function filterIncomingAttackMissionArchiveRows(
+  rows: FleetMissionArchiveEntry[],
+  wallet: `0x${string}`,
+  ownedPlanetIds: ReadonlySet<string>
+): FleetMissionArchiveEntry[] {
   const walletLower = wallet.toLowerCase();
   return rows.filter((row) => {
     if (row.kind === "battleReport") return ownedPlanetIds.has(row.report.targetPlanetId);
@@ -2417,8 +2429,25 @@ function filterMissionArchiveRows(
   });
 }
 
+function missionArchiveRowMissionId(row: FleetMissionArchiveEntry): string {
+  return row.kind === "battleReport" ? row.report.missionId : row.mission.missionId;
+}
+
+function normalizedMissionNumberSearch(value: string): string {
+  return value.replace(/\D+/g, "");
+}
+
+function filterMissionArchiveRowsByNumber(
+  rows: FleetMissionArchiveEntry[],
+  missionNumber: string | null
+): FleetMissionArchiveEntry[] {
+  const missionNumberQuery = normalizedMissionNumberSearch(missionNumber ?? "");
+  if (!missionNumberQuery) return rows;
+  return rows.filter((row) => missionArchiveRowMissionId(row).includes(missionNumberQuery));
+}
+
 function globalMissionArchive(url: URL, indexer: SettlementIndexer): GlobalMissionArchiveResponse {
-  const rows = globalMissionArchiveRows(indexer);
+  const rows = filterMissionArchiveRowsByNumber(globalMissionArchiveRows(indexer), url.searchParams.get("missionNumber"));
   const requested = missionArchivePagination(url);
   const totalEntries = rows.length;
   const totalPages = Math.max(1, Math.ceil(totalEntries / requested.pageSize));

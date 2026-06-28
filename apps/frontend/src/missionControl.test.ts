@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage, StationedDefenseSection, allActiveMissionRows, buildMissionControlViewQuery, missionPlanetCoordinateKey, missionReport, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
+import { MissionControlPage, StationedDefenseSection, allActiveMissionRows, buildMissionControlViewQuery, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
 import { MissionRouteCell, missionEndpoint, type MissionPlanetIdentity } from "./components/missionRoute";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
@@ -133,6 +133,41 @@ describe("Mission Control battle reports", () => {
       await fetchFleetMissionArchive("https://api.example.test/", wallet, { filter: "incomingAttacks", page: 1, pageSize: 25 });
       expect(requestedUrls).toEqual([
         `https://api.example.test/wallet/${wallet}/missions?status=completed&filter=incomingAttacks&page=1&pageSize=25`,
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("fetches mission archives with mission-number search", async () => {
+    const originalFetch = globalThis.fetch;
+    const requestedUrls: string[] = [];
+    const wallet = "0x1111111111111111111111111111111111111111";
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      requestedUrls.push(String(input));
+      return new Response(JSON.stringify({
+        wallet,
+        homePlanetId: "7",
+        rows: [{ kind: "mission", mission: mission("1473") }],
+        pagination: {
+          page: 1,
+          pageSize: 25,
+          totalEntries: 1,
+          totalPages: 1,
+          hasPreviousPage: false,
+          hasNextPage: false,
+        },
+      }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as typeof fetch;
+
+    try {
+      await fetchFleetMissionArchive("https://api.example.test/", wallet, { missionNumber: "147", page: 1, pageSize: 25 });
+      expect(requestedUrls).toEqual([
+        `https://api.example.test/wallet/${wallet}/missions?status=completed&missionNumber=147&page=1&pageSize=25`,
       ]);
     } finally {
       globalThis.fetch = originalFetch;
@@ -592,6 +627,75 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("All (26)");
     // Server-side pagination range proves the 25-per-page split (26 rows -> first page shows 1-25).
     expect(text).toContain("1-25 of 26");
+  });
+
+  test("filters Mission Control active and past rows by mission number and clears back to the full list", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const filtered = collectText(MissionControlPage({
+      ...missionControlProps(now, {
+        incoming: [mission("123", "Attack", "Outbound", "0x2222222222222222222222222222222222222222", "8", "7", now + 60_000)],
+        outgoing: [mission("45", "Transport", "Outbound", owner, "7", "9", now + 120_000)],
+      }),
+      missionArchive: {
+        wallet: owner,
+        homePlanetId: "7",
+        rows: [
+          { kind: "mission", mission: mission("9123", "Transport", "Returned", owner) },
+          { kind: "mission", mission: mission("77", "Transport", "Returned", owner) },
+        ],
+        pagination: { page: 1, pageSize: 25, totalEntries: 2, totalPages: 1, hasPreviousPage: false, hasNextPage: false },
+      },
+      missionNumberSearch: "#123",
+    })).join(" ");
+
+    expect(filtered).toContain("Mission #");
+    expect(filtered).toContain("#123");
+    expect(filtered).toContain("#9123");
+    expect(filtered).not.toContain("#45");
+    expect(filtered).not.toContain("#77");
+
+    const cleared = collectText(MissionControlPage({
+      ...missionControlProps(now, {
+        incoming: [mission("123", "Attack", "Outbound", "0x2222222222222222222222222222222222222222", "8", "7", now + 60_000)],
+        outgoing: [mission("45", "Transport", "Outbound", owner, "7", "9", now + 120_000)],
+      }),
+      missionArchive: {
+        wallet: owner,
+        homePlanetId: "7",
+        rows: [
+          { kind: "mission", mission: mission("9123", "Transport", "Returned", owner) },
+          { kind: "mission", mission: mission("77", "Transport", "Returned", owner) },
+        ],
+        pagination: { page: 1, pageSize: 25, totalEntries: 2, totalPages: 1, hasPreviousPage: false, hasNextPage: false },
+      },
+      missionNumberSearch: "",
+    })).join(" ");
+
+    expect(cleared).toContain("#123");
+    expect(cleared).toContain("#45");
+    expect(cleared).toContain("#9123");
+    expect(cleared).toContain("#77");
+  });
+
+  test("shows a compact empty state when mission-number search has no visible matches", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionControlPage({
+      ...missionControlProps(now, {
+        outgoing: [mission("45", "Transport", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now + 120_000)],
+      }),
+      missionNumberSearch: "999",
+    })).join(" ");
+
+    expect(text).toContain("No missions match #999.");
+    expect(text).not.toContain("#45");
+  });
+
+  test("normalizes mission-number search and supports numeric partial matching", () => {
+    expect(normalizeMissionNumberSearch(" #14-73 ")).toBe("1473");
+    expect(missionIdMatchesMissionNumberSearch("1473", "47")).toBe(true);
+    expect(missionIdMatchesMissionNumberSearch("1473", "#999")).toBe(false);
+    expect(missionIdMatchesMissionNumberSearch("1473", "")).toBe(true);
   });
 
   test("shows the Alliance empty state when there are no joinable attacks", () => {
