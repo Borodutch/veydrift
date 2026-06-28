@@ -166,7 +166,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
-        _settleResources(originPlanetId);
+        _settleActionPlanet(originPlanetId);
         if (
             missionType == FleetMissionType.Colonize
                 || uint8(missionType) > uint8(FleetMissionType.Intercept)
@@ -356,7 +356,7 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
         if (capacity == 0) revert InvalidQuantity();
         _requireMissionShips(originPlanetId, ships);
 
-        _settleResources(originPlanetId);
+        _settleActionPlanet(originPlanetId);
         uint256 travelDistance = _planetDistance(originPlanetId, attack.targetPlanetId);
         uint128 fuelCost = _toUint128(
             _ogameMissionFuelCost(
