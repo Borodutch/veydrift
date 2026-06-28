@@ -1671,6 +1671,41 @@ contract VeydriftGameTest is Test {
         _assertLastPlanetSettledMatchesPreview(planetId);
     }
 
+    function testFleetLaunchSettlesReadyBuildingBeforeSpendingCargo() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setBuildingLevel(originPlanetId, Building.CrystalMine, 12);
+        _setBuildingLevel(originPlanetId, Building.SolarPlant, 40);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 2);
+        _setResources(originPlanetId, 10_000, 0, 10_000);
+
+        (, uint256 oldCrystalPerHour,) = game.productionPerHour(originPlanetId);
+        uint64 readyAt = uint64(block.timestamp + 1);
+        _setBuildingConstruction(originPlanetId, Building.CrystalMine, 13, readyAt);
+        _setPlanetLastSettledAt(originPlanetId, readyAt);
+        vm.warp(uint256(readyAt) + 1 hours);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 2;
+        // Crystal mine production for one test hour is far below uint128.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint128 cargoCrystal = uint128(oldCrystalPerHour + 1);
+        VeydriftGameStorage.Resources memory cargo =
+            VeydriftGameStorage.Resources({metal: 0, crystal: cargoCrystal, deuterium: 0});
+
+        vm.prank(player);
+        game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            cargo,
+            779
+        );
+
+        assertEq(game.buildingLevel(originPlanetId, Building.CrystalMine), 13);
+        assertFalse(game.activeBuildingConstruction(originPlanetId).active);
+    }
+
     function testAttackRaidEmitsDefenderAuthoritativePlanetSettled() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
