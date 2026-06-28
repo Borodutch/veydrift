@@ -28,6 +28,7 @@ import {
   MissionControlPage,
   missionPlanetCoordinateKey,
   missionSystemKeysMissingUniverseArchetypes,
+  normalizeMissionNumberSearch,
 } from "./components/MissionControlPage";
 import { MissionCreationPage, type CombatTechLevels, type MissionCargoDraft, type MissionLaunchDraft } from "./components/MissionCreationPage";
 import { BattleReportsPage } from "./components/BattleReportsPage";
@@ -2868,6 +2869,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
   const [missionArchivePage, setMissionArchivePage] = useState(1);
   const [missionArchiveLoading, setMissionArchiveLoading] = useState(false);
   const [missionArchiveError, setMissionArchiveError] = useState<string | undefined>();
+  const [missionNumberSearch, setMissionNumberSearch] = useState("");
+  const missionNumberArchiveQuery = normalizeMissionNumberSearch(missionNumberSearch);
   const [incomingAttackArchive, setIncomingAttackArchive] = useState<FleetMissionArchiveResponse | undefined>();
   const [incomingAttackArchivePage, setIncomingAttackArchivePage] = useState(1);
   const [incomingAttackArchiveLoading, setIncomingAttackArchiveLoading] = useState(false);
@@ -4062,7 +4065,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
       error: undefined,
     }));
     try {
-      const nextArchive = await fetchFleetMissionArchive(apiBaseUrl, account, { page, pageSize: 25 });
+      const nextArchive = await fetchFleetMissionArchive(apiBaseUrl, account, { missionNumber: missionNumberArchiveQuery, page, pageSize: 25 });
       setMissionArchive(nextArchive);
       setMissionArchivePage(nextArchive.pagination.page);
     } catch (error) {
@@ -4076,7 +4079,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     } finally {
       setMissionArchiveLoading(false);
     }
-  }, [account, activePlanetId, apiBaseUrl, setMissionArchive]);
+  }, [account, activePlanetId, apiBaseUrl, missionNumberArchiveQuery, setMissionArchive]);
 
   const loadIncomingAttackArchive = useCallback(async (page: number) => {
     if (!apiBaseUrl || !account) {
@@ -4089,7 +4092,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     setIncomingAttackArchiveLoading(true);
     setIncomingAttackArchiveError(undefined);
     try {
-      const nextArchive = await fetchFleetMissionArchive(apiBaseUrl, account, { filter: "incomingAttacks", page, pageSize: 25 });
+      const nextArchive = await fetchFleetMissionArchive(apiBaseUrl, account, { filter: "incomingAttacks", missionNumber: missionNumberArchiveQuery, page, pageSize: 25 });
       setIncomingAttackArchive(nextArchive);
       setIncomingAttackArchivePage(nextArchive.pagination.page);
     } catch (error) {
@@ -4098,7 +4101,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     } finally {
       setIncomingAttackArchiveLoading(false);
     }
-  }, [account, apiBaseUrl]);
+  }, [account, apiBaseUrl, missionNumberArchiveQuery]);
 
   const loadAllActiveMissions = useCallback(async () => {
     if (!apiBaseUrl) {
@@ -4160,7 +4163,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
       error: undefined,
     }));
     try {
-      const nextArchive = await fetchGlobalMissionArchive(apiBaseUrl, { page, pageSize: 25 });
+      const nextArchive = await fetchGlobalMissionArchive(apiBaseUrl, { missionNumber: missionNumberArchiveQuery, page, pageSize: 25 });
       setGlobalMissionArchive(nextArchive);
       setGlobalMissionArchivePage(nextArchive.pagination.page);
     } catch (error) {
@@ -4174,7 +4177,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     } finally {
       setGlobalMissionArchiveLoading(false);
     }
-  }, [activePlanetId, apiBaseUrl, setGlobalMissionArchive]);
+  }, [activePlanetId, apiBaseUrl, missionNumberArchiveQuery, setGlobalMissionArchive]);
 
   useEffect(() => {
     if (page === "mission-control") {
@@ -7605,6 +7608,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           missionArchive={missionArchive}
           missionArchiveError={missionArchiveSection.status.error ?? missionArchiveError}
           missionArchiveLoading={missionArchiveLoading || missionArchiveSection.status.loading}
+          missionNumberSearch={missionNumberSearch}
           now={now}
           onCounterplay={handleMissionCounterplay}
           onDefendPlanet={handleDefendPlanet}
@@ -7615,6 +7619,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           onGlobalMissionArchivePageChange={(page) => void loadGlobalMissionArchive(page)}
           onIncomingAttackArchivePageChange={(page) => void loadIncomingAttackArchive(page)}
           onMissionArchivePageChange={(page) => void loadMissionArchive(page)}
+          onMissionNumberSearchChange={setMissionNumberSearch}
           onRefresh={() => void activePlanetSections.refresh("fleetVisibilityState")}
           planetArchetypesByCoordinate={missionPlanetArchetypesByCoordinate}
           reportMissionId={missionReportId ?? undefined}
