@@ -1114,6 +1114,17 @@ describe("Playable MVP app display helpers", () => {
     ]);
   });
 
+  test("does not invent full attack target resources from Raid Finder loot", () => {
+    const target = raidTargetPlanetForMission(raidTarget({
+      currentResources: null,
+      raidableResources: { metal: "1200", crystal: "450", deuterium: "125" },
+      loot: 1775,
+    }));
+
+    expect(target.publicState?.resources).toBeNull();
+    expect(target.resources).toMatchObject({ metal: 0, crystal: 0, deuterium: 0 });
+  });
+
   test("blocks research completion transactions until the active queue is ready", () => {
     expect(researchCompletionUnavailableReasonFor({
       canTransact: true,
