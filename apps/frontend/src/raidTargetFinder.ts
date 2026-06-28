@@ -82,6 +82,7 @@ export type RaidTarget = {
   ownerDisplayName: string | null;
   alliance: RaidTargetAlliance | null;
   hasMoon: boolean;
+  moonResources: OnChainResources | null;
   // Flight distance from the viewer's active planet, or null when no origin is known.
   distance: number | null;
   // Raidable resource total (metal + crystal + deuterium) as a finite number.
@@ -415,6 +416,7 @@ export function buildRaidTargets({
         ownerDisplayName: entry.displayName ?? null,
         alliance,
         hasMoon: Boolean(planet.hasMoon),
+        moonResources: planet.moon?.resourcesAsOfNow ?? planet.moon?.resources ?? null,
         distance: origin ? fleetMissionDistance(origin, planet.coordinates) : null,
         loot: safeNumber(tactical?.raidableResourceTotal),
         grossLoot: safeNumber(tactical?.grossResourceTotal),

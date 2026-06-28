@@ -75,6 +75,8 @@ const shipCompletedTopic = "0xd261dd8008086de5ef74708b23f5f21be1962fee33795961e0
 const planetSettledTopic = "0x7faee98c7c745f9c9fb2117a44185f57454dac3013383364df4c22b5f9bc4077";
 const planetShipCountChangedTopic = "0x6a0fc6b08970eb9f7e15767e6902471ca8731c57dbe4577c76021e1f9d6762cf";
 const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d726e0ae4a2e39e5c3b682a7bbd3";
+const moonCreatedTopic = "0x395ddd11cfc613034fc4941029df5968212af4a52ba611d84d3257824c81f4a4";
+const moonResourcesSettledTopic = "0xb20fd9e652e1b740544f362fb3047c43a7bf0d6c7fbf0f5cab5f1f939aac6917";
 const researchQueuedTopic = "0x2c3d4c823cd097fa6cbea60fb91c561d6a497270c397a8c8258170458fe69e73";
 const fleetMissionLaunchedTopic = "0x95e2cb506aa14052bac412e42f47fb34d9234819a960761a7bc7f1920c0ab456";
 const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d23be8867be4de33ff29";
@@ -7566,6 +7568,24 @@ describe("Veydrift backend", () => {
       ],
       data: abiWords(1n)
     });
+    indexer.applyLog({
+      blockNumber: "0x84",
+      transactionHash: "0xmoon-highscore",
+      logIndex: "0x0",
+      topics: [
+        moonCreatedTopic,
+        addressTopic(player),
+        topic(7n)
+      ],
+      data: abiWords(2n, 44n, 9n, 12n, 8777n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x85",
+      transactionHash: "0xmoonresources-highscore",
+      logIndex: "0x0",
+      topics: [moonResourcesSettledTopic, topic(7n)],
+      data: abiWords(7386n, 2472n, 1335n, 1770000300n)
+    });
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader,
@@ -7602,6 +7622,20 @@ describe("Veydrift backend", () => {
             position: 9
           },
           archetype: "temperate-ocean",
+          hasMoon: true,
+          moon: {
+            exists: true,
+            resources: {
+              metal: "7386",
+              crystal: "2472",
+              deuterium: "1335"
+            },
+            resourcesAsOfNow: {
+              metal: "7386",
+              crystal: "2472",
+              deuterium: "1335"
+            }
+          },
           tactical: {
             raidableResources: {
               metal: "2500",

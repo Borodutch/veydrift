@@ -909,6 +909,11 @@ export type HighscorePlanet = {
   };
   archetype: PlanetType;
   hasMoon?: boolean | undefined;
+  moon?: {
+    exists: boolean;
+    resources?: OnChainResources | null;
+    resourcesAsOfNow?: OnChainResources | null;
+  } | null;
   tactical?: {
     currentResources?: OnChainResources;
     raidableResources: OnChainResources;

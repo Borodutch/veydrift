@@ -192,6 +192,12 @@ describe("buildRaidTargets", () => {
       entries: [entry({ wallet: "0xa", planets: [planet({
         planetId: "1",
         coordinates: { galaxy: 1, system: 1, position: 5 },
+        hasMoon: true,
+        moon: {
+          exists: true,
+          resources: { metal: "7000", crystal: "2000", deuterium: "1000" },
+          resourcesAsOfNow: { metal: "7386", crystal: "2472", deuterium: "1335" },
+        },
         tactical: {
           raidableResources: { metal: "1000", crystal: "500", deuterium: "100" },
           raidableResourceTotal: "1600",
@@ -211,6 +217,7 @@ describe("buildRaidTargets", () => {
     // LOOT is the ~50% plunder of the planet's full accrued public resources (VEY-KANEO-454).
     expect(target.grossLoot).toBe(3200);
     expect(target.currentResources).toEqual({ metal: "2200", crystal: "900", deuterium: "300" });
+    expect(target.moonResources).toEqual({ metal: "7386", crystal: "2472", deuterium: "1335" });
     expect(target.productionPerHour).toEqual({ metal: "120", crystal: "60", deuterium: "24" });
     expect(target.storageCaps).toEqual({ metal: "10000", crystal: "10000", deuterium: "10000" });
     expect(target.combatPower).toBe(6000);
@@ -391,6 +398,7 @@ describe("sortRaidTargets", () => {
       ownerDisplayName: null,
       alliance: null,
       hasMoon: false,
+      moonResources: null,
       distance: 0,
       loot: 0,
       grossLoot: 0,

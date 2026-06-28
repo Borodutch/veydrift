@@ -236,6 +236,9 @@ describe("mission creation", () => {
 
     const target = targetPlanet({
       hasMoon: true,
+      publicMoonState: {
+        resources: { metal: "7386", crystal: "2472", deuterium: "1335" },
+      },
       publicState: {
         resources: { metal: "100000", crystal: "80000", deuterium: "60000" },
         buildings: null,
@@ -257,9 +260,11 @@ describe("mission creation", () => {
       true,
     );
 
-    expect(moonResourceIntel.current).toBeNull();
-    expect(moonResourceIntel.projectedArrivalLootable).toBeNull();
-    expect(moonResourceIntel.projectionDetail).toContain("Moon resource intel");
+    expect(moonResourceIntel.current).toEqual({ metal: 7_386, crystal: 2_472, deuterium: 1_335 });
+    expect(moonResourceIntel.current).not.toEqual({ metal: 100_000, crystal: 80_000, deuterium: 60_000 });
+    expect(moonResourceIntel.projectedArrival).toEqual({ metal: 7_386, crystal: 2_472, deuterium: 1_335 });
+    expect(moonResourceIntel.projectedArrivalLootable).toEqual({ metal: 3_693, crystal: 1_236, deuterium: 667 });
+    expect(moonResourceIntel.projectionDetail).toContain("current public moon resource snapshot");
     expect(moonBattleForecast.defenderPower).toBeNull();
     expect(moonBattleForecast.detail).toContain("Moon fleet and defense intel");
   });

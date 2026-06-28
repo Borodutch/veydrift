@@ -1125,6 +1125,18 @@ describe("Playable MVP app display helpers", () => {
     expect(target.resources).toMatchObject({ metal: 0, crystal: 0, deuterium: 0 });
   });
 
+  test("carries Raid Finder moon resources into attack mission public moon state", () => {
+    const target = raidTargetPlanetForMission(raidTarget({
+      currentResources: { metal: "100000", crystal: "80000", deuterium: "60000" },
+      hasMoon: true,
+      moonResources: { metal: "7386", crystal: "2472", deuterium: "1335" },
+    }));
+
+    expect(target.publicState?.resources).toEqual({ metal: "100000", crystal: "80000", deuterium: "60000" });
+    expect(target.publicMoonState?.resources).toEqual({ metal: "7386", crystal: "2472", deuterium: "1335" });
+    expect(target.publicMoonState?.resources).not.toEqual(target.publicState?.resources);
+  });
+
   test("blocks research completion transactions until the active queue is ready", () => {
     expect(researchCompletionUnavailableReasonFor({
       canTransact: true,
@@ -3176,6 +3188,7 @@ function raidTarget(overrides: Partial<RaidTarget> = {}): RaidTarget {
     ownerDisplayName: "Raider",
     alliance: null,
     hasMoon: false,
+    moonResources: null,
     distance: 42,
     loot: 0,
     grossLoot: 0,

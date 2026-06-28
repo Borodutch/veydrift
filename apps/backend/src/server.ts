@@ -3447,6 +3447,11 @@ type RankedHighscorePlanet = {
   };
   archetype: ReturnType<typeof planetArchetypeForTemperature>;
   hasMoon: boolean;
+  moon: {
+    exists: boolean;
+    resources: Resources | null;
+    resourcesAsOfNow?: Resources | null;
+  } | null;
   tactical: {
     currentResources: Resources;
     raidableResources: Resources;
@@ -3905,6 +3910,14 @@ function rankedHighscorePlanets(
       ? indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet
       : planet;
     const tactical = indexedPlanetTacticalSummary(accrued, buildings, ships, defenses, technologyLevels);
+    const moonState = indexer?.moonState(planet.owner, planet.planetId);
+    const moon = moonState?.moon
+      ? {
+          exists: true,
+          resources: moonState.resources ?? null,
+          ...(moonState.resourcesAsOfNow ? { resourcesAsOfNow: moonState.resourcesAsOfNow } : {})
+        }
+      : null;
 
     return {
       planetId: planet.planetId,
@@ -3915,7 +3928,8 @@ function rankedHighscorePlanets(
         position: planet.position
       },
       archetype: planetArchetypeForTemperature(planet.temperature),
-      hasMoon: indexer?.hasMoon(planet.planetId) ?? false,
+      hasMoon: Boolean(moon) || (indexer?.hasMoon(planet.planetId) ?? false),
+      moon,
       tactical
     };
   });

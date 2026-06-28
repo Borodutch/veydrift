@@ -534,6 +534,9 @@ export function raidTargetPlanetForMission(target: RaidTarget): Planet {
     diameter: 0,
     fields: 0,
     hasMoon: target.hasMoon,
+    publicMoonState: target.moonResources
+      ? { resources: target.moonResources }
+      : null,
     metalMultiplierBps: 10_000,
     crystalMultiplierBps: 10_000,
     deuteriumMultiplierBps: 10_000,
