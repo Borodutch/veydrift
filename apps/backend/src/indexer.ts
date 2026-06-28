@@ -479,7 +479,7 @@ export class SettlementIndexer {
   // function of indexed contract-mirror state and is valid until the next event-listener mutation.
   private leaderboardCache:
     | {
-      generation: number;
+      generation: string;
       planetsByOwner: Map<string, SettledPlanetEvent[]>;
       entries: HighscoreEntry[];
     }
@@ -1779,20 +1779,20 @@ export class SettlementIndexer {
     });
   }
 
-  // Whole-universe highscore leaderboard, memoized against the indexer's state generation. The
-  // scores depend only on integrated (completed) state, so the same result is valid for every
-  // request until the next touch() — turning the rankings / raid-finder hot path from an
-  // O(all-planets) recompute per request into an O(1) lookup between block integrations
-  // (VEY-KANEO-467).
+  // Whole-universe highscore leaderboard, memoized against the persisted indexed-state generation.
+  // Reader workers do not see the writer's in-memory stateGeneration, so this uses the shared DB
+  // token to avoid serving stale Raid Finder planet resources after another process indexes a spend
+  // or raid settlement. (VEY-KANEO-467)
   highscoreLeaderboard(): { planetsByOwner: Map<string, SettledPlanetEvent[]>; entries: HighscoreEntry[] } {
+    const generation = this.indexedStateCacheVersion();
     const cached = this.leaderboardCache;
-    if (cached && cached.generation === this.stateGeneration) {
+    if (cached && cached.generation === generation) {
       return cached;
     }
     const planetsByOwner = this.settledPlanetsByOwner();
     const entries = this.highscoreEntriesForOwners(planetsByOwner);
     this.leaderboardCache = {
-      generation: this.stateGeneration,
+      generation,
       planetsByOwner,
       entries
     };

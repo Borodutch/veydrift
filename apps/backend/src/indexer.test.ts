@@ -7531,6 +7531,47 @@ describe("SettlementIndexer", () => {
     expect(third.entries).toEqual(indexer.highscoreEntriesForOwners(indexer.settledPlanetsByOwner()));
   });
 
+  test("reader highscore leaderboard cache observes writer resource updates", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-highscore-cache-"));
+    const databasePath = join(dir, "contract-state.sqlite");
+    const chainReader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+
+    try {
+      const writer = new SettlementIndexer(chainReader, 100n, { databasePath });
+      await writer.rebuild();
+      const reader = new SettlementIndexer(chainReader, 100n, {
+        databasePath,
+        runStartupBackfill: false
+      });
+
+      const before = reader.highscoreLeaderboard();
+      expect(before.planetsByOwner.get(player)?.[0]?.resources.metal).toBe("5000");
+
+      const now = Math.floor(Date.now() / 1000);
+      writer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: "0xraid-spend",
+        logIndex: "0x0",
+        topics: [planetSettledTopic, topic(BigInt(planet.planetId))],
+        data: abiWords(1234n, 567n, 89n, BigInt(now))
+      });
+
+      const after = reader.highscoreLeaderboard();
+      expect(after).not.toBe(before);
+      expect(after.planetsByOwner.get(player)?.[0]?.resources).toEqual({
+        metal: "1234",
+        crystal: "567",
+        deuterium: "89"
+      });
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("keeps the indexed highscore cache version stable for mission-only events", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
