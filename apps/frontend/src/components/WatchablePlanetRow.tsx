@@ -22,6 +22,7 @@ export function WatchablePlanetRow({
   isHome = false,
   leadingSlot,
   meta,
+  moonActionSlot,
   onInspect,
   onInspectMoon,
   onSelectAlliance,
@@ -41,6 +42,7 @@ export function WatchablePlanetRow({
   isHome?: boolean | undefined;
   leadingSlot?: ComponentChildren;
   meta: PlanetMetaItem[];
+  moonActionSlot?: ComponentChildren;
   onInspect: (coords: Coordinates) => void;
   onInspectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
@@ -122,8 +124,9 @@ export function WatchablePlanetRow({
           </div>
           {planet.hasMoon ? (
             <PlanetMoonSubsection
+              action={moonActionSlot}
               label={planet.moonName ?? "Moon"}
-              onClick={onInspectMoon ? () => onInspectMoon(coords) : undefined}
+              onClick={moonActionSlot ? undefined : onInspectMoon ? () => onInspectMoon(coords) : undefined}
               planetType={planet.type}
               title={`Open ${planet.moonName ?? "Moon"} at [${coords.galaxy}:${coords.system}:${coords.position}]`}
             />

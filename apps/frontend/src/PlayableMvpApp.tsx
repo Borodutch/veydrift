@@ -245,6 +245,8 @@ import {
   type FleetMissionPlanetReference,
   type FleetMissionSummary,
   type GlobalMissionArchiveResponse,
+  type HighscoreEntry,
+  type HighscorePlanet,
   type MissionDetailResponse,
   type OnChainResources,
   type OrbitBodyKind,
@@ -2128,11 +2130,7 @@ export function overviewMyPlanetActionsFor({
       shipyardState,
     }).map((action) => [action.kind, action])
   );
-  if (activePlanetId === planet.planetId) {
-    return planet.moon?.exists
-      ? [overviewMoonTransportAction(actionsByKind.get("transport"))]
-      : [];
-  }
+  if (activePlanetId === planet.planetId) return [];
 
   const samePlanetReason = "Select another owned planet before launching this mission.";
   return [
@@ -2156,22 +2154,129 @@ function overviewOwnedPlanetMissionAction(
   };
 }
 
-function overviewMoonTransportAction(action: GalaxyAction | undefined): GalaxyAction {
-  if (!action) return disabledOwnedPlanetMissionAction("transport", "Moon transport", "Transport to this moon is unavailable.");
+export function overviewMyPlanetMoonActionsFor({
+  account,
+  defenseState,
+  homePlanetId,
+  planet,
+  shipyardState,
+}: {
+  account: string | undefined;
+  defenseState: ChainDefenseState | null;
+  homePlanetId: string | null | undefined;
+  planet: ManagedPlanetResponse;
+  shipyardState: ChainShipyardState | null;
+}): GalaxyAction[] {
+  if (!planet.moon?.exists) return [];
+
+  const rowPlanet = planetFromSettlementPlanet(planet);
+  const actionsByKind = new Map(
+    galaxyActionsForSlot({
+      account,
+      defenseState,
+      homePlanetId,
+      isOrigin: false,
+      planet: rowPlanet,
+      shipyardState,
+    }).map((action) => [action.kind, action])
+  );
+
+  return [
+    overviewMoonMissionAction(actionsByKind.get("transport"), "transport", "Moon transport"),
+    overviewMoonMissionAction(actionsByKind.get("deploy"), "deploy", "Moon deploy"),
+  ];
+}
+
+function overviewMoonMissionAction(
+  action: GalaxyAction | undefined,
+  kind: "transport" | "deploy",
+  label: string,
+): GalaxyAction {
+  if (!action) return disabledOwnedPlanetMissionAction(kind, label, `${label} is unavailable.`);
   if (!action.enabled) {
     return {
       ...action,
-      label: "Moon transport",
+      label,
       reason: overviewOwnedPlanetActionReason(action.reason),
     };
   }
-  if (action.mode !== "mission" || action.kind !== "transport") {
-    return disabledOwnedPlanetMissionAction("transport", "Moon transport", "Transport to this moon is unavailable.");
+  if (action.mode !== "mission" || action.kind !== kind) {
+    return disabledOwnedPlanetMissionAction(kind, label, `${label} is unavailable.`);
   }
   return {
     ...action,
-    label: "Moon transport",
+    label,
     defaultTargetIsMoon: true,
+  };
+}
+
+function moonTargetMissionAction(
+  action: GalaxyAction | undefined,
+  kind: "attack" | "transport" | "deploy",
+  label: string,
+): GalaxyAction {
+  if (!action) return disabledMoonTargetMissionAction(kind, label, `${label} is unavailable.`);
+  if (!action.enabled) return { ...action, label };
+  if (action.mode !== "mission" || action.kind !== kind) {
+    return disabledMoonTargetMissionAction(kind, label, `${label} is unavailable.`);
+  }
+  return {
+    ...action,
+    label,
+    defaultTargetIsMoon: true,
+  };
+}
+
+function disabledMoonTargetMissionAction(
+  kind: "attack" | "transport" | "deploy",
+  label: string,
+  reason: string,
+): GalaxyAction {
+  return {
+    enabled: false,
+    kind,
+    label,
+    mode: "mission",
+    mission: kind,
+    reason,
+  };
+}
+
+function highscorePlanetForMission(planet: HighscorePlanet, entry: HighscoreEntry): Planet {
+  return {
+    alliance: entry.alliance ?? null,
+    debrisField: null,
+    diameter: 0,
+    fields: 0,
+    galaxy: planet.coordinates.galaxy,
+    hasMoon: Boolean(planet.hasMoon || planet.moon?.exists),
+    id: planet.planetId,
+    image: planetImageForType(planet.archetype),
+    metalMultiplierBps: 10000,
+    crystalMultiplierBps: 10000,
+    deuteriumMultiplierBps: 10000,
+    moonChance: null,
+    moonName: "Moon",
+    name: planet.name?.trim() || `Planet ${planet.coordinates.galaxy}:${planet.coordinates.system}:${planet.coordinates.position}`,
+    occupiedBy: {
+      alliance: entry.alliance ?? null,
+      owner: entry.wallet,
+      ownerDisplayName: entry.displayName ?? null,
+      planetId: planet.planetId,
+    },
+    owner: entry.wallet,
+    ownerId: entry.wallet,
+    position: planet.coordinates.position,
+    publicMoonState: planet.moon?.resources || planet.moon?.resourcesAsOfNow
+      ? { resources: planet.moon.resourcesAsOfNow ?? planet.moon.resources ?? null }
+      : null,
+    publicState: planet.tactical?.currentResources
+      ? { resources: planet.tactical.currentResources }
+      : null,
+    resources: { metal: 0, crystal: 0, deuterium: 0, energy: 0 },
+    system: planet.coordinates.system,
+    temperature: { min: 0, max: 0 },
+    type: planet.archetype,
   };
 }
 
@@ -6630,6 +6735,13 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
         planet: managedPlanet,
         shipyardState,
       }),
+      moonActions: overviewMyPlanetMoonActionsFor({
+        account,
+        defenseState,
+        homePlanetId: onChainSettlement?.homePlanetId,
+        planet: managedPlanet,
+        shipyardState,
+      }),
     })),
     [account, activePlanetId, defenseState, onChainSettlement?.homePlanetId, shipyardState, walletPlanets]
   );
@@ -6657,6 +6769,61 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
       },
       originPlanet: selectedManagedPlanet,
       target: targetPlanet,
+    });
+  }, [selectedManagedPlanet]);
+
+  const rankingsMoonActionsForPlanet = useCallback((planet: HighscorePlanet, entry: HighscoreEntry): GalaxyAction[] => {
+    if (!planet.hasMoon && !planet.moon?.exists) return [];
+    const targetPlanet = highscorePlanetForMission(planet, entry);
+    const actionsByKind = new Map(
+      galaxyActionsForSlot({
+        account,
+        attackProtection: entry.attackProtection
+          ? {
+              allowed: entry.attackProtection.allowed,
+              blockedReason: entry.attackProtection.blockedReason,
+              blockedReasonLabel: entry.attackProtection.blockedReasonLabel,
+              ...(entry.attackProtection.atWar === undefined ? {} : { atWar: entry.attackProtection.atWar }),
+              ...(entry.attackProtection.scoreComparison
+                ? {
+                    scoreComparison: {
+                      attackerScore: entry.attackProtection.scoreComparison.attackerScore,
+                      defenderScore: entry.attackProtection.scoreComparison.defenderScore,
+                    },
+                  }
+                : {}),
+            }
+          : undefined,
+        defenseState,
+        homePlanetId: onChainSettlement?.homePlanetId,
+        isOrigin: false,
+        planet: targetPlanet,
+        shipyardState,
+      }).map((action) => [action.kind, action])
+    );
+
+    const isOwnTarget = Boolean(account && entry.wallet.toLowerCase() === account.toLowerCase());
+    if (isOwnTarget) {
+      return [
+        moonTargetMissionAction(actionsByKind.get("transport"), "transport", "Moon transport"),
+        moonTargetMissionAction(actionsByKind.get("deploy"), "deploy", "Moon deploy"),
+      ];
+    }
+
+    return [
+      moonTargetMissionAction(actionsByKind.get("attack"), "attack", "Moon attack"),
+    ];
+  }, [account, defenseState, onChainSettlement?.homePlanetId, shipyardState]);
+
+  const handleRankingsMoonAction = useCallback((action: GalaxyAction, planet: HighscorePlanet, entry: HighscoreEntry) => {
+    if (!action.enabled) return;
+    setGalaxyAction({ status: "idle" });
+    setPendingGalaxyMission({
+      action,
+      bodySelectionDefaults: { targetIsMoon: true },
+      coords: planet.coordinates,
+      originPlanet: selectedManagedPlanet,
+      target: highscorePlanetForMission(planet, entry),
     });
   }, [selectedManagedPlanet]);
 
@@ -8008,7 +8175,9 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           apiBaseUrl={apiBaseUrl}
           currentAllianceId={allianceState?.membership.allianceId}
           currentWallet={account}
+          moonActionsForPlanet={rankingsMoonActionsForPlanet}
           now={now}
+          onMoonAction={handleRankingsMoonAction}
           onSelectAlliance={handleSelectAlliance}
           onSelectMoon={handleSelectMoon}
           onSelectPlayer={handleSelectPlayer}
