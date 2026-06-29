@@ -77,6 +77,7 @@ type OverviewResearchActionState =
 export type OverviewMyPlanetActionGroup = {
   planet: ManagedPlanetResponse;
   actions: GalaxyAction[];
+  moonActions?: GalaxyAction[] | undefined;
 };
 
 interface OverviewPageProps {
@@ -745,7 +746,7 @@ function MyPlanetsPanel({
         <h3 className="text-sm font-semibold text-white">My planets</h3>
       </div>
       <div className="grid gap-1.5">
-        {myPlanets.map(({ actions, planet }) => {
+        {myPlanets.map(({ actions, moonActions, planet }) => {
           const coords = { galaxy: planet.galaxy, system: planet.system, position: planet.position };
           const rowPlanet = overviewPlanetFromManagedPlanet(planet);
           const isSelected = planet.planetId === selectedPlanetId;
@@ -762,12 +763,18 @@ function MyPlanetsPanel({
               planet={rowPlanet}
               showIdentity={false}
               showMoonIndicator={false}
-              actionSlot={(
+              actionSlot={actions.length > 0 ? (
                 <MyPlanetActionButtons
                   actions={actions}
                   onAction={(action) => onAction?.(action, planet)}
                 />
-              )}
+              ) : undefined}
+              moonActionSlot={moonActions && moonActions.length > 0 ? (
+                <MyPlanetActionButtons
+                  actions={moonActions}
+                  onAction={(action) => onAction?.(action, planet)}
+                />
+              ) : undefined}
             />
           );
         })}
@@ -784,7 +791,7 @@ function MyPlanetActionButtons({
   onAction: (action: GalaxyAction) => void;
 }) {
   return (
-    <>
+    <span className="flex flex-wrap justify-end gap-1.5">
       {actions.map((action) => (
         <button
           className={`rounded border px-2 py-1 text-xs font-medium transition ${
@@ -803,7 +810,7 @@ function MyPlanetActionButtons({
           {action.label}
         </button>
       ))}
-    </>
+    </span>
   );
 }
 

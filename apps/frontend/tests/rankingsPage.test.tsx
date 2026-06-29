@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
 import type { Coordinates } from "../src/types";
+import type { GalaxyAction } from "../src/galaxyActions";
 import {
   primaryRankingEntries,
   rankingsColumnLabels,
@@ -189,6 +190,59 @@ describe("RankingsPage", () => {
     expect(visibleText(table)).not.toContain("[3:12:4]");
     colonyButton?.props?.onClick?.();
     expect(selected).toEqual([{ galaxy: 3, system: 12, position: 4 }]);
+  });
+
+  test("renders ranked moon action rows and launches moon-targeted actions", () => {
+    const selectedMoons: Coordinates[] = [];
+    const launched: Array<{ action: GalaxyAction; planetId: string; wallet: string }> = [];
+    const moonAction: GalaxyAction = {
+      enabled: true,
+      kind: "attack",
+      label: "Moon attack",
+      mode: "mission",
+      mission: "attack",
+      defaultTargetIsMoon: true,
+      ships: {
+        smallCargo: 0,
+        lightFighter: 1,
+        recycler: 0,
+        colonyShip: 0,
+        largeCargo: 0,
+        heavyFighter: 0,
+        cruiser: 0,
+        battleship: 0,
+        bomber: 0,
+        destroyer: 0,
+        deathstar: 0,
+        battlecruiser: 0,
+        reaper: 0,
+        pathfinder: 0,
+      },
+    };
+    const entry = rankingEntry({
+      homePlanet: {
+        ...rankingEntry().homePlanet!,
+        hasMoon: true,
+      },
+    });
+    const table = RankingsTable({
+      entries: [entry],
+      loading: false,
+      moonActionsForPlanet: () => [moonAction],
+      onMoonAction: (action, planet, rankingEntry) => launched.push({ action, planetId: planet.planetId, wallet: rankingEntry.wallet }),
+      onSelectMoon: (coords) => selectedMoons.push(coords),
+    });
+    const inspect = buttonWithTitle(table, "Inspect moon");
+    const attack = buttonWithTitle(table, "Moon attack");
+
+    expect(visibleText(table)).toContain("Moon Inspect Moon attack");
+    expect(inspect).toBeTruthy();
+    expect(attack).toBeTruthy();
+    inspect?.props?.onClick?.();
+    attack?.props?.onClick?.();
+
+    expect(selectedMoons).toEqual([{ galaxy: 2, system: 44, position: 9 }]);
+    expect(launched).toEqual([{ action: moonAction, planetId: "7", wallet: entry.wallet }]);
   });
 
   test("marks the home planet inside the planet list instead of commander subtext", () => {

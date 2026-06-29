@@ -33,6 +33,7 @@ import {
   infrastructureUnavailableReasonFor,
   loadWalletPlanetSyncSnapshot,
   markFreshStateWrite,
+  overviewMyPlanetMoonActionsFor,
   overviewMyPlanetActionsFor,
   overviewBuildingReadyToFinishFlag,
   overviewResearchCompletionUnavailableReasonFor,
@@ -457,7 +458,7 @@ describe("Playable MVP app display helpers", () => {
     });
   });
 
-  test("Overview selected planet offers moon transport when the planet has a moon", () => {
+  test("Overview selected planet offers moon actions on the moon row", () => {
     const wallet = "0x2222222222222222222222222222222222222222";
     const selectedPlanet = {
       ...indexedPlanet(wallet),
@@ -492,7 +493,7 @@ describe("Playable MVP app display helpers", () => {
       queue: null,
     };
 
-    const actions = overviewMyPlanetActionsFor({
+    const planetActions = overviewMyPlanetActionsFor({
       account: wallet,
       activePlanetId: "8",
       defenseState: null,
@@ -500,13 +501,29 @@ describe("Playable MVP app display helpers", () => {
       planet: selectedPlanet,
       shipyardState: selectedShipyardState,
     });
+    const moonActions = overviewMyPlanetMoonActionsFor({
+      account: wallet,
+      defenseState: null,
+      homePlanetId: "7",
+      planet: selectedPlanet,
+      shipyardState: selectedShipyardState,
+    });
 
-    expect(actions).toHaveLength(1);
-    expect(actions[0]).toMatchObject({
+    expect(planetActions).toEqual([]);
+    expect(moonActions).toHaveLength(2);
+    expect(moonActions[0]).toMatchObject({
       enabled: true,
       kind: "transport",
       label: "Moon transport",
       mission: "transport",
+      defaultTargetIsMoon: true,
+      ships: { smallCargo: 1 },
+    });
+    expect(moonActions[1]).toMatchObject({
+      enabled: true,
+      kind: "deploy",
+      label: "Moon deploy",
+      mission: "deploy",
       defaultTargetIsMoon: true,
       ships: { smallCargo: 1 },
     });
