@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
-import { moonAsset } from "../gameAssets";
+import { moonImageForType } from "../gameAssets";
+import type { PlanetType } from "../types";
 import type { SizePreset } from "../utils/imageSizes";
 import { OptimizedImage } from "./OptimizedImage";
 
@@ -8,6 +9,7 @@ export function MoonImage({
   className = "",
   height,
   loading = "lazy",
+  planetType,
   sizes = "icon",
   width,
 }: {
@@ -15,6 +17,7 @@ export function MoonImage({
   className?: string | undefined;
   height?: number | undefined;
   loading?: "eager" | "lazy" | undefined;
+  planetType?: PlanetType | null | undefined;
   sizes?: SizePreset | string | undefined;
   width?: number | undefined;
 }) {
@@ -25,7 +28,7 @@ export function MoonImage({
       {...(height === undefined ? {} : { height })}
       loading={loading}
       sizes={sizes}
-      src={moonAsset.src}
+      src={moonImageForType(planetType)}
       {...(width === undefined ? {} : { width })}
     />
   );
@@ -35,10 +38,12 @@ export function PlanetMoonIndicator({
   className = "",
   compact = false,
   label = "Moon present",
+  planetType,
 }: {
   className?: string | undefined;
   compact?: boolean | undefined;
   label?: string | undefined;
+  planetType?: PlanetType | null | undefined;
 }) {
   const sizeClass = compact ? "h-4 w-4" : "h-5 w-5";
 
@@ -49,7 +54,7 @@ export function PlanetMoonIndicator({
       data-planet-moon-indicator="true"
       title={label}
     >
-      <MoonImage className="h-full w-full object-cover" />
+      <MoonImage className="h-full w-full object-cover" planetType={planetType} />
     </span>
   );
 }
@@ -58,10 +63,12 @@ export function PlanetMoonSubsection({
   action,
   detail,
   label = "Moon",
+  planetType,
 }: {
   action?: ComponentChildren;
   detail?: string | undefined;
   label?: string | undefined;
+  planetType?: PlanetType | null | undefined;
 }) {
   return (
     <div
@@ -69,7 +76,7 @@ export function PlanetMoonSubsection({
       data-planet-moon-subsection="true"
     >
       <span className="h-7 w-7 overflow-hidden rounded-full border border-cyan-100/30 bg-black/40">
-        <MoonImage className="h-full w-full object-cover" />
+        <MoonImage className="h-full w-full object-cover" planetType={planetType} />
       </span>
       <span className="min-w-0">
         <span className="block truncate text-[11px] font-semibold text-cyan-100">{label}</span>
