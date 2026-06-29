@@ -7229,10 +7229,18 @@ export class SettlementIndexer {
     }
     const summaries = this.fleetMissionSummariesFromCanonicalRowsByIds(reportMissionIds);
     const reportsWithParticipants = attachAttackGroupParticipants(matchingReports, summaries);
-    const defenderSnapshots = this.battleTimeDefenderSnapshots(reportsWithParticipants);
+    if (options.includeRawFallback !== true) {
+      return reportsWithParticipants.map((report) => ({
+        ...report,
+        defenderSnapshot: report.defenderSnapshot ?? null
+      }));
+    }
+
+    const reportsNeedingSnapshots = reportsWithParticipants.filter((report) => report.defenderSnapshot === null);
+    const defenderSnapshots = this.battleTimeDefenderSnapshots(reportsNeedingSnapshots);
     return reportsWithParticipants.map((report) => ({
       ...report,
-      defenderSnapshot: defenderSnapshots.get(report.missionId) ?? null
+      defenderSnapshot: report.defenderSnapshot ?? defenderSnapshots.get(report.missionId) ?? null
     }));
   }
 
