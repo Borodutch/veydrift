@@ -517,6 +517,60 @@ describe("mission creation", () => {
       attackerPower: 210,
       defenderPower: 165,
     });
+    expect(forecast.attackerLosses?.average).toEqual({ metal: 0, crystal: 0, deuterium: 0 });
+    expect(forecast.randomness).toBeNull();
+  });
+
+  test("does not label the mission-8262 shield stalemate as a probable win", () => {
+    const forecast = publicTargetBattleForecast({
+      ...attackAction.ships,
+      smallCargo: 2,
+      lightFighter: 3,
+    }, targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        // Mission 8262 resolved Draw with no losses. The old power-ratio preview
+        // missed that these small stacks cannot break shields/hull in six rounds.
+        fleet: [{ id: 9, count: 4 }],
+        defenses: [{ id: 0, count: 3 }],
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    }));
+
+    expect(forecast).toMatchObject({
+      kind: "draw",
+      label: "Probable draw",
+      attackerLosses: {
+        average: { metal: 0, crystal: 0, deuterium: 0 },
+        best: { metal: 0, crystal: 0, deuterium: 0 },
+        worst: { metal: 0, crystal: 0, deuterium: 0 },
+      },
+      randomness: null,
+    });
+  });
+
+  test("surfaces attacker loss ranges when combat randomness changes results", () => {
+    const forecast = publicTargetBattleForecast({
+      ...attackAction.ships,
+      lightFighter: 1,
+    }, targetPlanet({
+      publicState: {
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleet: [{ id: 0, count: 1 }],
+        defenses: [],
+        buildings: [],
+        research: [],
+        queues: null,
+      },
+    }), { weapons: 20, shielding: 0, armor: 0 });
+
+    expect(forecast.kind).not.toBe("uncertain");
+    if (forecast.kind === "uncertain") throw new Error("Expected a concrete battle forecast");
+    expect(forecast.attackerLosses.average.metal + forecast.attackerLosses.average.crystal).toBeGreaterThanOrEqual(0);
+    expect(forecast.randomness).not.toBeNull();
+    expect(forecast.randomness?.outcomeRange.length).toBeGreaterThan(1);
   });
 
   test("applies combat tech levels to public battle forecast power and outcome", () => {
@@ -540,7 +594,7 @@ describe("mission creation", () => {
     });
 
     expect(baseForecast).toMatchObject({
-      kind: "defeat",
+      kind: "draw",
       attackerTechLevels: { weapons: 0, shielding: 0, armor: 0 },
       defenderTechKnown: true,
       defenderTechLevels: { weapons: 0, shielding: 0, armor: 0 },
@@ -631,6 +685,8 @@ describe("mission creation", () => {
         detail: "Visible defender power is lower than the selected fleet.",
         attackerPower: 1_250,
         defenderPower: 200,
+        attackerLosses: zeroBattleLosses(),
+        randomness: null,
       },
       coords: { galaxy: 7, system: 41, position: 6 },
       lootableAtArrival: { metal: 500, crystal: 250, deuterium: 100 },
@@ -809,6 +865,8 @@ describe("mission creation", () => {
         detail: "Visible defender power is lower than the selected fleet.",
         attackerPower: 1_250,
         defenderPower: 200,
+        attackerLosses: zeroBattleLosses(),
+        randomness: null,
       },
       lootableAtArrival: { metal: 500, crystal: 250, deuterium: 100 },
       maxLootForecast: { metal: 300, crystal: 150, deuterium: 50 },
@@ -1291,6 +1349,11 @@ function targetPlanet(overrides: Partial<Planet> = {}): Planet {
     deuteriumMultiplierBps: 10_000,
     ...overrides,
   };
+}
+
+function zeroBattleLosses() {
+  const zero = { metal: 0, crystal: 0, deuterium: 0 };
+  return { average: zero, best: zero, worst: zero };
 }
 
 type FoundElement = { type?: unknown; props?: Record<string, unknown> & { children?: unknown } };
