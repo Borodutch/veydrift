@@ -1396,7 +1396,13 @@ export class SettlementIndexer {
   }
 
   fleetMission(missionId: string): FleetMissionSummary | null {
-    return this.indexedFleetMissionReferenceIndex().byId.get(missionId) ?? null;
+    const mission = this.fleetMissionSummariesFromCanonicalRowsByIds([missionId])[0]
+      ?? (
+        this.metadata("lastFleetMissionsReconciledAt") === null
+          ? this.eventDerivedFleetMissionForMissionId(missionId)
+          : null
+      );
+    return mission ? this.fleetMissionSummaryAsOfNow(mission) : null;
   }
 
   stationedDefendersForPlanet(planetId: string, asOfSeconds = Math.floor(Date.now() / 1_000)): StationedDefenderSummary[] {
@@ -1414,12 +1420,11 @@ export class SettlementIndexer {
     const attackArrival = Number(attack?.arrivalAt);
     if (!Number.isFinite(attackArrival)) return [];
 
-    const missionIndex = this.indexedFleetMissionReferenceIndex();
     const defenders = new Map<string, StationedDefenderSummary>();
 
     if (attack) {
-      for (const missionId of attack.counterplayDefenderMissionIds ?? []) {
-        const defender = missionIndex.byId.get(missionId);
+      const counterplayDefenders = this.fleetMissionSummariesFromCanonicalRowsByIds(attack.counterplayDefenderMissionIds ?? []);
+      for (const defender of counterplayDefenders) {
         if (!defender || !this.isBattleTimeCounterplay(defender, attack, attackArrival)) continue;
         defenders.set(defender.missionId, this.stationedDefenderSummary(defender, this.counterplayHoldUntil(defender)));
       }
@@ -1427,7 +1432,7 @@ export class SettlementIndexer {
 
     const targetPlanetId = report?.targetPlanetId ?? attack?.targetPlanetId;
     if (targetPlanetId) {
-      for (const defender of missionIndex.activeByTarget.get(targetPlanetId) ?? []) {
+      for (const defender of this.activeFleetMissionsFromCanonicalRowsForTarget(targetPlanetId)) {
         if (!this.isBattleTimeDefenseHoldForPlanet(defender, targetPlanetId, attackArrival)) continue;
         defenders.set(defender.missionId, this.stationedDefenderSummary(defender, this.defenseHoldWindowEnd(defender)));
       }
@@ -7307,6 +7312,35 @@ export class SettlementIndexer {
       }
     }
     return summaries;
+  }
+
+  private fleetMissionSummaryAsOfNow(mission: FleetMissionSummary): FleetMissionSummary {
+    const asOfSeconds = nowSeconds();
+    const withPlanetReferences = this.withFleetMissionPlanetReferences(mission);
+    const status = (
+      (withPlanetReferences.status === "Returning" || withPlanetReferences.status === "Recalled")
+      && Number(withPlanetReferences.returnAt) <= asOfSeconds
+    )
+      ? "Returned"
+      : withPlanetReferences.status;
+    const needsGate = this.randomnessEngineConfigured
+      && missionBattleRandomnessRequestId(withPlanetReferences) !== null
+      && status === "Outbound"
+      && Number(withPlanetReferences.arrivalAt) <= asOfSeconds;
+    const fulfilledRandomnessRequestIds = needsGate ? this.fulfilledRandomnessRequestIds() : null;
+    const resolvedMission = {
+      ...withPlanetReferences,
+      status,
+      needsResolution: fleetMissionNeedsResolution(
+        { ...withPlanetReferences, status },
+        asOfSeconds,
+        fulfilledRandomnessRequestIds
+      )
+    };
+    return withMissionAsOfNow(
+      withFleetMissionResolutionBlocker(resolvedMission, asOfSeconds, fulfilledRandomnessRequestIds),
+      asOfSeconds
+    );
   }
 
   private battleReportsForMissionIds(
