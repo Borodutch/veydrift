@@ -1,4 +1,4 @@
-import { Flame, Orbit } from "lucide-preact";
+import { ArrowLeftRight, Eye, Flame, Orbit, Rocket, Shield } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import { useState } from "preact/hooks";
 import type { Resources } from "../playableMvp";
@@ -47,6 +47,7 @@ interface MoonPageProps {
   canBurnChicken?: boolean | undefined;
   error?: string | undefined;
   loading?: boolean | undefined;
+  moonActions?: MoonOverviewAction[] | undefined;
   moonState?: ChainMoonState | null | undefined;
   onBurnChicken?: ((tokenId: string) => void) | undefined;
   onFinishBuilding?: ((label: string) => void) | undefined;
@@ -60,6 +61,13 @@ interface MoonPageProps {
   transactionUnavailableReason?: string | undefined;
 }
 
+export type MoonOverviewAction = {
+  disabledReason?: string | undefined;
+  kind: "inspect" | "transport" | "deploy" | "defend";
+  label: string;
+  onClick?: (() => void) | undefined;
+};
+
 export function MoonPage({
   action,
   burningChicken,
@@ -67,6 +75,7 @@ export function MoonPage({
   canBurnChicken,
   error,
   loading,
+  moonActions,
   moonState,
   onBurnChicken,
   onFinishBuilding,
@@ -115,6 +124,7 @@ export function MoonPage({
             action={action}
             canTransact={canTransact}
             moon={moon}
+            moonActions={moonActions}
             moonState={moonState}
             onFinishBuilding={onFinishBuilding}
             onFinishDefense={onFinishDefense}
@@ -328,6 +338,7 @@ function MoonSystemsPanel({
   action,
   canTransact,
   moon,
+  moonActions,
   moonState,
   onJumpGate,
   onFinishBuilding,
@@ -341,6 +352,7 @@ function MoonSystemsPanel({
   action?: MoonPageProps["action"];
   canTransact?: boolean | undefined;
   moon: NonNullable<ChainMoonState["moon"]>;
+  moonActions?: MoonOverviewAction[] | undefined;
   moonState?: ChainMoonState | null | undefined;
   onJumpGate?: MoonPageProps["onJumpGate"];
   onFinishBuilding?: MoonPageProps["onFinishBuilding"];
@@ -389,6 +401,7 @@ function MoonSystemsPanel({
               <MoonMetric icon={Orbit} label="Fields" value={`${fieldSummary.used} / ${fieldSummary.capacity}`} />
               <MoonMetric icon={Orbit} label="Jump Gate" value={moonJumpGateStatus(moon, moonState, jumpGateDestinations)} />
             </div>
+            <MoonActionStrip actions={moonActions} />
             <div>
               <h3 className="text-base font-semibold text-white">Resources</h3>
               <div className="mt-2 flex flex-wrap gap-2">
@@ -469,6 +482,39 @@ function MoonSystemsPanel({
       ) : null}
     </div>
   );
+}
+
+function MoonActionStrip({ actions }: { actions?: MoonOverviewAction[] | undefined }) {
+  if (!actions?.length) return null;
+
+  return (
+    <div aria-label="Moon actions" className="grid gap-2 sm:grid-cols-4">
+      {actions.map((action) => {
+        const Icon = moonActionIcon(action.kind);
+        const disabled = Boolean(action.disabledReason || !action.onClick);
+        return (
+          <button
+            className="inline-flex min-h-10 items-center justify-center gap-2 rounded border border-cyan-200/20 bg-cyan-200/10 px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
+            disabled={disabled}
+            key={action.kind}
+            onClick={action.onClick}
+            title={action.disabledReason}
+            type="button"
+          >
+            <Icon aria-hidden="true" size={15} strokeWidth={1.9} />
+            <span>{action.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function moonActionIcon(kind: MoonOverviewAction["kind"]): LucideIcon {
+  if (kind === "inspect") return Eye;
+  if (kind === "transport") return ArrowLeftRight;
+  if (kind === "deploy") return Rocket;
+  return Shield;
 }
 
 function MoonStructuresSection({
