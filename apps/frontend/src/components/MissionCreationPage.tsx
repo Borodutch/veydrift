@@ -268,8 +268,8 @@ export function MissionCreationPage({
   const [primaryTargetId, setPrimaryTargetId] = useState(action.mode === "missile" ? action.primaryTargetId : 0);
   const [quantity, setQuantity] = useState(action.mode === "missile" ? action.quantity : 1);
   const [holdHours, setHoldHours] = useState<number>(DEFAULT_DEFENSE_HOLD_HOURS);
-  const [originIsMoon, setOriginIsMoon] = useState(false);
-  const [targetIsMoon, setTargetIsMoon] = useState(false);
+  const [originIsMoon, setOriginIsMoon] = useState(() => action.mode === "mission" && action.defaultOriginIsMoon === true);
+  const [targetIsMoon, setTargetIsMoon] = useState(() => action.mode === "mission" && action.defaultTargetIsMoon === true);
 
   const distance = originCoords ? fleetMissionDistance(originCoords, coords) : 0;
   const travelSeconds = action.mode === "missile" ? 0 : fleetMissionTravelSeconds(distance, ships, driveLevels, speedPercent);

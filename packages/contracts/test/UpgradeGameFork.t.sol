@@ -11,7 +11,13 @@ import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftComb
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
+import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
+import {
+    IVeydriftMoonGame,
+    IVeydriftRandomnessEngine,
+    VeydriftMoonSystem
+} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {Ship} from "../src/libraries/VeydriftTypes.sol";
 
@@ -29,6 +35,8 @@ contract UpgradeGameForkTest is Test {
     address internal constant PROXY = 0xf12f31734868F1089d9d6514D7F19a31Ec5e00e2;
     address internal constant PROXY_ADMIN = 0xef1570EC118de0c3dC2219C1ee3B731b46f6F54B;
     address internal constant PROXY_ADMIN_OWNER = 0xC2142A4918754abe5975ecD486A66DfeBA39A419;
+    address payable internal constant MOON_PROXY =
+        payable(0xe65eF3415fA875666AEDF033616c43e61F368c96);
 
     function _addrFromSlot(bytes32 slot) private view returns (address) {
         return address(uint160(uint256(vm.load(PROXY, slot))));
@@ -48,6 +56,8 @@ contract UpgradeGameForkTest is Test {
         address oldImpl = _addrFromSlot(IMPL_SLOT);
         address ownerBefore = VeydriftGame(PROXY).owner();
         uint32 shipBefore = VeydriftGame(PROXY).shipCount(1, Ship.SmallCargo);
+
+        _upgradeMoonSystem();
 
         // Deploy the fresh module set + implementation exactly like UpgradeGame.s.sol.
         VeydriftCombatRapidfire rapidfire = new VeydriftCombatRapidfire();
@@ -79,5 +89,34 @@ contract UpgradeGameForkTest is Test {
         // Proxy storage (owner + a real planet's ship count) survives the upgrade unchanged.
         assertEq(VeydriftGame(PROXY).owner(), ownerBefore, "owner not preserved");
         assertEq(VeydriftGame(PROXY).shipCount(1, Ship.SmallCargo), shipBefore, "ship count drift");
+
+        _assertMoonAttackMissionNotStuck(8328);
+        _assertMoonAttackMissionNotStuck(8336);
+    }
+
+    function _upgradeMoonSystem() private {
+        VeydriftMoonSystem proxied = VeydriftMoonSystem(MOON_PROXY);
+        address owner = proxied.owner();
+        IVeydriftMoonGame game = proxied.game();
+        IVeydriftRandomnessEngine randomness = proxied.randomness();
+        address implementation = address(new VeydriftMoonSystem(address(game), address(randomness)));
+
+        vm.prank(owner);
+        proxied.upgradeToAndCall(implementation, "");
+    }
+
+    function _assertMoonAttackMissionNotStuck(uint256 missionId) private {
+        (VeydriftGameStorage.FleetMissionStatus statusBefore,,,,,,,,,,) =
+            VeydriftGame(PROXY).fleetMission(missionId);
+        if (statusBefore == VeydriftGameStorage.FleetMissionStatus.Outbound) {
+            VeydriftGame(PROXY).resolveFleetMission(missionId);
+        }
+
+        (VeydriftGameStorage.FleetMissionStatus statusAfter,,,,,,,,,,) =
+            VeydriftGame(PROXY).fleetMission(missionId);
+        assertTrue(
+            statusAfter != VeydriftGameStorage.FleetMissionStatus.Outbound,
+            "moon attack mission still stuck outbound after upgrade"
+        );
     }
 }

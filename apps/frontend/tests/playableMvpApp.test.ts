@@ -391,7 +391,7 @@ describe("Playable MVP app display helpers", () => {
     expect(scoped?.returning.map((mission) => mission.missionId)).toEqual(["ret-selected"]);
   });
 
-  test("Overview owned planet actions use the selected planet as origin and hide self-target actions", () => {
+  test("Overview owned planet actions use the selected planet as origin and hide same-body self-target actions", () => {
     const wallet = "0x2222222222222222222222222222222222222222";
     const selectedPlanet = {
       ...indexedPlanet(wallet),
@@ -451,6 +451,61 @@ describe("Playable MVP app display helpers", () => {
     expect(actions.find((action) => action.kind === "deploy")).toMatchObject({
       enabled: true,
       mission: "deploy",
+      ships: { smallCargo: 1 },
+    });
+  });
+
+  test("Overview selected planet offers moon transport when the planet has a moon", () => {
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const selectedPlanet = {
+      ...indexedPlanet(wallet),
+      planetId: "8",
+      name: "Astro",
+      coordinates: "6:9:13",
+      galaxy: 6,
+      system: 9,
+      position: 13,
+      isHomePlanet: false,
+      moon: {
+        exists: true,
+        planetId: "8",
+        diameter: "7420",
+        createdAt: "1780000000",
+        resources: { metal: "100", crystal: "50", deuterium: "25" },
+        resourcesAsOfNow: { metal: "100", crystal: "50", deuterium: "25" },
+      },
+    };
+    const selectedShipyardState: ChainShipyardState = {
+      wallet,
+      homePlanetId: "7",
+      planetId: "8",
+      productionAvailable: true,
+      resources: null,
+      fleetLaunchAvailable: true,
+      fleetSlots: { active: 0, limit: 2 },
+      shipyardLevel: 1,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: [{ id: 0, count: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } }],
+      queue: null,
+    };
+
+    const actions = overviewMyPlanetActionsFor({
+      account: wallet,
+      activePlanetId: "8",
+      defenseState: null,
+      homePlanetId: "7",
+      planet: selectedPlanet,
+      shipyardState: selectedShipyardState,
+    });
+
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({
+      enabled: true,
+      kind: "transport",
+      label: "Moon transport",
+      mission: "transport",
+      defaultTargetIsMoon: true,
       ships: { smallCargo: 1 },
     });
   });

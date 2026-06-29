@@ -439,13 +439,10 @@ abstract contract VeydriftResourceReserves is VeydriftGameStorage {
         returns (bool)
     {
         return mission.status == FleetMissionStatus.Outbound
-            && (mission.missionType == FleetMissionType.Attack
-                || mission.missionType == FleetMissionType.Harvest)
-            && _missionResolutionTimestamp() >= mission.arrivalAt;
-    }
-
-    function _missionResolutionTimestamp() private view returns (uint64) {
-        return uint64(block.timestamp);
+            && (mission.missionType == FleetMissionType.Harvest
+                || (mission.missionType == FleetMissionType.Attack && !mission.targetIsMoon))
+            // forge-lint: disable-next-line(block-timestamp)
+            && block.timestamp >= mission.arrivalAt;
     }
 
     function _isResolutionTrackedMissionType(FleetMissionType missionType)

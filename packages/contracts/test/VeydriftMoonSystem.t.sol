@@ -17,6 +17,7 @@ import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementMod
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {
+    Building,
     Defense,
     MoonBuilding,
     Resource,
@@ -1040,6 +1041,37 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 0);
     }
 
+    function testPendingMoonAttackDoesNotFreezeParentPlanetActions() public {
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
+            _seedMoonAttackPlanets();
+        _fundPlanet(originPlanetId, 100_000, 100_000, 100_000);
+        _fundPlanet(targetPlanetId, 100_000, 100_000, 100_000);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+
+        vm.prank(player);
+        uint256 missionId = game.launchBodyFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            false,
+            true
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+
+        vm.prank(defender);
+        game.startBuildingUpgrade(targetPlanetId, Building.MetalMine);
+
+        assertTrue(game.activeBuildingConstruction(targetPlanetId).active);
+    }
+
     // VEY-KANEO-468: a due moon-building construction completes lazily on the next moon interaction,
     // with no finishMoonBuildingUpgrade tx required.
     function testMoonBuildingSettlesLazilyWithoutFinishTx() public {
@@ -1117,10 +1149,17 @@ contract VeydriftMoonSystemTest is Test {
         uint16 system,
         uint8 position
     ) internal {
+        VeydriftGameStorage.Planet memory planetRef = game.planet(planetId);
         uint256 planetBase = uint256(keccak256(abi.encode(planetId, uint256(4))));
         uint256 packed = uint256(uint160(owner)) | (uint256(galaxy) << 160)
-            | (uint256(system) << 176) | (uint256(position) << 192);
+            | (uint256(system) << 176) | (uint256(position) << 192)
+            | (uint256(planetRef.fields) << 200) | (uint256(uint16(planetRef.temperature)) << 216)
+            | (uint256(planetRef.metalMultiplierBps) << 232);
         vm.store(address(game), bytes32(planetBase), bytes32(packed));
+        uint256 packedMultipliers = uint256(planetRef.crystalMultiplierBps)
+            | (uint256(planetRef.deuteriumMultiplierBps) << 16)
+            | (uint256(planetRef.lastSettledAt) << 32);
+        vm.store(address(game), bytes32(planetBase + 1), bytes32(packedMultipliers));
     }
 
     function _setNextFleetId(uint256 nextFleetId) internal {

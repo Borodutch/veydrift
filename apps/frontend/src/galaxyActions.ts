@@ -56,6 +56,8 @@ export type GalaxyAction =
       mode: "mission";
       mission: GalaxyMissionKind;
       ships: MissionShips;
+      defaultOriginIsMoon?: boolean | undefined;
+      defaultTargetIsMoon?: boolean | undefined;
       reason?: undefined;
     }
   | {
