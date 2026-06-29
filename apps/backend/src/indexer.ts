@@ -1396,7 +1396,13 @@ export class SettlementIndexer {
   }
 
   fleetMission(missionId: string): FleetMissionSummary | null {
-    return this.fleetMissionSummariesFromCanonicalRowsByIds([missionId])[0] ?? null;
+    const mission = this.fleetMissionSummariesFromCanonicalRowsByIds([missionId])[0]
+      ?? (
+        this.metadata("lastFleetMissionsReconciledAt") === null
+          ? this.eventDerivedFleetMissionForMissionId(missionId)
+          : null
+      );
+    return mission ? this.fleetMissionSummaryAsOfNow(mission) : null;
   }
 
   stationedDefendersForPlanet(planetId: string, asOfSeconds = Math.floor(Date.now() / 1_000)): StationedDefenderSummary[] {
@@ -7306,6 +7312,35 @@ export class SettlementIndexer {
       }
     }
     return summaries;
+  }
+
+  private fleetMissionSummaryAsOfNow(mission: FleetMissionSummary): FleetMissionSummary {
+    const asOfSeconds = nowSeconds();
+    const withPlanetReferences = this.withFleetMissionPlanetReferences(mission);
+    const status = (
+      (withPlanetReferences.status === "Returning" || withPlanetReferences.status === "Recalled")
+      && Number(withPlanetReferences.returnAt) <= asOfSeconds
+    )
+      ? "Returned"
+      : withPlanetReferences.status;
+    const needsGate = this.randomnessEngineConfigured
+      && missionBattleRandomnessRequestId(withPlanetReferences) !== null
+      && status === "Outbound"
+      && Number(withPlanetReferences.arrivalAt) <= asOfSeconds;
+    const fulfilledRandomnessRequestIds = needsGate ? this.fulfilledRandomnessRequestIds() : null;
+    const resolvedMission = {
+      ...withPlanetReferences,
+      status,
+      needsResolution: fleetMissionNeedsResolution(
+        { ...withPlanetReferences, status },
+        asOfSeconds,
+        fulfilledRandomnessRequestIds
+      )
+    };
+    return withMissionAsOfNow(
+      withFleetMissionResolutionBlocker(resolvedMission, asOfSeconds, fulfilledRandomnessRequestIds),
+      asOfSeconds
+    );
   }
 
   private battleReportsForMissionIds(
