@@ -284,6 +284,7 @@ type AllianceDiplomacyRow = {
   other_alliance_id: string;
   status_id: number;
   updated_at: string | null;
+  initiated_by_alliance_id: string | null;
 };
 
 type LegacyUnitMutation = {
@@ -1195,7 +1196,7 @@ export class SettlementIndexer {
     directoryById: ReadonlyMap<string, AllianceState["directory"][number]>
   ): AllianceState["diplomacy"] {
     const rows = this.db.query(`
-      SELECT alliance_id, other_alliance_id, status_id, updated_at
+      SELECT alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id
       FROM contract_alliance_diplomacy
       WHERE alliance_id = ? AND status_id != 0
       ORDER BY status_id DESC, CAST(other_alliance_id AS INTEGER) ASC
@@ -1206,6 +1207,7 @@ export class SettlementIndexer {
       status: diplomacyStatusName(row.status_id),
       statusId: row.status_id,
       updatedAt: row.updated_at,
+      initiatedByAllianceId: row.initiated_by_alliance_id,
       alliance: directoryById.get(row.other_alliance_id) ?? null
     }));
   }
@@ -3223,6 +3225,7 @@ export class SettlementIndexer {
         other_alliance_id TEXT NOT NULL,
         status_id INTEGER NOT NULL,
         updated_at TEXT,
+        initiated_by_alliance_id TEXT,
         PRIMARY KEY (alliance_id, other_alliance_id)
       );
       CREATE TABLE IF NOT EXISTS contract_highscore_inputs (
@@ -3239,6 +3242,7 @@ export class SettlementIndexer {
     this.ensureColumn("player_profiles", "description", "TEXT");
     this.ensureColumn("contract_production_queues", "backlog_json", "TEXT");
     this.ensureColumn("contract_planet_resources", "log_index", "TEXT NOT NULL DEFAULT '0x0'");
+    this.ensureColumn("contract_alliance_diplomacy", "initiated_by_alliance_id", "TEXT");
     if (runStartupBackfill) {
       this.backfillMissionEventLogs();
       this.backfillUnitCountEventLogs();
@@ -6066,19 +6070,21 @@ export class SettlementIndexer {
       `).run(event.newOwner, event.allianceId);
     } else if (event.eventName === "AllianceDiplomacyUpdated") {
       this.db.query(`
-        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
           status_id = excluded.status_id,
-          updated_at = excluded.updated_at
-      `).run(event.allianceId, event.otherAllianceId, event.statusId, event.blockNumber);
+          updated_at = excluded.updated_at,
+          initiated_by_alliance_id = excluded.initiated_by_alliance_id
+      `).run(event.allianceId, event.otherAllianceId, event.statusId, event.blockNumber, event.allianceId);
       this.db.query(`
-        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id)
+        VALUES (?, ?, ?, ?, ?)
         ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
           status_id = excluded.status_id,
-          updated_at = excluded.updated_at
-      `).run(event.otherAllianceId, event.allianceId, event.statusId, event.blockNumber);
+          updated_at = excluded.updated_at,
+          initiated_by_alliance_id = excluded.initiated_by_alliance_id
+      `).run(event.otherAllianceId, event.allianceId, event.statusId, event.blockNumber, event.allianceId);
     }
 
     this.touch();
@@ -6181,10 +6187,11 @@ export class SettlementIndexer {
     this.db.query("DELETE FROM contract_alliance_diplomacy").run();
     for (const relation of snapshot) {
       this.db.query(`
-        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at)
-        VALUES (?, ?, ?, NULL)
+        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id)
+        VALUES (?, ?, ?, NULL, NULL)
         ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
-          status_id = excluded.status_id
+          status_id = excluded.status_id,
+          initiated_by_alliance_id = excluded.initiated_by_alliance_id
       `).run(relation.allianceId, relation.otherAllianceId, relation.statusId);
     }
     this.touch();
