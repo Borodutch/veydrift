@@ -264,9 +264,13 @@ export function MissionCreationPage({
   const selectedShipCount = action.mode === "missile" ? 0 : fleetMissionShipCount(ships);
   const cargoSupported = action.mode === "mission" && (action.kind === "transport" || action.kind === "deploy");
   const bodyMissionSupported = action.mode === "mission" && (action.kind === "attack" || cargoSupported);
-  const bodySelectionSupported = bodyMissionSupported && Boolean(bodySelection) && (bodySelection?.originMoonAvailable || bodySelection?.targetMoonAvailable);
-  const effectiveOriginIsMoon = Boolean(bodySelectionSupported && originIsMoon);
-  const effectiveTargetIsMoon = Boolean(bodySelectionSupported && targetIsMoon);
+  const bodySelectionVisibility = missionBodySelectionVisibility({
+    bodyMissionSupported: bodyMissionSupported && Boolean(bodySelection),
+    originMoonAvailable: Boolean(bodySelection?.originMoonAvailable),
+    targetMoonAvailable: Boolean(bodySelection?.targetMoonAvailable),
+  });
+  const effectiveOriginIsMoon = Boolean(bodySelectionVisibility.originVisible && originIsMoon);
+  const effectiveTargetIsMoon = Boolean(bodySelectionVisibility.targetVisible && targetIsMoon);
   const effectiveResources = effectiveOriginIsMoon ? bodySelection?.originMoonResources : resources;
   const effectiveShipyardState = effectiveOriginIsMoon ? bodySelection?.originMoonShipyardState ?? null : shipyardState;
   const availableShips = useMemo(() => missionShipOptionsForAction(action, effectiveShipyardState), [action, effectiveShipyardState]);
@@ -411,25 +415,26 @@ export function MissionCreationPage({
 
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_21rem] lg:items-start">
         <section className="grid gap-3">
-          {bodySelectionSupported ? (
+          {bodySelectionVisibility.sectionVisible ? (
             <MissionFormSection title="Bodies" eyebrow="Route">
-              <BodySelectionRow
-                moonAvailable={Boolean(bodySelection?.originMoonAvailable)}
-                moonLabel="Origin moon"
-                onChange={setOriginIsMoon}
-                planetLabel="Origin planet"
-                value={effectiveOriginIsMoon}
-              />
-              <BodySelectionRow
-                moonAvailable={Boolean(bodySelection?.targetMoonAvailable)}
-                moonLabel="Destination moon"
-                onChange={setTargetIsMoon}
-                planetLabel="Destination planet"
-                value={effectiveTargetIsMoon}
-              />
-              <p className="text-xs text-slate-500">
-                Moon bodies keep independent resources and fleets. Jump Gates move moon fleets only and do not carry resources.
-              </p>
+              {bodySelectionVisibility.originVisible ? (
+                <BodySelectionRow
+                  moonAvailable
+                  moonLabel="Origin moon"
+                  onChange={setOriginIsMoon}
+                  planetLabel="Origin planet"
+                  value={effectiveOriginIsMoon}
+                />
+              ) : null}
+              {bodySelectionVisibility.targetVisible ? (
+                <BodySelectionRow
+                  moonAvailable
+                  moonLabel="Destination moon"
+                  onChange={setTargetIsMoon}
+                  planetLabel="Destination planet"
+                  value={effectiveTargetIsMoon}
+                />
+              ) : null}
             </MissionFormSection>
           ) : null}
 
@@ -725,6 +730,24 @@ function BodySelectionRow({
       </button>
     </div>
   );
+}
+
+export function missionBodySelectionVisibility({
+  bodyMissionSupported,
+  originMoonAvailable,
+  targetMoonAvailable,
+}: {
+  bodyMissionSupported: boolean;
+  originMoonAvailable: boolean;
+  targetMoonAvailable: boolean;
+}): { sectionVisible: boolean; originVisible: boolean; targetVisible: boolean } {
+  const originVisible = bodyMissionSupported && originMoonAvailable;
+  const targetVisible = bodyMissionSupported && targetMoonAvailable;
+  return {
+    originVisible,
+    sectionVisible: originVisible || targetVisible,
+    targetVisible,
+  };
 }
 
 export function missionConfirmButtonLabel({

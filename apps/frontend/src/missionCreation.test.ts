@@ -7,6 +7,7 @@ import {
   initialMissionShips,
   LootRatioControls,
   lootRatioFromUpToAmount,
+  missionBodySelectionVisibility,
   missionConfirmButtonLabel,
   missionDraftBlocker,
   missionShipOptions,
@@ -267,6 +268,45 @@ describe("mission creation", () => {
     expect(moonResourceIntel.projectionDetail).toContain("current public moon resource snapshot");
     expect(moonBattleForecast.defenderPower).toBeNull();
     expect(moonBattleForecast.detail).toContain("Moon fleet and defense intel");
+  });
+
+  test("shows body selectors only for route sides with moons", () => {
+    const visibility = (originMoonAvailable: boolean, targetMoonAvailable: boolean) => missionBodySelectionVisibility({
+      bodyMissionSupported: true,
+      originMoonAvailable,
+      targetMoonAvailable,
+    });
+
+    expect(visibility(false, false)).toEqual({
+      originVisible: false,
+      sectionVisible: false,
+      targetVisible: false,
+    });
+    expect(visibility(true, false)).toEqual({
+      originVisible: true,
+      sectionVisible: true,
+      targetVisible: false,
+    });
+    expect(visibility(false, true)).toEqual({
+      originVisible: false,
+      sectionVisible: true,
+      targetVisible: true,
+    });
+    expect(visibility(true, true)).toEqual({
+      originVisible: true,
+      sectionVisible: true,
+      targetVisible: true,
+    });
+    expect(missionBodySelectionVisibility({
+      bodyMissionSupported: false,
+      originMoonAvailable: true,
+      targetMoonAvailable: true,
+    })).toEqual({
+      originVisible: false,
+      sectionVisible: false,
+      targetVisible: false,
+    });
+    expect(missionCreationSource).not.toContain("Moon bodies keep independent");
   });
 
   test("keeps attack confirm visibly pending while transaction and indexing settle", () => {
