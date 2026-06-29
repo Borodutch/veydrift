@@ -70,8 +70,8 @@ const DEFAULT_LOOT_RATIO: MissionLootRatioDraft = { metal: 34, crystal: 33, deut
 const GREEDY_LOOT_RATIO: MissionLootRatioDraft = { metal: 100, crystal: 0, deuterium: 0 };
 const RAID_PLUNDER_BPS = 5_000;
 const BPS = 10_000;
-const PROBABLE_WIN_POWER_RATIO = 1.35;
-const PROBABLE_DEFEAT_POWER_RATIO = 0.85;
+const BATTLE_MAX_ROUNDS = 6;
+const BATTLE_FORECAST_SAMPLES = 33;
 const RESOURCE_KEYS = ["metal", "crystal", "deuterium"] as const;
 const ZERO_COMBAT_TECH_LEVELS: CombatTechLevels = { weapons: 0, shielding: 0, armor: 0 };
 
@@ -116,6 +116,8 @@ export type BattleForecastState =
       detail: string;
       attackerPower: number;
       defenderPower: number | null;
+      attackerLosses?: BattleForecastLossRange;
+      randomness?: BattleForecastRandomness | null;
       attackerTechLevels?: CombatTechLevels;
       defenderTechLevels?: CombatTechLevels;
       defenderTechKnown?: boolean;
@@ -126,10 +128,23 @@ export type BattleForecastState =
       detail: string;
       attackerPower: number;
       defenderPower: number;
+      attackerLosses: BattleForecastLossRange;
+      randomness: BattleForecastRandomness | null;
       attackerTechLevels?: CombatTechLevels;
       defenderTechLevels?: CombatTechLevels;
       defenderTechKnown?: boolean;
     });
+
+export type BattleForecastLossRange = {
+  average: MissionResourceSnapshot;
+  best: MissionResourceSnapshot;
+  worst: MissionResourceSnapshot;
+};
+
+export type BattleForecastRandomness = {
+  outcomeRange: Array<"win" | "defeat" | "draw">;
+  sampleCount: number;
+};
 
 export type TargetResourceIntel = {
   current: MissionResourceSnapshot | null;
@@ -1131,6 +1146,7 @@ export function publicTargetBattleForecast(
   const defenderPower = compositionCombatPower(target.publicState.fleet, "ship", defenderTechLevels)
     + compositionCombatPower(target.publicState.defenses, "defense", defenderTechLevels)
     + stationedPower;
+  const simulation = simulatePublicBattleForecast(ships, target, normalizedAttackerTechLevels, defenderTechLevels);
   if (defenderPower <= 0) {
     return {
       kind: "win",
@@ -1138,41 +1154,21 @@ export function publicTargetBattleForecast(
       detail: "No public stationed fleet or battlefield defenses are visible. Hidden state is not assumed.",
       attackerPower,
       defenderPower,
+      attackerLosses: zeroLossRange(),
+      randomness: null,
       ...forecastTech,
     };
   }
-  if (attackerPower >= defenderPower * PROBABLE_WIN_POWER_RATIO) {
-    return {
-      kind: "win",
-      label: "Probable win",
-      detail: stationedPower > 0
-        ? "Your selected fleet materially exceeds visible public defender power, including stationed defenders. Combat randomness and unindexed changes can still alter the result."
-        : "Your selected fleet materially exceeds visible public defender power. Combat randomness and unindexed changes can still alter the result.",
-      attackerPower,
-      defenderPower,
-      ...forecastTech,
-    };
-  }
-  if (attackerPower <= defenderPower * PROBABLE_DEFEAT_POWER_RATIO) {
-    return {
-      kind: "defeat",
-      label: "Probable defeat",
-      detail: stationedPower > 0
-        ? "Visible public defender power, including stationed defenders, materially exceeds your selected fleet. Add ships or reconsider the target."
-        : "Visible public defender power materially exceeds your selected fleet. Add ships or reconsider the target.",
-      attackerPower,
-      defenderPower,
-      ...forecastTech,
-    };
-  }
+  const kind = simulation.probableOutcome;
+  const label = kind === "win" ? "Probable win" : kind === "defeat" ? "Probable defeat" : "Probable draw";
   return {
-    kind: "draw",
-    label: "Probable draw",
-    detail: stationedPower > 0
-      ? "Public attacker and defender power, including stationed defenders, are close enough that the battle outcome is uncertain."
-      : "Public attacker and defender power are close enough that the battle outcome is uncertain.",
+    kind,
+    label,
+    detail: battleForecastDetail(kind, simulation, stationedPower > 0),
     attackerPower,
     defenderPower,
+    attackerLosses: simulation.attackerLosses,
+    randomness: simulation.randomness,
     ...forecastTech,
   };
 }
@@ -1555,6 +1551,10 @@ function AttackOutcomeContent({
           </div>
         </div>
         <div className="grid gap-1 rounded border border-white/10 bg-black/15 p-2">
+          <CompactFactRow label="Attacker losses" value={formatLossRange(battleForecast.attackerLosses)} />
+          {battleForecast.randomness ? (
+            <CompactFactRow label="Randomness" value={formatRandomnessRange(battleForecast.randomness, battleForecast.attackerLosses)} />
+          ) : null}
           <CompactFactRow label="Max loot" value={formatCompactResources(maxLootForecast)} />
           <CompactFactRow label="Lootable" value={formatCompactResources(lootableAtArrival)} />
           <CompactFactRow
@@ -1583,6 +1583,15 @@ function AttackOutcomeContent({
         </div>
       </div>
       <p className="text-xs text-slate-500">{battleForecast.detail}</p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <ResourceSummary title="Probable attacker losses" resources={battleForecast.attackerLosses?.average ?? null} />
+        {battleForecast.randomness ? (
+          <ResourceSummary title="Attacker loss range" resources={lossRangeSpread(battleForecast.attackerLosses)} />
+        ) : null}
+      </div>
+      {battleForecast.randomness ? (
+        <p className="text-xs text-amber-200">{formatRandomnessRange(battleForecast.randomness, battleForecast.attackerLosses)}</p>
+      ) : null}
       <CombatTechSummary
         attackerLevels={battleForecast.attackerTechLevels ?? ZERO_COMBAT_TECH_LEVELS}
         defenderKnown={battleForecast.defenderTechKnown ?? false}
@@ -2189,6 +2198,265 @@ function combatScaled(value: number, technologyLevel: number): number {
   return Math.floor((value * (BPS + normalizeCombatTechLevel(technologyLevel) * 1_000)) / BPS);
 }
 
+type BattleForecastOutcome = "win" | "defeat" | "draw";
+type BattleForecastSimulation = {
+  probableOutcome: BattleForecastOutcome;
+  attackerLosses: BattleForecastLossRange;
+  randomness: BattleForecastRandomness | null;
+};
+type CombatResources = MissionResourceSnapshot;
+type CombatUnitStats = { attack: number; shield: number; hull: number; metal: number; crystal: number; deuterium: number };
+type CombatUnitStack = { id: number; count: number; stats: CombatUnitStats };
+
+const shipCombatTable: CombatUnitStats[] = [
+  { attack: 5, shield: 10, hull: 400, metal: 2_000, crystal: 2_000, deuterium: 0 },
+  { attack: 50, shield: 10, hull: 400, metal: 3_000, crystal: 1_000, deuterium: 0 },
+  { attack: 1, shield: 10, hull: 1_600, metal: 10_000, crystal: 6_000, deuterium: 2_000 },
+  { attack: 50, shield: 100, hull: 3_000, metal: 10_000, crystal: 20_000, deuterium: 10_000 },
+  { attack: 5, shield: 25, hull: 1_200, metal: 6_000, crystal: 6_000, deuterium: 0 },
+  { attack: 150, shield: 25, hull: 1_000, metal: 6_000, crystal: 4_000, deuterium: 0 },
+  { attack: 400, shield: 50, hull: 2_700, metal: 20_000, crystal: 7_000, deuterium: 2_000 },
+  { attack: 1_000, shield: 200, hull: 6_000, metal: 45_000, crystal: 15_000, deuterium: 0 },
+  { attack: 1_000, shield: 500, hull: 7_500, metal: 50_000, crystal: 25_000, deuterium: 15_000 },
+  { attack: 1, shield: 1, hull: 200, metal: 0, crystal: 2_000, deuterium: 500 },
+  { attack: 2_000, shield: 500, hull: 11_000, metal: 60_000, crystal: 50_000, deuterium: 15_000 },
+  { attack: 200_000, shield: 50_000, hull: 900_000, metal: 5_000_000, crystal: 4_000_000, deuterium: 1_000_000 },
+  { attack: 700, shield: 400, hull: 7_000, metal: 30_000, crystal: 40_000, deuterium: 15_000 },
+  { attack: 2_800, shield: 700, hull: 14_000, metal: 85_000, crystal: 55_000, deuterium: 20_000 },
+  { attack: 200, shield: 100, hull: 2_300, metal: 8_000, crystal: 15_000, deuterium: 8_000 },
+  { attack: 1, shield: 1, hull: 400, metal: 2_000, crystal: 2_000, deuterium: 1_000 },
+];
+
+const defenseCombatTable: CombatUnitStats[] = [
+  { attack: 80, shield: 20, hull: 200, metal: 2_000, crystal: 0, deuterium: 0 },
+  { attack: 100, shield: 25, hull: 200, metal: 1_500, crystal: 500, deuterium: 0 },
+  { attack: 250, shield: 100, hull: 800, metal: 6_000, crystal: 2_000, deuterium: 0 },
+  { attack: 1, shield: 2_000, hull: 2_000, metal: 10_000, crystal: 10_000, deuterium: 0 },
+  { attack: 1_100, shield: 200, hull: 3_500, metal: 20_000, crystal: 15_000, deuterium: 2_000 },
+  { attack: 150, shield: 500, hull: 800, metal: 2_000, crystal: 6_000, deuterium: 0 },
+  { attack: 3_000, shield: 300, hull: 10_000, metal: 50_000, crystal: 50_000, deuterium: 30_000 },
+  { attack: 1, shield: 10_000, hull: 10_000, metal: 50_000, crystal: 50_000, deuterium: 0 },
+];
+
+function simulatePublicBattleForecast(
+  ships: MissionShips,
+  target: Planet,
+  attackerTechLevels: CombatTechLevels,
+  defenderTechLevels: CombatTechLevels,
+): BattleForecastSimulation {
+  const samples = Array.from({ length: BATTLE_FORECAST_SAMPLES }, (_, index) =>
+    runBattleForecastSample(
+      missionShipStacks(ships, attackerTechLevels),
+      defenderShipStacks(target, defenderTechLevels),
+      defenderDefenseStacks(target, defenderTechLevels),
+      0x9e3779b9 + index * 0x45d9f3b
+    )
+  );
+  const outcomeCounts = new Map<BattleForecastOutcome, number>();
+  for (const sample of samples) outcomeCounts.set(sample.outcome, (outcomeCounts.get(sample.outcome) ?? 0) + 1);
+  const probableOutcome = [...outcomeCounts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ?? "draw";
+  const attackerLosses = lossRange(samples.map((sample) => sample.attackerLosses));
+  const outcomeRange = (["win", "draw", "defeat"] as const).filter((outcome) => outcomeCounts.has(outcome));
+  const randomness = outcomeRange.length > 1 || !resourceSnapshotsEqual(attackerLosses.best, attackerLosses.worst)
+    ? { outcomeRange, sampleCount: samples.length }
+    : null;
+  return { probableOutcome, attackerLosses, randomness };
+}
+
+function runBattleForecastSample(
+  attackerInput: CombatUnitStack[],
+  defenderShipInput: CombatUnitStack[],
+  defenderDefenseInput: CombatUnitStack[],
+  seed: number,
+): { outcome: BattleForecastOutcome; attackerLosses: CombatResources } {
+  const attackers = copyCombatStacks(attackerInput);
+  const defenderShips = copyCombatStacks(defenderShipInput);
+  const defenderDefenses = copyCombatStacks(defenderDefenseInput);
+  const attackerLosses = zeroResources();
+
+  for (let round = 1; round <= BATTLE_MAX_ROUNDS; round += 1) {
+    if (unitTotal(attackers) <= 0 || unitTotal(defenderShips) + unitTotal(defenderDefenses) <= 0) break;
+    const attackersAtRoundStart = copyCombatStacks(attackers);
+    const defenderShipsAtRoundStart = copyCombatStacks(defenderShips);
+    const defenderDefensesAtRoundStart = copyCombatStacks(defenderDefenses);
+
+    for (const defender of defenderShipsAtRoundStart) {
+      fireAtStacks(defender, attackers, unitTotal(attackersAtRoundStart), attackerLosses, seed, round, 1);
+    }
+    for (const defender of defenderDefensesAtRoundStart) {
+      fireAtStacks(defender, attackers, unitTotal(attackersAtRoundStart), attackerLosses, seed, round, 2);
+    }
+    const defenderTargetTotal = unitTotal(defenderShipsAtRoundStart) + unitTotal(defenderDefensesAtRoundStart);
+    for (const attacker of attackersAtRoundStart) {
+      fireAtStacks(attacker, defenderShips, defenderTargetTotal, null, seed, round, 4);
+      fireAtStacks(attacker, defenderDefenses, defenderTargetTotal, null, seed, round, 5);
+    }
+  }
+
+  const finalAttackers = unitTotal(attackers);
+  const finalDefenders = unitTotal(defenderShips) + unitTotal(defenderDefenses);
+  return {
+    outcome: finalAttackers > 0 && finalDefenders <= 0 ? "win" : finalAttackers <= 0 && finalDefenders > 0 ? "defeat" : "draw",
+    attackerLosses,
+  };
+}
+
+function fireAtStacks(
+  firing: CombatUnitStack,
+  targets: CombatUnitStack[],
+  targetTotal: number,
+  losses: CombatResources | null,
+  seed: number,
+  round: number,
+  side: number,
+) {
+  if (firing.count <= 0 || targetTotal <= 0) return;
+  for (const target of targets) {
+    if (target.count <= 0) continue;
+    const shots = distributedTargetShots(firing.count, target.count, targetTotal, seed, round, side, firing.id, target.id);
+    const lost = lossCount(target, shots, firing.stats.attack, seed, round, side, target.id);
+    if (lost <= 0) continue;
+    target.count -= lost;
+    if (losses) {
+      losses.metal += target.stats.metal * lost;
+      losses.crystal += target.stats.crystal * lost;
+      losses.deuterium += target.stats.deuterium * lost;
+    }
+  }
+}
+
+function lossCount(target: CombatUnitStack, shots: number, attack: number, seed: number, round: number, side: number, targetId: number): number {
+  if (target.count <= 0 || shots <= 0 || attack <= 0 || target.stats.hull <= 0) return 0;
+  const targeted = Math.min(shots, target.count);
+  const shotsPerTarget = Math.ceil(shots / targeted);
+  const damage = attack * shotsPerTarget;
+  if (attack <= target.stats.shield / 100 || damage <= target.stats.shield) return 0;
+  const hullDamage = damage - target.stats.shield;
+  if (hullDamage >= target.stats.hull) return targeted;
+  const damageBps = Math.floor((hullDamage * BPS) / target.stats.hull);
+  if (damageBps <= 3_000) return 0;
+  return Math.min(targeted, sampleChance(targeted, damageBps, seed, round, side, targetId, shots));
+}
+
+function distributedTargetShots(shots: number, targetCount: number, targetTotal: number, seed: number, round: number, side: number, firingId: number, targetId: number): number {
+  if (shots <= 0 || targetCount <= 0 || targetTotal <= 0) return 0;
+  const weightedShots = shots * targetCount;
+  const base = Math.floor(weightedShots / targetTotal);
+  return combatRand(seed, round, side, firingId, targetId, 0) % targetTotal < weightedShots % targetTotal ? base + 1 : base;
+}
+
+function sampleChance(trials: number, chanceBps: number, seed: number, round: number, side: number, targetId: number, lane: number): number {
+  if (trials <= 0 || chanceBps <= 0) return 0;
+  if (chanceBps >= BPS) return trials;
+  const scaled = trials * chanceBps;
+  const base = Math.floor(scaled / BPS);
+  return combatRand(seed, round, side, targetId, lane, 1) % BPS < scaled % BPS ? base + 1 : base;
+}
+
+function combatRand(seed: number, round: number, side: number, unit: number, target: number, stream: number): number {
+  let value = (seed ^ Math.imul(round + 0x7f4a7c15, 0x9e3779b1) ^ Math.imul(side + 0x85ebca6b, 0xc2b2ae35) ^ Math.imul(unit + 0x27d4eb2f, 0x165667b1) ^ Math.imul(target + 0xd3a2646c, 0x27d4eb2d) ^ stream) >>> 0;
+  value ^= value >>> 16;
+  value = Math.imul(value, 0x7feb352d) >>> 0;
+  value ^= value >>> 15;
+  value = Math.imul(value, 0x846ca68b) >>> 0;
+  return (value ^ (value >>> 16)) >>> 0;
+}
+
+function missionShipStacks(ships: MissionShips, techLevels: CombatTechLevels): CombatUnitStack[] {
+  return missionShipOptions.flatMap((option) => {
+    const count = Math.max(0, Math.trunc(ships[option.key] ?? 0));
+    const stats = shipCombatTable[option.id];
+    return count > 0 && stats ? [{ id: option.id, count, stats: scaledCombatStats(stats, techLevels) }] : [];
+  });
+}
+
+function defenderShipStacks(target: Planet, techLevels: CombatTechLevels): CombatUnitStack[] {
+  const counts = new Map<number, number>();
+  for (const row of target.publicState?.fleet ?? []) counts.set(row.id, (counts.get(row.id) ?? 0) + Math.max(0, Math.trunc(row.count)));
+  for (const defender of target.publicState?.stationedDefenders ?? []) {
+    for (const ship of shipCatalog) {
+      const count = safeResourceNumber(defender.ships[ship.key]);
+      if (count > 0) counts.set(ship.id, (counts.get(ship.id) ?? 0) + count);
+    }
+  }
+  return [...counts.entries()].flatMap(([id, count]) => {
+    const stats = shipCombatTable[id];
+    return count > 0 && stats ? [{ id, count, stats: scaledCombatStats(stats, techLevels) }] : [];
+  });
+}
+
+function defenderDefenseStacks(target: Planet, techLevels: CombatTechLevels): CombatUnitStack[] {
+  return (target.publicState?.defenses ?? []).flatMap((row) => {
+    const count = Math.max(0, Math.trunc(row.count));
+    const stats = defenseCombatTable[row.id];
+    return count > 0 && stats ? [{ id: row.id, count, stats: scaledCombatStats(stats, techLevels) }] : [];
+  });
+}
+
+function scaledCombatStats(stats: CombatUnitStats, techLevels: CombatTechLevels): CombatUnitStats {
+  return {
+    ...stats,
+    attack: combatScaled(stats.attack, techLevels.weapons),
+    shield: combatScaled(stats.shield, techLevels.shielding),
+    hull: combatScaled(stats.hull, techLevels.armor),
+  };
+}
+
+function battleForecastDetail(kind: BattleForecastOutcome, simulation: BattleForecastSimulation, hasStationedDefenders: boolean): string {
+  const randomness = simulation.randomness ? " Sampled combat randomness can change the outcome or losses; review the range below." : "";
+  if (kind === "win") {
+    return `${hasStationedDefenders ? "The selected fleet defeats visible public defenders, including stationed defenders, in the sampled six-round combat preview." : "The selected fleet defeats visible public defenders in the sampled six-round combat preview."}${randomness}`;
+  }
+  if (kind === "defeat") {
+    return `${hasStationedDefenders ? "Visible public defenders, including stationed defenders, defeat the selected fleet in the sampled six-round combat preview." : "Visible public defenders defeat the selected fleet in the sampled six-round combat preview."}${randomness}`;
+  }
+  return `${hasStationedDefenders ? "Neither side reliably clears the other within six rounds against visible public defenders, including stationed defenders." : "Neither side reliably clears the other within six rounds against visible public defenders."}${randomness}`;
+}
+
+function lossRange(losses: CombatResources[]): BattleForecastLossRange {
+  if (losses.length <= 0) return zeroLossRange();
+  const sum = losses.reduce((total, item) => addResources(total, item), zeroResources());
+  const first = losses[0] ?? zeroResources();
+  return {
+    average: {
+      metal: Math.round(sum.metal / losses.length),
+      crystal: Math.round(sum.crystal / losses.length),
+      deuterium: Math.round(sum.deuterium / losses.length),
+    },
+    best: losses.reduce((best, item) => resourceValue(item) < resourceValue(best) ? item : best, first),
+    worst: losses.reduce((worst, item) => resourceValue(item) > resourceValue(worst) ? item : worst, first),
+  };
+}
+
+function zeroLossRange(): BattleForecastLossRange {
+  const zero = zeroResources();
+  return { average: zero, best: zero, worst: zero };
+}
+
+function zeroResources(): CombatResources {
+  return { metal: 0, crystal: 0, deuterium: 0 };
+}
+
+function addResources(left: CombatResources, right: CombatResources): CombatResources {
+  return { metal: left.metal + right.metal, crystal: left.crystal + right.crystal, deuterium: left.deuterium + right.deuterium };
+}
+
+function resourceValue(resources: CombatResources): number {
+  return resources.metal + resources.crystal + resources.deuterium;
+}
+
+function resourceSnapshotsEqual(left: CombatResources, right: CombatResources): boolean {
+  return left.metal === right.metal && left.crystal === right.crystal && left.deuterium === right.deuterium;
+}
+
+function copyCombatStacks(stacks: CombatUnitStack[]): CombatUnitStack[] {
+  return stacks.map((stack) => ({ ...stack }));
+}
+
+function unitTotal(stacks: CombatUnitStack[]): number {
+  return stacks.reduce((total, stack) => total + Math.max(0, stack.count), 0);
+}
+
 function commanderLabel(target: Planet | undefined): string {
   return target?.occupiedBy?.ownerDisplayName
     ?? target?.occupiedBy?.owner
@@ -2209,6 +2477,27 @@ function resourceLabel(key: ResourceKey): string {
 function formatCompactResources(resources: MissionResourceSnapshot | null): string {
   if (!resources) return "Unknown";
   return `${formatResourceAmount(resources.metal)} M / ${formatResourceAmount(resources.crystal)} C / ${formatResourceAmount(resources.deuterium)} D`;
+}
+
+function formatLossRange(losses: BattleForecastLossRange | undefined): string {
+  if (!losses) return "Unknown";
+  if (resourceSnapshotsEqual(losses.best, losses.worst)) return formatCompactResources(losses.average);
+  return `${formatCompactResources(losses.average)} avg`;
+}
+
+function lossRangeSpread(losses: BattleForecastLossRange | undefined): MissionResourceSnapshot | null {
+  if (!losses) return null;
+  return {
+    metal: losses.worst.metal - losses.best.metal,
+    crystal: losses.worst.crystal - losses.best.crystal,
+    deuterium: losses.worst.deuterium - losses.best.deuterium,
+  };
+}
+
+function formatRandomnessRange(randomness: BattleForecastRandomness, losses: BattleForecastLossRange | undefined): string {
+  const outcomes = randomness.outcomeRange.map((outcome) => outcome === "win" ? "win" : outcome === "defeat" ? "defeat" : "draw").join("/");
+  if (!losses) return `${outcomes} across ${randomness.sampleCount} samples`;
+  return `${outcomes}; losses ${formatCompactResources(losses.best)} to ${formatCompactResources(losses.worst)}`;
 }
 
 function formatResourceAmount(value: number): string {
