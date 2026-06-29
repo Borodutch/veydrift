@@ -5494,6 +5494,68 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("mission report reads reuse persisted defender snapshots instead of rebuilding them", async () => {
+    const chainReader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+    const indexer = new SettlementIndexer(chainReader, 100n);
+    await indexer.rebuild();
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xlaunch5681",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(5681n), addressTopic(player), topic(3n)],
+      data: abiWords(7n, 8n, 1770001200n, 1770002400n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xlaunch5681",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(5681n)],
+      data: abiWords(0n, 0n, 0n, 4n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xlaunch5681",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(5681n)],
+      data: abiWords(3n, ...Array.from({ length: 13 }, () => 0n))
+    });
+    indexer.applyLog({
+      blockNumber: "0x7f",
+      transactionHash: "0xpersisted-defender-before-battle",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(8n), topic(0n)],
+      data: abiWords(11n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xresolve5681",
+      logIndex: "0x0",
+      topics: [planetDefenseCountChangedTopic, topic(8n), topic(0n)],
+      data: abiWords(0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xresolve5681",
+      logIndex: "0x1",
+      topics: [attackBattleResolvedTopic, topic(5681n), addressTopic(player), topic(8n)],
+      data: abiWords(1n, 11n, 12345n, 2430n, 1364n, 375n)
+    });
+    indexer.materializeBattleReportReadModelsForWorker(["5681"], "ingest");
+
+    (indexer as unknown as { battleTimeDefenderSnapshots: () => never }).battleTimeDefenderSnapshots = () => {
+      throw new Error("mission detail must not rebuild defender snapshots after materialization");
+    };
+
+    expect(indexer.battleReport("5681")?.defenderSnapshot).toEqual({
+      fleet: [],
+      defenses: [{ id: 0, count: 11 }]
+    });
+  });
+
   test("canonical fleet mission sync is a no-op; terminal rows must come from event logs", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");
