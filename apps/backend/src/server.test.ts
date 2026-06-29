@@ -2380,6 +2380,88 @@ describe("Veydrift backend", () => {
     expect(materializationCalls).toBe(0);
   });
 
+  test("combat mission detail does not raw-decode missing battle reports on request", async () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    for (const log of activeFleetMissionLogs({
+      arrivalAt: 1_700_000_000n,
+      missionId: 90n,
+      missionTypeId: 3n,
+      owner: attacker,
+      originPlanetId: 7n,
+      targetPlanetId: 9n
+    })) {
+      indexer.applyLog(log);
+    }
+
+    const battleReportOptions: Array<{ includeRawFallback?: boolean } | undefined> = [];
+    const originalBattleReport = indexer.battleReport.bind(indexer);
+    indexer.battleReport = (missionId, options) => {
+      battleReportOptions.push(options);
+      if (options?.includeRawFallback !== false) {
+        throw new Error("mission detail must not raw-decode battle reports on a cold read");
+      }
+      return originalBattleReport(missionId, options);
+    };
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    })(new Request("http://localhost/mission/90"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.mission).toMatchObject({ missionId: "90", missionType: "Attack" });
+    expect(body.battleReport).toBeNull();
+    expect(body.battleReportMaterialization).toEqual({ status: "missing" });
+    expect(battleReportOptions).toEqual([{ includeRawFallback: false }]);
+  });
+
+  test("mission detail reports divergent persisted battle report rows explicitly", async () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    for (const log of activeFleetMissionLogs({
+      arrivalAt: 1_700_000_000n,
+      missionId: 92n,
+      missionTypeId: 3n,
+      owner: attacker,
+      originPlanetId: 7n,
+      targetPlanetId: 9n
+    })) {
+      indexer.applyLog(log);
+    }
+    (indexer as any).db.query(`
+      INSERT INTO indexed_battle_report_read_models (
+        mission_id, status, report_json, error, attempts, duration_ms, block_number, updated_at
+      )
+      VALUES (?, 'ready', ?, NULL, 1, 4, '145', '2026-06-25T00:00:00.000Z')
+    `).run("92", JSON.stringify({
+      missionId: "999",
+      participants: [],
+      blockNumber: "145",
+      targetPlanetId: "9"
+    }));
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    })(new Request("http://localhost/mission/92"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.battleReport).toBeNull();
+    expect(body.battleReportMaterialization).toMatchObject({
+      status: "failed",
+      attempts: 1,
+      durationMs: 4,
+      error: "Persisted battle report read model did not match this mission."
+    });
+  });
+
   test("persists battle report read model asynchronously and resolves ACS participant ids after restart", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-battle-report-read-model-"));
     const databasePath = join(dir, "contract-state.sqlite");

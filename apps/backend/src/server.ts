@@ -742,18 +742,28 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const battleReportMaterialization = expectsReport
           ? battleReportMaterializationStatusForMission(indexer, mission)
           : { status: "missing" as const };
-        const includeRawReportFallback = expectsReport && battleReportMaterialization.status === "missing";
         const battleReport = expectsReport
           ? (
-            indexer.battleReport(missionId, { includeRawFallback: includeRawReportFallback })
-            ?? (mission.attackGroupId ? indexer.battleReport(mission.attackGroupId, { includeRawFallback: includeRawReportFallback }) : null)
+            indexer.battleReport(missionId, { includeRawFallback: false })
+            ?? (mission.attackGroupId ? indexer.battleReport(mission.attackGroupId, { includeRawFallback: false }) : null)
           )
           : null;
+        const reportedBattleReportMaterialization = battleReport
+          ? { status: "ready" as const }
+          : battleReportMaterialization.status === "ready"
+            ? {
+                status: "failed" as const,
+                attempts: battleReportMaterialization.attempts,
+                durationMs: battleReportMaterialization.durationMs,
+                error: battleReportMaterialization.error ?? "Persisted battle report read model did not match this mission.",
+                updatedAt: battleReportMaterialization.updatedAt
+              }
+            : battleReportMaterialization;
         return Response.json(
           {
             mission,
             battleReport,
-            battleReportMaterialization: battleReport ? { status: "ready" as const } : battleReportMaterialization,
+            battleReportMaterialization: reportedBattleReportMaterialization,
             targetCombatIntel: targetCombatIntelForMission(indexer, mission),
             // The defender's surviving fleet/defenses are not in the on-chain combat log, but the
             // indexer tracks the target planet's ship/defense composition (ShipCountChanged + defense
