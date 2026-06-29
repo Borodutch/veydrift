@@ -8,6 +8,7 @@ import {
   allianceInviteAcceptanceState,
   allianceJoinRequestApprovalState,
   allianceJoinRequestDismissalState,
+  allianceWarEndActionState,
   clampDirectoryPage,
   clampRosterPage,
   directoryPageCount,
@@ -448,6 +449,50 @@ describe("AlliancePage loading display", () => {
     expect(alliancePageSource).toContain("Declare War");
     expect(alliancePageSource).not.toContain('<span className="text-xs uppercase tracking-[0.14em] text-slate-500">Declare War</span>');
     expect(alliancePageSource).not.toContain("<option value=\"\">Select alliance</option>");
+  });
+
+  test("only enables End War for wars started by the current alliance", () => {
+    expect(allianceWarEndActionState({
+      canEndWar: true,
+      currentAllianceId: "7",
+      initiatedByAllianceId: "7",
+    })).toEqual({
+      visible: true,
+      enabled: true,
+      reason: null,
+    });
+    expect(allianceWarEndActionState({
+      canEndWar: true,
+      currentAllianceId: "7",
+      initiatedByAllianceId: "8",
+    })).toEqual({
+      visible: true,
+      enabled: false,
+      reason: "Only the alliance that declared this war can end it.",
+    });
+    expect(allianceWarEndActionState({
+      canEndWar: true,
+      currentAllianceId: "7",
+      initiatedByAllianceId: null,
+    })).toEqual({
+      visible: true,
+      enabled: false,
+      reason: "Only the alliance that declared this war can end it.",
+    });
+    expect(allianceWarEndActionState({
+      canEndWar: false,
+      currentAllianceId: "7",
+      initiatedByAllianceId: "7",
+    })).toEqual({
+      visible: false,
+      enabled: false,
+      reason: null,
+    });
+    expect(alliancePageSource).toContain("disabledReasonId");
+    expect(alliancePageSource).toContain("aria-describedby={disabledReasonId}");
+    expect(alliancePageSource).toContain('role="tooltip"');
+    expect(alliancePageSource).toContain("group-hover:opacity-100 group-focus-within:opacity-100");
+    expect(alliancePageSource).toContain("Only the alliance that declared this war can end it.");
   });
 
   test("polishes alliance edit invite and delete controls with explicit labels", () => {

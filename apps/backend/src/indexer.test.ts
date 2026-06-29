@@ -3804,6 +3804,74 @@ describe("SettlementIndexer", () => {
     ]));
   });
 
+  test("preserves the initiating alliance for both directions of a war diplomacy event", () => {
+    const rival = "0x3333333333333333333333333333333333333333" as Address;
+    const indexer = new SettlementIndexer({
+      async listSettledPlanetEvents() { return []; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listAllianceLogs() { return []; }
+    }, 100n);
+
+    indexer.applyLog({
+      blockNumber: "0x90",
+      blockTimestamp: "0x69801c80",
+      transactionHash: "0xalliance-create-1",
+      logIndex: "0x0",
+      topics: [allianceCreatedTopic, topic(1n), addressTopic(player)],
+      data: abiStrings("VEY", "Veydrift Command")
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      blockTimestamp: "0x69801c81",
+      transactionHash: "0xalliance-owner-1",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(1n), addressTopic(player)],
+      data: abiWords(3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92",
+      blockTimestamp: "0x69801c82",
+      transactionHash: "0xalliance-create-2",
+      logIndex: "0x0",
+      topics: [allianceCreatedTopic, topic(2n), addressTopic(rival)],
+      data: abiStrings("RVL", "Rivals")
+    });
+    indexer.applyLog({
+      blockNumber: "0x93",
+      blockTimestamp: "0x69801c83",
+      transactionHash: "0xalliance-owner-2",
+      logIndex: "0x0",
+      topics: [allianceJoinedTopic, topic(2n), addressTopic(rival)],
+      data: abiWords(3n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x94",
+      blockTimestamp: "0x69801c84",
+      transactionHash: "0xalliance-diplomacy",
+      logIndex: "0x0",
+      topics: [allianceDiplomacyUpdatedTopic, topic(2n), topic(1n)],
+      data: abiWords(3n)
+    });
+
+    expect(indexer.allianceState(player).activeWars).toMatchObject([
+      {
+        allianceId: "1",
+        otherAllianceId: "2",
+        status: "war",
+        initiatedByAllianceId: "2"
+      }
+    ]);
+    expect(indexer.allianceState(rival).activeWars).toMatchObject([
+      {
+        allianceId: "2",
+        otherAllianceId: "1",
+        status: "war",
+        initiatedByAllianceId: "2"
+      }
+    ]);
+  });
+
   test("transfers alliance ownership to an officer from event logs", () => {
     const officer = "0x3333333333333333333333333333333333333333" as Address;
     const indexer = new SettlementIndexer({
