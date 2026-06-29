@@ -628,7 +628,7 @@ export function DebrisTargetRow({
             sizes="icon"
             src={planetImageForType(target.archetype)}
           />
-          {target.hasMoon ? <PlanetMoonIndicator compact /> : null}
+          {target.hasMoon ? <PlanetMoonIndicator compact planetType={target.archetype} /> : null}
         </span>
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -669,7 +669,7 @@ export function DebrisTargetRow({
             </span>
           </div>
           {target.hasMoon ? (
-            <PlanetMoonSubsection label="Moon" />
+            <PlanetMoonSubsection label="Moon" planetType={target.archetype} />
           ) : null}
         </div>
       </div>
@@ -746,7 +746,7 @@ export function RaidTargetRow({
             sizes="icon"
             src={planetImageForType(target.archetype)}
           />
-          {target.hasMoon ? <PlanetMoonIndicator compact /> : null}
+          {target.hasMoon ? <PlanetMoonIndicator compact planetType={target.archetype} /> : null}
         </span>
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -840,7 +840,7 @@ export function RaidTargetRow({
           </div>
           <PlanetMissionLines className="mt-1" planetId={target.planetId} subtext={missionSubtext} />
           {target.hasMoon ? (
-            <PlanetMoonSubsection label="Moon" />
+            <PlanetMoonSubsection label="Moon" planetType={target.archetype} />
           ) : null}
         </div>
       </div>

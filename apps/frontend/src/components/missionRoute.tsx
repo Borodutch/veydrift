@@ -138,7 +138,7 @@ function EndpointPlanetImage({ endpoint }: { endpoint: MissionEndpoint }) {
         loading="lazy"
         src={planetImageForType(endpoint.archetype)}
       />
-      {endpoint.hasMoon ? <PlanetMoonIndicator compact /> : null}
+      {endpoint.hasMoon ? <PlanetMoonIndicator compact planetType={endpoint.archetype} /> : null}
     </span>
   );
 }

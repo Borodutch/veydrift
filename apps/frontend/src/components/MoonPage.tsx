@@ -4,6 +4,7 @@ import { useState } from "preact/hooks";
 import type { Resources } from "../playableMvp";
 import type { MissionShips } from "../galaxyActions";
 import type { ChainMoonState } from "../walletFlow";
+import type { PlanetType } from "../types";
 import { formatCost } from "../buildingDetails";
 import { formatDuration } from "../durationFormat";
 import { buildingCatalog, defenseCatalog, shipCatalog, shipyardCatalog } from "../playableMvp";
@@ -55,6 +56,7 @@ interface MoonPageProps {
   onStartBuilding?: ((buildingId: number, label: string) => void) | undefined;
   onStartDefense?: ((defenseId: number, label: string, quantity: number) => void) | undefined;
   parentPlanetLabel?: string | undefined;
+  parentPlanetType?: PlanetType | null | undefined;
   transactionUnavailableReason?: string | undefined;
 }
 
@@ -74,6 +76,7 @@ export function MoonPage({
   onStartBuilding,
   onStartDefense,
   parentPlanetLabel,
+  parentPlanetType,
   transactionUnavailableReason,
 }: MoonPageProps) {
   const moon = moonState?.moon;
@@ -119,6 +122,7 @@ export function MoonPage({
             onStartBuilding={onStartBuilding}
             onStartDefense={onStartDefense}
             parentPlanetLabel={parentPlanetLabel}
+            parentPlanetType={parentPlanetType}
             transactionUnavailableReason={transactionUnavailableReason}
           />
         </>
@@ -133,7 +137,7 @@ export function MoonPage({
       ) : error ? (
         isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <MoonStatusPanel title="Moon state unavailable" body={error} tone="warning" />
       ) : (
-        <NoMoonGuidance moonState={moonState} reason={unavailableReason} />
+        <NoMoonGuidance moonState={moonState} parentPlanetType={parentPlanetType} reason={unavailableReason} />
       )}
     </div>
   );
@@ -264,9 +268,11 @@ function chickenBurnDisabledReason({
 
 function NoMoonGuidance({
   moonState,
+  parentPlanetType,
   reason,
 }: {
   moonState?: ChainMoonState | null | undefined;
+  parentPlanetType?: PlanetType | null | undefined;
   reason?: string | undefined;
 }) {
   const previewBuildings = moonStructurePreviewBuildings(moonState);
@@ -276,7 +282,7 @@ function NoMoonGuidance({
       <div className="grid gap-4">
         <div className="min-w-0">
           <div className="mb-3 grid h-10 w-10 place-items-center rounded border border-cyan-200/20 bg-cyan-200/10 text-cyan-200">
-            <MoonImage className="h-full w-full object-cover" />
+            <MoonImage className="h-full w-full object-cover" planetType={parentPlanetType} />
           </div>
           <h3 className="text-base font-semibold text-white">No moon in orbit</h3>
           {reason ? <p className="mt-2 text-xs text-slate-500">{reason}</p> : null}
@@ -329,6 +335,7 @@ function MoonSystemsPanel({
   onStartBuilding,
   onStartDefense,
   parentPlanetLabel,
+  parentPlanetType,
   transactionUnavailableReason,
 }: {
   action?: MoonPageProps["action"];
@@ -341,6 +348,7 @@ function MoonSystemsPanel({
   onStartBuilding?: MoonPageProps["onStartBuilding"];
   onStartDefense?: MoonPageProps["onStartDefense"];
   parentPlanetLabel?: string | undefined;
+  parentPlanetType?: PlanetType | null | undefined;
   transactionUnavailableReason?: string | undefined;
 }) {
   const [jumpDestination, setJumpDestination] = useState("");
@@ -366,6 +374,7 @@ function MoonSystemsPanel({
               className="absolute inset-0 h-full w-full object-cover"
               height={1254}
               loading="eager"
+              planetType={parentPlanetType}
               sizes="(min-width: 1280px) 38vw, (min-width: 768px) 46vw, 100vw"
               width={1254}
             />

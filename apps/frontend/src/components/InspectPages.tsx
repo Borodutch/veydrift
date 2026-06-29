@@ -238,7 +238,7 @@ function PlayerPlanetRow({
           sizes="icon"
           src={playerInspectPlanetImage(planet)}
         />
-        {planet.moon?.exists ? <PlanetMoonIndicator compact /> : null}
+        {planet.moon?.exists ? <PlanetMoonIndicator compact planetType={planetTypeFromTemperature(planet.temperature)} /> : null}
       </span>
       <span className="grid min-w-0 gap-2">
         <span className="flex flex-wrap items-center justify-between gap-2">
@@ -253,7 +253,7 @@ function PlayerPlanetRow({
           ))}
         </span>
         {planet.moon?.exists ? (
-          <PlanetMoonSubsection label="Moon" />
+          <PlanetMoonSubsection label="Moon" planetType={planetTypeFromTemperature(planet.temperature)} />
         ) : null}
       </span>
     </button>

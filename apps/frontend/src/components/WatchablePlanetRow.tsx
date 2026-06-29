@@ -93,7 +93,7 @@ export function WatchablePlanetRow({
             sizes="icon"
             src={planet.image}
           />
-          {planet.hasMoon ? <PlanetMoonIndicator compact /> : null}
+          {planet.hasMoon ? <PlanetMoonIndicator compact planetType={planet.type} /> : null}
         </div>
 
         <div className="min-w-0">
@@ -119,6 +119,7 @@ export function WatchablePlanetRow({
           {planet.hasMoon ? (
             <PlanetMoonSubsection
               label={planet.moonName ?? "Moon"}
+              planetType={planet.type}
             />
           ) : null}
         </div>

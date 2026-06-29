@@ -568,7 +568,7 @@ function RankingRow({
                     sizes="icon"
                     src={planetImageForType(planet.archetype)}
                   />
-                  {planet.hasMoon ? <PlanetMoonIndicator compact /> : null}
+                  {planet.hasMoon ? <PlanetMoonIndicator compact planetType={planet.archetype} /> : null}
                 </span>
                 <span className="min-w-0 truncate text-slate-200">
                   {isHomePlanet ? (
@@ -602,7 +602,7 @@ function RankingRow({
               </button>
               <PlanetMissionLines className="pl-2 sm:pl-[34px]" planetId={planet.planetId} subtext={missionLines} />
               {planet.hasMoon ? (
-                <PlanetMoonSubsection label="Moon" />
+                <PlanetMoonSubsection label="Moon" planetType={planet.archetype} />
               ) : null}
               </div>
             );

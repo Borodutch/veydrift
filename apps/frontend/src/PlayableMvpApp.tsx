@@ -7635,6 +7635,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           onStartBuilding={handleStartMoonBuilding}
           onStartDefense={handleStartMoonDefense}
           parentPlanetLabel={selectedManagedPlanet?.name ?? selectedManagedPlanet?.coordinates}
+          parentPlanetType={selectedManagedPlanet ? planetTypeFromTemperature(selectedManagedPlanet.temperature) : undefined}
           transactionUnavailableReason={moonTransactionUnavailableReason}
         />
       );
@@ -8100,7 +8101,13 @@ function PlanetSelectorButton({
           loading="lazy"
           src={planetImage(planet)}
         />
-        {planet.moon?.exists ? <PlanetMoonIndicator compact className="bottom-0.5 right-0.5 top-auto" /> : null}
+        {planet.moon?.exists ? (
+          <PlanetMoonIndicator
+            compact
+            className="bottom-0.5 right-0.5 top-auto"
+            planetType={planetTypeFromTemperature(planet.temperature)}
+          />
+        ) : null}
       </span>
       <span className="block max-w-full truncate text-[0.68rem] font-medium leading-4 text-slate-200">
         {planetDisplayName(planet)}
@@ -8137,7 +8144,7 @@ function PlanetSelectorMoonButton({
       type="button"
     >
       <span className="h-5 w-5 overflow-hidden rounded-full border border-cyan-100/30 bg-black/40">
-        <MoonImage className="h-full w-full object-cover" />
+        <MoonImage className="h-full w-full object-cover" planetType={planetTypeFromTemperature(planet.temperature)} />
       </span>
       <span className="min-w-0">
         <span className="block truncate text-[0.62rem] font-semibold leading-3">Moon</span>
