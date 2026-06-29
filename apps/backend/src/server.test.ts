@@ -2587,6 +2587,63 @@ describe("Veydrift backend", () => {
     expect(missionBody.battleReportMaterialization).toMatchObject({ status: "pending" });
   });
 
+  test("long-running battle report materialization does not delay API reads", async () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    let releaseMaterializer!: () => void;
+    let materializerStarted = false;
+    const materializerGate = new Promise<void>((resolve) => {
+      releaseMaterializer = resolve;
+    });
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, {
+      async battleReportMaterializationRunner() {
+        materializerStarted = true;
+        await materializerGate;
+      }
+    });
+    await indexer.rebuild();
+    for (const log of activeFleetMissionLogs({
+      arrivalAt: 1_700_000_000n,
+      missionId: 93n,
+      missionTypeId: 3n,
+      owner: attacker,
+      originPlanetId: 7n,
+      targetPlanetId: 9n
+    })) {
+      indexer.applyLog(log);
+    }
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xbattleresolved-93",
+      logIndex: "0x0",
+      removed: false,
+      topics: [attackBattleResolvedTopic, topic(93n), addressTopic(attacker), topic(9n)],
+      data: abiWords(1n, 2n, 12345n, 100n, 50n, 10n)
+    });
+
+    for (let attempt = 0; attempt < 10 && !materializerStarted; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    expect(materializerStarted).toBe(true);
+
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    });
+    const runtimeResponse = await resolvesWithin(handler(new Request("http://localhost/runtime-config")), 50);
+    const missionResponse = await resolvesWithin(handler(new Request("http://localhost/mission/93")), 50);
+    const missionBody = await missionResponse.json();
+
+    expect(runtimeResponse.status).toBe(200);
+    expect(missionResponse.status).toBe(200);
+    expect(missionBody.mission).toMatchObject({ missionId: "93", missionType: "Attack" });
+    expect(missionBody.battleReport).toBeNull();
+    expect(missionBody.battleReportMaterialization).toMatchObject({ status: "pending" });
+
+    releaseMaterializer();
+    await indexer.drainBattleReportMaterializationQueue();
+  });
+
   test("refreshes warmed shipyard and defense API caches after unit-count logs are indexed", async () => {
     const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
     indexer.applyEvent({
@@ -9182,6 +9239,19 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     }
   });
 });
+
+async function resolvesWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  const result = await Promise.race([
+    promise.then((value) => ({ timedOut: false as const, value })),
+    new Promise<{ timedOut: true }>((resolve) => {
+      setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+    })
+  ]);
+  if (result.timedOut) {
+    throw new Error(`Promise did not resolve within ${timeoutMs}ms`);
+  }
+  return result.value;
+}
 
 describe("shouldRecoverFailedReconciliation (VEY-KANEO-461)", () => {
   test("recovers a warm DB carrying a failed reconcile", () => {
