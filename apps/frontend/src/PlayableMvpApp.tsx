@@ -8003,9 +8003,17 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     if (page === "moon-inspect" && selectedCoords) {
       return (
         <PublicMoonDetail
+          account={account}
+          actionState={galaxyAction}
           apiBaseUrl={apiBaseUrl}
           coords={selectedCoords}
+          defenseState={defenseState}
+          homeCoords={activePlanetCoords}
+          homePlanetId={activePlanetId ?? onChainSettlement?.homePlanetId}
+          onAction={handleGalaxyAction}
           onBack={handlePlanetDetailBack}
+          shipyardState={missionActionShipyardState}
+          transactionUnavailableReason={gameTransactionUnavailableReason}
         />
       );
     }

@@ -37,22 +37,58 @@ export function MoonImage({
 export function PlanetMoonIndicator({
   className = "",
   compact = false,
+  href,
   label = "Moon present",
+  onClick,
   planetType,
+  title,
 }: {
   className?: string | undefined;
   compact?: boolean | undefined;
+  href?: string | undefined;
   label?: string | undefined;
+  onClick?: (() => void) | undefined;
   planetType?: PlanetType | null | undefined;
+  title?: string | undefined;
 }) {
   const sizeClass = compact ? "h-4 w-4" : "h-5 w-5";
+  const indicatorClass = `absolute right-1 top-1 inline-flex ${sizeClass} items-center justify-center overflow-hidden rounded-full border border-cyan-100/70 bg-slate-950/85 shadow-[0_0_10px_rgba(103,232,249,0.35)] ${className}`;
+
+  if (href) {
+    return (
+      <a
+        aria-label={label}
+        className={`${indicatorClass} transition hover:scale-105 hover:border-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/50`}
+        data-planet-moon-indicator="true"
+        href={href}
+        title={title ?? label}
+      >
+        <MoonImage className="h-full w-full object-cover" planetType={planetType} />
+      </a>
+    );
+  }
+
+  if (onClick) {
+    return (
+      <button
+        aria-label={label}
+        className={`${indicatorClass} transition hover:scale-105 hover:border-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-300/50`}
+        data-planet-moon-indicator="true"
+        onClick={onClick}
+        title={title ?? label}
+        type="button"
+      >
+        <MoonImage className="h-full w-full object-cover" planetType={planetType} />
+      </button>
+    );
+  }
 
   return (
     <span
       aria-label={label}
-      className={`pointer-events-none absolute right-1 top-1 inline-flex ${sizeClass} items-center justify-center overflow-hidden rounded-full border border-cyan-100/70 bg-slate-950/85 shadow-[0_0_10px_rgba(103,232,249,0.35)] ${className}`}
+      className={`pointer-events-none ${indicatorClass}`}
       data-planet-moon-indicator="true"
-      title={label}
+      title={title ?? label}
     >
       <MoonImage className="h-full w-full object-cover" planetType={planetType} />
     </span>
@@ -99,7 +135,10 @@ export function PlanetMoonSubsection({
       <div
         className={`${baseClass} w-full cursor-pointer transition hover:border-cyan-200/35 hover:bg-cyan-200/[0.09] focus:outline-none focus:ring-2 focus:ring-cyan-300/30`}
         data-planet-moon-subsection="true"
-        onClick={onClick}
+        onClick={(event) => {
+          if (event.target !== event.currentTarget && event.target instanceof Element && event.target.closest("button,a")) return;
+          onClick();
+        }}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
           if (event.key === "Enter" || event.key === " ") {

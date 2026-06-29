@@ -7,7 +7,7 @@ import {
   planetsFromSystemResponse
 } from "../src/data/mockUniverse";
 import { buildingCatalog, defenseCatalog, shipCatalog } from "../src/playableMvp";
-import { emptyMissionShips, galaxyActionsForSlot } from "../src/galaxyActions";
+import { emptyMissionShips, galaxyActionsForSlot, type GalaxyAction } from "../src/galaxyActions";
 import {
   cachedGalaxySystemPlanets,
   clearGalaxySystemCache,
@@ -52,6 +52,7 @@ import {
   moonRecordRows,
   moonResourceRows,
   moonStateRows,
+  publicMoonActions,
 } from "../src/components/PublicMoonDetail";
 import { isImageReady, type ImageLoadState } from "../src/imageLoadState";
 import { getSrcSet, VARIANT_WIDTHS } from "../src/utils/imageSizes";
@@ -545,6 +546,100 @@ describe("tester universe display data", () => {
       { label: "Shipyard", value: "Level 1" },
     ]);
     expect(moonQueueRows(planet).map((row) => row.label)).toContain("Defense");
+  });
+
+  test("public moon detail actions target the moon body when launched", () => {
+    const account = "0x1111111111111111111111111111111111111111";
+    const enemyOwner = "0x2222222222222222222222222222222222222222";
+    const [enemyMoon] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [{
+        fields: 211,
+        galaxy: 2,
+        hasMoon: true,
+        key: "2:44:9",
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 10_000,
+        occupiedBy: { owner: enemyOwner, planetId: "9" },
+        position: 9,
+        publicMoonState: { resources: { metal: "1", crystal: "2", deuterium: "3" } },
+        system: 44,
+        temperature: -8,
+      }],
+    });
+    const [ownMoon] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [{
+        fields: 211,
+        galaxy: 2,
+        hasMoon: true,
+        key: "2:44:1",
+        metalMultiplierBps: 10_000,
+        crystalMultiplierBps: 10_000,
+        deuteriumMultiplierBps: 10_000,
+        occupiedBy: { owner: account, planetId: "10" },
+        position: 1,
+        publicMoonState: { resources: { metal: "1", crystal: "2", deuterium: "3" } },
+        system: 44,
+        temperature: -8,
+      }],
+    });
+    const shipyardState = {
+      homePlanetId: "7",
+      productionAvailable: true,
+      resources: null,
+      shipyardLevel: 1,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: [
+        { id: 0, count: 2, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+        { id: 1, count: 2, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+      ],
+      queue: null,
+      wallet: account,
+    };
+    const launched: Array<{ kind: string; defaultTargetIsMoon?: boolean }> = [];
+    const base = {
+      account,
+      actionState: { status: "idle" as const },
+      attackProtection: null,
+      defenseState: null,
+      homeCoords: { galaxy: 2, system: 44, position: 1 },
+      homePlanetId: "7",
+      onAction: (action: GalaxyAction) => {
+        launched.push({
+          defaultTargetIsMoon: "defaultTargetIsMoon" in action ? action.defaultTargetIsMoon : undefined,
+          kind: action.kind,
+        });
+      },
+      shipyardState: shipyardState as never,
+    };
+
+    const enemyActions = publicMoonActions({
+      ...base,
+      coords: { galaxy: 2, system: 44, position: 9 },
+      planet: enemyMoon,
+    });
+    expect(enemyActions.map((action) => action.kind)).toEqual(["inspect", "attack", "transport", "deploy", "defend"]);
+    enemyActions.find((action) => action.kind === "attack")?.onClick?.();
+
+    const ownActions = publicMoonActions({
+      ...base,
+      coords: { galaxy: 2, system: 44, position: 1 },
+      planet: ownMoon,
+    });
+    ownActions.find((action) => action.kind === "transport")?.onClick?.();
+    ownActions.find((action) => action.kind === "deploy")?.onClick?.();
+
+    expect(launched).toEqual([
+      { kind: "attack", defaultTargetIsMoon: true },
+      { kind: "transport", defaultTargetIsMoon: true },
+      { kind: "deploy", defaultTargetIsMoon: true },
+    ]);
+    expect(ownActions.find((action) => action.kind === "defend")?.disabledReason).toContain("Moon defense stationing");
   });
 
   test("planet detail uses canonical Solar Satellite E/Sat temperature", () => {

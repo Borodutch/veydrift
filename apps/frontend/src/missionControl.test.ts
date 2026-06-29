@@ -1502,8 +1502,50 @@ describe("Mission Control battle reports", () => {
       target: missionEndpoint(routeMission, "target", lookup),
     });
 
-    const indicator = findElements(tree, "span").find((item) => item.props?.["data-planet-moon-indicator"] === "true");
-    expect(indicator?.props?.["aria-label"]).toBe("Moon present");
+    const indicator = findElements(tree, "a").find((item) => item.props?.["data-planet-moon-indicator"] === "true");
+    expect(indicator?.props?.["aria-label"]).toBe("Open moon at 1:2:3");
+    expect(indicator?.props?.href).toBe("/moon/1/2/3");
+  });
+
+  test("keeps planet endpoints with moon badges linked to both planet and moon detail paths", () => {
+    const owner = "0x1111111111111111111111111111111111111111";
+    const defender = "0x2222222222222222222222222222222222222222";
+    const routeMission: FleetMissionSummary = {
+      ...mission("planet-with-moon-route", "Attack", "Outbound", owner, "7", "9"),
+      targetPlanet: {
+        ...planetReference("9", defender, "Borealis", "5:407:4", "frozen-ice"),
+        hasMoon: true,
+      },
+    };
+    const tree = MissionRouteCell({
+      direction: "outbound",
+      origin: missionEndpoint(routeMission, "origin", new Map()),
+      target: missionEndpoint(routeMission, "target", new Map()),
+    });
+
+    const links = findElements(tree, "a");
+    expect(links.map((link) => link.props?.href)).toContain("/planet/5/407/4");
+    expect(links.map((link) => link.props?.href)).toContain("/moon/5/407/4");
+  });
+
+  test("links moon mission route endpoints to moon detail paths", () => {
+    const owner = "0x1111111111111111111111111111111111111111";
+    const defender = "0x2222222222222222222222222222222222222222";
+    const routeMission: FleetMissionSummary = {
+      ...mission("moon-target-route", "Attack", "Outbound", owner, "7", "9"),
+      targetIsMoon: true,
+      originPlanet: planetReference("7", owner, "New Zion", "6:9:1", "temperate-ocean"),
+      targetPlanet: planetReference("9", defender, "Borealis", "5:407:4", "frozen-ice"),
+    };
+    const tree = MissionRouteCell({
+      direction: "outbound",
+      origin: missionEndpoint(routeMission, "origin", new Map()),
+      target: missionEndpoint(routeMission, "target", new Map()),
+    });
+
+    const links = findElements(tree, "a");
+    expect(links.map((link) => link.props?.href)).toContain("/moon/5/407/4");
+    expect(links.map((link) => link.props?.href)).not.toContain("/planet/5/407/4");
   });
 
   test("links moon mission route endpoints to moon detail paths", () => {
