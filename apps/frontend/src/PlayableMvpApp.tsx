@@ -8195,6 +8195,7 @@ function PlanetSelectorItem({
 }) {
   const selectedPlanetBody = planet.planetId === selectedPlanet.planetId && selectedBodyKind === "planet";
   const selectedMoonBody = planet.planetId === selectedPlanet.planetId && selectedBodyKind === "moon";
+  const hasDedicatedMoonSelector = Boolean(planet.moon?.exists);
   return (
     <div
       className="grid w-20 min-w-0 shrink-0 gap-1"
@@ -8206,6 +8207,7 @@ function PlanetSelectorItem({
         onSelect={onSelect}
         planet={planet}
         selected={selectedPlanetBody}
+        showMoonIndicator={planet.moon?.exists === true && !hasDedicatedMoonSelector}
       />
       {planet.moon?.exists ? (
         <PlanetSelectorMoonButton
@@ -8224,12 +8226,14 @@ function PlanetSelectorButton({
   onSelect,
   planet,
   selected,
+  showMoonIndicator,
 }: {
   bodyKind: OrbitBodyKind;
   hasIncomingAttack: boolean;
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planet: ManagedPlanetResponse;
   selected: boolean;
+  showMoonIndicator: boolean;
 }) {
   const bodyLabel = bodyKind === "moon" ? "moon" : "planet";
   const label = `${hasIncomingAttack ? "Incoming attack warning. " : ""}Select ${planetDisplayName(planet)} ${bodyLabel} at ${planet.coordinates}`;
@@ -8263,13 +8267,7 @@ function PlanetSelectorButton({
           loading="lazy"
           src={planetImage(planet)}
         />
-        {planet.moon?.exists ? (
-          <PlanetMoonIndicator
-            compact
-            className="bottom-0.5 right-0.5 top-auto"
-            planetType={planetTypeFromTemperature(planet.temperature)}
-          />
-        ) : null}
+        {showMoonIndicator ? <PlanetMoonIndicator compact planetType={planetTypeFromTemperature(planet.temperature)} /> : null}
       </span>
       <span className="block max-w-full truncate text-[0.68rem] font-medium leading-4 text-slate-200">
         {planetDisplayName(planet)}

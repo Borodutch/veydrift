@@ -82,6 +82,8 @@ import { createInitialPlayableState } from "../src/playableMvp";
 import type { RaidTarget } from "../src/raidTargetFinder";
 import type { ChainDefenseState, ChainInfrastructureState, ChainResearchState, ChainShipyardState, FleetMissionSummary, PlayerQueuesResponse, QueueStateResponse, WalletPlanetsResponse, WalletSettlementResponse } from "../src/walletFlow";
 
+const playableMvpSource = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+
 describe("Playable MVP app display helpers", () => {
   const buildingFinishStateReadFailureLabel =
     "Can't check game state right now. Your upgrade is still ready, but Veydrift could not verify the contract state. Retry in a moment.";
@@ -576,6 +578,27 @@ describe("Playable MVP app display helpers", () => {
     expect(planetHasIncomingAttack(visibility, "8")).toBe(true);
     expect(planetHasIncomingAttack(visibility, "7")).toBe(false);
     expect(planetHasIncomingAttack(visibility, "9")).toBe(false);
+  });
+
+  test("conditions planet picker moon indicators on the nested moon selector", () => {
+    const itemSource = sourceBetween(
+      playableMvpSource,
+      "function PlanetSelectorItem",
+      "function PlanetSelectorButton"
+    );
+    const buttonSource = sourceBetween(
+      playableMvpSource,
+      "function PlanetSelectorButton",
+      "function planetDisplayName"
+    );
+
+    expect(itemSource).toContain("hasDedicatedMoonSelector");
+    expect(itemSource).toContain("PlanetSelectorMoonButton");
+    expect(itemSource).toContain("showMoonIndicator={planet.moon?.exists === true && !hasDedicatedMoonSelector}");
+    expect(buttonSource).toContain("veydrift-planet-selector-button");
+    expect(buttonSource).toContain("planetImage(planet)");
+    expect(buttonSource).toContain("showMoonIndicator");
+    expect(buttonSource).toContain("PlanetMoonIndicator");
   });
 
   test("keys galaxy home sync by coordinates instead of background snapshot identity", () => {
@@ -3310,6 +3333,14 @@ function indexedPlanet(wallet: string) {
       ship: null,
     },
   };
+}
+
+function sourceBetween(source: string, start: string, end: string): string {
+  const startIndex = source.indexOf(start);
+  const endIndex = source.indexOf(end, startIndex);
+  expect(startIndex).toBeGreaterThanOrEqual(0);
+  expect(endIndex).toBeGreaterThan(startIndex);
+  return source.slice(startIndex, endIndex);
 }
 
 function walletSettlementResponse(wallet: string): WalletSettlementResponse {
