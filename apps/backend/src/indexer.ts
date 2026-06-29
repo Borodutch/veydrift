@@ -3413,7 +3413,33 @@ export class SettlementIndexer {
     const previous = this.battleReportMaterializationStatus(missionId);
     try {
       const report = this.materializedBattleReportFromLogs(missionId);
-      if (!report) return false;
+      if (!report) {
+        const durationMs = Math.max(0, Math.round(performance.now() - started));
+        const message = `Battle report logs are incomplete or missing for mission ${missionId}.`;
+        this.db.query(`
+          INSERT INTO indexed_battle_report_read_models (
+            mission_id, status, report_json, error, attempts, duration_ms, block_number, updated_at
+          )
+          VALUES (?, 'failed', NULL, ?, 1, ?, NULL, ?)
+          ON CONFLICT(mission_id) DO UPDATE SET
+            status = 'failed',
+            error = excluded.error,
+            attempts = indexed_battle_report_read_models.attempts + 1,
+            duration_ms = excluded.duration_ms,
+            updated_at = excluded.updated_at
+        `).run(missionId, message, durationMs, new Date().toISOString());
+        this.touchBattleReportReadModel();
+        emitObservabilityEvent({
+          kind: "battle_report_materialization",
+          component: "battle-report-materializer",
+          reason,
+          missionId,
+          status: "failed",
+          durationMs,
+          error: message
+        });
+        return false;
+      }
       const durationMs = Math.max(0, Math.round(performance.now() - started));
       const updatedAt = new Date().toISOString();
       const writeReadyReport = this.db.query(`
