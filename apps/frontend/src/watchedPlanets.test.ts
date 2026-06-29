@@ -130,6 +130,7 @@ describe("overview planet sections", () => {
     expect(overviewSource).toContain("<MyPlanetActionButtons");
     expect(overviewSource).toContain("onAction={(action) => onAction?.(action, planet)}");
     expect(overviewSource).toContain("showIdentity={false}");
+    expect(overviewSource.match(/showMoonIndicator={false}/g)?.length).toBe(2);
     expect(overviewSource).toContain("current={isSelected}");
     expect(overviewSource).not.toContain("{myPlanets.length} owned");
   });
