@@ -95,7 +95,7 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("defaultTargetIsMoon: pendingGalaxyMission.bodySelectionDefaults?.targetIsMoon");
     expect(playableSource).toContain("Moon defense stationing is not available in the current mission contract.");
     expect(missionCreationSource).toContain("defaultTargetIsMoon?: boolean");
-    expect(missionCreationSource).toContain("useState(Boolean(bodySelection?.defaultTargetIsMoon))");
+    expect(missionCreationSource).toContain("Boolean(bodySelection?.defaultTargetIsMoon) || (action.mode === \"mission\" && action.defaultTargetIsMoon === true)");
   });
 
   test("keeps planet selector selected and keyboard focus states subtle", () => {

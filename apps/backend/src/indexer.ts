@@ -1208,8 +1208,7 @@ export class SettlementIndexer {
       status: diplomacyStatusName(row.status_id),
       statusId: row.status_id,
       updatedAt: row.updated_at,
-      initiatedByAllianceId: row.initiated_by_alliance_id
-        ?? (diplomacyStatusName(row.status_id) === "war" ? row.alliance_id : null),
+      initiatedByAllianceId: row.initiated_by_alliance_id,
       alliance: directoryById.get(row.other_alliance_id) ?? null
     }));
   }
@@ -6099,7 +6098,13 @@ export class SettlementIndexer {
           status_id = excluded.status_id,
           updated_at = excluded.updated_at,
           initiated_by_alliance_id = excluded.initiated_by_alliance_id
-      `).run(event.allianceId, event.otherAllianceId, event.statusId, event.blockNumber, event.allianceId);
+      `).run(
+        event.allianceId,
+        event.otherAllianceId,
+        event.statusId,
+        event.blockNumber,
+        diplomacyStatusName(event.statusId) === "war" ? event.allianceId : null
+      );
       this.db.query(`
         INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id)
         VALUES (?, ?, ?, ?, ?)
@@ -6107,7 +6112,13 @@ export class SettlementIndexer {
           status_id = excluded.status_id,
           updated_at = excluded.updated_at,
           initiated_by_alliance_id = excluded.initiated_by_alliance_id
-      `).run(event.otherAllianceId, event.allianceId, event.statusId, event.blockNumber, event.allianceId);
+      `).run(
+        event.otherAllianceId,
+        event.allianceId,
+        event.statusId,
+        event.blockNumber,
+        diplomacyStatusName(event.statusId) === "war" ? event.allianceId : null
+      );
     }
 
     this.touch();
@@ -6207,8 +6218,28 @@ export class SettlementIndexer {
   // empty-array semantics on applyAllianceJoinRequestSnapshot.
   private applyAllianceDiplomacySnapshot(snapshot: AllianceDiplomacySnapshot[] | null): void {
     if (snapshot === null) return;
+    const existingInitiators = new Map(
+      (this.db.query(`
+        SELECT alliance_id, other_alliance_id, initiated_by_alliance_id
+        FROM contract_alliance_diplomacy
+        WHERE initiated_by_alliance_id IS NOT NULL
+      `).all() as Pick<AllianceDiplomacyRow, "alliance_id" | "other_alliance_id" | "initiated_by_alliance_id">[])
+        .map((row) => [`${row.alliance_id}:${row.other_alliance_id}`, row.initiated_by_alliance_id])
+    );
+    const snapshotWarPairs = new Set(
+      snapshot
+        .filter((relation) => diplomacyStatusName(relation.statusId) === "war")
+        .map((relation) => `${relation.allianceId}:${relation.otherAllianceId}`)
+    );
     this.db.query("DELETE FROM contract_alliance_diplomacy").run();
     for (const relation of snapshot) {
+      const relationKey = `${relation.allianceId}:${relation.otherAllianceId}`;
+      const reverseKey = `${relation.otherAllianceId}:${relation.allianceId}`;
+      const status = diplomacyStatusName(relation.statusId);
+      const existingInitiator = existingInitiators.get(relationKey);
+      const inferredInitiator = status === "war" && !snapshotWarPairs.has(reverseKey)
+        ? relation.allianceId
+        : null;
       this.db.query(`
         INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id)
         VALUES (?, ?, ?, NULL, ?)
@@ -6219,7 +6250,7 @@ export class SettlementIndexer {
         relation.allianceId,
         relation.otherAllianceId,
         relation.statusId,
-        diplomacyStatusName(relation.statusId) === "war" ? relation.allianceId : null
+        status === "war" ? (existingInitiator ?? inferredInitiator) : null
       );
     }
     this.touch();
