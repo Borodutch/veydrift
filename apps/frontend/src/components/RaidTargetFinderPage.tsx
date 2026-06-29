@@ -32,7 +32,7 @@ import {
 import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton } from "./PageHeader";
-import { PlanetMoonIndicator, PlanetMoonSubsection } from "./PlanetMoonIndicator";
+import { PlanetMoonSubsection } from "./PlanetMoonIndicator";
 import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RaidTargetsSkeleton } from "./LoadingSkeletons";
 import { AfkFlair } from "./AfkFlair";
@@ -58,6 +58,7 @@ type RaidTargetFinderPageProps = {
   onAttackTarget?: ((target: RaidTarget) => void) | undefined;
   onHarvestDebrisTarget?: ((target: DebrisFinderTarget) => void) | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   originCoordinates?: Coordinates | null | undefined;
@@ -97,6 +98,7 @@ export function RaidTargetFinderPage({
   onAttackTarget,
   onHarvestDebrisTarget,
   onSelectAlliance,
+  onSelectMoon,
   onSelectPlanet,
   onSelectPlayer,
   originCoordinates,
@@ -302,6 +304,7 @@ export function RaidTargetFinderPage({
               now={now}
               onAttackTarget={onAttackTarget}
               onSelectAlliance={onSelectAlliance}
+              onSelectMoon={onSelectMoon}
               onSelectPlanet={onSelectPlanet}
               onSelectPlayer={onSelectPlayer}
               target={target}
@@ -314,6 +317,7 @@ export function RaidTargetFinderPage({
               key={target.planetId}
               now={now}
               onHarvest={onHarvestDebrisTarget}
+              onSelectMoon={onSelectMoon}
               onSelectPlanet={onSelectPlanet}
               onSelectPlayer={onSelectPlayer}
               target={target}
@@ -606,6 +610,7 @@ export function DebrisTargetRow({
   now,
   onHarvest,
   onSelectPlanet,
+  onSelectMoon,
   onSelectPlayer,
   target,
 }: {
@@ -613,6 +618,7 @@ export function DebrisTargetRow({
   now: number;
   onHarvest?: ((target: DebrisFinderTarget) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
+  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   target: DebrisFinderTarget;
 }) {
@@ -628,7 +634,6 @@ export function DebrisTargetRow({
             sizes="icon"
             src={planetImageForType(target.archetype)}
           />
-          {target.hasMoon ? <PlanetMoonIndicator compact planetType={target.archetype} /> : null}
         </span>
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -669,7 +674,13 @@ export function DebrisTargetRow({
             </span>
           </div>
           {target.hasMoon ? (
-            <PlanetMoonSubsection label="Moon" planetType={target.archetype} />
+            <PlanetMoonSubsection
+              className="ml-4"
+              label="Moon"
+              onClick={onSelectMoon ? () => onSelectMoon(target.coordinates) : undefined}
+              planetType={target.archetype}
+              title={`Open moon at ${coordinateLabel(target.coordinates)}`}
+            />
           ) : null}
         </div>
       </div>
@@ -710,6 +721,7 @@ export function RaidTargetRow({
   now,
   onAttackTarget,
   onSelectAlliance,
+  onSelectMoon,
   onSelectPlanet,
   onSelectPlayer,
   target,
@@ -719,6 +731,7 @@ export function RaidTargetRow({
   now: number;
   onAttackTarget?: ((target: RaidTarget) => void) | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   target: RaidTarget;
@@ -746,7 +759,6 @@ export function RaidTargetRow({
             sizes="icon"
             src={planetImageForType(target.archetype)}
           />
-          {target.hasMoon ? <PlanetMoonIndicator compact planetType={target.archetype} /> : null}
         </span>
         <div className="min-w-0">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -840,7 +852,14 @@ export function RaidTargetRow({
           </div>
           <PlanetMissionLines className="mt-1" planetId={target.planetId} subtext={missionSubtext} />
           {target.hasMoon ? (
-            <PlanetMoonSubsection label="Moon" planetType={target.archetype} />
+            <PlanetMoonSubsection
+              className="ml-4"
+              detail={moonRaidableResourcesLabel(target.moonResources)}
+              label="Moon"
+              onClick={onSelectMoon ? () => onSelectMoon(target.coordinates) : undefined}
+              planetType={target.archetype}
+              title={`Open moon at ${coordinateLabel(target.coordinates)}`}
+            />
           ) : null}
         </div>
       </div>
@@ -940,6 +959,18 @@ function raidableResourcesLabel(target: RaidTarget): string {
     return `${breakdown} — ~${pct}% plunder of the planet's full accrued public resources (${compactNumber(target.grossLoot)}), not its full stockpile`;
   }
   return breakdown;
+}
+
+function moonRaidableResourcesLabel(resources: RaidTarget["moonResources"]): string {
+  if (!resources) return "Moon resources unavailable";
+  const total = safeResourceNumber(resources.metal) + safeResourceNumber(resources.crystal) + safeResourceNumber(resources.deuterium);
+  return `Moon resources ${compactNumber(total)}`;
+}
+
+function safeResourceNumber(value: string | number | null | undefined): number {
+  if (value === null || value === undefined) return 0;
+  const parsed = typeof value === "number" ? value : Number.parseFloat(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
 }
 
 export function combatLabel(target: RaidTarget): string {
