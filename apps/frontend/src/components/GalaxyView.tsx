@@ -145,6 +145,7 @@ interface Props {
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onToggleWatchPlanet?: ((planetId: string, watched: boolean) => void) | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
+  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onNavigate: (galaxy: number, system: number) => void;
   transactionUnavailableReason?: string | undefined;
   watchedPlanetIds?: readonly string[] | undefined;
@@ -167,6 +168,7 @@ export function GalaxyView({
   onSelectPlayer,
   onToggleWatchPlanet,
   onSelectPlanet,
+  onSelectMoon,
   onNavigate,
   transactionUnavailableReason,
   watchedPlanetIds = [],
@@ -467,6 +469,7 @@ export function GalaxyView({
                   account={account}
                   actionState={actionState}
                   onSelectPlanet={onSelectPlanet}
+                  onSelectMoon={onSelectMoon}
                   onSelectAlliance={onSelectAlliance}
                   onSelectPlayer={onSelectPlayer}
                   onToggleWatchPlanet={onToggleWatchPlanet}
@@ -725,6 +728,7 @@ function GalaxySlot({
   onAction,
   attackProtection,
   onSelectPlanet,
+  onSelectMoon,
   onSelectAlliance,
   onSelectPlayer,
   onToggleWatchPlanet,
@@ -746,6 +750,7 @@ function GalaxySlot({
   onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   attackProtection: AttackProtectionStatus | undefined;
   onSelectPlanet: (coords: Coordinates) => void;
+  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectAlliance: ((allianceId: string) => void) | undefined;
   onSelectPlayer: ((wallet: string) => void) | undefined;
   onToggleWatchPlanet: ((planetId: string, watched: boolean) => void) | undefined;
@@ -840,10 +845,12 @@ function GalaxySlot({
       leadingSlot={<SlotNumber position={position} />}
       meta={meta}
       onInspect={onSelectPlanet}
+      onInspectMoon={onSelectMoon}
       onSelectAlliance={onSelectAlliance}
       onSelectPlayer={onSelectPlayer}
       onToggleWatch={planet.occupiedBy?.planetId ? () => onToggleWatchPlanet?.(planet.occupiedBy!.planetId, watched) : undefined}
       planet={planet}
+      showMoonIndicator={false}
       watchBusy={watchBusyPlanetId === planet.occupiedBy?.planetId}
       watched={watched}
     />
