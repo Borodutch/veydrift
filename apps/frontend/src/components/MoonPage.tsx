@@ -1057,11 +1057,11 @@ function moonTechnologyLevelsByKey(levels: Record<string, number> | undefined): 
   );
 }
 
-function moonBuildingAsset(key: ChainMoonState["buildings"][number]["key"]): string {
+export function moonBuildingAsset(key: ChainMoonState["buildings"][number]["key"]): string {
   const fallback = "/assets/game/style-pass/generated/buildings/terraformer-mid.webp";
   if (key === "lunarBase") return "/assets/game/style-pass/generated/buildings/lunar-base.webp";
-  if (key === "roboticsFactory") return buildingCatalog.find((item) => item.key === "roboticsFactory")?.asset ?? fallback;
-  if (key === "shipyard") return buildingCatalog.find((item) => item.key === "shipyard")?.asset ?? fallback;
+  if (key === "roboticsFactory") return "/assets/game/style-pass/generated/buildings/moon-robotics-factory.webp";
+  if (key === "shipyard") return "/assets/game/style-pass/generated/buildings/moon-shipyard.webp";
   return "/assets/game/style-pass/generated/buildings/jump-gate.webp";
 }
 
