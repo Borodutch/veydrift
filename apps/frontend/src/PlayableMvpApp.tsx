@@ -7730,6 +7730,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           onRecall={handleRecallMission}
           onRetry={loadMissionDetail}
           onSelectCoordinates={handleSelectPlanet}
+          onSelectMoon={handleSelectMoon}
           onSelectPlayer={handleSelectPlayer}
         />
       );
@@ -7885,6 +7886,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           homePlanet={homePlanetIdentity}
           onAction={handleGalaxyAction}
           onBack={handlePlanetDetailBack}
+          onSelectMoon={handleSelectMoon}
           shipyardState={missionActionShipyardState}
           transactionUnavailableReason={gameTransactionUnavailableReason}
         />
@@ -8118,6 +8120,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           currentWallet={account}
           onBack={() => handleNavigate("rankings")}
           onOpenAlliance={handleSelectAlliance}
+          onSelectMoon={handleSelectMoon}
           onSelectPlanet={handleSelectPlanet}
           originCoords={activePlanetCoords}
           wallet={inspectedPlayerWallet}
@@ -8241,6 +8244,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           : false}
         onAbandonPlanet={handleAbandonPlanet}
         onSelectAlliance={handleSelectAlliance}
+        onSelectMoon={handleSelectMoon}
         onSelectPlanet={handleSelectPlanet}
         onSelectPlayer={handleSelectPlayer}
         onToggleWatchPlanet={handleToggleWatchPlanet}

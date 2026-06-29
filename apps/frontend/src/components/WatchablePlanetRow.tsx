@@ -78,61 +78,63 @@ export function WatchablePlanetRow({
       }`}
     >
       {leadingSlot}
-      <button
-        className="flex min-w-0 items-center gap-3 text-left"
-        onClick={() => onInspect(coords)}
-        type="button"
-      >
-        <div className={`relative h-11 w-11 flex-shrink-0 overflow-hidden rounded-md border bg-black/30 ${
-          isHighlighted ? "border-emerald-300/35" : "border-white/15"
-        }`}>
-          {!imageLoaded && <PlanetImageSkeleton className="absolute inset-0" />}
-          <OptimizedImage
-            key={planet.image}
-            alt={planet.name}
-            className={`h-full w-full object-cover transition-opacity duration-200 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
-            imageRef={imageRef}
-            loading="eager"
-            onLoad={(event) => {
-              if (isImageReady(event.currentTarget)) setImageLoaded(true);
-            }}
-            sizes="icon"
-            src={planet.image}
-          />
-          {showMoonIndicator && planet.hasMoon ? <PlanetMoonIndicator compact planetType={planet.type} /> : null}
-        </div>
-
-        <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <span className="truncate text-sm font-semibold text-white group-hover:text-signal">
-              {planet.name}
-            </span>
-            {isHome ? (
-              <span className="rounded border border-cyan-300/35 bg-cyan-300/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-cyan-100">
-                Home
-              </span>
-            ) : null}
-            {meta.some((item) => item.label === "Inactive") ? <AfkFlair /> : null}
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-            {meta.map((item, index) => (
-              <Fragment key={`${item.label}-${index}`}>
-                {index > 0 ? <span className="text-slate-700">/</span> : null}
-                <span className={metaToneClass(item.tone)}>{item.label}</span>
-              </Fragment>
-            ))}
-          </div>
-          {planet.hasMoon ? (
-            <PlanetMoonSubsection
-              action={moonActionSlot}
-              label={planet.moonName ?? "Moon"}
-              onClick={moonActionSlot ? undefined : onInspectMoon ? () => onInspectMoon(coords) : undefined}
-              planetType={planet.type}
-              title={`Open ${planet.moonName ?? "Moon"} at [${coords.galaxy}:${coords.system}:${coords.position}]`}
+      <div className="min-w-0">
+        <button
+          className="flex min-w-0 items-center gap-3 text-left"
+          onClick={() => onInspect(coords)}
+          type="button"
+        >
+          <div className={`relative h-11 w-11 flex-shrink-0 overflow-hidden rounded-md border bg-black/30 ${
+            isHighlighted ? "border-emerald-300/35" : "border-white/15"
+          }`}>
+            {!imageLoaded && <PlanetImageSkeleton className="absolute inset-0" />}
+            <OptimizedImage
+              key={planet.image}
+              alt={planet.name}
+              className={`h-full w-full object-cover transition-opacity duration-200 ${imageLoaded ? "opacity-100" : "opacity-0"}`}
+              imageRef={imageRef}
+              loading="eager"
+              onLoad={(event) => {
+                if (isImageReady(event.currentTarget)) setImageLoaded(true);
+              }}
+              sizes="icon"
+              src={planet.image}
             />
-          ) : null}
-        </div>
-      </button>
+            {showMoonIndicator && planet.hasMoon ? <PlanetMoonIndicator compact planetType={planet.type} /> : null}
+          </div>
+
+          <div className="min-w-0">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <span className="truncate text-sm font-semibold text-white group-hover:text-signal">
+                {planet.name}
+              </span>
+              {isHome ? (
+                <span className="rounded border border-cyan-300/35 bg-cyan-300/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-cyan-100">
+                  Home
+                </span>
+              ) : null}
+              {meta.some((item) => item.label === "Inactive") ? <AfkFlair /> : null}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+              {meta.map((item, index) => (
+                <Fragment key={`${item.label}-${index}`}>
+                  {index > 0 ? <span className="text-slate-700">/</span> : null}
+                  <span className={metaToneClass(item.tone)}>{item.label}</span>
+                </Fragment>
+              ))}
+            </div>
+          </div>
+        </button>
+        {planet.hasMoon ? (
+          <PlanetMoonSubsection
+            action={moonActionSlot}
+            label={planet.moonName ?? "Moon"}
+            onClick={moonActionSlot ? undefined : onInspectMoon ? () => onInspectMoon(coords) : undefined}
+            planetType={planet.type}
+            title={`Open ${planet.moonName ?? "Moon"} at [${coords.galaxy}:${coords.system}:${coords.position}]`}
+          />
+        ) : null}
+      </div>
 
       {showIdentity ? (
         <div className={`hidden min-w-32 justify-self-end text-right text-xs font-medium sm:block ${isHighlighted ? "text-emerald-100" : "text-slate-500"}`}>

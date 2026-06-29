@@ -1,4 +1,4 @@
-import type { DebrisField, MoonChanceReport, OccupiedPlanet, Planet, PlanetType, PublicPlanetState, Resources } from "../types";
+import type { DebrisField, MoonChanceReport, OccupiedPlanet, Planet, PlanetType, PublicMoonState, PublicPlanetState, Resources } from "../types";
 
 const PLANET_IMAGES: Record<PlanetType, string> = {
   "scorching-molten": "/assets/game/style-pass/generated/planets/scorching-molten.webp",
@@ -55,6 +55,7 @@ export type ApiPlanet = {
   archetype?: PlanetType;
   occupiedBy?: OccupiedPlanet | null;
   publicState?: PublicPlanetState | null;
+  publicMoonState?: PublicMoonState | null;
   debrisField?: {
     metal: string | number;
     crystal: string | number;
@@ -232,6 +233,7 @@ function planetFromApi(planet: ApiPlanet): Planet | null {
     alliance,
     occupiedBy,
     publicState: planet.publicState ?? null,
+    publicMoonState: planet.publicMoonState ?? null,
     debrisField: debrisFieldFromApi(planet.debrisField),
     moonChance: moonChanceFromApi(planet.moonChance),
     resources: resourcesFromMultipliers({
@@ -243,6 +245,7 @@ function planetFromApi(planet: ApiPlanet): Planet | null {
     diameter: Math.max(5_000, fields * 72),
     fields,
     hasMoon: Boolean(planet.hasMoon),
+    ...(planet.hasMoon ? { moonName: "Moon" } : {}),
     metalMultiplierBps,
     crystalMultiplierBps,
     deuteriumMultiplierBps,

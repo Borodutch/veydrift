@@ -26,10 +26,20 @@ export interface Planet {
 }
 
 export interface PublicMoonState {
+  fields?: number;
+  diameterKm?: number;
+  createdAt?: string;
   resources?: {
     metal: string;
     crystal: string;
     deuterium: string;
+  } | null;
+  buildings?: Array<{ id: number; level: number }> | null;
+  fleet?: Array<{ id: number; count: number }> | null;
+  defenses?: Array<{ id: number; count: number }> | null;
+  queues?: {
+    building?: PublicQueueState | null;
+    defense?: PublicQueueState | null;
   } | null;
 }
 

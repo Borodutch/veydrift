@@ -47,6 +47,12 @@ import {
   publicSignalRows,
   shouldShowPlanetDetailInitialLoader
 } from "../src/components/PlanetDetail";
+import {
+  moonQueueRows,
+  moonRecordRows,
+  moonResourceRows,
+  moonStateRows,
+} from "../src/components/PublicMoonDetail";
 import { isImageReady, type ImageLoadState } from "../src/imageLoadState";
 import { getSrcSet, VARIANT_WIDTHS } from "../src/utils/imageSizes";
 
@@ -482,6 +488,63 @@ describe("tester universe display data", () => {
       ...publicProductionRows(planet).map((row) => row.value),
     ].join(" ");
     expect(copy).not.toMatch(/\b(indexed|indexer|backend|universe data|OGame|ogame)\b/i);
+  });
+
+  test("public moon detail rows use indexed moon state from universe responses", () => {
+    const [planet] = planetsFromSystemResponse({
+      galaxy: 2,
+      system: 44,
+      planets: [
+        {
+          fields: 211,
+          galaxy: 2,
+          hasMoon: true,
+          key: "2:44:9",
+          metalMultiplierBps: 10_000,
+          crystalMultiplierBps: 10_000,
+          deuteriumMultiplierBps: 10_000,
+          position: 9,
+          publicMoonState: {
+            fields: 12,
+            diameterKm: 8777,
+            createdAt: "1770000300",
+            resources: { metal: "7386", crystal: "2472", deuterium: "1335" },
+            buildings: [{ id: 0, level: 2 }, { id: 3, level: 1 }],
+            fleet: [{ id: 0, count: 5 }],
+            defenses: [{ id: 0, count: 7 }],
+            queues: {
+              building: null,
+              defense: {
+                active: true,
+                itemId: 0,
+                kind: "defense",
+                quantity: 3,
+                readyAt: "1770000900",
+              },
+            },
+          },
+          system: 44,
+          temperature: -8,
+        },
+      ],
+    });
+
+    expect(planet.publicMoonState?.resources).toEqual({ metal: "7386", crystal: "2472", deuterium: "1335" });
+    expect(moonResourceRows(planet).map((row) => `${row.label}: ${row.value}`)).toEqual([
+      "Metal: 7,386",
+      "Crystal: 2,472",
+      "Deuterium: 1,335",
+    ]);
+    expect(moonRecordRows(planet).map((row) => `${row.label}: ${row.value}`)).toEqual(expect.arrayContaining([
+      "Fields: 12",
+      "Diameter: 8,777 km",
+      "Parent type: Temperate Ocean",
+    ]));
+    expect(moonStateRows(planet.publicMoonState?.buildings, [{ id: 0, label: "Lunar Base" }, { id: 3, label: "Shipyard" }], "level")).toEqual([
+      { label: "Lunar Base", value: "Level 2" },
+      { label: "Shipyard", value: "Level 1" },
+    ]);
+    expect(moonQueueRows(planet).map((row) => row.label)).toContain("Defense");
   });
 
   test("planet detail uses canonical Solar Satellite E/Sat temperature", () => {

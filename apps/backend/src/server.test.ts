@@ -5208,6 +5208,24 @@ describe("Veydrift backend", () => {
       data: abiWords(0n, 15n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n),
       logIndex: 423
     }));
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xmoon-public-system",
+      logIndex: "0x0",
+      topics: [
+        moonCreatedTopic,
+        addressTopic(player),
+        topic(7n)
+      ],
+      data: abiWords(2n, 44n, 9n, 12n, 8777n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xmoonresources-public-system",
+      logIndex: "0x0",
+      topics: [moonResourcesSettledTopic, topic(7n)],
+      data: abiWords(7386n, 2472n, 1335n, 1770000300n)
+    });
 
     const system = await handler(new Request("http://localhost/universe/galaxies/2/systems/44"));
     const body = await system.json();
@@ -5263,6 +5281,23 @@ describe("Veydrift backend", () => {
     expect(occupiedPlanet.publicState.research).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 0, level: 2 })
     ]));
+    expect(occupiedPlanet.publicMoonState).toMatchObject({
+      fields: 12,
+      diameterKm: 8777,
+      createdAt: expect.any(String),
+      resources: {
+        metal: "7386",
+        crystal: "2472",
+        deuterium: "1335"
+      },
+      buildings: expect.any(Array),
+      fleet: expect.any(Array),
+      defenses: expect.any(Array),
+      queues: {
+        building: null,
+        defense: null
+      }
+    });
     expect(system.headers.get("access-control-allow-origin")).toBe("https://test.veydrift.com");
     expect(chainReader.rebuildCalls).toBe(1);
   });

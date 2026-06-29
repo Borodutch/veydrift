@@ -24,6 +24,7 @@ interface Props {
   homePlanet?: Planet | undefined;
   onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onBack: () => void;
+  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   shipyardState?: ChainShipyardState | null | undefined;
   transactionUnavailableReason?: string | undefined;
 }
@@ -71,6 +72,7 @@ export function PlanetDetail({
   homePlanet,
   onAction,
   onBack,
+  onSelectMoon,
   shipyardState = null,
   transactionUnavailableReason,
 }: Props) {
@@ -285,7 +287,13 @@ export function PlanetDetail({
             ) : null}
           </div>
           {planet.hasMoon ? (
-            <div className="rounded border border-white/10 bg-white/5 px-3 py-2">
+            <button
+              className="rounded border border-white/10 bg-white/5 px-3 py-2 text-left transition hover:border-cyan-200/35 hover:bg-cyan-200/[0.08] disabled:cursor-default disabled:hover:border-white/10 disabled:hover:bg-white/5"
+              disabled={!onSelectMoon}
+              onClick={() => onSelectMoon?.({ galaxy: planet.galaxy, system: planet.system, position: planet.position })}
+              title={`Open ${planet.moonName ?? "Moon"} at [${planet.galaxy}:${planet.system}:${planet.position}]`}
+              type="button"
+            >
               <div className="flex items-center gap-2">
                 <span className="h-8 w-8 overflow-hidden rounded-full border border-cyan-100/30 bg-black/40">
                   <MoonImage className="h-full w-full object-cover" planetType={planet.type} />
@@ -295,7 +303,7 @@ export function PlanetDetail({
                   <span className="block text-xs text-slate-500">Nested moon body</span>
                 </span>
               </div>
-            </div>
+            </button>
           ) : null}
         </div>
 

@@ -1,7 +1,9 @@
 import { useEffect, useState } from "preact/hooks";
 import type { Coordinates, Planet } from "../types";
 import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
+import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { playableApiUrl } from "../runtimeConfig";
+import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import { shortAddress } from "../walletFlow";
 import { MoonImage } from "./PlanetMoonIndicator";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
@@ -126,8 +128,14 @@ export function PublicMoonDetail({
               { label: "Planet", value: planet.name },
               { label: "Planet ID", value: planet.occupiedBy?.planetId ? `#${planet.occupiedBy.planetId}` : "Unknown" },
             ]} />
+            <MoonRecordPanel title="Moon Record" rows={moonRecordRows(planet)} />
             <MoonRecordPanel title="Moon Resources" rows={moonResourceRows(planet)} />
+            <MoonRecordPanel title="Moon Structures" rows={moonStateRows(planet.publicMoonState?.buildings, moonBuildingCatalog, "level")} />
+            <MoonRecordPanel title="Moon Fleet" rows={moonStateRows(planet.publicMoonState?.fleet, shipCatalog, "count")} />
+            <MoonRecordPanel title="Moon Defenses" rows={moonStateRows(planet.publicMoonState?.defenses, defenseCatalog, "count")} />
           </div>
+
+          <MoonRecordPanel title="Moon Queues" rows={moonQueueRows(planet)} />
         </div>
       </div>
     </div>
@@ -158,7 +166,7 @@ function MoonRecordPanel({
   );
 }
 
-function moonResourceRows(planet: Planet): Array<{ label: string; value: string }> {
+export function moonResourceRows(planet: Planet): Array<{ label: string; value: string }> {
   const resources = planet.publicMoonState?.resources;
   if (!resources) {
     return [
@@ -172,6 +180,80 @@ function moonResourceRows(planet: Planet): Array<{ label: string; value: string 
     { label: "Crystal", value: resourceValue(resources.crystal) },
     { label: "Deuterium", value: resourceValue(resources.deuterium) },
   ];
+}
+
+const moonBuildingCatalog = [
+  { id: 0, label: "Lunar Base" },
+  { id: 1, label: "Robotics Factory" },
+  { id: 2, label: "Jump Gate" },
+  { id: 3, label: "Shipyard" },
+] as const;
+
+export function moonRecordRows(planet: Planet): Array<{ label: string; value: string }> {
+  const moon = planet.publicMoonState;
+  return [
+    { label: "Fields", value: moon?.fields === undefined ? "Unknown" : moon.fields.toLocaleString("en-US") },
+    { label: "Diameter", value: moon?.diameterKm === undefined ? "Unknown" : `${moon.diameterKm.toLocaleString("en-US")} km` },
+    { label: "Created", value: moon?.createdAt ? formatUserTimestamp(timestampToMs(moon.createdAt)) : "Unknown" },
+    { label: "Parent type", value: formatPlanetType(planet.type) },
+  ];
+}
+
+export function moonStateRows(
+  rows: Array<{ id: number; level?: number; count?: number }> | null | undefined,
+  catalog: readonly { id?: number; label: string }[],
+  valueKind: "level" | "count",
+): Array<{ label: string; value: string }> {
+  const visibleRows = (rows ?? [])
+    .map((row) => {
+      const value = valueKind === "level" ? row.level ?? 0 : row.count ?? 0;
+      const catalogItem = catalog.find((item, index) => (item.id ?? index) === row.id);
+      return {
+        label: catalogItem?.label ?? `ID ${row.id}`,
+        value,
+      };
+    })
+    .filter((row) => row.value > 0);
+
+  if (visibleRows.length === 0) {
+    return [{ label: "Public records", value: rows ? "No public entries" : "Unavailable" }];
+  }
+
+  return visibleRows.map((row) => ({
+    label: row.label,
+    value: valueKind === "level" ? `Level ${row.value}` : row.value.toLocaleString("en-US"),
+  }));
+}
+
+export function moonQueueRows(planet: Planet): Array<{ label: string; value: string }> {
+  const queues = planet.publicMoonState?.queues;
+  if (!queues) return [{ label: "Queues", value: "Public queue data unavailable" }];
+
+  const rows = [
+    moonQueueRow("Building", queues.building, moonBuildingCatalog, "Level"),
+    moonQueueRow("Defense", queues.defense, defenseCatalog, "x"),
+  ];
+
+  return rows.some((row) => row.value !== "Idle")
+    ? rows
+    : [{ label: "Queues", value: "No active public queues" }];
+}
+
+function moonQueueRow(
+  label: string,
+  queue: NonNullable<NonNullable<Planet["publicMoonState"]>["queues"]>["building"],
+  catalog: readonly { id?: number; label: string }[],
+  suffix: "Level" | "x",
+): { label: string; value: string } {
+  if (!queue?.active) return { label, value: "Idle" };
+  const item = queue.itemId === undefined
+    ? undefined
+    : catalog.find((entry, index) => (entry.id ?? index) === queue.itemId);
+  const quantity = suffix === "Level"
+    ? queue.targetLevel === undefined ? "" : ` Level ${queue.targetLevel}`
+    : queue.quantity === undefined ? "" : ` x${queue.quantity.toLocaleString("en-US")}`;
+  const readyAt = queue.readyAt ? ` ready ${formatUserTimestamp(timestampToMs(queue.readyAt))}` : "";
+  return { label, value: `${item?.label ?? queue.kind ?? "Queue item"}${quantity}${readyAt}` };
 }
 
 function resourceValue(value: string | null | undefined): string {
