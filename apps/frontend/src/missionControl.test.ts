@@ -4,7 +4,7 @@ import { MissionDetailPage } from "./components/MissionDetailPage";
 import { MissionControlPage, StationedDefenseSection, allActiveMissionRows, buildMissionControlViewQuery, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
 import { MissionRouteCell, missionEndpoint, type MissionPlanetIdentity } from "./components/missionRoute";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
-import { buildInspectHash, parseInspectRoute } from "./inspectRoutes";
+import { buildInspectHash, buildInspectPath, parseInspectPath, parseInspectRoute } from "./inspectRoutes";
 import type { Coordinates } from "./types";
 import { fetchBattleReports, fetchFleetMissionArchive, fetchMission, type BattleReport, type FleetMissionPlanetReference, type FleetMissionSummary, type FleetMissionVisibilityResponse } from "./walletFlow";
 
@@ -19,6 +19,10 @@ describe("Mission Control battle reports", () => {
     expect(parseInspectRoute("#/battle-report/42")).toEqual({ kind: "mission", missionId: "42" });
     expect(parseInspectRoute("#/mission/42")).toEqual({ kind: "mission", missionId: "42" });
     expect(buildInspectHash({ kind: "mission", missionId: "42" })).toBe("#/mission/42");
+    expect(parseInspectRoute("#/moon/6/9/1")).toEqual({ kind: "moon", coords: { galaxy: 6, system: 9, position: 1 } });
+    expect(parseInspectPath("/moon/6/9/1")).toEqual({ kind: "moon", coords: { galaxy: 6, system: 9, position: 1 } });
+    expect(buildInspectHash({ kind: "moon", coords: { galaxy: 6, system: 9, position: 1 } })).toBe("#/moon/6/9/1");
+    expect(buildInspectPath({ kind: "moon", coords: { galaxy: 6, system: 9, position: 1 } })).toBe("/moon/6/9/1");
   });
 
   test("fetches public battle report lists without wallet scope", async () => {

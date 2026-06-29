@@ -22,6 +22,7 @@ import { ShipyardPage } from "./components/ShipyardPage";
 import type { RequirementTarget } from "./components/RequirementFlairs";
 import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
+import { PublicMoonDetail } from "./components/PublicMoonDetail";
 import { MoonImage, PlanetMoonIndicator } from "./components/PlanetMoonIndicator";
 import { MissionDetailPage } from "./components/MissionDetailPage";
 import {
@@ -2786,6 +2787,9 @@ function initialInspectPageState(): {
   if (route.kind === "planet") {
     return { page: "planet", playerWallet: null, allianceId: null, missionDetailId: null, missionReportId: null };
   }
+  if (route.kind === "moon") {
+    return { page: "moon-inspect", playerWallet: null, allianceId: null, missionDetailId: null, missionReportId: null };
+  }
   return { page: route.page, playerWallet: null, allianceId: null, missionDetailId: null, missionReportId: null };
 }
 
@@ -2793,7 +2797,7 @@ function initialSelectedCoords(): Coordinates | undefined {
   if (typeof window === "undefined") return undefined;
   replaceLegacyHashEntityRoute();
   const route = parseInspectRouteFromLocation(window.location);
-  return route.kind === "planet" ? route.coords : undefined;
+  return route.kind === "planet" || route.kind === "moon" ? route.coords : undefined;
 }
 
 function replaceLegacyHashEntityRoute(): boolean {
@@ -3381,6 +3385,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
         setGalaxyNav({ galaxy: route.coords.galaxy, system: route.coords.system });
         setSelectedCoords(route.coords);
         setPage("planet");
+        return;
+      }
+      if (route.kind === "moon") {
+        setInspectedPlayerWallet(null);
+        setInspectedAllianceId(null);
+        setMissionDetailId(null);
+        setMissionReportId(null);
+        setGalaxyNav({ galaxy: route.coords.galaxy, system: route.coords.system });
+        setSelectedCoords(route.coords);
+        setPage("moon-inspect");
         return;
       }
       setInspectedPlayerWallet(null);
@@ -6740,6 +6754,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     };
 
     if (action.mode === "colonize") {
+      if (!target) {
+        setGalaxyAction({ status: "error", label: "Colonization target is not a generated planet slot." });
+        return;
+      }
       const colonyLimitBlocker = colonizationLimitBlocker({
         planetCount: walletPlanets.length,
         researchTechnologyLevels: effectiveResearchState?.technologyLevels,
@@ -7218,6 +7236,27 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     writeInspectRoute({ kind: "planet", coords });
   }, [inspectedAllianceId, inspectedPlayerWallet, missionDetailId, missionReportId, page]);
 
+  const handleSelectMoon = useCallback((coords: Coordinates) => {
+    setPlanetBackRoute(planetDetailBackRouteForCurrentScreen({
+      inspectedAllianceId,
+      inspectedPlayerWallet,
+      missionDetailId,
+      missionReportId,
+      page,
+    }));
+    setPendingGalaxyMission(null);
+    setPendingJoinAttack(null);
+    setPendingAcsDefend(null);
+    setGalaxyNav({ galaxy: coords.galaxy, system: coords.system });
+    setSelectedCoords(coords);
+    setInspectedPlayerWallet(null);
+    setInspectedAllianceId(null);
+    setMissionDetailId(null);
+    setMissionReportId(null);
+    setPage("moon-inspect");
+    writeInspectRoute({ kind: "moon", coords });
+  }, [inspectedAllianceId, inspectedPlayerWallet, missionDetailId, missionReportId, page]);
+
   const handlePlanetDetailBack = useCallback(() => {
     if (hasUsefulPlanetDetailBackRoute(planetBackRoute) && typeof window !== "undefined" && window.history.length > 1) {
       setPlanetBackRoute(null);
@@ -7566,6 +7605,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           onSelectPlayer={handleSelectPlayer}
           onToggleWatchPlanet={handleToggleWatchPlanet}
           onNavigate={(g, s) => setGalaxyNav({ galaxy: g, system: s })}
+          onSelectMoon={handleSelectMoon}
           onSelectPlanet={handleSelectPlanet}
           system={galaxyNav.system}
           transactionUnavailableReason={gameTransactionUnavailableReason}
@@ -7590,6 +7630,16 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           onBack={handlePlanetDetailBack}
           shipyardState={missionActionShipyardState}
           transactionUnavailableReason={gameTransactionUnavailableReason}
+        />
+      );
+    }
+
+    if (page === "moon-inspect" && selectedCoords) {
+      return (
+        <PublicMoonDetail
+          apiBaseUrl={apiBaseUrl}
+          coords={selectedCoords}
+          onBack={handlePlanetDetailBack}
         />
       );
     }
@@ -7654,6 +7704,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           onStartBuilding={handleStartMoonBuilding}
           onStartDefense={handleStartMoonDefense}
           parentPlanetLabel={selectedManagedPlanet?.name ?? selectedManagedPlanet?.coordinates}
+          parentPlanetType={selectedManagedPlanet ? planetTypeFromTemperature(selectedManagedPlanet.temperature) : undefined}
           transactionUnavailableReason={moonTransactionUnavailableReason}
         />
       );
@@ -7868,6 +7919,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           currentWallet={account}
           now={now}
           onSelectAlliance={handleSelectAlliance}
+          onSelectMoon={handleSelectMoon}
           onSelectPlayer={handleSelectPlayer}
           onSelectPlanet={handleSelectPlanet}
           originCoordinates={activePlanetCoords}
@@ -7889,6 +7941,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           onAttackTarget={handleRaidFinderAttack}
           onHarvestDebrisTarget={handleRaidFinderHarvest}
           onSelectAlliance={handleSelectAlliance}
+          onSelectMoon={handleSelectMoon}
           onSelectPlanet={handleSelectPlanet}
           onSelectPlayer={handleSelectPlayer}
           originCoordinates={activePlanetCoords}
@@ -8119,7 +8172,13 @@ function PlanetSelectorButton({
           loading="lazy"
           src={planetImage(planet)}
         />
-        {planet.moon?.exists ? <PlanetMoonIndicator compact className="bottom-0.5 right-0.5 top-auto" /> : null}
+        {planet.moon?.exists ? (
+          <PlanetMoonIndicator
+            compact
+            className="bottom-0.5 right-0.5 top-auto"
+            planetType={planetTypeFromTemperature(planet.temperature)}
+          />
+        ) : null}
       </span>
       <span className="block max-w-full truncate text-[0.68rem] font-medium leading-4 text-slate-200">
         {planetDisplayName(planet)}
@@ -8156,7 +8215,7 @@ function PlanetSelectorMoonButton({
       type="button"
     >
       <span className="h-5 w-5 overflow-hidden rounded-full border border-cyan-100/30 bg-black/40">
-        <MoonImage className="h-full w-full object-cover" />
+        <MoonImage className="h-full w-full object-cover" planetType={planetTypeFromTemperature(planet.temperature)} />
       </span>
       <span className="min-w-0">
         <span className="block truncate text-[0.62rem] font-semibold leading-3">Moon</span>

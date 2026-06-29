@@ -27,6 +27,7 @@ export type Page =
   | "galaxy"
   | "raid-target-finder"
   | "planet"
+  | "moon-inspect"
   | "battle-reports"
   | "player-inspect"
   | "alliance-inspect";

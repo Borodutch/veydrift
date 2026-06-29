@@ -376,18 +376,25 @@ describe("createForwardingFetch", () => {
       expect(logs).toHaveLength(1);
       const log = logs[0];
       expect(log).toBeDefined();
-      expect(log![0]).toBe("veydrift-api-request");
-      const entry = JSON.parse(String(log![1])) as {
+      const entry = JSON.parse(String(log![0])) as {
         durationMs: number;
+        kind: string;
         method: string;
         path: string;
+        queryKeys: string[];
+        route: string;
         status: number;
+        stream: boolean;
         workerRole: string;
       };
       expect(entry).toMatchObject({
+        kind: "api_request",
         method: "GET",
         path: "/runtime-config?source=test",
+        queryKeys: ["source"],
+        route: "/runtime-config",
         status: 200,
+        stream: false,
         workerRole: "reader"
       });
       expect(entry.durationMs).toBeGreaterThanOrEqual(0);

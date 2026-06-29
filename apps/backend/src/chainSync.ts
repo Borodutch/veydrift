@@ -1,7 +1,8 @@
 import type { BackendConfig } from "./config";
-import { isSettledPlanetLog } from "./evm";
+import { eventNameForTopic, isSettledPlanetLog } from "./evm";
 import type { RpcLog } from "./evm";
 import type { SettlementIndexer } from "./indexer";
+import { emitObservabilityEvent } from "./observability";
 
 // HTTP catch-up source. `getHeadBlock` resolves the current chain head (eth_blockNumber) and
 // `listContractLogs` returns every indexed-contract log in a block range (chunked internally). The
@@ -638,10 +639,13 @@ export class ChainSyncService {
     if (durationMs > 300) this.slowHandlerCount300Ms += 1;
     if (durationMs > 1_000) this.slowHandlerCount1000Ms += 1;
 
+    const eventTopic = log.topics[0] ?? null;
     const logLine = {
+      kind: "chain_event",
       msg: "Veydrift chain event handled",
       source,
-      eventTopic: log.topics[0] ?? null,
+      eventName: eventNameForTopic(eventTopic),
+      eventTopic,
       contractAddress: (log as RpcLog & { address?: string }).address ?? null,
       blockNumber: log.blockNumber,
       transactionHash: log.transactionHash,
@@ -661,13 +665,12 @@ export class ChainSyncService {
         canonicalHealQueued: false
       }
     };
-    const serialized = JSON.stringify(logLine);
     if (durationMs > 1_000) {
-      console.warn(serialized);
+      emitObservabilityEvent(logLine, "warn");
     } else if (durationMs > 300) {
-      console.warn(serialized);
+      emitObservabilityEvent(logLine, "warn");
     } else {
-      console.log(serialized);
+      emitObservabilityEvent(logLine, "info");
     }
   }
 

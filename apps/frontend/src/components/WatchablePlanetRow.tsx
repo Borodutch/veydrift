@@ -23,11 +23,13 @@ export function WatchablePlanetRow({
   leadingSlot,
   meta,
   onInspect,
+  onInspectMoon,
   onSelectAlliance,
   onSelectPlayer,
   onToggleWatch,
   planet,
   showIdentity = true,
+  showMoonIndicator = true,
   watchBusy = false,
   watched = false,
 }: {
@@ -40,11 +42,13 @@ export function WatchablePlanetRow({
   leadingSlot?: ComponentChildren;
   meta: PlanetMetaItem[];
   onInspect: (coords: Coordinates) => void;
+  onInspectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onToggleWatch?: (() => void) | undefined;
   planet: Planet;
   showIdentity?: boolean | undefined;
+  showMoonIndicator?: boolean | undefined;
   watchBusy?: boolean | undefined;
   watched?: boolean | undefined;
 }) {
@@ -93,7 +97,7 @@ export function WatchablePlanetRow({
             sizes="icon"
             src={planet.image}
           />
-          {planet.hasMoon ? <PlanetMoonIndicator compact /> : null}
+          {showMoonIndicator && planet.hasMoon ? <PlanetMoonIndicator compact planetType={planet.type} /> : null}
         </div>
 
         <div className="min-w-0">
@@ -119,6 +123,9 @@ export function WatchablePlanetRow({
           {planet.hasMoon ? (
             <PlanetMoonSubsection
               label={planet.moonName ?? "Moon"}
+              onClick={onInspectMoon ? () => onInspectMoon(coords) : undefined}
+              planetType={planet.type}
+              title={`Open ${planet.moonName ?? "Moon"} at [${coords.galaxy}:${coords.system}:${coords.position}]`}
             />
           ) : null}
         </div>

@@ -1262,7 +1262,7 @@ function TargetIdentityContent({
             loading="lazy"
             src={target.image}
           />
-          {target.hasMoon ? <PlanetMoonIndicator compact /> : null}
+          {target.hasMoon ? <PlanetMoonIndicator compact planetType={target.type} /> : null}
         </span>
       ) : (
         <div className={placeholderClassName}>
@@ -1616,7 +1616,7 @@ function TargetDecisionTable({ coords, target }: { coords: Coordinates; target: 
             loading="lazy"
             src={target.image}
           />
-          {target.hasMoon ? <PlanetMoonIndicator compact /> : null}
+          {target.hasMoon ? <PlanetMoonIndicator compact planetType={target.type} /> : null}
         </span>
       ) : (
         <div className="grid h-16 w-16 place-items-center rounded-md border border-white/10 bg-white/[0.03] text-[11px] text-slate-500 sm:h-14 sm:w-14">

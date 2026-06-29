@@ -1,4 +1,5 @@
 import type { DefenseKey, ResearchKey, ShipKey } from "./playableMvp";
+import type { PlanetType } from "./types";
 
 export type GameAssetMapping<Key extends string> = {
   key: Key;
@@ -14,10 +15,43 @@ const RESEARCH_BASE = "/assets/game/style-pass/generated/research";
 const MOON_BASE = "/assets/game/style-pass/generated/moons";
 
 export const moonAsset = {
-  key: "crateredCyanMoon",
-  src: `${MOON_BASE}/cratered-cyan-moon.webp`,
+  key: "frozenIceMoon",
+  src: `${MOON_BASE}/frozen-ice.webp`,
   status: "generated-preview",
 } as const;
+
+type CanonicalMoonPlanetType =
+  | "frozen-ice"
+  | "cold-tundra"
+  | "temperate-ocean"
+  | "lush-temperate"
+  | "warm-terracotta"
+  | "hot-desert"
+  | "scorching-molten";
+
+const CANONICAL_MOON_IMAGES: Record<CanonicalMoonPlanetType, string> = {
+  "frozen-ice": `${MOON_BASE}/frozen-ice.webp`,
+  "cold-tundra": `${MOON_BASE}/cold-tundra.webp`,
+  "temperate-ocean": `${MOON_BASE}/temperate-ocean.webp`,
+  "lush-temperate": `${MOON_BASE}/lush-temperate.webp`,
+  "warm-terracotta": `${MOON_BASE}/warm-terracotta.webp`,
+  "hot-desert": `${MOON_BASE}/hot-desert.webp`,
+  "scorching-molten": `${MOON_BASE}/scorching-molten.webp`,
+};
+
+const LEGACY_PLANET_TYPE_MOON_FALLBACKS: Partial<Record<PlanetType, string>> = {
+  "cool-misty-blue": `${MOON_BASE}/cold-tundra.webp`,
+  "outer-cryo": `${MOON_BASE}/frozen-ice.webp`,
+  "metal-planetoid": `${MOON_BASE}/warm-terracotta.webp`,
+  "crystal-violet": `${MOON_BASE}/lush-temperate.webp`,
+  "deuterium-blue": `${MOON_BASE}/temperate-ocean.webp`,
+};
+
+export function moonImageForType(type: PlanetType | null | undefined): string {
+  if (!type) return moonAsset.src;
+  const canonicalImages = CANONICAL_MOON_IMAGES as Partial<Record<PlanetType, string>>;
+  return canonicalImages[type] ?? LEGACY_PLANET_TYPE_MOON_FALLBACKS[type] ?? moonAsset.src;
+}
 
 export const shipAssetManifest = [
   { key: "smallCargo", src: `${SHIP_BASE}/small-cargo.webp`, category: "ship", status: "production" },

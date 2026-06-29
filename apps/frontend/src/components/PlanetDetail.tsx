@@ -277,7 +277,7 @@ export function PlanetDetail({
               src={planet.image}
             />
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_80%,rgba(5,7,13,0.6),transparent_60%)]" />
-            {planet.hasMoon ? <PlanetMoonIndicator className="right-3 top-3" /> : null}
+            {planet.hasMoon ? <PlanetMoonIndicator className="right-3 top-3" planetType={planet.type} /> : null}
             {isHome ? (
               <span className="absolute left-3 top-3 rounded border border-cyan-300/30 bg-cyan-300/15 px-2 py-1 text-xs font-semibold uppercase text-cyan-100">
                 Home Planet
@@ -288,7 +288,7 @@ export function PlanetDetail({
             <div className="rounded border border-white/10 bg-white/5 px-3 py-2">
               <div className="flex items-center gap-2">
                 <span className="h-8 w-8 overflow-hidden rounded-full border border-cyan-100/30 bg-black/40">
-                  <MoonImage className="h-full w-full object-cover" />
+                  <MoonImage className="h-full w-full object-cover" planetType={planet.type} />
                 </span>
                 <span className="min-w-0">
                   <span className="block text-sm font-semibold text-cyan-100">{planet.moonName ?? "Moon"}</span>
