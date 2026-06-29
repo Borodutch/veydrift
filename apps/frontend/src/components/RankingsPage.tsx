@@ -7,7 +7,7 @@ import type { Coordinates } from "../types";
 import { fetchHighscores, shortAddress, type FleetMissionSummary, type HighscoreCategory, type HighscoreEntry, type HighscorePlanet, type HighscoreResponse } from "../walletFlow";
 import { OptimizedImage } from "./OptimizedImage";
 import { PageHeader, RefreshButton, refreshButtonState } from "./PageHeader";
-import { PlanetMoonIndicator, PlanetMoonSubsection } from "./PlanetMoonIndicator";
+import { PlanetMoonSubsection } from "./PlanetMoonIndicator";
 import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RankingsRowsSkeleton } from "./LoadingSkeletons";
 import { AfkFlair } from "./AfkFlair";
@@ -24,6 +24,7 @@ type RankingsPageProps = {
   // Live clock (ms) driving the mission-subtext ETA countdowns; ticks every second from the app shell.
   now?: number | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
   originCoordinates?: Coordinates | null | undefined;
@@ -65,7 +66,7 @@ export function rankingsRefreshButtonState(loading: boolean): { disabled: boolea
   return refreshButtonState(loading);
 }
 
-export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, currentWallet, now, onSelectAlliance, onSelectPlayer, onSelectPlanet, originCoordinates }: RankingsPageProps) {
+export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, currentWallet, now, onSelectAlliance, onSelectMoon, onSelectPlayer, onSelectPlanet, originCoordinates }: RankingsPageProps) {
   const [active, setActive] = useState<HighscoreCategory>("total");
   const [data, setData] = useState<HighscoreResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -172,6 +173,7 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
         missionsByPlanetId={missionsByPlanetId}
         now={nowMs}
         onSelectAlliance={onSelectAlliance}
+        onSelectMoon={onSelectMoon}
         onSelectPlayer={onSelectPlayer}
         onSelectPlanet={onSelectPlanet}
         originCoordinates={originCoordinates}
@@ -345,6 +347,7 @@ export function RankingsTable({
   missionsByPlanetId,
   now,
   onSelectAlliance,
+  onSelectMoon,
   onSelectPlayer,
   onSelectPlanet,
   originCoordinates,
@@ -358,6 +361,7 @@ export function RankingsTable({
   missionsByPlanetId?: ReadonlyMap<string, FleetMissionSummary[]> | undefined;
   now?: number | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
   originCoordinates?: Coordinates | null | undefined;
@@ -386,6 +390,7 @@ export function RankingsTable({
             missionsByPlanetId={missionsByPlanetId}
             now={now}
             onSelectAlliance={onSelectAlliance}
+            onSelectMoon={onSelectMoon}
             onSelectPlayer={onSelectPlayer}
             onSelectPlanet={onSelectPlanet}
             originCoordinates={originCoordinates}
@@ -404,6 +409,7 @@ function RankingRow({
   missionsByPlanetId,
   now,
   onSelectAlliance,
+  onSelectMoon,
   onSelectPlayer,
   onSelectPlanet,
   originCoordinates,
@@ -415,6 +421,7 @@ function RankingRow({
   missionsByPlanetId?: ReadonlyMap<string, FleetMissionSummary[]> | undefined;
   now?: number | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
   originCoordinates?: Coordinates | null | undefined;
@@ -568,7 +575,6 @@ function RankingRow({
                     sizes="icon"
                     src={planetImageForType(planet.archetype)}
                   />
-                  {planet.hasMoon ? <PlanetMoonIndicator compact planetType={planet.archetype} /> : null}
                 </span>
                 <span className="min-w-0 truncate text-slate-200">
                   {isHomePlanet ? (
@@ -602,7 +608,13 @@ function RankingRow({
               </button>
               <PlanetMissionLines className="pl-2 sm:pl-[34px]" planetId={planet.planetId} subtext={missionLines} />
               {planet.hasMoon ? (
-                <PlanetMoonSubsection label="Moon" planetType={planet.archetype} />
+                <PlanetMoonSubsection
+                  className="ml-4 sm:ml-[34px]"
+                  label="Moon"
+                  onClick={onSelectMoon ? () => onSelectMoon(planet.coordinates) : undefined}
+                  planetType={planet.archetype}
+                  title={`Open moon at ${homePlanetCoordinatesLabel(planet)}`}
+                />
               ) : null}
               </div>
             );

@@ -4,12 +4,13 @@ import type { Coordinates } from "./types";
 export type InspectRoute =
   | { kind: "page"; page: Page }
   | { kind: "planet"; coords: Coordinates }
+  | { kind: "moon"; coords: Coordinates }
   | { kind: "mission"; missionId: string }
   | { kind: "player"; wallet: string }
   | { kind: "alliance"; allianceId: string }
   | { kind: "mission-report"; missionId: string };
 
-export type PlanetDetailBackRoute = Exclude<InspectRoute, { kind: "planet" }>;
+export type PlanetDetailBackRoute = Exclude<InspectRoute, { kind: "planet" } | { kind: "moon" }>;
 
 const pageNames = new Set<Page>([
   "overview",
@@ -76,6 +77,16 @@ function parseInspectPathValue(rawPath: string): InspectRoute | null {
     }
     return { kind: "page", page: "planet" };
   }
+  if (kind === "moon") {
+    const pathCoords = parsePlanetCoords(
+      `galaxy=${value ?? ""}&system=${detailId ?? ""}&position=${positionId ?? ""}`,
+    );
+    const coords = pathCoords ?? parsePlanetCoords(query);
+    if (coords) {
+      return { kind: "moon", coords };
+    }
+    return { kind: "page", page: "moon" };
+  }
   if (pageNames.has(kind as Page)) {
     return { kind: "page", page: kind as Page };
   }
@@ -111,6 +122,9 @@ export function buildInspectHash(route: InspectRoute): string {
   if (route.kind === "planet") {
     return `#/planet/${route.coords.galaxy}/${route.coords.system}/${route.coords.position}`;
   }
+  if (route.kind === "moon") {
+    return `#/moon/${route.coords.galaxy}/${route.coords.system}/${route.coords.position}`;
+  }
   if (route.kind === "player") return `#/player/${encodeURIComponent(route.wallet)}`;
   if (route.kind === "alliance") return `#/alliance/${encodeURIComponent(route.allianceId)}`;
   if (route.kind === "mission") return `#/mission/${encodeURIComponent(route.missionId)}`;
@@ -121,6 +135,9 @@ export function buildInspectHash(route: InspectRoute): string {
 export function buildInspectPath(route: InspectRoute): string {
   if (route.kind === "planet") {
     return `/planet/${route.coords.galaxy}/${route.coords.system}/${route.coords.position}`;
+  }
+  if (route.kind === "moon") {
+    return `/moon/${route.coords.galaxy}/${route.coords.system}/${route.coords.position}`;
   }
   if (route.kind === "player") return `/player/${encodeURIComponent(route.wallet)}`;
   if (route.kind === "alliance") return `/alliance/${encodeURIComponent(route.allianceId)}`;
@@ -158,5 +175,5 @@ export function planetDetailBackRouteForCurrentScreen({
 }
 
 export function hasUsefulPlanetDetailBackRoute(route: InspectRoute | null | undefined): route is PlanetDetailBackRoute {
-  return Boolean(route && route.kind !== "planet" && !(route.kind === "page" && route.page === "planet"));
+  return Boolean(route && route.kind !== "planet" && route.kind !== "moon" && !(route.kind === "page" && route.page === "planet"));
 }
