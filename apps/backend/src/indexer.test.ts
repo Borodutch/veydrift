@@ -4148,6 +4148,7 @@ describe("SettlementIndexer", () => {
         allianceId: "1",
         otherAllianceId: "2",
         status: "war",
+        initiatedByAllianceId: "1",
         alliance: { allianceId: "2", tag: "RVL", name: "Rivals" }
       }
     ]);
@@ -5544,6 +5545,11 @@ describe("SettlementIndexer", () => {
       topics: [attackBattleResolvedTopic, topic(5681n), addressTopic(player), topic(8n)],
       data: abiWords(1n, 11n, 12345n, 2430n, 1364n, 375n)
     });
+    (indexer as unknown as { indexedFleetMissionReferenceIndex: () => never }).indexedFleetMissionReferenceIndex = () => {
+      throw new Error("single-mission report reads must not build the full mission reference index");
+    };
+
+    expect(indexer.fleetMission("5681")).toMatchObject({ missionId: "5681" });
     indexer.materializeBattleReportReadModelsForWorker(["5681"], "ingest");
 
     (indexer as unknown as { battleTimeDefenderSnapshots: () => never }).battleTimeDefenderSnapshots = () => {

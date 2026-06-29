@@ -1207,7 +1207,8 @@ export class SettlementIndexer {
       status: diplomacyStatusName(row.status_id),
       statusId: row.status_id,
       updatedAt: row.updated_at,
-      initiatedByAllianceId: row.initiated_by_alliance_id,
+      initiatedByAllianceId: row.initiated_by_alliance_id
+        ?? (diplomacyStatusName(row.status_id) === "war" ? row.alliance_id : null),
       alliance: directoryById.get(row.other_alliance_id) ?? null
     }));
   }
@@ -1396,7 +1397,13 @@ export class SettlementIndexer {
   }
 
   fleetMission(missionId: string): FleetMissionSummary | null {
-    return this.indexedFleetMissionReferenceIndex().byId.get(missionId) ?? null;
+    const mission = this.fleetMissionSummariesFromCanonicalRowsByIds([missionId])[0]
+      ?? (
+        this.metadata("lastFleetMissionsReconciledAt") === null
+          ? this.eventDerivedFleetMissionForMissionId(missionId)
+          : null
+      );
+    return mission ? this.fleetMissionSummaryAsOfNow(mission) : null;
   }
 
   stationedDefendersForPlanet(planetId: string, asOfSeconds = Math.floor(Date.now() / 1_000)): StationedDefenderSummary[] {
@@ -1414,12 +1421,11 @@ export class SettlementIndexer {
     const attackArrival = Number(attack?.arrivalAt);
     if (!Number.isFinite(attackArrival)) return [];
 
-    const missionIndex = this.indexedFleetMissionReferenceIndex();
     const defenders = new Map<string, StationedDefenderSummary>();
 
     if (attack) {
-      for (const missionId of attack.counterplayDefenderMissionIds ?? []) {
-        const defender = missionIndex.byId.get(missionId);
+      const counterplayDefenders = this.fleetMissionSummariesFromCanonicalRowsByIds(attack.counterplayDefenderMissionIds ?? []);
+      for (const defender of counterplayDefenders) {
         if (!defender || !this.isBattleTimeCounterplay(defender, attack, attackArrival)) continue;
         defenders.set(defender.missionId, this.stationedDefenderSummary(defender, this.counterplayHoldUntil(defender)));
       }
@@ -1428,7 +1434,7 @@ export class SettlementIndexer {
     const targetPlanetId = report?.targetPlanetId ?? attack?.targetPlanetId;
     const targetIsMoon = Boolean(report?.targetIsMoon ?? attack?.targetIsMoon);
     if (targetPlanetId) {
-      for (const defender of missionIndex.activeByTarget.get(targetPlanetId) ?? []) {
+      for (const defender of this.activeFleetMissionsFromCanonicalRowsForTarget(targetPlanetId)) {
         if (!this.isBattleTimeDefenseHoldForPlanet(defender, targetPlanetId, attackArrival, targetIsMoon)) continue;
         defenders.set(defender.missionId, this.stationedDefenderSummary(defender, this.defenseHoldWindowEnd(defender)));
       }
@@ -6180,20 +6186,24 @@ export class SettlementIndexer {
   }
 
   // Canonical-mirror seed for contract_alliance_diplomacy. The reader returns one row per directed
-  // (alliance_id, other_alliance_id) pair, matching the AllianceDiplomacyUpdated handler that writes both
-  // directions; updated_at is left NULL on the chain seed (no event block backs it). See null vs.
-  // empty-array semantics on applyAllianceJoinRequestSnapshot.
+  // (alliance_id, other_alliance_id) pair; updated_at is left NULL on the chain seed (no event block
+  // backs it). See null vs. empty-array semantics on applyAllianceJoinRequestSnapshot.
   private applyAllianceDiplomacySnapshot(snapshot: AllianceDiplomacySnapshot[] | null): void {
     if (snapshot === null) return;
     this.db.query("DELETE FROM contract_alliance_diplomacy").run();
     for (const relation of snapshot) {
       this.db.query(`
         INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id)
-        VALUES (?, ?, ?, NULL, NULL)
+        VALUES (?, ?, ?, NULL, ?)
         ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
           status_id = excluded.status_id,
           initiated_by_alliance_id = excluded.initiated_by_alliance_id
-      `).run(relation.allianceId, relation.otherAllianceId, relation.statusId);
+      `).run(
+        relation.allianceId,
+        relation.otherAllianceId,
+        relation.statusId,
+        diplomacyStatusName(relation.statusId) === "war" ? relation.allianceId : null
+      );
     }
     this.touch();
   }
@@ -7308,6 +7318,35 @@ export class SettlementIndexer {
       }
     }
     return summaries;
+  }
+
+  private fleetMissionSummaryAsOfNow(mission: FleetMissionSummary): FleetMissionSummary {
+    const asOfSeconds = nowSeconds();
+    const withPlanetReferences = this.withFleetMissionPlanetReferences(mission);
+    const status = (
+      (withPlanetReferences.status === "Returning" || withPlanetReferences.status === "Recalled")
+      && Number(withPlanetReferences.returnAt) <= asOfSeconds
+    )
+      ? "Returned"
+      : withPlanetReferences.status;
+    const needsGate = this.randomnessEngineConfigured
+      && missionBattleRandomnessRequestId(withPlanetReferences) !== null
+      && status === "Outbound"
+      && Number(withPlanetReferences.arrivalAt) <= asOfSeconds;
+    const fulfilledRandomnessRequestIds = needsGate ? this.fulfilledRandomnessRequestIds() : null;
+    const resolvedMission = {
+      ...withPlanetReferences,
+      status,
+      needsResolution: fleetMissionNeedsResolution(
+        { ...withPlanetReferences, status },
+        asOfSeconds,
+        fulfilledRandomnessRequestIds
+      )
+    };
+    return withMissionAsOfNow(
+      withFleetMissionResolutionBlocker(resolvedMission, asOfSeconds, fulfilledRandomnessRequestIds),
+      asOfSeconds
+    );
   }
 
   private battleReportsForMissionIds(

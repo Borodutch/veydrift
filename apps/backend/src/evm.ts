@@ -2575,8 +2575,8 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   // Canonical-mirror seed: alliance diplomacy. diplomacyStatus(uint256,uint256) is read for every
-  // ordered allianceId pair (skipping self-pairs); each non-None status yields one directed row, matching
-  // the AllianceDiplomacyUpdated event handler which writes both directions of the relation.
+  // ordered allianceId pair (skipping self-pairs); each non-None status yields one directed row. War
+  // rows are directional on newer AllianceSystem deployments: the row's allianceId is the declarer.
   async listAllianceDiplomacyState(): Promise<AllianceDiplomacySnapshot[]> {
     if (!this.allianceContractAddress) return [];
 
