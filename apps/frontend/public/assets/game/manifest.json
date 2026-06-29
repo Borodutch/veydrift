@@ -125,6 +125,16 @@
       }
     }
   },
+  "moonStructures": {
+    "moon-robotics-factory": {
+      "name": "Moon Robotics Factory",
+      "image": "/assets/game/style-pass/generated/buildings/moon-robotics-factory.webp"
+    },
+    "moon-shipyard": {
+      "name": "Moon Shipyard",
+      "image": "/assets/game/style-pass/generated/buildings/moon-shipyard.webp"
+    }
+  },
   "ships": {
     "small-cargo": {
       "name": "Small Cargo",

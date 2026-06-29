@@ -620,6 +620,24 @@
       "512": "/assets/game/sizes/512/style-pass/generated/buildings/missile-silo-mid.webp"
     }
   },
+  "/assets/game/style-pass/generated/buildings/moon-robotics-factory.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/moon-robotics-factory.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/moon-robotics-factory.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/moon-robotics-factory.webp"
+    }
+  },
+  "/assets/game/style-pass/generated/buildings/moon-shipyard.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/buildings/moon-shipyard.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/buildings/moon-shipyard.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/buildings/moon-shipyard.webp"
+    }
+  },
   "/assets/game/style-pass/generated/buildings/nanite-factory-mid.webp": {
     "width": 1024,
     "height": 1024,
