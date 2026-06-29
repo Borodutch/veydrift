@@ -9,6 +9,7 @@ import {VeydriftCatalog} from "./libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "./libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
+import {VeydriftUniverseRules} from "./VeydriftUniverseRules.sol";
 import {Building, Defense, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 /// @dev Self-call surface used by the Colonize lazy reconcile to drive the existing (public)
@@ -18,11 +19,25 @@ interface IVeydriftColonizeMissionResolver {
     function resolveFleetMission(uint256 missionId) external;
 }
 
+interface IVeydriftUniverseRules {
+    function isPopulatedPlanetSlot(
+        uint256 chainId,
+        address universeAddress,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position,
+        uint16 maxGalaxy,
+        uint16 maxSystem,
+        uint8 maxPosition
+    ) external pure returns (bool);
+}
+
 /// @notice Delegatecall target for delayed colony fleet mission launch and resolution.
 contract VeydriftColonizationModule is VeydriftResourceReserves {
     using SafeCast for uint256;
 
     address private immutable _defenseProductionModule;
+    address private immutable _universeRules;
 
     uint256 private constant COLONIZATION_COORDINATE_FLAG = 1 << 255;
     uint256 private constant COLONIZATION_GALAXY_SHIFT = 24;
@@ -32,6 +47,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
 
     constructor() VeydriftResourceReserves(address(0)) {
         _defenseProductionModule = address(new VeydriftDefenseProductionModule());
+        _universeRules = address(new VeydriftUniverseRules());
     }
 
     function setSpaceDockSystem(address nextSpaceDockSystem) external onlyOwner {
@@ -320,7 +336,8 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         _settleResearchDue(mission.owner, mission.arrivalAt);
         uint256 limit = 1 + _technologyLevels[mission.owner][Technology.Astrophysics];
         if (
-            occupiedCoordinates[_coordinateKey(galaxy, system, position)]
+            !_isPopulatedPlanetSlot(galaxy, system, position)
+                || occupiedCoordinates[_coordinateKey(galaxy, system, position)]
                 || planetCountOf[mission.owner] >= limit
         ) {
             mission.status = FleetMissionStatus.Returning;
@@ -376,6 +393,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     ) private returns (uint256 missionId) {
         bytes32 coordinates = _coordinateKey(galaxy, system, position);
         if (occupiedCoordinates[coordinates]) revert CoordinatesOccupied();
+        if (!_isPopulatedPlanetSlot(galaxy, system, position)) revert UnpopulatedCoordinates();
 
         _settleResources(originPlanetId);
         uint256 travelDistance =
@@ -455,6 +473,7 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
     ) private returns (uint256 colonyPlanetId) {
         bytes32 coordinates = _coordinateKey(galaxy, system, position);
         if (occupiedCoordinates[coordinates]) revert CoordinatesOccupied();
+        if (!_isPopulatedPlanetSlot(galaxy, system, position)) revert UnpopulatedCoordinates();
 
         colonyPlanetId = nextPlanetId++;
         occupiedCoordinates[coordinates] = true;
@@ -730,6 +749,24 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         return VeydriftPlanetGeneration.coordinateKey(
             block.chainid, galaxy, system, position, MAX_GALAXY, MAX_SYSTEM, MAX_POSITION
         );
+    }
+
+    function _isPopulatedPlanetSlot(uint16 galaxy, uint16 system, uint8 position)
+        private
+        view
+        returns (bool)
+    {
+        return IVeydriftUniverseRules(_universeRules)
+            .isPopulatedPlanetSlot(
+                block.chainid,
+                address(this),
+                galaxy,
+                system,
+                position,
+                MAX_GALAXY,
+                MAX_SYSTEM,
+                MAX_POSITION
+            );
     }
 
     function _planetSeed(uint16 galaxy, uint16 system, uint8 position)
