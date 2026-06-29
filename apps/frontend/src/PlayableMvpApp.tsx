@@ -23,7 +23,7 @@ import type { RequirementTarget } from "./components/RequirementFlairs";
 import { RiftPage } from "./components/RiftPage";
 import { MoonPage } from "./components/MoonPage";
 import { PublicMoonDetail } from "./components/PublicMoonDetail";
-import { MoonImage, PlanetMoonIndicator } from "./components/PlanetMoonIndicator";
+import { MoonImage } from "./components/PlanetMoonIndicator";
 import { MissionDetailPage } from "./components/MissionDetailPage";
 import {
   MissionControlPage,
@@ -8172,13 +8172,6 @@ function PlanetSelectorButton({
           loading="lazy"
           src={planetImage(planet)}
         />
-        {planet.moon?.exists ? (
-          <PlanetMoonIndicator
-            compact
-            className="bottom-0.5 right-0.5 top-auto"
-            planetType={planetTypeFromTemperature(planet.temperature)}
-          />
-        ) : null}
       </span>
       <span className="block max-w-full truncate text-[0.68rem] font-medium leading-4 text-slate-200">
         {planetDisplayName(planet)}
