@@ -223,7 +223,6 @@ export type SettlementIndexerOptions = {
   database?: Database;
   databasePath?: string;
   readOnly?: boolean;
-  battleReportMaterializationRunner?: (request: BattleReportMaterializationRequest) => Promise<void>;
   // Multi-process API workers share one SQLite DB. The writer is the only process that should run
   // startup materialized-state repair/backfill; readers only need the schema and current rows.
   runStartupBackfill?: boolean;
@@ -530,9 +529,6 @@ export class SettlementIndexer {
     }
     | null = null;
   private battleReportGeneration = 0;
-  private pendingBattleReportMaterializationIds = new Set<string>();
-  private battleReportMaterializationScheduled = false;
-  private battleReportMaterializationQueue: Promise<void> = Promise.resolve();
   private missionReferenceCache:
     | {
       source: FleetMissionSummary[];
@@ -628,8 +624,6 @@ export class SettlementIndexer {
   ) {
     const databasePath = options.databasePath ?? ":memory:";
     this.db = options.database ?? openIndexerDatabase(databasePath, options.readOnly ?? false);
-    this.battleReportMaterializationDatabasePath = !options.database && !options.readOnly && databasePath !== ":memory:" ? databasePath : null;
-    this.battleReportMaterializationRunner = options.battleReportMaterializationRunner;
     this.qaSyntheticStationedDefenders = options.qaSyntheticStationedDefenders ?? false;
     this.randomnessEngineConfigured = options.randomnessEngineConfigured ?? false;
     this.rebuildDeadlineMs = options.rebuildDeadlineMs && options.rebuildDeadlineMs > 0 ? options.rebuildDeadlineMs : 0;
@@ -644,8 +638,6 @@ export class SettlementIndexer {
   private readonly randomnessEngineConfigured: boolean;
   // VEY-KANEO-485: see SettlementIndexerOptions. 0 = no cold-rebuild deadline.
   private readonly rebuildDeadlineMs: number;
-  private readonly battleReportMaterializationDatabasePath: string | null;
-  private readonly battleReportMaterializationRunner: SettlementIndexerOptions["battleReportMaterializationRunner"];
 
   snapshot(): IndexerSnapshot {
     const nowMs = Date.now();
@@ -1442,7 +1434,7 @@ export class SettlementIndexer {
     return [...defenders.values()].sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
   }
 
-  battleReport(missionId: string, options: { includeRawFallback?: boolean } = {}): BattleReport | null {
+  battleReport(missionId: string, options: { includeRawFallback?: boolean } = { includeRawFallback: false }): BattleReport | null {
     const mission = this.fleetMissionSummariesFromCanonicalRowsByIds([missionId])[0] ?? null;
     const reports = mission
       ? this.indexedBattleReportsForMissions([mission], options)
@@ -1477,7 +1469,42 @@ export class SettlementIndexer {
   }
 
   async drainBattleReportMaterializationQueue(): Promise<void> {
-    await this.battleReportMaterializationQueue;
+    await Promise.resolve();
+  }
+
+  pendingBattleReportMaterializationMissionIds(limit = 100): string[] {
+    const boundedLimit = Math.max(1, Math.min(2_000, Math.trunc(limit) || 100));
+    const queued = this.db.query(`
+      SELECT mission_id
+      FROM indexed_battle_report_read_models
+      WHERE status IN ('pending', 'failed')
+      ORDER BY
+        CASE status WHEN 'pending' THEN 0 ELSE 1 END,
+        CAST(COALESCE(block_number, '0') AS INTEGER) ASC,
+        updated_at ASC
+      LIMIT ?
+    `).all(boundedLimit) as Array<{ mission_id: string }>;
+    const ids = queued.map((row) => row.mission_id);
+    if (ids.length >= boundedLimit) return ids;
+
+    const missing = this.db.query(`
+      SELECT json_extract(event_json, '$.topics[1]') AS mission_topic,
+        MAX(CAST(block_number AS INTEGER)) AS latest_block
+      FROM indexed_mission_event_logs
+      WHERE event_kind = 'battle'
+        AND json_extract(event_json, '$.topics[1]') IS NOT NULL
+      GROUP BY mission_topic
+      ORDER BY latest_block ASC
+      LIMIT ?
+    `).all(Math.min(2_000, boundedLimit * 4)) as Array<{ mission_topic: string | null }>;
+    for (const row of missing) {
+      const missionId = missionIdFromTopic(row.mission_topic);
+      if (!missionId || ids.includes(missionId)) continue;
+      if (this.battleReportMaterializationStatus(missionId).status === "ready") continue;
+      ids.push(missionId);
+      if (ids.length >= boundedLimit) break;
+    }
+    return ids;
   }
 
   // Every active mission across the universe (all players), for the Mission Control "All" active tab.
@@ -3666,53 +3693,6 @@ export class SettlementIndexer {
     return false;
   }
 
-  private scheduleBattleReportMaterialization(missionId: string): void {
-    this.pendingBattleReportMaterializationIds.add(missionId);
-    if (this.battleReportMaterializationScheduled) return;
-
-    this.battleReportMaterializationScheduled = true;
-    this.battleReportMaterializationQueue = this.battleReportMaterializationQueue
-      .then(async () => {
-        await Promise.resolve();
-        while (this.pendingBattleReportMaterializationIds.size > 0) {
-          const missionIds = [...this.pendingBattleReportMaterializationIds];
-          this.pendingBattleReportMaterializationIds.clear();
-          await this.runBattleReportMaterialization(missionIds, "ingest");
-        }
-      })
-      .catch((error) => {
-        console.warn(`[battle-report-materializer] async queue failed: ${reasonText(error)}`);
-      })
-      .finally(() => {
-        this.battleReportMaterializationScheduled = false;
-        if (this.pendingBattleReportMaterializationIds.size > 0) {
-          const nextMissionId = this.pendingBattleReportMaterializationIds.values().next().value;
-          if (nextMissionId) this.scheduleBattleReportMaterialization(nextMissionId);
-        }
-      });
-  }
-
-  private async runBattleReportMaterialization(missionIds: string[], reason: "ingest" | "backfill" | "repair"): Promise<void> {
-    const uniqueMissionIds = [...new Set(missionIds.filter((id) => id.length > 0))];
-    if (uniqueMissionIds.length === 0) return;
-
-    const request: BattleReportMaterializationRequest = {
-      databasePath: this.battleReportMaterializationDatabasePath,
-      fromBlock: this.fromBlock.toString(),
-      missionIds: uniqueMissionIds,
-      reason
-    };
-    if (this.battleReportMaterializationRunner) {
-      await this.battleReportMaterializationRunner(request);
-      return;
-    }
-    if (this.battleReportMaterializationDatabasePath) {
-      await runBattleReportMaterializationWorker(request);
-      return;
-    }
-    this.materializeBattleReportReadModelsForWorker(uniqueMissionIds, reason);
-  }
-
   private async readCanonicalState(planets: SettledPlanetEvent[]): Promise<CanonicalReconciliationState> {
     const state: CanonicalReconciliationState = {
       resources: new Map(),
@@ -5034,7 +5014,7 @@ export class SettlementIndexer {
     if (!mission || mission.status !== "Returned") return 0;
 
     const reportMissionIds = [mission.missionId, mission.attackGroupId].filter((value): value is string => Boolean(value));
-    const mutations = this.returnedFleetCreditMutations(mission, this.battleReportsForMissionIds(reportMissionIds))
+    const mutations = this.returnedFleetCreditMutations(mission, this.battleReportsForMissionIds(reportMissionIds, { includeRawFallback: true }))
       .filter((mutation) => !this.hasReturnSettlementUnitCountChanged(log, "ship", mutation.planetId, mutation.itemId));
     return this.applyLegacyUnitMutationsOnce(`legacy:fleet-return:${missionId}`, mutations, log);
   }
@@ -6339,10 +6319,6 @@ export class SettlementIndexer {
       if (missionId) this.markBattleReportMaterializationPending(missionId, blockNumberToDecimal(log.blockNumber));
     }
     this.touchMissionReadModel();
-    if (eventKind === "battle") {
-      const missionId = battleLogMissionId(log);
-      if (missionId) this.scheduleBattleReportMaterialization(missionId);
-    }
   }
 
   private recordUnitCountEventLog(eventId: string, log: IndexedRpcLog): void {
@@ -7198,7 +7174,7 @@ export class SettlementIndexer {
     const missionIds = rows
       .map((row) => missionIdFromTopic(row.mission_topic))
       .filter((missionId): missionId is string => missionId !== null);
-    const reports = this.attachBattleReportParticipantsWithoutSnapshots(this.battleReportsForMissionIds(missionIds))
+    const reports = this.attachBattleReportParticipantsWithoutSnapshots(this.battleReportsForMissionIds(missionIds, { includeRawFallback: false }))
       .sort(compareBattleReportsNewestFirst)
       .slice(0, boundedLimit);
     this.recentBattleReportsCache.set(boundedLimit, {
@@ -7211,7 +7187,7 @@ export class SettlementIndexer {
 
   private indexedBattleReportsForMissions(
     missions: readonly FleetMissionSummary[],
-    options: { includeRawFallback?: boolean } = {}
+    options: { includeRawFallback?: boolean } = { includeRawFallback: false }
   ): BattleReport[] {
     if (missions.length === 0) return [];
 
@@ -7320,7 +7296,7 @@ export class SettlementIndexer {
 
   private battleReportsForMissionIds(
     missionIds: Iterable<string>,
-    options: { includeRawFallback?: boolean } = {}
+    options: { includeRawFallback?: boolean } = { includeRawFallback: false }
   ): BattleReport[] {
     this.currentMissionReadModelDbVersion();
     this.currentBattleReportReadModelDbVersion();
@@ -7346,7 +7322,7 @@ export class SettlementIndexer {
       }
     }
 
-    if (options.includeRawFallback !== false) {
+    if (options.includeRawFallback === true) {
       for (const report of this.rawBattleReportsForMissionIds(missingMissionIds)) {
         reportsByMissionId.set(report.missionId, report);
       }
@@ -8322,31 +8298,6 @@ function openIndexerDatabase(databasePath: string, readOnly = false): Database {
     database.exec("PRAGMA journal_size_limit = 67108864;");
   }
   return database;
-}
-
-async function runBattleReportMaterializationWorker(request: BattleReportMaterializationRequest): Promise<void> {
-  if (!request.databasePath) return;
-  const workerPath = new URL("./battleReportMaterializerWorker.ts", import.meta.url).pathname;
-  const child = Bun.spawn({
-    cmd: [
-      process.execPath,
-      workerPath,
-      "--db",
-      request.databasePath,
-      "--from-block",
-      request.fromBlock,
-      "--reason",
-      request.reason,
-      "--missions",
-      request.missionIds.join(",")
-    ],
-    stderr: "inherit",
-    stdout: "inherit"
-  });
-  const exitCode = await child.exited;
-  if (exitCode !== 0) {
-    throw new Error(`Battle report materializer worker exited with code ${exitCode}`);
-  }
 }
 
 function parseEvent<T>(value: string): T {

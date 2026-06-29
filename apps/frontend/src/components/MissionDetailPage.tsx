@@ -403,7 +403,7 @@ function MissionBattleReport({
     if (materialization?.status === "pending") {
       return (
         <Notice tone="warning">
-          Battle report is processing. Refresh shortly.
+          Report generating, please hold...
         </Notice>
       );
     }
@@ -436,7 +436,7 @@ function MissionBattleReport({
     }
     return (
       <Notice tone="neutral">
-        No indexed battle report is available for this combat mission yet.
+        Report generating, please hold...
       </Notice>
     );
   }

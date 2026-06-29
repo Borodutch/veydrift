@@ -5271,7 +5271,7 @@ describe("SettlementIndexer", () => {
         topics: [combatLossesTopic, topic(1776n)],
         data: abiWords(0n, 0n, 0n, 0n, 0n, 0n)
       });
-      await writer.drainBattleReportMaterializationQueue();
+      writer.materializeBattleReportReadModelsForWorker(["1776"], "ingest");
       expect(writer.battleReportMaterializationStatus("1776")).toMatchObject({
         status: "ready",
         error: null
@@ -5361,6 +5361,7 @@ describe("SettlementIndexer", () => {
       data: abiWords(1n, 0n, 12345n, 2430n, 1364n, 375n)
     });
 
+    indexer.materializeBattleReportReadModelsForWorker(["5678"], "ingest");
     expect(indexer.battleReport("5678")?.defenderSnapshot).toEqual({
       fleet: [],
       defenses: []
@@ -5418,6 +5419,7 @@ describe("SettlementIndexer", () => {
       data: abiWords(1n, 37n, 12345n, 2430n, 1364n, 375n)
     });
 
+    indexer.materializeBattleReportReadModelsForWorker(["5680"], "ingest");
     expect(indexer.battleReport("5680")?.defenderSnapshot).toEqual({
       fleet: [],
       defenses: [{ id: 0, count: 37 }]
@@ -5861,6 +5863,7 @@ describe("SettlementIndexer", () => {
         launchBlockNumber: "43024663",
         randomnessRequestId: "1503"
       });
+      reader.materializeBattleReportReadModelsForWorker(["1776"], "ingest");
       expect(reader.battleReport("1776")).toMatchObject({
         missionId: "1776",
         loot: { metal: "3098", crystal: "1448", deuterium: "454" }

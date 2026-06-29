@@ -397,6 +397,7 @@ const buildingWalletConfirmationLabel = (label: string) =>
     ? "Building completion: confirm the game-state update in your wallet; token balance changes are not expected."
     : `${label}: unlock your wallet if needed, then confirm in your wallet.`;
 const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 30_000;
+export const MISSION_REPORT_PENDING_POLL_INTERVAL_MS = 3_000;
 const CHAIN_EVENT_REFRESH_DEBOUNCE_MS = 3_000;
 const BUILDING_COMPLETION_AUTO_REFRESH_BUFFER_MS = 1_500;
 // VEY-KANEO-433: after an active mission's ETA passes, wait a short beat before the tightened Mission
@@ -827,6 +828,19 @@ export function shouldClearCachedShipyardStateForPageRefresh(page: Page): boolea
 // after a manual Refresh.
 export function shouldAutoPollMissionControlForPage(page: Page): boolean {
   return page === "mission-control";
+}
+
+export function shouldPollPendingMissionReport(
+  detail: MissionDetailResponse | undefined,
+  now = Date.now(),
+): boolean {
+  if (!detail || detail.battleReport) return false;
+  if (!["Attack", "AcsAttack", "Intercept", "MissileAttack"].includes(detail.mission.missionType)) return false;
+  if (detail.battleReportMaterialization?.status === "ready") return false;
+  if (detail.mission.status === "Recalled") return false;
+  if (detail.mission.status === "Returned" && detail.mission.recallCost !== null && detail.mission.returnCargo === null) return false;
+  if (detail.mission.status === "Outbound" && Number(detail.mission.arrivalAt) * 1_000 > now) return false;
+  return true;
 }
 
 // VEY-KANEO-433: the soonest still-pending resolution moment across the player's active missions — an
@@ -3495,6 +3509,37 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
       cancelled = true;
     };
   }, [apiBaseUrl, missionDetailId]);
+
+  useEffect(() => {
+    if (!apiBaseUrl || !missionDetailId || !shouldPollPendingMissionReport(missionDetail)) {
+      return;
+    }
+
+    let refreshInFlight = false;
+    const pollPendingReport = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
+      if (refreshInFlight || !shouldPollPendingMissionReport(missionDetail)) {
+        return;
+      }
+      refreshInFlight = true;
+      fetchMission(apiBaseUrl, missionDetailId)
+        .then((detail) => {
+          setMissionDetail(detail);
+          setMissionDetailError(undefined);
+        })
+        .catch(() => {
+          // Keep the visible mission detail while the generator is still catching up.
+        })
+        .finally(() => {
+          refreshInFlight = false;
+        });
+    };
+
+    const interval = window.setInterval(pollPendingReport, MISSION_REPORT_PENDING_POLL_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [apiBaseUrl, missionDetail, missionDetailId]);
 
   // Close the battle-report share dialog whenever the viewer moves to a different mission so a stale
   // link is never left open.

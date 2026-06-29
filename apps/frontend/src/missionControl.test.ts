@@ -1286,7 +1286,7 @@ describe("Mission Control battle reports", () => {
       battleReport: null,
     }))).join(" ");
 
-    expect(text).toContain("No indexed battle report is available for this combat mission yet.");
+    expect(text).toContain("Report generating, please hold...");
   });
 
   test("VEY-KANEO-425: still shows the due/resolving notice for an outbound combat fleet whose arrival has passed", () => {
@@ -1312,7 +1312,7 @@ describe("Mission Control battle reports", () => {
       battleReport: null,
     }))).join(" ");
 
-    expect(text).toContain("No indexed battle report is available for this combat mission yet.");
+    expect(text).toContain("Report generating, please hold...");
   });
 
   test("VEY-KANEO-425: keeps a non-combat outbound mission free of any battle-report notice", () => {

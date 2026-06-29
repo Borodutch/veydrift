@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  MISSION_REPORT_PENDING_POLL_INTERVAL_MS,
   nextMissionResolutionEventMs,
+  shouldPollPendingMissionReport,
   shouldAutoPollMissionControlForPage,
 } from "../src/PlayableMvpApp";
-import type { FleetMissionSummary, FleetMissionVisibilityResponse } from "../src/walletFlow";
+import type { BattleReport, FleetMissionSummary, FleetMissionVisibilityResponse, MissionDetailResponse } from "../src/walletFlow";
 
 function mission(overrides: Partial<FleetMissionSummary>): FleetMissionSummary {
   return {
@@ -38,6 +40,34 @@ function visibility(overrides: Partial<FleetMissionVisibilityResponse>): FleetMi
     joinableAttacks: [],
     completedMissions: [],
     battleReports: [],
+    ...overrides,
+  };
+}
+
+function report(missionId = "1"): BattleReport {
+  return {
+    missionId,
+    attacker: "0xowner",
+    targetPlanetId: "2",
+    outcome: "AttackerWin",
+    rounds: 1,
+    randomSeed: "1",
+    loot: { metal: "0", crystal: "0", deuterium: "0" },
+    attackerLosses: { metal: "0", crystal: "0", deuterium: "0" },
+    defenderLosses: { metal: "0", crystal: "0", deuterium: "0" },
+    debris: { metal: "0", crystal: "0" },
+    roundReports: [],
+    transactionHash: "0xreport",
+    blockNumber: "10",
+    participants: [],
+  };
+}
+
+function detail(overrides: Partial<MissionDetailResponse> = {}): MissionDetailResponse {
+  return {
+    mission: mission({ status: "Returned", arrivalAt: "1700000000", returnAt: "1700000100" }),
+    battleReport: null,
+    battleReportMaterialization: { status: "pending" },
     ...overrides,
   };
 }
@@ -113,7 +143,7 @@ describe("VEY-KANEO-433 Mission Control auto-poll wiring", () => {
     expect(source).toContain("nextMissionResolutionEventMs(fleetVisibility, Date.now())");
     expect(source).toContain("MISSION_RESOLUTION_REFRESH_BUFFER_MS");
     // The manual Refresh button stays wired to the same refresher (no regression).
-    expect(source).toContain("onRefresh={refreshMissionControl}");
+    expect(source).toContain("onRefresh={() => void activePlanetSections.refresh(\"fleetVisibilityState\")}");
   });
 
   test("the open mission-detail report is refreshed silently by the auto-poll (no loading flicker)", async () => {
@@ -132,5 +162,23 @@ describe("VEY-KANEO-433 Mission Control auto-poll wiring", () => {
     expect(silent).toContain("setMissionDetail(detail)");
     // The ETA-tightened one-shot pulls the open report too, so resolution lands promptly on it.
     expect(source).toContain("void refreshOpenMissionDetailSilently();");
+  });
+});
+
+describe("VEY-KANEO-653 pending mission report polling", () => {
+  test("polls only while a combat mission report is absent", () => {
+    expect(MISSION_REPORT_PENDING_POLL_INTERVAL_MS).toBe(3_000);
+    expect(shouldPollPendingMissionReport(detail(), 1_700_000_200_000)).toBe(true);
+    expect(shouldPollPendingMissionReport(detail({ battleReportMaterialization: { status: "missing" } }), 1_700_000_200_000)).toBe(true);
+    expect(shouldPollPendingMissionReport(detail({ battleReport: report() }), 1_700_000_200_000)).toBe(false);
+    expect(shouldPollPendingMissionReport(detail({ mission: mission({ missionType: "Transport", status: "Returned" }) }), 1_700_000_200_000)).toBe(false);
+    expect(shouldPollPendingMissionReport(detail({ mission: mission({ status: "Outbound", arrivalAt: "1800000000" }) }), 1_700_000_200_000)).toBe(false);
+  });
+
+  test("PlayableMvpApp installs a 3s pending-report poll that stops after a report appears", async () => {
+    const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+    expect(source).toContain("window.setInterval(pollPendingReport, MISSION_REPORT_PENDING_POLL_INTERVAL_MS)");
+    expect(source).toContain("!shouldPollPendingMissionReport(missionDetail)");
+    expect(source).toContain("setMissionDetail(detail)");
   });
 });
