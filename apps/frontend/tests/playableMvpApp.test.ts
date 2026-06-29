@@ -580,17 +580,25 @@ describe("Playable MVP app display helpers", () => {
     expect(planetHasIncomingAttack(visibility, "9")).toBe(false);
   });
 
-  test("keeps moon indicators out of the planet picker card", () => {
+  test("conditions planet picker moon indicators on the nested moon selector", () => {
+    const itemSource = sourceBetween(
+      playableMvpSource,
+      "function PlanetSelectorItem",
+      "function PlanetSelectorButton"
+    );
     const buttonSource = sourceBetween(
       playableMvpSource,
       "function PlanetSelectorButton",
       "function planetDisplayName"
     );
 
+    expect(itemSource).toContain("hasDedicatedMoonSelector");
+    expect(itemSource).toContain("PlanetSelectorMoonButton");
+    expect(itemSource).toContain("showMoonIndicator={planet.moon?.exists === true && !hasDedicatedMoonSelector}");
     expect(buttonSource).toContain("veydrift-planet-selector-button");
     expect(buttonSource).toContain("planetImage(planet)");
-    expect(buttonSource).not.toContain("PlanetMoonIndicator");
-    expect(buttonSource).not.toContain("data-planet-moon-indicator");
+    expect(buttonSource).toContain("showMoonIndicator");
+    expect(buttonSource).toContain("PlanetMoonIndicator");
   });
 
   test("keys galaxy home sync by coordinates instead of background snapshot identity", () => {
