@@ -4138,19 +4138,88 @@ describe("SettlementIndexer", () => {
       { allianceId: "1", inviter: owner, inviterDisplayName: null, invitedAt: "1770004000" }
     ]);
     expect(
-      db.query("SELECT alliance_id, other_alliance_id, status_id FROM contract_alliance_diplomacy ORDER BY alliance_id, other_alliance_id").all()
+      db.query("SELECT alliance_id, other_alliance_id, status_id, initiated_by_alliance_id FROM contract_alliance_diplomacy ORDER BY alliance_id, other_alliance_id").all()
     ).toEqual([
-      { alliance_id: "1", other_alliance_id: "2", status_id: 3 },
-      { alliance_id: "2", other_alliance_id: "1", status_id: 3 }
+      { alliance_id: "1", other_alliance_id: "2", status_id: 3, initiated_by_alliance_id: null },
+      { alliance_id: "2", other_alliance_id: "1", status_id: 3, initiated_by_alliance_id: null }
     ]);
     expect(indexer.allianceState(owner).activeWars).toMatchObject([
       {
         allianceId: "1",
         otherAllianceId: "2",
         status: "war",
-        initiatedByAllianceId: "1",
+        initiatedByAllianceId: null,
         alliance: { allianceId: "2", tag: "RVL", name: "Rivals" }
       }
+    ]);
+  });
+
+  test("keeps event-derived war initiator when chain snapshot mirrors legacy war state", async () => {
+    const db = new Database(":memory:");
+    const firstOwner = "0x1111111111111111111111111111111111111111" as Address;
+    const secondOwner = "0x2222222222222222222222222222222222222222" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      async listAllianceLogs() {
+        return [
+          {
+            blockNumber: "0x90",
+            blockTimestamp: "0x69801c80",
+            transactionHash: "0xalliance-create-1",
+            logIndex: "0x0",
+            topics: [allianceCreatedTopic, topic(1n), addressTopic(firstOwner)],
+            data: abiStrings("VEY", "Veydrift Command")
+          },
+          {
+            blockNumber: "0x91",
+            blockTimestamp: "0x69801c81",
+            transactionHash: "0xalliance-owner-1",
+            logIndex: "0x0",
+            topics: [allianceJoinedTopic, topic(1n), addressTopic(firstOwner)],
+            data: abiWords(3n)
+          },
+          {
+            blockNumber: "0x92",
+            blockTimestamp: "0x69801c82",
+            transactionHash: "0xalliance-create-2",
+            logIndex: "0x0",
+            topics: [allianceCreatedTopic, topic(2n), addressTopic(secondOwner)],
+            data: abiStrings("RVL", "Rivals")
+          },
+          {
+            blockNumber: "0x93",
+            blockTimestamp: "0x69801c83",
+            transactionHash: "0xalliance-owner-2",
+            logIndex: "0x0",
+            topics: [allianceJoinedTopic, topic(2n), addressTopic(secondOwner)],
+            data: abiWords(3n)
+          },
+          {
+            blockNumber: "0x94",
+            transactionHash: "0xalliance-diplomacy",
+            logIndex: "0x0",
+            topics: [allianceDiplomacyUpdatedTopic, topic(2n), topic(1n)],
+            data: abiWords(3n)
+          }
+        ];
+      },
+      async listAllianceDiplomacyState() {
+        return [
+          { allianceId: "1", otherAllianceId: "2", statusId: 3 },
+          { allianceId: "2", otherAllianceId: "1", statusId: 3 }
+        ];
+      }
+    }, 100n, { database: db });
+
+    await indexer.rebuild();
+
+    expect(indexer.allianceState(firstOwner).activeWars).toMatchObject([
+      { allianceId: "1", otherAllianceId: "2", status: "war", initiatedByAllianceId: "2" }
+    ]);
+    expect(indexer.allianceState(secondOwner).activeWars).toMatchObject([
+      { allianceId: "2", otherAllianceId: "1", status: "war", initiatedByAllianceId: "2" }
     ]);
   });
 
