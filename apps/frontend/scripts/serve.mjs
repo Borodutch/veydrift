@@ -109,6 +109,16 @@ function shareRouteForPathname(pathname) {
     };
   }
 
+  const moon = pathname.match(/^\/moon\/([0-9]+)\/([0-9]+)\/([0-9]+)$/);
+  if (moon) {
+    return {
+      kind: "moon",
+      galaxy: Number(moon[1]),
+      system: Number(moon[2]),
+      position: Number(moon[3]),
+    };
+  }
+
   const player = pathname.match(/^\/player\/([^/]+)$/);
   if (player) return { kind: "player", wallet: decodeURIComponent(player[1]) };
 
@@ -132,6 +142,16 @@ function imageRouteForPathname(pathname) {
     };
   }
 
+  const moon = pathname.match(/^\/og\/moon\/([0-9]+)\/([0-9]+)\/([0-9]+)\.png$/);
+  if (moon) {
+    return {
+      kind: "moon",
+      galaxy: Number(moon[1]),
+      system: Number(moon[2]),
+      position: Number(moon[3]),
+    };
+  }
+
   const player = pathname.match(/^\/og\/player\/([^/]+)\.png$/);
   if (player) return { kind: "player", wallet: decodeURIComponent(player[1]) };
 
@@ -144,6 +164,7 @@ function imageRouteForPathname(pathname) {
 function sharePathForRoute(route) {
   if (route.kind === "mission") return `/mission/${encodeURIComponent(route.id)}`;
   if (route.kind === "planet") return `/planet/${route.galaxy}/${route.system}/${route.position}`;
+  if (route.kind === "moon") return `/moon/${route.galaxy}/${route.system}/${route.position}`;
   if (route.kind === "player") return `/player/${encodeURIComponent(route.wallet)}`;
   return `/alliance/${encodeURIComponent(route.allianceId)}`;
 }
@@ -151,6 +172,7 @@ function sharePathForRoute(route) {
 function imagePathForRoute(route) {
   if (route.kind === "mission") return `/og/mission/${encodeURIComponent(route.id)}.png`;
   if (route.kind === "planet") return `/og/planet/${route.galaxy}/${route.system}/${route.position}.png`;
+  if (route.kind === "moon") return `/og/moon/${route.galaxy}/${route.system}/${route.position}.png`;
   if (route.kind === "player") return `/og/player/${encodeURIComponent(route.wallet)}.png`;
   return `/og/alliance/${encodeURIComponent(route.allianceId)}.png`;
 }
@@ -168,6 +190,7 @@ export async function routeMeta(route) {
 async function buildRouteMeta(route) {
   if (route.kind === "mission") return missionMeta(route.id);
   if (route.kind === "planet") return planetMeta(route);
+  if (route.kind === "moon") return moonMeta(route);
   if (route.kind === "player") return playerMeta(route.wallet);
   return allianceMeta(route.allianceId);
 }
@@ -214,6 +237,25 @@ async function planetMeta(route) {
     description: `${route.galaxy}:${route.system}:${route.position}`,
     status: type.toUpperCase(),
     subtitle: `${route.galaxy}:${route.system}:${route.position}`,
+    accent: "#67e8f9",
+    planetAssets: [planetAssetFor(archetype)],
+  };
+}
+
+async function moonMeta(route) {
+  const system = await fetchJson(`/universe/galaxies/${route.galaxy}/systems/${route.system}`);
+  const planet = system?.planets?.find((candidate) => Number(candidate.position) === route.position) ?? {};
+  const archetype = planet.archetype ?? planetTypeFromTemperature(planet.temperature);
+  const parentName = (planet.name || "").trim() || `Planet ${route.galaxy}:${route.system}:${route.position}`;
+  const moonName = (planet.moonName || "").trim() || "Moon";
+  const type = formatPlanetType(archetype);
+
+  return {
+    kind: "moon",
+    title: moonName,
+    description: `Moon orbiting ${parentName}`,
+    status: "MOON",
+    subtitle: `${route.galaxy}:${route.system}:${route.position} · ${type}`,
     accent: "#67e8f9",
     planetAssets: [planetAssetFor(archetype)],
   };
@@ -275,6 +317,17 @@ function fallbackMeta(route) {
       title: `Planet ${route.galaxy}:${route.system}:${route.position}`,
       description: "Veydrift",
       status: "PLANET",
+      subtitle: `${route.galaxy}:${route.system}:${route.position}`,
+      accent: "#67e8f9",
+      planetAssets: [planetAssets["frozen-ice"]],
+    };
+  }
+  if (route.kind === "moon") {
+    return {
+      kind: "moon",
+      title: `Moon ${route.galaxy}:${route.system}:${route.position}`,
+      description: "Veydrift",
+      status: "MOON",
       subtitle: `${route.galaxy}:${route.system}:${route.position}`,
       accent: "#67e8f9",
       planetAssets: [planetAssets["frozen-ice"]],

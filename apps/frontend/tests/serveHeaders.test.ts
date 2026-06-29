@@ -46,4 +46,20 @@ describe("frontend static server headers", () => {
       else process.env.VEYDRIFT_OG_METADATA_TIMEOUT_MS = originalTimeout;
     }
   });
+
+  test("builds fallback metadata for moon share routes", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response("not found", { status: 404 })) as typeof fetch;
+
+    try {
+      const meta = await routeMeta({ kind: "moon", galaxy: 6, system: 9, position: 1 });
+      expect(meta).toMatchObject({
+        kind: "moon",
+        title: "Moon 6:9:1",
+        status: "MOON",
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });
