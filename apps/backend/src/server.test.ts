@@ -2256,7 +2256,7 @@ describe("Veydrift backend", () => {
       topics: [combatLossesTopic, topic(1n)],
       data: abiWords(100n, 50n, 0n, 900n, 250n, 0n)
     });
-    await indexer.drainBattleReportMaterializationQueue();
+    indexer.materializeBattleReportReadModelsForWorker(["1"], "ingest");
 
     const response = await createRequestHandler({
       config: configuredTestConfig,
@@ -2327,7 +2327,7 @@ describe("Veydrift backend", () => {
       topics: [combatLossesTopic, topic(89n)],
       data: abiWords(100n, 50n, 0n, 900n, 250n, 0n)
     });
-    await indexer.drainBattleReportMaterializationQueue();
+    indexer.materializeBattleReportReadModelsForWorker(["89"], "ingest");
 
     expect(indexer.battleReportMaterializationStatus("89")).toMatchObject({
       status: "ready",
@@ -2501,7 +2501,7 @@ describe("Veydrift backend", () => {
         topics: [combatLossesTopic, topic(500n)],
         data: abiWords(100n, 50n, 0n, 900n, 250n, 0n)
       });
-      await writer.drainBattleReportMaterializationQueue();
+      writer.materializeBattleReportReadModelsForWorker(["500"], "ingest");
 
       expect(writer.battleReportMaterializationStatus("500")).toMatchObject({ status: "ready" });
       expect(writer.battleReportMaterializationStatus("501")).toMatchObject({ status: "ready" });
@@ -2587,19 +2587,9 @@ describe("Veydrift backend", () => {
     expect(missionBody.battleReportMaterialization).toMatchObject({ status: "pending" });
   });
 
-  test("long-running battle report materialization does not delay API reads", async () => {
+  test("main backend only marks reports pending while separate generator materializes them", async () => {
     const attacker = "0x3333333333333333333333333333333333333333" as Address;
-    let releaseMaterializer!: () => void;
-    let materializerStarted = false;
-    const materializerGate = new Promise<void>((resolve) => {
-      releaseMaterializer = resolve;
-    });
-    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock, {
-      async battleReportMaterializationRunner() {
-        materializerStarted = true;
-        await materializerGate;
-      }
-    });
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
     await indexer.rebuild();
     for (const log of activeFleetMissionLogs({
       arrivalAt: 1_700_000_000n,
@@ -2619,11 +2609,14 @@ describe("Veydrift backend", () => {
       topics: [attackBattleResolvedTopic, topic(93n), addressTopic(attacker), topic(9n)],
       data: abiWords(1n, 2n, 12345n, 100n, 50n, 10n)
     });
-
-    for (let attempt = 0; attempt < 10 && !materializerStarted; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-    expect(materializerStarted).toBe(true);
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xcombatlosses-93",
+      logIndex: "0x0",
+      removed: false,
+      topics: [combatLossesTopic, topic(93n)],
+      data: abiWords(100n, 50n, 0n, 900n, 250n, 0n)
+    });
 
     const handler = createRequestHandler({
       config: configuredTestConfig,
@@ -2639,9 +2632,12 @@ describe("Veydrift backend", () => {
     expect(missionBody.mission).toMatchObject({ missionId: "93", missionType: "Attack" });
     expect(missionBody.battleReport).toBeNull();
     expect(missionBody.battleReportMaterialization).toMatchObject({ status: "pending" });
+    expect(indexer.battleReport("93")).toBeNull();
+    expect(indexer.pendingBattleReportMaterializationMissionIds()).toContain("93");
 
-    releaseMaterializer();
-    await indexer.drainBattleReportMaterializationQueue();
+    expect(indexer.materializeBattleReportReadModelsForWorker(["93"], "ingest")).toBe(1);
+    expect(indexer.battleReportMaterializationStatus("93")).toMatchObject({ status: "ready" });
+    expect(indexer.battleReport("93")).toMatchObject({ missionId: "93", outcome: "AttackerWin" });
   });
 
   test("refreshes warmed shipyard and defense API caches after unit-count logs are indexed", async () => {
@@ -2773,7 +2769,7 @@ describe("Veydrift backend", () => {
         topics: [fleetMissionReturnedTopic, topic(1777n), addressTopic(player), topic(7n)],
         data: "0x"
       });
-      await writer.drainBattleReportMaterializationQueue();
+      writer.materializeBattleReportReadModelsForWorker(["1777"], "ingest");
 
       const afterReportResponse = await handler(new Request("http://localhost/mission/1777"));
       const afterReportBody = await afterReportResponse.json();
@@ -2849,7 +2845,7 @@ describe("Veydrift backend", () => {
       topics: [planetDefenseCountChangedTopic, topic(92n), topic(0n)],
       data: abiWords(4n)
     });
-    await indexer.drainBattleReportMaterializationQueue();
+    indexer.materializeBattleReportReadModelsForWorker(["1240"], "ingest");
 
     const response = await createRequestHandler({
       config: configuredTestConfig,
@@ -2897,6 +2893,7 @@ describe("Veydrift backend", () => {
       data: abiWords(16n, 37n, 17_000n, 7_000n, 0n, 0n)
     });
 
+    indexer.materializeBattleReportReadModelsForWorker(["1241"], "ingest");
     expect(indexer.battleReport("1241")?.defenderSnapshot).toBeNull();
 
     indexer.applyLog({
@@ -2908,6 +2905,7 @@ describe("Veydrift backend", () => {
       data: abiWords(37n)
     });
 
+    indexer.materializeBattleReportReadModelsForWorker(["1241"], "repair");
     expect(indexer.battleReport("1241")?.defenderSnapshot).toEqual({
       fleet: [],
       defenses: [{ id: 0, count: 37 }]
@@ -3022,6 +3020,7 @@ describe("Veydrift backend", () => {
       topics: [attackBattleResolvedTopic, topic(2000n), addressTopic(player), topic(9n)],
       data: abiWords(1n, 1n, 54321n, 5n, 0n, 0n)
     });
+    indexer.materializeBattleReportReadModelsForWorker(["1154"], "ingest");
 
     const response = await createRequestHandler({
       config: configuredTestConfig,
@@ -3217,7 +3216,7 @@ describe("Veydrift backend", () => {
       topics: [combatRoundResolvedTopic, topic(1n), topic(1n)],
       data: abiWords(0n, 15n, 9000n, 7000n, 0n, 0n)
     });
-    await indexer.drainBattleReportMaterializationQueue();
+    indexer.materializeBattleReportReadModelsForWorker(["1"], "ingest");
 
     const response = await createRequestHandler({
       config: configuredTestConfig,

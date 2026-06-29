@@ -804,7 +804,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             { headers: indexedStateHeaders(indexedStateLabel(snapshot)), status: materialization.status === "pending" ? 202 : 503 }
           );
         }
-        const report = indexer.battleReport(missionId);
+        const report = indexer.battleReport(missionId, { includeRawFallback: false });
         if (report) {
           return Response.json(report, {
             headers: indexedStateHeaders(indexedStateLabel(snapshot))
