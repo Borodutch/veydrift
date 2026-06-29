@@ -519,7 +519,8 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
                 _fleetCounterplayMissions[missionId],
                 _fleetMissions,
                 _defenseHoldUntil,
-                mission.arrivalAt
+                mission.arrivalAt,
+                mission.targetIsMoon
             );
         } else {
             _settleResources(mission.targetPlanetId);

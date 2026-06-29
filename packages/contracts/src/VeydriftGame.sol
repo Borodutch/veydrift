@@ -321,6 +321,21 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToDefenseHoldModule();
     }
 
+    /// @notice Body-aware DefenseHold launch for stationing fleets at moon targets or from moon origins.
+    function launchBodyDefenseHold(
+        uint256,
+        uint256,
+        MissionShips calldata,
+        Resources calldata,
+        uint16,
+        uint256,
+        bool,
+        bool
+    ) external returns (uint256) {
+        _touchPlayer(msg.sender);
+        _delegateToDefenseHoldModule();
+    }
+
     function recallFleetMission(uint256 missionId) external {
         _touchPlayer(msg.sender);
         FleetMission storage mission = _fleetMissions[missionId];

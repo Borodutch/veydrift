@@ -15,6 +15,7 @@ import {
   encodeGameCall,
   encodeJoinAttackMissionCall,
   encodeLaunchAttackMissionCall,
+  encodeLaunchBodyDefenseHoldCall,
   encodeLaunchBodyFleetMissionCall,
   encodeLaunchDefenseHoldCall,
   encodeLaunchInterplanetaryMissileAttackCall,
@@ -1330,6 +1331,44 @@ describe("walletFlow", () => {
           1, 2, 3, 4, 5, 6, 7,
           8, 9, 10, 11, 12, 13, 14,
           101, 202, 303, 50, 3600,
+        ].map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")
+    );
+  });
+
+  test("encodes moon body DefenseHold launches with body flags in contract ABI order", () => {
+    const ships = {
+      smallCargo: 1,
+      lightFighter: 2,
+      recycler: 3,
+      colonyShip: 4,
+      largeCargo: 5,
+      heavyFighter: 6,
+      cruiser: 7,
+      battleship: 8,
+      bomber: 9,
+      destroyer: 10,
+      deathstar: 11,
+      battlecruiser: 12,
+      reaper: 13,
+      pathfinder: 14,
+    };
+
+    expect(encodeLaunchBodyDefenseHoldCall({
+      originPlanetId: 7,
+      targetPlanetId: 9,
+      ships,
+      cargo: { metal: "101", crystal: "202", deuterium: "303" },
+      speedPercent: 50,
+      holdSeconds: 3600,
+      originIsMoon: false,
+      targetIsMoon: true,
+    })).toBe(
+      "0x374bd6ab"
+        + [
+          7, 9,
+          1, 2, 3, 4, 5, 6, 7,
+          8, 9, 10, 11, 12, 13, 14,
+          101, 202, 303, 50, 3600, 0, 1,
         ].map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")
     );
   });

@@ -45,9 +45,49 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         uint16 speedPercent,
         uint256 holdSeconds
     ) external returns (uint256 missionId) {
-        _requirePlanetOwner(originPlanetId);
-        if (originPlanetId == targetPlanetId) revert SamePlanet();
-        if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
+        return _launchDefenseHold(originPlanetId, targetPlanetId, ships, cargo, speedPercent, holdSeconds, false, false);
+    }
+
+    /// @notice Body-aware DefenseHold launch for stationing fleets at moon targets or from moon origins.
+    function launchBodyDefenseHold(
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        MissionShips calldata ships,
+        Resources calldata cargo,
+        uint16 speedPercent,
+        uint256 holdSeconds,
+        bool originIsMoon,
+        bool targetIsMoon
+    ) external returns (uint256 missionId) {
+        return _launchDefenseHold(
+            originPlanetId,
+            targetPlanetId,
+            ships,
+            cargo,
+            speedPercent,
+            holdSeconds,
+            originIsMoon,
+            targetIsMoon
+        );
+    }
+
+    function _launchDefenseHold(
+        uint256 originPlanetId,
+        uint256 targetPlanetId,
+        MissionShips calldata ships,
+        Resources calldata cargo,
+        uint16 speedPercent,
+        uint256 holdSeconds,
+        bool originIsMoon,
+        bool targetIsMoon
+    ) private returns (uint256 missionId) {
+        if (originPlanetId == targetPlanetId && originIsMoon == targetIsMoon) revert SamePlanet();
+        _requireOwnedBody(originPlanetId, originIsMoon);
+        if (targetIsMoon) {
+            _requireAttackTargetBody(targetPlanetId, true);
+        } else if (_planets[targetPlanetId].owner == address(0)) {
+            revert NoPlanet();
+        }
         if (
             holdSeconds < VeydriftAntiRaidPrimitives.MIN_DEFENSE_HOLD_SECONDS
                 || holdSeconds > VeydriftAntiRaidPrimitives.MAX_DEFENSE_HOLD_SECONDS
@@ -62,8 +102,8 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
         _requireNoPendingMissionResolutionForPlanet(targetPlanetId);
-        _settleResources(originPlanetId);
-        _settleResources(targetPlanetId);
+        if (!originIsMoon) _settleResources(originPlanetId);
+        if (!targetIsMoon) _settleResources(targetPlanetId);
 
         uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
             _technologyLevels[msg.sender][Technology.Computer]
@@ -74,7 +114,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
 
         (uint256 capacity, uint256 slowestSpeed) = _missionMovement(msg.sender, ships);
         if (capacity == 0) revert InvalidQuantity();
-        _requireMissionShips(originPlanetId, ships);
+        _requireBodyMissionShips(originPlanetId, originIsMoon, ships);
 
         uint256 travelDistance = _planetDistance(originPlanetId, targetPlanetId);
         uint128 fuelCost = _toUint128(
@@ -103,8 +143,9 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         if (committedCapacity > capacity) {
             revert CargoCapacityExceeded(capacity, committedCapacity);
         }
-        _spend(
+        _spendBodyResources(
             originPlanetId,
+            originIsMoon,
             Resources({
                 metal: cargo.metal,
                 crystal: cargo.crystal,
@@ -112,7 +153,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             })
         );
         _increaseInternalResources(cargo);
-        _debitMissionShips(originPlanetId, ships);
+        _debitBodyMissionShips(originPlanetId, originIsMoon, ships);
 
         // Arrive, hold for the chosen window, then fly home.
         uint64 holdUntil = (uint256(arrivalAt) + holdSeconds).toUint64();
@@ -133,8 +174,8 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             ships: ships,
             randomnessRequestId: 0,
             lootRatio: LootRatio({metalBps: 0, crystalBps: 0, deuteriumBps: 0}),
-            originIsMoon: false,
-            targetIsMoon: false
+            originIsMoon: originIsMoon,
+            targetIsMoon: targetIsMoon
         });
 
         VeydriftDefenseHoldStorage.beginHold(
@@ -157,6 +198,9 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
             0
         );
         emit FleetMissionCargo(missionId, cargo.metal, cargo.crystal, cargo.deuterium, fuelCost);
+        if (originIsMoon || targetIsMoon) {
+            emit FleetMissionBodies(missionId, originIsMoon, targetIsMoon);
+        }
         emit FleetMissionShips(
             missionId,
             ships.smallCargo,

@@ -192,6 +192,7 @@ import {
   sendCreateColonyTransaction,
   sendLaunchInterplanetaryMissileAttackTransaction,
   sendLaunchAttackMissionTransaction,
+  sendLaunchBodyDefenseHoldTransaction,
   sendLaunchBodyFleetMissionTransaction,
   sendLaunchDefenseHoldTransaction,
   sendLaunchFleetMissionTransaction,
@@ -2096,6 +2097,8 @@ type PendingGalaxyMission = {
   target: Planet | undefined;
   coords: Coordinates;
   originPlanet: ManagedPlanetResponse | undefined;
+  initialOriginIsMoon?: boolean | undefined;
+  initialTargetIsMoon?: boolean | undefined;
 };
 
 export function overviewMyPlanetActionsFor({
@@ -2131,6 +2134,40 @@ export function overviewMyPlanetActionsFor({
     overviewOwnedPlanetMissionAction(actionsByKind.get("transport"), "transport", "Transport", samePlanetReason),
     overviewOwnedPlanetMissionAction(actionsByKind.get("deploy"), "deploy", "Deploy", samePlanetReason),
     overviewOwnedPlanetMissionAction(actionsByKind.get("defenseHold"), "defenseHold", "Defend", "Defend is unavailable for this planet."),
+  ];
+}
+
+export function overviewMyMoonActionsFor({
+  account,
+  defenseState,
+  homePlanetId,
+  planet,
+  shipyardState,
+}: {
+  account: string | undefined;
+  defenseState: ChainDefenseState | null;
+  homePlanetId: string | null | undefined;
+  planet: ManagedPlanetResponse;
+  shipyardState: ChainShipyardState | null;
+}): GalaxyAction[] {
+  if (!planet.moon?.exists) return [];
+
+  const rowPlanet = planetFromSettlementPlanet(planet);
+  const actionsByKind = new Map(
+    galaxyActionsForSlot({
+      account,
+      defenseState,
+      homePlanetId,
+      isOrigin: false,
+      planet: rowPlanet,
+      shipyardState,
+    }).map((action) => [action.kind, action])
+  );
+
+  return [
+    overviewOwnedPlanetMissionAction(actionsByKind.get("transport"), "transport", "Transport", "Transport is unavailable for this moon."),
+    overviewOwnedPlanetMissionAction(actionsByKind.get("deploy"), "deploy", "Deploy", "Deploy is unavailable for this moon."),
+    overviewOwnedPlanetMissionAction(actionsByKind.get("defenseHold"), "defenseHold", "Defend", "Defend is unavailable for this moon."),
   ];
 }
 
@@ -6572,10 +6609,22 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     });
   }, [account, activePlanetId, confirmSubmittedTransaction, gameContract, provider, refreshOnChainState, runGatedTransaction, selectedManagedPlanet]);
 
-  const handleGalaxyAction = useCallback((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => {
+  const handleGalaxyAction = useCallback((
+    action: GalaxyAction,
+    target: Planet | undefined,
+    coords: Coordinates,
+    bodySelection: { originIsMoon?: boolean; targetIsMoon?: boolean } = {},
+  ) => {
     if (!action.enabled) return;
     setGalaxyAction({ status: "idle" });
-    setPendingGalaxyMission({ action, target, coords, originPlanet: selectedManagedPlanet });
+    setPendingGalaxyMission({
+      action,
+      target,
+      coords,
+      originPlanet: selectedManagedPlanet,
+      initialOriginIsMoon: bodySelection.originIsMoon,
+      initialTargetIsMoon: bodySelection.targetIsMoon,
+    });
   }, [selectedManagedPlanet]);
 
   const overviewMyPlanetActionGroups = useMemo<OverviewMyPlanetActionGroup[]>(() =>
@@ -6589,17 +6638,24 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
         planet: managedPlanet,
         shipyardState,
       }),
+      moonActions: overviewMyMoonActionsFor({
+        account,
+        defenseState,
+        homePlanetId: onChainSettlement?.homePlanetId,
+        planet: managedPlanet,
+        shipyardState,
+      }),
     })),
     [account, activePlanetId, defenseState, onChainSettlement?.homePlanetId, shipyardState, walletPlanets]
   );
 
-  const handleOverviewMyPlanetAction = useCallback((action: GalaxyAction, managedPlanet: ManagedPlanetResponse) => {
+  const handleOverviewMyPlanetAction = useCallback((action: GalaxyAction, managedPlanet: ManagedPlanetResponse, targetIsMoon = false) => {
     const targetPlanet = planetFromSettlementPlanet(managedPlanet);
     handleGalaxyAction(action, targetPlanet, {
       galaxy: managedPlanet.galaxy,
       system: managedPlanet.system,
       position: managedPlanet.position,
-    });
+    }, { targetIsMoon });
   }, [handleGalaxyAction]);
 
   const raidFinderAttackAction = useCallback((target: RaidTarget): GalaxyAction => {
@@ -6784,34 +6840,41 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
       return;
     }
 
+    const supportsCargoMission = action.kind === "transport" || action.kind === "deploy";
+    const supportsBodyMission = supportsCargoMission || action.kind === "attack" || action.kind === "defenseHold";
+    const originIsMoon = supportsBodyMission && draft.originIsMoon === true;
+    const targetIsMoon = supportsBodyMission && draft.targetIsMoon === true;
+
     if (action.kind === "defenseHold") {
       // VEY-KANEO-440: proactive ACS Defend — station the fleet at the target own/ally planet for the
       // chosen hold window via launchDefenseHold (pre-flighted so ineligible / out-of-window /
       // under-fuelled reverts surface as a clear message before the wallet prompt).
-      closeMissionCreationWhenComplete(runGalaxyTransaction("Stationed defense", () => sendLaunchDefenseHoldTransaction(
-        provider,
-        account,
-        gameContract,
-        {
-          originPlanetId,
-          targetPlanetId,
-          ships: draft.ships,
-          speedPercent: draft.speedPercent,
-          holdSeconds: draft.holdSeconds ?? 0,
-        },
+      const defenseHoldParams = {
+        originPlanetId,
+        targetPlanetId,
+        ships: draft.ships,
+        speedPercent: draft.speedPercent,
+        holdSeconds: draft.holdSeconds ?? 0,
+      };
+      closeMissionCreationWhenComplete(runGalaxyTransaction("Stationed defense", () => (
+        originIsMoon || targetIsMoon
+          ? sendLaunchBodyDefenseHoldTransaction(provider, account, gameContract, {
+              ...defenseHoldParams,
+              originIsMoon,
+              targetIsMoon,
+            })
+          : sendLaunchDefenseHoldTransaction(provider, account, gameContract, defenseHoldParams)
       ), pendingLaunchOptions({
         missionType: "DefenseHold",
         targetPlanet: target,
         targetPlanetId,
         targetCoords: coords,
-        validateShipInventory: { originPlanetId, ships: draft.ships },
+        originIsMoon,
+        targetIsMoon,
+        validateShipInventory: originIsMoon ? undefined : { originPlanetId, ships: draft.ships },
       })));
       return;
     }
-    const supportsCargoMission = action.kind === "transport" || action.kind === "deploy";
-    const supportsBodyMission = supportsCargoMission || action.kind === "attack";
-    const originIsMoon = supportsBodyMission && draft.originIsMoon === true;
-    const targetIsMoon = supportsBodyMission && draft.targetIsMoon === true;
 
     if (action.kind === "attack" && draft.lootRatio && !originIsMoon && !targetIsMoon) {
       const { metal, crystal, deuterium } = draft.lootRatio;
@@ -7485,6 +7548,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           pendingGalaxyMission.action.kind === "attack"
             || pendingGalaxyMission.action.kind === "transport"
             || pendingGalaxyMission.action.kind === "deploy"
+            || pendingGalaxyMission.action.kind === "defenseHold"
         )
         ? {
             originMoonAvailable: pendingMissionOriginMoonLoaded,
@@ -7508,6 +7572,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
             : undefined}
           defenseHoldMode={pendingGalaxyMission.action.kind === "defenseHold"}
           driveLevels={driveLevelsFromTechnologyLevels(shipyardState?.technologyLevels)}
+          initialOriginIsMoon={pendingGalaxyMission.initialOriginIsMoon}
+          initialTargetIsMoon={pendingGalaxyMission.initialTargetIsMoon}
           onBack={() => setPendingGalaxyMission(null)}
           onConfirm={handleConfirmGalaxyMission}
           originCoords={pendingMissionOriginCoords}
@@ -7958,6 +8024,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           : false}
         onAbandonPlanet={handleAbandonPlanet}
         onSelectAlliance={handleSelectAlliance}
+        onSelectMoon={handleSelectMoon}
         onSelectPlanet={handleSelectPlanet}
         onSelectPlayer={handleSelectPlayer}
         onToggleWatchPlanet={handleToggleWatchPlanet}

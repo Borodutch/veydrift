@@ -30,6 +30,7 @@ export function WatchablePlanetRow({
   planet,
   showIdentity = true,
   showMoonIndicator = true,
+  showMoonSubsection = true,
   watchBusy = false,
   watched = false,
 }: {
@@ -49,6 +50,7 @@ export function WatchablePlanetRow({
   planet: Planet;
   showIdentity?: boolean | undefined;
   showMoonIndicator?: boolean | undefined;
+  showMoonSubsection?: boolean | undefined;
   watchBusy?: boolean | undefined;
   watched?: boolean | undefined;
 }) {
@@ -120,7 +122,7 @@ export function WatchablePlanetRow({
               </Fragment>
             ))}
           </div>
-          {planet.hasMoon ? (
+          {showMoonSubsection && planet.hasMoon ? (
             <PlanetMoonSubsection
               label={planet.moonName ?? "Moon"}
               onClick={onInspectMoon ? () => onInspectMoon(coords) : undefined}

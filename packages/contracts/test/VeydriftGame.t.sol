@@ -5312,6 +5312,50 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(allyPlanetId, Ship.Battleship), 1);
     }
 
+    function testBodyDefenseHoldStationedFleetDefendsMoonAttack() public {
+        (address ally, uint256 attackerPlanetId, uint256 targetPlanetId, uint256 allyPlanetId) =
+            _seedDefenseHold();
+        moons.createMoon(targetPlanetId);
+        _setShipCount(attackerPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(allyPlanetId, Ship.Battleship, 1);
+        _setResources(attackerPlanetId, 100_000, 100_000, 100_000);
+        _setResources(allyPlanetId, 100_000, 100_000, 100_000);
+        _setResources(targetPlanetId, 100_000, 100_000, 100_000);
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.battleship = 1;
+        vm.prank(ally);
+        uint256 holdMissionId = game.launchBodyDefenseHold(
+            allyPlanetId, targetPlanetId, defenders, _noCargo(), 100, 4 hours, false, true
+        );
+
+        (, uint64 holdArrivalAt,,) = _fleetMission(holdMissionId);
+        vm.warp(holdArrivalAt + 1 hours);
+
+        VeydriftGameStorage.MissionShips memory attackers;
+        attackers.smallCargo = 1;
+        vm.prank(player);
+        uint256 attackMissionId = game.launchBodyFleetMission(
+            attackerPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            attackers,
+            _noCargo(),
+            100,
+            false,
+            true
+        );
+        (, uint64 attackArrivalAt,,) = _fleetMission(attackMissionId);
+        vm.warp(attackArrivalAt);
+        _fulfillAttackBattleRandomness(attackMissionId, 771);
+        game.resolveFleetMission(attackMissionId);
+
+        (VeydriftGameStorage.FleetMissionStatus attackStatus,,,) = _fleetMission(attackMissionId);
+        assertEq(uint8(attackStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Resolved));
+        (VeydriftGameStorage.FleetMissionStatus holdStatus,,,) = _fleetMission(holdMissionId);
+        assertEq(uint8(holdStatus), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+    }
+
     function testDefenseHoldDefendsEveryAttackWithinWindow() public {
         (address ally, uint256 attackerPlanetId, uint256 targetPlanetId, uint256 allyPlanetId) =
             _seedDefenseHold();

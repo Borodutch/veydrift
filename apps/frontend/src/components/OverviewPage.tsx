@@ -43,7 +43,7 @@ import {
 } from "../buildingActionNotice";
 import { OptimizedImage } from "./OptimizedImage";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
-import { PlanetMoonIndicator } from "./PlanetMoonIndicator";
+import { MoonImage, PlanetMoonIndicator } from "./PlanetMoonIndicator";
 import { InlineSyncIndicator } from "./VeydriftLoader";
 import {
   formatGalaxyAllianceIdentityLabel,
@@ -77,6 +77,7 @@ type OverviewResearchActionState =
 export type OverviewMyPlanetActionGroup = {
   planet: ManagedPlanetResponse;
   actions: GalaxyAction[];
+  moonActions?: GalaxyAction[] | undefined;
 };
 
 interface OverviewPageProps {
@@ -97,6 +98,7 @@ interface OverviewPageProps {
   researchAction?: OverviewResearchActionState | undefined;
   onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard" | "mission-control") => void;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectMoon?: ((coords: { galaxy: number; system: number; position: number }) => void) | undefined;
   onSelectPlanet?: ((coords: { galaxy: number; system: number; position: number }) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onToggleWatchPlanet?: ((planetId: string, watched: boolean) => void) | undefined;
@@ -122,7 +124,7 @@ interface OverviewPageProps {
   myPlanets?: readonly OverviewMyPlanetActionGroup[] | undefined;
   currentCommanderLabel?: string | undefined;
   selectedPlanetId?: string | undefined;
-  onMyPlanetAction?: ((action: GalaxyAction, planet: ManagedPlanetResponse) => void) | undefined;
+  onMyPlanetAction?: ((action: GalaxyAction, planet: ManagedPlanetResponse, targetIsMoon?: boolean) => void) | undefined;
 }
 
 export function OverviewPage({
@@ -142,6 +144,7 @@ export function OverviewPage({
   researchAction = { status: "idle" },
   onNavigate,
   onSelectAlliance,
+  onSelectMoon,
   onSelectPlanet,
   onSelectPlayer,
   onToggleWatchPlanet,
@@ -687,6 +690,7 @@ export function OverviewPage({
           commanderLabel={currentCommanderLabel?.trim() || "You"}
           myPlanets={myPlanets}
           onAction={onMyPlanetAction}
+          onSelectMoon={onSelectMoon}
           onSelectPlanet={onSelectPlanet}
           selectedPlanetId={selectedPlanetId ?? onChainSettlement?.homePlanetId ?? onChainSettlement?.planet?.planetId}
         />
@@ -730,12 +734,14 @@ function MyPlanetsPanel({
   commanderLabel,
   myPlanets,
   onAction,
+  onSelectMoon,
   onSelectPlanet,
   selectedPlanetId,
 }: {
   commanderLabel: string;
   myPlanets: readonly OverviewMyPlanetActionGroup[];
-  onAction: ((action: GalaxyAction, planet: ManagedPlanetResponse) => void) | undefined;
+  onAction: ((action: GalaxyAction, planet: ManagedPlanetResponse, targetIsMoon?: boolean) => void) | undefined;
+  onSelectMoon: ((coords: Coordinates) => void) | undefined;
   onSelectPlanet: ((coords: Coordinates) => void) | undefined;
   selectedPlanetId: string | undefined;
 }) {
@@ -745,33 +751,95 @@ function MyPlanetsPanel({
         <h3 className="text-sm font-semibold text-white">My planets</h3>
       </div>
       <div className="grid gap-1.5">
-        {myPlanets.map(({ actions, planet }) => {
+        {myPlanets.map(({ actions, moonActions, planet }) => {
           const coords = { galaxy: planet.galaxy, system: planet.system, position: planet.position };
           const rowPlanet = overviewPlanetFromManagedPlanet(planet);
           const isSelected = planet.planetId === selectedPlanetId;
           return (
-            <WatchablePlanetRow
-              allianceLabel="No alliance"
-              commanderLabel={commanderLabel}
-              coords={coords}
-              current={isSelected}
-              isHome={planet.isHomePlanet}
-              key={planet.planetId}
-              meta={myPlanetMeta(planet)}
-              onInspect={onSelectPlanet ?? (() => undefined)}
-              planet={rowPlanet}
-              showIdentity={false}
-              actionSlot={(
-                <MyPlanetActionButtons
-                  actions={actions}
-                  onAction={(action) => onAction?.(action, planet)}
+            <div className="grid gap-1.5" key={planet.planetId}>
+              <WatchablePlanetRow
+                allianceLabel="No alliance"
+                commanderLabel={commanderLabel}
+                coords={coords}
+                current={isSelected}
+                isHome={planet.isHomePlanet}
+                meta={myPlanetMeta(planet)}
+                onInspect={onSelectPlanet ?? (() => undefined)}
+                planet={rowPlanet}
+                showIdentity={false}
+                showMoonSubsection={false}
+                actionSlot={(
+                  <MyPlanetActionButtons
+                    actions={actions}
+                    onAction={(action) => onAction?.(action, planet, false)}
+                  />
+                )}
+              />
+              {planet.moon?.exists ? (
+                <MyPlanetMoonRow
+                  actions={moonActions ?? []}
+                  coords={coords}
+                  onAction={(action) => onAction?.(action, planet, true)}
+                  onInspect={onSelectMoon ?? (() => undefined)}
+                  planet={rowPlanet}
                 />
-              )}
-            />
+              ) : null}
+            </div>
           );
         })}
       </div>
     </section>
+  );
+}
+
+function MyPlanetMoonRow({
+  actions,
+  coords,
+  onAction,
+  onInspect,
+  planet,
+}: {
+  actions: GalaxyAction[];
+  coords: Coordinates;
+  onAction: (action: GalaxyAction) => void;
+  onInspect: (coords: Coordinates) => void;
+  planet: Planet;
+}) {
+  const moonName = planet.moonName ?? "Moon";
+  return (
+    <div className="ml-5 grid min-h-14 w-[calc(100%-1.25rem)] grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md border border-cyan-200/15 bg-cyan-200/[0.055] px-3 py-2 text-left">
+      <button
+        className="flex min-w-0 items-center gap-3 text-left"
+        onClick={() => onInspect(coords)}
+        title={`Open ${moonName} at [${coords.galaxy}:${coords.system}:${coords.position}]`}
+        type="button"
+      >
+        <span className="h-10 w-10 flex-shrink-0 overflow-hidden rounded-full border border-cyan-100/30 bg-black/40">
+          <MoonImage className="h-full w-full object-cover" planetType={planet.type} />
+        </span>
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-semibold text-cyan-100 hover:text-cyan-50">
+            {moonName}
+          </span>
+          <span className="block text-xs text-slate-500">
+            {coords.galaxy}:{coords.system}:{coords.position} moon
+          </span>
+        </span>
+      </button>
+      <div className="flex flex-wrap justify-end gap-1.5">
+        <button
+          className="rounded border border-signal/25 px-2 py-1 text-xs font-medium text-signal hover:bg-signal/10"
+          onClick={() => onInspect(coords)}
+          type="button"
+        >
+          Inspect
+        </button>
+        <MyPlanetActionButtons
+          actions={actions}
+          onAction={onAction}
+        />
+      </div>
+    </div>
   );
 }
 

@@ -218,6 +218,8 @@ export function MissionCreationPage({
   defenseHoldMode = false,
   attackerCombatTechLevels = ZERO_COMBAT_TECH_LEVELS,
   driveLevels = {},
+  initialOriginIsMoon = false,
+  initialTargetIsMoon = false,
   joinAttackMode = false,
   nowMs = Date.now(),
   onBack,
@@ -245,6 +247,8 @@ export function MissionCreationPage({
   defenseHoldMode?: boolean | undefined;
   attackerCombatTechLevels?: CombatTechLevels | undefined;
   driveLevels?: FleetDriveLevels | undefined;
+  initialOriginIsMoon?: boolean | undefined;
+  initialTargetIsMoon?: boolean | undefined;
   // VEY-KANEO-431: render the picker for a join-attack — ship selection only,
   // with no loot ratio or speed controls (the join inherits the lead attack's
   // loot split and coordinated arrival).
@@ -268,8 +272,8 @@ export function MissionCreationPage({
   const [primaryTargetId, setPrimaryTargetId] = useState(action.mode === "missile" ? action.primaryTargetId : 0);
   const [quantity, setQuantity] = useState(action.mode === "missile" ? action.quantity : 1);
   const [holdHours, setHoldHours] = useState<number>(DEFAULT_DEFENSE_HOLD_HOURS);
-  const [originIsMoon, setOriginIsMoon] = useState(false);
-  const [targetIsMoon, setTargetIsMoon] = useState(false);
+  const [originIsMoon, setOriginIsMoon] = useState(initialOriginIsMoon);
+  const [targetIsMoon, setTargetIsMoon] = useState(initialTargetIsMoon);
 
   const distance = originCoords ? fleetMissionDistance(originCoords, coords) : 0;
   const travelSeconds = action.mode === "missile" ? 0 : fleetMissionTravelSeconds(distance, ships, driveLevels, speedPercent);
@@ -278,7 +282,7 @@ export function MissionCreationPage({
   const cargoCapacity = action.mode === "missile" ? 0 : fleetMissionAvailableCargoCapacity(ships, distance, driveLevels, speedPercent);
   const selectedShipCount = action.mode === "missile" ? 0 : fleetMissionShipCount(ships);
   const cargoSupported = action.mode === "mission" && (action.kind === "transport" || action.kind === "deploy");
-  const bodyMissionSupported = action.mode === "mission" && (action.kind === "attack" || cargoSupported);
+  const bodyMissionSupported = action.mode === "mission" && (action.kind === "attack" || action.kind === "defenseHold" || cargoSupported);
   const bodySelectionVisibility = missionBodySelectionVisibility({
     bodyMissionSupported: bodyMissionSupported && Boolean(bodySelection),
     originMoonAvailable: Boolean(bodySelection?.originMoonAvailable),

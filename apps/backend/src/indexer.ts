@@ -1426,9 +1426,10 @@ export class SettlementIndexer {
     }
 
     const targetPlanetId = report?.targetPlanetId ?? attack?.targetPlanetId;
+    const targetIsMoon = Boolean(report?.targetIsMoon ?? attack?.targetIsMoon);
     if (targetPlanetId) {
       for (const defender of missionIndex.activeByTarget.get(targetPlanetId) ?? []) {
-        if (!this.isBattleTimeDefenseHoldForPlanet(defender, targetPlanetId, attackArrival)) continue;
+        if (!this.isBattleTimeDefenseHoldForPlanet(defender, targetPlanetId, attackArrival, targetIsMoon)) continue;
         defenders.set(defender.missionId, this.stationedDefenderSummary(defender, this.defenseHoldWindowEnd(defender)));
       }
     }
@@ -7545,6 +7546,7 @@ export class SettlementIndexer {
   ): boolean {
     return ["AcsDefend", "Intercept", "DefenseHold"].includes(defender.missionType)
       && defender.targetPlanetId === attack.targetPlanetId
+      && Boolean(defender.targetIsMoon) === Boolean(attack.targetIsMoon)
       && Number(defender.arrivalAt) <= attackArrival
       && Number(this.counterplayHoldUntil(defender)) >= attackArrival
       && hasAnyShips(defender.ships);
@@ -7553,10 +7555,12 @@ export class SettlementIndexer {
   private isBattleTimeDefenseHoldForPlanet(
     defender: FleetMissionSummary,
     planetId: string,
-    attackArrival: number
+    attackArrival: number,
+    targetIsMoon = false
   ): boolean {
     return defender.missionType === "DefenseHold"
       && defender.targetPlanetId === planetId
+      && Boolean(defender.targetIsMoon) === targetIsMoon
       && Number(defender.arrivalAt) <= attackArrival
       && Number(this.defenseHoldWindowEnd(defender)) >= attackArrival
       && hasAnyShips(defender.ships);

@@ -230,9 +230,9 @@ describe("mission creation", () => {
   });
 
   test("supports moon body selection for attack missions without reusing parent planet intel", () => {
-    expect(missionCreationSource).toContain("const bodyMissionSupported = action.mode === \"mission\" && (action.kind === \"attack\" || cargoSupported);");
+    expect(missionCreationSource).toContain("const bodyMissionSupported = action.mode === \"mission\" && (action.kind === \"attack\" || action.kind === \"defenseHold\" || cargoSupported);");
     expect(playableMvpAppSource).toContain("pendingGalaxyMission.action.kind === \"attack\"");
-    expect(playableMvpAppSource).toContain("const supportsBodyMission = supportsCargoMission || action.kind === \"attack\";");
+    expect(playableMvpAppSource).toContain("const supportsBodyMission = supportsCargoMission || action.kind === \"attack\" || action.kind === \"defenseHold\";");
     expect(playableMvpAppSource).toContain("draft.lootRatio && !originIsMoon && !targetIsMoon");
 
     const target = targetPlanet({
