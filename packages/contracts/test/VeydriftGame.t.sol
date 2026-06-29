@@ -27,6 +27,7 @@ import {VeydriftRaidStorage} from "../src/libraries/VeydriftRaidStorage.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftFormulas} from "../src/libraries/VeydriftFormulas.sol";
+import {VeydriftPlanetGeneration} from "../src/libraries/VeydriftPlanetGeneration.sol";
 import {Building, Defense, Resource, Ship, Technology} from "../src/libraries/VeydriftTypes.sol";
 
 contract MockResourceToken {
@@ -1364,11 +1365,12 @@ contract VeydriftGameTest is Test {
         _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
         _setShipCount(originPlanetId, Ship.ColonyShip, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        uint8 colonyPosition = _populatedColonyPosition(2, 44, 8);
 
         vm.prank(player);
         uint256 missionId = game.launchFleetMission(
             originPlanetId,
-            _colonizationTargetId(2, 44, 9),
+            _colonizationTargetId(2, 44, colonyPosition),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
@@ -3015,18 +3017,21 @@ contract VeydriftGameTest is Test {
         _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
         _setShipCount(originPlanetId, Ship.ColonyShip, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        uint8 colonyPosition = _populatedColonyPosition(2, 44, 8);
 
         vm.prank(player);
         uint256 missionId = game.launchFleetMission(
             originPlanetId,
-            _colonizationTargetId(2, 44, 9),
+            _colonizationTargetId(2, 44, colonyPosition),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             100,
             0
         );
-        uint256 expectedDistance = 1_005;
+        uint256 positionDistance =
+            colonyPosition > 8 ? uint256(colonyPosition - 8) : uint256(8 - colonyPosition);
+        uint256 expectedDistance = 1_000 + positionDistance * 5;
         (, uint256 colonyFuelConsumption, uint256 colonySpeed) =
             VeydriftCatalog.shipMovementStats(Ship.ColonyShip, 0, 4, 0);
         uint256 expectedFuelCost = VeydriftAntiRaidPrimitives.missionFuelCost(
@@ -3069,7 +3074,7 @@ contract VeydriftGameTest is Test {
         assertEq(game.planet(colonyPlanetId).owner, player);
         assertEq(game.planet(colonyPlanetId).galaxy, 2);
         assertEq(game.planet(colonyPlanetId).system, 44);
-        assertEq(game.planet(colonyPlanetId).position, 9);
+        assertEq(game.planet(colonyPlanetId).position, colonyPosition);
         assertEq(game.planet(colonyPlanetId).resources.metal, 500);
         assertEq(game.planet(colonyPlanetId).resources.crystal, 500);
         assertEq(game.planet(colonyPlanetId).resources.deuterium, 0);
@@ -3087,6 +3092,29 @@ contract VeydriftGameTest is Test {
         );
     }
 
+    function testColonizeFleetMissionRejectsUnpopulatedCoordinates() public {
+        vm.prank(player);
+        uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(originPlanetId, 2, 44, 8);
+        _setTechnologyLevel(player, Technology.Astrophysics, 1);
+        _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
+        _setShipCount(originPlanetId, Ship.ColonyShip, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        uint8 emptyPosition = _unpopulatedColonyPosition(2, 44, 8);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.UnpopulatedCoordinates.selector);
+        game.launchFleetMission(
+            originPlanetId,
+            _colonizationTargetId(2, 44, emptyPosition),
+            VeydriftGameStorage.FleetMissionType.Colonize,
+            _colonyShipManifest(),
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            0
+        );
+    }
+
     function testColonizeFleetMissionRejectsCarriedCargo() public {
         vm.prank(player);
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
@@ -3095,12 +3123,13 @@ contract VeydriftGameTest is Test {
         _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
         _setShipCount(originPlanetId, Ship.ColonyShip, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        uint8 colonyPosition = _populatedColonyPosition(2, 44, 8);
 
         vm.prank(player);
         vm.expectRevert(VeydriftGameStorage.CargoNotAllowed.selector);
         game.launchFleetMission(
             originPlanetId,
-            _colonizationTargetId(2, 44, 9),
+            _colonizationTargetId(2, 44, colonyPosition),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
             VeydriftGameStorage.Resources({metal: 1, crystal: 0, deuterium: 0}),
@@ -3122,6 +3151,7 @@ contract VeydriftGameTest is Test {
         game.startShipProduction(originPlanetId, Ship.ColonyShip, 1);
         VeydriftGameStorage.ShipQueue memory queue = game.shipQueue(originPlanetId);
         vm.warp(queue.readyAt);
+        uint8 colonyPosition = _populatedColonyPosition(2, 44, 8);
 
         assertEq(game.shipCount(originPlanetId, Ship.ColonyShip), 0);
         assertTrue(game.shipQueue(originPlanetId).active);
@@ -3129,7 +3159,7 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         uint256 missionId = game.launchFleetMission(
             originPlanetId,
-            _colonizationTargetId(2, 44, 9),
+            _colonizationTargetId(2, 44, colonyPosition),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
@@ -3158,6 +3188,7 @@ contract VeydriftGameTest is Test {
         _setTechnologyLevel(player, Technology.ImpulseDrive, 4);
         _setShipCount(originPlanetId, Ship.ColonyShip, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        uint8 colonyPosition = _populatedColonyPosition(2, 44, 8);
 
         // The launch debits the single colony ship from the origin and must emit the resulting total (0)
         // through the same `PlanetShipCountChanged` sink the indexer integrates for every mission type.
@@ -3167,7 +3198,7 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         uint256 missionId = game.launchFleetMission(
             originPlanetId,
-            _colonizationTargetId(2, 44, 9),
+            _colonizationTargetId(2, 44, colonyPosition),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
@@ -3195,11 +3226,12 @@ contract VeydriftGameTest is Test {
         _setBuildingLevel(originPlanetId, Building.Shipyard, 2);
         _setShipCount(originPlanetId, Ship.ColonyShip, 1);
         _setResources(originPlanetId, 100_000, 100_000, 100_000);
+        uint8 colonyPosition = _populatedColonyPosition(2, 44, 8);
 
         vm.prank(player);
         uint256 missionId = game.launchFleetMission(
             originPlanetId,
-            _colonizationTargetId(2, 44, 9),
+            _colonizationTargetId(2, 44, colonyPosition),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
@@ -3235,11 +3267,12 @@ contract VeydriftGameTest is Test {
         _setBuildingLevel(originPlanetId, Building.Shipyard, 2);
         _setShipCount(originPlanetId, Ship.ColonyShip, 1);
         _setResources(originPlanetId, 100_000, 100_000, 100_000);
+        uint8 colonyPosition = _populatedColonyPosition(2, 44, 8);
 
         vm.prank(player);
         uint256 missionId = game.launchFleetMission(
             originPlanetId,
-            _colonizationTargetId(2, 44, 9),
+            _colonizationTargetId(2, 44, colonyPosition),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
@@ -3288,11 +3321,12 @@ contract VeydriftGameTest is Test {
         _setShipCount(competitorPlanetId, Ship.ColonyShip, 1);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
         _setResources(competitorPlanetId, 10_000, 10_000, 10_000);
+        uint8 colonyPosition = _populatedColonyPosition(9, 400, 8);
 
         vm.prank(player);
         uint256 missionId = game.launchFleetMission(
             originPlanetId,
-            _colonizationTargetId(9, 400, 9),
+            _colonizationTargetId(9, 400, colonyPosition),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
@@ -3306,7 +3340,7 @@ contract VeydriftGameTest is Test {
             competitorPlanetId,
             9,
             400,
-            9,
+            colonyPosition,
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             _colonyShipManifest()
         );
@@ -3358,11 +3392,13 @@ contract VeydriftGameTest is Test {
         _setTechnologyLevel(player, Technology.Computer, 1);
         _setShipCount(originPlanetId, Ship.ColonyShip, 2);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        uint8 pendingPosition = _populatedColonyPosition(9, 399, 0);
+        uint8 secondPosition = _populatedColonyPosition(9, 399, pendingPosition);
 
         vm.prank(player);
         uint256 missionId = game.launchFleetMission(
             originPlanetId,
-            _colonizationTargetId(9, 399, 8),
+            _colonizationTargetId(9, 399, pendingPosition),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
@@ -3376,7 +3412,7 @@ contract VeydriftGameTest is Test {
             originPlanetId,
             9,
             399,
-            9,
+            secondPosition,
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
             _colonyShipManifest()
         );
@@ -4185,11 +4221,13 @@ contract VeydriftGameTest is Test {
         _setTechnologyLevel(player, Technology.Computer, 3);
         _setShipCount(originPlanetId, Ship.ColonyShip, 2);
         _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        uint8 firstColonyPosition = _populatedColonyPosition(2, 60, 8);
+        uint8 secondColonyPosition = _populatedColonyPosition(2, 60, firstColonyPosition);
 
         vm.prank(player);
         uint256 firstMissionId = game.launchFleetMission(
             originPlanetId,
-            _colonizationTargetId(2, 60, 9),
+            _colonizationTargetId(2, 60, firstColonyPosition),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
@@ -4204,7 +4242,7 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         uint256 secondMissionId = game.launchFleetMission(
             originPlanetId,
-            _colonizationTargetId(2, 60, 10),
+            _colonizationTargetId(2, 60, secondColonyPosition),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
@@ -7149,12 +7187,13 @@ contract VeydriftGameTest is Test {
     function testColonyCallsEnforcePlanetLimitBeforeLaunch() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        uint8 colonyPosition = _populatedColonyPosition(2, 44, 0);
 
         vm.prank(player);
         vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.PlanetLimitReached.selector, 1));
         game.launchFleetMission(
             planetId,
-            _colonizationTargetId(2, 44, 9),
+            _colonizationTargetId(2, 44, colonyPosition),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
@@ -7171,11 +7210,12 @@ contract VeydriftGameTest is Test {
         _setResearchQueue(player, Technology.Astrophysics, 1, uint64(block.timestamp));
         _setShipCount(planetId, Ship.ColonyShip, 1);
         _setResources(planetId, 100_000, 100_000, 100_000);
+        uint8 colonyPosition = _populatedColonyPosition(2, 44, 8);
 
         vm.prank(player);
         uint256 missionId = game.launchFleetMission(
             planetId,
-            _colonizationTargetId(2, 44, 9),
+            _colonizationTargetId(2, 44, colonyPosition),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
@@ -7195,11 +7235,12 @@ contract VeydriftGameTest is Test {
         _setTechnologyLevel(player, Technology.Computer, 2);
         _setShipCount(originPlanetId, Ship.ColonyShip, 2);
         _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
+        uint8 colonyPosition = _populatedColonyPosition(9, 399, 0);
 
         vm.prank(player);
         uint256 missionId = game.launchFleetMission(
             originPlanetId,
-            _colonizationTargetId(9, 399, 8),
+            _colonizationTargetId(9, 399, colonyPosition),
             VeydriftGameStorage.FleetMissionType.Colonize,
             _colonyShipManifest(),
             VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
@@ -7812,6 +7853,61 @@ contract VeydriftGameTest is Test {
             | uint256(position);
     }
 
+    function _populatedColonyPosition(uint16 galaxy, uint16 system, uint8 avoidPosition)
+        internal
+        view
+        returns (uint8)
+    {
+        for (uint8 position = 1; position <= game.MAX_POSITION();) {
+            if (
+                position != avoidPosition && _isPopulatedColonySlot(galaxy, system, position)
+                    && !game.occupiedCoordinates(game.coordinateKey(galaxy, system, position))
+            ) {
+                return position;
+            }
+            unchecked {
+                ++position;
+            }
+        }
+        revert("populated colony position exhausted");
+    }
+
+    function _unpopulatedColonyPosition(uint16 galaxy, uint16 system, uint8 avoidPosition)
+        internal
+        view
+        returns (uint8)
+    {
+        for (uint8 position = 1; position <= game.MAX_POSITION();) {
+            if (
+                position != avoidPosition && !_isPopulatedColonySlot(galaxy, system, position)
+                    && !game.occupiedCoordinates(game.coordinateKey(galaxy, system, position))
+            ) {
+                return position;
+            }
+            unchecked {
+                ++position;
+            }
+        }
+        revert("unpopulated colony position exhausted");
+    }
+
+    function _isPopulatedColonySlot(uint16 galaxy, uint16 system, uint8 position)
+        internal
+        view
+        returns (bool)
+    {
+        return VeydriftPlanetGeneration.isPopulatedPlanetSlot(
+            block.chainid,
+            address(game),
+            galaxy,
+            system,
+            position,
+            game.MAX_GALAXY(),
+            game.MAX_SYSTEM(),
+            game.MAX_POSITION()
+        );
+    }
+
     function _nextColonyCoordinates(address account, uint256 salt)
         internal
         view
@@ -7831,7 +7927,10 @@ contract VeydriftGameTest is Test {
             galaxy = uint16((uint256(seed) % game.MAX_GALAXY()) + 1);
             system = uint16(((uint256(seed) >> 16) % game.MAX_SYSTEM()) + 1);
             position = uint8(((uint256(seed) >> 32) % game.MAX_POSITION()) + 1);
-            if (!game.occupiedCoordinates(game.coordinateKey(galaxy, system, position))) {
+            if (
+                _isPopulatedColonySlot(galaxy, system, position)
+                    && !game.occupiedCoordinates(game.coordinateKey(galaxy, system, position))
+            ) {
                 return (galaxy, system, position);
             }
         }
@@ -8026,6 +8125,7 @@ contract VeydriftGameTest is Test {
                 uint8(((uint256(origin.position) + salt + offset - 1) % maxPosition) + 1);
             if (
                 candidatePosition != origin.position
+                    && _isPopulatedColonySlot(galaxy, system, candidatePosition)
                     && !game.occupiedCoordinates(
                         game.coordinateKey(galaxy, system, candidatePosition)
                     )

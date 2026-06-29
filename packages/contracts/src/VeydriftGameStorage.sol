@@ -330,6 +330,7 @@ abstract contract VeydriftGameStorage {
     error LevelTooHigh();
     error InvalidCoordinates();
     error CoordinatesOccupied();
+    error UnpopulatedCoordinates();
     error PlanetLimitReached(uint256 limit);
     error InsufficientShips(Ship ship, uint32 available, uint32 required);
     error SamePlanet();

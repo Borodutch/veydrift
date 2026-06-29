@@ -6717,6 +6717,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     };
 
     if (action.mode === "colonize") {
+      if (!target) {
+        setGalaxyAction({ status: "error", label: "Colonization target is not a generated planet slot." });
+        return;
+      }
       const colonyLimitBlocker = colonizationLimitBlocker({
         planetCount: walletPlanets.length,
         researchTechnologyLevels: effectiveResearchState?.technologyLevels,
