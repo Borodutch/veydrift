@@ -4148,6 +4148,7 @@ describe("SettlementIndexer", () => {
         allianceId: "1",
         otherAllianceId: "2",
         status: "war",
+        initiatedByAllianceId: "1",
         alliance: { allianceId: "2", tag: "RVL", name: "Rivals" }
       }
     ]);
