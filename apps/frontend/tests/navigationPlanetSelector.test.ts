@@ -73,8 +73,10 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("data-planet-selector-item={planet.planetId}");
     expect(playableSource).toContain('data-planet-selector-moon="true"');
     expect(playableSource).toContain("<PlanetSelectorMoonButton");
+    expect(playableSource).toContain('className="grid w-20 min-w-0 shrink-0 gap-1"');
+    expect(playableSource).toContain("grid w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)] items-center gap-1 overflow-hidden");
     expect(playableSource).not.toContain("planets.flatMap((planet) => planetSelectorButtons");
-    expect(gameAssetsSource).toContain("cratered-cyan-moon.webp");
+    expect(gameAssetsSource).toContain("frozen-ice.webp");
     expect(moonIndicatorSource).toContain('data-planet-moon-subsection="true"');
     expect(moonIndicatorSource).not.toContain("Child moon body");
     expect(rankingsSource).toContain("<PlanetMoonSubsection");
@@ -85,6 +87,15 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain('setSelectedBodyKind("planet")');
     expect(playableSource).not.toContain('activeBodyKind === "moon" && (page === "overview" || page === "infrastructure" || page === "defenses" || page === "shipyard")');
     expect(playableSource).toContain('if (page === "moon")');
+  });
+
+  test("moon overview actions open moon-targeted mission flows", () => {
+    expect(playableSource).toContain("moonOverviewActions");
+    expect(playableSource).toContain("bodySelectionDefaults: { targetIsMoon: true }");
+    expect(playableSource).toContain("defaultTargetIsMoon: pendingGalaxyMission.bodySelectionDefaults?.targetIsMoon");
+    expect(playableSource).toContain("Moon defense stationing is not available in the current mission contract.");
+    expect(missionCreationSource).toContain("defaultTargetIsMoon?: boolean");
+    expect(missionCreationSource).toContain("Boolean(bodySelection?.defaultTargetIsMoon) || (action.mode === \"mission\" && action.defaultTargetIsMoon === true)");
   });
 
   test("keeps planet selector selected and keyboard focus states subtle", () => {

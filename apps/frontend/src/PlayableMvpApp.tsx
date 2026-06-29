@@ -2093,6 +2093,10 @@ type EnabledGalaxyAction = Extract<GalaxyAction, { enabled: true }>;
 
 type PendingGalaxyMission = {
   action: EnabledGalaxyAction;
+  bodySelectionDefaults?: {
+    originIsMoon?: boolean | undefined;
+    targetIsMoon?: boolean | undefined;
+  } | undefined;
   target: Planet | undefined;
   coords: Coordinates;
   originPlanet: ManagedPlanetResponse | undefined;
@@ -2190,6 +2194,20 @@ function disabledOwnedPlanetMissionAction(
     mode: "mission",
     mission: kind,
     reason,
+  };
+}
+
+function moonOverviewMissionAction(
+  action: GalaxyAction | undefined,
+  kind: "transport" | "deploy",
+  label: string,
+): GalaxyAction {
+  const fallbackReason = `${label} is unavailable for this moon.`;
+  if (!action) return disabledOwnedPlanetMissionAction(kind, label, fallbackReason);
+  if (action.enabled) return action;
+  return {
+    ...action,
+    reason: overviewOwnedPlanetActionReason(action.reason),
   };
 }
 
@@ -6625,6 +6643,23 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     });
   }, [handleGalaxyAction]);
 
+  const handleMoonMissionAction = useCallback((action: GalaxyAction, managedPlanet: ManagedPlanetResponse) => {
+    if (!action.enabled) return;
+    const targetPlanet = planetFromSettlementPlanet(managedPlanet);
+    setGalaxyAction({ status: "idle" });
+    setPendingGalaxyMission({
+      action,
+      bodySelectionDefaults: { targetIsMoon: true },
+      coords: {
+        galaxy: managedPlanet.galaxy,
+        system: managedPlanet.system,
+        position: managedPlanet.position,
+      },
+      originPlanet: selectedManagedPlanet,
+      target: targetPlanet,
+    });
+  }, [selectedManagedPlanet]);
+
   const raidFinderAttackAction = useCallback((target: RaidTarget): GalaxyAction => {
     const planet = raidTargetPlanetForMission(target);
     return galaxyActionsForSlot({
@@ -7257,6 +7292,59 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     writeInspectRoute({ kind: "moon", coords });
   }, [inspectedAllianceId, inspectedPlayerWallet, missionDetailId, missionReportId, page]);
 
+  const moonOverviewActions = useMemo(() => {
+    if (!selectedManagedPlanet?.moon?.exists) return [];
+    const targetPlanet = planetFromSettlementPlanet(selectedManagedPlanet);
+    const targetActions = galaxyActionsForSlot({
+      account,
+      defenseState,
+      homePlanetId: onChainSettlement?.homePlanetId,
+      isOrigin: false,
+      planet: targetPlanet,
+      shipyardState,
+    });
+    const actionsByKind = new Map(targetActions.map((action) => [action.kind, action]));
+    const transportAction = moonOverviewMissionAction(actionsByKind.get("transport"), "transport", "Transport");
+    const deployAction = moonOverviewMissionAction(actionsByKind.get("deploy"), "deploy", "Deploy");
+
+    return [
+      {
+        kind: "inspect" as const,
+        label: "Inspect",
+        onClick: () => handleSelectMoon({
+          galaxy: selectedManagedPlanet.galaxy,
+          system: selectedManagedPlanet.system,
+          position: selectedManagedPlanet.position,
+        }),
+      },
+      {
+        disabledReason: transportAction.enabled ? undefined : transportAction.reason,
+        kind: "transport" as const,
+        label: transportAction.label,
+        onClick: transportAction.enabled ? () => handleMoonMissionAction(transportAction, selectedManagedPlanet) : undefined,
+      },
+      {
+        disabledReason: deployAction.enabled ? undefined : deployAction.reason,
+        kind: "deploy" as const,
+        label: deployAction.label,
+        onClick: deployAction.enabled ? () => handleMoonMissionAction(deployAction, selectedManagedPlanet) : undefined,
+      },
+      {
+        disabledReason: "Moon defense stationing is not available in the current mission contract.",
+        kind: "defend" as const,
+        label: "Defend",
+      },
+    ];
+  }, [
+    account,
+    defenseState,
+    handleMoonMissionAction,
+    handleSelectMoon,
+    onChainSettlement?.homePlanetId,
+    selectedManagedPlanet,
+    shipyardState,
+  ]);
+
   const handlePlanetDetailBack = useCallback(() => {
     if (hasUsefulPlanetDetailBackRoute(planetBackRoute) && typeof window !== "undefined" && window.history.length > 1) {
       setPlanetBackRoute(null);
@@ -7510,6 +7598,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
             || pendingGalaxyMission.action.kind === "deploy"
         )
         ? {
+            defaultOriginIsMoon: pendingGalaxyMission.bodySelectionDefaults?.originIsMoon,
+            defaultTargetIsMoon: pendingGalaxyMission.bodySelectionDefaults?.targetIsMoon,
             originMoonAvailable: pendingMissionOriginMoonLoaded,
             targetMoonAvailable: Boolean(pendingGalaxyMission.target?.hasMoon),
             originMoonResources: pendingMissionOriginMoonLoaded ? missionMoonResources(moonState) : undefined,
@@ -7695,6 +7785,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           canTransact={canSubmitMoonTransaction}
           error={moonSection.status.error ?? moonError}
           loading={moonLoading || moonSection.status.loading}
+          moonActions={moonOverviewActions}
           moonState={moonState}
           onBurnChicken={handleBurnChickenForMoon}
           onFinishBuilding={handleFinishMoonBuilding}
@@ -8107,7 +8198,7 @@ function PlanetSelectorItem({
   const hasDedicatedMoonSelector = Boolean(planet.moon?.exists);
   return (
     <div
-      className="grid w-20 shrink-0 gap-1"
+      className="grid w-20 min-w-0 shrink-0 gap-1"
       data-planet-selector-item={planet.planetId}
     >
       <PlanetSelectorButton
@@ -8150,7 +8241,7 @@ function PlanetSelectorButton({
     <button
       aria-current={selected ? "true" : undefined}
       aria-label={label}
-      className={`veydrift-planet-selector-button group relative grid w-20 shrink-0 justify-items-center gap-1 rounded border p-1.5 text-center transition focus:outline-none ${
+      className={`veydrift-planet-selector-button group relative grid w-full min-w-0 shrink-0 justify-items-center gap-1 rounded border p-1.5 text-center transition focus:outline-none ${
         hasIncomingAttack
           ? "border-red-400/70 bg-red-500/15 shadow-lg shadow-red-950/25"
           : selected
@@ -8202,7 +8293,7 @@ function PlanetSelectorMoonButton({
     <button
       aria-current={selected ? "true" : undefined}
       aria-label={label}
-      className={`grid w-full grid-cols-[1.25rem_minmax(0,1fr)] items-center gap-1 rounded border px-1.5 py-1 text-left transition focus:outline-none ${
+      className={`grid w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)] items-center gap-1 overflow-hidden rounded border px-1 py-1 text-left transition focus:outline-none ${
         selected
           ? "border-cyan-200/45 bg-cyan-200/[0.10] text-cyan-100"
           : "border-cyan-200/15 bg-cyan-200/[0.055] text-slate-300 hover:border-cyan-200/35 hover:bg-cyan-200/[0.09]"

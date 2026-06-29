@@ -126,6 +126,33 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).toContain("Moon orbiting {moonOrbitParentLabel(parentPlanetLabel, moon.planetId)}");
   });
 
+  test("renders selected moon primary actions with clear unavailable states", () => {
+    const page = MoonPage({
+      moonActions: [
+        { kind: "inspect", label: "Inspect", onClick: () => undefined },
+        { kind: "transport", label: "Transport", onClick: () => undefined },
+        { kind: "deploy", label: "Deploy", onClick: () => undefined },
+        { kind: "defend", label: "Defend", disabledReason: "Moon defense stationing is not available yet." },
+      ],
+      moonState: loadedMoonState({
+        moon: {
+          exists: true,
+          planetId: "7",
+          owner: "0x1111111111111111111111111111111111111111",
+          fields: 3,
+          diameterKm: 8774,
+          createdAt: "1770000000",
+          jumpGateReadyAt: "0",
+        },
+      }),
+    });
+    const systemsPanel = componentNodes(page).find((node) => typeof node.type === "function" && node.type.name === "MoonSystemsPanel");
+
+    expect(systemsPanel?.props?.moonActions?.map((action: { label: string }) => action.label)).toEqual(["Inspect", "Transport", "Deploy", "Defend"]);
+    expect(moonPageSource).toContain('aria-label="Moon actions"');
+    expect(moonPageSource).toContain('kind: "inspect" | "transport" | "deploy" | "defend"');
+  });
+
   test("uses the larger page title styling without redundant section helper copy", () => {
     expect(moonPageSource).toContain('titleSize="xl"');
     expect(moonPageSource).toContain('<h3 className="text-base font-semibold text-white">Moon Structures</h3>');
