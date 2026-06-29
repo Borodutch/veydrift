@@ -4750,6 +4750,75 @@ const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc09841
 const marketResourceWithdrawalRequestedTopic = "0xc4694dfe978480c576eacc57b2b09e69c8b8f50c49739ca4c4515295be589eab";
 const marketResourceWithdrawalFinishedTopic = "0x2b254e656a481b3978a707e6846146a1d7a3144e414cb803bbc7adc97d7587ee";
 
+const eventNamesByTopic = new Map<string, string>([
+  [planetStartedTopic, "PlanetStarted"],
+  [colonyCreatedTopic, "ColonyCreated"],
+  [planetSettledTopic, "PlanetSettled"],
+  [moonResourcesSettledTopic, "MoonResourcesSettled"],
+  [planetRenamedTopic, "PlanetRenamed"],
+  [buildingStartedTopic, "BuildingStarted"],
+  [buildingCompletedTopic, "BuildingCompleted"],
+  [defenseQueuedTopic, "DefenseQueued"],
+  [defenseCompletedTopic, "DefenseCompleted"],
+  [shipQueuedTopic, "ShipQueued"],
+  [shipCompletedTopic, "ShipCompleted"],
+  [researchQueuedTopic, "ResearchQueued"],
+  [researchCompletedTopic, "ResearchCompleted"],
+  [debrisFieldUpdatedTopic, "DebrisFieldUpdated"],
+  [planetShipCountChangedTopic, "PlanetShipCountChanged"],
+  [planetDefenseCountChangedTopic, "PlanetDefenseCountChanged"],
+  [moonResourcesChangedTopic, "MoonResourcesChanged"],
+  [moonShipCountChangedTopic, "MoonShipCountChanged"],
+  [moonDefenseCountChangedTopic, "MoonDefenseCountChanged"],
+  [fleetMissionLaunchedTopic, "FleetMissionLaunched"],
+  [fleetMissionCargoTopic, "FleetMissionCargo"],
+  [fleetMissionShipsTopic, "FleetMissionShips"],
+  [fleetMissionBodiesTopic, "FleetMissionBodies"],
+  [fleetMissionRecalledTopic, "FleetMissionRecalled"],
+  [fleetMissionResolvedTopic, "FleetMissionResolved"],
+  [fleetMissionReturnExposedTopic, "FleetMissionReturnExposed"],
+  [fleetMissionReturnedTopic, "FleetMissionReturned"],
+  [defenseHoldStationedTopic, "DefenseHoldStationed"],
+  [attackMissionJoinedTopic, "AttackMissionJoined"],
+  [attackBattleResolvedTopic, "AttackBattleResolved"],
+  [combatRoundResolvedTopic, "CombatRoundResolved"],
+  [combatLossesTopic, "CombatLosses"],
+  [combatDebrisSignaledTopic, "CombatDebrisSignaled"],
+  [interplanetaryMissileAttackTopic, "InterplanetaryMissileAttack"],
+  [randomnessFulfilledTopic, "RandomnessFulfilled"],
+  [moonChanceRequestedTopic, "MoonChanceRequested"],
+  [moonChanceFinalizedTopic, "MoonChanceFinalized"],
+  [moonChanceSkippedExistingMoonTopic, "MoonChanceSkippedExistingMoon"],
+  [moonDestructionRequestedTopic, "MoonDestructionRequested"],
+  [moonDestructionFinalizedTopic, "MoonDestructionFinalized"],
+  [moonCreatedTopic, "MoonCreated"],
+  [moonBuildingStartedTopic, "MoonBuildingStarted"],
+  [moonBuildingCompletedTopic, "MoonBuildingCompleted"],
+  [moonDefenseQueuedTopic, "MoonDefenseQueued"],
+  [moonDefenseCompletedTopic, "MoonDefenseCompleted"],
+  [jumpGateJumpedTopic, "JumpGateJumped"],
+  [allianceCreatedTopic, "AllianceCreated"],
+  [allianceProfileUpdatedTopic, "AllianceProfileUpdated"],
+  [allianceInviteCreatedTopic, "AllianceInviteCreated"],
+  [allianceInviteCancelledTopic, "AllianceInviteCancelled"],
+  [allianceJoinRequestedTopic, "AllianceJoinRequested"],
+  [allianceJoinRequestCancelledTopic, "AllianceJoinRequestCancelled"],
+  [allianceJoinRequestDismissedTopic, "AllianceJoinRequestDismissed"],
+  [allianceJoinRequestApprovedTopic, "AllianceJoinRequestApproved"],
+  [allianceJoinedTopic, "AllianceJoined"],
+  [allianceLeftTopic, "AllianceLeft"],
+  [allianceRoleUpdatedTopic, "AllianceRoleUpdated"],
+  [allianceOwnershipTransferredTopic, "AllianceOwnershipTransferred"],
+  [allianceDiplomacyUpdatedTopic, "AllianceDiplomacyUpdated"],
+  [marketResourceDepositedTopic, "MarketResourceDeposited"],
+  [marketResourceWithdrawalRequestedTopic, "MarketResourceWithdrawalRequested"],
+  [marketResourceWithdrawalFinishedTopic, "MarketResourceWithdrawalFinished"]
+]);
+
+export function eventNameForTopic(topic: string | null | undefined): string | null {
+  return topic ? eventNamesByTopic.get(topic) ?? null : null;
+}
+
 export function assertAddress(address: string): asserts address is Address {
   if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
     throw new Error("Invalid EVM address.");

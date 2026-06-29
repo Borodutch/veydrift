@@ -16,6 +16,8 @@
 // This module is intentionally side-effect free (no port binding, no spawning)
 // so the topology decisions can be unit-tested in isolation.
 
+import { logApiRequestEvent } from "./observability";
+
 export const WORKER_ROLE_ENV = "VEYDRIFT_WORKER_ROLE";
 export const WORKER_INDEX_ENV = "VEYDRIFT_WORKER_INDEX";
 export const WORKER_COUNT_ENV = "VEYDRIFT_WORKER_COUNT";
@@ -232,15 +234,14 @@ function logBackendRequest(
   durationMs: number,
   error?: unknown
 ): void {
-  const entry = {
-    durationMs: Math.round(durationMs),
-    method: request.method,
-    path: `${url.pathname}${url.search}`,
-    status,
+  logApiRequestEvent(
+    request,
+    url,
     workerRole,
-    ...(error ? { error: error instanceof Error ? error.message : String(error) } : {})
-  };
-  console.info("veydrift-api-request", JSON.stringify(entry));
+    status,
+    durationMs,
+    error ? error instanceof Error ? error.message : String(error) : undefined
+  );
 }
 
 function forwardedResponseBody(
