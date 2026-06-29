@@ -76,7 +76,7 @@ export function PlanetMoonSubsection({
   planetType?: PlanetType | null | undefined;
   title?: string | undefined;
 }) {
-  const content = (
+  const summaryContent = (
     <>
       <span className="h-7 w-7 overflow-hidden rounded-full border border-cyan-100/30 bg-black/40">
         <MoonImage className="h-full w-full object-cover" planetType={planetType} />
@@ -85,10 +85,37 @@ export function PlanetMoonSubsection({
         <span className="block truncate text-[11px] font-semibold text-cyan-100">{label}</span>
         {detail ? <span className="block truncate text-[10px] text-slate-400">{detail}</span> : null}
       </span>
+    </>
+  );
+  const content = (
+    <>
+      {summaryContent}
       {action}
     </>
   );
   const baseClass = `mt-1.5 grid grid-cols-[1.75rem_minmax(0,1fr)_auto] items-center gap-2 rounded border border-cyan-200/15 bg-cyan-200/[0.06] px-2 py-1.5 text-left ${className}`;
+  if (onClick && action) {
+    return (
+      <div
+        className={`${baseClass} w-full cursor-pointer transition hover:border-cyan-200/35 hover:bg-cyan-200/[0.09] focus:outline-none focus:ring-2 focus:ring-cyan-300/30`}
+        data-planet-moon-subsection="true"
+        onClick={onClick}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onClick();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+        title={title ?? `Open ${label}`}
+      >
+        {summaryContent}
+        {action}
+      </div>
+    );
+  }
   if (onClick) {
     return (
       <button

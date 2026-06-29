@@ -65,7 +65,7 @@ export function WatchablePlanetRow({
 
   return (
     <div
-      className={`group grid min-h-16 w-full items-center gap-3 rounded-md border px-3 py-2 text-left transition ${
+      className={`group grid min-h-16 w-full items-start gap-3 rounded-md border px-3 py-2 text-left transition ${
         leadingSlot
           ? "grid-cols-[3rem_minmax(0,1fr)_auto] sm:grid-cols-[4rem_minmax(0,1fr)_8rem_auto]"
           : showIdentity
@@ -77,7 +77,7 @@ export function WatchablePlanetRow({
           : "border-white/10 bg-white/[0.035] hover:border-signal/35 hover:bg-white/[0.06]"
       }`}
     >
-      {leadingSlot}
+      {leadingSlot ? <div className="self-start pt-0.5">{leadingSlot}</div> : null}
       <div className="min-w-0">
         <button
           className="flex min-w-0 items-center gap-3 text-left"
@@ -169,7 +169,7 @@ export function WatchablePlanetRow({
         </div>
       ) : null}
 
-      <div className="flex flex-wrap justify-end gap-1.5">
+      <div className="flex flex-wrap justify-end gap-1.5 pt-2">
         {canWatch ? (
           <button
             aria-pressed={watched}

@@ -120,6 +120,8 @@ interface OverviewPageProps {
   watchedPlanetsPage?: number | undefined;
   onWatchedPlanetsPageChange?: ((page: number) => void) | undefined;
   onRefreshWatchedPlanets?: (() => void) | undefined;
+  watchedMoonActionsForPlanet?: ((planet: Planet) => GalaxyAction[]) | undefined;
+  onWatchedMoonAction?: ((action: GalaxyAction, planet: Planet) => void) | undefined;
   watchBusyPlanetId?: string | undefined;
   myPlanets?: readonly OverviewMyPlanetActionGroup[] | undefined;
   currentCommanderLabel?: string | undefined;
@@ -166,6 +168,8 @@ export function OverviewPage({
   watchedPlanetsPage = 1,
   onWatchedPlanetsPageChange,
   onRefreshWatchedPlanets,
+  watchedMoonActionsForPlanet,
+  onWatchedMoonAction,
   watchBusyPlanetId,
   myPlanets = [],
   currentCommanderLabel,
@@ -706,6 +710,8 @@ export function OverviewPage({
           loading={watchedPlanetsLoading}
           onPageChange={onWatchedPlanetsPageChange}
           onRefresh={onRefreshWatchedPlanets}
+          moonActionsForPlanet={watchedMoonActionsForPlanet}
+          onMoonAction={onWatchedMoonAction}
           onSelectAlliance={onSelectAlliance}
           onSelectMoon={onSelectMoon}
           onSelectPlanet={onSelectPlanet}
@@ -777,8 +783,9 @@ function MyPlanetsPanel({
                 />
               ) : undefined}
               moonActionSlot={moonActions && moonActions.length > 0 ? (
-                <MyPlanetActionButtons
+                <OverviewMoonActionButtons
                   actions={moonActions}
+                  onInspect={onSelectMoon ? () => onSelectMoon(coords) : undefined}
                   onAction={(action) => onAction?.(action, planet)}
                 />
               ) : undefined}
@@ -817,6 +824,32 @@ function MyPlanetActionButtons({
           {action.label}
         </button>
       ))}
+    </span>
+  );
+}
+
+function OverviewMoonActionButtons({
+  actions,
+  onAction,
+  onInspect,
+}: {
+  actions: GalaxyAction[];
+  onAction: (action: GalaxyAction) => void;
+  onInspect?: (() => void) | undefined;
+}) {
+  return (
+    <span className="flex flex-wrap justify-end gap-1.5">
+      {onInspect ? (
+        <button
+          className="rounded border border-cyan-200/20 bg-cyan-200/10 px-2 py-1 text-xs font-medium text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15"
+          onClick={onInspect}
+          title="Inspect moon"
+          type="button"
+        >
+          Inspect
+        </button>
+      ) : null}
+      <MyPlanetActionButtons actions={actions} onAction={onAction} />
     </span>
   );
 }
@@ -860,6 +893,8 @@ export function overviewBuildingActionNoticeFor(
 function WatchedPlanetsPanel({
   error,
   loading,
+  moonActionsForPlanet,
+  onMoonAction,
   onPageChange,
   onRefresh,
   onSelectAlliance,
@@ -877,6 +912,8 @@ function WatchedPlanetsPanel({
 }: {
   error: string | undefined;
   loading: boolean;
+  moonActionsForPlanet: ((planet: Planet) => GalaxyAction[]) | undefined;
+  onMoonAction: ((action: GalaxyAction, planet: Planet) => void) | undefined;
   onPageChange: ((page: number) => void) | undefined;
   onRefresh: (() => void) | undefined;
   onSelectAlliance: ((allianceId: string) => void) | undefined;
@@ -950,6 +987,7 @@ function WatchedPlanetsPanel({
         {planets.map((planet) => {
           const planetId = planet.occupiedBy?.planetId;
           const coords = { galaxy: planet.galaxy, system: planet.system, position: planet.position };
+          const moonActions = planet.hasMoon ? moonActionsForPlanet?.(planet) ?? [] : [];
           return (
             <WatchablePlanetRow
               allianceLabel={formatGalaxyAllianceIdentityLabel(planet.alliance)}
@@ -957,6 +995,13 @@ function WatchedPlanetsPanel({
               coords={coords}
               key={planetId ?? planet.id}
               meta={watchedPlanetMeta(planet)}
+              moonActionSlot={moonActions.length > 0 ? (
+                <OverviewMoonActionButtons
+                  actions={moonActions}
+                  onInspect={onSelectMoon ? () => onSelectMoon(coords) : undefined}
+                  onAction={(action) => onMoonAction?.(action, planet)}
+                />
+              ) : undefined}
               onInspect={onSelectPlanet ?? (() => undefined)}
               onInspectMoon={onSelectMoon}
               onSelectAlliance={onSelectAlliance}

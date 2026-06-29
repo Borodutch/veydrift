@@ -198,7 +198,7 @@ describe("RankingsPage", () => {
     const moonAction: GalaxyAction = {
       enabled: true,
       kind: "attack",
-      label: "Moon attack",
+      label: "Attack",
       mode: "mission",
       mission: "attack",
       defaultTargetIsMoon: true,
@@ -232,17 +232,59 @@ describe("RankingsPage", () => {
       onMoonAction: (action, planet, rankingEntry) => launched.push({ action, planetId: planet.planetId, wallet: rankingEntry.wallet }),
       onSelectMoon: (coords) => selectedMoons.push(coords),
     });
-    const inspect = buttonWithTitle(table, "Inspect moon");
-    const attack = buttonWithTitle(table, "Moon attack");
+    const moonRow = elementWithTitle(table, "Open moon at [2:44:9]");
+    const attack = buttonWithTitle(table, "Attack");
 
-    expect(visibleText(table)).toContain("Moon Inspect Moon attack");
-    expect(inspect).toBeTruthy();
+    expect(visibleText(table)).toContain("Moon Attack");
+    expect(buttonWithTitle(table, "Inspect moon")).toBeUndefined();
+    expect(moonRow).toBeTruthy();
     expect(attack).toBeTruthy();
-    inspect?.props?.onClick?.();
-    attack?.props?.onClick?.();
+    moonRow?.props?.onClick?.();
+    attack?.props?.onClick?.(clickEvent());
 
     expect(selectedMoons).toEqual([{ galaxy: 2, system: 44, position: 9 }]);
     expect(launched).toEqual([{ action: moonAction, planetId: "7", wallet: entry.wallet }]);
+  });
+
+  test("renders ranked planet action rows and launches planet-targeted actions", () => {
+    const launched: Array<{ action: GalaxyAction; planetId: string; wallet: string }> = [];
+    const planetAction: GalaxyAction = {
+      enabled: true,
+      kind: "transport",
+      label: "Transport",
+      mode: "mission",
+      mission: "transport",
+      ships: {
+        smallCargo: 1,
+        lightFighter: 0,
+        recycler: 0,
+        colonyShip: 0,
+        largeCargo: 0,
+        heavyFighter: 0,
+        cruiser: 0,
+        battleship: 0,
+        bomber: 0,
+        destroyer: 0,
+        deathstar: 0,
+        battlecruiser: 0,
+        reaper: 0,
+        pathfinder: 0,
+      },
+    };
+    const entry = rankingEntry();
+    const table = RankingsTable({
+      entries: [entry],
+      loading: false,
+      onPlanetAction: (action, planet, rankingEntry) => launched.push({ action, planetId: planet.planetId, wallet: rankingEntry.wallet }),
+      planetActionsForPlanet: () => [planetAction],
+    });
+    const transport = buttonWithTitle(table, "Transport");
+
+    expect(visibleText(table)).toContain("Transport");
+    expect(transport).toBeTruthy();
+    transport?.props?.onClick?.(clickEvent());
+
+    expect(launched).toEqual([{ action: planetAction, planetId: "7", wallet: entry.wallet }]);
   });
 
   test("marks the home planet inside the planet list instead of commander subtext", () => {
@@ -791,6 +833,14 @@ function textParts(node: ComponentChildren): string[] {
 
 function buttonWithTitle(node: ComponentChildren, title: string): VNode | undefined {
   return elementNodes(node).find((item) => item.type === "button" && item.props?.title === title);
+}
+
+function elementWithTitle(node: ComponentChildren, title: string): VNode | undefined {
+  return elementNodes(node).find((item) => item.props?.title === title);
+}
+
+function clickEvent(): MouseEvent {
+  return { stopPropagation: () => undefined } as unknown as MouseEvent;
 }
 
 function rowWithWallet(node: ComponentChildren, wallet: string): VNode | undefined {

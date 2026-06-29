@@ -35,6 +35,7 @@ import {
   markFreshStateWrite,
   overviewMyPlanetMoonActionsFor,
   overviewMyPlanetActionsFor,
+  overviewWatchedPlanetMoonActionsFor,
   overviewBuildingReadyToFinishFlag,
   overviewResearchCompletionUnavailableReasonFor,
   preserveActiveResearchQueue,
@@ -81,6 +82,7 @@ import {
 } from "../src/components/InfrastructurePage";
 import { createInitialPlayableState } from "../src/playableMvp";
 import type { RaidTarget } from "../src/raidTargetFinder";
+import type { Planet } from "../src/types";
 import type { ChainDefenseState, ChainInfrastructureState, ChainResearchState, ChainShipyardState, FleetMissionSummary, PlayerQueuesResponse, QueueStateResponse, WalletPlanetsResponse, WalletSettlementResponse } from "../src/walletFlow";
 
 const playableMvpSource = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
@@ -510,11 +512,11 @@ describe("Playable MVP app display helpers", () => {
     });
 
     expect(planetActions).toEqual([]);
-    expect(moonActions).toHaveLength(2);
+    expect(moonActions).toHaveLength(3);
     expect(moonActions[0]).toMatchObject({
       enabled: true,
       kind: "transport",
-      label: "Moon transport",
+      label: "Transport",
       mission: "transport",
       defaultTargetIsMoon: true,
       ships: { smallCargo: 1 },
@@ -522,10 +524,93 @@ describe("Playable MVP app display helpers", () => {
     expect(moonActions[1]).toMatchObject({
       enabled: true,
       kind: "deploy",
-      label: "Moon deploy",
+      label: "Deploy",
       mission: "deploy",
       defaultTargetIsMoon: true,
       ships: { smallCargo: 1 },
+    });
+    expect(moonActions[2]).toMatchObject({
+      enabled: true,
+      kind: "defenseHold",
+      label: "Defend",
+      mission: "defenseHold",
+      defaultTargetIsMoon: true,
+    });
+  });
+
+  test("Overview watched moon rows expose moon-targeted actions", () => {
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const enemy = "0x3333333333333333333333333333333333333333";
+    const selectedShipyardState: ChainShipyardState = {
+      wallet,
+      homePlanetId: "7",
+      planetId: "7",
+      productionAvailable: true,
+      resources: null,
+      fleetLaunchAvailable: true,
+      fleetSlots: { active: 0, limit: 2 },
+      shipyardLevel: 1,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: [
+        { id: 0, count: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+        { id: 1, count: 2, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+      ],
+      queue: null,
+    };
+    const watchedPlanet = (owner: string): Planet => ({
+      alliance: null,
+      debrisField: null,
+      diameter: 12000,
+      fields: 180,
+      galaxy: 2,
+      hasMoon: true,
+      id: "9",
+      image: "/assets/game/style-pass/generated/planets/hot-desert.webp",
+      metalMultiplierBps: 10000,
+      crystalMultiplierBps: 10000,
+      deuteriumMultiplierBps: 10000,
+      moonChance: null,
+      moonName: "Moon",
+      name: "Watched",
+      occupiedBy: {
+        owner,
+        ownerDisplayName: null,
+        planetId: "9",
+      },
+      owner,
+      ownerId: owner,
+      position: 9,
+      resources: { metal: 0, crystal: 0, deuterium: 0, energy: 0 },
+      system: 44,
+      temperature: { min: -20, max: 40 },
+      type: "hot-desert",
+    });
+
+    const ownMoonActions = overviewWatchedPlanetMoonActionsFor({
+      account: wallet,
+      defenseState: null,
+      homePlanetId: "7",
+      planet: watchedPlanet(wallet),
+      shipyardState: selectedShipyardState,
+    });
+    const enemyMoonActions = overviewWatchedPlanetMoonActionsFor({
+      account: wallet,
+      defenseState: null,
+      homePlanetId: "7",
+      planet: watchedPlanet(enemy),
+      shipyardState: selectedShipyardState,
+    });
+
+    expect(ownMoonActions.map((action) => action.label)).toEqual(["Transport", "Deploy", "Defend"]);
+    expect(ownMoonActions.every((action) => action.enabled && action.defaultTargetIsMoon === true)).toBe(true);
+    expect(enemyMoonActions).toHaveLength(1);
+    expect(enemyMoonActions[0]).toMatchObject({
+      enabled: true,
+      kind: "attack",
+      label: "Attack",
+      mission: "attack",
+      defaultTargetIsMoon: true,
     });
   });
 

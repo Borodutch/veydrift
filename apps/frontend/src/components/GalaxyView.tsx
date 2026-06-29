@@ -815,6 +815,7 @@ function GalaxySlot({
   const attackBlockLabel = formatAttackBlockReason(attackProtection);
   const attackRuleLabels = formatAttackRuleLabels(attackProtection);
   const watched = Boolean(planet.occupiedBy?.planetId && watchedPlanetIds.includes(planet.occupiedBy.planetId));
+  const moonActions = galaxyMoonActionsForSlot({ account, actions, planet });
   const meta: PlanetMetaItem[] = [
     { label: formatGalaxyHeatLabel(planet.temperature) },
     { label: `${planet.fields} fields` },
@@ -844,6 +845,17 @@ function GalaxySlot({
       isHome={isHome}
       leadingSlot={<SlotNumber position={position} />}
       meta={meta}
+      moonActionSlot={moonActions.length > 0 ? (
+        <GalaxyMoonActionButtons
+          actions={moonActions}
+          busy={actionState.status === "pending" || Boolean(transactionUnavailableReason)}
+          busyReason={transactionUnavailableReason}
+          coords={coords}
+          onAction={onAction}
+          onInspect={onSelectMoon ? () => onSelectMoon(coords) : undefined}
+          planet={planet}
+        />
+      ) : undefined}
       onInspect={onSelectPlanet}
       onInspectMoon={onSelectMoon}
       onSelectAlliance={onSelectAlliance}
@@ -854,6 +866,111 @@ function GalaxySlot({
       watchBusy={watchBusyPlanetId === planet.occupiedBy?.planetId}
       watched={watched}
     />
+  );
+}
+
+type MoonTargetActionKind = "attack" | "transport" | "deploy" | "defenseHold";
+
+export function galaxyMoonActionsForSlot({
+  account,
+  actions,
+  planet,
+}: {
+  account: string | undefined;
+  actions: GalaxyAction[];
+  planet: Planet;
+}): GalaxyAction[] {
+  if (!planet.hasMoon) return [];
+
+  const actionsByKind = new Map(actions.map((action) => [action.kind, action]));
+  const owner = planet.occupiedBy?.owner ?? planet.ownerId;
+  const isOwnTarget = Boolean(account && owner?.toLowerCase() === account.toLowerCase());
+
+  if (isOwnTarget) {
+    return [
+      moonTargetGalaxyAction(actionsByKind.get("transport"), "transport", "Transport"),
+      moonTargetGalaxyAction(actionsByKind.get("deploy"), "deploy", "Deploy"),
+      moonTargetGalaxyAction(actionsByKind.get("defenseHold"), "defenseHold", "Defend"),
+    ];
+  }
+
+  const defendAction = actionsByKind.get("defenseHold");
+  return defendAction
+    ? [moonTargetGalaxyAction(defendAction, "defenseHold", "Defend")]
+    : [moonTargetGalaxyAction(actionsByKind.get("attack"), "attack", "Attack")];
+}
+
+function moonTargetGalaxyAction(
+  action: GalaxyAction | undefined,
+  kind: MoonTargetActionKind,
+  label: string,
+): GalaxyAction {
+  if (!action) return disabledMoonTargetGalaxyAction(kind, label, `${label} is unavailable for this moon.`);
+  if (!action.enabled) return { ...action, label };
+  if (action.mode !== "mission" || action.kind !== kind) {
+    return disabledMoonTargetGalaxyAction(kind, label, `${label} is unavailable for this moon.`);
+  }
+
+  return {
+    ...action,
+    label,
+    defaultTargetIsMoon: true,
+  };
+}
+
+function disabledMoonTargetGalaxyAction(
+  kind: MoonTargetActionKind,
+  label: string,
+  reason: string,
+): GalaxyAction {
+  return {
+    enabled: false,
+    kind,
+    label,
+    mode: "mission",
+    mission: kind,
+    reason,
+  };
+}
+
+function GalaxyMoonActionButtons({
+  actions,
+  busy,
+  busyReason,
+  coords,
+  onAction,
+  onInspect,
+  planet,
+}: {
+  actions: GalaxyAction[];
+  busy: boolean;
+  busyReason?: string | undefined;
+  coords: Coordinates;
+  onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
+  onInspect?: (() => void) | undefined;
+  planet: Planet;
+}) {
+  return (
+    <div className="flex flex-wrap justify-end gap-1.5">
+      {onInspect ? (
+        <button
+          className="rounded border border-cyan-200/20 bg-cyan-200/10 px-2 py-1 text-xs font-medium text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15"
+          onClick={onInspect}
+          title="Inspect moon"
+          type="button"
+        >
+          Inspect
+        </button>
+      ) : null}
+      <GalaxyActionButtons
+        actions={actions}
+        busy={busy}
+        busyReason={busyReason}
+        coords={coords}
+        onAction={onAction}
+        planet={planet}
+      />
+    </div>
   );
 }
 
