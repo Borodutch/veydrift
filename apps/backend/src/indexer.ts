@@ -1207,7 +1207,8 @@ export class SettlementIndexer {
       status: diplomacyStatusName(row.status_id),
       statusId: row.status_id,
       updatedAt: row.updated_at,
-      initiatedByAllianceId: row.initiated_by_alliance_id,
+      initiatedByAllianceId: row.initiated_by_alliance_id
+        ?? (diplomacyStatusName(row.status_id) === "war" ? row.alliance_id : null),
       alliance: directoryById.get(row.other_alliance_id) ?? null
     }));
   }
@@ -6193,11 +6194,16 @@ export class SettlementIndexer {
     for (const relation of snapshot) {
       this.db.query(`
         INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id)
-        VALUES (?, ?, ?, NULL, NULL)
+        VALUES (?, ?, ?, NULL, ?)
         ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
           status_id = excluded.status_id,
           initiated_by_alliance_id = excluded.initiated_by_alliance_id
-      `).run(relation.allianceId, relation.otherAllianceId, relation.statusId);
+      `).run(
+        relation.allianceId,
+        relation.otherAllianceId,
+        relation.statusId,
+        diplomacyStatusName(relation.statusId) === "war" ? relation.allianceId : null
+      );
     }
     this.touch();
   }
