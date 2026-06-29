@@ -3,6 +3,8 @@ import type { ChainReader } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { emitObservabilityEvent } from "./observability";
 
+const materializerWorkerPath = new URL("./battleReportMaterializerWorker.ts", import.meta.url).pathname;
+
 const noopChainReader: Pick<ChainReader, "listDebrisFieldEvents" | "listMoonChanceReportEvents" | "listSettledPlanetEvents"> = {
   async listDebrisFieldEvents() {
     return [];
@@ -19,6 +21,7 @@ type MissionReportGeneratorSnapshot = {
   enabled: boolean;
   intervalMs: number;
   batchSize: number;
+  concurrency: number;
   lastRunAt: string | null;
   lastError: string | null;
   lastProcessedMissionIds: string[];
@@ -37,7 +40,7 @@ class MissionReportGeneratorService {
 
   constructor(
     private readonly indexer: SettlementIndexer,
-    private readonly options: { intervalMs: number; batchSize: number }
+    private readonly options: { databasePath: string; fromBlock: bigint; intervalMs: number; batchSize: number; concurrency: number }
   ) {}
 
   snapshot(): MissionReportGeneratorSnapshot {
@@ -45,6 +48,7 @@ class MissionReportGeneratorService {
       enabled: true,
       intervalMs: this.options.intervalMs,
       batchSize: this.options.batchSize,
+      concurrency: this.options.concurrency,
       lastRunAt: this.lastRunAt,
       lastError: this.lastError,
       lastProcessedMissionIds: this.lastProcessedMissionIds,
@@ -68,7 +72,7 @@ class MissionReportGeneratorService {
       const missionIds = this.indexer.pendingBattleReportMaterializationMissionIds(this.options.batchSize);
       this.lastProcessedMissionIds = missionIds;
       if (missionIds.length > 0) {
-        const materialized = this.indexer.materializeBattleReportReadModelsForWorker(missionIds, "ingest");
+        const materialized = await this.materializeInParallel(missionIds);
         this.processedCount += missionIds.length;
         this.materializedCount += materialized;
         emitObservabilityEvent({
@@ -86,6 +90,43 @@ class MissionReportGeneratorService {
       this.inFlight = false;
     }
   }
+
+  private async materializeInParallel(missionIds: string[]): Promise<number> {
+    const chunkSize = Math.max(1, Math.ceil(missionIds.length / this.options.concurrency));
+    const batches = chunks(missionIds, chunkSize);
+    const results = await Promise.all(batches.map((batch) => this.runMaterializerWorker(batch)));
+    return results.reduce((total, result) => total + result.materialized, 0);
+  }
+
+  private async runMaterializerWorker(missionIds: string[]): Promise<{ materialized: number }> {
+    const process = Bun.spawn({
+      cmd: [
+        Bun.argv[0] ?? "bun",
+        materializerWorkerPath,
+        "--db",
+        this.options.databasePath,
+        "--from-block",
+        this.options.fromBlock.toString(),
+        "--reason",
+        "ingest",
+        "--missions",
+        missionIds.join(",")
+      ],
+      stdout: "pipe",
+      stderr: "pipe"
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(process.stdout).text(),
+      new Response(process.stderr).text(),
+      process.exited
+    ]);
+    if (stdout.trim()) console.info(stdout.trim());
+    if (stderr.trim()) console.error(stderr.trim());
+    if (exitCode !== 0) {
+      throw new Error(`battle report materializer worker exited with ${exitCode}`);
+    }
+    return { materialized: parsedMaterializedCount(stdout) };
+  }
 }
 
 const loaded = loadBackendConfig();
@@ -100,8 +141,11 @@ const service = new MissionReportGeneratorService(
     runStartupBackfill: false
   }),
   {
+    databasePath: loaded.config.indexDbPath,
+    fromBlock: loaded.config.indexFromBlock,
     intervalMs: positiveInt(process.env.VEYDRIFT_MISSION_REPORT_GENERATOR_INTERVAL_MS, 3_000),
-    batchSize: positiveInt(process.env.VEYDRIFT_MISSION_REPORT_GENERATOR_BATCH_SIZE, 25)
+    batchSize: positiveInt(process.env.VEYDRIFT_MISSION_REPORT_GENERATOR_BATCH_SIZE, 50),
+    concurrency: positiveInt(process.env.VEYDRIFT_MISSION_REPORT_GENERATOR_CONCURRENCY, 4)
   }
 );
 service.start();
@@ -134,4 +178,17 @@ emitObservabilityEvent({
 function positiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function chunks<T>(items: T[], size: number): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    result.push(items.slice(index, index + size));
+  }
+  return result;
+}
+
+function parsedMaterializedCount(output: string): number {
+  const match = output.match(/\bmaterialized=(\d+)\b/);
+  return match ? Number.parseInt(match[1]!, 10) : 0;
 }

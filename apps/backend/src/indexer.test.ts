@@ -5506,6 +5506,47 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("incomplete battle report logs fail materialization instead of starving newer pending reports", async () => {
+    const chainReader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+    const indexer = new SettlementIndexer(chainReader, 100n);
+    await indexer.rebuild();
+
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xincomplete-battle-report",
+      logIndex: "0x0",
+      topics: [combatLossesTopic, topic(700n)],
+      data: abiWords(0n, 0n, 0n, 100n, 50n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x81",
+      transactionHash: "0xcomplete-battle-report",
+      logIndex: "0x0",
+      topics: [attackBattleResolvedTopic, topic(701n), addressTopic(player), topic(7n)],
+      data: abiWords(1n, 1n, 12345n, 50n, 25n, 0n)
+    });
+
+    expect(indexer.pendingBattleReportMaterializationMissionIds(2)).toEqual(["700", "701"]);
+    expect(indexer.materializeBattleReportReadModelsForWorker(["700"], "ingest")).toBe(0);
+    expect(indexer.battleReportMaterializationStatus("700")).toMatchObject({
+      status: "failed",
+      attempts: 1,
+      error: "Battle report logs are incomplete or missing for mission 700."
+    });
+    expect(indexer.pendingBattleReportMaterializationMissionIds(1)).toEqual(["701"]);
+
+    expect(indexer.materializeBattleReportReadModelsForWorker(["701"], "ingest")).toBe(1);
+    expect(indexer.battleReportMaterializationStatus("701")).toMatchObject({
+      status: "ready",
+      attempts: 1,
+      error: null
+    });
+  });
+
   test("battle reports keep defender snapshots when all defenders die in the battle transaction", async () => {
     const chainReader = {
       async listDebrisFieldEvents() { return []; },
