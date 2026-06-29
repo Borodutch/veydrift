@@ -27,10 +27,12 @@ type RankingsPageProps = {
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   moonActionsForPlanet?: ((planet: HighscorePlanet, entry: HighscoreEntry) => GalaxyAction[]) | undefined;
   onMoonAction?: ((action: GalaxyAction, planet: HighscorePlanet, entry: HighscoreEntry) => void) | undefined;
+  onPlanetAction?: ((action: GalaxyAction, planet: HighscorePlanet, entry: HighscoreEntry) => void) | undefined;
   onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
   originCoordinates?: Coordinates | null | undefined;
+  planetActionsForPlanet?: ((planet: HighscorePlanet, entry: HighscoreEntry) => GalaxyAction[]) | undefined;
 };
 
 const categories: Array<{ key: HighscoreCategory; label: string }> = [
@@ -69,7 +71,7 @@ export function rankingsRefreshButtonState(loading: boolean): { disabled: boolea
   return refreshButtonState(loading);
 }
 
-export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, currentWallet, now, moonActionsForPlanet, onMoonAction, onSelectAlliance, onSelectMoon, onSelectPlayer, onSelectPlanet, originCoordinates }: RankingsPageProps) {
+export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, currentWallet, now, moonActionsForPlanet, onMoonAction, onPlanetAction, onSelectAlliance, onSelectMoon, onSelectPlayer, onSelectPlanet, originCoordinates, planetActionsForPlanet }: RankingsPageProps) {
   const [active, setActive] = useState<HighscoreCategory>("total");
   const [data, setData] = useState<HighscoreResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -177,11 +179,13 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
         now={nowMs}
         moonActionsForPlanet={moonActionsForPlanet}
         onMoonAction={onMoonAction}
+        onPlanetAction={onPlanetAction}
         onSelectAlliance={onSelectAlliance}
         onSelectMoon={onSelectMoon}
         onSelectPlayer={onSelectPlayer}
         onSelectPlanet={onSelectPlanet}
         originCoordinates={originCoordinates}
+        planetActionsForPlanet={planetActionsForPlanet}
       />
 
       {pagination ? (
@@ -353,11 +357,13 @@ export function RankingsTable({
   now,
   moonActionsForPlanet,
   onMoonAction,
+  onPlanetAction,
   onSelectAlliance,
   onSelectMoon,
   onSelectPlayer,
   onSelectPlanet,
   originCoordinates,
+  planetActionsForPlanet,
 }: {
   active?: HighscoreCategory;
   currentAllianceId?: string | null | undefined;
@@ -369,11 +375,13 @@ export function RankingsTable({
   now?: number | undefined;
   moonActionsForPlanet?: ((planet: HighscorePlanet, entry: HighscoreEntry) => GalaxyAction[]) | undefined;
   onMoonAction?: ((action: GalaxyAction, planet: HighscorePlanet, entry: HighscoreEntry) => void) | undefined;
+  onPlanetAction?: ((action: GalaxyAction, planet: HighscorePlanet, entry: HighscoreEntry) => void) | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
   originCoordinates?: Coordinates | null | undefined;
+  planetActionsForPlanet?: ((planet: HighscorePlanet, entry: HighscoreEntry) => GalaxyAction[]) | undefined;
 }) {
   return (
     <div className="min-w-0 max-w-full overflow-hidden rounded-md border border-white/10 bg-[#0d1422]/90">
@@ -400,11 +408,13 @@ export function RankingsTable({
             now={now}
             moonActionsForPlanet={moonActionsForPlanet}
             onMoonAction={onMoonAction}
+            onPlanetAction={onPlanetAction}
             onSelectAlliance={onSelectAlliance}
             onSelectMoon={onSelectMoon}
             onSelectPlayer={onSelectPlayer}
             onSelectPlanet={onSelectPlanet}
             originCoordinates={originCoordinates}
+            planetActionsForPlanet={planetActionsForPlanet}
           />
         ))
       )}
@@ -421,11 +431,13 @@ function RankingRow({
   now,
   moonActionsForPlanet,
   onMoonAction,
+  onPlanetAction,
   onSelectAlliance,
   onSelectMoon,
   onSelectPlayer,
   onSelectPlanet,
   originCoordinates,
+  planetActionsForPlanet,
 }: {
   active: HighscoreCategory;
   currentAllianceId?: string | null | undefined;
@@ -435,11 +447,13 @@ function RankingRow({
   now?: number | undefined;
   moonActionsForPlanet?: ((planet: HighscorePlanet, entry: HighscoreEntry) => GalaxyAction[]) | undefined;
   onMoonAction?: ((action: GalaxyAction, planet: HighscorePlanet, entry: HighscoreEntry) => void) | undefined;
+  onPlanetAction?: ((action: GalaxyAction, planet: HighscorePlanet, entry: HighscoreEntry) => void) | undefined;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
   onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onSelectPlanet?: ((coords: Coordinates) => void) | undefined;
   originCoordinates?: Coordinates | null | undefined;
+  planetActionsForPlanet?: ((planet: HighscorePlanet, entry: HighscoreEntry) => GalaxyAction[]) | undefined;
 }) {
   const rankedPlanets = rankingPlanets(entry);
   const canOpenPlayer = Boolean(onSelectPlayer);
@@ -574,6 +588,7 @@ function RankingRow({
             const missionLines = planetMissionSubtext(planet.planetId, entry.wallet, missionsByPlanetId?.get(planet.planetId) ?? [], now ?? Date.now());
             const hasMoon = Boolean(planet.hasMoon || planet.moon?.exists);
             const moonActions = hasMoon ? moonActionsForPlanet?.(planet, entry) ?? [] : [];
+            const planetActions = planetActionsForPlanet?.(planet, entry) ?? [];
             return (
               <div className="space-y-1" key={`tactical-${planet.planetId}`}>
               <button
@@ -623,19 +638,25 @@ function RankingRow({
                   {compactScore(planet.tactical?.combatPower ?? "0")}
                 </span>
               </button>
+              {planetActions.length > 0 ? (
+                <RankingsActionButtons
+                  actions={planetActions}
+                  className="pl-2 sm:pl-[34px]"
+                  onAction={(action) => onPlanetAction?.(action, planet, entry)}
+                />
+              ) : null}
               <PlanetMissionLines className="pl-2 sm:pl-[34px]" planetId={planet.planetId} subtext={missionLines} />
               {hasMoon ? (
                 <PlanetMoonSubsection
                   action={moonActions.length > 0 ? (
-                    <RankingsMoonActionButtons
+                    <RankingsActionButtons
                       actions={moonActions}
                       onAction={(action) => onMoonAction?.(action, planet, entry)}
-                      onInspect={onSelectMoon ? () => onSelectMoon(planet.coordinates) : undefined}
                     />
                   ) : undefined}
                   className="ml-4 sm:ml-[34px]"
                   label="Moon"
-                  onClick={moonActions.length > 0 ? undefined : onSelectMoon ? () => onSelectMoon(planet.coordinates) : undefined}
+                  onClick={onSelectMoon ? () => onSelectMoon(planet.coordinates) : undefined}
                   planetType={planet.archetype}
                   title={`Open moon at ${homePlanetCoordinatesLabel(planet)}`}
                 />
@@ -657,27 +678,17 @@ function RankingsMessage({ label }: { label: string }) {
   );
 }
 
-function RankingsMoonActionButtons({
+function RankingsActionButtons({
   actions,
+  className = "",
   onAction,
-  onInspect,
 }: {
   actions: GalaxyAction[];
+  className?: string | undefined;
   onAction: (action: GalaxyAction) => void;
-  onInspect?: (() => void) | undefined;
 }) {
   return (
-    <span className="flex flex-wrap justify-end gap-1">
-      {onInspect ? (
-        <button
-          className="rounded border border-cyan-200/20 bg-cyan-200/10 px-2 py-1 text-[10px] font-semibold text-cyan-100 transition hover:border-cyan-200/40 hover:bg-cyan-200/15"
-          onClick={onInspect}
-          title="Inspect moon"
-          type="button"
-        >
-          Inspect
-        </button>
-      ) : null}
+    <span className={`flex flex-wrap justify-end gap-1 ${className}`}>
       {actions.map((action) => (
         <button
           className={`rounded border px-2 py-1 text-[10px] font-semibold transition ${
@@ -687,7 +698,8 @@ function RankingsMoonActionButtons({
           }`}
           disabled={!action.enabled}
           key={action.kind}
-          onClick={() => {
+          onClick={(event) => {
+            event.stopPropagation();
             if (action.enabled) onAction(action);
           }}
           title={action.enabled ? action.label : action.reason}
