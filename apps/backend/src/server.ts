@@ -51,6 +51,7 @@ import {
 } from "./indexer";
 import { RandomnessCommitterService } from "./randomnessCommitter";
 import { MissionResolutionService } from "./missionResolution";
+import { logApiRequestEvent } from "./observability";
 import {
   validatePlayerDescription,
   validatePlayerDisplayName,
@@ -1498,15 +1499,7 @@ function logApiRequest(
   durationMs: number,
   error?: unknown
 ): void {
-  const entry = {
-    durationMs: Math.round(durationMs),
-    method: request.method,
-    path: `${url.pathname}${url.search}`,
-    status,
-    workerRole,
-    ...(error ? { error: reasonText(error) } : {})
-  };
-  console.info("veydrift-api-request", JSON.stringify(entry));
+  logApiRequestEvent(request, url, workerRole, status, durationMs, error ? reasonText(error) : undefined);
 }
 
 function allowedCorsOrigin(request: Request): string {

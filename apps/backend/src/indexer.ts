@@ -120,6 +120,7 @@ import type { HighscoreEntry } from "./highscores";
 import { playerFallbackName, type PlayerProfile } from "./playerProfiles";
 import { planetArchetypeForTemperature } from "./universe";
 import { nowSeconds, settleQueueAsOfNow, withMissionAsOfNow } from "./asOfNow";
+import { emitObservabilityEvent } from "./observability";
 
 export type IndexedDebrisFieldEvent = DebrisFieldEvent & Pick<SettledPlanetEvent, "galaxy" | "system" | "position">;
 export type IndexedDebrisTarget = IndexedDebrisFieldEvent & {
@@ -3437,7 +3438,15 @@ export class SettlementIndexer {
         }
       })();
       this.touchBattleReportReadModel();
-      console.info(`[battle-report-materializer] ${reason} mission=${missionId} status=ready durationMs=${durationMs}`);
+      emitObservabilityEvent({
+        kind: "battle_report_materialization",
+        component: "battle-report-materializer",
+        reason,
+        missionId,
+        status: "ready",
+        durationMs,
+        blockNumber: report.blockNumber
+      });
       return previous.status !== "ready";
     } catch (error) {
       const durationMs = Math.max(0, Math.round(performance.now() - started));
@@ -3455,7 +3464,15 @@ export class SettlementIndexer {
           updated_at = excluded.updated_at
       `).run(missionId, message, durationMs, new Date().toISOString());
       this.touchBattleReportReadModel();
-      console.warn(`[battle-report-materializer] ${reason} mission=${missionId} status=failed durationMs=${durationMs}: ${message}`);
+      emitObservabilityEvent({
+        kind: "battle_report_materialization",
+        component: "battle-report-materializer",
+        reason,
+        missionId,
+        status: "failed",
+        durationMs,
+        error: message
+      }, "warn");
       return false;
     }
   }

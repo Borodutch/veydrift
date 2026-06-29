@@ -1,6 +1,7 @@
 import { loadBackendConfig, safeConfigSummary } from "./config";
 import type { ChainReader } from "./evm";
 import { SettlementIndexer } from "./indexer";
+import { emitObservabilityEvent } from "./observability";
 
 const noopChainReader: Pick<ChainReader, "listDebrisFieldEvents" | "listMoonChanceReportEvents" | "listSettledPlanetEvents"> = {
   async listDebrisFieldEvents() {
@@ -70,7 +71,12 @@ class MissionReportGeneratorService {
         const materialized = this.indexer.materializeBattleReportReadModelsForWorker(missionIds, "ingest");
         this.processedCount += missionIds.length;
         this.materializedCount += materialized;
-        console.info(`[mission-report-generator] processed=${missionIds.length} materialized=${materialized}`);
+        emitObservabilityEvent({
+          kind: "mission_report_generator_tick",
+          component: "mission-report-generator",
+          processed: missionIds.length,
+          materialized
+        });
       }
       this.lastError = null;
     } catch (error) {
@@ -118,7 +124,12 @@ Bun.serve({
   }
 });
 
-console.log(`[mission-report-generator] listening on http://localhost:${port}`);
+emitObservabilityEvent({
+  kind: "service_start",
+  component: "mission-report-generator",
+  message: `[mission-report-generator] listening on http://localhost:${port}`,
+  port
+});
 
 function positiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
