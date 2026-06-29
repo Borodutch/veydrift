@@ -129,7 +129,7 @@ export function WatchablePlanetRow({
           <PlanetMoonSubsection
             action={moonActionSlot}
             label={planet.moonName ?? "Moon"}
-            onClick={moonActionSlot ? undefined : onInspectMoon ? () => onInspectMoon(coords) : undefined}
+            onClick={onInspectMoon ? () => onInspectMoon(coords) : undefined}
             planetType={planet.type}
             title={`Open ${planet.moonName ?? "Moon"} at [${coords.galaxy}:${coords.system}:${coords.position}]`}
           />

@@ -1,4 +1,4 @@
-import { ArrowLeftRight, Eye, Flame, Orbit, Rocket, Shield } from "lucide-preact";
+import { ArrowLeftRight, Crosshair, Eye, Flame, Orbit, Rocket, Shield } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import { useState } from "preact/hooks";
 import type { Resources } from "../playableMvp";
@@ -63,7 +63,7 @@ interface MoonPageProps {
 
 export type MoonOverviewAction = {
   disabledReason?: string | undefined;
-  kind: "inspect" | "transport" | "deploy" | "defend";
+  kind: "inspect" | "attack" | "transport" | "deploy" | "defend";
   label: string;
   onClick?: (() => void) | undefined;
 };
@@ -484,11 +484,11 @@ function MoonSystemsPanel({
   );
 }
 
-function MoonActionStrip({ actions }: { actions?: MoonOverviewAction[] | undefined }) {
+export function MoonActionStrip({ actions }: { actions?: MoonOverviewAction[] | undefined }) {
   if (!actions?.length) return null;
 
   return (
-    <div aria-label="Moon actions" className="grid gap-2 sm:grid-cols-4">
+    <div aria-label="Moon actions" className="grid gap-2 sm:grid-cols-5">
       {actions.map((action) => {
         const Icon = moonActionIcon(action.kind);
         const disabled = Boolean(action.disabledReason || !action.onClick);
@@ -512,6 +512,7 @@ function MoonActionStrip({ actions }: { actions?: MoonOverviewAction[] | undefin
 
 function moonActionIcon(kind: MoonOverviewAction["kind"]): LucideIcon {
   if (kind === "inspect") return Eye;
+  if (kind === "attack") return Crosshair;
   if (kind === "transport") return ArrowLeftRight;
   if (kind === "deploy") return Rocket;
   return Shield;

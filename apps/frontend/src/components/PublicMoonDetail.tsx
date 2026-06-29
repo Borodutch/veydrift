@@ -1,26 +1,46 @@
 import { useEffect, useState } from "preact/hooks";
 import type { Coordinates, Planet } from "../types";
 import { formatPlanetType, planetsFromSystemResponse } from "../data/mockUniverse";
+import { galaxyActionsForSlot, type GalaxyAction } from "../galaxyActions";
 import { defenseCatalog, shipCatalog } from "../playableMvp";
 import { playableApiUrl } from "../runtimeConfig";
+import { formatAttackBlockReason, type AttackProtectionStatus, type GalaxyActionState } from "./GalaxyView";
 import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
-import { shortAddress } from "../walletFlow";
+import { shortAddress, type ChainDefenseState, type ChainShipyardState } from "../walletFlow";
+import { MoonActionStrip, type MoonOverviewAction } from "./MoonPage";
 import { MoonImage } from "./PlanetMoonIndicator";
 import { PlanetImageSkeleton } from "./PlanetImageSkeleton";
 
 type PublicMoonDetailProps = {
+  account?: string | undefined;
+  actionState?: GalaxyActionState | undefined;
   apiBaseUrl?: string | undefined;
   coords: Coordinates;
+  defenseState?: ChainDefenseState | null | undefined;
+  homeCoords?: Coordinates | undefined;
+  homePlanetId?: string | null | undefined;
+  onAction?: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
   onBack: () => void;
+  shipyardState?: ChainShipyardState | null | undefined;
+  transactionUnavailableReason?: string | undefined;
 };
 
 export function PublicMoonDetail({
+  account,
+  actionState = { status: "idle" },
   apiBaseUrl = playableApiUrl,
   coords,
+  defenseState = null,
+  homeCoords,
+  homePlanetId,
+  onAction,
   onBack,
+  shipyardState = null,
+  transactionUnavailableReason,
 }: PublicMoonDetailProps) {
   const [planet, setPlanet] = useState<Planet | null>(null);
   const [source, setSource] = useState<"api" | "error" | "loading">("loading");
+  const [attackProtection, setAttackProtection] = useState<AttackProtectionStatus | null>(null);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -49,7 +69,52 @@ export function PublicMoonDetail({
     return () => abortController.abort();
   }, [apiBaseUrl, coords.galaxy, coords.position, coords.system]);
 
+  useEffect(() => {
+    const targetPlanetId = planet?.occupiedBy?.planetId;
+    const isHome = planet ? sameCoordinates(homeCoords, planet) : false;
+    if (!account || !targetPlanetId || isHome) {
+      setAttackProtection(null);
+      return;
+    }
+
+    const abortController = new AbortController();
+    fetch(`${apiBaseUrl.replace(/\/+$/, "")}/wallet/${account}/attack-protection?targetPlanetId=${targetPlanetId}`, {
+      headers: { accept: "application/json" },
+      signal: abortController.signal,
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Attack protection request failed with ${response.status}`);
+        return response.json() as Promise<AttackProtectionStatus>;
+      })
+      .then((status) => {
+        if (!abortController.signal.aborted) setAttackProtection(status);
+      })
+      .catch((error) => {
+        if (!abortController.signal.aborted) {
+          console.error(error);
+          setAttackProtection(null);
+        }
+      });
+
+    return () => abortController.abort();
+  }, [account, apiBaseUrl, homeCoords?.galaxy, homeCoords?.position, homeCoords?.system, planet?.occupiedBy?.planetId]);
+
   const coordinateText = `[${coords.galaxy}:${coords.system}:${coords.position}]`;
+  const actions = planet?.hasMoon
+      ? publicMoonActions({
+        account,
+        actionState,
+        attackProtection,
+        coords,
+        defenseState,
+        homeCoords,
+        homePlanetId,
+        onAction,
+        planet,
+        shipyardState,
+        transactionUnavailableReason,
+      })
+    : [];
 
   if (source === "loading" && !planet) {
     return (
@@ -120,6 +185,20 @@ export function PublicMoonDetail({
               <span className="text-slate-700">|</span>
               <span>{formatPlanetType(planet.type)} parent</span>
             </div>
+            <div className="mt-4">
+              <MoonActionStrip actions={actions} />
+            </div>
+            {actionState.status !== "idle" ? (
+              <div className={`mt-3 rounded border px-3 py-2 text-xs ${
+                actionState.status === "error"
+                  ? "border-red-300/30 bg-red-500/10 text-red-100"
+                  : actionState.status === "success"
+                    ? "border-emerald-300/30 bg-emerald-400/10 text-emerald-100"
+                    : "border-signal/25 bg-signal/10 text-signal"
+              }`}>
+                {actionState.label}
+              </div>
+            ) : null}
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -254,6 +333,134 @@ function moonQueueRow(
     : queue.quantity === undefined ? "" : ` x${queue.quantity.toLocaleString("en-US")}`;
   const readyAt = queue.readyAt ? ` ready ${formatUserTimestamp(timestampToMs(queue.readyAt))}` : "";
   return { label, value: `${item?.label ?? queue.kind ?? "Queue item"}${quantity}${readyAt}` };
+}
+
+export function publicMoonActions({
+  account,
+  actionState,
+  attackProtection,
+  coords,
+  defenseState,
+  homeCoords,
+  homePlanetId,
+  onAction,
+  planet,
+  shipyardState,
+  transactionUnavailableReason,
+}: {
+  account: string | undefined;
+  actionState: GalaxyActionState;
+  attackProtection: AttackProtectionStatus | null;
+  coords: Coordinates;
+  defenseState: ChainDefenseState | null | undefined;
+  homeCoords: Coordinates | undefined;
+  homePlanetId: string | null | undefined;
+  onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
+  planet: Planet;
+  shipyardState: ChainShipyardState | null;
+  transactionUnavailableReason?: string | undefined;
+}): MoonOverviewAction[] {
+  const targetActions = galaxyActionsForSlot({
+    account,
+    attackProtection,
+    defenseState,
+    homePlanetId,
+    isOrigin: false,
+    planet,
+    shipyardState,
+  });
+  const actionsByKind = new Map(targetActions.map((action) => [action.kind, action]));
+  const pendingReason = actionState.status === "pending" ? actionState.label : undefined;
+  const unavailableReason = pendingReason ?? transactionUnavailableReason;
+
+  return [
+    {
+      disabledReason: "Viewing this moon.",
+      kind: "inspect",
+      label: "Inspect",
+    },
+    moonMissionAction({
+      action: actionsByKind.get("attack"),
+      coords,
+      fallbackReason: attackMoonUnavailableReason(attackProtection),
+      kind: "attack",
+      label: "Attack",
+      onAction,
+      planet,
+      unavailableReason,
+    }),
+    moonMissionAction({
+      action: actionsByKind.get("transport"),
+      coords,
+      fallbackReason: "Transport to this moon is unavailable.",
+      kind: "transport",
+      label: "Transport",
+      onAction,
+      planet,
+      unavailableReason,
+    }),
+    moonMissionAction({
+      action: actionsByKind.get("deploy"),
+      coords,
+      fallbackReason: "Deploy to this moon is unavailable.",
+      kind: "deploy",
+      label: "Deploy",
+      onAction,
+      planet,
+      unavailableReason,
+    }),
+    {
+      disabledReason: "Moon defense stationing is not available in the current mission contract.",
+      kind: "defend",
+      label: "Defend",
+    },
+  ];
+}
+
+function moonMissionAction({
+  action,
+  coords,
+  fallbackReason,
+  kind,
+  label,
+  onAction,
+  planet,
+  unavailableReason,
+}: {
+  action: GalaxyAction | undefined;
+  coords: Coordinates;
+  fallbackReason: string;
+  kind: Extract<MoonOverviewAction["kind"], "attack" | "transport" | "deploy">;
+  label: string;
+  onAction: ((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => void) | undefined;
+  planet: Planet;
+  unavailableReason?: string | undefined;
+}): MoonOverviewAction {
+  if (!action) {
+    return { disabledReason: unavailableReason ?? fallbackReason, kind, label };
+  }
+  if (!action.enabled) {
+    return { disabledReason: unavailableReason ?? action.reason, kind, label: action.label };
+  }
+  if (action.mode !== "mission") {
+    return { disabledReason: unavailableReason ?? fallbackReason, kind, label: action.label };
+  }
+  if (unavailableReason || !onAction) {
+    return { disabledReason: unavailableReason ?? "Mission actions unavailable.", kind, label: action.label };
+  }
+  return {
+    kind,
+    label: action.label,
+    onClick: () => onAction({ ...action, defaultTargetIsMoon: true }, planet, coords),
+  };
+}
+
+function attackMoonUnavailableReason(attackProtection: AttackProtectionStatus | null): string {
+  return formatAttackBlockReason(attackProtection ?? undefined) ?? "Attack is unavailable for this moon.";
+}
+
+function sameCoordinates(left: Coordinates | undefined, right: Coordinates | undefined): boolean {
+  return Boolean(left && right && left.galaxy === right.galaxy && left.system === right.system && left.position === right.position);
 }
 
 function resourceValue(value: string | null | undefined): string {

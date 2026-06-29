@@ -279,7 +279,15 @@ export function PlanetDetail({
               src={planet.image}
             />
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_80%,rgba(5,7,13,0.6),transparent_60%)]" />
-            {planet.hasMoon ? <PlanetMoonIndicator className="right-3 top-3" planetType={planet.type} /> : null}
+            {planet.hasMoon ? (
+              <PlanetMoonIndicator
+                className="right-3 top-3"
+                label={`Open ${planet.moonName ?? "Moon"}`}
+                onClick={onSelectMoon ? () => onSelectMoon({ galaxy: planet.galaxy, system: planet.system, position: planet.position }) : undefined}
+                planetType={planet.type}
+                title={`Open ${planet.moonName ?? "Moon"} at [${planet.galaxy}:${planet.system}:${planet.position}]`}
+              />
+            ) : null}
             {isHome ? (
               <span className="absolute left-3 top-3 rounded border border-cyan-300/30 bg-cyan-300/15 px-2 py-1 text-xs font-semibold uppercase text-cyan-100">
                 Home Planet

@@ -115,7 +115,7 @@ export function MissionRouteCell({
 function RouteEndpoint({ align, endpoint, nav }: { align: "left" | "right"; endpoint: MissionEndpoint; nav: RouteNavigation }) {
   return (
     <div className={`flex min-w-0 max-w-[7.5rem] items-center gap-2 sm:max-w-[11rem] ${align === "right" ? "flex-row-reverse text-right" : ""}`}>
-      <EndpointPlanetImage endpoint={endpoint} />
+      <EndpointPlanetImage endpoint={endpoint} nav={nav} />
       <div className="min-w-0">
         <EndpointName endpoint={endpoint} nav={nav} />
         <EndpointCommander endpoint={endpoint} nav={nav} />
@@ -127,11 +127,23 @@ function RouteEndpoint({ align, endpoint, nav }: { align: "left" | "right"; endp
 // Real planet art for an endpoint (the same asset set the Galaxy view uses for thumbnails — VEY-67).
 // Falls back to a subtle ringed placeholder only when no planet can be resolved (e.g. a
 // battle-report attacker without coordinates).
-function EndpointPlanetImage({ endpoint }: { endpoint: MissionEndpoint }) {
+function EndpointPlanetImage({ endpoint, nav }: { endpoint: MissionEndpoint; nav: RouteNavigation }) {
   const frameClass = "relative h-8 w-8 shrink-0 overflow-hidden rounded-full border border-white/15 bg-black/30 sm:h-9 sm:w-9";
   if (!endpoint.archetype) {
     return <span aria-hidden="true" className={`${frameClass} flex items-center justify-center`}><span className="h-3 w-3 rounded-full border border-white/25" /></span>;
   }
+  const moonLabel = endpoint.coordinates ? `Open moon at ${endpoint.coordinates}` : "Open moon";
+  const moonIndicator = endpoint.hasMoon && endpoint.coords ? (
+    <PlanetMoonIndicator
+      compact
+      href={nav.onSelectMoon ? undefined : buildInspectPath({ coords: endpoint.coords, kind: "moon" })}
+      label={moonLabel}
+      onClick={nav.onSelectMoon ? () => nav.onSelectMoon?.(endpoint.coords!) : undefined}
+      planetType={endpoint.archetype}
+      title={moonLabel}
+    />
+  ) : null;
+
   return (
     <span className={frameClass}>
       <img
@@ -141,7 +153,7 @@ function EndpointPlanetImage({ endpoint }: { endpoint: MissionEndpoint }) {
         loading="lazy"
         src={planetImageForType(endpoint.archetype)}
       />
-      {endpoint.hasMoon ? <PlanetMoonIndicator compact planetType={endpoint.archetype} /> : null}
+      {moonIndicator}
     </span>
   );
 }

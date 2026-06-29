@@ -361,7 +361,15 @@ export function OverviewPage({
         ) : null}
         <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-r from-[#101624]/80 via-[#101624]/45 to-[#101624]/10" />
         <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-t from-[#101624]/70 via-[#101624]/10 to-transparent" />
-        {homePlanet?.hasMoon ? <PlanetMoonIndicator className="right-3 top-3" planetType={homePlanet.type} /> : null}
+        {homePlanet?.hasMoon ? (
+          <PlanetMoonIndicator
+            className="right-3 top-3"
+            label={`Open ${homePlanet.moonName ?? "Moon"}`}
+            onClick={onSelectMoon ? () => onSelectMoon({ galaxy: homePlanet.galaxy, system: homePlanet.system, position: homePlanet.position }) : undefined}
+            planetType={homePlanet.type}
+            title={`Open ${homePlanet.moonName ?? "Moon"} at [${homePlanet.galaxy}:${homePlanet.system}:${homePlanet.position}]`}
+          />
+        ) : null}
         <div className="relative grid min-h-[8.75rem] content-end gap-3 p-3 sm:min-h-[9.5rem] sm:p-4">
           <div className="grid max-w-[36rem] min-w-0 gap-2">
             <div className="min-w-0">
