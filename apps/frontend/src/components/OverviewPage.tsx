@@ -761,6 +761,7 @@ function MyPlanetsPanel({
               onInspect={onSelectPlanet ?? (() => undefined)}
               planet={rowPlanet}
               showIdentity={false}
+              showMoonIndicator={false}
               actionSlot={(
                 <MyPlanetActionButtons
                   actions={actions}
@@ -945,6 +946,7 @@ function WatchedPlanetsPanel({
               onSelectPlayer={onSelectPlayer}
               onToggleWatch={planetId ? () => onToggleWatchPlanet?.(planetId, watchedPlanetIds.includes(planetId)) : undefined}
               planet={planet}
+              showMoonIndicator={false}
               watchBusy={watchBusyPlanetId === planetId}
               watched={Boolean(planetId && watchedPlanetIds.includes(planetId))}
             />
