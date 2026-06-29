@@ -25,6 +25,7 @@ export type MissionEndpoint = {
   commanderWallet: string | null;
   coordinates: string | null;
   coords: Coordinates | null;
+  bodyKind: "planet" | "moon";
   hasMoon: boolean;
   name: string;
 };
@@ -67,6 +68,7 @@ export function missionProgressPercent(mission: FleetMissionSummary, now: number
 // these (Mission Detail); when omitted, they render as hash links (Mission Control).
 type RouteNavigation = {
   onSelectCoordinates?: ((coords: Coordinates) => void) | undefined;
+  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
 };
 
@@ -78,6 +80,7 @@ type RouteNavigation = {
 export function MissionRouteCell({
   direction,
   onSelectCoordinates,
+  onSelectMoon,
   onSelectPlayer,
   origin,
   progressPercent,
@@ -90,7 +93,7 @@ export function MissionRouteCell({
   subtext?: string | undefined;
   target: MissionEndpoint;
 } & RouteNavigation) {
-  const nav: RouteNavigation = { onSelectCoordinates, onSelectPlayer };
+  const nav: RouteNavigation = { onSelectCoordinates, onSelectMoon, onSelectPlayer };
   return (
     <div className="min-w-0">
       {/* Origin hugs the left edge, target hugs the right edge, and the directional arrow spans the
@@ -145,10 +148,21 @@ function EndpointPlanetImage({ endpoint }: { endpoint: MissionEndpoint }) {
 
 function EndpointName({ endpoint, nav }: { endpoint: MissionEndpoint; nav: RouteNavigation }) {
   const linkClass = "block min-w-0 truncate rounded font-medium text-cyan-100 underline-offset-2 transition hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-300/50";
-  const title = endpoint.coordinates ? `Open ${endpoint.coordinates} in Galaxy` : undefined;
+  const title = endpoint.coordinates
+    ? endpoint.bodyKind === "moon"
+      ? `Open moon at ${endpoint.coordinates}`
+      : `Open ${endpoint.coordinates} in Galaxy`
+    : undefined;
   if (endpoint.coords) {
     const coords = endpoint.coords;
     // Mission Detail wires in-app navigation through a callback; Mission Control links via clean paths.
+    if (endpoint.bodyKind === "moon" && nav.onSelectMoon) {
+      return (
+        <button className={`${linkClass} text-left`} onClick={() => nav.onSelectMoon?.(coords)} title={title} type="button">
+          {endpoint.name}
+        </button>
+      );
+    }
     if (nav.onSelectCoordinates) {
       return (
         <button className={`${linkClass} text-left`} onClick={() => nav.onSelectCoordinates?.(coords)} title={title} type="button">
@@ -157,7 +171,7 @@ function EndpointName({ endpoint, nav }: { endpoint: MissionEndpoint; nav: Route
       );
     }
     return (
-      <a className={linkClass} href={buildInspectPath({ coords, kind: "planet" })} title={title}>
+      <a className={linkClass} href={buildInspectPath({ coords, kind: endpoint.bodyKind })} title={title}>
         {endpoint.name}
       </a>
     );
@@ -284,6 +298,7 @@ export function missionEndpoint(
   const commanderDisplay = ref?.ownerDisplayName?.trim() || identity?.ownerDisplayName?.trim() || null;
   return {
     archetype: endpointArchetype(ref?.archetype, identity?.archetype, coords),
+    bodyKind: isMoon ? "moon" : "planet",
     commanderName: commanderDisplay || (commanderWallet ? shortAddress(commanderWallet) : null),
     commanderWallet,
     coordinates,
@@ -306,6 +321,7 @@ export function endpointFromPlanetId(planetId: string, lookup: ReadonlyMap<strin
   const commanderDisplay = identity?.ownerDisplayName?.trim() || null;
   return {
     archetype: endpointArchetype(undefined, identity?.archetype, coords),
+    bodyKind: "planet",
     commanderName: commanderDisplay || (commanderWallet ? shortAddress(commanderWallet) : null),
     commanderWallet,
     coordinates,

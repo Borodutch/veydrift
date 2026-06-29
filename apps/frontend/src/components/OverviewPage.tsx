@@ -98,6 +98,7 @@ interface OverviewPageProps {
   researchAction?: OverviewResearchActionState | undefined;
   onNavigate: (page: "infrastructure" | "defenses" | "research" | "shipyard" | "mission-control") => void;
   onSelectAlliance?: ((allianceId: string) => void) | undefined;
+  onSelectMoon?: ((coords: { galaxy: number; system: number; position: number }) => void) | undefined;
   onSelectPlanet?: ((coords: { galaxy: number; system: number; position: number }) => void) | undefined;
   onSelectPlayer?: ((wallet: string) => void) | undefined;
   onToggleWatchPlanet?: ((planetId: string, watched: boolean) => void) | undefined;
@@ -143,6 +144,7 @@ export function OverviewPage({
   researchAction = { status: "idle" },
   onNavigate,
   onSelectAlliance,
+  onSelectMoon,
   onSelectPlanet,
   onSelectPlayer,
   onToggleWatchPlanet,
@@ -688,6 +690,7 @@ export function OverviewPage({
           commanderLabel={currentCommanderLabel?.trim() || "You"}
           myPlanets={myPlanets}
           onAction={onMyPlanetAction}
+          onSelectMoon={onSelectMoon}
           onSelectPlanet={onSelectPlanet}
           selectedPlanetId={selectedPlanetId ?? onChainSettlement?.homePlanetId ?? onChainSettlement?.planet?.planetId}
         />
@@ -704,6 +707,7 @@ export function OverviewPage({
           onPageChange={onWatchedPlanetsPageChange}
           onRefresh={onRefreshWatchedPlanets}
           onSelectAlliance={onSelectAlliance}
+          onSelectMoon={onSelectMoon}
           onSelectPlanet={onSelectPlanet}
           onSelectPlayer={onSelectPlayer}
           onToggleWatchPlanet={onToggleWatchPlanet}
@@ -731,12 +735,14 @@ function MyPlanetsPanel({
   commanderLabel,
   myPlanets,
   onAction,
+  onSelectMoon,
   onSelectPlanet,
   selectedPlanetId,
 }: {
   commanderLabel: string;
   myPlanets: readonly OverviewMyPlanetActionGroup[];
   onAction: ((action: GalaxyAction, planet: ManagedPlanetResponse) => void) | undefined;
+  onSelectMoon: ((coords: Coordinates) => void) | undefined;
   onSelectPlanet: ((coords: Coordinates) => void) | undefined;
   selectedPlanetId: string | undefined;
 }) {
@@ -760,6 +766,7 @@ function MyPlanetsPanel({
               key={planet.planetId}
               meta={myPlanetMeta(planet)}
               onInspect={onSelectPlanet ?? (() => undefined)}
+              onInspectMoon={onSelectMoon}
               planet={rowPlanet}
               showIdentity={false}
               showMoonIndicator={false}
@@ -856,6 +863,7 @@ function WatchedPlanetsPanel({
   onPageChange,
   onRefresh,
   onSelectAlliance,
+  onSelectMoon,
   onSelectPlanet,
   onSelectPlayer,
   onToggleWatchPlanet,
@@ -872,6 +880,7 @@ function WatchedPlanetsPanel({
   onPageChange: ((page: number) => void) | undefined;
   onRefresh: (() => void) | undefined;
   onSelectAlliance: ((allianceId: string) => void) | undefined;
+  onSelectMoon: ((coords: { galaxy: number; system: number; position: number }) => void) | undefined;
   onSelectPlanet: ((coords: { galaxy: number; system: number; position: number }) => void) | undefined;
   onSelectPlayer: ((wallet: string) => void) | undefined;
   onToggleWatchPlanet: ((planetId: string, watched: boolean) => void) | undefined;
@@ -949,6 +958,7 @@ function WatchedPlanetsPanel({
               key={planetId ?? planet.id}
               meta={watchedPlanetMeta(planet)}
               onInspect={onSelectPlanet ?? (() => undefined)}
+              onInspectMoon={onSelectMoon}
               onSelectAlliance={onSelectAlliance}
               onSelectPlayer={onSelectPlayer}
               onToggleWatch={planetId ? () => onToggleWatchPlanet?.(planetId, watchedPlanetIds.includes(planetId)) : undefined}

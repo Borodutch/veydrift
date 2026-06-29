@@ -44,6 +44,7 @@ interface MissionDetailPageProps {
   onRecall: (missionId: string) => void;
   onRetry: () => void;
   onSelectCoordinates: (coords: Coordinates) => void;
+  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer: (wallet: string) => void;
 }
 
@@ -56,11 +57,13 @@ export function MissionDetailPage({
   loading,
   missionId,
   now,
-  onBack,  onShareReport,
+  onBack,
+  onShareReport,
   onCounterplay,
   onRecall,
   onRetry,
   onSelectCoordinates,
+  onSelectMoon,
   onSelectPlayer,
 }: MissionDetailPageProps) {
   const mission = detail?.mission;
@@ -133,6 +136,7 @@ export function MissionDetailPage({
             mission={mission}
             now={now}
             onSelectCoordinates={onSelectCoordinates}
+            onSelectMoon={onSelectMoon}
             onSelectPlayer={onSelectPlayer}
           />
           <TargetCombatIntelPanel intel={detail?.targetCombatIntel} mission={mission} now={now} />
@@ -259,6 +263,7 @@ function MissionFacts({
   mission,
   now,
   onSelectCoordinates,
+  onSelectMoon,
   onSelectPlayer,
   reportOutcome,
 }: {
@@ -267,6 +272,7 @@ function MissionFacts({
   mission: FleetMissionSummary;
   now: number;
   onSelectCoordinates: (coords: Coordinates) => void;
+  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer: (wallet: string) => void;
   reportOutcome?: BattleReport["outcome"] | undefined;
 }) {
@@ -279,6 +285,7 @@ function MissionFacts({
         mission={mission}
         now={now}
         onSelectCoordinates={onSelectCoordinates}
+        onSelectMoon={onSelectMoon}
         onSelectPlayer={onSelectPlayer}
         reportOutcome={reportOutcome}
       />
@@ -306,8 +313,8 @@ function MissionFacts({
 // matches Mission Control exactly — the same origin -> target layout, directional progress-filled
 // arrow, real planet art, clickable planet name, and clickable commander. The detail page keeps its
 // per-leg timing (return beside the origin, arrival beside the target) as a strip beneath the shared
-// hero. Navigation stays in-app: the cell calls back through `onSelectCoordinates`/`onSelectPlayer`
-// rather than emitting hash links. The Mission ID field is intentionally dropped (it shows in the
+// hero. Navigation stays in-app: the cell calls back through
+// `onSelectCoordinates`/`onSelectMoon`/`onSelectPlayer` rather than emitting hash links. The Mission ID field is intentionally dropped (it shows in the
 // page header).
 const EMPTY_PLANET_LOOKUP: ReadonlyMap<string, MissionPlanetIdentity> = new Map();
 
@@ -315,12 +322,14 @@ function MissionRoute({
   mission,
   now,
   onSelectCoordinates,
+  onSelectMoon,
   onSelectPlayer,
   reportOutcome,
 }: {
   mission: FleetMissionSummary;
   now: number;
   onSelectCoordinates: (coords: Coordinates) => void;
+  onSelectMoon?: ((coords: Coordinates) => void) | undefined;
   onSelectPlayer: (wallet: string) => void;
   reportOutcome?: BattleReport["outcome"] | undefined;
 }) {
@@ -341,6 +350,7 @@ function MissionRoute({
       <MissionRouteCell
         direction={missionRouteLeg(mission.status)}
         onSelectCoordinates={onSelectCoordinates}
+        onSelectMoon={onSelectMoon}
         onSelectPlayer={onSelectPlayer}
         origin={origin}
         progressPercent={missionProgressPercent(mission, now)}

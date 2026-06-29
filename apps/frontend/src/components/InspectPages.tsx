@@ -55,6 +55,7 @@ export function PlayerInspectPage({
   currentWallet,
   onBack,
   onOpenAlliance,
+  onSelectMoon,
   onSelectPlanet,
   originCoords,
   wallet,
@@ -63,6 +64,7 @@ export function PlayerInspectPage({
   currentWallet?: string | undefined;
   onBack: () => void;
   onOpenAlliance: (allianceId: string) => void;
+  onSelectMoon: (coords: Coordinates) => void;
   onSelectPlanet: (coords: Coordinates) => void;
   originCoords?: Coordinates | undefined;
   wallet: string;
@@ -150,6 +152,7 @@ export function PlayerInspectPage({
                   <PlayerPlanetRow
                     attackProtection={state.highscore?.attackProtection ?? null}
                     key={planet.planetId}
+                    onSelectMoon={onSelectMoon}
                     onSelectPlanet={onSelectPlanet}
                     originCoords={originCoords}
                     planet={planet}
@@ -210,11 +213,13 @@ export const isSafeProfileDescriptionUrl = isSafeDescriptionUrl;
 
 function PlayerPlanetRow({
   attackProtection,
+  onSelectMoon,
   onSelectPlanet,
   originCoords,
   planet,
 }: {
   attackProtection: HighscoreEntry["attackProtection"] | null;
+  onSelectMoon: (coords: Coordinates) => void;
   onSelectPlanet: (coords: Coordinates) => void;
   originCoords?: Coordinates | undefined;
   planet: ManagedPlanetResponse;
@@ -223,40 +228,51 @@ function PlayerPlanetRow({
   const signals = playerPlanetTacticalSignals(planet, originCoords, attackProtection);
 
   return (
-    <button
+    <div
       className="grid gap-3 rounded border border-white/10 bg-black/20 p-2 text-left transition hover:border-cyan-300/25 hover:bg-white/[0.06] sm:grid-cols-[64px_minmax(0,1fr)]"
       key={planet.planetId}
-      onClick={() => onSelectPlanet(coords)}
-      title={`Open [${coords.galaxy}:${coords.system}:${coords.position}]`}
-      type="button"
     >
-      <span className="relative h-16 w-16 overflow-hidden rounded border border-white/10 bg-black/30">
-        <OptimizedImage
-          alt=""
-          className="h-full w-full object-cover"
-          loading="lazy"
-          sizes="icon"
-          src={playerInspectPlanetImage(planet)}
-        />
-        {planet.moon?.exists ? <PlanetMoonIndicator compact planetType={planetTypeFromTemperature(planet.temperature)} /> : null}
-      </span>
-      <span className="grid min-w-0 gap-2">
-        <span className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-sm font-semibold text-white">{planet.name || `Planet #${planet.planetId}`}</span>
-          <span className="font-mono text-xs text-cyan-100">[{coords.galaxy}:{coords.system}:{coords.position}]</span>
+      <button
+        className="contents text-left"
+        onClick={() => onSelectPlanet(coords)}
+        title={`Open [${coords.galaxy}:${coords.system}:${coords.position}]`}
+        type="button"
+      >
+        <span className="relative h-16 w-16 overflow-hidden rounded border border-white/10 bg-black/30">
+          <OptimizedImage
+            alt=""
+            className="h-full w-full object-cover"
+            loading="lazy"
+            sizes="icon"
+            src={playerInspectPlanetImage(planet)}
+          />
+          {planet.moon?.exists ? <PlanetMoonIndicator compact planetType={planetTypeFromTemperature(planet.temperature)} /> : null}
         </span>
-        <span className="grid gap-1 text-xs text-slate-400 sm:grid-cols-2 lg:grid-cols-3">
-          {signals.map((signal) => (
-            <span className="min-w-0 truncate" key={signal.label}>
-              <span className="text-slate-600">{signal.label}</span> {signal.value}
-            </span>
-          ))}
+        <span className="grid min-w-0 gap-2">
+          <span className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm font-semibold text-white">{planet.name || `Planet #${planet.planetId}`}</span>
+            <span className="font-mono text-xs text-cyan-100">[{coords.galaxy}:{coords.system}:{coords.position}]</span>
+          </span>
+          <span className="grid gap-1 text-xs text-slate-400 sm:grid-cols-2 lg:grid-cols-3">
+            {signals.map((signal) => (
+              <span className="min-w-0 truncate" key={signal.label}>
+                <span className="text-slate-600">{signal.label}</span> {signal.value}
+              </span>
+            ))}
+          </span>
         </span>
-        {planet.moon?.exists ? (
-          <PlanetMoonSubsection label="Moon" planetType={planetTypeFromTemperature(planet.temperature)} />
-        ) : null}
-      </span>
-    </button>
+      </button>
+      {planet.moon?.exists ? (
+        <span className="sm:col-start-2">
+          <PlanetMoonSubsection
+            label="Moon"
+            onClick={() => onSelectMoon(coords)}
+            planetType={planetTypeFromTemperature(planet.temperature)}
+            title={`Open moon at [${coords.galaxy}:${coords.system}:${coords.position}]`}
+          />
+        </span>
+      ) : null}
+    </div>
   );
 }
 

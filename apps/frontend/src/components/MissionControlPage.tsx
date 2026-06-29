@@ -1867,6 +1867,7 @@ function PastBattleReportRow({
     commanderWallet: report.attacker,
     coordinates: null,
     coords: null,
+    bodyKind: "planet",
     hasMoon: false,
     name: "Attacker",
   };

@@ -2250,6 +2250,7 @@ function watchedPlanetPayload(
     archetype: planetArchetypeForTemperature(planet.temperature),
     occupiedBy: occupiedPlanetRef(planet, indexer, allianceIntel),
     publicState: publicPlanetStateRef(planet, indexer),
+    publicMoonState: publicMoonStateRef(planet, indexer),
     debrisField: debrisFieldRef(indexer.debrisFieldsInSystem(planet.galaxy, planet.system).find((field) => field.position === planet.position)),
     hasMoon: indexer.hasMoon(planet.planetId),
     moonChance: moonChanceReportRef(indexer.moonChanceReportsInSystem(planet.galaxy, planet.system).find((report) => report.position === planet.position))
@@ -2791,6 +2792,7 @@ type GalaxySystemPayload = Omit<SystemSnapshot, "planets"> & {
   planets: Array<PlanetMetadata & {
     occupiedBy: ReturnType<typeof occupiedPlanetRef>;
     publicState: ReturnType<typeof publicPlanetStateRef>;
+    publicMoonState: ReturnType<typeof publicMoonStateRef>;
     debrisField: ReturnType<typeof debrisFieldRef>;
     hasMoon: boolean;
     moonChance: ReturnType<typeof moonChanceReportRef>;
@@ -2891,6 +2893,7 @@ function galaxySystemPayload({
       ...planet,
       occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer, allianceIntel),
       publicState: publicPlanetStateRef(occupied.get(planet.position), indexer),
+      publicMoonState: publicMoonStateRef(occupied.get(planet.position), indexer),
       debrisField: debrisFieldRef(debris.get(planet.position)),
       hasMoon: occupied.get(planet.position) ? indexer?.hasMoon(occupied.get(planet.position)!.planetId) ?? false : false,
       moonChance: moonChanceReportRef(moonChance.get(planet.position))
@@ -3052,6 +3055,41 @@ function publicPlanetStateRef(
       defense: indexer.planetQueue(planet.planetId, "defense"),
       ship: indexer.planetQueue(planet.planetId, "ship"),
       research: indexer.researchQueue(planet.owner)
+    }
+  };
+}
+
+function publicMoonStateRef(
+  planet: SettledPlanetEvent | undefined,
+  indexer: SettlementIndexer | undefined
+): {
+  fields: number;
+  diameterKm: number;
+  createdAt: string;
+  resources: Resources;
+  buildings: Array<{ id: number; level: number }>;
+  fleet: Array<{ id: number; count: number }>;
+  defenses: Array<{ id: number; count: number }>;
+  queues: {
+    building: PlayerQueues["building"];
+    defense: PlayerQueues["defense"];
+  };
+} | null {
+  if (!planet || !indexer || !indexer.hasMoon(planet.planetId)) return null;
+  const moonState = indexer.moonState(planet.owner, planet.planetId);
+  if (!moonState.moon?.exists) return null;
+
+  return {
+    fields: moonState.moon.fields,
+    diameterKm: moonState.moon.diameterKm,
+    createdAt: moonState.moon.createdAt,
+    resources: moonState.resources ?? { metal: "0", crystal: "0", deuterium: "0" },
+    buildings: moonState.buildings.map(({ id, level }) => ({ id, level })),
+    fleet: (moonState.fleet ?? []).map(({ id, count }) => ({ id, count })),
+    defenses: moonState.defenses.map(({ id, count }) => ({ id, count })),
+    queues: {
+      building: moonState.queue,
+      defense: moonState.defenseQueue ?? null
     }
   };
 }
