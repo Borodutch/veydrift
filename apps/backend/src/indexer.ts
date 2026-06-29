@@ -223,6 +223,7 @@ export type SettlementIndexerOptions = {
   database?: Database;
   databasePath?: string;
   readOnly?: boolean;
+  battleReportMaterializationRunner?: (request: BattleReportMaterializationRequest) => Promise<void>;
   // Multi-process API workers share one SQLite DB. The writer is the only process that should run
   // startup materialized-state repair/backfill; readers only need the schema and current rows.
   runStartupBackfill?: boolean;
@@ -242,6 +243,13 @@ export type SettlementIndexerOptions = {
   // recovery) instead of sitting in reconciliation_in_progress forever. Omitted/<=0 disables the
   // deadline (the in-memory test indexer has no slow RPC to guard).
   rebuildDeadlineMs?: number;
+};
+
+export type BattleReportMaterializationRequest = {
+  databasePath: string | null;
+  fromBlock: string;
+  missionIds: string[];
+  reason: "ingest" | "backfill" | "repair";
 };
 
 type CountRow = {
@@ -618,7 +626,10 @@ export class SettlementIndexer {
     private readonly fromBlock: bigint,
     options: SettlementIndexerOptions = {}
   ) {
-    this.db = options.database ?? openIndexerDatabase(options.databasePath ?? ":memory:", options.readOnly ?? false);
+    const databasePath = options.databasePath ?? ":memory:";
+    this.db = options.database ?? openIndexerDatabase(databasePath, options.readOnly ?? false);
+    this.battleReportMaterializationDatabasePath = !options.database && !options.readOnly && databasePath !== ":memory:" ? databasePath : null;
+    this.battleReportMaterializationRunner = options.battleReportMaterializationRunner;
     this.qaSyntheticStationedDefenders = options.qaSyntheticStationedDefenders ?? false;
     this.randomnessEngineConfigured = options.randomnessEngineConfigured ?? false;
     this.rebuildDeadlineMs = options.rebuildDeadlineMs && options.rebuildDeadlineMs > 0 ? options.rebuildDeadlineMs : 0;
@@ -633,6 +644,8 @@ export class SettlementIndexer {
   private readonly randomnessEngineConfigured: boolean;
   // VEY-KANEO-485: see SettlementIndexerOptions. 0 = no cold-rebuild deadline.
   private readonly rebuildDeadlineMs: number;
+  private readonly battleReportMaterializationDatabasePath: string | null;
+  private readonly battleReportMaterializationRunner: SettlementIndexerOptions["battleReportMaterializationRunner"];
 
   snapshot(): IndexerSnapshot {
     const nowMs = Date.now();
@@ -3410,6 +3423,14 @@ export class SettlementIndexer {
     }
   }
 
+  materializeBattleReportReadModelsForWorker(missionIds: Iterable<string>, reason: "ingest" | "backfill" | "repair"): number {
+    let materialized = 0;
+    for (const missionId of [...new Set([...missionIds].filter((id) => id.length > 0))]) {
+      if (this.materializeBattleReportReadModel(missionId, reason)) materialized += 1;
+    }
+    return materialized;
+  }
+
   private backfillUnitCountEventLogs(): void {
     const existing = this.count("indexed_unit_count_event_logs");
     if (existing > 0) return;
@@ -3656,9 +3677,7 @@ export class SettlementIndexer {
         while (this.pendingBattleReportMaterializationIds.size > 0) {
           const missionIds = [...this.pendingBattleReportMaterializationIds];
           this.pendingBattleReportMaterializationIds.clear();
-          for (const pendingMissionId of missionIds) {
-            this.materializeBattleReportReadModel(pendingMissionId, "ingest");
-          }
+          await this.runBattleReportMaterialization(missionIds, "ingest");
         }
       })
       .catch((error) => {
@@ -3671,6 +3690,27 @@ export class SettlementIndexer {
           if (nextMissionId) this.scheduleBattleReportMaterialization(nextMissionId);
         }
       });
+  }
+
+  private async runBattleReportMaterialization(missionIds: string[], reason: "ingest" | "backfill" | "repair"): Promise<void> {
+    const uniqueMissionIds = [...new Set(missionIds.filter((id) => id.length > 0))];
+    if (uniqueMissionIds.length === 0) return;
+
+    const request: BattleReportMaterializationRequest = {
+      databasePath: this.battleReportMaterializationDatabasePath,
+      fromBlock: this.fromBlock.toString(),
+      missionIds: uniqueMissionIds,
+      reason
+    };
+    if (this.battleReportMaterializationRunner) {
+      await this.battleReportMaterializationRunner(request);
+      return;
+    }
+    if (this.battleReportMaterializationDatabasePath) {
+      await runBattleReportMaterializationWorker(request);
+      return;
+    }
+    this.materializeBattleReportReadModelsForWorker(uniqueMissionIds, reason);
   }
 
   private async readCanonicalState(planets: SettledPlanetEvent[]): Promise<CanonicalReconciliationState> {
@@ -8282,6 +8322,31 @@ function openIndexerDatabase(databasePath: string, readOnly = false): Database {
     database.exec("PRAGMA journal_size_limit = 67108864;");
   }
   return database;
+}
+
+async function runBattleReportMaterializationWorker(request: BattleReportMaterializationRequest): Promise<void> {
+  if (!request.databasePath) return;
+  const workerPath = new URL("./battleReportMaterializerWorker.ts", import.meta.url).pathname;
+  const child = Bun.spawn({
+    cmd: [
+      process.execPath,
+      workerPath,
+      "--db",
+      request.databasePath,
+      "--from-block",
+      request.fromBlock,
+      "--reason",
+      request.reason,
+      "--missions",
+      request.missionIds.join(",")
+    ],
+    stderr: "inherit",
+    stdout: "inherit"
+  });
+  const exitCode = await child.exited;
+  if (exitCode !== 0) {
+    throw new Error(`Battle report materializer worker exited with code ${exitCode}`);
+  }
 }
 
 function parseEvent<T>(value: string): T {
