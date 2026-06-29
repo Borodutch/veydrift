@@ -2113,19 +2113,23 @@ export function overviewMyPlanetActionsFor({
   planet: ManagedPlanetResponse;
   shipyardState: ChainShipyardState | null;
 }): GalaxyAction[] {
-  if (activePlanetId === planet.planetId) return [];
-
   const rowPlanet = planetFromSettlementPlanet(planet);
   const actionsByKind = new Map(
     galaxyActionsForSlot({
       account,
       defenseState,
       homePlanetId,
-      isOrigin: activePlanetId === planet.planetId,
+      isOrigin: false,
       planet: rowPlanet,
       shipyardState,
     }).map((action) => [action.kind, action])
   );
+  if (activePlanetId === planet.planetId) {
+    return planet.moon?.exists
+      ? [overviewMoonTransportAction(actionsByKind.get("transport"))]
+      : [];
+  }
+
   const samePlanetReason = "Select another owned planet before launching this mission.";
   return [
     overviewOwnedPlanetMissionAction(actionsByKind.get("transport"), "transport", "Transport", samePlanetReason),
@@ -2145,6 +2149,25 @@ function overviewOwnedPlanetMissionAction(
   return {
     ...action,
     reason: overviewOwnedPlanetActionReason(action.reason),
+  };
+}
+
+function overviewMoonTransportAction(action: GalaxyAction | undefined): GalaxyAction {
+  if (!action) return disabledOwnedPlanetMissionAction("transport", "Moon transport", "Transport to this moon is unavailable.");
+  if (!action.enabled) {
+    return {
+      ...action,
+      label: "Moon transport",
+      reason: overviewOwnedPlanetActionReason(action.reason),
+    };
+  }
+  if (action.mode !== "mission" || action.kind !== "transport") {
+    return disabledOwnedPlanetMissionAction("transport", "Moon transport", "Transport to this moon is unavailable.");
+  }
+  return {
+    ...action,
+    label: "Moon transport",
+    defaultTargetIsMoon: true,
   };
 }
 

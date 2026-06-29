@@ -309,6 +309,11 @@ describe("mission creation", () => {
     expect(missionCreationSource).not.toContain("Moon bodies keep independent");
   });
 
+  test("mission body selectors can be preselected by Overview moon shortcuts", () => {
+    expect(missionCreationSource).toContain("action.defaultOriginIsMoon === true");
+    expect(missionCreationSource).toContain("action.defaultTargetIsMoon === true");
+  });
+
   test("keeps attack confirm visibly pending while transaction and indexing settle", () => {
     expect(missionConfirmButtonLabel({ actionPendingLabel: "Attack mission: syncing indexed state..." }))
       .toBe("Attack mission: syncing indexed state...");
