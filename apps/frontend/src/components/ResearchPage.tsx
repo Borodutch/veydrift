@@ -15,7 +15,7 @@ import {
   researchUnlockRows,
   unmetResearchRequirement,
 } from "../playableMvp";
-import type { ChainResearchState } from "../walletFlow";
+import { walletRecoveryActionMessage, type ChainResearchState } from "../walletFlow";
 import { researchQueueForDisplay as chainResearchQueueForDisplay } from "../chainState";
 import { formatMissingResources } from "../buildingDetails";
 import { formatDuration, formatDurationUntil } from "../durationFormat";
@@ -290,6 +290,11 @@ export function ResearchStatusPanel({
   // is silently re-fetched.
   if (loading && !researchState) {
     return null;
+  }
+
+  const walletRecoveryMessage = walletRecoveryActionMessage(error ?? researchState?.unavailableReason);
+  if (walletRecoveryMessage) {
+    return <Notice tone="danger">{walletRecoveryMessage}</Notice>;
   }
 
   const refreshError = researchRefreshErrorLabel({ error, researchState });

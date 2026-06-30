@@ -93,6 +93,7 @@ import {
   watchPlanet,
   WATCHED_PLANETS_API_READ_TIMEOUT_MS,
   waitForBaseSepoliaNetwork,
+  walletRecoveryActionMessage,
   walletRequestErrorMessage,
   type Eip1193Provider
 } from "./walletFlow";
@@ -1653,6 +1654,10 @@ describe("walletFlow", () => {
     expect(walletRequestErrorMessage(new Error("MetaMask is locked"))).toBe(
       "Wallet is locked. Please unlock your wallet and try again."
     );
+    expect(walletRecoveryActionMessage("Timed out reading wallet accounts from the wallet after 10 seconds.")).toBe(
+      "Wallet needs attention. Unlock or reconnect your wallet, return to Veydrift, then retry."
+    );
+    expect(walletRecoveryActionMessage("No VeydriftGame home planet was found for this wallet.")).toBeUndefined();
   });
 
   test("detects on-chain reverts wrapped in an internal JSON-RPC error", () => {
