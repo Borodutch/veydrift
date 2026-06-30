@@ -4002,8 +4002,28 @@ export class SettlementIndexer {
         this.upsertIndexedLevel("indexed_ship_counts", "ship_id", "count", row.planetId, ship.id, ship.count);
         this.upsertIndexedLevel("contract_ship_counts", "ship_id", "count", row.planetId, ship.id, ship.count);
       }
+      this.replayStoredPlanetShipCountLogsAfterSnapshot(row.planetId, this.canonicalQueueSnapshotBlock);
       this.touch();
     });
+  }
+
+  private replayStoredPlanetShipCountLogsAfterSnapshot(planetId: string, snapshotBlock: string | null): void {
+    if (!snapshotBlock) return;
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_unit_count_event_logs
+      WHERE json_extract(event_json, '$.topics[1]') = ?
+        AND CAST(block_number AS INTEGER) > CAST(? AS INTEGER)
+      ORDER BY CAST(block_number AS INTEGER) ASC, CAST(log_index AS INTEGER) ASC
+    `).all(fleetMissionIdTopic(planetId), snapshotBlock) as EventRow[];
+
+    for (const log of sortedEventRows(rows)) {
+      if (!isShipCountChangedLog(log)) continue;
+      const event = decodeShipCountChangedLog(log);
+      if (event.planetId !== planetId) continue;
+      this.upsertIndexedLevel("indexed_ship_counts", "ship_id", "count", event.planetId, event.shipId, event.total);
+      this.upsertIndexedLevel("contract_ship_counts", "ship_id", "count", event.planetId, event.shipId, event.total);
+    }
   }
 
   private countCanonicalShipMismatches(row: CanonicalPlanetChainState): number {

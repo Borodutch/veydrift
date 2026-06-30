@@ -6463,6 +6463,72 @@ describe("SettlementIndexer", () => {
     ]);
   });
 
+  test("current-state seed preserves newer exact deploy-return ship count logs over stale canonical rows (VEY-KANEO-670)", async () => {
+    const rawState: CanonicalPlanetChainState = {
+      planetId: planet.planetId,
+      resources: planet.resources,
+      buildings: deriveBuildingRows(() => 0),
+      defenses: deriveDefenseRows(() => 0),
+      ships: deriveShipRows(() => 0),
+      queues: {
+        building: null,
+        defense: null,
+        ship: null
+      }
+    };
+    const indexer = new SettlementIndexer({
+      async listCurrentPlanets() { return [planet]; },
+      async getCanonicalPlanetState(planetId) {
+        expect(planetId).toBe(BigInt(planet.planetId));
+        return rawState;
+      },
+      async getBlockNumber() { return 0x91n; },
+      async listContractLogs() { return []; },
+      async listDebrisFieldEvents() { throw new Error("event backfill should not run"); },
+      async listMoonChanceReportEvents() { throw new Error("event backfill should not run"); },
+      async listSettledPlanetEvents() { throw new Error("settled event scan should not run"); }
+    }, 100n);
+    indexer.applyEvent(planet);
+
+    // Large Cargo (ship id 4) is present, deploys away, then a later deploy/return credits it back.
+    // The current-state snapshot was read at block 0x91 and still says 0, so the stored exact block-0x92
+    // PlanetShipCountChanged event must win for the served/API-facing roster.
+    indexer.applyLog({
+      blockNumber: "0x83",
+      transactionHash: "0xlarge-cargo-initial",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(BigInt(planet.planetId)), topic(4n)],
+      data: abiWords(1n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x90",
+      transactionHash: "0xlarge-cargo-deploy-away",
+      logIndex: "0x0",
+      topics: [planetShipCountChangedTopic, topic(BigInt(planet.planetId)), topic(4n)],
+      data: abiWords(0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x92",
+      transactionHash: "0xlarge-cargo-deploy-back",
+      logIndex: "0x38",
+      topics: [planetShipCountChangedTopic, topic(BigInt(planet.planetId)), topic(4n)],
+      data: abiWords(1n)
+    });
+
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 4)?.count).toBe(1);
+
+    await expect(indexer.seedCurrentCanonicalState({ planetConcurrency: 25 })).resolves.toMatchObject({
+      indexedPlanets: 1,
+      lastCurrentStateHealPlanetsScanned: 1,
+      lastCurrentStateHealShipMismatches: 1,
+      lastReconciledBlock: "145",
+      lastReconciliationError: null
+    });
+
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 4)?.count).toBe(1);
+    expect(indexer.availableShipRows(planet.planetId).find((ship) => ship.id === 4)?.count).toBe(1);
+  });
+
   test("stored planet events do not overwrite canonical current-state identity", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
