@@ -9,4 +9,10 @@ describe("Raid Finder page header", () => {
     expect(raidFinderSource).not.toContain("Raid Target Finder");
     expect(raidFinderSource).not.toContain("Scout raidable planets across the universe");
   });
+
+  test("uses one Defense threat column instead of separate Combat and Defense columns", () => {
+    expect(raidFinderSource).toContain('{ key: "defense", label: "Defense"');
+    expect(raidFinderSource).not.toContain('label: "Combat"');
+    expect(raidFinderSource).not.toContain('<span className="text-slate-600">Combat </span>');
+  });
 });

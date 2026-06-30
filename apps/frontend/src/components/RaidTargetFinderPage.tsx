@@ -73,8 +73,7 @@ export const raidTargetFinderPageSize = 250;
 const sortColumns: Array<{ key: RaidTargetSortKey; label: string; hint: string }> = [
   { key: "distance", label: "Dist", hint: "Flight distance from your active planet" },
   { key: "loot", label: "Loot", hint: "Plunderable haul — ~50% of the target's current (production-accrued) unprotected resources you'd actually capture, not its full stockpile" },
-  { key: "combat", label: "Combat", hint: "Combined ship + defense power to overcome" },
-  { key: "defense", label: "Defense", hint: "Stationary defense power" },
+  { key: "defense", label: "Defense", hint: "Combined defending ship + static defense power to overcome" },
 ];
 const debrisSortColumns: Array<{ key: DebrisTargetSortKey; label: string; hint: string }> = [
   { key: "distance", label: "Dist", hint: "Flight distance from your active planet" },
@@ -541,7 +540,7 @@ function RaidTargetTableHeader({
   sort: RaidTargetSort;
 }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_88px_auto] sm:px-3">
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-white/10 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_auto] sm:px-3">
       <span>Target</span>
       {sortColumns.map((column) => (
         <button
@@ -748,7 +747,7 @@ export function RaidTargetRow({
 
   return (
     <div
-      className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b px-2 py-2.5 text-sm last:border-b-0 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_88px_auto] sm:px-3 ${rowTone}`}
+      className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b px-2 py-2.5 text-sm last:border-b-0 sm:grid-cols-[minmax(0,1fr)_64px_96px_88px_auto] sm:px-3 ${rowTone}`}
     >
       <div className="flex min-w-0 items-center gap-2.5">
         <span className="relative h-7 w-7 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30">
@@ -840,13 +839,9 @@ export function RaidTargetRow({
                 <span className="text-slate-600">Loot </span>
                 {compactNumber(target.loot)}
               </span>
-              <span className="text-rose-100" title={combatLabel(target)}>
-                <span className="text-slate-600">Combat </span>
-                {compactNumber(target.combatPower)}
-              </span>
               <span className="text-orange-100" title={defenseLabel(target)}>
                 <span className="text-slate-600">Def </span>
-                {compactNumber(target.defensePower)}
+                {compactNumber(target.combatPower)}
               </span>
             </span>
           </div>
@@ -876,11 +871,8 @@ export function RaidTargetRow({
       >
         {compactNumber(target.loot)}
       </span>
-      <span className="hidden text-right font-mono text-rose-100 sm:block" title={combatLabel(target)}>
-        {compactNumber(target.combatPower)}
-      </span>
       <span className="hidden text-right font-mono text-orange-100 sm:block" title={defenseLabel(target)}>
-        {compactNumber(target.defensePower)}
+        {compactNumber(target.combatPower)}
       </span>
 
       <div className="row-span-2 flex shrink-0 flex-col items-end gap-1 self-start sm:row-span-1">
@@ -973,18 +965,13 @@ function safeResourceNumber(value: string | number | null | undefined): number {
   return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
 }
 
-export function combatLabel(target: RaidTarget): string {
+export function defenseLabel(target: RaidTarget): string {
   const sections = [
     unitBreakdownSection("Ships", target.combatShipUnits, shipLabelForId),
     unitBreakdownSection("Defenses", target.defenseUnits, defenseLabelForId),
   ].filter(Boolean);
   const fallback = `from ${target.shipCount} ships and ${target.defenseCount} defenses`;
-  return `Combat ${fullNumber(String(target.combatPower))}${sections.length > 0 ? ` — ${sections.join("; ")}` : ` ${fallback}`}`;
-}
-
-export function defenseLabel(target: RaidTarget): string {
-  const section = unitBreakdownSection("Defenses", target.defenseUnits, defenseLabelForId);
-  return `Defense power ${fullNumber(String(target.defensePower))}${section ? ` — ${section}` : ` from ${target.defenseCount} defenses`}`;
+  return `Defense ${fullNumber(String(target.combatPower))}${sections.length > 0 ? ` — ${sections.join("; ")}` : ` ${fallback}`}`;
 }
 
 function unitBreakdownSection(
