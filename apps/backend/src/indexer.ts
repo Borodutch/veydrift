@@ -1476,6 +1476,10 @@ export class SettlementIndexer {
     return this.recentBattleReports(limit);
   }
 
+  battleReportsForMissions(missions: readonly FleetMissionSummary[]): BattleReport[] {
+    return this.indexedBattleReportsForMissions(missions);
+  }
+
   async drainBattleReportMaterializationQueue(): Promise<void> {
     await Promise.resolve();
   }

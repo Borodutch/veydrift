@@ -2457,9 +2457,10 @@ function globalMissionArchive(url: URL, indexer: SettlementIndexer): GlobalMissi
   const totalPages = Math.max(1, Math.ceil(totalEntries / requested.pageSize));
   const page = Math.min(requested.page, totalPages);
   const offset = (page - 1) * requested.pageSize;
+  const pageRows = rows.slice(offset, offset + requested.pageSize);
 
   return {
-    rows: rows.slice(offset, offset + requested.pageSize),
+    rows: attachMissionArchiveReports(pageRows, indexer.battleReportsForMissions(missionsFromArchiveRows(pageRows))),
     pagination: {
       page,
       pageSize: requested.pageSize,
@@ -2472,6 +2473,25 @@ function globalMissionArchive(url: URL, indexer: SettlementIndexer): GlobalMissi
 }
 
 const globalMissionArchiveRowsCache = new WeakMap<SettlementIndexer, { expiresAt: number; stateVersion: string; rows: FleetMissionArchiveEntry[] }>();
+
+function attachMissionArchiveReports(
+  rows: FleetMissionArchiveEntry[],
+  battleReports: FleetMissionVisibility["battleReports"]
+): FleetMissionArchiveEntry[] {
+  if (battleReports.length === 0) return rows;
+  const reportsByMissionId = battleReportsByAssociatedMissionId(battleReports);
+  return rows.map((row) => {
+    if (row.kind !== "mission" || row.report) return row;
+    return {
+      ...row,
+      report: reportsByMissionId.get(row.mission.missionId)
+    };
+  });
+}
+
+function missionsFromArchiveRows(rows: readonly FleetMissionArchiveEntry[]): FleetMissionSummary[] {
+  return rows.flatMap((row) => row.kind === "mission" ? [row.mission] : []);
+}
 
 function globalMissionArchiveRows(indexer: SettlementIndexer): FleetMissionArchiveEntry[] {
   const stateVersion = indexer.responseCacheVersion();
