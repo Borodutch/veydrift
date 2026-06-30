@@ -1274,6 +1274,27 @@ export function walletRequestErrorMessage(error: unknown): string {
   return message;
 }
 
+export function walletRecoveryActionMessage(message: string | undefined): string | undefined {
+  const trimmed = message?.trim();
+  if (!trimmed) return undefined;
+
+  if (
+    trimmed === WALLET_LOCKED_MESSAGE
+    || trimmed === WALLET_ACCOUNT_UNAVAILABLE_MESSAGE
+    || trimmed === WALLET_CONNECTION_REJECTED_MESSAGE
+    || trimmed === WALLET_ACCOUNT_MISMATCH_MESSAGE
+    || /wallet is locked|metamask is locked|unlock metamask|unlock your wallet/i.test(trimmed)
+    || /wallet account is unavailable|wallet account authorization|selected wallet account changed/i.test(trimmed)
+    || /wallet connection was rejected|user rejected|request rejected|permission|unauthori[sz]ed/i.test(trimmed)
+    || /wallet provider is unavailable|provider unavailable|wallet disconnected|disconnected wallet/i.test(trimmed)
+    || /timed out reading .* from the wallet/i.test(trimmed)
+  ) {
+    return "Wallet needs attention. Unlock or reconnect your wallet, return to Veydrift, then retry.";
+  }
+
+  return undefined;
+}
+
 const INSUFFICIENT_RESOURCES_REVERT_SELECTOR = "0x2ab0f96f";
 const INSUFFICIENT_SHIPS_REVERT_SELECTOR = "0x705f508b";
 const MISSING_DEPENDENCY_REVERT_SELECTOR = "0xb8f7e9ba";

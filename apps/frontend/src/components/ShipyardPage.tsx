@@ -4,7 +4,7 @@ import { canAfford, missingUnlockRequirements, shipCatalog, shipyardCatalog, shi
 import { formatMissingResources } from "../buildingDetails";
 import { formatDuration } from "../durationFormat";
 import { activeProductionQueue } from "../productionQueueFallback";
-import type { ChainShipyardState } from "../walletFlow";
+import { walletRecoveryActionMessage, type ChainShipyardState } from "../walletFlow";
 import {
   Notice,
   parseProductionQuantity,
@@ -162,6 +162,11 @@ export function StatusPanel({
   // is silently re-fetched.
   if (loading && !shipyardState) {
     return null;
+  }
+
+  const walletRecoveryMessage = walletRecoveryActionMessage(error ?? shipyardState?.unavailableReason);
+  if (walletRecoveryMessage) {
+    return <Notice tone="danger">{walletRecoveryMessage}</Notice>;
   }
 
   const refreshError = shipyardRefreshErrorLabel({ error, shipyardState });
