@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
   detectFarcasterMiniApp,
+  farcasterMiniAppWalletSupport,
   farcasterMiniAppPlatformType,
+  FARCASTER_BASE_SEPOLIA_CHAIN,
+  FARCASTER_WALLET_CAPABILITY,
   hasMiniAppUrlHint,
   resetFarcasterReadyForTests,
   scheduleFarcasterReady,
@@ -120,5 +123,49 @@ describe("Farcaster Mini App ready lifecycle", () => {
         ready: () => undefined,
       },
     })).resolves.toBe("unknown");
+  });
+
+  test("accepts Farcaster hosts that advertise the wallet provider and Base Sepolia", async () => {
+    await expect(farcasterMiniAppWalletSupport({
+      actions: {
+        ready: () => undefined,
+      },
+      getCapabilities: async () => [FARCASTER_WALLET_CAPABILITY, "actions.ready"],
+      getChains: async () => [FARCASTER_BASE_SEPOLIA_CHAIN, "eip155:8453"],
+    })).resolves.toEqual({
+      status: "supported",
+      capabilities: [FARCASTER_WALLET_CAPABILITY, "actions.ready"],
+      chains: [FARCASTER_BASE_SEPOLIA_CHAIN, "eip155:8453"],
+    });
+  });
+
+  test("reports missing Farcaster wallet capability before account requests", async () => {
+    await expect(farcasterMiniAppWalletSupport({
+      actions: {
+        ready: () => undefined,
+      },
+      getCapabilities: async () => ["actions.ready"],
+      getChains: async () => [FARCASTER_BASE_SEPOLIA_CHAIN],
+    })).resolves.toMatchObject({
+      status: "unsupported",
+      code: "FARCASTER_WALLET_CAPABILITY_MISSING",
+      capabilities: ["actions.ready"],
+      chains: [],
+    });
+  });
+
+  test("reports missing Farcaster Base Sepolia support before network switching", async () => {
+    await expect(farcasterMiniAppWalletSupport({
+      actions: {
+        ready: () => undefined,
+      },
+      getCapabilities: async () => [FARCASTER_WALLET_CAPABILITY],
+      getChains: async () => ["eip155:8453"],
+    })).resolves.toMatchObject({
+      status: "unsupported",
+      code: "FARCASTER_BASE_SEPOLIA_UNSUPPORTED",
+      capabilities: [FARCASTER_WALLET_CAPABILITY],
+      chains: ["eip155:8453"],
+    });
   });
 });
