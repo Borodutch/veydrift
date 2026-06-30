@@ -249,6 +249,59 @@ describe("RankingsPage", () => {
     expect(launched).toEqual([{ action: moonAction, planetId: "7", wallet: entry.wallet }]);
   });
 
+  test("keeps ranked moon rows inside the rankings row width", () => {
+    const moonAction: GalaxyAction = {
+      enabled: true,
+      kind: "attack",
+      label: "Attack",
+      mode: "mission",
+      mission: "attack",
+      defaultTargetIsMoon: true,
+      ships: {
+        smallCargo: 0,
+        lightFighter: 1,
+        recycler: 0,
+        colonyShip: 0,
+        largeCargo: 0,
+        heavyFighter: 0,
+        cruiser: 0,
+        battleship: 0,
+        bomber: 0,
+        destroyer: 0,
+        deathstar: 0,
+        battlecruiser: 0,
+        reaper: 0,
+        pathfinder: 0,
+      },
+    };
+    const table = RankingsTable({
+      entries: [rankingEntry({
+        homePlanet: {
+          ...rankingEntry().homePlanet!,
+          hasMoon: true,
+        },
+      })],
+      loading: false,
+      moonActionsForPlanet: () => [moonAction],
+      onMoonAction: () => undefined,
+      onSelectMoon: () => undefined,
+    });
+    const nodes = elementNodes(table);
+    const moonRowWrapper = nodes.find((item) => item.props?.["data-ranking-moon-row"] === "full-width");
+    const moonSubsection = nodes.find((item) => item.props?.["data-planet-moon-subsection"] === "true");
+    const actionWrapper = nodes.find((item) => (
+      item.type === "span"
+      && String(item.props?.className ?? "").includes("justify-end")
+      && String(item.props?.className ?? "").includes("min-w-0")
+    ));
+
+    expect(moonRowWrapper?.props?.className).toContain("min-w-0 pl-4");
+    expect(moonRowWrapper?.props?.className).not.toContain("ml-");
+    expect(moonSubsection?.props?.className).toContain("min-w-0");
+    expect(moonSubsection?.props?.className).not.toContain("ml-");
+    expect(actionWrapper).toBeTruthy();
+  });
+
   test("renders ranked planet action rows and launches planet-targeted actions", () => {
     const launched: Array<{ action: GalaxyAction; planetId: string; wallet: string }> = [];
     const planetAction: GalaxyAction = {

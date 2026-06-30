@@ -680,19 +680,22 @@ function RankingRow({
               ) : null}
               <PlanetMissionLines className="pl-2 sm:pl-[34px]" planetId={planet.planetId} subtext={missionLines} />
               {hasMoon ? (
-                <PlanetMoonSubsection
-                  action={moonActions.length > 0 ? (
-                    <RankingsActionButtons
-                      actions={moonActions}
-                      onAction={(action) => onMoonAction?.(action, planet, entry)}
-                    />
-                  ) : undefined}
-                  className="ml-4 sm:ml-[34px]"
-                  label="Moon"
-                  onClick={onSelectMoon ? () => onSelectMoon(planet.coordinates) : undefined}
-                  planetType={planet.archetype}
-                  title={`Open moon at ${homePlanetCoordinatesLabel(planet)}`}
-                />
+                <div className="min-w-0 pl-4 sm:pl-[34px]" data-ranking-moon-row="full-width">
+                  <PlanetMoonSubsection
+                    action={moonActions.length > 0 ? (
+                      <RankingsActionButtons
+                        actions={moonActions}
+                        className="min-w-0"
+                        onAction={(action) => onMoonAction?.(action, planet, entry)}
+                      />
+                    ) : undefined}
+                    className="min-w-0"
+                    label="Moon"
+                    onClick={onSelectMoon ? () => onSelectMoon(planet.coordinates) : undefined}
+                    planetType={planet.archetype}
+                    title={`Open moon at ${homePlanetCoordinatesLabel(planet)}`}
+                  />
+                </div>
               ) : null}
               </div>
             );
