@@ -2390,11 +2390,12 @@ function indexedMissionArchive(
   const totalPages = Math.max(1, Math.ceil(totalEntries / requested.pageSize));
   const page = Math.min(requested.page, totalPages);
   const offset = (page - 1) * requested.pageSize;
+  const pageRows = rows.slice(offset, offset + requested.pageSize);
 
   return {
     wallet,
     homePlanetId: archive.homePlanetId,
-    rows: rows.slice(offset, offset + requested.pageSize),
+    rows: attachMissionArchiveReports(pageRows, indexer.battleReportsForMissions(missionsFromArchiveRows(pageRows))),
     pagination: {
       page,
       pageSize: requested.pageSize,
