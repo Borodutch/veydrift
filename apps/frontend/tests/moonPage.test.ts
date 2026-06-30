@@ -496,7 +496,7 @@ describe("Moon page helpers", () => {
     });
   });
 
-  test("gates not-built and unaffordable moon structures before wallet submission", () => {
+  test("keeps moon structure affordability copy out of the selected UI", () => {
     const moonState = loadedMoonState({
       moon: {
         exists: true,
@@ -526,11 +526,13 @@ describe("Moon page helpers", () => {
     const status = moonStructureStatus(moonState.buildings[0], moonState.moon!, moonState, { canTransact: true });
 
     expect(status.disabled).toBe(true);
-    expect(status.reason).toContain("Requires 20,000 more Metal");
-    expect(status.reason).toContain("time unavailable");
+    expect(status.reason).toBe("Moon resources are below the build cost.");
     expect(status.targetLevel).toBe(1);
     expect(moonPageSource).toContain("Build ${building.label}");
     expect(moonPageSource).not.toContain("Upgrade Level {building.level + 1}");
+    expect(moonPageSource).not.toContain("formatMissingResources");
+    expect(moonPageSource).not.toContain("{status.reason}");
+    expect(moonPageSource).not.toContain('title={status.disabled ? status.reason : undefined}');
   });
 
   test("renders moon structure details with readable clickable requirements", () => {
@@ -541,6 +543,9 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).toContain("MoonStructureComparisonMetric");
     expect(moonPageSource).toContain("MoonStructureLevelInfoButton");
     expect(moonPageSource).toContain("MoonStructureLevelInfoModal");
+    expect(moonPageSource).toContain("moonStructureCatalogStatusText(building)");
+    expect(moonPageSource).toContain("moonStructureBuildDurationSeconds");
+    expect(moonPageSource).toContain("isBinaryMoonStructure(building.key)");
     expect(moonPageSource).not.toContain('InspectInfoBlock label="Current level"');
     expect(moonPageSource).not.toContain('InspectInfoBlock label="Current effect"');
     expect(moonPageSource).not.toContain('InspectInfoBlock label="Next effect"');
@@ -548,7 +553,11 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).not.toContain('label: "Open field"');
     expect(moonPageSource).not.toContain("{fieldSummary.used} / {fieldSummary.capacity} fields");
     expect(moonPageSource).not.toContain('statusText={status.disabled ? status.reason : formatCost(status.cost)}');
+    expect(moonPageSource).not.toContain("statusText={status.costAvailable ? formatCost(status.cost) : \"Cost pending\"}");
     expect(moonPageSource).not.toContain("Cost unavailable");
+    expect(moonPageSource).not.toContain("required`,");
+    expect(moonPageSource).not.toContain("\"Pending\" : formatDuration(row.durationSeconds)");
+    expect(moonPageSource).not.toContain(": \"Met\"");
     expect(moonPageSource).not.toContain('<MoonMetric icon={Orbit} label="Jump Gate"');
   });
 

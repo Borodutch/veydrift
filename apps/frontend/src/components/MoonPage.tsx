@@ -6,9 +6,9 @@ import type { Resources } from "../playableMvp";
 import type { MissionShips } from "../galaxyActions";
 import type { ChainMoonState } from "../walletFlow";
 import type { PlanetType } from "../types";
-import { formatCost, formatMissingResources } from "../buildingDetails";
+import { formatCost } from "../buildingDetails";
 import { formatDuration } from "../durationFormat";
-import { buildingCatalog, canAfford, defenseCatalog, shipCatalog, shipyardCatalog } from "../playableMvp";
+import { buildingCatalog, buildingDurationEstimate, canAfford, defenseCatalog, shipCatalog, shipyardCatalog } from "../playableMvp";
 import type { DefenseKey, ShipKey } from "../playableMvp";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../moonActions";
 import { formatUserTimestamp } from "../timestampFormat";
@@ -584,10 +584,10 @@ function MoonStructuresSection({
                 isSelected={selectedBuilding?.key === building.key}
                 key={building.key}
                 label={building.label}
-                labelTone={status.disabled ? "muted" : "normal"}
+                labelTone={moonStructureCatalogTitleTone(status)}
                 onClick={() => selectInspectItem(building.key)}
-                statusText={status.costAvailable ? formatCost(status.cost) : "Cost pending"}
-                statusTone={status.disabled ? "warning" : "accent"}
+                statusText={moonStructureCatalogStatusText(building)}
+                statusTone="accent"
               />
             );
           })}
@@ -660,7 +660,9 @@ function MoonStructureDetailPanel({
     pending,
     transactionUnavailableReason,
   });
-  const actionVerb = building.level === 0 ? "Build" : "Upgrade";
+  const binary = isBinaryMoonStructure(building.key);
+  const built = building.level > 0;
+  const actionVerb = building.level === 0 || binary ? "Build" : "Upgrade";
   const currentEffect = moonStructureLevelEffect(building.key, building.level);
   const nextEffect = moonStructureLevelEffect(building.key, building.level + 1);
   const levelInfoRows = moonStructureLevelInfoRows(building, moon, moonState);
@@ -681,7 +683,7 @@ function MoonStructureDetailPanel({
           <div className="min-w-0">
             <h3 className="break-words text-lg font-semibold text-white">{building.label}</h3>
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-400">
-              <span>{building.level === 0 ? `Build Level ${status.targetLevel}` : `Level ${building.level} to ${status.targetLevel}`}</span>
+              <span>{moonStructureLevelSummary(building, status.targetLevel)}</span>
               <MoonStructureLevelInfoButton
                 buildingLabel={building.label}
                 onClick={() => setIsInfoOpen(true)}
@@ -715,28 +717,21 @@ function MoonStructureDetailPanel({
         )}
       </div>
 
-      <div className="mt-4 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
-        <p className={`text-sm font-semibold ${status.disabled ? "text-slate-400" : "text-emerald-200"}`}>
-          {status.reason}
-        </p>
-      </div>
-
       {action?.status === "error" && action.label ? (
         <div className="mt-2 rounded border border-rose-300/20 bg-rose-300/10 px-3 py-2 text-sm font-semibold text-rose-200">
           {action.label}
         </div>
       ) : null}
 
-      {onStartBuilding ? (
+      {onStartBuilding && !(binary && built) ? (
         <button
           className="mt-3 h-10 w-full rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
           aria-label={`${actionVerb} ${building.label} to Level ${status.targetLevel}`}
           disabled={status.disabled}
           onClick={() => onStartBuilding(building.id, building.label)}
-          title={status.disabled ? status.reason : undefined}
           type="button"
         >
-          {building.level === 0 ? `Build ${building.label}` : `Upgrade Level ${status.targetLevel}`}
+          {building.level === 0 || binary ? `Build ${building.label}` : `Upgrade Level ${status.targetLevel}`}
         </button>
       ) : null}
 
@@ -795,10 +790,10 @@ function MoonStructureLevelInfoButton({
 
 type MoonStructureLevelInfoRow = {
   cost: Resources;
-  durationSeconds?: number | undefined;
+  durationSeconds: number;
   effect: string;
   level: number;
-  requirements: string;
+  requirements?: string | undefined;
   status: "current" | "next" | "future";
 };
 
@@ -872,10 +867,8 @@ function MoonStructureLevelInfoModal({
                     {row.status === "next" ? <MoonStructureLevelPill tone="next">Next</MoonStructureLevelPill> : null}
                   </MoonStructureLevelInfoCell>
                   <MoonStructureLevelInfoCell>{formatCost(row.cost)}</MoonStructureLevelInfoCell>
-                  <MoonStructureLevelInfoCell>
-                    {row.durationSeconds === undefined ? "Pending" : formatDuration(row.durationSeconds)}
-                  </MoonStructureLevelInfoCell>
-                  <MoonStructureLevelInfoCell>{row.requirements}</MoonStructureLevelInfoCell>
+                  <MoonStructureLevelInfoCell>{formatDuration(row.durationSeconds)}</MoonStructureLevelInfoCell>
+                  <MoonStructureLevelInfoCell>{row.requirements ?? "None"}</MoonStructureLevelInfoCell>
                   <MoonStructureLevelInfoCell>{row.effect}</MoonStructureLevelInfoCell>
                 </tr>
               ))}
@@ -1460,7 +1453,7 @@ export function moonStructureStatus(
   const cost = moonStructureUpgradeCost(building);
   const spendable = resourcesFromChain(moonState?.resourcesAsOfNow ?? moonState?.resources);
   const requirements = moonBuildingRequirementRows(building, moon, moonState);
-  const targetLevel = building.level + 1;
+  const targetLevel = moonStructureTargetLevel(building);
   const costAvailable = moonStructureCostAvailable(cost);
   const base = {
     cost,
@@ -1516,7 +1509,7 @@ export function moonStructureStatus(
     return {
       ...base,
       disabled: true,
-      reason: formatMissingResources(spendable, cost, { metal: 0, crystal: 0, deuterium: 0 }),
+      reason: "Moon resources are below the build cost.",
     };
   }
 
@@ -1525,6 +1518,41 @@ export function moonStructureStatus(
     disabled: false,
     reason: building.level === 0 ? `Ready to build ${building.label}` : `Ready for Level ${targetLevel}`,
   };
+}
+
+function moonStructureTargetLevel(building: MoonBuilding): number {
+  return isBinaryMoonStructure(building.key) ? 1 : building.level + 1;
+}
+
+function isBinaryMoonStructure(key: MoonBuilding["key"]): boolean {
+  return key === "jumpGate";
+}
+
+function moonStructureLevelSummary(building: MoonBuilding, targetLevel: number): string {
+  if (isBinaryMoonStructure(building.key)) {
+    return building.level > 0 ? "Built on this moon" : "Build on this moon";
+  }
+  return building.level === 0 ? `Build Level ${targetLevel}` : `Level ${building.level} to ${targetLevel}`;
+}
+
+function moonStructureCatalogTitleTone(
+  status: Pick<MoonStructureStatus, "disabled" | "reason">,
+): "normal" | "muted" {
+  return status.disabled && (
+    status.reason.startsWith("Lunar Base")
+    || status.reason.startsWith("Robotics Factory")
+    || status.reason.startsWith("Hyperspace")
+    || status.reason.includes("open field")
+  )
+    ? "muted"
+    : "normal";
+}
+
+function moonStructureCatalogStatusText(building: MoonBuilding): string {
+  if (building.key === "lunarBase") return "Moon fields";
+  if (building.key === "roboticsFactory") return "Build speed";
+  if (building.key === "shipyard") return "Defense queue";
+  return building.level > 0 ? "Built" : "One-time gate";
 }
 
 export function moonBuildingRequirementRows(
@@ -1620,7 +1648,7 @@ function activeQueueTitle(queue: ChainMoonState["queue"] | undefined): string | 
 
 function moonRequirementFlairs(rows: RequirementRow[]): RequirementFlair[] {
   return rows.map((row) => ({
-    label: row.met ? row.label : `${row.label} required`,
+    label: row.label,
     met: row.met,
     target: row.target,
   }));
@@ -1659,24 +1687,64 @@ function moonStructureLevelInfoRows(
   moonState: ChainMoonState | null | undefined,
 ): MoonStructureLevelInfoRow[] {
   const currentLevel = building.level;
-  const highestLevel = Math.max(currentLevel + 3, 4);
+  const highestLevel = isBinaryMoonStructure(building.key)
+    ? 1
+    : Math.max(currentLevel + 6, 10);
+  const requirements = moonStructureRequirementsSummary(moonBuildingRequirementRows(building, moon, moonState));
   return Array.from({ length: highestLevel }, (_, index) => {
     const level = index + 1;
     const status = level === currentLevel ? "current" : level === currentLevel + 1 ? "next" : "future";
     return {
       cost: level === currentLevel + 1 ? moonStructureUpgradeCost(building, level) : moonStructureCatalogCost(building.key, level - 1),
-      durationSeconds: level === currentLevel + 1 ? building.durationSeconds : undefined,
+      durationSeconds: moonStructureBuildDurationSeconds(building, level, moonState),
       effect: moonStructureLevelEffect(building.key, level),
       level,
-      requirements: moonStructureRequirementsSummary(moonBuildingRequirementRows(building, moon, moonState)),
+      requirements,
       status,
     };
   });
 }
 
-function moonStructureRequirementsSummary(rows: RequirementRow[]): string {
+function moonStructureRequirementsSummary(rows: RequirementRow[]): string | undefined {
   const missing = rows.filter((row) => !row.met).map((row) => row.label);
-  return missing.length > 0 ? `Requires ${missing.join(", ")}` : "Met";
+  return missing.length > 0 ? missing.join(", ") : undefined;
+}
+
+function moonStructureBuildDurationSeconds(
+  building: MoonBuilding,
+  level: number,
+  moonState: ChainMoonState | null | undefined,
+): number {
+  if (level === building.level + 1 && building.durationSeconds !== undefined) {
+    return building.durationSeconds;
+  }
+
+  const moonLevels = moonBuildingLevels(moonState);
+  const roboticsLevel = building.key === "roboticsFactory"
+    ? Math.max(0, level - 1)
+    : moonLevels.roboticsFactory;
+  const estimatedBuildings = {
+    metalMine: 0,
+    crystalMine: 0,
+    deuteriumSynthesizer: 0,
+    solarPlant: 0,
+    roboticsFactory: roboticsLevel,
+    shipyard: building.key === "shipyard" ? Math.max(0, level - 1) : moonLevels.shipyard,
+    researchLab: 0,
+    terraformer: 0,
+    fusionReactor: 0,
+    naniteFactory: 0,
+    metalStorage: 0,
+    crystalStorage: 0,
+    deuteriumTank: 0,
+    allianceDepot: 0,
+    missileSilo: 0,
+    interdimensionalRiftStabilizer: 0,
+  };
+  return buildingDurationEstimate(
+    estimatedBuildings,
+    moonStructureCatalogCost(building.key, Math.max(0, level - 1)),
+  );
 }
 
 function moonStructureLevelText(building: MoonBuilding): string {
