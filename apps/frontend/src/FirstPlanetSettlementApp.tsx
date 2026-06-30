@@ -62,7 +62,6 @@ type SettlementConfigState =
 
 export function shouldAutoConnectFarcasterWallet(input: {
   miniAppMode: boolean;
-  miniAppPlatformType: FarcasterMiniAppPlatformType | undefined;
   providerAvailable: boolean;
   settlementConfigReady: boolean;
   walletProviderSource: "injected" | "farcaster" | undefined;
@@ -70,7 +69,6 @@ export function shouldAutoConnectFarcasterWallet(input: {
 }): boolean {
   return input.providerAvailable
     && input.miniAppMode
-    && input.miniAppPlatformType !== undefined
     && input.walletProviderSource === "farcaster"
     && input.settlementConfigReady
     && !input.alreadyAttempted;
@@ -134,8 +132,19 @@ export function settlementErrorStateMessage(planet: Extract<PlanetState, { kind:
 
 export async function walletConnectionAccounts(
   provider: Eip1193Provider,
-  _context: WalletProviderContext,
+  context: WalletProviderContext,
 ): Promise<string[]> {
+  if (context.miniAppMode && context.walletProviderSource === "farcaster") {
+    try {
+      const accounts = await getCurrentAccounts(provider, WALLET_BOOTSTRAP_READ_TIMEOUT_MS);
+      if (accounts[0]) {
+        return accounts;
+      }
+    } catch {
+      // Some Mini App hosts expose accounts only through the request path.
+    }
+  }
+
   return requestAccounts(provider);
 }
 
@@ -284,7 +293,10 @@ export function FirstPlanetSettlementApp() {
     let disposed = false;
 
     void (async () => {
-      const walletProvider = await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode });
+      let walletProvider = await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode });
+      if (!walletProvider?.provider && !miniAppMode) {
+        walletProvider = await loadWalletProviderDetails({ waitForFarcasterProvider: true });
+      }
       if (disposed) return;
       bindWalletProviderDetails(walletProvider);
 
@@ -338,7 +350,6 @@ export function FirstPlanetSettlementApp() {
     if (!shouldAutoConnectFarcasterWallet({
       alreadyAttempted: farcasterAutoConnectAttempted.current,
       miniAppMode,
-      miniAppPlatformType,
       providerAvailable: Boolean(provider),
       settlementConfigReady: settlementConfigState.status === "ready",
       walletProviderSource,
@@ -650,7 +661,7 @@ export function FirstPlanetSettlementApp() {
 
     const walletProvider = provider
       ? undefined
-      : await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode });
+      : await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode || !provider });
     const activeProvider = provider ?? bindWalletProviderDetails(walletProvider);
     const providerContext = provider ? walletProviderContext() : walletProviderContext(walletProvider?.source);
 
