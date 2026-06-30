@@ -46,6 +46,28 @@ describe("Shipyard status panel surfaces only failures", () => {
     });
     expect(visibleText(panel)).toContain("Ship build failed");
   });
+
+  test("shows wallet recovery guidance instead of missing-home-planet copy", () => {
+    const panel = StatusPanel({
+      actionState: { status: "idle" },
+      error: "Timed out reading wallet accounts from the wallet after 10 seconds.",
+      loading: false,
+      shipyardState: shipyardState({ homePlanetId: null }),
+    });
+    const text = visibleText(panel);
+    expect(text).toContain("Unlock or reconnect your wallet");
+    expect(text).not.toContain("No VeydriftGame home planet");
+  });
+
+  test("keeps true missing-home-planet copy when no wallet recovery is needed", () => {
+    const panel = StatusPanel({
+      actionState: { status: "idle" },
+      error: undefined,
+      loading: false,
+      shipyardState: shipyardState({ homePlanetId: null }),
+    });
+    expect(visibleText(panel)).toContain("No VeydriftGame home planet");
+  });
 });
 
 function visibleText(node: ComponentChildren): string {

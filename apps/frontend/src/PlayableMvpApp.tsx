@@ -179,6 +179,7 @@ import {
   fetchPlayerProfile,
   mergePlayerProfile,
   walletRequestErrorMessage,
+  walletRecoveryActionMessage,
   spendTransactionErrorMessage,
   confirmTransactionReceipt,
   fetchWalletQueues,
@@ -7827,6 +7828,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
   const canSubmitMoonTransaction = moonTransactionInputsAvailable && !transactionActionPending;
   const canSubmitChickenBurnTransaction = chickenBurnTransactionInputsAvailable && !transactionActionPending;
   const canSubmitProfileMutation = Boolean(provider && account && apiBaseUrl) && !transactionActionPending;
+  const walletRecoveryReadError = walletRecoveryActionMessage(onChainError) ? onChainError : undefined;
   const missionLaunchBlocker = gameTransactionUnavailableReason ?? missionLaunchStateBlocker;
   const activePlanetSections = planetSectionAccessForPlanet(planetSectionStore, activePlanetId, {
     settlementState: () => refreshOnChainState(),
@@ -8177,7 +8179,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
         <ResearchPage
           actionState={researchAction}
           canTransact={canSubmitGameTransaction}
-          error={researchSection.status.error ?? researchError}
+          error={researchSection.status.error ?? researchError ?? walletRecoveryReadError}
           loading={researchLoading || researchSection.status.loading}
           now={now}
           onOpenRequirement={handleOpenRequirement}
@@ -8202,7 +8204,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           actionState={defenseAction}
           canTransact={canSubmitGameTransaction}
           defenseState={defenseState}
-          error={defenseSection.status.error ?? defenseError}
+          error={defenseSection.status.error ?? defenseError ?? walletRecoveryReadError}
           loading={defenseLoading || defenseSection.status.loading}
           now={now}
           onBuild={handleBuildDefense}
@@ -8296,7 +8298,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
         <ShipyardPage
           actionState={shipyardAction}
           canTransact={canSubmitGameTransaction}
-          error={shipyardSection.status.error ?? shipyardError}
+          error={shipyardSection.status.error ?? shipyardError ?? walletRecoveryReadError}
           loading={shipyardLoading || shipyardSection.status.loading}
           now={now}
           onBuild={handleBuildShip}

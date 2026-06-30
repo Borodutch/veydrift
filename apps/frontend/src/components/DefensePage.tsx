@@ -3,7 +3,7 @@ import type { BuildingKey, DefenseKey, ResearchKey, Resources, UnlockRequirement
 import { canAfford, defenseCatalog, defenseCombatStats, missingUnlockRequirements } from "../playableMvp";
 import { formatMissingResources } from "../buildingDetails";
 import { activeProductionQueue } from "../productionQueueFallback";
-import type { ChainDefenseState } from "../walletFlow";
+import { walletRecoveryActionMessage, type ChainDefenseState } from "../walletFlow";
 import {
   Notice,
   parseProductionQuantity,
@@ -155,6 +155,11 @@ export function StatusPanel({
   // is silently re-fetched.
   if (loading && !defenseState) {
     return null;
+  }
+
+  const walletRecoveryMessage = walletRecoveryActionMessage(error ?? defenseState?.unavailableReason);
+  if (walletRecoveryMessage) {
+    return <Notice tone="danger">{walletRecoveryMessage}</Notice>;
   }
 
   if (error) {

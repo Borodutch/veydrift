@@ -72,6 +72,31 @@ describe("Research status panel surfaces only failures", () => {
     });
     expect(visibleText(refreshing)).toContain("Research failed");
   });
+
+  test("shows wallet recovery guidance instead of missing-home-planet copy", () => {
+    const panel = ResearchStatusPanel({
+      actionState: { status: "idle" },
+      error: undefined,
+      loading: false,
+      researchState: researchState({
+        homePlanetId: null,
+        unavailableReason: "Wallet account is unavailable. Reconnect your wallet, then retry.",
+      }),
+    });
+    const text = visibleText(panel);
+    expect(text).toContain("Unlock or reconnect your wallet");
+    expect(text).not.toContain("No VeydriftGame home planet");
+  });
+
+  test("keeps true missing-home-planet copy when no wallet recovery is needed", () => {
+    const panel = ResearchStatusPanel({
+      actionState: { status: "idle" },
+      error: undefined,
+      loading: false,
+      researchState: researchState({ homePlanetId: null }),
+    });
+    expect(visibleText(panel)).toContain("No VeydriftGame home planet");
+  });
 });
 
 describe("Research page load-error display", () => {
