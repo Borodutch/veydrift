@@ -168,4 +168,33 @@ describe("Farcaster Mini App ready lifecycle", () => {
       chains: ["eip155:8453"],
     });
   });
+
+  test("keeps wallet capability and chain read failures as diagnostics", async () => {
+    await expect(farcasterMiniAppWalletSupport({
+      actions: {
+        ready: () => undefined,
+      },
+      getCapabilities: async () => {
+        throw new Error("method unavailable");
+      },
+      getChains: async () => [FARCASTER_BASE_SEPOLIA_CHAIN],
+    })).resolves.toMatchObject({
+      status: "unknown",
+      code: "FARCASTER_CAPABILITIES_UNAVAILABLE",
+      capabilities: [],
+      chains: [FARCASTER_BASE_SEPOLIA_CHAIN],
+    });
+
+    await expect(farcasterMiniAppWalletSupport({
+      actions: {
+        ready: () => undefined,
+      },
+      getCapabilities: async () => [FARCASTER_WALLET_CAPABILITY],
+    })).resolves.toMatchObject({
+      status: "unknown",
+      code: "FARCASTER_CHAINS_UNAVAILABLE",
+      capabilities: [FARCASTER_WALLET_CAPABILITY],
+      chains: [],
+    });
+  });
 });

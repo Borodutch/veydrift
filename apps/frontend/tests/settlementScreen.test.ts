@@ -462,7 +462,8 @@ describe("settlement screen mode", () => {
     expect(source).toContain("signalFarcasterReadyOnce");
     expect(source).toContain("farcasterMiniAppWalletSupport");
     expect(source).toContain("preferFarcasterProvider: waitForFarcasterProvider");
-    expect(source).toContain("await ensureBaseSepoliaNetwork(injected)");
+    expect(source).toContain("await setupBaseSepoliaNetworkForWallet(injected, context)");
+    expect(source).toContain("await switchBaseSepoliaNetwork(walletProvider)");
     expect(source).toContain("Retry Base Sepolia");
     expect(source).toContain("networkSwitchPending");
     expect(source).toContain("disabled={networkSwitchPending}");
@@ -476,9 +477,21 @@ describe("settlement screen mode", () => {
     expect(farcasterMiniAppReportableWalletError(
       "FARCASTER_BASE_SEPOLIA_SWITCH_FAILED",
       "The host rejected wallet_switchEthereumChain.",
-      { chainId: "0x2105", source: "farcaster" },
+      {
+        chainId: "0x2105",
+        requestedChainId: "0x14a34",
+        source: "farcaster",
+        support: {
+          status: "unknown",
+          code: "FARCASTER_CHAINS_UNAVAILABLE",
+          capabilities: ["wallet.getEthereumProvider"],
+          chains: [],
+          message: "Farcaster Mini App host did not report supported chains.",
+        },
+        error: { code: 4902, message: "Unrecognized chain" },
+      },
     )).toBe(
-      "Farcaster Mini App wallet setup failed (FARCASTER_BASE_SEPOLIA_SWITCH_FAILED). The host rejected wallet_switchEthereumChain. Details: chain=0x2105; source=farcaster. Please send this exact message to Veydrift support.",
+      "Farcaster Mini App wallet setup failed (FARCASTER_BASE_SEPOLIA_SWITCH_FAILED). The host rejected wallet_switchEthereumChain. Details: chain=0x2105; requestedChain=0x14a34; source=farcaster; support=unknown/FARCASTER_CHAINS_UNAVAILABLE; capabilities=wallet.getEthereumProvider; chains=none; errorCode=4902; errorMessage=Unrecognized chain. Please send this exact message to Veydrift support.",
     );
 
     expect(farcasterMiniAppSupportErrorMessage({

@@ -17,6 +17,7 @@ export type FarcasterReadyClient = {
 export type FarcasterMiniAppPlatformType = "web" | "mobile" | "unknown";
 export type FarcasterMiniAppWalletSupport =
   | { status: "supported"; capabilities: string[]; chains: string[] }
+  | { status: "unknown"; code: string; capabilities: string[]; chains: string[]; message: string }
   | { status: "unsupported"; code: string; capabilities: string[]; chains: string[]; message: string };
 
 type ReadyScheduler = (callback: () => void) => void;
@@ -74,10 +75,7 @@ export async function farcasterMiniAppWalletSupport(
     "FARCASTER_CAPABILITIES_UNAVAILABLE",
     "Farcaster Mini App host did not report wallet capabilities.",
   );
-  if (capabilities.status === "unsupported") {
-    return capabilities;
-  }
-  if (!capabilities.values.includes(requiredCapability)) {
+  if (capabilities.status === "reported" && !capabilities.values.includes(requiredCapability)) {
     return {
       status: "unsupported",
       code: "FARCASTER_WALLET_CAPABILITY_MISSING",
@@ -93,19 +91,27 @@ export async function farcasterMiniAppWalletSupport(
     "FARCASTER_CHAINS_UNAVAILABLE",
     "Farcaster Mini App host did not report supported chains.",
   );
-  if (chains.status === "unsupported") {
-    return {
-      ...chains,
-      capabilities: capabilities.values,
-    };
-  }
-  if (!chains.values.includes(requiredChain)) {
+  if (chains.status === "reported" && !chains.values.includes(requiredChain)) {
     return {
       status: "unsupported",
       code: "FARCASTER_BASE_SEPOLIA_UNSUPPORTED",
-      capabilities: capabilities.values,
+      capabilities: capabilities.status === "reported" ? capabilities.values : [],
       chains: chains.values,
       message: `Farcaster Mini App host does not advertise ${requiredChain}.`,
+    };
+  }
+
+  if (capabilities.status === "unavailable" || chains.status === "unavailable") {
+    const unavailable = capabilities.status === "unavailable" ? capabilities : chains.status === "unavailable" ? chains : undefined;
+    return {
+      status: "unknown",
+      code: unavailable?.code ?? "FARCASTER_WALLET_SUPPORT_UNKNOWN",
+      capabilities: capabilities.status === "reported" ? capabilities.values : [],
+      chains: chains.status === "reported" ? chains.values : [],
+      message: [
+        capabilities.status === "unavailable" ? capabilities.message : undefined,
+        chains.status === "unavailable" ? chains.message : undefined,
+      ].filter(Boolean).join(" "),
     };
   }
 
@@ -169,31 +175,27 @@ async function readMiniAppStringList(
   code: string,
   message: string,
 ): Promise<
-  | { status: "supported"; values: string[] }
-  | { status: "unsupported"; code: string; capabilities: string[]; chains: string[]; message: string }
+  | { status: "reported"; values: string[] }
+  | { status: "unavailable"; code: string; message: string }
 > {
   try {
     const result = await withTimeout(Promise.resolve(read()), timeoutMs);
     if (!Array.isArray(result)) {
       return {
-        status: "unsupported",
+        status: "unavailable",
         code,
-        capabilities: [],
-        chains: [],
         message,
       };
     }
 
     return {
-      status: "supported",
+      status: "reported",
       values: result.filter((value): value is string => typeof value === "string"),
     };
   } catch {
     return {
-      status: "unsupported",
+      status: "unavailable",
       code,
-      capabilities: [],
-      chains: [],
       message,
     };
   }

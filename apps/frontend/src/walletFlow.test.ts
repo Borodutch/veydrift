@@ -85,6 +85,7 @@ import {
   sendStartResearchTransaction,
   sendStartShipProductionTransaction,
   settlementTransactionData,
+  switchBaseSepoliaNetwork,
   isOnChainRevertError,
   playerProfileMessage,
   updatePlayerProfile,
@@ -1491,6 +1492,20 @@ describe("walletFlow", () => {
 
     await ensureBaseSepoliaNetwork(provider);
 
+    expect(calls).toEqual(["wallet_switchEthereumChain"]);
+  });
+
+  test("switches Farcaster Mini App wallets without adding Base Sepolia", async () => {
+    const calls: string[] = [];
+    const provider = mockProvider(async ({ method }) => {
+      calls.push(method);
+      if (method === "wallet_switchEthereumChain") {
+        throw { code: 4902, message: "Unrecognized chain" };
+      }
+      return null;
+    });
+
+    await expect(switchBaseSepoliaNetwork(provider)).rejects.toMatchObject({ code: 4902 });
     expect(calls).toEqual(["wallet_switchEthereumChain"]);
   });
 
