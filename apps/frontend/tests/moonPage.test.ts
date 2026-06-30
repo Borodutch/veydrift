@@ -549,6 +549,7 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).not.toContain("{fieldSummary.used} / {fieldSummary.capacity} fields");
     expect(moonPageSource).not.toContain('statusText={status.disabled ? status.reason : formatCost(status.cost)}');
     expect(moonPageSource).not.toContain("Cost unavailable");
+    expect(moonPageSource).not.toContain('<MoonMetric icon={Orbit} label="Jump Gate"');
   });
 
   test("falls back to known moon structure catalog costs when indexed cost is zero", () => {
