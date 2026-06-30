@@ -59,6 +59,11 @@ import {
 } from "./buildingActionNotice";
 import { buildingUpgradeStatus, formatMissingResources } from "./buildingDetails";
 import { serverUnavailableRetryMessage } from "./gameUnavailable";
+import {
+  detectFarcasterMiniApp,
+  hasMiniAppUrlHint,
+  signalFarcasterReadyOnce,
+} from "./farcasterReady";
 
 export { infrastructureActionNoticeFor, infrastructureDisplayActionNoticeFor } from "./buildingActionNotice";
 import {
@@ -184,7 +189,10 @@ import {
   confirmTransactionReceipt,
   fetchWalletQueues,
   fetchWalletSettlement,
+  getAvailableWalletProviderDetails,
+  getCurrentAccounts,
   parseRiftTokenAmount,
+  requestAccounts,
   unwatchPlanet,
   watchPlanet,
   sendApproveResourceTokenTransaction,
@@ -231,6 +239,7 @@ import {
   isOnChainRevertError,
   isUserRejected,
   updatePlayerProfile,
+  WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
   type ChainDefenseState,
   type ChainAllianceState,
   type ChainInfrastructureState,
@@ -3008,8 +3017,90 @@ function writeInspectRoute(route: InspectRoute): void {
   resetDocumentTitle();
 }
 
-export function PlayableMvpApp({ provider, account, miniAppMode = false, onConnectWallet, planet }: PlayableMvpAppProps = {}) {
+export function PlayableMvpApp({
+  provider: providedProvider,
+  account: providedAccount,
+  miniAppMode: providedMiniAppMode = false,
+  onConnectWallet,
+  planet,
+}: PlayableMvpAppProps = {}) {
+  const [miniAppProvider, setMiniAppProvider] = useState<Eip1193Provider>();
+  const [miniAppAccount, setMiniAppAccount] = useState<string | undefined>();
+  const [detectedMiniAppMode, setDetectedMiniAppMode] = useState(() => (
+    providedMiniAppMode
+      || (typeof window !== "undefined" && hasMiniAppUrlHint(window.location))
+  ));
+  const miniAppWalletConnectAttempted = useRef(false);
+  const provider = providedProvider ?? miniAppProvider;
+  const account = providedAccount ?? miniAppAccount;
+  const miniAppMode = providedMiniAppMode || detectedMiniAppMode;
   const isWalletConnected = Boolean(provider && account);
+  const connectMiniAppWallet = useCallback(async () => {
+    if (providedProvider && providedAccount) {
+      return;
+    }
+
+    await signalFarcasterReadyOnce();
+    const walletProvider = await getAvailableWalletProviderDetails(
+      window as typeof window & { ethereum?: Eip1193Provider },
+      undefined,
+      { preferFarcasterProvider: true },
+    );
+    if (!walletProvider?.provider || walletProvider.source !== "farcaster") {
+      return;
+    }
+
+    setDetectedMiniAppMode(true);
+    setMiniAppProvider(walletProvider.provider);
+
+    let accounts: string[] = [];
+    try {
+      accounts = await getCurrentAccounts(walletProvider.provider, WALLET_BOOTSTRAP_READ_TIMEOUT_MS);
+    } catch {
+      // Fall back to the Mini App provider's authorization path below.
+    }
+
+    if (!accounts[0]) {
+      accounts = await requestAccounts(walletProvider.provider);
+    }
+
+    if (accounts[0]) {
+      setMiniAppAccount(accounts[0]);
+    }
+  }, [providedAccount, providedProvider]);
+
+  useEffect(() => {
+    if (providedMiniAppMode || detectedMiniAppMode) {
+      return;
+    }
+
+    let disposed = false;
+    void detectFarcasterMiniApp().then((detected) => {
+      if (!disposed && detected) {
+        setDetectedMiniAppMode(true);
+      }
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, [detectedMiniAppMode, providedMiniAppMode]);
+
+  useEffect(() => {
+    if (
+      providedProvider
+      || providedAccount
+      || !miniAppMode
+      || miniAppWalletConnectAttempted.current
+    ) {
+      return;
+    }
+
+    miniAppWalletConnectAttempted.current = true;
+    void connectMiniAppWallet().catch((error) => {
+      console.error("Mini App wallet connection failed", error);
+    });
+  }, [connectMiniAppWallet, miniAppMode, providedAccount, providedProvider]);
   const [now, setNow] = useState(() => Date.now());
   const [runtimeConfig, setRuntimeConfig] = useState<RuntimeConfigState>({ status: "loading" });
   const [page, setPage] = useState<Page>(() => initialInspectPageState().page);
@@ -7828,6 +7919,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
   const canSubmitMoonTransaction = moonTransactionInputsAvailable && !transactionActionPending;
   const canSubmitChickenBurnTransaction = chickenBurnTransactionInputsAvailable && !transactionActionPending;
   const canSubmitProfileMutation = Boolean(provider && account && apiBaseUrl) && !transactionActionPending;
+  const effectiveConnectWallet = onConnectWallet ?? (miniAppMode ? connectMiniAppWallet : undefined);
   const walletRecoveryReadError = walletRecoveryActionMessage(onChainError) ? onChainError : undefined;
   const missionLaunchBlocker = gameTransactionUnavailableReason ?? missionLaunchStateBlocker;
   const activePlanetSections = planetSectionAccessForPlanet(planetSectionStore, activePlanetId, {
@@ -8446,7 +8538,7 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
           active={page}
           canEditPlayerProfile={canSubmitProfileMutation}
           coordinates={homeCoordinateLabel}
-          onConnectWallet={onConnectWallet}
+          onConnectWallet={effectiveConnectWallet}
           onNavigate={handleNavigate}
           onUpdatePlayerProfile={handleUpdatePlayerProfile}
           planetPicker={mobilePlanetPicker}
