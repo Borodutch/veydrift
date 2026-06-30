@@ -63,6 +63,16 @@ export function WatchablePlanetRow({
     setImageLoaded(isImageReady(imageRef.current));
   }, [planet.image]);
 
+  const moonSubsection = planet.hasMoon ? (
+    <PlanetMoonSubsection
+      action={moonActionSlot}
+      label={planet.moonName ?? "Moon"}
+      onClick={onInspectMoon ? () => onInspectMoon(coords) : undefined}
+      planetType={planet.type}
+      title={`Open ${planet.moonName ?? "Moon"} at [${coords.galaxy}:${coords.system}:${coords.position}]`}
+    />
+  ) : null;
+
   return (
     <div
       className={`group grid min-h-16 w-full items-start gap-3 rounded-md border px-3 py-2 text-left transition ${
@@ -125,15 +135,6 @@ export function WatchablePlanetRow({
             </div>
           </div>
         </button>
-        {planet.hasMoon ? (
-          <PlanetMoonSubsection
-            action={moonActionSlot}
-            label={planet.moonName ?? "Moon"}
-            onClick={onInspectMoon ? () => onInspectMoon(coords) : undefined}
-            planetType={planet.type}
-            title={`Open ${planet.moonName ?? "Moon"} at [${coords.galaxy}:${coords.system}:${coords.position}]`}
-          />
-        ) : null}
       </div>
 
       {showIdentity ? (
@@ -196,6 +197,12 @@ export function WatchablePlanetRow({
         </button>
         {actionSlot}
       </div>
+
+      {moonSubsection ? (
+        <div className="col-span-full min-w-0" data-watchable-moon-row="full-width">
+          {moonSubsection}
+        </div>
+      ) : null}
 
       {showIdentity ? (
         <div className={`${leadingSlot ? "col-span-2 col-start-2" : "col-span-2"} min-w-0 text-xs font-medium sm:hidden`}>

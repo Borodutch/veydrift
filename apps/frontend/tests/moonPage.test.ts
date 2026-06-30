@@ -538,10 +538,45 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).toContain('label: "Lunar Base level 1"');
     expect(moonPageSource).toContain('label: "Robotics Factory level 2"');
     expect(moonPageSource).toContain('? { kind: "moonStructure", key }');
-    expect(moonPageSource).toContain('InspectInfoBlock label="Current effect"');
-    expect(moonPageSource).toContain('InspectInfoBlock label="Next effect"');
+    expect(moonPageSource).toContain("MoonStructureComparisonMetric");
+    expect(moonPageSource).toContain("MoonStructureLevelInfoButton");
+    expect(moonPageSource).toContain("MoonStructureLevelInfoModal");
+    expect(moonPageSource).not.toContain('InspectInfoBlock label="Current level"');
+    expect(moonPageSource).not.toContain('InspectInfoBlock label="Current effect"');
+    expect(moonPageSource).not.toContain('InspectInfoBlock label="Next effect"');
     expect(moonPageSource).not.toContain('label: "Lunar Base first"');
     expect(moonPageSource).not.toContain('label: "Open field"');
+    expect(moonPageSource).not.toContain("{fieldSummary.used} / {fieldSummary.capacity} fields");
+    expect(moonPageSource).not.toContain('statusText={status.disabled ? status.reason : formatCost(status.cost)}');
+    expect(moonPageSource).not.toContain("Cost unavailable");
+    expect(moonPageSource).not.toContain('<MoonMetric icon={Orbit} label="Jump Gate"');
+  });
+
+  test("falls back to known moon structure catalog costs when indexed cost is zero", () => {
+    const moonState = loadedMoonState({
+      moon: {
+        exists: true,
+        planetId: "7",
+        owner: "0x1111111111111111111111111111111111111111",
+        fields: 4,
+        diameterKm: 8774,
+        createdAt: "1770000000",
+        jumpGateReadyAt: "0",
+      },
+      resourcesAsOfNow: { metal: "100000", crystal: "100000", deuterium: "100000" },
+      buildings: [{
+        id: 0,
+        key: "lunarBase",
+        label: "Lunar Base",
+        level: 0,
+        cost: { metal: "0", crystal: "0", deuterium: "0" },
+        durationSeconds: 1440,
+      }],
+    });
+    const status = moonStructureStatus(moonState.buildings[0], moonState.moon!, moonState, { canTransact: true });
+
+    expect(status.costAvailable).toBe(true);
+    expect(status.cost).toEqual({ metal: 20000, crystal: 40000, deuterium: 20000 });
   });
 
   test("marks ready moon queues available for completion only after backend readiness", () => {
