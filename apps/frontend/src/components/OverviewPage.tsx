@@ -120,7 +120,9 @@ interface OverviewPageProps {
   watchedPlanetsPage?: number | undefined;
   onWatchedPlanetsPageChange?: ((page: number) => void) | undefined;
   onRefreshWatchedPlanets?: (() => void) | undefined;
+  watchedPlanetActionsForPlanet?: ((planet: Planet) => GalaxyAction[]) | undefined;
   watchedMoonActionsForPlanet?: ((planet: Planet) => GalaxyAction[]) | undefined;
+  onWatchedPlanetAction?: ((action: GalaxyAction, planet: Planet) => void) | undefined;
   onWatchedMoonAction?: ((action: GalaxyAction, planet: Planet) => void) | undefined;
   watchBusyPlanetId?: string | undefined;
   myPlanets?: readonly OverviewMyPlanetActionGroup[] | undefined;
@@ -168,7 +170,9 @@ export function OverviewPage({
   watchedPlanetsPage = 1,
   onWatchedPlanetsPageChange,
   onRefreshWatchedPlanets,
+  watchedPlanetActionsForPlanet,
   watchedMoonActionsForPlanet,
+  onWatchedPlanetAction,
   onWatchedMoonAction,
   watchBusyPlanetId,
   myPlanets = [],
@@ -718,7 +722,9 @@ export function OverviewPage({
           loading={watchedPlanetsLoading}
           onPageChange={onWatchedPlanetsPageChange}
           onRefresh={onRefreshWatchedPlanets}
+          planetActionsForPlanet={watchedPlanetActionsForPlanet}
           moonActionsForPlanet={watchedMoonActionsForPlanet}
+          onPlanetAction={onWatchedPlanetAction}
           onMoonAction={onWatchedMoonAction}
           onSelectAlliance={onSelectAlliance}
           onSelectMoon={onSelectMoon}
@@ -812,21 +818,17 @@ function MyPlanetActionButtons({
   actions: GalaxyAction[];
   onAction: (action: GalaxyAction) => void;
 }) {
+  const enabledActions = actions.filter((action) => action.enabled);
+  if (enabledActions.length === 0) return null;
+
   return (
     <span className="flex flex-wrap justify-end gap-1.5">
-      {actions.map((action) => (
+      {enabledActions.map((action) => (
         <button
-          className={`rounded border px-2 py-1 text-xs font-medium transition ${
-            action.enabled
-              ? "border-signal/30 bg-signal/10 text-signal hover:bg-signal/20"
-              : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
-          }`}
-          disabled={!action.enabled}
+          className="rounded border border-signal/30 bg-signal/10 px-2 py-1 text-xs font-medium text-signal transition hover:bg-signal/20"
           key={action.kind}
-          onClick={() => {
-            if (action.enabled) onAction(action);
-          }}
-          title={action.enabled ? action.label : action.reason}
+          onClick={() => onAction(action)}
+          title={action.label}
           type="button"
         >
           {action.label}
@@ -902,6 +904,7 @@ function WatchedPlanetsPanel({
   error,
   loading,
   moonActionsForPlanet,
+  onPlanetAction,
   onMoonAction,
   onPageChange,
   onRefresh,
@@ -910,6 +913,7 @@ function WatchedPlanetsPanel({
   onSelectPlanet,
   onSelectPlayer,
   onToggleWatchPlanet,
+  planetActionsForPlanet,
   page,
   pageSize,
   planets,
@@ -921,8 +925,10 @@ function WatchedPlanetsPanel({
   error: string | undefined;
   loading: boolean;
   moonActionsForPlanet: ((planet: Planet) => GalaxyAction[]) | undefined;
+  onPlanetAction: ((action: GalaxyAction, planet: Planet) => void) | undefined;
   onMoonAction: ((action: GalaxyAction, planet: Planet) => void) | undefined;
   onPageChange: ((page: number) => void) | undefined;
+  planetActionsForPlanet: ((planet: Planet) => GalaxyAction[]) | undefined;
   onRefresh: (() => void) | undefined;
   onSelectAlliance: ((allianceId: string) => void) | undefined;
   onSelectMoon: ((coords: { galaxy: number; system: number; position: number }) => void) | undefined;
@@ -995,9 +1001,16 @@ function WatchedPlanetsPanel({
         {planets.map((planet) => {
           const planetId = planet.occupiedBy?.planetId;
           const coords = { galaxy: planet.galaxy, system: planet.system, position: planet.position };
+          const actions = planetActionsForPlanet?.(planet) ?? [];
           const moonActions = planet.hasMoon ? moonActionsForPlanet?.(planet) ?? [] : [];
           return (
             <WatchablePlanetRow
+              actionSlot={actions.length > 0 ? (
+                <MyPlanetActionButtons
+                  actions={actions}
+                  onAction={(action) => onPlanetAction?.(action, planet)}
+                />
+              ) : undefined}
               allianceLabel={formatGalaxyAllianceIdentityLabel(planet.alliance)}
               commanderLabel={formatGalaxyCommanderLabel(planet)}
               coords={coords}

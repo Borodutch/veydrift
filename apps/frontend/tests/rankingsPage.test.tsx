@@ -239,7 +239,7 @@ describe("RankingsPage", () => {
     expect(buttonWithTitle(table, "Inspect moon")).toBeUndefined();
     expect(moonRow).toBeTruthy();
     expect(attack).toBeTruthy();
-    moonRow?.props?.onClick?.();
+    moonRow?.props?.onClick?.(clickEvent());
     attack?.props?.onClick?.(clickEvent());
 
     expect(selectedMoons).toEqual([{ galaxy: 2, system: 44, position: 9 }]);
@@ -840,7 +840,11 @@ function elementWithTitle(node: ComponentChildren, title: string): VNode | undef
 }
 
 function clickEvent(): MouseEvent {
-  return { stopPropagation: () => undefined } as unknown as MouseEvent;
+  return {
+    currentTarget: null,
+    stopPropagation: () => undefined,
+    target: null,
+  } as unknown as MouseEvent;
 }
 
 function rowWithWallet(node: ComponentChildren, wallet: string): VNode | undefined {

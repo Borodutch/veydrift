@@ -35,6 +35,7 @@ import {
   markFreshStateWrite,
   overviewMyPlanetMoonActionsFor,
   overviewMyPlanetActionsFor,
+  overviewWatchedPlanetActionsFor,
   overviewWatchedPlanetMoonActionsFor,
   overviewBuildingReadyToFinishFlag,
   overviewResearchCompletionUnavailableReasonFor,
@@ -612,6 +613,84 @@ describe("Playable MVP app display helpers", () => {
       mission: "attack",
       defaultTargetIsMoon: true,
     });
+  });
+
+  test("Overview watched planet rows expose only valid planet-targeted actions", () => {
+    const wallet = "0x2222222222222222222222222222222222222222";
+    const enemy = "0x3333333333333333333333333333333333333333";
+    const selectedShipyardState: ChainShipyardState = {
+      wallet,
+      homePlanetId: "7",
+      planetId: "7",
+      productionAvailable: true,
+      resources: null,
+      fleetLaunchAvailable: true,
+      fleetSlots: { active: 0, limit: 2 },
+      shipyardLevel: 1,
+      naniteLevel: 0,
+      technologyLevels: {},
+      ships: [
+        { id: 0, count: 3, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+        { id: 1, count: 2, cost: { metal: "0", crystal: "0", deuterium: "0" } },
+      ],
+      queue: null,
+    };
+    const watchedPlanet = (owner: string): Planet => ({
+      alliance: null,
+      debrisField: null,
+      diameter: 12000,
+      fields: 180,
+      galaxy: 2,
+      hasMoon: true,
+      id: "9",
+      image: "/assets/game/style-pass/generated/planets/hot-desert.webp",
+      metalMultiplierBps: 10000,
+      crystalMultiplierBps: 10000,
+      deuteriumMultiplierBps: 10000,
+      moonChance: null,
+      moonName: "Moon",
+      name: "Watched",
+      occupiedBy: {
+        owner,
+        ownerDisplayName: null,
+        planetId: "9",
+      },
+      owner,
+      ownerId: owner,
+      position: 9,
+      resources: { metal: 0, crystal: 0, deuterium: 0, energy: 0 },
+      system: 44,
+      temperature: { min: -20, max: 40 },
+      type: "hot-desert",
+    });
+
+    const ownActions = overviewWatchedPlanetActionsFor({
+      account: wallet,
+      defenseState: null,
+      homePlanetId: "7",
+      planet: watchedPlanet(wallet),
+      shipyardState: selectedShipyardState,
+    });
+    const enemyActions = overviewWatchedPlanetActionsFor({
+      account: wallet,
+      defenseState: null,
+      homePlanetId: "7",
+      planet: watchedPlanet(enemy),
+      shipyardState: selectedShipyardState,
+    });
+    const unavailableActions = overviewWatchedPlanetActionsFor({
+      account: wallet,
+      defenseState: null,
+      homePlanetId: "7",
+      planet: watchedPlanet(enemy),
+      shipyardState: null,
+    });
+
+    expect(ownActions.map((action) => action.label)).toEqual(["Transport", "Deploy", "Defend"]);
+    expect(ownActions.every((action) => action.enabled && action.defaultTargetIsMoon !== true)).toBe(true);
+    expect(enemyActions.map((action) => action.label)).toEqual(["Attack"]);
+    expect(enemyActions.every((action) => action.enabled && action.defaultTargetIsMoon !== true)).toBe(true);
+    expect(unavailableActions).toEqual([]);
   });
 
   test("Overview owned planet disabled action copy names the selected planet state", () => {

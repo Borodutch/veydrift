@@ -687,22 +687,20 @@ function RankingsActionButtons({
   className?: string | undefined;
   onAction: (action: GalaxyAction) => void;
 }) {
+  const enabledActions = actions.filter((action) => action.enabled);
+  if (enabledActions.length === 0) return null;
+
   return (
     <span className={`flex flex-wrap justify-end gap-1 ${className}`}>
-      {actions.map((action) => (
+      {enabledActions.map((action) => (
         <button
-          className={`rounded border px-2 py-1 text-[10px] font-semibold transition ${
-            action.enabled
-              ? "border-signal/30 bg-signal/10 text-signal hover:bg-signal/20"
-              : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"
-          }`}
-          disabled={!action.enabled}
+          className="rounded border border-signal/30 bg-signal/10 px-2 py-1 text-[10px] font-semibold text-signal transition hover:bg-signal/20"
           key={action.kind}
           onClick={(event) => {
             event.stopPropagation();
-            if (action.enabled) onAction(action);
+            onAction(action);
           }}
-          title={action.enabled ? action.label : action.reason}
+          title={action.label}
           type="button"
         >
           {action.label}
