@@ -282,12 +282,36 @@ describe("RankingsPage", () => {
       planetActionsForPlanet: () => [planetAction],
     });
     const transport = buttonWithTitle(table, "Transport");
+    const planetRow = planetRowWithPlanetId(table, "7");
 
     expect(visibleText(table)).toContain("Transport");
+    expect(visibleText(planetRow)).toContain("Transport");
+    expect(buttonWithTitle(planetRow, "Transport")).toBeTruthy();
     expect(transport).toBeTruthy();
     transport?.props?.onClick?.(clickEvent());
 
     expect(launched).toEqual([{ action: planetAction, planetId: "7", wallet: entry.wallet }]);
+  });
+
+  test("hides unavailable ranked planet actions inside the target row", () => {
+    const planetAction: GalaxyAction = {
+      enabled: false,
+      kind: "attack",
+      label: "Attack",
+      mode: "mission",
+      mission: "attack",
+      reason: "Attack unavailable.",
+    };
+    const table = RankingsTable({
+      entries: [rankingEntry()],
+      loading: false,
+      planetActionsForPlanet: () => [planetAction],
+    });
+    const planetRow = planetRowWithPlanetId(table, "7");
+
+    expect(planetRow).toBeTruthy();
+    expect(visibleText(planetRow)).not.toContain("Attack");
+    expect(buttonWithTitle(planetRow, "Attack")).toBeUndefined();
   });
 
   test("marks the home planet inside the planet list instead of commander subtext", () => {
@@ -887,6 +911,10 @@ function clickEvent(): MouseEvent {
 
 function rowWithWallet(node: ComponentChildren, wallet: string): VNode | undefined {
   return elementNodes(node).find((item) => item.props?.["data-ranking-wallet"] === wallet.toLowerCase());
+}
+
+function planetRowWithPlanetId(node: ComponentChildren, planetId: string): VNode | undefined {
+  return elementNodes(node).find((item) => item.props?.["data-ranking-planet-row"] === planetId);
 }
 
 function elementNodes(node: ComponentChildren): VNode[] {
