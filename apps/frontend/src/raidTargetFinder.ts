@@ -108,7 +108,7 @@ export type RaidTarget = {
   inbound: RaidTargetInbound;
 };
 
-export type RaidTargetSortKey = "distance" | "loot" | "combat" | "defense";
+export type RaidTargetSortKey = "distance" | "loot" | "defense";
 export type DebrisTargetSortKey = "distance" | "total" | "metal" | "crystal" | "eta" | "fuel";
 export type RaidTargetSortDirection = "asc" | "desc";
 
@@ -222,9 +222,11 @@ export function normalizeRaidTargetSort(value: unknown): RaidTargetSort {
   const key = candidate.key;
   const direction = candidate.direction;
   return {
-    key: key === "distance" || key === "loot" || key === "combat" || key === "defense"
-      ? key
-      : DEFAULT_RAID_TARGET_SORT.key,
+    key: key === "combat"
+      ? "defense"
+      : key === "distance" || key === "loot" || key === "defense"
+        ? key
+        : DEFAULT_RAID_TARGET_SORT.key,
     direction: direction === "asc" || direction === "desc"
       ? direction
       : DEFAULT_RAID_TARGET_SORT.direction,
@@ -484,10 +486,8 @@ function sortValue(target: RaidTarget, key: RaidTargetSortKey): number {
       return target.distance === null ? Number.POSITIVE_INFINITY : target.distance;
     case "loot":
       return target.loot;
-    case "combat":
-      return target.combatPower;
     case "defense":
-      return target.defensePower;
+      return target.combatPower;
   }
 }
 

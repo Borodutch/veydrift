@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { DebrisTargetRow, RaidTargetFilterControls, RaidTargetRow, combatLabel, defenseLabel } from "../src/components/RaidTargetFinderPage";
+import { DebrisTargetRow, RaidTargetFilterControls, RaidTargetRow, defenseLabel } from "../src/components/RaidTargetFinderPage";
 import { DEFAULT_RAID_TARGET_FILTERS, type DebrisFinderTarget, type RaidTarget } from "../src/raidTargetFinder";
 
 describe("RaidTargetFinderPage", () => {
@@ -15,7 +15,7 @@ describe("RaidTargetFinderPage", () => {
     expect(visibleText(controls)).toContain("Hide active fleet");
   });
 
-  test("combat and defense hover labels include per-unit breakdowns", () => {
+  test("defense hover label combines defending combat ships and static defenses", () => {
     const target = raidTarget({
       combatPower: 6_000,
       combatShipUnits: [{ id: 1, count: 1, power: 4_000 }],
@@ -23,8 +23,7 @@ describe("RaidTargetFinderPage", () => {
       defenseUnits: [{ id: 0, count: 1, power: 2_000 }],
     });
 
-    expect(combatLabel(target)).toBe("Combat 6,000 — Ships: Light Fighter x1 (4K); Defenses: Rocket Launcher x1 (2K)");
-    expect(defenseLabel(target)).toBe("Defense power 2,000 — Defenses: Rocket Launcher x1 (2K)");
+    expect(defenseLabel(target)).toBe("Defense 6,000 — Ships: Light Fighter x1 (4K); Defenses: Rocket Launcher x1 (2K)");
   });
 
   test("row exposes enabled and disabled attack actions without dropping Inspect", () => {
@@ -73,7 +72,7 @@ describe("RaidTargetFinderPage", () => {
     expect(visibleText(disabled)).not.toContain("Protection score");
   });
 
-  test("row top-level cells match the desktop header order before actions", () => {
+  test("row top-level cells expose one combined Defense column before actions", () => {
     const row = RaidTargetRow({
       attackAction: { label: "Attack" },
       missionSubtext: { lines: [], overflow: 0 },
@@ -84,13 +83,13 @@ describe("RaidTargetFinderPage", () => {
     });
     const cells = directElementChildren(row);
 
-    expect(cells).toHaveLength(6);
+    expect(cells).toHaveLength(5);
     expect(cells[1]?.props?.title).toBe("Distance from your active planet");
     expect(cells[2]?.props?.title).toContain("LOOT M");
-    expect(cells[3]?.props?.title).toContain("Combat 6,000");
-    expect(cells[4]?.props?.title).toContain("Defense power 2,000");
-    expect(visibleText(cells[5])).toContain("Attack");
-    expect(visibleText(cells[5])).toContain("Inspect");
+    expect(cells[3]?.props?.title).toContain("Defense 6,000");
+    expect(visibleText(cells[3])).toBe("6K");
+    expect(visibleText(cells[4])).toContain("Attack");
+    expect(visibleText(cells[4])).toContain("Inspect");
   });
 
   test("debris row exposes harvest blockers and keeps Inspect", () => {

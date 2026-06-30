@@ -64,6 +64,10 @@ describe("persisted raid target settings", () => {
       key: "distance",
       direction: "asc",
     });
+    expect(normalizeRaidTargetSort({ key: "combat", direction: "desc" })).toEqual({
+      key: "defense",
+      direction: "desc",
+    });
     expect(normalizeRaidTargetSort({ key: "owner", direction: "sideways" })).toEqual(DEFAULT_RAID_TARGET_SORT);
     expect(normalizeRaidTargetSort("bad")).toEqual(DEFAULT_RAID_TARGET_SORT);
   });
@@ -464,6 +468,17 @@ describe("sortRaidTargets", () => {
     const snapshot = input.map((target) => target.planetId);
     sortRaidTargets(input, DEFAULT_RAID_TARGET_SORT);
     expect(input.map((target) => target.planetId)).toEqual(snapshot);
+  });
+
+  test("defense sorting uses the combined defender threat value", () => {
+    const sorted = sortRaidTargets(
+      [
+        targetWith({ planetId: "static", combatPower: 2_000, defensePower: 2_000 }),
+        targetWith({ planetId: "stationed", combatPower: 8_000, defensePower: 0 }),
+      ],
+      { key: "defense", direction: "desc" },
+    );
+    expect(sorted.map((target) => target.planetId)).toEqual(["stationed", "static"]);
   });
 });
 
