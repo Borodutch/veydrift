@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { ChevronLeft, ChevronRight, UserRound } from "lucide-preact";
 import { planetImageForType } from "../data/mockUniverse";
 import { fleetMissionDistance } from "../fleetMissionRules";
@@ -71,12 +71,32 @@ export function rankingsRefreshButtonState(loading: boolean): { disabled: boolea
   return refreshButtonState(loading);
 }
 
+export function rankingsCurrentPlayerRowSelector(currentWallet: string): string {
+  return `[data-ranking-wallet="${currentWallet.toLowerCase()}"]`;
+}
+
+export function scrollRankingsCurrentPlayerRow(
+  container: { querySelector: (selectors: string) => { focus?: (options?: FocusOptions) => void; scrollIntoView?: (options?: ScrollIntoViewOptions) => void } | null } | null | undefined,
+  currentWallet: string | undefined,
+): boolean {
+  if (!container || !currentWallet) return false;
+
+  const row = container.querySelector(rankingsCurrentPlayerRowSelector(currentWallet));
+  if (!row) return false;
+
+  row.scrollIntoView?.({ behavior: "smooth", block: "center", inline: "nearest" });
+  row.focus?.({ preventScroll: true });
+  return true;
+}
+
 export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, currentWallet, now, moonActionsForPlanet, onMoonAction, onPlanetAction, onSelectAlliance, onSelectMoon, onSelectPlayer, onSelectPlanet, originCoordinates, planetActionsForPlanet }: RankingsPageProps) {
   const [active, setActive] = useState<HighscoreCategory>("total");
   const [data, setData] = useState<HighscoreResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [page, setPage] = useState(1);
+  const [pendingCurrentPlayerJumpPage, setPendingCurrentPlayerJumpPage] = useState<number | null>(null);
+  const rankingsSectionRef = useRef<HTMLElement | null>(null);
 
   const load = (targetPage = page) => {
     if (!apiBaseUrl) {
@@ -114,6 +134,11 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
     ? entries.find((entry) => entry.wallet.toLowerCase() === currentWallet.toLowerCase()) ?? null
     : null;
   const currentPlayerScore = currentPlayerEntry ? rankingDisplayScore(currentPlayerEntry, active) : null;
+  const handleCurrentPlayerJump = () => {
+    if (!currentPlayerPage) return;
+    setPendingCurrentPlayerJumpPage(currentPlayerPage.page);
+    setPage(currentPlayerPage.page);
+  };
   // VEY-KANEO-448: discoverability signal so the enriched per-planet mission subtext is never buried in
   // a long rank-ordered page (mirrors the Raid Target Finder footer). Counts visible planets that carry
   // at least one active mission line, using the same owner (entry wallet) the rows classify against.
@@ -127,8 +152,15 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
     [entries, missionsByPlanetId, nowMs],
   );
 
+  useEffect(() => {
+    if (pendingCurrentPlayerJumpPage === null || loading) return;
+    if (!currentWallet || !data?.pagination || data.pagination.page !== pendingCurrentPlayerJumpPage) return;
+    scrollRankingsCurrentPlayerRow(rankingsSectionRef.current, currentWallet);
+    setPendingCurrentPlayerJumpPage(null);
+  }, [currentWallet, data?.pagination?.page, loading, pendingCurrentPlayerJumpPage]);
+
   return (
-    <section className="space-y-4">
+    <section className="space-y-4" ref={rankingsSectionRef}>
       <RankingsPageHeader loading={loading} onRefresh={() => load(page)} />
 
       <RankingsCurrentPlayerIndicator
@@ -137,7 +169,7 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
         currentWallet={currentWallet}
         hasLoadedData={Boolean(data)}
         loading={loading}
-        onCurrentPlayer={() => currentPlayerPage ? setPage(currentPlayerPage.page) : undefined}
+        onCurrentPlayer={handleCurrentPlayerJump}
       />
 
       {error ? (
@@ -194,7 +226,7 @@ export function RankingsPage({ activeMissions, apiBaseUrl, currentAllianceId, cu
           currentPlayerPage={currentPlayerPage}
           onNext={() => setPage((currentPage) => currentPage + 1)}
           onPrevious={() => setPage((currentPage) => Math.max(1, currentPage - 1))}
-          onCurrentPlayer={() => currentPlayerPage ? setPage(currentPlayerPage.page) : undefined}
+          onCurrentPlayer={handleCurrentPlayerJump}
           pagination={pagination}
         />
       ) : null}
@@ -505,6 +537,7 @@ function RankingRow({
       aria-current={isCurrentPlayer ? "true" : undefined}
       className={`grid min-w-0 grid-cols-[40px_minmax(0,1fr)] items-center border-b px-2 py-3 text-sm last:border-b-0 sm:grid-cols-[72px_minmax(0,1fr)_120px] sm:px-3 ${rowTone}`}
       data-ranking-wallet={normalizedWallet}
+      tabIndex={isCurrentPlayer ? -1 : undefined}
     >
       <span className={`font-mono ${isCurrentPlayer ? "text-cyan-100" : isSameAlliance ? "text-sky-100" : "text-slate-400"}`}>#{entry.rank}</span>
       <span className="flex min-w-0 items-center overflow-hidden">

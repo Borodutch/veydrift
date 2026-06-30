@@ -5,6 +5,7 @@ import type { GalaxyAction } from "../src/galaxyActions";
 import {
   primaryRankingEntries,
   rankingsColumnLabels,
+  rankingsCurrentPlayerRowSelector,
   rankingsPageSize,
   rankingsPaginationLabel,
   rankingsRefreshButtonState,
@@ -12,6 +13,7 @@ import {
   RankingsPagination,
   RankingsPageHeader,
   RankingsTable,
+  scrollRankingsCurrentPlayerRow,
   shouldShowRankingsInitialLoader,
 } from "../src/components/RankingsPage";
 // The per-planet mission subtext helpers live in their own module (unit-tested in
@@ -66,6 +68,7 @@ describe("RankingsPage", () => {
 
     expect(row?.props?.["aria-current"]).toBe("true");
     expect(row?.props?.className).toContain("bg-cyan-300");
+    expect(row?.props?.tabIndex).toBe(-1);
     expect(visibleText(row)).toContain("You");
   });
 
@@ -596,6 +599,41 @@ describe("RankingsPage", () => {
       hasLoadedData: true,
       loading: false,
     })).toBeNull();
+  });
+
+  test("scrolls and focuses the current player's ranking row", () => {
+    const selectors: string[] = [];
+    const calls: string[] = [];
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const row = {
+      focus: (options?: FocusOptions) => calls.push(`focus:${String(options?.preventScroll)}`),
+      scrollIntoView: (options?: ScrollIntoViewOptions) => calls.push(`scroll:${options?.block}:${options?.inline}:${options?.behavior}`),
+    };
+    const container = {
+      querySelector: (selector: string) => {
+        selectors.push(selector);
+        return row;
+      },
+    };
+
+    expect(rankingsCurrentPlayerRowSelector(wallet.toUpperCase())).toBe(`[data-ranking-wallet="${wallet}"]`);
+    expect(scrollRankingsCurrentPlayerRow(container, wallet.toUpperCase())).toBe(true);
+    expect(selectors).toEqual([`[data-ranking-wallet="${wallet}"]`]);
+    expect(calls).toEqual(["scroll:center:nearest:smooth", "focus:true"]);
+  });
+
+  test("reports unavailable current-player rows without scrolling", () => {
+    const selectors: string[] = [];
+    const container = {
+      querySelector: (selector: string) => {
+        selectors.push(selector);
+        return null;
+      },
+    };
+
+    expect(scrollRankingsCurrentPlayerRow(container, "0x1111111111111111111111111111111111111111")).toBe(false);
+    expect(scrollRankingsCurrentPlayerRow(container, undefined)).toBe(false);
+    expect(selectors).toEqual(["[data-ranking-wallet=\"0x1111111111111111111111111111111111111111\"]"]);
   });
 
   test("renders compact pagination controls from highscore metadata", () => {
