@@ -599,6 +599,33 @@ describe("walletFlow", () => {
     });
   });
 
+  test("requires a real Farcaster Mini App host before using the SDK wallet provider", async () => {
+    const miniAppProvider = mockProvider(async () => null);
+
+    await expect(getAvailableWalletProvider({}, {
+      isInMiniApp: async () => false,
+      wallet: {
+        getEthereumProvider: () => miniAppProvider,
+      },
+    }, { preferFarcasterProvider: true })).resolves.toBeUndefined();
+
+    await expect(getAvailableWalletProvider({}, {
+      isInMiniApp: async () => true,
+      wallet: {
+        getEthereumProvider: () => miniAppProvider,
+      },
+    }, { preferFarcasterProvider: true })).resolves.toBe(miniAppProvider);
+
+    await expect(getAvailableWalletProvider({}, {
+      isInMiniApp: async () => {
+        throw new Error("host unavailable");
+      },
+      wallet: {
+        getEthereumProvider: () => miniAppProvider,
+      },
+    }, { preferFarcasterProvider: true })).resolves.toBeUndefined();
+  });
+
   test("reports whether the selected wallet provider came from Farcaster", async () => {
     const provider = mockProvider(async () => null);
     const miniAppProvider = mockProvider(async () => null);
