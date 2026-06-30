@@ -24,6 +24,7 @@ import {
   transactionSyncingLabel,
 } from "./transactionActionGate";
 import {
+  BASE_SEPOLIA,
   ensureBaseSepoliaNetwork,
   fetchSettlementFundingState,
   fetchWalletSettlement,
@@ -39,6 +40,7 @@ import {
   getAvailableWalletProviderDetails,
   sendSettlementTransaction,
   settlementContractConfigured,
+  switchBaseSepoliaNetwork,
   waitForBaseSepoliaNetwork,
   walletRequestErrorMessage,
   type Eip1193Provider,
@@ -118,12 +120,21 @@ export function shouldShowPublicPlayableApp(wallet: WalletState, planet: PlanetS
 export function farcasterMiniAppReportableWalletError(
   code: string,
   message: string,
-  details?: { chainId?: string | undefined; source?: string | undefined },
+  details?: {
+    chainId?: string | undefined;
+    source?: string | undefined;
+    requestedChainId?: string | undefined;
+    support?: FarcasterMiniAppWalletSupport | undefined;
+    error?: unknown;
+  },
 ): string {
   const detailRows = [
     details?.chainId ? `chain=${details.chainId}` : undefined,
+    details?.requestedChainId ? `requestedChain=${details.requestedChainId}` : undefined,
     details?.source ? `source=${details.source}` : undefined,
-  ].filter(Boolean).join("; ");
+    details?.support ? farcasterMiniAppSupportDetail(details.support) : undefined,
+    ...walletErrorDetails(details?.error),
+  ].filter((value): value is string => Boolean(value)).join("; ");
   const detailsCopy = detailRows ? ` Details: ${detailRows}.` : "";
   return `Farcaster Mini App wallet setup failed (${code}). ${message}${detailsCopy} ${FARCASTER_MINIAPP_REPORT_SUFFIX}`;
 }
@@ -137,6 +148,26 @@ export function farcasterMiniAppSupportErrorMessage(
     support.code,
     `${support.message} Required capability: ${FARCASTER_WALLET_CAPABILITY}. Required chain: ${FARCASTER_BASE_SEPOLIA_CHAIN}. Reported capabilities: ${capabilities}. Reported chains: ${chains}.`,
   );
+}
+
+function farcasterMiniAppSupportDetail(support: FarcasterMiniAppWalletSupport): string {
+  const capabilities = support.capabilities.length > 0 ? support.capabilities.join(",") : "none";
+  const chains = support.chains.length > 0 ? support.chains.join(",") : "none";
+  return `support=${support.status}/${support.status === "supported" ? "ok" : support.code}; capabilities=${capabilities}; chains=${chains}`;
+}
+
+function walletErrorDetails(error: unknown): string[] {
+  if (!error || typeof error !== "object") {
+    return [];
+  }
+
+  const candidate = error as { code?: unknown; message?: unknown };
+  return [
+    candidate.code !== undefined ? `errorCode=${String(candidate.code)}` : undefined,
+    typeof candidate.message === "string" && candidate.message
+      ? `errorMessage=${candidate.message.replace(/\s+/g, " ").slice(0, 240)}`
+      : undefined,
+  ].filter((value): value is string => Boolean(value));
 }
 
 export function settlementErrorStateMessage(planet: Extract<PlanetState, { kind: "error" | "rejected" }>): {
@@ -334,9 +365,24 @@ export function FirstPlanetSettlementApp() {
       bindWalletProviderDetails(walletProvider);
 
       if (!walletProvider?.provider) {
-        setWallet({
-          kind: "no-wallet"
-        });
+        if (miniAppMode) {
+          const support = await readFarcasterMiniAppWalletSupport(walletProvider?.source);
+          if (disposed || blockUnsupportedFarcasterMiniAppWalletSupport(support)) {
+            return;
+          }
+          setWallet({ kind: "disconnected" });
+          setPlanet({
+            kind: "error",
+            message: farcasterMiniAppReportableWalletError(
+              "FARCASTER_WALLET_PROVIDER_UNAVAILABLE",
+              "The Farcaster Mini App SDK did not provide an Ethereum wallet provider after the app became ready.",
+              { support },
+            ),
+          });
+          return;
+        }
+
+        setWallet({ kind: "no-wallet" });
       }
     })();
 
@@ -428,15 +474,20 @@ export function FirstPlanetSettlementApp() {
     return walletProvider;
   }
 
-  async function ensureFarcasterMiniAppWalletSupport(source = walletProviderSource): Promise<boolean> {
+  async function readFarcasterMiniAppWalletSupport(source = walletProviderSource): Promise<FarcasterMiniAppWalletSupport | undefined> {
     if (!miniAppMode || source === "injected") {
-      return true;
+      return undefined;
     }
 
     await signalFarcasterReadyOnce();
-    const support = await farcasterMiniAppWalletSupport();
-    if (support.status === "supported") {
-      return true;
+    return farcasterMiniAppWalletSupport();
+  }
+
+  function blockUnsupportedFarcasterMiniAppWalletSupport(
+    support: FarcasterMiniAppWalletSupport | undefined,
+  ): boolean {
+    if (!support || support.status !== "unsupported") {
+      return false;
     }
 
     setWallet({ kind: "disconnected" });
@@ -445,7 +496,19 @@ export function FirstPlanetSettlementApp() {
       message: farcasterMiniAppSupportErrorMessage(support),
     });
     setSettlementFunding({ status: "idle" });
-    return false;
+    return true;
+  }
+
+  async function setupBaseSepoliaNetworkForWallet(
+    walletProvider: Eip1193Provider,
+    context: WalletProviderContext,
+  ): Promise<void> {
+    if (context.miniAppMode && context.walletProviderSource === "farcaster") {
+      await switchBaseSepoliaNetwork(walletProvider);
+      return;
+    }
+
+    await ensureBaseSepoliaNetwork(walletProvider);
   }
 
   function bindWalletProviderDetails(
@@ -565,11 +628,13 @@ export function FirstPlanetSettlementApp() {
             kind: "checking"
           });
 
+          let support: FarcasterMiniAppWalletSupport | undefined;
           try {
-            if (!await ensureFarcasterMiniAppWalletSupport(context.walletProviderSource)) {
+            support = await readFarcasterMiniAppWalletSupport(context.walletProviderSource);
+            if (blockUnsupportedFarcasterMiniAppWalletSupport(support)) {
               return;
             }
-            await ensureBaseSepoliaNetwork(injected);
+            await setupBaseSepoliaNetworkForWallet(injected, context);
             await waitForBaseSepoliaNetwork(injected, {
               readTimeoutMs: WALLET_BOOTSTRAP_READ_TIMEOUT_MS
             });
@@ -586,7 +651,13 @@ export function FirstPlanetSettlementApp() {
               message: farcasterMiniAppReportableWalletError(
                 "FARCASTER_BASE_SEPOLIA_SWITCH_FAILED",
                 walletRequestErrorMessage(error),
-                { chainId, source: context.walletProviderSource },
+                {
+                  chainId,
+                  requestedChainId: BASE_SEPOLIA.chainIdHex,
+                  source: context.walletProviderSource,
+                  support,
+                  error,
+                },
               ),
             });
             setSettlementFunding({ status: "idle" });
@@ -641,7 +712,16 @@ export function FirstPlanetSettlementApp() {
       });
       setPlanet({
         kind: "error",
-        message: walletRequestErrorMessage(error)
+        message: context.miniAppMode && context.walletProviderSource === "farcaster"
+          ? farcasterMiniAppReportableWalletError(
+            "FARCASTER_WALLET_BOOTSTRAP_FAILED",
+            walletRequestErrorMessage(error),
+            {
+              source: context.walletProviderSource,
+              error,
+            },
+          )
+          : walletRequestErrorMessage(error)
       });
       setSettlementFunding({ status: "idle" });
     }
@@ -720,15 +800,20 @@ export function FirstPlanetSettlementApp() {
       kind: "connecting"
     });
 
-    if (!await ensureFarcasterMiniAppWalletSupport(walletProviderSource)) {
-      return;
-    }
+    const supportPromise = miniAppMode
+      ? readFarcasterMiniAppWalletSupport(walletProviderSource)
+      : Promise.resolve(undefined);
 
     const walletProvider = provider
       ? undefined
       : await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode || !provider });
     const activeProvider = provider ?? bindWalletProviderDetails(walletProvider);
     const providerContext = provider ? walletProviderContext() : walletProviderContext(walletProvider?.source);
+    const support = await supportPromise;
+
+    if (providerContext.walletProviderSource === "farcaster" && blockUnsupportedFarcasterMiniAppWalletSupport(support)) {
+      return;
+    }
 
     if (!activeProvider) {
       if (miniAppMode) {
@@ -738,6 +823,7 @@ export function FirstPlanetSettlementApp() {
           message: farcasterMiniAppReportableWalletError(
             "FARCASTER_WALLET_PROVIDER_UNAVAILABLE",
             "The Farcaster Mini App SDK did not provide an Ethereum wallet provider after the app became ready.",
+            { support },
           ),
         });
       } else {
@@ -761,7 +847,11 @@ export function FirstPlanetSettlementApp() {
           ? farcasterMiniAppReportableWalletError(
             isUserRejected(error) ? "FARCASTER_WALLET_REJECTED" : "FARCASTER_WALLET_ACCOUNT_FAILED",
             isUserRejected(error) ? "Wallet connection was rejected." : walletRequestErrorMessage(error),
-            { source: providerContext.walletProviderSource },
+            {
+              source: providerContext.walletProviderSource,
+              support,
+              error,
+            },
           )
           : isUserRejected(error) ? "Wallet connection was rejected." : walletRequestErrorMessage(error)
       });
@@ -778,11 +868,14 @@ export function FirstPlanetSettlementApp() {
       kind: "checking"
     });
 
+    let support: FarcasterMiniAppWalletSupport | undefined;
     try {
-      if (!await ensureFarcasterMiniAppWalletSupport(walletProviderSource)) {
+      support = await readFarcasterMiniAppWalletSupport(walletProviderSource);
+      if (blockUnsupportedFarcasterMiniAppWalletSupport(support)) {
         return;
       }
-      await ensureBaseSepoliaNetwork(provider);
+      const context = walletProviderContext();
+      await setupBaseSepoliaNetworkForWallet(provider, context);
       await waitForBaseSepoliaNetwork(provider, {
         readTimeoutMs: WALLET_BOOTSTRAP_READ_TIMEOUT_MS
       });
@@ -796,7 +889,13 @@ export function FirstPlanetSettlementApp() {
           message: farcasterMiniAppReportableWalletError(
             "FARCASTER_BASE_SEPOLIA_RETRY_FAILED",
             walletRequestErrorMessage(error),
-            { chainId: wallet.chainId, source: walletProviderSource },
+            {
+              chainId: wallet.chainId,
+              requestedChainId: BASE_SEPOLIA.chainIdHex,
+              source: walletProviderSource,
+              support,
+              error,
+            },
           ),
         });
         return;

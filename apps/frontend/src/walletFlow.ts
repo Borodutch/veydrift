@@ -2331,6 +2331,10 @@ export async function ensureBaseSepoliaNetwork(provider: Eip1193Provider): Promi
   }
 }
 
+export async function switchBaseSepoliaNetwork(provider: Eip1193Provider): Promise<void> {
+  await switchToBaseSepolia(provider);
+}
+
 export async function ensureBaseMainnetNetwork(provider: Eip1193Provider): Promise<void> {
   try {
     await switchToBaseMainnet(provider);
