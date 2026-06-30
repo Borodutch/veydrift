@@ -1124,6 +1124,7 @@ export type BurningChickenNft = {
 };
 
 export type FarcasterWalletClient = {
+  isInMiniApp?: (timeoutMs?: number) => Promise<boolean>;
   wallet?: {
     ethProvider?: Eip1193Provider | undefined;
     getEthereumProvider?: () => Promise<Eip1193Provider | undefined> | Eip1193Provider | undefined;
@@ -1189,6 +1190,21 @@ export async function getAvailableWalletProvider(
 async function getFarcasterEthereumProvider(
   farcasterClient: FarcasterWalletClient,
 ): Promise<Eip1193Provider | undefined> {
+  if (farcasterClient.isInMiniApp) {
+    try {
+      const isInMiniApp = await timeoutPromise(
+        farcasterClient.isInMiniApp(FARCASTER_WALLET_PROVIDER_TIMEOUT_MS),
+        FARCASTER_WALLET_PROVIDER_TIMEOUT_MS,
+        "Farcaster Mini App host detection",
+      );
+      if (!isInMiniApp) {
+        return undefined;
+      }
+    } catch {
+      return undefined;
+    }
+  }
+
   try {
     const providerRequest = farcasterClient.wallet?.getEthereumProvider?.();
     const provider = providerRequest
