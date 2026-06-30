@@ -117,6 +117,14 @@ export function shouldShowPublicPlayableApp(wallet: WalletState, planet: PlanetS
   return wallet.kind === "disconnected" || wallet.kind === "no-wallet";
 }
 
+export function shouldRefreshWalletOnProviderReady(input: {
+  account: string | undefined;
+  miniAppMode: boolean;
+  walletProviderSource: "injected" | "farcaster" | undefined;
+}): boolean {
+  return !(input.miniAppMode && input.walletProviderSource === "farcaster" && !input.account);
+}
+
 export function farcasterMiniAppReportableWalletError(
   code: string,
   message: string,
@@ -199,13 +207,15 @@ export async function walletConnectionAccounts(
   context: WalletProviderContext,
 ): Promise<string[]> {
   if (context.miniAppMode && context.walletProviderSource === "farcaster") {
-    try {
-      const accounts = await getCurrentAccounts(provider, WALLET_BOOTSTRAP_READ_TIMEOUT_MS);
-      if (accounts[0]) {
-        return accounts;
+    if (context.miniAppPlatformType === "web") {
+      try {
+        const accounts = await getCurrentAccounts(provider, WALLET_BOOTSTRAP_READ_TIMEOUT_MS);
+        if (accounts[0]) {
+          return accounts;
+        }
+      } catch {
+        // Some Mini App hosts expose accounts only through the request path.
       }
-    } catch {
-      // Some Mini App hosts expose accounts only through the request path.
     }
   }
 
@@ -421,9 +431,12 @@ export function FirstPlanetSettlementApp() {
     if (!provider || settlementConfigState.status !== "ready") {
       return;
     }
+    if (!shouldRefreshWalletOnProviderReady({ account, miniAppMode, walletProviderSource })) {
+      return;
+    }
 
     void refreshWallet(provider, account);
-  }, [provider, settlementConfig.address, settlementConfigState.apiUrl, settlementConfigState.status]);
+  }, [account, miniAppMode, provider, settlementConfig.address, settlementConfigState.apiUrl, settlementConfigState.status, walletProviderSource]);
 
   useEffect(() => {
     if (!shouldAutoConnectFarcasterWallet({

@@ -9,6 +9,7 @@ import {
   settlementLaunchBlocker,
   shouldAttemptFarcasterNetworkSetup,
   shouldAutoConnectFarcasterWallet,
+  shouldRefreshWalletOnProviderReady,
   shouldShowMiniAppWalletError,
   shouldRetryFarcasterWalletProviderProbe,
   shouldRetryRejectedRequestWithSettlement,
@@ -395,7 +396,7 @@ describe("settlement screen mode", () => {
     expect(calls).toEqual(["eth_accounts", "eth_requestAccounts"]);
   });
 
-  test("uses already exposed Farcaster Mini App accounts without a manual wallet prompt", async () => {
+  test("uses already exposed Farcaster web Mini App accounts without a manual wallet prompt", async () => {
     const calls: string[] = [];
     const provider = walletProvider(async ({ method }) => {
       calls.push(method);
@@ -405,17 +406,16 @@ describe("settlement screen mode", () => {
 
     await expect(walletConnectionAccounts(provider, {
       miniAppMode: true,
-      miniAppPlatformType: undefined,
+      miniAppPlatformType: "web",
       walletProviderSource: "farcaster",
     })).resolves.toEqual([connected.account]);
     expect(calls).toEqual(["eth_accounts"]);
   });
 
-  test("keeps Farcaster mobile wallet binding on active account authorization", async () => {
+  test("requests Farcaster mobile wallet accounts without a passive accounts preflight", async () => {
     const calls: string[] = [];
     const provider = walletProvider(async ({ method }) => {
       calls.push(method);
-      if (method === "eth_accounts") return [];
       if (method === "eth_requestAccounts") return [connected.account];
       throw new Error(`Unexpected method ${method}`);
     });
@@ -425,7 +425,43 @@ describe("settlement screen mode", () => {
       miniAppPlatformType: "mobile",
       walletProviderSource: "farcaster",
     })).resolves.toEqual([connected.account]);
-    expect(calls).toEqual(["eth_accounts", "eth_requestAccounts"]);
+    expect(calls).toEqual(["eth_requestAccounts"]);
+  });
+
+  test("requests Farcaster pending-platform wallet accounts without a passive accounts preflight", async () => {
+    const calls: string[] = [];
+    const provider = walletProvider(async ({ method }) => {
+      calls.push(method);
+      if (method === "eth_requestAccounts") return [connected.account];
+      throw new Error(`Unexpected method ${method}`);
+    });
+
+    await expect(walletConnectionAccounts(provider, {
+      miniAppMode: true,
+      miniAppPlatformType: undefined,
+      walletProviderSource: "farcaster",
+    })).resolves.toEqual([connected.account]);
+    expect(calls).toEqual(["eth_requestAccounts"]);
+  });
+
+  test("lets Farcaster Mini App connect own the initial account authorization", () => {
+    expect(shouldRefreshWalletOnProviderReady({
+      account: undefined,
+      miniAppMode: true,
+      walletProviderSource: "farcaster",
+    })).toBe(false);
+
+    expect(shouldRefreshWalletOnProviderReady({
+      account: connected.account,
+      miniAppMode: true,
+      walletProviderSource: "farcaster",
+    })).toBe(true);
+
+    expect(shouldRefreshWalletOnProviderReady({
+      account: undefined,
+      miniAppMode: true,
+      walletProviderSource: "injected",
+    })).toBe(true);
   });
 
   test("surfaces an unavailable account when Farcaster desktop authorization returns no account", async () => {
