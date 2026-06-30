@@ -1029,10 +1029,11 @@ function MissionFleet({
   // VEY-KANEO-495: a resolved attack that lost ships must not read like a normal completed mission.
   // For the player's own offensive mission a DefenderWin is a failed attack, so the card shows a
   // distinct red "Attack failed — fleet lost" flag (criterion 2). All resolved battles also state the
-  // outcome (coloured by result), the per-side fleet losses (criterion 1's resource-value fallback —
-  // per-ship loss counts are not in the served payload), and any debris created for follow-up harvest
-  // (criterion 3). A winning raid shows the green outcome and 0 losses, with no false loss flag.
+  // outcome (coloured by result), non-zero per-side fleet losses (criterion 1's resource-value fallback
+  // — per-ship loss counts are not in the served payload), and any debris created for follow-up harvest
+  // (criterion 3). A winning no-loss raid shows the green outcome without a noisy empty Losses line.
   const attackFailed = losses && missionType ? isFailedPlayerAttack(missionType, losses.outcome) : false;
+  const hasLosses = losses ? hasAnyCombatLosses(losses.attacker, losses.defender) : false;
   return (
     <div className="space-y-1">
       <FleetIcons ships={ships} />
@@ -1047,7 +1048,9 @@ function MissionFleet({
             </p>
           ) : null}
           <p className={`text-[11px] ${battleOutcomeTextTone(losses.outcome)}`}>Outcome {battleOutcomeLabel(losses.outcome)}</p>
-          <p className="text-[11px] text-slate-500">Losses {formatCargo(losses.attacker)} / {formatCargo(losses.defender)}</p>
+          {hasLosses ? (
+            <p className="text-[11px] text-slate-500">Losses {formatCargo(losses.attacker)} / {formatCargo(losses.defender)}</p>
+          ) : null}
           {debrisTotal(losses.debris) > 0 ? (
             <p className="text-[11px] text-slate-500">Debris {formatDebris(losses.debris)}</p>
           ) : null}
@@ -1877,6 +1880,7 @@ function PastBattleReportRow({
   const isGroupedAttack = participants.length > 1;
   const lootShown = isGroupedAttack ? sumLoot(participants) : report.loot;
   const joinerCount = isGroupedAttack ? participants.length - 1 : 0;
+  const hasLosses = hasAnyCombatLosses(report.attackerLosses, report.defenderLosses);
   return (
     <MissionCard
       actions={
@@ -1898,7 +1902,9 @@ function PastBattleReportRow({
           <p className="text-[11px] text-slate-500">
             {isGroupedAttack ? "Group loot " : "Loot "}{formatCargo(lootShown)}
           </p>
-          <p className="text-[11px] text-slate-500">Losses {formatCargo(report.attackerLosses)} / {formatCargo(report.defenderLosses)}</p>
+          {hasLosses ? (
+            <p className="text-[11px] text-slate-500">Losses {formatCargo(report.attackerLosses)} / {formatCargo(report.defenderLosses)}</p>
+          ) : null}
           {debrisTotal(report.debris) > 0 ? (
             <p className="text-[11px] text-slate-500">Debris {formatDebris(report.debris)}</p>
           ) : null}
@@ -2737,6 +2743,17 @@ function battleOutcomeTextTone(outcome: BattleReport["outcome"]): string {
   if (outcome === "AttackerWin") return "text-emerald-300/80";
   if (outcome === "DefenderWin") return "text-red-300/90";
   return "text-amber-300/80";
+}
+
+function hasAnyCombatLosses(
+  attacker: BattleReport["attackerLosses"],
+  defender: BattleReport["defenderLosses"],
+): boolean {
+  return resourceTotal(attacker) > 0 || resourceTotal(defender) > 0;
+}
+
+function resourceTotal(resources: { metal: string; crystal: string; deuterium: string }): number {
+  return Number(resources.metal) + Number(resources.crystal) + Number(resources.deuterium);
 }
 
 function debrisTotal(debris: BattleReport["debris"]): number {

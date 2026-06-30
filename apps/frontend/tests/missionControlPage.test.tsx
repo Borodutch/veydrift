@@ -582,7 +582,7 @@ describe("MissionControlPage", () => {
     expect(text).not.toContain("Route / target");
     expect(text).not.toContain("Mission Route Result Details");
     expect(text).not.toContain("Completed");
-    expect(text).not.toContain("Mission #");
+    expect(text).not.toContain("Mission #1");
     expect(text).not.toContain("Open list");
     expect(text).not.toContain("Battle reports");
   });
@@ -606,8 +606,8 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Past missions");
     // Mission 77 collapses to a single row; the bare outgoing "Attack" label is kept.
     expect(text).toContain("Attack");
-    // Mission-number text is no longer rendered in the compact past rows (VEY-371).
-    expect(text).not.toContain("Mission #");
+    // The old table-column mission-number wording is gone; card ids render compactly as "#77".
+    expect(text).not.toContain("Mission #77");
     // A single "Open" button replaces the old split "Open details" / "Open report" pair (VEY-399#8).
     expect(text).toContain("Open");
     expect(text).not.toContain("Open mission");
@@ -678,6 +678,51 @@ describe("MissionControlPage", () => {
     expect(text).toContain("Loot 1,200 M / 300 C / 0 D");
     expect(text).toContain("Outcome Attacker win");
     expect(text).toContain("Losses 100 M / 50 C / 0 D / 900 M / 250 C / 0 D");
+  });
+
+  test("shows returned attack outcome and loot without a losses line when no ships were lost", () => {
+    const page = missionControlPage({
+      fleetVisibility: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        incoming: [],
+        outgoing: [],
+        returning: [],
+        joinableAttacks: [],
+        completedMissions: [],
+        battleReports: [],
+      },
+      missionArchive: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        rows: [{
+          kind: "mission",
+          mission: mission({ missionId: "177", missionType: "Attack", status: "Returned" }),
+          report: {
+            ...battleReport("177"),
+            attackerLosses: { metal: "0", crystal: "0", deuterium: "0" },
+            defenderLosses: { metal: "0", crystal: "0", deuterium: "0" },
+            debris: { metal: "0", crystal: "0" },
+          },
+        }],
+        pagination: {
+          page: 1,
+          pageSize: 25,
+          totalEntries: 1,
+          totalPages: 1,
+          hasPreviousPage: false,
+          hasNextPage: false,
+        },
+      },
+    });
+    const text = visibleText(page);
+
+    expect(text).toContain("Attack #177");
+    expect(text).toContain("Returned");
+    expect(text).toContain("Outcome Attacker win");
+    expect(text).toContain("Loot 1,200 M / 300 C / 0 D");
+    expect(text).not.toContain("Losses 0 M / 0 C / 0 D / 0 M / 0 C / 0 D");
+    expect(text).not.toContain("Losses");
   });
 
   test("renders returned moon-target missions distinctly in the completed archive", () => {
@@ -939,7 +984,10 @@ describe("MissionControlPage", () => {
     const text = visibleText(page);
 
     expect(text).toContain("Harvest");
+    expect(text).toContain("Returned");
     expect(text).toContain("Debris collected 400 M / 50 C / 0 D");
+    expect(text).not.toContain("Outcome");
+    expect(text).not.toContain("Losses");
   });
 
   test("shows a joined attack participant's grabbed loot on the returning mission card", () => {
