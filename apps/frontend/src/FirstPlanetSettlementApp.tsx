@@ -8,10 +8,14 @@ import { preSettlementMode, type PlanetState, type WalletState } from "./settlem
 import { TELEGRAM_SUPPORT_URL } from "./supportLinks";
 import {
   detectFarcasterMiniApp,
+  farcasterMiniAppWalletSupport,
   farcasterMiniAppPlatformType,
   hasMiniAppUrlHint,
   signalFarcasterReadyOnce,
+  FARCASTER_BASE_SEPOLIA_CHAIN,
+  FARCASTER_WALLET_CAPABILITY,
   type FarcasterMiniAppPlatformType,
+  type FarcasterMiniAppWalletSupport,
 } from "./farcasterReady";
 import {
   createTransactionActionGate,
@@ -55,6 +59,7 @@ const GAME_BACKEND_UNAVAILABLE_BODY =
   "The Veydrift backend is likely restarting or temporarily unreachable. It should be back in a few minutes.";
 const FARCASTER_WALLET_PROVIDER_PROBE_ATTEMPTS = 8;
 const FARCASTER_WALLET_PROVIDER_PROBE_INTERVAL_MS = 250;
+const FARCASTER_MINIAPP_REPORT_SUFFIX = "Please send this exact message to Veydrift support.";
 
 type SettlementConfigState =
   | { status: "loading"; apiUrl?: string; config: SettlementConfig }
@@ -101,9 +106,37 @@ export function shouldRetryRejectedRequestWithSettlement(wallet: WalletState): b
   return wallet.kind === "connected";
 }
 
+export function shouldShowMiniAppWalletError(miniAppMode: boolean, planet: PlanetState): boolean {
+  return miniAppMode && (planet.kind === "error" || planet.kind === "rejected");
+}
+
 export function shouldShowPublicPlayableApp(wallet: WalletState, planet: PlanetState): boolean {
   if (planet.kind === "success" || planet.kind === "already-settled") return false;
   return wallet.kind === "disconnected" || wallet.kind === "no-wallet";
+}
+
+export function farcasterMiniAppReportableWalletError(
+  code: string,
+  message: string,
+  details?: { chainId?: string | undefined; source?: string | undefined },
+): string {
+  const detailRows = [
+    details?.chainId ? `chain=${details.chainId}` : undefined,
+    details?.source ? `source=${details.source}` : undefined,
+  ].filter(Boolean).join("; ");
+  const detailsCopy = detailRows ? ` Details: ${detailRows}.` : "";
+  return `Farcaster Mini App wallet setup failed (${code}). ${message}${detailsCopy} ${FARCASTER_MINIAPP_REPORT_SUFFIX}`;
+}
+
+export function farcasterMiniAppSupportErrorMessage(
+  support: Exclude<FarcasterMiniAppWalletSupport, { status: "supported" }>,
+): string {
+  const capabilities = support.capabilities.length > 0 ? support.capabilities.join(",") : "none";
+  const chains = support.chains.length > 0 ? support.chains.join(",") : "none";
+  return farcasterMiniAppReportableWalletError(
+    support.code,
+    `${support.message} Required capability: ${FARCASTER_WALLET_CAPABILITY}. Required chain: ${FARCASTER_BASE_SEPOLIA_CHAIN}. Reported capabilities: ${capabilities}. Reported chains: ${chains}.`,
+  );
 }
 
 export function settlementErrorStateMessage(planet: Extract<PlanetState, { kind: "error" | "rejected" }>): {
@@ -395,6 +428,26 @@ export function FirstPlanetSettlementApp() {
     return walletProvider;
   }
 
+  async function ensureFarcasterMiniAppWalletSupport(source = walletProviderSource): Promise<boolean> {
+    if (!miniAppMode || source === "injected") {
+      return true;
+    }
+
+    await signalFarcasterReadyOnce();
+    const support = await farcasterMiniAppWalletSupport();
+    if (support.status === "supported") {
+      return true;
+    }
+
+    setWallet({ kind: "disconnected" });
+    setPlanet({
+      kind: "error",
+      message: farcasterMiniAppSupportErrorMessage(support),
+    });
+    setSettlementFunding({ status: "idle" });
+    return false;
+  }
+
   function bindWalletProviderDetails(
     walletProvider: WalletProviderDetails,
   ) {
@@ -513,6 +566,9 @@ export function FirstPlanetSettlementApp() {
           });
 
           try {
+            if (!await ensureFarcasterMiniAppWalletSupport(context.walletProviderSource)) {
+              return;
+            }
             await ensureBaseSepoliaNetwork(injected);
             await waitForBaseSepoliaNetwork(injected, {
               readTimeoutMs: WALLET_BOOTSTRAP_READ_TIMEOUT_MS
@@ -526,7 +582,12 @@ export function FirstPlanetSettlementApp() {
               chainId
             });
             setPlanet({
-              kind: "idle"
+              kind: "error",
+              message: farcasterMiniAppReportableWalletError(
+                "FARCASTER_BASE_SEPOLIA_SWITCH_FAILED",
+                walletRequestErrorMessage(error),
+                { chainId, source: context.walletProviderSource },
+              ),
             });
             setSettlementFunding({ status: "idle" });
           }
@@ -659,6 +720,10 @@ export function FirstPlanetSettlementApp() {
       kind: "connecting"
     });
 
+    if (!await ensureFarcasterMiniAppWalletSupport(walletProviderSource)) {
+      return;
+    }
+
     const walletProvider = provider
       ? undefined
       : await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode || !provider });
@@ -666,9 +731,20 @@ export function FirstPlanetSettlementApp() {
     const providerContext = provider ? walletProviderContext() : walletProviderContext(walletProvider?.source);
 
     if (!activeProvider) {
-      setWallet({
-        kind: "no-wallet"
-      });
+      if (miniAppMode) {
+        setWallet({ kind: "disconnected" });
+        setPlanet({
+          kind: "error",
+          message: farcasterMiniAppReportableWalletError(
+            "FARCASTER_WALLET_PROVIDER_UNAVAILABLE",
+            "The Farcaster Mini App SDK did not provide an Ethereum wallet provider after the app became ready.",
+          ),
+        });
+      } else {
+        setWallet({
+          kind: "no-wallet"
+        });
+      }
       return;
     }
 
@@ -681,7 +757,13 @@ export function FirstPlanetSettlementApp() {
       });
       setPlanet({
         kind: isUserRejected(error) ? "rejected" : "error",
-        message: isUserRejected(error) ? "Wallet connection was rejected." : walletRequestErrorMessage(error)
+        message: miniAppMode
+          ? farcasterMiniAppReportableWalletError(
+            isUserRejected(error) ? "FARCASTER_WALLET_REJECTED" : "FARCASTER_WALLET_ACCOUNT_FAILED",
+            isUserRejected(error) ? "Wallet connection was rejected." : walletRequestErrorMessage(error),
+            { source: providerContext.walletProviderSource },
+          )
+          : isUserRejected(error) ? "Wallet connection was rejected." : walletRequestErrorMessage(error)
       });
     }
   }
@@ -697,6 +779,9 @@ export function FirstPlanetSettlementApp() {
     });
 
     try {
+      if (!await ensureFarcasterMiniAppWalletSupport(walletProviderSource)) {
+        return;
+      }
       await ensureBaseSepoliaNetwork(provider);
       await waitForBaseSepoliaNetwork(provider, {
         readTimeoutMs: WALLET_BOOTSTRAP_READ_TIMEOUT_MS
@@ -707,7 +792,12 @@ export function FirstPlanetSettlementApp() {
         farcasterNetworkSetupAttempted.current = undefined;
         setWallet(wallet);
         setPlanet({
-          kind: "idle"
+          kind: "error",
+          message: farcasterMiniAppReportableWalletError(
+            "FARCASTER_BASE_SEPOLIA_RETRY_FAILED",
+            walletRequestErrorMessage(error),
+            { chainId: wallet.chainId, source: walletProviderSource },
+          ),
         });
         return;
       }
@@ -836,7 +926,7 @@ export function FirstPlanetSettlementApp() {
     );
   }
 
-  if (shouldShowPublicPlayableApp(wallet, planet)) {
+  if (shouldShowPublicPlayableApp(wallet, planet) && !shouldShowMiniAppWalletError(miniAppMode, planet)) {
     return (
       <PlayableMvpApp
         miniAppMode={miniAppMode}

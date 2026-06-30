@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  farcasterMiniAppReportableWalletError,
+  farcasterMiniAppSupportErrorMessage,
   indexedSettlementState,
   noWalletDetectedMessage,
   POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE,
@@ -7,6 +9,7 @@ import {
   settlementLaunchBlocker,
   shouldAttemptFarcasterNetworkSetup,
   shouldAutoConnectFarcasterWallet,
+  shouldShowMiniAppWalletError,
   shouldRetryFarcasterWalletProviderProbe,
   shouldRetryRejectedRequestWithSettlement,
   shouldShowPublicPlayableApp,
@@ -41,6 +44,8 @@ describe("settlement screen mode", () => {
       label: "Prime",
       source: "chain",
     } })).toBe(false);
+    expect(shouldShowMiniAppWalletError(true, { kind: "error", message: "Farcaster Mini App wallet setup failed (FARCASTER_BASE_SEPOLIA_UNSUPPORTED)." })).toBe(true);
+    expect(shouldShowMiniAppWalletError(false, { kind: "error", message: "Farcaster Mini App wallet setup failed (FARCASTER_BASE_SEPOLIA_UNSUPPORTED)." })).toBe(false);
   });
 
   test("keeps no-wallet copy wallet-neutral outside Mini App mode", () => {
@@ -455,12 +460,34 @@ describe("settlement screen mode", () => {
     expect(source).toContain("input.walletProviderSource === \"farcaster\"");
     expect(source).toContain("void connectWallet()");
     expect(source).toContain("signalFarcasterReadyOnce");
+    expect(source).toContain("farcasterMiniAppWalletSupport");
     expect(source).toContain("preferFarcasterProvider: waitForFarcasterProvider");
     expect(source).toContain("await ensureBaseSepoliaNetwork(injected)");
     expect(source).toContain("Retry Base Sepolia");
     expect(source).toContain("networkSwitchPending");
     expect(source).toContain("disabled={networkSwitchPending}");
-    expect(source).not.toContain("Unsupported Mini App network");
+    expect(source).toContain("FARCASTER_BASE_SEPOLIA_SWITCH_FAILED");
+    expect(source).toContain("FARCASTER_BASE_SEPOLIA_RETRY_FAILED");
+    expect(source).toContain("FARCASTER_WALLET_PROVIDER_UNAVAILABLE");
+    expect(source).toContain("!shouldShowMiniAppWalletError(miniAppMode, planet)");
+  });
+
+  test("formats reportable Farcaster Mini App wallet errors with host diagnostics", () => {
+    expect(farcasterMiniAppReportableWalletError(
+      "FARCASTER_BASE_SEPOLIA_SWITCH_FAILED",
+      "The host rejected wallet_switchEthereumChain.",
+      { chainId: "0x2105", source: "farcaster" },
+    )).toBe(
+      "Farcaster Mini App wallet setup failed (FARCASTER_BASE_SEPOLIA_SWITCH_FAILED). The host rejected wallet_switchEthereumChain. Details: chain=0x2105; source=farcaster. Please send this exact message to Veydrift support.",
+    );
+
+    expect(farcasterMiniAppSupportErrorMessage({
+      status: "unsupported",
+      code: "FARCASTER_BASE_SEPOLIA_UNSUPPORTED",
+      capabilities: ["wallet.getEthereumProvider"],
+      chains: ["eip155:8453"],
+      message: "Farcaster Mini App host does not advertise eip155:84532.",
+    })).toContain("Reported chains: eip155:8453.");
   });
 
   test("rechecks the Farcaster wallet provider when connect is clicked after a cold desktop load", async () => {
