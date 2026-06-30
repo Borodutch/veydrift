@@ -319,6 +319,42 @@ describe("Mission Control battle reports", () => {
     expect(text).toContain("Borealis");
   });
 
+  test("Past Missions All rows show returned attack outcome, loot, losses, cargo, and debris (VEY-KANEO-668)", () => {
+    const now = Date.parse("2026-06-29T22:00:00.000Z");
+    const owner = "0x1111111111111111111111111111111111111111";
+    const defender = "0x2222222222222222222222222222222222222222";
+    const completed: FleetMissionSummary = {
+      ...mission("668", "Attack", "Returned", owner, "7", "9", now - 7_200_000),
+      cargo: { metal: "400", crystal: "120", deuterium: "30" },
+      originPlanet: planetReference("7", owner, "New Zion", "6:9:1"),
+      targetPlanet: planetReference("9", defender, "Borealis", "5:407:4"),
+    };
+    const report: BattleReport = {
+      ...battleReport("668"),
+      loot: { metal: "900", crystal: "450", deuterium: "75" },
+      attackerLosses: { metal: "100", crystal: "50", deuterium: "0" },
+      defenderLosses: { metal: "1200", crystal: "300", deuterium: "0" },
+      debris: { metal: "390", crystal: "105" },
+    };
+    const tree = MissionControlPage({
+      ...missionControlProps(now, {}),
+      globalMissionArchive: {
+        rows: [{ kind: "mission", mission: completed, report }],
+        pagination: { page: 1, pageSize: 25, totalEntries: 1, totalPages: 1, hasPreviousPage: false, hasNextPage: false },
+      },
+      initialView: { activePage: 0, activeTab: "mine", pastPage: 0, pastTab: "all" },
+    });
+    const allPanel = findElements(tree, "div").find((node) => node.props?.["data-past-tab-panel"] === "all");
+    const text = collectText(allPanel).join(" ");
+
+    expect(allPanel?.props?.hidden).toBe(false);
+    expect(text).toMatch(/Outcome\s+Attacker win/);
+    expect(text).toMatch(/Loot\s+900 M \/ 450 C \/ 75 D/);
+    expect(text).toMatch(/Losses\s+100 M \/ 50 C \/ 0 D\s+\/\s+1,200 M \/ 300 C \/ 0 D/);
+    expect(text).toMatch(/Cargo\s+400 M \/ 120 C \/ 30 D/);
+    expect(text).toMatch(/Debris\s+390 M \/ 105 C/);
+  });
+
   test("renders the Incoming attacks past mission filter as a restored tab (VEY-KANEO-564)", () => {
     const now = Date.parse("2026-06-08T23:00:00.000Z");
     const wallet = "0x1111111111111111111111111111111111111111";

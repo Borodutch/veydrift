@@ -2102,8 +2102,9 @@ describe("Veydrift backend", () => {
     expect(body.rows[0].report).toBeUndefined();
   });
 
-  test("keeps global completed mission archive independent from battle report decoding", async () => {
+  test("global completed mission archive attaches materialized battle report summaries without raw decoding", async () => {
     const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+    const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
     indexer.applyEvent({
@@ -2131,12 +2132,37 @@ describe("Veydrift backend", () => {
       topics: [attackBattleResolvedTopic, topic(88n), addressTopic(player), topic(8n)],
       data: abiWords(1n, 2n, 12345n, 75n, 25n, 0n)
     });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xcombatlosses-88",
+      logIndex: "0x0",
+      removed: false,
+      topics: [combatLossesTopic, topic(88n)],
+      data: abiWords(100n, 50n, 0n, 900n, 250n, 0n)
+    });
 
     const afterReportResponse = await handler(new Request("http://localhost/missions?status=completed&page=1&pageSize=25"));
     const afterReportBody = await afterReportResponse.json();
     expect(afterReportResponse.status).toBe(200);
     expect(afterReportBody.rows[0]).toMatchObject({ kind: "mission", mission: { missionId: "88" } });
     expect(afterReportBody.rows[0].report).toBeUndefined();
+
+    indexer.materializeBattleReportReadModelsForWorker(["88"], "ingest");
+
+    const afterMaterializedReportResponse = await handler(new Request("http://localhost/missions?status=completed&page=1&pageSize=25"));
+    const afterMaterializedReportBody = await afterMaterializedReportResponse.json();
+    expect(afterMaterializedReportResponse.status).toBe(200);
+    expect(afterMaterializedReportBody.rows[0]).toMatchObject({
+      kind: "mission",
+      mission: { missionId: "88" },
+      report: {
+        missionId: "88",
+        outcome: "AttackerWin",
+        loot: { metal: "75", crystal: "25", deuterium: "0" },
+        attackerLosses: { metal: "100", crystal: "50", deuterium: "0" },
+        defenderLosses: { metal: "900", crystal: "250", deuterium: "0" }
+      }
+    });
   });
 
   test("serves universe-wide active missions from the indexed read model (all players, no wallet scope)", async () => {
