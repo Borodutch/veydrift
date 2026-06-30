@@ -2051,6 +2051,7 @@ describe("Veydrift backend", () => {
 
   test("serves completed attack archive rows without rebuilding battle reports", async () => {
     const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
+    const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
     const chainReader = new class extends MockChainReader {
       override async getFleetMissionVisibility(): Promise<never> {
         throw new Error("mission archive must not call chain reader");
@@ -2073,6 +2074,14 @@ describe("Veydrift backend", () => {
       removed: false,
       topics: [attackBattleResolvedTopic, topic(77n), addressTopic(player), topic(8n)],
       data: abiWords(1n, 2n, 12345n, 75n, 25n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x91",
+      transactionHash: "0xcombatlosses-77",
+      logIndex: "0x0",
+      removed: false,
+      topics: [combatLossesTopic, topic(77n)],
+      data: abiWords(100n, 50n, 0n, 900n, 250n, 0n)
     });
 
     const response = await createRequestHandler({
@@ -2100,6 +2109,31 @@ describe("Veydrift backend", () => {
       }
     });
     expect(body.rows[0].report).toBeUndefined();
+
+    indexer.materializeBattleReportReadModelsForWorker(["77"], "ingest");
+
+    const materializedResponse = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    })(new Request(`http://localhost/wallet/${player}/missions?status=completed&page=1&pageSize=1`));
+
+    const materializedBody = await materializedResponse.json();
+    expect(materializedResponse.status).toBe(200);
+    expect(materializedBody.rows[0]).toMatchObject({
+      kind: "mission",
+      mission: {
+        missionId: "77",
+        status: "Returned"
+      },
+      report: {
+        missionId: "77",
+        outcome: "AttackerWin",
+        loot: { metal: "75", crystal: "25", deuterium: "0" },
+        attackerLosses: { metal: "100", crystal: "50", deuterium: "0" },
+        defenderLosses: { metal: "900", crystal: "250", deuterium: "0" }
+      }
+    });
   });
 
   test("global completed mission archive attaches materialized battle report summaries without raw decoding", async () => {
