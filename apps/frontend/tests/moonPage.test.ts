@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { MoonPage, moonBuildingRequirementRows, moonFieldSummary, moonJumpGateAvailable, moonJumpGateDestinations, moonJumpGateStatus, queueReady } from "../src/components/MoonPage";
+import { MoonPage, moonBuildingRequirementRows, moonFieldSummary, moonJumpGateAvailable, moonJumpGateDestinations, moonJumpGateStatus, moonStructureStatus, queueReady } from "../src/components/MoonPage";
 import type { ChainMoonState } from "../src/walletFlow";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../src/moonActions";
 
@@ -150,7 +150,7 @@ describe("Moon page helpers", () => {
 
     expect(systemsPanel?.props?.moonActions?.map((action: { label: string }) => action.label)).toEqual(["Inspect", "Transport", "Deploy", "Defend"]);
     expect(moonPageSource).toContain('aria-label="Moon actions"');
-    expect(moonPageSource).toContain('kind: "inspect" | "transport" | "deploy" | "defend"');
+    expect(moonPageSource).toContain('kind: "inspect" | "attack" | "transport" | "deploy" | "defend"');
   });
 
   test("uses the larger page title styling without redundant section helper copy", () => {
@@ -449,14 +449,15 @@ describe("Moon page helpers", () => {
 
     expect(moonFieldSummary(moonState.moon!, moonState)).toEqual({ capacity: 4, used: 2, open: 2 });
     expect(moonBuildingRequirementRows(moonState.buildings[3], moonState.moon!, moonState)).toContainEqual({
-      label: "Robotics Factory 2",
+      label: "Robotics Factory level 2",
       met: false,
-      status: "L1 / 2",
+      status: "Current level 1",
+      target: { kind: "moonStructure", key: "roboticsFactory" },
     });
     expect(moonBuildingRequirementRows(moonState.buildings[2], moonState.moon!, moonState)).toContainEqual({
-      label: "Hyperspace 7",
+      label: "Hyperspace level 7",
       met: false,
-      status: "L6 / 7",
+      status: "Current level 6",
     });
   });
 
@@ -488,10 +489,59 @@ describe("Moon page helpers", () => {
 
     expect(moonFieldSummary(moonState.moon!, moonState)).toEqual({ capacity: 1, used: 0, open: 1 });
     expect(moonBuildingRequirementRows(moonState.buildings[1], moonState.moon!, moonState)).toContainEqual({
-      label: "Lunar Base first",
+      label: "Lunar Base level 1",
       met: false,
-      status: "Build Lunar Base",
+      status: "Current level 0",
+      target: { kind: "moonStructure", key: "lunarBase" },
     });
+  });
+
+  test("gates not-built and unaffordable moon structures before wallet submission", () => {
+    const moonState = loadedMoonState({
+      moon: {
+        exists: true,
+        planetId: "7",
+        owner: "0x1111111111111111111111111111111111111111",
+        fields: 4,
+        diameterKm: 8774,
+        createdAt: "1770000000",
+        jumpGateReadyAt: "0",
+      },
+      resourcesAsOfNow: { metal: "0", crystal: "0", deuterium: "0" },
+      buildings: [{
+        id: 0,
+        key: "lunarBase",
+        label: "Lunar Base",
+        level: 0,
+        cost: { metal: "20000", crystal: "40000", deuterium: "20000" },
+        durationSeconds: 1440,
+      }, {
+        id: 1,
+        key: "roboticsFactory",
+        label: "Robotics Factory",
+        level: 0,
+        cost: { metal: "400", crystal: "120", deuterium: "200" },
+      }],
+    });
+    const status = moonStructureStatus(moonState.buildings[0], moonState.moon!, moonState, { canTransact: true });
+
+    expect(status.disabled).toBe(true);
+    expect(status.reason).toContain("Requires 20,000 more Metal");
+    expect(status.reason).toContain("time unavailable");
+    expect(status.targetLevel).toBe(1);
+    expect(moonPageSource).toContain("Build ${building.label}");
+    expect(moonPageSource).not.toContain("Upgrade Level {building.level + 1}");
+  });
+
+  test("renders moon structure details with readable clickable requirements", () => {
+    expect(moonPageSource).toContain("onOpenRequirement={onOpenRequirement}");
+    expect(moonPageSource).toContain('label: "Lunar Base level 1"');
+    expect(moonPageSource).toContain('label: "Robotics Factory level 2"');
+    expect(moonPageSource).toContain('? { kind: "moonStructure", key }');
+    expect(moonPageSource).toContain('InspectInfoBlock label="Current effect"');
+    expect(moonPageSource).toContain('InspectInfoBlock label="Next effect"');
+    expect(moonPageSource).not.toContain('label: "Lunar Base first"');
+    expect(moonPageSource).not.toContain('label: "Open field"');
   });
 
   test("marks ready moon queues available for completion only after backend readiness", () => {

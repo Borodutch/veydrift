@@ -3,7 +3,8 @@ import type { BuildingKey, ResearchKey, ShipKey } from "../playableMvp";
 export type RequirementTarget =
   | { kind: "building"; key: BuildingKey }
   | { kind: "research"; key: ResearchKey }
-  | { kind: "ship"; key: ShipKey };
+  | { kind: "ship"; key: ShipKey }
+  | { kind: "moonStructure"; key: string };
 
 export type RequirementFlair = {
   label: string;
