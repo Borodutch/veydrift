@@ -610,11 +610,12 @@ function RankingRow({
       </span>
       {rankedPlanets.length > 0 ? (
         <div className="col-start-1 col-end-3 mt-2 min-w-0 max-w-full overflow-hidden space-y-1 sm:col-start-2 sm:col-end-4">
-          <div className="grid grid-cols-[22px_minmax(0,1fr)] items-center gap-1 px-2 text-[10px] font-semibold uppercase tracking-normal text-slate-500 sm:grid-cols-[26px_minmax(0,1fr)_56px_88px_82px] sm:gap-2">
+          <div className="grid grid-cols-[22px_minmax(0,1fr)] items-center gap-1 px-2 text-[10px] font-semibold uppercase tracking-normal text-slate-500 sm:grid-cols-[26px_minmax(0,1fr)_56px_88px_82px_minmax(72px,auto)] sm:gap-2">
             <span className="col-span-2">Planet</span>
             <span className="hidden text-right sm:block">Dist</span>
             <span className="hidden text-right sm:block">Loot</span>
             <span className="hidden text-right sm:block">Combat</span>
+            <span className="hidden text-right sm:block">Actions</span>
           </div>
           {rankedPlanets.map((planet) => {
             const isHomePlanet = entry.homePlanetId === planet.planetId;
@@ -624,79 +625,84 @@ function RankingRow({
             const planetActions = planetActionsForPlanet?.(planet, entry) ?? [];
             return (
               <div className="space-y-1" key={`tactical-${planet.planetId}`}>
-              <button
-                aria-label={`Open planet at ${homePlanetCoordinatesLabel(planet)}`}
-                className="grid w-full grid-cols-[22px_minmax(0,1fr)] items-center gap-1 rounded border border-white/5 bg-black/20 px-2 py-1.5 text-left text-[11px] transition hover:border-cyan-200/30 hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-cyan-300/30 sm:grid-cols-[26px_minmax(0,1fr)_56px_88px_82px] sm:gap-2"
-                disabled={!onSelectPlanet}
-                onClick={() => onSelectPlanet?.(planet.coordinates)}
-                title={`Open ${homePlanetHoverLabel(planet)}`}
-                type="button"
-              >
-                <span className="relative row-span-2 h-5 w-5 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30 sm:row-span-1 sm:h-6 sm:w-6">
-                  <OptimizedImage
-                    alt=""
-                    className="h-full w-full object-cover"
-                    loading="lazy"
-                    sizes="icon"
-                    src={planetImageForType(planet.archetype)}
-                  />
-                </span>
-                <span className="min-w-0 truncate text-slate-200">
-                  {isHomePlanet ? (
-                    <span className="mr-1 font-mono text-[10px] font-semibold text-cyan-100">[HOME]</span>
-                  ) : null}
-                  {homePlanetLabel(planet)}
-                </span>
-                <span className="col-start-2 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 font-mono text-[10px] sm:hidden">
-                  <span className="text-slate-400" title={originCoordinates ? `Distance from ${coordinateLabel(originCoordinates)}` : "Select a planet to calculate distance"}>
-                    <span className="text-slate-500">Dist </span>
-                    {planetDistanceLabel(originCoordinates, planet.coordinates)}
-                  </span>
-                  <span className="text-emerald-100" title={planetRaidableResourcesLabel(planet)}>
-                    <span className="text-slate-500">Loot </span>
-                    {compactScore(planet.tactical?.raidableResourceTotal ?? "0")}
-                  </span>
-                  <span className="text-rose-100" title={planetCombatLabel(planet)}>
-                    <span className="text-slate-500">Combat </span>
-                    {compactScore(planet.tactical?.combatPower ?? "0")}
-                  </span>
-                </span>
-                <span className="hidden text-right font-mono text-slate-400 sm:block" title={originCoordinates ? `Distance from ${coordinateLabel(originCoordinates)}` : "Select a planet to calculate distance"}>
-                  {planetDistanceLabel(originCoordinates, planet.coordinates)}
-                </span>
-                <span className="hidden min-w-0 truncate font-mono text-emerald-100 sm:block sm:text-right" title={planetRaidableResourcesLabel(planet)}>
-                  {compactScore(planet.tactical?.raidableResourceTotal ?? "0")}
-                </span>
-                <span className="hidden min-w-0 truncate text-right font-mono text-rose-100 sm:block" title={planetCombatLabel(planet)}>
-                  {compactScore(planet.tactical?.combatPower ?? "0")}
-                </span>
-              </button>
-              {planetActions.length > 0 ? (
-                <RankingsActionButtons
-                  actions={planetActions}
-                  className="pl-2 sm:pl-[34px]"
-                  onAction={(action) => onPlanetAction?.(action, planet, entry)}
-                />
-              ) : null}
-              <PlanetMissionLines className="pl-2 sm:pl-[34px]" planetId={planet.planetId} subtext={missionLines} />
-              {hasMoon ? (
-                <div className="min-w-0 pl-4 sm:pl-[34px]" data-ranking-moon-row="full-width">
-                  <PlanetMoonSubsection
-                    action={moonActions.length > 0 ? (
-                      <RankingsActionButtons
-                        actions={moonActions}
-                        className="min-w-0"
-                        onAction={(action) => onMoonAction?.(action, planet, entry)}
+                <div
+                  className="grid grid-cols-[22px_minmax(0,1fr)] items-center gap-1 rounded border border-white/5 bg-black/20 px-2 py-1.5 text-[11px] transition hover:border-cyan-200/30 hover:bg-white/[0.06] sm:grid-cols-[26px_minmax(0,1fr)_56px_88px_82px_minmax(72px,auto)] sm:gap-2"
+                  data-ranking-planet-row={planet.planetId}
+                >
+                  <button
+                    aria-label={`Open planet at ${homePlanetCoordinatesLabel(planet)}`}
+                    className="col-span-2 grid min-w-0 grid-cols-[22px_minmax(0,1fr)] items-center gap-1 rounded-sm text-left focus:outline-none focus:ring-2 focus:ring-cyan-300/30 sm:col-span-5 sm:grid-cols-[26px_minmax(0,1fr)_56px_88px_82px] sm:gap-2"
+                    disabled={!onSelectPlanet}
+                    onClick={() => onSelectPlanet?.(planet.coordinates)}
+                    title={`Open ${homePlanetHoverLabel(planet)}`}
+                    type="button"
+                  >
+                    <span className="relative row-span-2 h-5 w-5 shrink-0 overflow-hidden rounded border border-white/10 bg-black/30 sm:row-span-1 sm:h-6 sm:w-6">
+                      <OptimizedImage
+                        alt=""
+                        className="h-full w-full object-cover"
+                        loading="lazy"
+                        sizes="icon"
+                        src={planetImageForType(planet.archetype)}
                       />
-                    ) : undefined}
-                    className="min-w-0"
-                    label="Moon"
-                    onClick={onSelectMoon ? () => onSelectMoon(planet.coordinates) : undefined}
-                    planetType={planet.archetype}
-                    title={`Open moon at ${homePlanetCoordinatesLabel(planet)}`}
-                  />
+                    </span>
+                    <span className="min-w-0 truncate text-slate-200">
+                      {isHomePlanet ? (
+                        <span className="mr-1 font-mono text-[10px] font-semibold text-cyan-100">[HOME]</span>
+                      ) : null}
+                      {homePlanetLabel(planet)}
+                    </span>
+                    <span className="col-start-2 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 font-mono text-[10px] sm:hidden">
+                      <span className="text-slate-400" title={originCoordinates ? `Distance from ${coordinateLabel(originCoordinates)}` : "Select a planet to calculate distance"}>
+                        <span className="text-slate-500">Dist </span>
+                        {planetDistanceLabel(originCoordinates, planet.coordinates)}
+                      </span>
+                      <span className="text-emerald-100" title={planetRaidableResourcesLabel(planet)}>
+                        <span className="text-slate-500">Loot </span>
+                        {compactScore(planet.tactical?.raidableResourceTotal ?? "0")}
+                      </span>
+                      <span className="text-rose-100" title={planetCombatLabel(planet)}>
+                        <span className="text-slate-500">Combat </span>
+                        {compactScore(planet.tactical?.combatPower ?? "0")}
+                      </span>
+                    </span>
+                    <span className="hidden text-right font-mono text-slate-400 sm:block" title={originCoordinates ? `Distance from ${coordinateLabel(originCoordinates)}` : "Select a planet to calculate distance"}>
+                      {planetDistanceLabel(originCoordinates, planet.coordinates)}
+                    </span>
+                    <span className="hidden min-w-0 truncate font-mono text-emerald-100 sm:block sm:text-right" title={planetRaidableResourcesLabel(planet)}>
+                      {compactScore(planet.tactical?.raidableResourceTotal ?? "0")}
+                    </span>
+                    <span className="hidden min-w-0 truncate text-right font-mono text-rose-100 sm:block" title={planetCombatLabel(planet)}>
+                      {compactScore(planet.tactical?.combatPower ?? "0")}
+                    </span>
+                  </button>
+                  {planetActions.length > 0 ? (
+                    <RankingsActionButtons
+                      actions={planetActions}
+                      className="col-start-2 justify-start sm:col-start-6 sm:justify-end"
+                      onAction={(action) => onPlanetAction?.(action, planet, entry)}
+                    />
+                  ) : null}
                 </div>
-              ) : null}
+                <PlanetMissionLines className="pl-2 sm:pl-[34px]" planetId={planet.planetId} subtext={missionLines} />
+                {hasMoon ? (
+                  <div className="min-w-0 pl-4 sm:pl-[34px]" data-ranking-moon-row="full-width">
+                    <PlanetMoonSubsection
+                      action={moonActions.length > 0 ? (
+                        <RankingsActionButtons
+                          actions={moonActions}
+                          className="min-w-0"
+                          onAction={(action) => onMoonAction?.(action, planet, entry)}
+                        />
+                      ) : undefined}
+                      className="min-w-0"
+                      label="Moon"
+                      onClick={onSelectMoon ? () => onSelectMoon(planet.coordinates) : undefined}
+                      planetType={planet.archetype}
+                      title={`Open moon at ${homePlanetCoordinatesLabel(planet)}`}
+                    />
+                  </div>
+                ) : null}
               </div>
             );
           })}
