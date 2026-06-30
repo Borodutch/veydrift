@@ -7,6 +7,7 @@ import type { ManagedPlanetResponse } from "./walletFlow";
 const appSource = await Bun.file(new URL("./PlayableMvpApp.tsx", import.meta.url)).text();
 const galaxySource = await Bun.file(new URL("./components/GalaxyView.tsx", import.meta.url)).text();
 const overviewSource = await Bun.file(new URL("./components/OverviewPage.tsx", import.meta.url)).text();
+const watchableRowSource = await Bun.file(new URL("./components/WatchablePlanetRow.tsx", import.meta.url)).text();
 
 describe("watched planets UI", () => {
   test("keeps the Overview watched-planets panel hidden when there are no watched planets", () => {
@@ -133,6 +134,12 @@ describe("overview planet sections", () => {
     expect(overviewSource.match(/showMoonIndicator={false}/g)?.length).toBe(2);
     expect(overviewSource).toContain("current={isSelected}");
     expect(overviewSource).not.toContain("{myPlanets.length} owned");
+  });
+
+  test("lets nested moon rows span the full watchable row width", () => {
+    expect(watchableRowSource).toContain('data-watchable-moon-row="full-width"');
+    expect(watchableRowSource).toContain("col-span-full min-w-0");
+    expect(watchableRowSource).not.toContain("<PlanetMoonSubsection\\n            action={moonActionSlot}");
   });
 
   test("labels owned planets by custom name, then coordinates", () => {
