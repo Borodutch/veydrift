@@ -2322,6 +2322,29 @@ export function overviewWatchedPlanetMoonActionsFor({
     : [moonTargetMissionAction(actionsByKind.get("attack"), "attack", "Attack")];
 }
 
+export function overviewWatchedPlanetActionsFor({
+  account,
+  defenseState,
+  homePlanetId,
+  planet,
+  shipyardState,
+}: {
+  account: string | undefined;
+  defenseState: ChainDefenseState | null;
+  homePlanetId: string | null | undefined;
+  planet: Planet;
+  shipyardState: ChainShipyardState | null;
+}): GalaxyAction[] {
+  return galaxyActionsForSlot({
+    account,
+    defenseState,
+    homePlanetId,
+    isOrigin: false,
+    planet,
+    shipyardState,
+  }).filter((action) => action.enabled);
+}
+
 function overviewOwnedPlanetActionReason(reason: string): string {
   if (reason === "Shipyard state is still loading.") {
     return "Selected planet fleet inventory is still syncing.";
@@ -6822,6 +6845,29 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
     shipyardState,
   }), [account, defenseState, onChainSettlement?.homePlanetId, shipyardState]);
 
+  const watchedPlanetActionsForPlanet = useCallback((planet: Planet): GalaxyAction[] => overviewWatchedPlanetActionsFor({
+    account,
+    defenseState,
+    homePlanetId: onChainSettlement?.homePlanetId,
+    planet,
+    shipyardState,
+  }), [account, defenseState, onChainSettlement?.homePlanetId, shipyardState]);
+
+  const handleOverviewWatchedPlanetAction = useCallback((action: GalaxyAction, planet: Planet) => {
+    if (!action.enabled) return;
+    setGalaxyAction({ status: "idle" });
+    setPendingGalaxyMission({
+      action,
+      coords: {
+        galaxy: planet.galaxy,
+        system: planet.system,
+        position: planet.position,
+      },
+      originPlanet: selectedManagedPlanet,
+      target: planet,
+    });
+  }, [selectedManagedPlanet]);
+
   const handleOverviewWatchedMoonAction = useCallback((action: GalaxyAction, planet: Planet) => {
     if (!action.enabled) return;
     setGalaxyAction({ status: "idle" });
@@ -8374,6 +8420,8 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
         onWatchedPlanetsPageChange={setWatchedPlanetsPage}
         onRefreshWatchedPlanets={() => void refreshWatchedPlanets(watchedPlanetsPage)}
         watchedMoonActionsForPlanet={watchedMoonActionsForPlanet}
+        watchedPlanetActionsForPlanet={watchedPlanetActionsForPlanet}
+        onWatchedPlanetAction={handleOverviewWatchedPlanetAction}
         onWatchedMoonAction={handleOverviewWatchedMoonAction}
         watchBusyPlanetId={watchBusyPlanetId}
         myPlanets={overviewMyPlanetActionGroups}
