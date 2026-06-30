@@ -7734,8 +7734,10 @@ export function PlayableMvpApp({ provider, account, miniAppMode = false, onConne
       return;
     }
 
-    setSelectedShipKey(target.key);
-    setPage("shipyard");
+    if (target.kind === "ship") {
+      setSelectedShipKey(target.key);
+      setPage("shipyard");
+    }
   }, []);
 
   const topBar = (
