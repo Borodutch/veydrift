@@ -213,7 +213,7 @@
     },
     "crawler": {
       "name": "Crawler",
-      "image": "/assets/game/style-pass/generated/ships/crawler.webp",
+      "image": "/assets/game/style-pass/generated/ships/crawler-approved.webp",
       "status": "production"
     }
   },
