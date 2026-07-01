@@ -3393,6 +3393,50 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("keeps cached galaxy system summary and full responses separate", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xsummary-full-cache",
+      blockNumber: "123"
+    });
+
+    const requestBodies = async (firstUrl: string, secondUrl: string) => {
+      const handler = createRequestHandler({
+        config: configuredTestConfig,
+        chainReader,
+        enableResponseCache: true,
+        indexer,
+        sharedResponseCache: null
+      });
+      const first = await (await handler(new Request(firstUrl))).json();
+      const second = await (await handler(new Request(secondUrl))).json();
+      return [first, second] as const;
+    };
+    const summaryUrl = "http://localhost/universe/galaxies/2/systems/44";
+    const fullUrl = `${summaryUrl}?detail=full`;
+
+    const [summaryFirst, fullSecond] = await requestBodies(summaryUrl, fullUrl);
+    const summaryOccupied = summaryFirst.planets.find((item: { position: number }) => item.position === 9);
+    const fullOccupied = fullSecond.planets.find((item: { position: number }) => item.position === 9);
+
+    expect(summaryOccupied).not.toHaveProperty("publicState");
+    expect(summaryOccupied).not.toHaveProperty("publicMoonState");
+    expect(fullOccupied).toHaveProperty("publicState");
+    expect(fullOccupied).toHaveProperty("publicMoonState");
+
+    const [fullFirst, summarySecond] = await requestBodies(fullUrl, summaryUrl);
+    const fullFirstOccupied = fullFirst.planets.find((item: { position: number }) => item.position === 9);
+    const summarySecondOccupied = summarySecond.planets.find((item: { position: number }) => item.position === 9);
+
+    expect(fullFirstOccupied).toHaveProperty("publicState");
+    expect(fullFirstOccupied).toHaveProperty("publicMoonState");
+    expect(summarySecondOccupied).not.toHaveProperty("publicState");
+    expect(summarySecondOccupied).not.toHaveProperty("publicMoonState");
+  });
+
   test("persists watched planets and lists them paginated from indexed state", async () => {
     const watcher = privateKeyToAccount("0x1111111111111111111111111111111111111111111111111111111111111111");
     const watcherWallet = watcher.address as Address;

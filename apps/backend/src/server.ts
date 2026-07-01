@@ -94,7 +94,7 @@ const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
   ["/highscores", new Set(["category", "limit", "page", "pageSize"])],
   ["/missions", new Set(["owner", "page", "pageSize", "status"])],
   ["/raid-finder/debris", new Set(["limit", "minMetal", "minCrystal"])],
-  ["/universe/systems", new Set(["galaxy", "limit", "page"])],
+  ["/universe/systems", new Set(["center", "detail", "galaxy", "limit", "page", "radius"])],
   ["/wallet/*/fleet-visibility", new Set(["archive", "planetId"])],
   ["/wallet/*/missions", new Set(["page", "pageSize", "status"])],
   ["/wallet/*/overview", new Set(["planetId"])],
@@ -1568,6 +1568,7 @@ function acceptedCacheParams(pathname: string): ReadonlySet<string> | undefined 
   if (pathname.match(/^\/wallet\/[^/]+\/shipyard$/)) return acceptedCacheQueryParams.get("/wallet/*/shipyard");
   if (pathname.match(/^\/wallet\/[^/]+\/defenses$/)) return acceptedCacheQueryParams.get("/wallet/*/defenses");
   if (pathname.match(/^\/wallet\/[^/]+\/research$/)) return acceptedCacheQueryParams.get("/wallet/*/research");
+  if (pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return new Set(["detail"]);
   return undefined;
 }
 
@@ -1686,7 +1687,15 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
   if (url.pathname === "/missions") return "ttl";
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return indexer.missionResponseCacheVersion();
   if (cacheableWalletSnapshotPath(url.pathname)) return indexer.responseCacheVersion();
-  if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return "ttl";
+  if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) {
+    const parts = url.pathname.split("/");
+    const galaxy = Number.parseInt(parts[3] ?? "", 10);
+    const system = Number.parseInt(parts[5] ?? "", 10);
+    if (Number.isFinite(galaxy) && Number.isFinite(system)) {
+      return galaxySystemCacheVersion(indexer, galaxySystemDetail(url), galaxy, system);
+    }
+    return "ttl";
+  }
   if (url.pathname === "/universe/systems") return "ttl";
   return indexer.responseCacheVersion();
 }
