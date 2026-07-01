@@ -14,6 +14,7 @@ import {
   shouldRetryFarcasterWalletProviderProbe,
   shouldRetryRejectedRequestWithSettlement,
   shouldShowPublicPlayableApp,
+  shouldUseWalletProviderForSettlement,
   waitForIndexedSettledPlanet,
   walletConnectionAccounts,
 } from "../src/FirstPlanetSettlementApp";
@@ -464,6 +465,28 @@ describe("settlement screen mode", () => {
     })).toBe(true);
   });
 
+  test("blocks Mini App mode from using injected or missing providers", () => {
+    expect(shouldUseWalletProviderForSettlement({
+      miniAppMode: true,
+      walletProviderSource: "farcaster",
+    })).toBe(true);
+
+    expect(shouldUseWalletProviderForSettlement({
+      miniAppMode: true,
+      walletProviderSource: "injected",
+    })).toBe(false);
+
+    expect(shouldUseWalletProviderForSettlement({
+      miniAppMode: true,
+      walletProviderSource: undefined,
+    })).toBe(false);
+
+    expect(shouldUseWalletProviderForSettlement({
+      miniAppMode: false,
+      walletProviderSource: "injected",
+    })).toBe(true);
+  });
+
   test("surfaces an unavailable account when Farcaster desktop authorization returns no account", async () => {
     await expect(walletConnectionAccounts(walletProvider(async ({ method }) => {
       if (method === "eth_accounts") return [];
@@ -506,6 +529,7 @@ describe("settlement screen mode", () => {
     expect(source).toContain("FARCASTER_BASE_SEPOLIA_SWITCH_FAILED");
     expect(source).toContain("FARCASTER_BASE_SEPOLIA_RETRY_FAILED");
     expect(source).toContain("FARCASTER_WALLET_PROVIDER_UNAVAILABLE");
+    expect(source).toContain("showFarcasterWalletProviderUnavailable");
     expect(source).toContain("!shouldShowMiniAppWalletError(miniAppMode, planet)");
   });
 
