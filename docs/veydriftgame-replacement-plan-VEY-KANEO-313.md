@@ -58,7 +58,7 @@ Before broadcasting replacement contracts:
 
 1. Freeze the deploy surface: record git SHA, deployed addresses, deploy block,
    index block, ABI hash, backend `/health`, `/runtime-config`,
-   `/debug/indexer`, resource-token owner, and runtime authority.
+   `/health`, resource-token owner, and runtime authority.
 2. Pause nonessential alpha contract broadcasts while the migration snapshot is
    captured.
 3. Rerun the redeploy preflight against the target API/RPC. The only acceptable
@@ -147,7 +147,7 @@ After replacement:
 3. Restart the test backend/indexer/frontend in that order.
 4. Rebuild or reconcile the backend SQLite/indexer from preserved canonical
    state and the selected replay point.
-5. Verify `/health`, `/runtime-config`, and `/debug/indexer` match the
+5. Verify `/health` and `/runtime-config` match the
    replacement manifest and report safe indexed state before live QA.
 
 ## Validation

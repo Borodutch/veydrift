@@ -41,6 +41,7 @@ async function main(): Promise<void> {
       startBlock: config.chickenBurnStartBlock,
       backfillBlocks: config.backfillBlocks,
       maxRangeBlocks: config.maxRangeBlocks,
+      confirmationBlocks: config.confirmationBlocks,
       enableTransferBurnFallback: config.enableTransferBurnFallback,
       logger: consoleLogger
     }

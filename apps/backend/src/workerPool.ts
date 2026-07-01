@@ -40,6 +40,7 @@ const WRITER_ONLY_READ_PATHS = new Set([
 const WRITER_PREFERRED_READ_PATHS = new Set<string>();
 const WRITER_PREFERRED_READ_PREFIXES: string[] = [];
 const BODYLESS_METHODS = new Set(["GET", "HEAD"]);
+const FORWARDED_BODY_LIMIT_BYTES = 128 * 1024;
 
 // Request headers that must not be copied verbatim when re-issuing a forwarded request: the body is
 // re-encoded by fetch (content-length) and the connection is to the writer's loopback listener (host).
@@ -160,9 +161,21 @@ async function forwardToWriter(
     for (const name of STRIPPED_FORWARD_REQUEST_HEADERS) {
       headers.delete(name);
     }
-    const body = BODYLESS_METHODS.has(request.method)
-      ? undefined
-      : await request.arrayBuffer();
+    let body: ArrayBuffer | undefined;
+    try {
+      body = BODYLESS_METHODS.has(request.method) ? undefined : await limitedForwardBody(request);
+    } catch (error) {
+      if (error instanceof ForwardedBodyTooLargeError) {
+        return Response.json(
+          {
+            error: "request_body_too_large",
+            message: error.message
+          },
+          { status: 413, headers: { "access-control-allow-origin": "*" } }
+        );
+      }
+      throw error;
+    }
 
     const abortController = new AbortController();
     const abortForwardedRequest = () => {
@@ -206,6 +219,27 @@ async function forwardToWriter(
       statusText: upstream.statusText,
       headers: responseHeaders
     });
+}
+
+async function limitedForwardBody(request: Request): Promise<ArrayBuffer> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength) {
+    const parsed = Number.parseInt(contentLength, 10);
+    if (Number.isFinite(parsed) && parsed > FORWARDED_BODY_LIMIT_BYTES) {
+      throw new ForwardedBodyTooLargeError();
+    }
+  }
+  const body = await request.arrayBuffer();
+  if (body.byteLength > FORWARDED_BODY_LIMIT_BYTES) {
+    throw new ForwardedBodyTooLargeError();
+  }
+  return body;
+}
+
+class ForwardedBodyTooLargeError extends Error {
+  constructor() {
+    super(`Forwarded request body exceeds ${FORWARDED_BODY_LIMIT_BYTES} bytes.`);
+  }
 }
 
 export function createRequestLoggingFetch(

@@ -1478,8 +1478,13 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         if (_moonSystem == address(0)) return;
         if (uint256(debris.metal) + debris.crystal < MOON_CHANCE_DEBRIS_UNIT) return;
 
-        IVeydriftCombatMoonSystem(_moonSystem)
-            .requestMoonChanceFromBattle(missionId, targetPlanetId, debris.metal, debris.crystal);
+        try IVeydriftCombatMoonSystem(_moonSystem)
+            .requestMoonChanceFromBattle(
+                missionId, targetPlanetId, debris.metal, debris.crystal
+            ) returns (
+            uint256, uint256
+        ) {}
+            catch {}
     }
 
     function _harvestDebris(FleetMission storage mission) private {

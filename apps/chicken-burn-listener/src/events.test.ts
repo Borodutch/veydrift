@@ -42,7 +42,7 @@ describe("decodeChickenBurnLog", () => {
 
     const decoded = decodeChickenBurnLog(log, burnEvent);
     expect(decoded).toMatchObject({
-      burnId: burnIdFromLog(log),
+      burnId: burnIdFromLog(log, 42n),
       burner: "0x2222222222222222222222222222222222222222",
       tokenId: "42",
       planetId: "7",

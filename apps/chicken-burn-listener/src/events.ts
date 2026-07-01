@@ -18,6 +18,7 @@ export type RawLog = {
   logIndex: `0x${string}` | bigint;
   topics: `0x${string}`[];
   data: `0x${string}`;
+  removed?: boolean;
 };
 
 export type ChickenBurnEvent = {
@@ -177,7 +178,7 @@ function buildBurnEvent(
 ): ChickenBurnEvent {
   const sourceLogIndex = toNumber(log.logIndex);
   return {
-    burnId: burnIdFromLog(log),
+    burnId: burnIdFromLog(log, tokenId),
     burner,
     tokenId: tokenId.toString(),
     planetId: planetId.toString(),
@@ -187,8 +188,8 @@ function buildBurnEvent(
   };
 }
 
-export function burnIdFromLog(log: Pick<RawLog, "transactionHash" | "logIndex">): `0x${string}` {
-  return keccak256(toBytes(`${log.transactionHash.toLowerCase()}:${toNumber(log.logIndex)}`));
+export function burnIdFromLog(log: Pick<RawLog, "address">, tokenId: bigint): `0x${string}` {
+  return keccak256(toBytes(`${log.address.toLowerCase()}:${tokenId.toString()}`));
 }
 
 function asAddress(value: unknown): `0x${string}` | null {

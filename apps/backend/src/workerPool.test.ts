@@ -153,7 +153,7 @@ describe("createForwardingFetch", () => {
     const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
 
     for (const method of ["GET", "HEAD", "OPTIONS"]) {
-      const response = await handler(new Request("http://localhost/debug/config", { method }));
+      const response = await handler(new Request("http://localhost/runtime-config", { method }));
       expect(response.status).toBe(200);
     }
     expect(forwarded).toBe(false);
@@ -179,7 +179,7 @@ describe("createForwardingFetch", () => {
     const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
 
     const response = await handler(
-      new Request("http://localhost/webhooks/alchemy?x=1", {
+      new Request("http://localhost/wallet/0x1111111111111111111111111111111111111111/profile?x=1", {
         method: "POST",
         headers: { "content-type": "application/json", "x-alchemy-signature": "abc" },
         body: JSON.stringify({ event: "log" })
@@ -187,7 +187,7 @@ describe("createForwardingFetch", () => {
     );
 
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe("http://127.0.0.1:4001/webhooks/alchemy?x=1");
+    expect(calls[0]?.url).toBe("http://127.0.0.1:4001/wallet/0x1111111111111111111111111111111111111111/profile?x=1");
     expect(calls[0]?.method).toBe("POST");
     expect(calls[0]?.body).toBe(JSON.stringify({ event: "log" }));
     expect(calls[0]?.signature).toBe("abc");
@@ -232,72 +232,6 @@ describe("createForwardingFetch", () => {
     expect(calls).toEqual([]);
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({ ok: true });
-  });
-
-  test("serves indexer debug reads locally from persisted writer diagnostics", async () => {
-    const calls: Array<{ url: string; body: BodyInit | null | undefined }> = [];
-    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
-      calls.push({ url: String(input), body: init?.body });
-      return Response.json({
-        error: "writer should not receive debug reads"
-      }, { status: 503 });
-    }) as unknown as typeof fetch;
-
-    const local = async () => Response.json({
-      writerDiagnostics: { source: "persisted", updatedAt: "2026-06-24T18:00:00.000Z" },
-      chainSync: {
-        lastPollDurationMs: 12,
-        lastGetLogsDurationMs: 8,
-        lastGetLogsRange: { fromBlock: "43272548", toBlock: "43272549" },
-        pollBacklogBlocks: "0",
-        recentEventReceiveLagMs: { count: 3, p50: 300, p95: 800, max: 900 }
-      },
-      chainSyncRpc: { requestCount: 4 },
-      indexer: { indexedState: "healthy" }
-    });
-    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
-
-    const response = await handler(new Request("http://localhost/debug/indexer?sample=qa"));
-
-    expect(calls).toEqual([]);
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      writerDiagnostics: { source: "persisted" },
-      chainSync: {
-        lastPollDurationMs: 12,
-        lastGetLogsDurationMs: 8,
-        lastGetLogsRange: { fromBlock: "43272548", toBlock: "43272549" },
-        pollBacklogBlocks: "0",
-        recentEventReceiveLagMs: { count: 3, p95: 800 }
-      },
-      chainSyncRpc: { requestCount: 4 }
-    });
-  });
-
-  test("does not fail indexer debug reads when the writer is busy", async () => {
-    const fetchImpl = (async () => {
-      throw new Error("writer timed out");
-    }) as unknown as typeof fetch;
-    const local = async () => Response.json({
-      writerDiagnostics: { source: "persisted", updatedAt: "2026-06-24T18:00:00.000Z" },
-      chainSync: {
-        lastPollDurationMs: 33128,
-        pollBacklogBlocks: "0"
-      },
-      indexer: { indexedState: "healthy" }
-    });
-    const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
-
-    const response = await handler(new Request("http://localhost/debug/indexer"));
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      writerDiagnostics: { source: "persisted" },
-      chainSync: {
-        lastPollDurationMs: 33128,
-        pollBacklogBlocks: "0"
-      }
-    });
   });
 
   test("serves runtime-config bootstrap reads locally on readers", async () => {
@@ -635,7 +569,7 @@ describe("createForwardingFetch", () => {
     const local = async () => new Response("local", { status: 200 });
     const handler = createForwardingFetch(local, "http://127.0.0.1:4001", fetchImpl);
 
-    const response = await handler(new Request("http://localhost/webhooks/alchemy", { method: "POST" }));
+    const response = await handler(new Request("http://localhost/wallet/0x1111111111111111111111111111111111111111/profile", { method: "POST" }));
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toMatchObject({ error: "writer_unavailable" });
   });

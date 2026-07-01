@@ -819,9 +819,9 @@ contract VeydriftMoonSystemTest is Test {
 
         // A jump-gate transfer debits the origin moon and credits the destination moon, emitting
         // moon-specific totals so the backend never aliases moon fleets to planet fleets.
-        vm.expectEmit(true, true, false, true, address(moons));
+        vm.expectEmit(true, true, false, true, address(game));
         emit MoonShipCountChanged(planetId, Ship.SmallCargo, 1);
-        vm.expectEmit(true, true, false, true, address(moons));
+        vm.expectEmit(true, true, false, true, address(game));
         emit MoonShipCountChanged(secondPlanetId, Ship.SmallCargo, 3);
         vm.prank(player);
         moons.jumpGateJumpShips(planetId, secondPlanetId, ships);
@@ -1041,7 +1041,7 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 0);
     }
 
-    function testPendingMoonAttackDoesNotFreezeParentPlanetActions() public {
+    function testPendingMoonAttackBlocksParentPlanetActionsUntilResolved() public {
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
             _seedMoonAttackPlanets();
         _fundPlanet(originPlanetId, 100_000, 100_000, 100_000);
@@ -1066,9 +1066,17 @@ contract VeydriftMoonSystemTest is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
 
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftGameStorage.FleetMissionNotResolved.selector, arrivalAt)
+        );
         vm.prank(defender);
         game.startBuildingUpgrade(targetPlanetId, Building.MetalMine);
 
+        _fulfillAttackBattleRandomness(missionId, 659);
+        game.resolveFleetMission(missionId);
+
+        vm.prank(defender);
+        game.startBuildingUpgrade(targetPlanetId, Building.MetalMine);
         assertTrue(game.activeBuildingConstruction(targetPlanetId).active);
     }
 

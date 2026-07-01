@@ -13,6 +13,24 @@ import {Defense, MoonBuilding, Ship, Technology} from "./libraries/VeydriftTypes
 interface IVeydriftMoonGame {
     function planet(uint256 planetId) external view returns (VeydriftGameStorage.Planet memory);
     function technologyLevel(address player, Technology technology) external view returns (uint16);
+    function moonResources(uint256 planetId)
+        external
+        view
+        returns (VeydriftGameStorage.Resources memory);
+    function moonShipCount(uint256 planetId, Ship ship) external view returns (uint32);
+    function requireNoPendingMoonAttackResolution(uint256 planetId) external view;
+    function spendMoonResources(uint256 planetId, VeydriftGameStorage.Resources calldata cost)
+        external;
+    function grantMoonResources(uint256 planetId, VeydriftGameStorage.Resources calldata amount)
+        external;
+    function setMoonShipCount(uint256 planetId, Ship ship, uint32 total) external;
+    function moveMoonGateShips(
+        uint256 originPlanetId,
+        uint256 destinationPlanetId,
+        address owner,
+        VeydriftGameStorage.MissionShips calldata ships
+    ) external;
+    function clearMoonState(uint256 planetId) external;
 }
 
 interface IVeydriftRandomnessEngine {
@@ -113,6 +131,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         _moonBuildingLevels;
     mapping(uint256 planetId => MoonBuildingConstruction construction) public
         moonBuildingConstructions;
+    // Dormant legacy storage retained for upgrade layout. Game is the moon resource/ship authority.
     mapping(uint256 planetId => VeydriftGameStorage.Resources resources) internal _moonResources;
     mapping(uint256 planetId => mapping(Ship ship => uint32 count)) internal _moonShipCounts;
     mapping(uint256 planetId => mapping(Defense defense => uint32 count)) internal
@@ -294,16 +313,15 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         onlyOwner
     {
         _requireMoonExists(planetId);
-        VeydriftGameStorage.Resources storage available = _moonResources[planetId];
-        available.metal += amount.metal;
-        available.crystal += amount.crystal;
-        available.deuterium += amount.deuterium;
+        game.requireNoPendingMoonAttackResolution(planetId);
+        game.grantMoonResources(planetId, amount);
         _emitMoonResourcesSettled(planetId);
     }
 
     function setMoonShipCount(uint256 planetId, Ship ship, uint32 total) external onlyOwner {
         _requireMoonExists(planetId);
-        _setMoonShipCount(planetId, ship, total);
+        game.requireNoPendingMoonAttackResolution(planetId);
+        game.setMoonShipCount(planetId, ship, total);
     }
 
     function setMoonDefenseCount(uint256 planetId, Defense defense, uint32 total)
@@ -597,6 +615,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
 
     function startMoonBuildingUpgrade(uint256 planetId, MoonBuilding building) external {
         _requireMoonOwner(planetId);
+        game.requireNoPendingMoonAttackResolution(planetId);
         // Lazy on-chain reconciliation (VEY-KANEO-468): a due moon-building construction completes on
         // the next moon interaction, so the owner can immediately queue the next without a finish tx.
         _settleMoonBuildingDue(planetId);
@@ -658,6 +677,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         external
     {
         _requireMoonOwner(planetId);
+        game.requireNoPendingMoonAttackResolution(planetId);
         _settleMoonDefenseDue(planetId);
         if (quantity == 0) revert InvalidQuantity();
         if (moonDefenseQueues[planetId].active) revert ConstructionActive();
@@ -726,6 +746,8 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         if (originMoonPlanetId == destinationMoonPlanetId) revert SameMoon();
         _requireMoonOwner(originMoonPlanetId);
         _requireMoonOwner(destinationMoonPlanetId);
+        game.requireNoPendingMoonAttackResolution(originMoonPlanetId);
+        game.requireNoPendingMoonAttackResolution(destinationMoonPlanetId);
         // Lazy on-chain reconciliation (VEY-KANEO-468): settle any due moon-building constructions on
         // both moons this call touches before resolving the jump.
         _settleMoonBuildingDue(originMoonPlanetId);
@@ -758,11 +780,11 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         view
         returns (VeydriftGameStorage.Resources memory)
     {
-        return _moonResources[planetId];
+        return game.moonResources(planetId);
     }
 
     function moonShipCount(uint256 planetId, Ship ship) external view returns (uint32) {
-        return _moonShipCounts[planetId][ship];
+        return game.moonShipCount(planetId, ship);
     }
 
     function moonChanceRandomness(uint256 outcomeId)
@@ -998,7 +1020,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     function _spendMoonResources(uint256 planetId, VeydriftGameStorage.Resources memory cost)
         private
     {
-        VeydriftGameStorage.Resources storage available = _moonResources[planetId];
+        VeydriftGameStorage.Resources memory available = game.moonResources(planetId);
         if (
             available.metal < cost.metal || available.crystal < cost.crystal
                 || available.deuterium < cost.deuterium
@@ -1007,10 +1029,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
                 available.metal, available.crystal, available.deuterium
             );
         }
-
-        available.metal -= cost.metal;
-        available.crystal -= cost.crystal;
-        available.deuterium -= cost.deuterium;
+        game.spendMoonResources(planetId, cost);
         _emitMoonResourcesSettled(planetId);
     }
 
@@ -1025,17 +1044,11 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
             if (ship != Ship.SolarSatellite) {
                 uint32 quantity = _missionShipQuantity(ships, ship);
                 if (quantity != 0) {
-                    uint32 available = _moonShipCounts[originMoonPlanetId][ship];
+                    uint32 available = game.moonShipCount(originMoonPlanetId, ship);
                     if (available < quantity) {
                         revert VeydriftGameStorage.InsufficientShips(ship, available, quantity);
                     }
                     shipTotal += quantity;
-                    _setMoonShipCount(originMoonPlanetId, ship, available - quantity);
-                    _setMoonShipCount(
-                        destinationMoonPlanetId,
-                        ship,
-                        _moonShipCounts[destinationMoonPlanetId][ship] + quantity
-                    );
                 }
             }
             unchecked {
@@ -1043,11 +1056,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
             }
         }
         if (shipTotal == 0) revert InvalidQuantity();
-    }
-
-    function _setMoonShipCount(uint256 planetId, Ship ship, uint32 total) private {
-        _moonShipCounts[planetId][ship] = total;
-        emit MoonShipCountChanged(planetId, ship, total);
+        game.moveMoonGateShips(originMoonPlanetId, destinationMoonPlanetId, msg.sender, ships);
     }
 
     function _setMoonDefenseCount(uint256 planetId, Defense defense, uint32 total) private {
@@ -1056,7 +1065,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     }
 
     function _emitMoonResourcesSettled(uint256 planetId) private {
-        VeydriftGameStorage.Resources storage balance = _moonResources[planetId];
+        VeydriftGameStorage.Resources memory balance = game.moonResources(planetId);
         emit MoonResourcesSettled(
             planetId, balance.metal, balance.crystal, balance.deuterium, _currentTimestamp()
         );
@@ -1259,15 +1268,9 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         delete _moons[planetId];
         delete moonBuildingConstructions[planetId];
         delete moonDefenseQueues[planetId];
-        delete _moonResources[planetId];
+        game.clearMoonState(planetId);
         for (uint8 i = 0; i <= uint8(type(MoonBuilding).max);) {
             delete _moonBuildingLevels[planetId][MoonBuilding(i)];
-            unchecked {
-                ++i;
-            }
-        }
-        for (uint8 i = 0; i <= uint8(type(Ship).max);) {
-            delete _moonShipCounts[planetId][Ship(i)];
             unchecked {
                 ++i;
             }

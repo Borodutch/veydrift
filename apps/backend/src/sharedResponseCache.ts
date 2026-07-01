@@ -20,6 +20,7 @@ type CacheRow = {
 
 export class SharedResponseCache {
   private readonly db: Database;
+  private readonly maxRows = 4_096;
 
   constructor(databasePath: string) {
     mkdirSync(dirname(databasePath), { recursive: true });
@@ -125,6 +126,15 @@ export class SharedResponseCache {
   private prune(now = Date.now()): void {
     this.runCacheOperation(() => {
       this.db.query("DELETE FROM response_cache WHERE stale_expires_at <= ?").run(now);
+      this.db.query(`
+        DELETE FROM response_cache
+        WHERE cache_key IN (
+          SELECT cache_key
+          FROM response_cache
+          ORDER BY created_at DESC
+          LIMIT -1 OFFSET ?
+        )
+      `).run(this.maxRows);
     });
   }
 
