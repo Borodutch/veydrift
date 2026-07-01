@@ -46,7 +46,7 @@ export function PublicMoonDetail({
     const abortController = new AbortController();
     setSource("loading");
 
-    fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${coords.galaxy}/systems/${coords.system}`, {
+    fetch(`${apiBaseUrl.replace(/\/+$/, "")}/universe/galaxies/${coords.galaxy}/systems/${coords.system}?detail=full`, {
       headers: { accept: "application/json" },
       signal: abortController.signal,
     })
