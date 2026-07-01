@@ -26,17 +26,19 @@ describe("resolveWorkerCount", () => {
     expect(resolveWorkerCount({}, Number.NaN)).toBe(1);
   });
 
-  test("honors a positive integer override up to the deploy-safe cap", () => {
+  test("honors a positive integer override up to the hardware cap", () => {
     expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "2" }, 16)).toBe(2);
     expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "1" }, 16)).toBe(1);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "3" }, 16)).toBe(DEFAULT_MAX_WORKER_COUNT);
-    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "12" }, 16)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "3" }, 16)).toBe(3);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "12" }, 16)).toBe(12);
+    expect(resolveWorkerCount({ [WORKER_COUNT_ENV]: "16" }, 12)).toBe(12);
   });
 
-  test("honors the legacy max-worker env as a deployment cap", () => {
+  test("honors the legacy max-worker env as a deployment cap and default raiser", () => {
     expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "1" }, 16)).toBe(1);
     expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "2" }, 16)).toBe(2);
-    expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "3" }, 16)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "3" }, 16)).toBe(3);
+    expect(resolveWorkerCount({ [LEGACY_MAX_WORKER_COUNT_ENV]: "10" }, 12)).toBe(10);
   });
 
   test("applies the legacy max-worker env as a hard cap to an explicit worker count", () => {
@@ -51,7 +53,15 @@ describe("resolveWorkerCount", () => {
     expect(resolveWorkerCount({
       [WORKER_COUNT_ENV]: "10",
       [LEGACY_MAX_WORKER_COUNT_ENV]: "10"
-    }, 16)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    }, 16)).toBe(10);
+    expect(resolveWorkerCount({
+      [WORKER_COUNT_ENV]: "10",
+      [LEGACY_MAX_WORKER_COUNT_ENV]: "10"
+    }, 12)).toBe(10);
+    expect(resolveWorkerCount({
+      [WORKER_COUNT_ENV]: "12",
+      [LEGACY_MAX_WORKER_COUNT_ENV]: "10"
+    }, 12)).toBe(10);
   });
 
   test("ignores blank or invalid overrides and falls back to the capped default", () => {
@@ -66,7 +76,7 @@ describe("resolveWorkerCount", () => {
     expect(resolveWorkerCount({
       [WORKER_COUNT_ENV]: "12",
       [LEGACY_MAX_WORKER_COUNT_ENV]: "abc"
-    }, 16)).toBe(DEFAULT_MAX_WORKER_COUNT);
+    }, 16)).toBe(12);
   });
 });
 
@@ -84,6 +94,13 @@ describe("resolveWorkerAssignment", () => {
     expect(resolveWorkerAssignment({ [WORKER_COUNT_ENV]: "2" }, 16)).toEqual({
       kind: "supervisor",
       workerCount: 2
+    });
+    expect(resolveWorkerAssignment({
+      [WORKER_COUNT_ENV]: "10",
+      [LEGACY_MAX_WORKER_COUNT_ENV]: "10"
+    }, 12)).toEqual({
+      kind: "supervisor",
+      workerCount: 10
     });
     expect(resolveWorkerAssignment({ [LEGACY_MAX_WORKER_COUNT_ENV]: "1" }, 16)).toEqual({
       kind: "supervisor",

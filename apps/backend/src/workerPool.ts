@@ -24,6 +24,7 @@ export const WORKER_COUNT_ENV = "VEYDRIFT_WORKER_COUNT";
 export const LEGACY_MAX_WORKER_COUNT_ENV = "VEYDRIFT_MAX_WORKER_COUNT";
 export const WRITER_INTERNAL_PORT_ENV = "VEYDRIFT_WRITER_INTERNAL_PORT";
 export const DEFAULT_MAX_WORKER_COUNT = 2;
+export const HARD_MAX_WORKER_COUNT = 32;
 
 export type WorkerRole = "writer" | "reader";
 
@@ -50,27 +51,25 @@ export type WorkerAssignment =
   | { kind: "supervisor"; workerCount: number }
   | { kind: "worker"; role: WorkerRole; index: number };
 
-// Resolve how many worker processes to run. `VEYDRIFT_WORKER_COUNT` is an
-// explicit target for lowering/pinning the pool; it is still bounded by the
-// deploy-safe cap so stale service configs cannot accidentally keep a
-// memory-heavy 10-worker pool alive. `VEYDRIFT_MAX_WORKER_COUNT` is retained as
-// a legacy cap, but it can only lower the built-in default cap, not raise it.
+// Resolve how many worker processes to run. With no explicit pool sizing, keep
+// the conservative built-in default. Production deploys can intentionally raise
+// the pool with VEYDRIFT_WORKER_COUNT and cap it with VEYDRIFT_MAX_WORKER_COUNT;
+// both are still bounded by hardware concurrency and a hard process ceiling.
 // The result is always at least 1 so the backend can boot on a single-core host.
 export function resolveWorkerCount(
   env: Record<string, string | undefined>,
   hardwareConcurrency: number
 ): number {
+  const cpus = Number.isFinite(hardwareConcurrency) ? Math.max(1, Math.floor(hardwareConcurrency)) : 1;
+  const hardwareCap = Math.max(1, Math.min(cpus, HARD_MAX_WORKER_COUNT));
   const configuredCap = parsePositiveIntegerEnv(env[LEGACY_MAX_WORKER_COUNT_ENV]);
-  const maxWorkerCount = Math.min(configuredCap ?? DEFAULT_MAX_WORKER_COUNT, DEFAULT_MAX_WORKER_COUNT);
-  const override = env[WORKER_COUNT_ENV];
-  if (override !== undefined && override.trim() !== "") {
-    const parsed = Number.parseInt(override, 10);
-    if (Number.isFinite(parsed) && parsed >= 1) {
-      return Math.max(1, Math.min(parsed, maxWorkerCount));
-    }
+  const configuredWorkerCount = parsePositiveIntegerEnv(env[WORKER_COUNT_ENV]);
+  if (configuredWorkerCount !== undefined) {
+    const maxWorkerCount = Math.min(configuredCap ?? hardwareCap, hardwareCap);
+    return Math.max(1, Math.min(configuredWorkerCount, maxWorkerCount));
   }
 
-  const cpus = Number.isFinite(hardwareConcurrency) ? Math.floor(hardwareConcurrency) : 1;
+  const maxWorkerCount = Math.min(configuredCap ?? DEFAULT_MAX_WORKER_COUNT, hardwareCap);
   return Math.max(1, Math.min(cpus, maxWorkerCount));
 }
 
