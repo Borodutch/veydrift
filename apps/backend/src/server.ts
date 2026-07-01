@@ -1035,6 +1035,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const parts = url.pathname.split("/");
       const galaxy = Number.parseInt(parts[3] ?? "", 10);
       const system = Number.parseInt(parts[5] ?? "", 10);
+      const detail = galaxySystemDetail(url);
       let payload;
       try {
         payload = cachedGalaxySystemPayload(
@@ -1042,6 +1043,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           {
             chainId: loaded.config.chainId,
             settlementContractAddress: universeContractAddress(loaded.config),
+            detail,
             galaxy,
             system,
             indexer
@@ -1076,6 +1078,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
                 {
                   chainId: loaded.config.chainId,
                   settlementContractAddress: universeContractAddress(loaded.config),
+                  detail: galaxySystemDetail(url),
                   galaxy,
                   system,
                   indexer
@@ -2723,15 +2726,22 @@ function indexedRiftState(
   return indexer.riftState(wallet, planet?.planetId ?? settlement.homePlanetId);
 }
 
+type GalaxySystemDetail = "summary" | "full";
+
+type GalaxySystemSummaryPlanet = PlanetMetadata & {
+  occupiedBy: ReturnType<typeof occupiedPlanetRef>;
+  debrisField: ReturnType<typeof debrisFieldRef>;
+  hasMoon: boolean;
+  moonChance: ReturnType<typeof moonChanceReportRef>;
+};
+
+type GalaxySystemFullPlanet = GalaxySystemSummaryPlanet & {
+  publicState: ReturnType<typeof publicPlanetStateRef>;
+  publicMoonState: ReturnType<typeof publicMoonStateRef>;
+};
+
 type GalaxySystemPayload = Omit<SystemSnapshot, "planets"> & {
-  planets: Array<PlanetMetadata & {
-    occupiedBy: ReturnType<typeof occupiedPlanetRef>;
-    publicState: ReturnType<typeof publicPlanetStateRef>;
-    publicMoonState: ReturnType<typeof publicMoonStateRef>;
-    debrisField: ReturnType<typeof debrisFieldRef>;
-    hasMoon: boolean;
-    moonChance: ReturnType<typeof moonChanceReportRef>;
-  }>;
+  planets: Array<GalaxySystemSummaryPlanet | GalaxySystemFullPlanet>;
 };
 
 type GalaxySystemCacheEntry = {
@@ -2744,15 +2754,17 @@ function cachedGalaxySystemPayload(
   input: {
     chainId: number;
     settlementContractAddress: string;
+    detail: GalaxySystemDetail;
     galaxy: number;
     system: number;
     indexer: SettlementIndexer | undefined;
   }
 ): GalaxySystemPayload {
-  const indexerVersion = input.indexer?.responseCacheVersion() ?? "none";
+  const indexerVersion = galaxySystemCacheVersion(input.indexer, input.detail, input.galaxy, input.system);
   const cacheKey = [
     input.chainId,
     input.settlementContractAddress.toLowerCase(),
+    input.detail,
     input.galaxy,
     input.system
   ].join(":");
@@ -2764,24 +2776,58 @@ function cachedGalaxySystemPayload(
     return cached.payload;
   }
 
+  if (input.detail === "summary" && input.indexer) {
+    const materialized = input.indexer.materializedUniverseSystemSnapshot(cacheKey, indexerVersion);
+    if (materialized) {
+      const payload = materialized as GalaxySystemPayload;
+      cache.set(cacheKey, {
+        indexerVersion,
+        payload
+      });
+      pruneGalaxySystemCache(cache);
+      return payload;
+    }
+  }
+
   const payload = galaxySystemPayload(input);
   cache.set(cacheKey, {
     indexerVersion,
     payload
   });
+  if (input.detail === "summary" && input.indexer) {
+    input.indexer.storeMaterializedUniverseSystemSnapshot(cacheKey, indexerVersion, payload);
+  }
   pruneGalaxySystemCache(cache);
   return payload;
+}
+
+function galaxySystemCacheVersion(
+  indexer: SettlementIndexer | undefined,
+  detail: GalaxySystemDetail,
+  galaxy: number,
+  system: number
+): string {
+  if (!indexer) return "none";
+  return detail === "summary"
+    ? indexer.universeSystemSummaryVersion(galaxy, system)
+    : indexer.responseCacheVersion();
+}
+
+function galaxySystemDetail(url: URL): GalaxySystemDetail {
+  return url.searchParams.get("detail") === "full" ? "full" : "summary";
 }
 
 function galaxySystemPayload({
   chainId,
   settlementContractAddress,
+  detail,
   galaxy,
   system,
   indexer
 }: {
   chainId: number;
   settlementContractAddress: string;
+  detail: GalaxySystemDetail;
   galaxy: number;
   system: number;
   indexer: SettlementIndexer | undefined;
@@ -2824,15 +2870,22 @@ function galaxySystemPayload({
       settlementContractAddress,
       galaxy,
       system
-    ).map((planet) => ({
-      ...planet,
-      occupiedBy: occupiedPlanetRef(occupied.get(planet.position), indexer, allianceIntel),
-      publicState: publicPlanetStateRef(occupied.get(planet.position), indexer),
-      publicMoonState: publicMoonStateRef(occupied.get(planet.position), indexer),
-      debrisField: debrisFieldRef(debris.get(planet.position)),
-      hasMoon: occupied.get(planet.position) ? indexer?.hasMoon(occupied.get(planet.position)!.planetId) ?? false : false,
-      moonChance: moonChanceReportRef(moonChance.get(planet.position))
-    }))
+    ).map((planet) => {
+      const occupiedPlanet = occupied.get(planet.position);
+      const summary: GalaxySystemSummaryPlanet = {
+        ...planet,
+        occupiedBy: occupiedPlanetRef(occupiedPlanet, indexer, allianceIntel),
+        debrisField: debrisFieldRef(debris.get(planet.position)),
+        hasMoon: occupiedPlanet ? indexer?.hasMoon(occupiedPlanet.planetId) ?? false : false,
+        moonChance: moonChanceReportRef(moonChance.get(planet.position))
+      };
+      if (detail === "summary") return summary;
+      return {
+        ...summary,
+        publicState: publicPlanetStateRef(occupiedPlanet, indexer),
+        publicMoonState: publicMoonStateRef(occupiedPlanet, indexer)
+      };
+    })
   };
 }
 

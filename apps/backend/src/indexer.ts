@@ -265,6 +265,11 @@ type MetadataRow = {
   value: string;
 };
 
+type UniverseSystemSnapshotRow = {
+  payload_json: string;
+  version: string;
+};
+
 type EventRow = {
   event_json: string;
 };
@@ -1863,6 +1868,85 @@ export class SettlementIndexer {
     return `${this.indexedStateCacheVersion()}:${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}:${this.productionQueueProjectionCacheVersion()}`;
   }
 
+  universeSystemSummaryVersion(galaxy: number, system: number): string {
+    return [
+      this.universeSystemFingerprint(galaxy, system, "planets", `
+        SELECT planet.planet_id || ':' || planet.owner || ':' || COALESCE(planet.name, '') || ':' || planet.position || ':' || planet.fields || ':' || planet.temperature || ':' || planet.event_json AS value
+        FROM contract_planets planet
+        WHERE planet.galaxy = ? AND planet.system_number = ?
+        ORDER BY planet.position ASC
+      `),
+      this.universeSystemFingerprint(galaxy, system, "profiles", `
+        SELECT profile.wallet || ':' || COALESCE(profile.display_name, '') || ':' || profile.updated_at AS value
+        FROM player_profiles profile
+        WHERE profile.wallet IN (
+          SELECT lower(planet.owner)
+          FROM contract_planets planet
+          WHERE planet.galaxy = ? AND planet.system_number = ?
+        )
+        ORDER BY profile.wallet ASC
+      `),
+      this.universeSystemFingerprint(galaxy, system, "alliances", `
+        SELECT member.wallet || ':' || member.alliance_id || ':' || alliance.tag || ':' || alliance.name || ':' || alliance.active AS value
+        FROM contract_alliance_members member
+        INNER JOIN contract_alliances alliance ON alliance.alliance_id = member.alliance_id
+        WHERE member.wallet IN (
+          SELECT lower(planet.owner)
+          FROM contract_planets planet
+          WHERE planet.galaxy = ? AND planet.system_number = ?
+        )
+        ORDER BY member.wallet ASC, member.alliance_id ASC
+      `),
+      this.universeSystemFingerprint(galaxy, system, "debris", `
+        SELECT debris.planet_id || ':' || debris.metal || ':' || debris.crystal || ':' || debris.block_number || ':' || debris.event_json AS value
+        FROM contract_debris_fields debris
+        INNER JOIN contract_planets planet ON planet.planet_id = debris.planet_id
+        WHERE planet.galaxy = ? AND planet.system_number = ?
+        ORDER BY planet.position ASC
+      `),
+      this.universeSystemFingerprint(galaxy, system, "moons", `
+        SELECT moon.planet_id || ':' || moon.exists_flag || ':' || COALESCE(moon.fields, '') || ':' || COALESCE(moon.diameter_km, '') || ':' || COALESCE(moon.created_at, '') || ':' || COALESCE(moon.event_json, '') AS value
+        FROM contract_moons moon
+        INNER JOIN contract_planets planet ON planet.planet_id = moon.planet_id
+        WHERE planet.galaxy = ? AND planet.system_number = ?
+        ORDER BY planet.position ASC
+      `),
+      this.universeSystemFingerprint(galaxy, system, "moon-chance", `
+        SELECT report.report_key || ':' || report.target_planet_id || ':' || report.battle_id || ':' || COALESCE(report.outcome_id, '') || ':' || report.block_number || ':' || report.event_json AS value
+        FROM contract_moon_chance_reports report
+        INNER JOIN contract_planets planet ON planet.planet_id = report.target_planet_id
+        WHERE planet.galaxy = ? AND planet.system_number = ?
+        ORDER BY planet.position ASC, report.block_number ASC
+      `)
+    ].join("|");
+  }
+
+  materializedUniverseSystemSnapshot(cacheKey: string, version: string): unknown | null {
+    const row = this.db.query(`
+      SELECT version, payload_json
+      FROM contract_universe_system_snapshots
+      WHERE cache_key = ?
+    `).get(cacheKey) as UniverseSystemSnapshotRow | null;
+    if (!row || row.version !== version) return null;
+    try {
+      return JSON.parse(row.payload_json);
+    } catch {
+      this.db.query("DELETE FROM contract_universe_system_snapshots WHERE cache_key = ?").run(cacheKey);
+      return null;
+    }
+  }
+
+  storeMaterializedUniverseSystemSnapshot(cacheKey: string, version: string, payload: unknown): void {
+    this.db.query(`
+      INSERT INTO contract_universe_system_snapshots (cache_key, version, payload_json, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(cache_key) DO UPDATE SET
+        version = excluded.version,
+        payload_json = excluded.payload_json,
+        updated_at = excluded.updated_at
+    `).run(cacheKey, version, JSON.stringify(payload), new Date().toISOString());
+  }
+
   missionResponseCacheVersion(): string {
     return `${this.currentMissionReadModelDbVersion()}:${this.currentBattleReportReadModelDbVersion()}`;
   }
@@ -3157,6 +3241,14 @@ export class SettlementIndexer {
         block_number TEXT NOT NULL,
         event_json TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS contract_universe_system_snapshots (
+        cache_key TEXT PRIMARY KEY,
+        version TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS contract_universe_system_snapshots_version_idx
+        ON contract_universe_system_snapshots (version);
       CREATE TABLE IF NOT EXISTS contract_fleet_missions (
         mission_id TEXT PRIMARY KEY,
         status_id INTEGER NOT NULL,
@@ -7851,6 +7943,11 @@ export class SettlementIndexer {
   private metadata(key: string): string | null {
     const row = this.db.query("SELECT value FROM indexer_metadata WHERE key = ?").get(key) as MetadataRow | null;
     return row?.value ?? null;
+  }
+
+  private universeSystemFingerprint(galaxy: number, system: number, label: string, sql: string): string {
+    const rows = this.db.query(sql).all(galaxy, system) as Array<{ value: string }>;
+    return `${label}:${rows.map((row) => row.value).join("\u001f")}`;
   }
 
   private rows<T>(sql: string, ...params: SQLQueryBindings[]): T[] {

@@ -3327,6 +3327,8 @@ describe("Veydrift backend", () => {
       ownerDisplayName: "borodutch",
       planetId: "7"
     });
+    expect(occupied).not.toHaveProperty("publicState");
+    expect(occupied).not.toHaveProperty("publicMoonState");
   });
 
   test("memoizes galaxy system payloads until indexed state changes", async () => {
@@ -3354,6 +3356,24 @@ describe("Veydrift backend", () => {
     expect(secondResponse.status).toBe(200);
     expect(indexer.systemReads).toBe(1);
     expect(secondBody).toEqual(firstBody);
+
+    indexer.applyEvent({
+      ...planet,
+      planetId: "8",
+      galaxy: 3,
+      system: 45,
+      position: 1,
+      eventName: "PlanetStarted",
+      transactionHash: "0xother-system",
+      blockNumber: "122"
+    });
+
+    const unrelatedChangeResponse = await handler(new Request("http://localhost/universe/galaxies/2/systems/44"));
+    const unrelatedChangeBody = await unrelatedChangeResponse.json();
+
+    expect(unrelatedChangeResponse.status).toBe(200);
+    expect(indexer.systemReads).toBe(1);
+    expect(unrelatedChangeBody).toEqual(firstBody);
 
     indexer.applyEvent({
       ...planet,
@@ -5275,7 +5295,7 @@ describe("Veydrift backend", () => {
       data: abiWords(7386n, 2472n, 1335n, 1770000300n)
     });
 
-    const system = await handler(new Request("http://localhost/universe/galaxies/2/systems/44"));
+    const system = await handler(new Request("http://localhost/universe/galaxies/2/systems/44?detail=full"));
     const body = await system.json();
     const occupiedPlanet = body.planets.find((item: { position: number }) => item.position === 9);
     expect(occupiedPlanet).toMatchObject({
@@ -8039,7 +8059,7 @@ describe("Veydrift backend", () => {
 
     const planetResponse = await handler(new Request("http://localhost/planets/7"));
     const planetBody = await planetResponse.json();
-    const universeResponse = await handler(new Request("http://localhost/universe/galaxies/2/systems/44"));
+    const universeResponse = await handler(new Request("http://localhost/universe/galaxies/2/systems/44?detail=full"));
     const universeBody = await universeResponse.json();
     const publicPlanet = universeBody.planets.find((item: { position: number }) => item.position === 9);
     const publicResources = publicPlanet.publicState.resources;
