@@ -3346,7 +3346,7 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   private async readResearchQueue(wallet: Address): Promise<QueueState> {
-    const words = splitWords(await this.call("0x2b98afc7", [encodeAddress(wallet)]));
+    const words = splitWords(await this.call("0xd0b044c5", [encodeAddress(wallet)]));
     const active = decodeBoolWord(wordAt(words, 0));
     const queue: QueueState = {
       active,

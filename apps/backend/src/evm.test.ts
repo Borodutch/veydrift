@@ -1097,7 +1097,7 @@ describe("player queue startedAt", () => {
             return abiWords(1n, itemId, quantity, readyAt, cost.metal, cost.crystal, cost.deuterium) as T;
           }
           if (selector === "0x52b55205") return abiWords(0n, 0n) as T;
-          if (selector === "0x2b98afc7") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+          if (selector === "0xd0b044c5") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
           throw new Error(`Unexpected eth_call selector ${selector}`);
         }
         if (method === "eth_blockNumber") {
@@ -1157,7 +1157,7 @@ describe("player queue startedAt", () => {
             return abiWords(1n, itemId, quantity, readyAt, cost.metal, cost.crystal, cost.deuterium) as T;
           }
           if (selector === "0x52b55205") return abiWords(0n, 0n) as T;
-          if (selector === "0x2b98afc7") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
+          if (selector === "0xd0b044c5") return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
           throw new Error(`Unexpected eth_call selector ${selector}`);
         }
         if (method === "eth_getLogs") {

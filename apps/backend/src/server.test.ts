@@ -4940,7 +4940,7 @@ describe("Veydrift backend", () => {
             || call.data.startsWith("0x4f5ed437")
             || call.data.startsWith("0xb6f4b7b7")
             || call.data.startsWith("0x52b55205")
-            || call.data.startsWith("0x2b98afc7")
+            || call.data.startsWith("0xd0b044c5")
           )
         ) {
           return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
@@ -5032,7 +5032,7 @@ describe("Veydrift backend", () => {
             call.data.startsWith("0xb8e835ab")
             || call.data.startsWith("0xb6f4b7b7")
             || call.data.startsWith("0x52b55205")
-            || call.data.startsWith("0x2b98afc7")
+            || call.data.startsWith("0xd0b044c5")
           )
         ) {
           return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
@@ -5132,7 +5132,7 @@ describe("Veydrift backend", () => {
             || call.data.startsWith("0x4f5ed437")
             || call.data.startsWith("0xb6f4b7b7")
             || call.data.startsWith("0x52b55205")
-            || call.data.startsWith("0x2b98afc7")
+            || call.data.startsWith("0xd0b044c5")
           )
         ) {
           return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
@@ -5224,7 +5224,7 @@ describe("Veydrift backend", () => {
         ) {
           return abiWords(0n, 0n, 0n, 0n, 0n, 0n, 0n) as T;
         }
-        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0x2b98afc7")) {
+        if (call.to === configuredTestConfig.gameContractAddress && call.data.startsWith("0xd0b044c5")) {
           return abiWords(1n, 0n, 2n, readyAt, 0n, 1_600n, 800n) as T;
         }
 
