@@ -6,10 +6,14 @@ describe("playable Mini App wallet binding", () => {
 
     expect(source).toContain("detectFarcasterMiniApp");
     expect(source).toContain("signalFarcasterReadyOnce");
+    expect(source).toContain("farcasterMiniAppWalletSupport");
     expect(source).toContain("{ preferFarcasterProvider: true }");
     expect(source).toContain("walletProvider.source !== \"farcaster\"");
-    expect(source).toContain("getCurrentAccounts(walletProvider.provider, WALLET_BOOTSTRAP_READ_TIMEOUT_MS)");
+    expect(source).not.toContain("getCurrentAccounts(walletProvider.provider, WALLET_BOOTSTRAP_READ_TIMEOUT_MS)");
     expect(source).toContain("accounts = await requestAccounts(walletProvider.provider)");
+    expect(source).toContain("await switchBaseSepoliaNetwork(walletProvider.provider)");
+    expect(source).toContain("FARCASTER_WALLET_PROVIDER_UNAVAILABLE");
+    expect(source).toContain("MiniAppWalletErrorState");
     expect(source).toContain("const effectiveConnectWallet = onConnectWallet ?? (miniAppMode ? connectMiniAppWallet : undefined)");
     expect(source).toContain("onConnectWallet={effectiveConnectWallet}");
   });

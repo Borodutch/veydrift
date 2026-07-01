@@ -61,8 +61,12 @@ import { buildingUpgradeStatus, formatMissingResources } from "./buildingDetails
 import { serverUnavailableRetryMessage } from "./gameUnavailable";
 import {
   detectFarcasterMiniApp,
+  FARCASTER_BASE_SEPOLIA_CHAIN,
+  FARCASTER_WALLET_CAPABILITY,
+  farcasterMiniAppWalletSupport,
   hasMiniAppUrlHint,
   signalFarcasterReadyOnce,
+  type FarcasterMiniAppWalletSupport,
 } from "./farcasterReady";
 
 export { infrastructureActionNoticeFor, infrastructureDisplayActionNoticeFor } from "./buildingActionNotice";
@@ -190,9 +194,9 @@ import {
   fetchWalletQueues,
   fetchWalletSettlement,
   getAvailableWalletProviderDetails,
-  getCurrentAccounts,
   parseRiftTokenAmount,
   requestAccounts,
+  switchBaseSepoliaNetwork,
   unwatchPlanet,
   watchPlanet,
   sendApproveResourceTokenTransaction,
@@ -1709,6 +1713,43 @@ interface PlayableMvpAppProps {
   planet?: PlanetSummary | undefined;
 }
 
+const farcasterWalletReportInstruction = "Please send this exact message to Veydrift support.";
+
+function playableFarcasterMiniAppWalletError(
+  code: string,
+  message: string,
+  details: {
+    support?: FarcasterMiniAppWalletSupport | undefined;
+    error?: unknown;
+  } = {},
+): string {
+  const detailParts = [
+    details.support ? playableFarcasterSupportDiagnostics(details.support) : undefined,
+    ...playableFarcasterRawErrorDiagnostics(details.error),
+  ].filter((part): part is string => Boolean(part));
+  const detailText = detailParts.length > 0 ? ` Details: ${detailParts.join("; ")}.` : "";
+  return `Farcaster Mini App wallet setup failed (${code}). ${message}${detailText} ${farcasterWalletReportInstruction}`;
+}
+
+function playableFarcasterSupportDiagnostics(support: FarcasterMiniAppWalletSupport): string {
+  const capabilities = support.capabilities.length > 0 ? support.capabilities.join(",") : "none";
+  const chains = support.chains.length > 0 ? support.chains.join(",") : "none";
+  return `support=${support.status}/${support.status === "supported" ? "ok" : support.code}; capabilities=${capabilities}; chains=${chains}`;
+}
+
+function playableFarcasterRawErrorDiagnostics(error: unknown): string[] {
+  if (!error || typeof error !== "object") {
+    return [];
+  }
+  const providerError = error as { code?: unknown; message?: unknown };
+  return [
+    providerError.code !== undefined ? `errorCode=${String(providerError.code)}` : undefined,
+    typeof providerError.message === "string" && providerError.message.trim()
+      ? `errorMessage=${providerError.message.replace(/\s+/g, " ").slice(0, 240)}`
+      : undefined,
+  ].filter((part): part is string => Boolean(part));
+}
+
 type ShipyardActionState =
   | { status: "idle" }
   | { status: "pending"; label: string }
@@ -3026,6 +3067,7 @@ export function PlayableMvpApp({
 }: PlayableMvpAppProps = {}) {
   const [miniAppProvider, setMiniAppProvider] = useState<Eip1193Provider>();
   const [miniAppAccount, setMiniAppAccount] = useState<string | undefined>();
+  const [miniAppWalletError, setMiniAppWalletError] = useState<string | undefined>();
   const [detectedMiniAppMode, setDetectedMiniAppMode] = useState(() => (
     providedMiniAppMode
       || (typeof window !== "undefined" && hasMiniAppUrlHint(window.location))
@@ -3035,39 +3077,92 @@ export function PlayableMvpApp({
   const account = providedAccount ?? miniAppAccount;
   const miniAppMode = providedMiniAppMode || detectedMiniAppMode;
   const isWalletConnected = Boolean(provider && account);
+  const showMiniAppWalletError = useCallback((message: string) => {
+    setMiniAppProvider(undefined);
+    setMiniAppAccount(undefined);
+    setMiniAppWalletError(message);
+    setOnChainError(message);
+    setOnChainStatus("error");
+  }, []);
+
   const connectMiniAppWallet = useCallback(async () => {
     if (providedProvider && providedAccount) {
       return;
     }
 
-    await signalFarcasterReadyOnce();
-    const walletProvider = await getAvailableWalletProviderDetails(
-      window as typeof window & { ethereum?: Eip1193Provider },
-      undefined,
-      { preferFarcasterProvider: true },
-    );
-    if (!walletProvider?.provider || walletProvider.source !== "farcaster") {
-      return;
-    }
-
     setDetectedMiniAppMode(true);
-    setMiniAppProvider(walletProvider.provider);
+    setMiniAppWalletError(undefined);
+    setOnChainError(undefined);
 
-    let accounts: string[] = [];
+    let support: FarcasterMiniAppWalletSupport | undefined;
     try {
-      accounts = await getCurrentAccounts(walletProvider.provider, WALLET_BOOTSTRAP_READ_TIMEOUT_MS);
-    } catch {
-      // Fall back to the Mini App provider's authorization path below.
-    }
+      await signalFarcasterReadyOnce();
+      support = await farcasterMiniAppWalletSupport();
+      if (support.status === "unsupported") {
+        showMiniAppWalletError(playableFarcasterMiniAppWalletError(
+          support.code,
+          `${support.message} Required capability: ${FARCASTER_WALLET_CAPABILITY}. Required chain: ${FARCASTER_BASE_SEPOLIA_CHAIN}.`,
+          { support },
+        ));
+        return;
+      }
 
-    if (!accounts[0]) {
-      accounts = await requestAccounts(walletProvider.provider);
-    }
+      const walletProvider = await getAvailableWalletProviderDetails(
+        window as typeof window & { ethereum?: Eip1193Provider },
+        undefined,
+        { preferFarcasterProvider: true },
+      );
+      if (!walletProvider?.provider || walletProvider.source !== "farcaster") {
+        showMiniAppWalletError(playableFarcasterMiniAppWalletError(
+          "FARCASTER_WALLET_PROVIDER_UNAVAILABLE",
+          "The Farcaster Mini App SDK did not provide an Ethereum wallet provider after the app became ready.",
+          { support },
+        ));
+        return;
+      }
 
-    if (accounts[0]) {
+      let accounts: string[];
+      try {
+        accounts = await requestAccounts(walletProvider.provider);
+      } catch (error) {
+        showMiniAppWalletError(playableFarcasterMiniAppWalletError(
+          isUserRejected(error) ? "FARCASTER_WALLET_REJECTED" : "FARCASTER_WALLET_ACCOUNT_FAILED",
+          isUserRejected(error) ? "Wallet connection was rejected." : walletRequestErrorMessage(error),
+          { support, error },
+        ));
+        return;
+      }
+      if (!accounts[0]) {
+        showMiniAppWalletError(playableFarcasterMiniAppWalletError(
+          "FARCASTER_WALLET_ACCOUNT_UNAVAILABLE",
+          "Farcaster Wallet authorization completed without returning an account.",
+          { support },
+        ));
+        return;
+      }
+
+      try {
+        await switchBaseSepoliaNetwork(walletProvider.provider);
+      } catch (error) {
+        showMiniAppWalletError(playableFarcasterMiniAppWalletError(
+          "FARCASTER_BASE_SEPOLIA_SWITCH_FAILED",
+          walletRequestErrorMessage(error),
+          { support, error },
+        ));
+        return;
+      }
+      setMiniAppProvider(walletProvider.provider);
       setMiniAppAccount(accounts[0]);
+      setMiniAppWalletError(undefined);
+      setOnChainError(undefined);
+    } catch (error) {
+      showMiniAppWalletError(playableFarcasterMiniAppWalletError(
+        isUserRejected(error) ? "FARCASTER_WALLET_REJECTED" : "FARCASTER_WALLET_BOOTSTRAP_FAILED",
+        isUserRejected(error) ? "Wallet connection was rejected." : walletRequestErrorMessage(error),
+        { support, error },
+      ));
     }
-  }, [providedAccount, providedProvider]);
+  }, [providedAccount, providedProvider, showMiniAppWalletError]);
 
   useEffect(() => {
     if (providedMiniAppMode || detectedMiniAppMode) {
@@ -7948,6 +8043,15 @@ export function PlayableMvpApp({
   const globalMissionArchiveSection = activePlanetSections.read("globalMissionArchiveState");
 
   const content = (() => {
+    if (miniAppMode && miniAppWalletError && !isWalletConnected) {
+      return (
+        <MiniAppWalletErrorState
+          error={miniAppWalletError}
+          onRetry={() => void connectMiniAppWallet()}
+        />
+      );
+    }
+
     if (page === "battle-reports") {
       return (
         <BattleReportsPage
@@ -8815,6 +8919,33 @@ function HydratingPlanetState({
             Retry
           </button>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+function MiniAppWalletErrorState({
+  error,
+  onRetry,
+}: {
+  error: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="grid min-h-[52vh] place-items-center">
+      <div className="max-w-xl rounded-lg border border-amber-300/20 bg-[#101624] p-5 text-center shadow-2xl shadow-black/20">
+        <div className="mx-auto mb-4 grid h-10 w-10 place-items-center rounded-full border border-amber-200/25 bg-amber-300/10 text-amber-200">
+          <AlertTriangle size={20} strokeWidth={2.4} />
+        </div>
+        <h1 className="text-base font-semibold text-white">Wallet error</h1>
+        <p className="mt-2 text-sm leading-6 text-slate-300">{error}</p>
+        <button
+          className="mt-4 inline-flex h-9 items-center justify-center rounded-md border border-cyan-300/40 bg-cyan-300/10 px-4 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-300/20"
+          onClick={onRetry}
+          type="button"
+        >
+          Retry
+        </button>
       </div>
     </div>
   );
