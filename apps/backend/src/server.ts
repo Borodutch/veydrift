@@ -2758,6 +2758,8 @@ type GalaxySystemCacheEntry = {
   payload: GalaxySystemPayload;
 };
 
+let materializedUniverseSnapshotStoreWarningEmitted = false;
+
 function cachedGalaxySystemPayload(
   cache: Map<string, GalaxySystemCacheEntry>,
   input: {
@@ -2804,10 +2806,26 @@ function cachedGalaxySystemPayload(
     payload
   });
   if (input.detail === "summary" && input.indexer) {
-    input.indexer.storeMaterializedUniverseSystemSnapshot(cacheKey, indexerVersion, payload);
+    tryStoreMaterializedUniverseSystemSnapshot(input.indexer, cacheKey, indexerVersion, payload);
   }
   pruneGalaxySystemCache(cache);
   return payload;
+}
+
+function tryStoreMaterializedUniverseSystemSnapshot(
+  indexer: SettlementIndexer,
+  cacheKey: string,
+  version: string,
+  payload: GalaxySystemPayload
+): void {
+  try {
+    indexer.storeMaterializedUniverseSystemSnapshot(cacheKey, version, payload);
+  } catch (error) {
+    if (!materializedUniverseSnapshotStoreWarningEmitted) {
+      console.warn("Veydrift universe system snapshot cache write unavailable", reasonText(error));
+      materializedUniverseSnapshotStoreWarningEmitted = true;
+    }
+  }
 }
 
 function galaxySystemCacheVersion(
