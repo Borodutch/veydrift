@@ -69,7 +69,7 @@ export const shipAssetManifest = [
   { key: "battlecruiser", src: `${SHIP_BASE}/battlecruiser.webp`, category: "ship", status: "production" },
   { key: "reaper", src: `${SHIP_BASE}/reaper.webp`, category: "ship", status: "production" },
   { key: "pathfinder", src: `${SHIP_BASE}/pathfinder.webp`, category: "ship", status: "production" },
-  { key: "crawler", src: `${SHIP_BASE}/crawler.webp`, category: "ship", status: "production" },
+  { key: "crawler", src: `${SHIP_BASE}/crawler-approved.webp`, category: "ship", status: "production" },
 ] as const satisfies readonly GameAssetMapping<ShipKey>[];
 
 export const researchAssetManifest = [

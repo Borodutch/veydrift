@@ -1133,6 +1133,15 @@
       "512": "/assets/game/sizes/512/style-pass/generated/ships/colony-ship.webp"
     }
   },
+  "/assets/game/style-pass/generated/ships/crawler-approved.webp": {
+    "width": 1024,
+    "height": 1024,
+    "variants": {
+      "64": "/assets/game/sizes/64/style-pass/generated/ships/crawler-approved.webp",
+      "256": "/assets/game/sizes/256/style-pass/generated/ships/crawler-approved.webp",
+      "512": "/assets/game/sizes/512/style-pass/generated/ships/crawler-approved.webp"
+    }
+  },
   "/assets/game/style-pass/generated/ships/crawler.webp": {
     "width": 1024,
     "height": 1024,
