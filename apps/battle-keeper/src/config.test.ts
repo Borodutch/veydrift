@@ -19,7 +19,7 @@ describe("loadKeeperConfig", () => {
     expect(config?.sweepIntervalMs).toBe(10_000);
     expect(config?.resolveIntervalMs).toBe(2_000);
     expect(config?.port).toBe(8080);
-    expect(config?.maxConcurrency).toBe(3);
+    expect(config?.maxConcurrency).toBe(1);
   });
 
   test("reports missing required vars", () => {
@@ -63,7 +63,7 @@ describe("loadKeeperConfig", () => {
     expect(config?.chainId).toBe(8453);
     expect(config?.port).toBe(9000);
     expect(config?.sweepIntervalMs).toBe(30_000);
-    expect(config?.maxConcurrency).toBe(5);
+    expect(config?.maxConcurrency).toBe(1);
   });
 
   test("loads static HTTP RPC fallback URLs", () => {

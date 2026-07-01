@@ -7,12 +7,8 @@ import {
   type FleetDefenseUnitCount,
   type FleetDefenseUnitKind
 } from "./fleetDefenseParity";
+import { SettlementIndexer } from "./indexer";
 import { defenseCount, supportedShipIds } from "./readModels";
-
-type DebugFleetDefenseState = {
-  counts?: FleetDefenseUnitCount[];
-  indexer?: unknown;
-};
 
 type ApiMission = {
   arrivalAt: string;
@@ -68,6 +64,7 @@ const missionParityAbi = [
 
 const options = parseArgs(process.argv.slice(2));
 const apiUrl = trimSlash(options["api-url"] ?? process.env.VEYDRIFT_API_URL ?? "https://api-test.veydrift.com");
+const indexDbPath = options["index-db"] ?? process.env.VEYDRIFT_INDEX_DB_PATH;
 const rpcUrl = options["rpc-url"] ?? process.env.VEYDRIFT_RPC_URL ?? process.env.BASE_SEPOLIA_RPC_URL ?? "https://sepolia.base.org";
 const warmupPasses = parsePositiveInt(options["warmup-passes"], 2);
 const apiTimeoutMs = parsePositiveInt(options["api-timeout-ms"], 15_000);
@@ -94,8 +91,8 @@ try {
 
 async function main(): Promise<void> {
   const gameAddress = await resolveGameAddress();
-  const rawState = await fetchJson<DebugFleetDefenseState>(`${apiUrl}/debug/fleet-defense-state`, apiTimeoutMs);
-  const rawCounts = rawState.counts ?? [];
+  const rawState = readRawFleetDefenseState();
+  const rawCounts = rawState.counts;
   const activeMissions = await readActiveMissions();
   const missionParity = await readMissionParity(gameAddress, activeMissions);
   const fleetSlotParity = await readFleetSlotParity(gameAddress, rawCounts, activeMissions);
@@ -153,6 +150,20 @@ async function main(): Promise<void> {
     }
     process.exit(1);
   }
+}
+
+function readRawFleetDefenseState(): { counts: FleetDefenseUnitCount[]; indexer: unknown } {
+  if (!indexDbPath) {
+    throw new Error("Set --index-db or VEYDRIFT_INDEX_DB_PATH; public fleet/defense debug endpoints are removed.");
+  }
+  const indexer = new SettlementIndexer({} as ConstructorParameters<typeof SettlementIndexer>[0], 0n, {
+    databasePath: indexDbPath,
+    readOnly: true
+  });
+  return {
+    counts: indexer.fleetDefenseRawCounts(),
+    indexer: indexer.snapshot()
+  };
 }
 
 async function readActiveMissions(): Promise<ApiMission[]> {
@@ -516,7 +527,7 @@ function parseArgs(args: string[]): Record<string, string | undefined> {
 function usage(message?: string): never {
   if (message) console.error(message);
   console.error(
-    "Usage: bun apps/backend/src/fleetDefenseParityGuard.ts [--api-url <url>] [--rpc-url <url>] [--game <address>] [--warmup-passes <n>] [--mission-parity-limit <n>] [--rpc-batch-size <n>] [--api-timeout-ms <n>] [--rpc-timeout-ms <n>] [--out <file>]"
+    "Usage: bun apps/backend/src/fleetDefenseParityGuard.ts [--api-url <url>] [--index-db <path>] [--rpc-url <url>] [--game <address>] [--warmup-passes <n>] [--mission-parity-limit <n>] [--rpc-batch-size <n>] [--api-timeout-ms <n>] [--rpc-timeout-ms <n>] [--out <file>]"
   );
   process.exit(message ? 1 : 0);
 }

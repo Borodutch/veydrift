@@ -30,6 +30,18 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
         _emitMoonResourcesChanged(planetId);
     }
 
+    function grantMoonResources(uint256 planetId, Resources calldata amount) external {
+        if (msg.sender != _moonSystem) revert Unauthorized(msg.sender);
+        _moonResources[planetId] = _add(_moonResources[planetId], amount);
+        _increaseInternalResources(amount);
+        _emitMoonResourcesChanged(planetId);
+    }
+
+    function setMoonShipCount(uint256 planetId, Ship ship, uint32 total) external {
+        if (msg.sender != _moonSystem) revert Unauthorized(msg.sender);
+        _setMoonShipCount(planetId, ship, total);
+    }
+
     function moveMoonGateShips(
         uint256 originPlanetId,
         uint256 destinationPlanetId,
@@ -61,6 +73,25 @@ contract VeydriftDefenseProductionModule is VeydriftResourceReserves {
             }
         }
         if (shipTotal == 0) revert InvalidQuantity();
+    }
+
+    function clearMoonState(uint256 planetId) external {
+        if (msg.sender != _moonSystem) revert Unauthorized(msg.sender);
+        Resources memory resources = _moonResources[planetId];
+        if (resources.metal != 0 || resources.crystal != 0 || resources.deuterium != 0) {
+            delete _moonResources[planetId];
+            _decreaseInternalResources(resources);
+            _emitMoonResourcesChanged(planetId);
+        }
+        for (uint8 i = 0; i <= uint8(Ship.Pathfinder);) {
+            Ship ship = Ship(i);
+            if (_moonShipCounts[planetId][ship] != 0) {
+                _setMoonShipCount(planetId, ship, 0);
+            }
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function resolveFleetMission(uint256 missionId) external {

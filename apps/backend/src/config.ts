@@ -1,7 +1,6 @@
 export type DeploymentMode = "local" | "test" | "staging" | "production";
 
 export type BackendConfig = {
-  alchemyWebhookSigningKey?: string;
   allianceContractAddress?: `0x${string}`;
   chainId: number;
   deploymentMode: DeploymentMode;
@@ -71,7 +70,6 @@ export type ConfigResult = {
 
 export type SafeConfigSummary = {
   allianceContractConfigured: boolean;
-  alchemyWebhookConfigured: boolean;
   chainId: number;
   deploymentMode: DeploymentMode;
   gameContractConfigured: boolean;
@@ -139,7 +137,6 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   // fake defenders to real players.
   const qaSyntheticStationedDefenders =
     parseBooleanFlag(env.VEYDRIFT_QA_SYNTHETIC_STATIONED_DEFENDERS) && deploymentMode !== "production";
-  const alchemyWebhookSigningKey = env.VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY;
   const chainId = parsePositiveInteger(env.VEYDRIFT_CHAIN_ID, "VEYDRIFT_CHAIN_ID", problems) ?? defaultChainId;
   const indexFromBlock = parseBigInt(env.VEYDRIFT_INDEX_FROM_BLOCK, "VEYDRIFT_INDEX_FROM_BLOCK", problems) ?? 0n;
   const parsedLogChunkSpan = parseBigInt(env.VEYDRIFT_LOG_CHUNK_SPAN, "VEYDRIFT_LOG_CHUNK_SPAN", problems);
@@ -244,7 +241,6 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
 
   return {
     config: {
-      ...(alchemyWebhookSigningKey ? { alchemyWebhookSigningKey } : {}),
       ...(allianceContractAddress ? { allianceContractAddress } : {}),
       chainId,
       deploymentMode,
@@ -281,7 +277,6 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
 export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
   return {
     allianceContractConfigured: Boolean(config.allianceContractAddress),
-    alchemyWebhookConfigured: Boolean(config.alchemyWebhookSigningKey),
     chainId: config.chainId,
     deploymentMode: config.deploymentMode,
     gameContractConfigured: Boolean(config.gameContractAddress),

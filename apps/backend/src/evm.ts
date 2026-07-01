@@ -1105,7 +1105,7 @@ export type RpcMetrics = {
   lastFailoverReason: string | null;
   rpcUrls: string[];
   // Count of upstream RPC fetches aborted for exceeding the per-request deadline. Surfaced on /health
-  // and /debug/indexer so an Alchemy live-read timeout storm is visible before it escalates to a crash
+  // and /health so an RPC live-read timeout storm is visible before it escalates to a crash
   // (VEY-KANEO-459).
   timeouts: number;
 };

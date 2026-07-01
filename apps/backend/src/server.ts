@@ -1,4 +1,3 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { generateSystem } from "@veydrift/universe";
@@ -46,7 +45,6 @@ import {
   type IndexedDebrisFieldEvent,
   type IndexedDebrisTarget,
   type IndexedMoonChanceReportEvent,
-  type IndexedRpcLog,
   type IndexerSnapshot
 } from "./indexer";
 import { RandomnessCommitterService } from "./randomnessCommitter";
@@ -89,6 +87,24 @@ const corsHeaders = {
   "vary": "Origin",
   ...jsonHeaders
 } as const;
+
+const jsonBodyLimitBytes = 32 * 1024;
+const graphqlBodyLimitBytes = 128 * 1024;
+const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
+  ["/highscores", new Set(["category", "limit", "page", "pageSize"])],
+  ["/missions", new Set(["owner", "page", "pageSize", "status"])],
+  ["/raid-finder/debris", new Set(["limit", "minMetal", "minCrystal"])],
+  ["/universe/systems", new Set(["galaxy", "limit", "page"])],
+  ["/wallet/*/fleet-visibility", new Set(["archive", "planetId"])],
+  ["/wallet/*/missions", new Set(["page", "pageSize", "status"])],
+  ["/wallet/*/overview", new Set(["planetId"])],
+  ["/wallet/*/queues", new Set(["planetId"])],
+  ["/wallet/*/infrastructure", new Set(["planetId"])],
+  ["/wallet/*/moon", new Set(["planetId"])],
+  ["/wallet/*/shipyard", new Set(["planetId"])],
+  ["/wallet/*/defenses", new Set(["planetId"])],
+  ["/wallet/*/research", new Set(["planetId"])]
+]);
 
 const indexedSource = "contract-state-indexer" as const;
 const burningChickenPlanetBurnSelector = "0xe1775196";
@@ -368,65 +384,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
 
     if (request.method === "GET" && url.pathname === "/raid-finder/debris") {
       return indexedDebrisTargetsResponse(indexer, url);
-    }
-
-    if (request.method === "GET" && url.pathname === "/debug/config") {
-      return Response.json(
-        {
-          configured: loaded.problems.length === 0,
-          chain: safeConfigSummary(loaded.config),
-          chainSync: chainSync?.snapshot() ?? null,
-          missionResolution: missionResolution?.snapshot() ?? null,
-          randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
-          indexer: indexer?.snapshot() ?? null,
-          problems: loaded.problems
-        },
-        {
-          headers: corsHeaders
-        }
-      );
-    }
-
-    if (request.method === "GET" && url.pathname === "/debug/indexer") {
-      const liveChainSyncSnapshot = chainSync?.snapshot() ?? null;
-      const liveChainSyncRpc = logBackfiller?.rpcMetrics?.() ?? null;
-      if (liveChainSyncSnapshot) {
-        indexer?.recordWriterChainSyncDiagnostics?.({
-          chainSync: liveChainSyncSnapshot,
-          chainSyncRpc: liveChainSyncRpc
-        });
-      }
-      const persistedWriterDiagnostics = liveChainSyncSnapshot
-        ? null
-        : indexer?.writerChainSyncDiagnostics?.() ?? null;
-      return Response.json(
-        {
-          indexer: indexer?.snapshot() ?? null,
-          chainSync: liveChainSyncSnapshot ?? persistedWriterDiagnostics?.chainSync ?? null,
-          rpc: chainReader?.rpcMetrics?.() ?? null,
-          chainSyncRpc: liveChainSyncSnapshot ? liveChainSyncRpc : persistedWriterDiagnostics?.chainSyncRpc ?? null,
-          writerDiagnostics: liveChainSyncSnapshot
-            ? { source: "live", updatedAt: new Date().toISOString() }
-            : persistedWriterDiagnostics
-              ? { source: "persisted", updatedAt: persistedWriterDiagnostics.updatedAt }
-              : { source: "unavailable", updatedAt: null }
-        },
-        {
-          headers: corsHeaders
-        }
-      );
-    }
-
-    if (request.method === "GET" && url.pathname === "/debug/fleet-defense-state") {
-      return Response.json(
-        {
-          indexer: indexer?.snapshot() ?? null,
-          counts: indexer?.fleetDefenseRawCounts() ?? []
-        },
-        {
-          headers: corsHeaders
-        }
-      );
     }
 
     if (request.method === "GET" && url.pathname === "/chain/events") {
@@ -1145,48 +1102,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     // trigger an RPC call: the indexed DB is reconciled from the contracts exactly once at startup and
     // mutated thereafter only by the websocket event listener. The HTTP API serves purely from the DB.
 
-    if (request.method === "POST" && url.pathname === "/webhooks/alchemy") {
-      if (!indexer) {
-        return unavailableResponse(loaded.problems);
-      }
-
-      const rawBody = await request.text();
-      const signatureFailure = verifyAlchemyWebhookSignature(rawBody, request.headers, loaded.config.alchemyWebhookSigningKey);
-      if (signatureFailure) return signatureFailure;
-
-      try {
-        const payload = JSON.parse(rawBody) as unknown;
-        const logs = alchemyWebhookLogs(payload);
-        let applied = 0;
-        let duplicates = 0;
-        let ignored = 0;
-        let removed = 0;
-        for (const log of logs) {
-          const result = indexer.applyLog(log);
-          if (result.applied) applied += 1;
-          if (result.duplicate) duplicates += 1;
-          if (result.ignored) ignored += 1;
-          if (result.removed) removed += 1;
-        }
-
-        return Response.json(
-          {
-            receivedLogs: logs.length,
-            applied,
-            duplicates,
-            ignored,
-            removed,
-            indexer: indexer.snapshot()
-          },
-          {
-            headers: corsHeaders
-          }
-        );
-      } catch (error) {
-        return errorResponse(error, 400);
-      }
-    }
-
     if (request.method === "POST" && url.pathname === "/graphql") {
       return handleGraphQLRequest(request, workerRole);
     }
@@ -1563,7 +1478,7 @@ function limitedReadResponse(
   scope: "client" | "route" = "client"
 ): Response | null {
   if (request.method !== "GET") return null;
-  if (url.pathname === "/health" || url.pathname === "/debug/indexer") return null;
+  if (url.pathname === "/health") return null;
   if (!isRateLimitedReadPath(url.pathname)) return null;
 
   const now = Date.now();
@@ -1576,7 +1491,7 @@ function limitedReadResponse(
 
   const clientKey = requestClientKey(request);
   if (!clientKey) return null;
-  const key = scope === "route" ? `${clientKey} ${url.pathname}${url.search}` : clientKey;
+  const key = scope === "route" ? `${clientKey} ${url.pathname}${normalizedCacheSearch(url)}` : clientKey;
   const current = limits.get(key);
   if (!current || current.resetAt <= now) {
     limits.set(key, { count: 1, resetAt: now + readRateLimitWindowMs });
@@ -1614,9 +1529,43 @@ function isBootstrapReadPath(pathname: string): boolean {
 }
 
 function requestClientKey(request: Request): string | null {
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  if (process.env.VEYDRIFT_TRUST_PROXY_HEADERS !== "true") return "direct";
   const realIp = request.headers.get("x-real-ip")?.trim();
-  return forwarded || realIp || null;
+  if (realIp) return realIp;
+  const forwarded = request.headers.get("x-forwarded-for")
+    ?.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return forwarded?.[forwarded.length - 1] ?? null;
+}
+
+function normalizedCacheSearch(url: URL): string {
+  const accepted = acceptedCacheParams(url.pathname);
+  if (!accepted || accepted.size === 0) return "";
+  const normalized = new URLSearchParams();
+  for (const name of [...accepted].sort()) {
+    const values = url.searchParams.getAll(name).filter((value) => value.trim() !== "");
+    for (const value of values.sort()) {
+      normalized.append(name, value);
+    }
+  }
+  const search = normalized.toString();
+  return search ? `?${search}` : "";
+}
+
+function acceptedCacheParams(pathname: string): ReadonlySet<string> | undefined {
+  const direct = acceptedCacheQueryParams.get(pathname);
+  if (direct) return direct;
+  if (pathname.match(/^\/wallet\/[^/]+\/fleet-visibility$/)) return acceptedCacheQueryParams.get("/wallet/*/fleet-visibility");
+  if (pathname.match(/^\/wallet\/[^/]+\/missions$/)) return acceptedCacheQueryParams.get("/wallet/*/missions");
+  if (pathname.match(/^\/wallet\/[^/]+\/overview$/)) return acceptedCacheQueryParams.get("/wallet/*/overview");
+  if (pathname.match(/^\/wallet\/[^/]+\/queues$/)) return acceptedCacheQueryParams.get("/wallet/*/queues");
+  if (pathname.match(/^\/wallet\/[^/]+\/infrastructure$/)) return acceptedCacheQueryParams.get("/wallet/*/infrastructure");
+  if (pathname.match(/^\/wallet\/[^/]+\/moon$/)) return acceptedCacheQueryParams.get("/wallet/*/moon");
+  if (pathname.match(/^\/wallet\/[^/]+\/shipyard$/)) return acceptedCacheQueryParams.get("/wallet/*/shipyard");
+  if (pathname.match(/^\/wallet\/[^/]+\/defenses$/)) return acceptedCacheQueryParams.get("/wallet/*/defenses");
+  if (pathname.match(/^\/wallet\/[^/]+\/research$/)) return acceptedCacheQueryParams.get("/wallet/*/research");
+  return undefined;
 }
 
 function sharedResponseCacheForIndex(indexDbPath: string): SharedResponseCache | null {
@@ -1694,7 +1643,6 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (request.method !== "GET") return 0;
   if (url.pathname === "/chain/events") return 0;
   if (url.pathname === "/health") return 10_000;
-  if (url.pathname === "/debug/indexer") return 10_000;
   if (url.pathname === "/highscores") return 300_000;
   if (url.pathname === "/raid-finder/debris") return 30_000;
   // Mission-control reads are backed by the mission read-model version in responseCacheVersion(), so
@@ -1720,16 +1668,15 @@ function cacheableWalletSnapshotPath(pathname: string): boolean {
 
 function cacheableJsonRequestKey(request: Request, url: URL, indexer: SettlementIndexer | undefined): string {
   const indexerVersion = indexer ? cacheableJsonRequestVersion(url, indexer) : "none";
-  return `${request.method} ${url.pathname}${url.search} indexer=${indexerVersion}`;
+  return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=${indexerVersion}`;
 }
 
 function cacheableJsonRequestStaleKey(request: Request, url: URL): string {
-  return `${request.method} ${url.pathname}${url.search} indexer=stale`;
+  return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=stale`;
 }
 
 function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): string {
   if (url.pathname === "/health") return "ttl";
-  if (url.pathname === "/debug/indexer") return "ttl";
   if (url.pathname === "/highscores") return "ttl";
   if (url.pathname === "/raid-finder/debris") return "ttl";
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return indexer.missionResponseCacheVersion();
@@ -1890,8 +1837,41 @@ function hasWarmAllianceIndex(indexer: SettlementIndexer | undefined): indexer i
 }
 
 async function readJsonBody(request: Request): Promise<Record<string, unknown> | null> {
-  const body = await request.json().catch(() => null);
+  let body: unknown;
+  try {
+    body = await readLimitedJson(request, jsonBodyLimitBytes);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) throw error;
+    return null;
+  }
   return body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : null;
+}
+
+class RequestBodyTooLargeError extends Error {
+  constructor(limitBytes: number) {
+    super(`Request body exceeds ${limitBytes} bytes.`);
+    this.name = "RequestBodyTooLargeError";
+  }
+}
+
+async function readLimitedJson(request: Request, limitBytes: number): Promise<unknown> {
+  const text = await readLimitedText(request, limitBytes);
+  return JSON.parse(text);
+}
+
+async function readLimitedText(request: Request, limitBytes: number): Promise<string> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength) {
+    const parsed = Number.parseInt(contentLength, 10);
+    if (Number.isFinite(parsed) && parsed > limitBytes) {
+      throw new RequestBodyTooLargeError(limitBytes);
+    }
+  }
+  const body = await request.arrayBuffer();
+  if (body.byteLength > limitBytes) {
+    throw new RequestBodyTooLargeError(limitBytes);
+  }
+  return new TextDecoder().decode(body);
 }
 
 function playerProfilesUnavailableResponse(): Response {
@@ -2741,72 +2721,6 @@ function indexedRiftState(
   indexer: SettlementIndexer
 ): RiftState {
   return indexer.riftState(wallet, planet?.planetId ?? settlement.homePlanetId);
-}
-
-function verifyAlchemyWebhookSignature(
-  rawBody: string,
-  headers: Headers,
-  signingKey: string | undefined
-): Response | null {
-  if (!signingKey) return null;
-
-  const signature = headers.get("x-alchemy-signature");
-  if (!signature) {
-    return Response.json(
-      { error: "webhook_signature_required" },
-      { headers: corsHeaders, status: 401 }
-    );
-  }
-
-  const expected = createHmac("sha256", signingKey).update(rawBody).digest("hex");
-  if (!constantTimeEqual(signature, expected)) {
-    return Response.json(
-      { error: "webhook_signature_invalid" },
-      { headers: corsHeaders, status: 401 }
-    );
-  }
-
-  return null;
-}
-
-function constantTimeEqual(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left, "hex");
-  const rightBuffer = Buffer.from(right, "hex");
-  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function alchemyWebhookLogs(payload: unknown): IndexedRpcLog[] {
-  const logs: IndexedRpcLog[] = [];
-  collectAlchemyLogs(payload, logs);
-  return logs;
-}
-
-function collectAlchemyLogs(value: unknown, logs: IndexedRpcLog[]): void {
-  if (Array.isArray(value)) {
-    for (const item of value) collectAlchemyLogs(item, logs);
-    return;
-  }
-  if (!isRecord(value)) return;
-
-  if (isWebhookLog(value)) {
-    logs.push(value);
-    return;
-  }
-
-  for (const child of Object.values(value)) {
-    collectAlchemyLogs(child, logs);
-  }
-}
-
-function isWebhookLog(value: Record<string, unknown>): value is IndexedRpcLog {
-  return typeof value.blockNumber === "string"
-    && typeof value.transactionHash === "string"
-    && Array.isArray(value.topics)
-    && value.topics.every((topic) => typeof topic === "string")
-    && typeof value.data === "string"
-    && (value.blockTimestamp === undefined || typeof value.blockTimestamp === "string")
-    && (value.logIndex === undefined || typeof value.logIndex === "string")
-    && (value.removed === undefined || typeof value.removed === "boolean");
 }
 
 type GalaxySystemPayload = Omit<SystemSnapshot, "planets"> & {
@@ -4438,6 +4352,7 @@ function statusForError(error: unknown, fallback: number): number {
   if (!(error instanceof Error)) return fallback;
 
   if (isSqliteBusyError(error)) return 503;
+  if (error instanceof RequestBodyTooLargeError) return 413;
   if (isLiveWalletReadTimeout(error)) return 503;
   if (isRateLimitedRpcError(error)) return 503;
   if (isUpstreamRpcError(error)) return 502;
@@ -4588,8 +4503,23 @@ async function handleGraphQLRequest(request: Request, workerRole: WorkerRole): P
   let payload: GraphQLPayload;
 
   try {
-    payload = (await request.json()) as GraphQLPayload;
-  } catch {
+    payload = (await readLimitedJson(request, graphqlBodyLimitBytes)) as GraphQLPayload;
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return Response.json(
+        {
+          errors: [
+            {
+              message: error.message
+            }
+          ]
+        },
+        {
+          headers: corsHeaders,
+          status: 413
+        }
+      );
+    }
     return Response.json(
       {
         errors: [

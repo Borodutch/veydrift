@@ -41,7 +41,7 @@ const defaultChainId = 84532;
 const defaultSweepIntervalMs = 10_000;
 const defaultResolveIntervalMs = 2_000;
 const defaultPort = 8080;
-const defaultMaxConcurrency = 3;
+const defaultMaxConcurrency = 1;
 // ~2 days of Base L2 blocks (2s). Covers the active-mission window; kept at/under the node's
 // 100k-block eth_getLogs cap per chunk (the sweep chunks anything larger).
 const defaultBackfillBlocks = 90_000;
@@ -107,12 +107,12 @@ export function loadKeeperConfig(env: NodeJS.ProcessEnv = process.env): LoadConf
     problems
   );
   const port = parsePositiveInt(env.PORT, defaultPort, "PORT", problems);
-  const maxConcurrency = parsePositiveInt(
+  const maxConcurrency = Math.min(1, parsePositiveInt(
     env.MAX_CONCURRENCY,
     defaultMaxConcurrency,
     "MAX_CONCURRENCY",
     problems
-  );
+  ));
   const backfillBlocks = parsePositiveInt(
     env.BACKFILL_BLOCKS,
     defaultBackfillBlocks,

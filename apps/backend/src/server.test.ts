@@ -1,6 +1,5 @@
 import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { createHmac } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -798,7 +797,6 @@ describe("Veydrift backend", () => {
 
     await expect(response.json()).resolves.toEqual({
       chain: {
-        alchemyWebhookConfigured: false,
         allianceContractConfigured: false,
         chainId: 84532,
         deploymentMode: "local",
@@ -1764,7 +1762,7 @@ describe("Veydrift backend", () => {
     expect(response.status).toBe(200);
   });
 
-  test("does not leak secrets in config debug output", async () => {
+  test("does not leak secrets in public runtime config output", async () => {
     const response = await createRequestHandler({
       config: {
         ...configuredTestConfig,
@@ -1772,23 +1770,13 @@ describe("Veydrift backend", () => {
         rpcUrl: "https://base-sepolia.g.alchemy.com/v2/not-for-output"
       },
       chainReader: new MockChainReader()
-    })(new Request("http://localhost/debug/config"));
+    })(new Request("http://localhost/runtime-config"));
 
     const body = await response.json();
     expect(JSON.stringify(body)).not.toContain("not-for-output");
     expect(body).toMatchObject({
-      configured: true,
-      chain: {
-        hasRpcUrl: true,
-        rpcSource: "alchemy-key",
-        wsRpcSource: "missing",
-        hasWsRpcUrl: false,
-        resourceTokenAddressesConfigured: true,
-        settlementContractConfigured: true,
-        moonContractConfigured: false,
-        randomnessEngineConfigured: false,
-        gameContractConfigured: true
-      }
+      chainId: 84532,
+      rpcProvider: "unknown"
     });
   });
 
@@ -5581,71 +5569,6 @@ describe("Veydrift backend", () => {
     expect(chainReader.rebuildCalls).toBe(1);
   });
 
-  test("accepts signed Alchemy webhook logs and deduplicates retries", async () => {
-    const chainReader = new MockChainReader();
-    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
-    const handler = createRequestHandler({
-      config: {
-        ...configuredTestConfig,
-        alchemyWebhookSigningKey: "webhook-secret"
-      },
-      chainReader,
-      indexer
-    });
-    const body = JSON.stringify({
-      event: {
-        data: {
-          block: {
-            logs: [
-              {
-                blockNumber: "0x7c",
-                transactionHash: "0xabc",
-                logIndex: "0x0",
-                topics: [
-                  planetStartedTopic,
-                  `0x${player.slice(2).padStart(64, "0")}`,
-                  `0x${(7n).toString(16).padStart(64, "0")}`
-                ],
-                data: abiWords(2n, 44n, 9n, 211n, 1n)
-              }
-            ]
-          }
-        }
-      }
-    });
-    const signature = createHmac("sha256", "webhook-secret").update(body).digest("hex");
-    const request = () => new Request("http://localhost/webhooks/alchemy", {
-      body,
-      headers: {
-        "content-type": "application/json",
-        "x-alchemy-signature": signature
-      },
-      method: "POST"
-    });
-
-    const first = await handler(request());
-    await expect(first.json()).resolves.toMatchObject({
-      receivedLogs: 1,
-      applied: 1,
-      duplicates: 0,
-      indexer: {
-        indexedEventLogs: 1,
-        indexedPlanets: 1,
-        latestIndexedBlock: "124"
-      }
-    });
-    const second = await handler(request());
-    await expect(second.json()).resolves.toMatchObject({
-      receivedLogs: 1,
-      applied: 0,
-      duplicates: 1,
-      indexer: {
-        indexedEventLogs: 1,
-        indexedPlanets: 1
-      }
-    });
-  });
-
   test("serves indexed wallet settlement resources when the index is warm", async () => {
     const chainReader = new MockChainReader();
     let liveReadCalled = false;
@@ -9140,16 +9063,15 @@ describe("worker role gating (VEY-KANEO-466)", () => {
     expect(body.chainSync).toBeNull();
     expect(body.missionResolution).toBeNull();
     expect(body.randomnessCommitter).toBeNull();
-    // Reader liveness must stay cheap; diagnostics still expose the shared WAL snapshot explicitly.
+    // Reader liveness must stay cheap and public debug endpoints stay unavailable.
     expect(body.indexer).toBeNull();
     expect(response.status).toBe(200);
 
     const debugResponse = await handler(new Request("http://localhost/debug/indexer"));
-    const debugBody = await debugResponse.json();
-    expect(debugBody.indexer).not.toBeNull();
+    expect(debugResponse.status).toBe(404);
   });
 
-  test("reader debug indexer exposes persisted writer chain-sync diagnostics", async () => {
+  test("reader debug indexer endpoint is removed", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-reader-debug-"));
     const databasePath = join(dir, "contract-state.sqlite");
     try {
@@ -9179,21 +9101,8 @@ describe("worker role gating (VEY-KANEO-466)", () => {
       });
 
       const response = await handler(new Request("http://localhost/debug/indexer"));
-      const body = await response.json();
 
-      expect(response.status).toBe(200);
-      expect(body.writerDiagnostics).toMatchObject({ source: "persisted" });
-      expect(body.chainSync).toMatchObject({
-        lastPollDurationMs: 33128,
-        lastGetLogsDurationMs: 17,
-        lastGetLogsRange: { fromBlock: "43277454", toBlock: "43277454" },
-        pollBacklogBlocks: "0",
-        recentEventReceiveLagMs: { p95: 52236 }
-      });
-      expect(body.chainSyncRpc).toMatchObject({
-        callsByMethod: { eth_getLogs: 190 },
-        timeouts: 0
-      });
+      expect(response.status).toBe(404);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

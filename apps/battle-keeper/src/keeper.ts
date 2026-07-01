@@ -144,7 +144,7 @@ export class BattleKeeper {
     private readonly resolver: MissionResolver,
     options: BattleKeeperOptions = {}
   ) {
-    this.maxConcurrency = options.maxConcurrency ?? 3;
+    this.maxConcurrency = Math.min(options.maxConcurrency ?? 1, 1);
     this.now = options.now ?? (() => Math.floor(Date.now() / 1_000));
     this.logger = options.logger ?? consoleLogger;
   }

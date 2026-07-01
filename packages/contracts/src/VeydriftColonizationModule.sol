@@ -58,7 +58,19 @@ contract VeydriftColonizationModule is VeydriftResourceReserves {
         _delegateToDefenseProductionModule();
     }
 
+    function grantMoonResources(uint256, Resources calldata) external {
+        _delegateToDefenseProductionModule();
+    }
+
+    function setMoonShipCount(uint256, Ship, uint32) external {
+        _delegateToDefenseProductionModule();
+    }
+
     function moveMoonGateShips(uint256, uint256, address, MissionShips calldata) external {
+        _delegateToDefenseProductionModule();
+    }
+
+    function clearMoonState(uint256) external {
         _delegateToDefenseProductionModule();
     }
 

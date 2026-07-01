@@ -216,7 +216,19 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToColonizationModule();
     }
 
+    function grantMoonResources(uint256, Resources calldata) external {
+        _delegateToColonizationModule();
+    }
+
+    function setMoonShipCount(uint256, Ship, uint32) external {
+        _delegateToColonizationModule();
+    }
+
     function moveMoonGateShips(uint256, uint256, address, MissionShips calldata) external {
+        _delegateToColonizationModule();
+    }
+
+    function clearMoonState(uint256) external {
         _delegateToColonizationModule();
     }
 
@@ -381,6 +393,18 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function planet(uint256 planetId) external view returns (Planet memory) {
         return _planets[planetId];
+    }
+
+    function moonResources(uint256 planetId) external view returns (Resources memory) {
+        return _moonResources[planetId];
+    }
+
+    function moonShipCount(uint256 planetId, Ship ship) external view returns (uint32) {
+        return _moonShipCounts[planetId][ship];
+    }
+
+    function requireNoPendingMoonAttackResolution(uint256 planetId) external view {
+        _requireNoPendingMissionResolutionForPlanet(planetId);
     }
 
     function fleetMission(uint256 missionId)

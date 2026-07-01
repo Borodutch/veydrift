@@ -12,6 +12,7 @@ export type ChickenBurnListenerConfig = {
   backfillIntervalMs: number;
   backfillBlocks: bigint;
   maxRangeBlocks: bigint;
+  confirmationBlocks: bigint;
   enableTransferBurnFallback: boolean;
   port: number;
 };
@@ -36,6 +37,7 @@ const defaultVeydriftChainId = 84532;
 const defaultBackfillIntervalMs = 15_000;
 const defaultBackfillBlocks = 2_000n;
 const defaultMaxRangeBlocks = 90_000n;
+const defaultConfirmationBlocks = 20n;
 const defaultPort = 8080;
 const defaultStateFile = "./chicken-burn-listener-state.json";
 
@@ -87,6 +89,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LoadConfigResu
     "MAX_RANGE_BLOCKS",
     problems
   );
+  const confirmationBlocks = parseBigInt(
+    env.CONFIRMATION_BLOCKS,
+    defaultConfirmationBlocks,
+    "CONFIRMATION_BLOCKS",
+    problems
+  );
   const veydriftChainId = parsePositiveInt(
     env.VEYDRIFT_CHAIN_ID,
     defaultVeydriftChainId,
@@ -129,6 +137,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LoadConfigResu
       backfillIntervalMs,
       backfillBlocks,
       maxRangeBlocks,
+      confirmationBlocks,
       enableTransferBurnFallback,
       port
     },
@@ -151,6 +160,7 @@ export function safeConfigSummary(config: ChickenBurnListenerConfig): Record<str
     backfillIntervalMs: config.backfillIntervalMs,
     backfillBlocks: config.backfillBlocks.toString(),
     maxRangeBlocks: config.maxRangeBlocks.toString(),
+    confirmationBlocks: config.confirmationBlocks.toString(),
     enableTransferBurnFallback: config.enableTransferBurnFallback,
     port: config.port
   };

@@ -287,7 +287,7 @@ describe("HTTP JSON-RPC transport", () => {
       // Three attempts, each aborted at the deadline — no fetch is left hanging.
       expect(fetchCalls).toBe(3);
       expect(abortedCalls).toBe(3);
-      // The storm is observable on the metrics surfaced by /health and /debug/indexer.
+      // The storm is observable on the metrics surfaced by /health.
       expect(transport.snapshot().timeouts).toBe(3);
     } finally {
       globalThis.fetch = previousFetch;

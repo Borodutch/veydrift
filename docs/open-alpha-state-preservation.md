@@ -54,7 +54,7 @@ approved migration/no-state evidence below.
    `VeydriftGame` or resource-token implementation change.
 3. Current player-state evidence:
    - current deploy/index block and ABI hash;
-   - backend `GET /health`, `/runtime-config`, and `/debug/indexer` snapshots;
+   - backend `GET /health` and `/runtime-config` snapshots;
    - count or export of settled planets, owners, moons, active queues, fleets,
      research queues, alliances, debris fields, and moon-chance reports;
    - resource reserve requirement and available reserve balances.

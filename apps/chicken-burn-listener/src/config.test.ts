@@ -17,6 +17,7 @@ describe("loadConfig", () => {
     expect(problems).toEqual([]);
     expect(config?.veydriftChainId).toBe(84532);
     expect(config?.backfillBlocks).toBe(2_000n);
+    expect(config?.confirmationBlocks).toBe(20n);
     expect(config?.enableTransferBurnFallback).toBe(false);
 
     const summary = safeConfigSummary(config!);
@@ -24,6 +25,7 @@ describe("loadConfig", () => {
     expect(String(summary.baseMainnetHttpRpcUrl)).not.toContain("secret");
     expect(String(summary.baseMainnetWsRpcUrl)).not.toContain("secret");
     expect(summary.enableTransferBurnFallback).toBe(false);
+    expect(summary.confirmationBlocks).toBe("20");
   });
 
   test("reports missing required variables", () => {

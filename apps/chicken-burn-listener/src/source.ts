@@ -59,6 +59,7 @@ export class ChickenBurnSource {
       startBlock: bigint;
       backfillBlocks: bigint;
       maxRangeBlocks: bigint;
+      confirmationBlocks: bigint;
       enableTransferBurnFallback?: boolean;
       WebSocketCtor?: WebSocketConstructor;
       logger?: ListenerLogger;
@@ -105,16 +106,21 @@ export class ChickenBurnSource {
 
   async backfill(lookbackOverride?: bigint): Promise<void> {
     const latest = BigInt(await this.http.request<string>("eth_blockNumber", []));
+    const confirmedLatest = latest > this.options.confirmationBlocks
+      ? latest - this.options.confirmationBlocks
+      : 0n;
     const stored = this.store.lastScannedBlock();
     const lookback = lookbackOverride ?? this.options.backfillBlocks;
-    const lookbackStart = latest > lookback ? latest - lookback : 0n;
+    const lookbackStart = confirmedLatest > lookback ? confirmedLatest - lookback : 0n;
     const fromBlock = maxBigInt(this.options.startBlock, stored === 0n ? lookbackStart : stored + 1n);
-    if (fromBlock > latest) {
+    if (fromBlock > confirmedLatest) {
       return;
     }
 
-    for (let start = fromBlock; start <= latest; start += this.options.maxRangeBlocks + 1n) {
-      const end = start + this.options.maxRangeBlocks > latest ? latest : start + this.options.maxRangeBlocks;
+    for (let start = fromBlock; start <= confirmedLatest; start += this.options.maxRangeBlocks + 1n) {
+      const end = start + this.options.maxRangeBlocks > confirmedLatest
+        ? confirmedLatest
+        : start + this.options.maxRangeBlocks;
       const logs = await this.http.request<RawLog[]>("eth_getLogs", [
         {
           address: this.chickenContractAddress,
@@ -229,11 +235,12 @@ export class ChickenBurnSource {
     if (message.method !== "eth_subscription" || !message.params) return;
     if (this.logsSubscriptionId && message.params.subscription !== this.logsSubscriptionId) return;
     if (isRawLog(message.params.result)) {
-      await this.handleRawLog(message.params.result);
+      await this.backfill(0n);
     }
   }
 
   private async handleRawLog(log: RawLog): Promise<void> {
+    if (log.removed) return;
     let event = decodeChickenBurnLog(log, this.burnEvent);
     if (
       !event &&
@@ -258,7 +265,9 @@ function isRawLog(value: unknown): value is RawLog {
     value !== null &&
     Array.isArray((value as { topics?: unknown }).topics) &&
     typeof (value as { data?: unknown }).data === "string" &&
-    typeof (value as { transactionHash?: unknown }).transactionHash === "string"
+    typeof (value as { transactionHash?: unknown }).transactionHash === "string" &&
+    ((value as { removed?: unknown }).removed === undefined
+      || typeof (value as { removed?: unknown }).removed === "boolean")
   );
 }
 

@@ -108,7 +108,7 @@ The service:
 - persists secrets to a `FileRandomnessCommitmentStore` at `VEYDRIFT_RANDOMNESS_COMMITMENT_STORE_PATH`
   (default `.data/randomness-commitments.json`) so reveals survive restarts;
 - ticks every 15s and surfaces the latest `RandomnessCommitmentStatus` (and `lastError`) under
-  `randomnessCommitter` in `GET /health` and `GET /debug/config`.
+  `randomnessCommitter` in `GET /health`.
 
 Required environment for the committer (in addition to the engine being deployed/authorized):
 
