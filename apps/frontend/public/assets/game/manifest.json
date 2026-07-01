@@ -210,6 +210,11 @@
       "name": "Pathfinder",
       "image": "/assets/game/style-pass/generated/ships/pathfinder.webp",
       "status": "generated-preview"
+    },
+    "crawler": {
+      "name": "Crawler",
+      "image": "/assets/game/style-pass/generated/ships/crawler.webp",
+      "status": "production"
     }
   },
   "defenses": {
