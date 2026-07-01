@@ -3437,6 +3437,38 @@ describe("Veydrift backend", () => {
     expect(summarySecondOccupied).not.toHaveProperty("publicMoonState");
   });
 
+  test("serves galaxy system summaries when materialized snapshot writes are unavailable", async () => {
+    const chainReader = new MockChainReader();
+    const indexer = new class extends SettlementIndexer {
+      override storeMaterializedUniverseSystemSnapshot(): void {
+        throw new Error("attempt to write a readonly database");
+      }
+    }(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xsummary-readonly-cache",
+      blockNumber: "123"
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      indexer
+    });
+
+    const response = await handler(new Request("http://localhost/universe/galaxies/2/systems/44"));
+    const body = await response.json();
+    const occupied = body.planets.find((item: { position: number }) => item.position === 9);
+
+    expect(response.status).toBe(200);
+    expect(occupied.occupiedBy).toMatchObject({
+      owner: player,
+      planetId: "7"
+    });
+    expect(occupied).not.toHaveProperty("publicState");
+    expect(occupied).not.toHaveProperty("publicMoonState");
+  });
+
   test("persists watched planets and lists them paginated from indexed state", async () => {
     const watcher = privateKeyToAccount("0x1111111111111111111111111111111111111111111111111111111111111111");
     const watcherWallet = watcher.address as Address;
