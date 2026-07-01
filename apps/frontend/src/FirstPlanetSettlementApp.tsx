@@ -125,6 +125,13 @@ export function shouldRefreshWalletOnProviderReady(input: {
   return !(input.miniAppMode && input.walletProviderSource === "farcaster" && !input.account);
 }
 
+export function shouldUseWalletProviderForSettlement(input: {
+  miniAppMode: boolean;
+  walletProviderSource: "injected" | "farcaster" | undefined;
+}): boolean {
+  return !input.miniAppMode || input.walletProviderSource === "farcaster";
+}
+
 export function farcasterMiniAppReportableWalletError(
   code: string,
   message: string,
@@ -372,6 +379,18 @@ export function FirstPlanetSettlementApp() {
         walletProvider = await loadWalletProviderDetails({ waitForFarcasterProvider: true });
       }
       if (disposed) return;
+      if (!shouldUseWalletProviderForSettlement({
+        miniAppMode,
+        walletProviderSource: walletProvider?.source,
+      })) {
+        const support = await readFarcasterMiniAppWalletSupport(undefined);
+        if (disposed || blockUnsupportedFarcasterMiniAppWalletSupport(support)) {
+          return;
+        }
+        showFarcasterWalletProviderUnavailable(support);
+        return;
+      }
+
       bindWalletProviderDetails(walletProvider);
 
       if (!walletProvider?.provider) {
@@ -416,7 +435,15 @@ export function FirstPlanetSettlementApp() {
 
     void (async () => {
       const walletProvider = await loadWalletProviderDetails({ waitForFarcasterProvider: true });
-      if (disposed || !walletProvider?.provider || walletProvider.source !== "farcaster") return;
+      if (disposed) return;
+      if (!walletProvider?.provider || walletProvider.source !== "farcaster") {
+        const support = await readFarcasterMiniAppWalletSupport(undefined);
+        if (disposed || blockUnsupportedFarcasterMiniAppWalletSupport(support)) {
+          return;
+        }
+        showFarcasterWalletProviderUnavailable(support);
+        return;
+      }
 
       bindWalletProviderDetails(walletProvider);
       setWallet({ kind: "disconnected" });
@@ -510,6 +537,25 @@ export function FirstPlanetSettlementApp() {
     });
     setSettlementFunding({ status: "idle" });
     return true;
+  }
+
+  function showFarcasterWalletProviderUnavailable(
+    support: FarcasterMiniAppWalletSupport | undefined,
+  ): void {
+    walletProviderCleanup.current?.();
+    walletProviderCleanup.current = undefined;
+    setProvider(undefined);
+    setWalletProviderSource(undefined);
+    setWallet({ kind: "disconnected" });
+    setPlanet({
+      kind: "error",
+      message: farcasterMiniAppReportableWalletError(
+        "FARCASTER_WALLET_PROVIDER_UNAVAILABLE",
+        "The Farcaster Mini App SDK did not provide an Ethereum wallet provider after the app became ready.",
+        { support },
+      ),
+    });
+    setSettlementFunding({ status: "idle" });
   }
 
   async function setupBaseSepoliaNetworkForWallet(
@@ -814,31 +860,40 @@ export function FirstPlanetSettlementApp() {
     });
 
     const supportPromise = miniAppMode
-      ? readFarcasterMiniAppWalletSupport(walletProviderSource)
+      ? readFarcasterMiniAppWalletSupport(undefined)
       : Promise.resolve(undefined);
 
     const walletProvider = provider
       ? undefined
       : await loadWalletProviderDetails({ waitForFarcasterProvider: miniAppMode || !provider });
-    const activeProvider = provider ?? bindWalletProviderDetails(walletProvider);
+    const activeProvider = provider ?? (
+      shouldUseWalletProviderForSettlement({
+        miniAppMode,
+        walletProviderSource: walletProvider?.source,
+      })
+        ? bindWalletProviderDetails(walletProvider)
+        : undefined
+    );
     const providerContext = provider ? walletProviderContext() : walletProviderContext(walletProvider?.source);
     const support = await supportPromise;
 
     if (providerContext.walletProviderSource === "farcaster" && blockUnsupportedFarcasterMiniAppWalletSupport(support)) {
       return;
     }
+    if (!shouldUseWalletProviderForSettlement({
+      miniAppMode,
+      walletProviderSource: providerContext.walletProviderSource,
+    })) {
+      if (blockUnsupportedFarcasterMiniAppWalletSupport(support)) {
+        return;
+      }
+      showFarcasterWalletProviderUnavailable(support);
+      return;
+    }
 
     if (!activeProvider) {
       if (miniAppMode) {
-        setWallet({ kind: "disconnected" });
-        setPlanet({
-          kind: "error",
-          message: farcasterMiniAppReportableWalletError(
-            "FARCASTER_WALLET_PROVIDER_UNAVAILABLE",
-            "The Farcaster Mini App SDK did not provide an Ethereum wallet provider after the app became ready.",
-            { support },
-          ),
-        });
+        showFarcasterWalletProviderUnavailable(support);
       } else {
         setWallet({
           kind: "no-wallet"
