@@ -11,6 +11,7 @@ import type {
   OnChainResources,
   PlayerQueuesResponse,
   QueueStateResponse,
+  ResourceSnapshotMetadata,
   WalletSettlementResponse,
   WalletPlanetsResponse,
 } from "./walletFlow";
@@ -30,6 +31,7 @@ export type FinishedBuildingSnapshot = {
 export type StartedBuildingExpectation = {
   itemId: number;
   planetId?: string | undefined;
+  resourceIndexing?: ResourceIndexingExpectation | undefined;
   targetLevel?: number | undefined;
 };
 
@@ -43,6 +45,7 @@ export type StartedDefenseProductionExpectation = {
   itemId: number;
   planetId?: string | undefined;
   quantity: number;
+  resourceIndexing?: ResourceIndexingExpectation | undefined;
 };
 
 export type StartedDefenseProductionSnapshot = {
@@ -54,6 +57,7 @@ export type StartedShipProductionExpectation = {
   itemId: number;
   planetId?: string | undefined;
   quantity: number;
+  resourceIndexing?: ResourceIndexingExpectation | undefined;
 };
 
 export type StartedShipProductionSnapshot = {
@@ -63,6 +67,7 @@ export type StartedShipProductionSnapshot = {
 
 export type StartedResearchExpectation = {
   itemId: number;
+  resourceIndexing?: ResourceIndexingExpectation | undefined;
   targetLevel?: number | undefined;
 };
 
@@ -126,6 +131,12 @@ export type AllianceProfileExpectation = {
 
 export type HydratedWalletPlanetSnapshot = WalletPlanetSyncSnapshot & {
   selectedPlanet: ManagedPlanetResponse | NonNullable<WalletSettlementResponse["planet"]>;
+};
+
+export type ResourceIndexingExpectation = {
+  baseline?: ResourceSnapshotMetadata | undefined;
+  receiptBlockNumber?: string | number | bigint | null | undefined;
+  transactionHash: string;
 };
 
 type WaitOptions = {
@@ -193,6 +204,13 @@ export function isStartedBuildingStateVisible(
     if (planetId && planetId !== expectation.planetId) return false;
   }
 
+  if (expectation.resourceIndexing && !isResourceSnapshotIndexedAfterTransaction(
+    snapshot.infrastructure.resourceSnapshot,
+    expectation.resourceIndexing,
+  )) {
+    return false;
+  }
+
   return buildingQueueMatches(snapshot.infrastructure.queue, expectation)
     || buildingQueueMatches(snapshot.queues.building, expectation)
     || Boolean(startedBuildingQueueFromWalletPlanets(snapshot.planetsResponse, expectation));
@@ -216,6 +234,12 @@ export function isStartedDefenseProductionVisible(
   expectation: StartedDefenseProductionExpectation,
 ): boolean {
   if (expectation.planetId && snapshot.defense.homePlanetId !== expectation.planetId) return false;
+  if (expectation.resourceIndexing && !isResourceSnapshotIndexedAfterTransaction(
+    snapshot.defense.resourceSnapshot,
+    expectation.resourceIndexing,
+  )) {
+    return false;
+  }
 
   return defenseQueueMatches(snapshot.defense.queue, expectation)
     || defenseQueueMatches(snapshot.queues.defense, expectation);
@@ -226,6 +250,12 @@ export function isStartedShipProductionVisible(
   expectation: StartedShipProductionExpectation,
 ): boolean {
   if (expectation.planetId && (snapshot.shipyard.planetId ?? snapshot.shipyard.homePlanetId) !== expectation.planetId) return false;
+  if (expectation.resourceIndexing && !isResourceSnapshotIndexedAfterTransaction(
+    snapshot.shipyard.resourceSnapshot,
+    expectation.resourceIndexing,
+  )) {
+    return false;
+  }
 
   return shipQueueMatches(snapshot.shipyard.queue, expectation)
     || shipQueueMatches(snapshot.queues.ship, expectation);
@@ -235,8 +265,50 @@ export function isStartedResearchStateVisible(
   snapshot: StartedResearchSnapshot,
   expectation: StartedResearchExpectation,
 ): boolean {
+  if (expectation.resourceIndexing && !isResourceSnapshotIndexedAfterTransaction(
+    snapshot.research.resourceSnapshot,
+    expectation.resourceIndexing,
+  )) {
+    return false;
+  }
+
   return researchQueueMatches(snapshot.research.queue, expectation)
     && researchQueueMatches(snapshot.queues.research, expectation);
+}
+
+export function isResourceSnapshotIndexedAfterTransaction(
+  snapshot: ResourceSnapshotMetadata | null | undefined,
+  expectation: ResourceIndexingExpectation,
+): boolean {
+  if (!snapshot) return false;
+
+  const transactionHash = normalizeTransactionHash(expectation.transactionHash);
+  const snapshotTransactionHash = normalizeTransactionHash(snapshot.transactionHash);
+  if (transactionHash && snapshotTransactionHash === transactionHash) return true;
+
+  const receiptBlock = parseBlockNumber(expectation.receiptBlockNumber);
+  const snapshotBlock = parseBlockNumber(snapshot.blockNumber);
+  if (receiptBlock !== undefined && snapshotBlock !== undefined && snapshotBlock >= receiptBlock) return true;
+
+  const baseline = expectation.baseline;
+  if (!baseline) return false;
+
+  const baselineBlock = parseBlockNumber(baseline.blockNumber);
+  if (snapshotBlock !== undefined && baselineBlock !== undefined && snapshotBlock > baselineBlock) return true;
+
+  return resourceSnapshotKey(snapshot) !== resourceSnapshotKey(baseline);
+}
+
+export function resourceIndexingExpectationForTransaction(
+  transactionHash: string,
+  baseline: ResourceSnapshotMetadata | null | undefined,
+  receipt: { blockNumber?: string | number | bigint | null } | null | undefined,
+): ResourceIndexingExpectation {
+  return {
+    baseline: baseline ?? undefined,
+    receiptBlockNumber: receipt?.blockNumber,
+    transactionHash,
+  };
 }
 
 export function isFinishedResearchStateVisible(
@@ -512,6 +584,35 @@ function buildingQueueMatches(
       && queue.itemId === expectation.itemId
       && (expectation.targetLevel === undefined || (queue.targetLevel ?? 0) >= expectation.targetLevel),
   );
+}
+
+function normalizeTransactionHash(value: string | null | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized && normalized !== "0x" ? normalized : undefined;
+}
+
+function parseBlockNumber(value: string | number | bigint | null | undefined): bigint | undefined {
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? BigInt(Math.trunc(value)) : undefined;
+  if (!value) return undefined;
+  try {
+    return BigInt(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function resourceSnapshotKey(snapshot: ResourceSnapshotMetadata): string {
+  const resources = snapshot.resources;
+  return [
+    snapshot.planetId ?? "",
+    snapshot.transactionHash ?? "",
+    snapshot.blockNumber?.toString() ?? "",
+    snapshot.lastSettledAt ?? "",
+    resources?.metal ?? "",
+    resources?.crystal ?? "",
+    resources?.deuterium ?? "",
+  ].join(":");
 }
 
 function defenseQueueMatches(
