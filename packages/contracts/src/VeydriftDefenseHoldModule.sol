@@ -218,6 +218,7 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         _requireBodyMissionShips(originPlanetId, originIsMoon, ships);
 
         uint256 travelDistance = _planetDistance(originPlanetId, targetPlanetId);
+        if (travelDistance == 0 && originIsMoon != targetIsMoon) travelDistance = 5;
         uint128 fuelCost = _toUint128(
             _ogameMissionFuelCost(msg.sender, ships, travelDistance, speedPercent, slowestSpeed)
         );

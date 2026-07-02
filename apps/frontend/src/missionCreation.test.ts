@@ -23,6 +23,7 @@ import {
   TargetIntelCard,
   targetResourceIntel,
 } from "./components/MissionCreationPage";
+import { fleetMissionDistance } from "./fleetMissionRules";
 import type { GalaxyAction } from "./galaxyActions";
 import type { Planet } from "./types";
 
@@ -307,6 +308,15 @@ describe("mission creation", () => {
       targetVisible: false,
     });
     expect(missionCreationSource).not.toContain("Moon bodies keep independent");
+  });
+
+  test("uses local planet-moon distance for same-parent body-aware missions", () => {
+    const coords = { galaxy: 2, system: 44, position: 7 };
+
+    expect(fleetMissionDistance(coords, coords)).toBe(0);
+    expect(fleetMissionDistance(coords, coords, { originIsMoon: false, targetIsMoon: true })).toBe(5);
+    expect(fleetMissionDistance(coords, coords, { originIsMoon: true, targetIsMoon: false })).toBe(5);
+    expect(fleetMissionDistance(coords, coords, { originIsMoon: true, targetIsMoon: true })).toBe(0);
   });
 
   test("mission body selectors can be preselected by Overview moon shortcuts", () => {
