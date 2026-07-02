@@ -8031,6 +8031,159 @@ describe("Veydrift backend", () => {
     expect(response.headers.get("cache-control")).toBe("public, max-age=300, stale-while-revalidate=300");
   });
 
+  test("does not serve current-player highscore fields from anonymous response cache", async () => {
+    const owners = [
+      "0x4444444444444444444444444444444444444444",
+      "0x5555555555555555555555555555555555555555",
+      "0x6666666666666666666666666666666666666666"
+    ] as Address[];
+    const currentWallet = owners[2]!;
+    const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => owners.map((owner, index) => ({
+      ...planet,
+      eventName: "PlanetStarted",
+      owner,
+      planetId: String(index + 10),
+      transactionHash: `0xcurrentplayercache${index}`,
+      blockNumber: String(123 + index)
+    }));
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      enableResponseCache: true,
+      indexer,
+      prewarmResponseCache: false
+    });
+    const publicPath = "http://localhost/highscores?category=total&page=1&pageSize=1";
+
+    const anonymous = await handler(new Request(publicPath));
+    const anonymousBody = await anonymous.json();
+    const personalized = await handler(new Request(`${publicPath}&currentWallet=${currentWallet}`));
+    const personalizedBody = await personalized.json();
+    const anonymousAgain = await handler(new Request(publicPath));
+    const anonymousAgainBody = await anonymousAgain.json();
+
+    expect(anonymous.status).toBe(200);
+    expect(anonymousBody.currentPlayer).toBeUndefined();
+    expect(personalized.status).toBe(200);
+    expect(personalized.headers.get("cache-control")).toBe("private, no-store");
+    expect(personalizedBody.currentPlayer).toMatchObject({
+      wallet: currentWallet,
+      rankings: {
+        total: {
+          rank: 3,
+          page: 3
+        }
+      }
+    });
+    expect(anonymousAgainBody.currentPlayer).toBeUndefined();
+  });
+
+  test("keeps cached highscore current-player fields separated by wallet", async () => {
+    const owners = [
+      "0x4444444444444444444444444444444444444444",
+      "0x5555555555555555555555555555555555555555",
+      "0x6666666666666666666666666666666666666666"
+    ] as Address[];
+    const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => owners.map((owner, index) => ({
+      ...planet,
+      eventName: "PlanetStarted",
+      owner,
+      planetId: String(index + 20),
+      transactionHash: `0xwalletcache${index}`,
+      blockNumber: String(223 + index)
+    }));
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      enableResponseCache: true,
+      indexer,
+      prewarmResponseCache: false
+    });
+
+    const first = await handler(new Request(`http://localhost/highscores?category=total&page=1&pageSize=1&currentWallet=${owners[0]}`));
+    const firstBody = await first.json();
+    const second = await handler(new Request(`http://localhost/highscores?category=total&page=1&pageSize=1&currentWallet=${owners[2]}`));
+    const secondBody = await second.json();
+
+    expect(first.status).toBe(200);
+    expect(firstBody.currentPlayer).toMatchObject({
+      wallet: owners[0],
+      rankings: { total: { rank: 1, page: 1 } }
+    });
+    expect(second.status).toBe(200);
+    expect(secondBody.currentPlayer).toMatchObject({
+      wallet: owners[2],
+      rankings: { total: { rank: 3, page: 3 } }
+    });
+  });
+
+  test("does not serve cached highscore attack protection when the flag is absent", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const chainReader = new class extends MockChainReader {
+      override async getAttackProtectionStatus(): Promise<AttackProtectionStatus> {
+        throw new Error("indexed rankings should not call live attack protection");
+      }
+    }();
+    chainReader.listSettledPlanetEvents = async () => [
+      {
+        ...planet,
+        eventName: "PlanetStarted",
+        planetId: "7",
+        owner: player,
+        transactionHash: "0xabc1",
+        blockNumber: "123"
+      },
+      {
+        ...planet,
+        eventName: "PlanetStarted",
+        planetId: "8",
+        owner: attacker,
+        transactionHash: "0xabc2",
+        blockNumber: "124"
+      }
+    ];
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.applyLog({
+      blockNumber: "0x80",
+      transactionHash: "0xdefenseattacker",
+      logIndex: "0x0",
+      topics: [
+        defenseCompletedTopic,
+        topic(8n),
+        topic(0n)
+      ],
+      data: abiWords(9n, 25000n)
+    });
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      enableResponseCache: true,
+      indexer,
+      prewarmResponseCache: false
+    });
+    const personalizedPath = `http://localhost/highscores?limit=10&currentWallet=${attacker}`;
+
+    const protectedResponse = await handler(new Request(`${personalizedPath}&includeAttackProtection=true`));
+    const protectedBody = await protectedResponse.json();
+    const unprotectedResponse = await handler(new Request(personalizedPath));
+    const unprotectedBody = await unprotectedResponse.json();
+
+    expect(protectedResponse.status).toBe(200);
+    expect(protectedBody.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toMatchObject({
+      allowed: false,
+      blockedReason: "score_protection"
+    });
+    expect(unprotectedResponse.status).toBe(200);
+    expect(unprotectedBody.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toBeNull();
+  });
+
   test("sends private browser cache headers for cached wallet API reads", async () => {
     const chainReader = new MockChainReader();
     const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
