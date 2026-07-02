@@ -3,6 +3,7 @@ import { VeydriftGameReader } from "./evm";
 import { SettlementIndexer } from "./indexer";
 
 type ReplayArgs = {
+  allianceStateSeed: boolean;
   canonicalSync: boolean;
   canonicalSyncRebuildDeadlineMs?: number;
   currentStateSeed: boolean;
@@ -40,6 +41,11 @@ async function main(): Promise<void> {
         { planetConcurrency: args.currentStateConcurrency ?? 25 }
       )
     }
+    : args.allianceStateSeed
+    ? {
+      replay: null,
+      rebuild: await indexer.seedCurrentAllianceState()
+    }
     : args.canonicalSync
     ? await indexer.syncCanonicalState(fromBlock, toBlock, {
       rebuildDeadlineMs: args.canonicalSyncRebuildDeadlineMs ?? 0
@@ -55,6 +61,7 @@ async function main(): Promise<void> {
       canonicalSync: args.canonicalSync,
       canonicalSyncRebuildDeadlineMs: args.canonicalSync ? args.canonicalSyncRebuildDeadlineMs ?? null : null,
       legacyUnitMutationsOnly: args.legacyUnitMutationsOnly,
+      allianceStateSeed: args.allianceStateSeed,
       currentStateSeed: args.currentStateSeed,
       currentStateConcurrency: args.currentStateSeed ? args.currentStateConcurrency ?? 25 : null
     },
@@ -76,12 +83,14 @@ function replayFromBlock(latestIndexedBlock: string | null, configuredFromBlock:
 }
 
 function parseArgs(args: string[]): ReplayArgs {
-  const parsed: ReplayArgs = { canonicalSync: false, currentStateSeed: false, legacyUnitMutationsOnly: false };
+  const parsed: ReplayArgs = { allianceStateSeed: false, canonicalSync: false, currentStateSeed: false, legacyUnitMutationsOnly: false };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     const value = args[index + 1];
     if (arg === "--canonical-sync") {
       parsed.canonicalSync = true;
+    } else if (arg === "--alliance-state-seed") {
+      parsed.allianceStateSeed = true;
     } else if (arg === "--legacy-unit-mutations-only") {
       parsed.legacyUnitMutationsOnly = true;
     } else if (arg === "--current-state-seed") {
@@ -117,8 +126,11 @@ function parseArgs(args: string[]): ReplayArgs {
   if (parsed.currentStateSeed && parsed.canonicalSync) {
     throw new Error("--current-state-seed and --canonical-sync are mutually exclusive");
   }
-  if (parsed.legacyUnitMutationsOnly && (parsed.currentStateSeed || parsed.canonicalSync)) {
-    throw new Error("--legacy-unit-mutations-only cannot be combined with --current-state-seed or --canonical-sync");
+  if (parsed.allianceStateSeed && (parsed.currentStateSeed || parsed.canonicalSync)) {
+    throw new Error("--alliance-state-seed cannot be combined with --current-state-seed or --canonical-sync");
+  }
+  if (parsed.legacyUnitMutationsOnly && (parsed.currentStateSeed || parsed.canonicalSync || parsed.allianceStateSeed)) {
+    throw new Error("--legacy-unit-mutations-only cannot be combined with --current-state-seed, --canonical-sync, or --alliance-state-seed");
   }
   return parsed;
 }

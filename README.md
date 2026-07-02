@@ -94,6 +94,14 @@ cd apps/backend
 bun run index:replay -- --from-block <block>
 ```
 
+For a narrow alliance-state repair that only refreshes alliance directory/member counts, join
+requests, and directed diplomacy from the alliance contract, use:
+
+```sh
+cd apps/backend
+bun run index:sync -- --alliance-state-seed
+```
+
 Both commands are explicit operator tools and do not add request-time, startup, or periodic
 canonical RPC self-heal.
 
@@ -154,7 +162,8 @@ and last reconciliation error. `GET /chain/events` streams backend chain-event
 notifications to the frontend. Manual DB alignment is intentionally separated
 from HTTP routes and runs through `bun run index:sync -- --from-block <block>`
 when canonical on-chain repair is required, or `bun run index:replay -- --from-block <block>`
-when only stored-log rematerialization is intended.
+when only stored-log rematerialization is intended. For alliance-only drift, use
+`bun run index:sync -- --alliance-state-seed` to avoid reseeding planet/resource tables.
 `POST /webhooks/alchemy` accepts Alchemy contract log webhook payloads, verifies
 `X-Alchemy-Signature` when `VEYDRIFT_ALCHEMY_WEBHOOK_SIGNING_KEY` is configured,
 and applies duplicate-safe indexed event updates.

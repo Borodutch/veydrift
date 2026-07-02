@@ -3804,7 +3804,7 @@ describe("SettlementIndexer", () => {
     ]));
   });
 
-  test("preserves the initiating alliance for both directions of a war diplomacy event", () => {
+  test("keeps alliance diplomacy event rows in their on-chain direction only", () => {
     const rival = "0x3333333333333333333333333333333333333333" as Address;
     const indexer = new SettlementIndexer({
       async listSettledPlanetEvents() { return []; },
@@ -3854,14 +3854,8 @@ describe("SettlementIndexer", () => {
       data: abiWords(3n)
     });
 
-    expect(indexer.allianceState(player).activeWars).toMatchObject([
-      {
-        allianceId: "1",
-        otherAllianceId: "2",
-        status: "war",
-        initiatedByAllianceId: "2"
-      }
-    ]);
+    expect(indexer.allianceState(player).activeWars).toEqual([]);
+    expect(indexer.allianceRelationship("1", "2")).toBe("none");
     expect(indexer.allianceState(rival).activeWars).toMatchObject([
       {
         allianceId: "2",
@@ -3870,6 +3864,7 @@ describe("SettlementIndexer", () => {
         initiatedByAllianceId: "2"
       }
     ]);
+    expect(indexer.allianceRelationship("2", "1")).toBe("war");
   });
 
   test("transfers alliance ownership to an officer from event logs", () => {
@@ -4065,6 +4060,49 @@ describe("SettlementIndexer", () => {
         { address: owner, role: "owner", joinedAt: "1770000015" },
         { address: officer, role: "officer", joinedAt: "1770000016" }
       ]
+    });
+  });
+
+  test("derives alliance profile and directory memberCount from indexed roster rows", async () => {
+    const owner = "0x3333333333333333333333333333333333333333" as Address;
+    const directory: AllianceState["directory"] = [
+      {
+        allianceId: "37",
+        active: true,
+        tag: "ONE",
+        name: "One Member",
+        description: "Imported profile with stale count",
+        owner,
+        createdAt: "1770000037",
+        memberCount: 0,
+        members: [{ address: owner, role: "owner", joinedAt: "1770000037" }]
+      }
+    ];
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+      async listAllianceLogs() { return []; },
+      async listAllianceDirectoryState() {
+        return directory;
+      }
+    }, 100n);
+
+    await indexer.rebuild();
+
+    const state = indexer.allianceState(owner);
+    expect(state.profile).toMatchObject({
+      memberCount: 1,
+      owner,
+      tag: "ONE"
+    });
+    expect(state.directory.find((alliance) => alliance.allianceId === "37")).toMatchObject({
+      memberCount: 1,
+      members: [{ address: owner, role: "owner" }]
+    });
+    expect(indexer.allianceProfile("37")).toMatchObject({
+      memberCount: 1,
+      members: [{ address: owner, role: "owner" }]
     });
   });
 
@@ -4289,6 +4327,76 @@ describe("SettlementIndexer", () => {
     expect(db.query("SELECT COUNT(*) AS n FROM contract_alliance_join_requests").get()).toEqual({ n: 0 });
     expect(db.query("SELECT COUNT(*) AS n FROM contract_alliance_invites").get()).toEqual({ n: 0 });
     expect(db.query("SELECT COUNT(*) AS n FROM contract_alliance_diplomacy").get()).toEqual({ n: 0 });
+  });
+
+  test("alliance-only seed repairs stale member counts and directed diplomacy without planet reads", async () => {
+    const db = new Database(":memory:");
+    const owner = "0x3333333333333333333333333333333333333333" as Address;
+    const rival = "0x4444444444444444444444444444444444444444" as Address;
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { throw new Error("alliance-only seed must not read debris events"); },
+      async listMoonChanceReportEvents() { throw new Error("alliance-only seed must not read moon chance events"); },
+      async listSettledPlanetEvents() { throw new Error("alliance-only seed must not read settled planets"); },
+      async listAllianceDirectoryState() {
+        return [
+          {
+            allianceId: "3",
+            active: true,
+            tag: "OLD",
+            name: "Old Guard",
+            description: "",
+            owner: rival,
+            createdAt: "1770000003",
+            memberCount: 1,
+            members: [{ address: rival, role: "owner", joinedAt: "1770000003" }]
+          },
+          {
+            allianceId: "37",
+            active: true,
+            tag: "ONE",
+            name: "One Member",
+            description: "",
+            owner,
+            createdAt: "1770000037",
+            memberCount: 0,
+            members: [{ address: owner, role: "owner", joinedAt: "1770000037" }]
+          }
+        ];
+      },
+      async listAllianceJoinRequestState() {
+        return [];
+      },
+      async listAllianceDiplomacyState() {
+        return [{ allianceId: "37", otherAllianceId: "3", statusId: 3 }];
+      }
+    }, 100n, { database: db });
+
+    db.query(`
+      INSERT INTO contract_alliances (
+        alliance_id, active, tag, name, description, owner, created_at, member_count, event_json
+      )
+      VALUES (?, 1, ?, ?, '', lower(?), ?, ?, '{}')
+    `).run("37", "ONE", "One Member", owner, "1770000037", 0);
+    db.query("INSERT INTO contract_alliance_members (alliance_id, wallet, role_id, joined_at) VALUES (?, lower(?), ?, ?)").run("37", owner, 3, "1770000037");
+    db.query("INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at) VALUES (?, ?, ?, ?)").run("3", "37", 3, "43615945");
+
+    await expect(indexer.seedCurrentAllianceState()).resolves.toMatchObject({
+      allianceStaleReason: null,
+      safeToServeAllianceState: true
+    });
+
+    expect(db.query("SELECT member_count FROM contract_alliances WHERE alliance_id = ?").get("37")).toEqual({
+      member_count: 1
+    });
+    expect(indexer.allianceProfile("37")).toMatchObject({
+      memberCount: 1,
+      members: [{ address: owner, role: "owner" }]
+    });
+    expect(db.query("SELECT alliance_id, other_alliance_id, status_id FROM contract_alliance_diplomacy ORDER BY alliance_id, other_alliance_id").all()).toEqual([
+      { alliance_id: "37", other_alliance_id: "3", status_id: 3 }
+    ]);
+    expect(indexer.allianceRelationship("3", "37")).toBe("none");
+    expect(indexer.allianceRelationship("37", "3")).toBe("war");
   });
 
   test("keeps reconciled alliance state serveable when unrelated indexed state is stale", async () => {
@@ -7347,8 +7455,7 @@ describe("SettlementIndexer", () => {
           { requester: applicant, requested_at: "1770003000" }
         ]);
         expect(repairedDb.query("SELECT alliance_id, other_alliance_id, status_id FROM contract_alliance_diplomacy ORDER BY alliance_id, other_alliance_id").all()).toEqual([
-          { alliance_id: "1", other_alliance_id: "2", status_id: 3 },
-          { alliance_id: "2", other_alliance_id: "1", status_id: 3 }
+          { alliance_id: "1", other_alliance_id: "2", status_id: 3 }
         ]);
       } finally {
         repairedDb.close();
