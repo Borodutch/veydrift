@@ -217,7 +217,8 @@ contract VeydriftDefenseHoldModule is VeydriftResourceReserves {
         if (capacity == 0) revert InvalidQuantity();
         _requireBodyMissionShips(originPlanetId, originIsMoon, ships);
 
-        uint256 travelDistance = _planetDistance(originPlanetId, targetPlanetId);
+        uint256 travelDistance =
+            originPlanetId == targetPlanetId ? 5 : _planetDistance(originPlanetId, targetPlanetId);
         uint128 fuelCost = _toUint128(
             _ogameMissionFuelCost(msg.sender, ships, travelDistance, speedPercent, slowestSpeed)
         );

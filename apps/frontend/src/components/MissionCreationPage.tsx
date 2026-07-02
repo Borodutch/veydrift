@@ -277,12 +277,6 @@ export function MissionCreationPage({
     () => Boolean(bodySelection?.defaultTargetIsMoon) || (action.mode === "mission" && action.defaultTargetIsMoon === true)
   );
 
-  const distance = originCoords ? fleetMissionDistance(originCoords, coords) : 0;
-  const travelSeconds = action.mode === "missile" ? 0 : fleetMissionTravelSeconds(distance, ships, driveLevels, speedPercent);
-  const fuelCost = action.mode === "missile" ? 0 : fleetMissionFuelCost(ships, distance, driveLevels, speedPercent);
-  const totalCargoCapacity = action.mode === "missile" ? 0 : fleetMissionCargoCapacity(ships);
-  const cargoCapacity = action.mode === "missile" ? 0 : fleetMissionAvailableCargoCapacity(ships, distance, driveLevels, speedPercent);
-  const selectedShipCount = action.mode === "missile" ? 0 : fleetMissionShipCount(ships);
   const cargoSupported = action.mode === "mission" && (action.kind === "transport" || action.kind === "deploy");
   const bodyMissionSupported = action.mode === "mission" && (action.kind === "attack" || cargoSupported);
   const bodySelectionVisibility = missionBodySelectionVisibility({
@@ -292,6 +286,15 @@ export function MissionCreationPage({
   });
   const effectiveOriginIsMoon = Boolean(bodySelectionVisibility.originVisible && originIsMoon);
   const effectiveTargetIsMoon = Boolean(bodySelectionVisibility.targetVisible && targetIsMoon);
+  const distance = originCoords ? fleetMissionDistance(originCoords, coords, {
+    originIsMoon: effectiveOriginIsMoon,
+    targetIsMoon: effectiveTargetIsMoon,
+  }) : 0;
+  const travelSeconds = action.mode === "missile" ? 0 : fleetMissionTravelSeconds(distance, ships, driveLevels, speedPercent);
+  const fuelCost = action.mode === "missile" ? 0 : fleetMissionFuelCost(ships, distance, driveLevels, speedPercent);
+  const totalCargoCapacity = action.mode === "missile" ? 0 : fleetMissionCargoCapacity(ships);
+  const cargoCapacity = action.mode === "missile" ? 0 : fleetMissionAvailableCargoCapacity(ships, distance, driveLevels, speedPercent);
+  const selectedShipCount = action.mode === "missile" ? 0 : fleetMissionShipCount(ships);
   const effectiveResources = effectiveOriginIsMoon ? bodySelection?.originMoonResources : resources;
   const effectiveShipyardState = effectiveOriginIsMoon ? bodySelection?.originMoonShipyardState ?? null : shipyardState;
   const availableShips = useMemo(() => missionShipOptionsForAction(action, effectiveShipyardState), [action, effectiveShipyardState]);
