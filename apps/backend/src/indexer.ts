@@ -1115,6 +1115,7 @@ export class SettlementIndexer {
     `).all() as AllianceRow[];
     return rows.map((row) => {
       const members = this.allianceMembers(row.alliance_id);
+      const memberCount = members.length;
       return {
         allianceId: row.alliance_id,
         active: row.active === 1,
@@ -1124,7 +1125,7 @@ export class SettlementIndexer {
         owner: row.owner.toLowerCase() as Address,
         ownerDisplayName: this.playerProfile(row.owner).displayName,
         createdAt: row.created_at,
-        memberCount: row.member_count,
+        memberCount,
         totalMemberScore: this.allianceTotalScore(members.map((member) => member.address)),
         members
       };
@@ -2538,6 +2539,29 @@ export class SettlementIndexer {
       });
     this.planetRebuildPromise = this.currentStateHealPromise;
     return this.currentStateHealPromise;
+  }
+
+  async seedCurrentAllianceState(): Promise<IndexerSnapshot> {
+    const allianceDirectory = this.chainReader.listAllianceDirectoryState
+      ? await this.chainReader.listAllianceDirectoryState()
+      : [];
+    const allianceJoinRequests = this.chainReader.listAllianceJoinRequestState
+      ? await this.chainReader.listAllianceJoinRequestState()
+      : null;
+    const allianceDiplomacy = this.chainReader.listAllianceDiplomacyState
+      ? await this.chainReader.listAllianceDiplomacyState()
+      : null;
+
+    await this.runHealWrite("alliance-only snapshots", () => {
+      this.applyAllianceDirectorySnapshot(allianceDirectory);
+      this.applyAllianceJoinRequestSnapshot(allianceJoinRequests);
+      this.applyAllianceDiplomacySnapshot(allianceDiplomacy);
+      this.recordSuccessfulAllianceReconciliation();
+      this.setMetadata("lastAllianceStateHealAt", new Date().toISOString());
+      this.touch();
+    });
+
+    return this.snapshot();
   }
 
   async syncCanonicalFleetMissions(reason = "periodic"): Promise<IndexerSnapshot> {
@@ -6247,20 +6271,6 @@ export class SettlementIndexer {
         event.blockNumber,
         diplomacyStatusName(event.statusId) === "war" ? event.allianceId : null
       );
-      this.db.query(`
-        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
-          status_id = excluded.status_id,
-          updated_at = excluded.updated_at,
-          initiated_by_alliance_id = excluded.initiated_by_alliance_id
-      `).run(
-        event.otherAllianceId,
-        event.allianceId,
-        event.statusId,
-        event.blockNumber,
-        diplomacyStatusName(event.statusId) === "war" ? event.allianceId : null
-      );
     }
 
     this.touch();
@@ -6268,6 +6278,7 @@ export class SettlementIndexer {
 
   private applyAllianceDirectorySnapshot(directory: readonly AllianceState["directory"][number][]): void {
     for (const alliance of directory) {
+      const memberCount = alliance.members ? alliance.members.length : alliance.memberCount;
       this.db.query(`
         INSERT INTO contract_alliances (
           alliance_id, active, tag, name, description, owner, created_at, member_count, event_json
@@ -6290,7 +6301,7 @@ export class SettlementIndexer {
         alliance.description,
         alliance.owner,
         alliance.createdAt,
-        alliance.memberCount,
+        memberCount,
         JSON.stringify({
           eventName: "AllianceDirectorySnapshot",
           allianceId: alliance.allianceId,
@@ -6300,7 +6311,7 @@ export class SettlementIndexer {
           description: alliance.description,
           owner: alliance.owner,
           createdAt: alliance.createdAt,
-          memberCount: alliance.memberCount
+          memberCount
         })
       );
 
@@ -6378,7 +6389,7 @@ export class SettlementIndexer {
       const relationKey = `${relation.allianceId}:${relation.otherAllianceId}`;
       const reverseKey = `${relation.otherAllianceId}:${relation.allianceId}`;
       const status = diplomacyStatusName(relation.statusId);
-      const existingInitiator = existingInitiators.get(relationKey);
+      const existingInitiator = existingInitiators.get(relationKey) ?? existingInitiators.get(reverseKey);
       const inferredInitiator = status === "war" && !snapshotWarPairs.has(reverseKey)
         ? relation.allianceId
         : null;
