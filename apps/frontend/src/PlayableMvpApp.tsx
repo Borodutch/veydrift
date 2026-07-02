@@ -139,6 +139,7 @@ import {
   waitForAllianceProfileState,
   waitForMissionLaunchState,
   waitForRenamedWalletPlanet,
+  resourceIndexingExpectationForTransaction,
   type AllianceApplicationExpectation,
   type FinishedResearchExpectation,
   type MissionLaunchSnapshot,
@@ -274,13 +275,16 @@ import {
   type WalletPlanetsResponse,
   type WatchedPlanetsResponse,
   type WalletSettlementResponse,
+  type ResourceSnapshotMetadata,
+  type TransactionReceipt,
 } from "./walletFlow";
 import { nextWatchedPlanetsPageAfterToggle } from "./watchedPlanetsView";
 import {
   createTransactionActionGate,
+  runWriteTransaction,
   transactionAwaitingWalletLabel,
-  transactionConfirmingLabel,
   transactionSyncingLabel,
+  type WriteTransactionState,
 } from "./transactionActionGate";
 import { timestampToMs } from "./timestampFormat";
 import {
@@ -413,7 +417,7 @@ const buildingWalletConfirmationLabel = (label: string) =>
   label === "Building completion"
     ? "Building completion: confirm the game-state update in your wallet; token balance changes are not expected."
     : `${label}: unlock your wallet if needed, then confirm in your wallet.`;
-const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 30_000;
+const TOP_BAR_RESOURCE_POLL_INTERVAL_MS = 10_000;
 export const MISSION_REPORT_PENDING_POLL_INTERVAL_MS = 3_000;
 const CHAIN_EVENT_REFRESH_DEBOUNCE_MS = 3_000;
 const BUILDING_COMPLETION_AUTO_REFRESH_BUFFER_MS = 1_500;
@@ -3450,6 +3454,7 @@ export function PlayableMvpApp({
   const [playerProfileAction, setPlayerProfileAction] = useState<PlanetRenameActionState>({ status: "idle" });
   const [missionAction, setMissionAction] = useState<MissionActionState>({ status: "idle" });
   const [transactionActionPending, setTransactionActionPending] = useState(false);
+  const [writeTransactionState, setWriteTransactionState] = useState<WriteTransactionState>({ phase: "idle" });
   // The shareable battle-report URL currently shown in the share dialog; null when it is closed.
   const [shareDialogUrl, setShareDialogUrl] = useState<string | null>(null);
   const [moonAction, setMoonAction] = useState<MoonActionState>({ status: "idle" });
@@ -4100,12 +4105,48 @@ export function PlayableMvpApp({
     setMoonAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
   }, [moonActionInputsAvailable, transactionActionPending]);
 
-  const confirmSubmittedTransaction = useCallback(async (txHash: string) => {
+  const confirmSubmittedTransaction = useCallback(async (txHash: string): Promise<TransactionReceipt> => {
     if (!provider) {
       throw new Error("Wallet provider is unavailable while confirming the transaction.");
     }
-    await confirmTransactionReceipt(provider, txHash);
+    return confirmTransactionReceipt(provider, txHash);
   }, [provider]);
+
+  const runCoordinatedWriteTransaction = useCallback(async <IndexedSnapshot,>({
+    applyIndexedState,
+    errorLabel,
+    key,
+    label,
+    onErrorRefresh,
+    onStateChange,
+    send,
+    waitForIndexed,
+  }: {
+    applyIndexedState?: (snapshot: IndexedSnapshot) => Promise<void> | void;
+    errorLabel?: (error: unknown) => string;
+    key: string;
+    label: string;
+    onErrorRefresh?: (error: unknown) => Promise<void> | void;
+    onStateChange?: (state: WriteTransactionState) => void;
+    send: () => Promise<string>;
+    waitForIndexed?: (receipt: TransactionReceipt, txHash: string) => Promise<IndexedSnapshot>;
+  }) => {
+    return runWriteTransaction(transactionActionGate, {
+      ...(applyIndexedState ? { applyIndexedState } : {}),
+      confirm: confirmSubmittedTransaction,
+      ...(errorLabel ? { errorLabel } : {}),
+      key,
+      label,
+      ...(onErrorRefresh ? { onErrorRefresh } : {}),
+      onStateChange: (state) => {
+        setWriteTransactionState(state);
+        setTransactionActionPending(state.phase !== "idle" && state.phase !== "success" && state.phase !== "error");
+        onStateChange?.(state);
+      },
+      send,
+      ...(waitForIndexed ? { waitForIndexed: waitForIndexed as (receipt: unknown, txHash: string) => Promise<IndexedSnapshot> } : {}),
+    });
+  }, [confirmSubmittedTransaction, transactionActionGate]);
 
   const refreshInfrastructureState = useCallback(async () => {
     const requestId = beginRefreshRequest(infrastructureRefreshGate);
@@ -5693,29 +5734,28 @@ export function PlayableMvpApp({
   }, []);
 
   const runBuildingTransaction = useCallback(async (key: BuildingKey) => {
-    await runGatedTransaction(`building:start:${key}`, async () => {
-      const planetSwitchRequestId = planetSwitchGate.current;
-      const planetId = activePlanetId ?? onChainSettlement?.homePlanetId;
-      if (!provider || !account || !gameContract || !planetId || !apiBaseUrl) {
-        setBuildingAction({
-          status: "error",
-          buildingKey: key,
-          label: infrastructureUnavailableReason ?? "Wallet, game contract, active planet, or game API is unavailable.",
-        });
-        return;
-      }
+    const planetSwitchRequestId = planetSwitchGate.current;
+    const planetId = activePlanetId ?? onChainSettlement?.homePlanetId;
+    if (!provider || !account || !gameContract || !planetId || !apiBaseUrl) {
+      setBuildingAction({
+        status: "error",
+        buildingKey: key,
+        label: infrastructureUnavailableReason ?? "Wallet, game contract, active planet, or game API is unavailable.",
+      });
+      return;
+    }
 
-      const building = buildingContractIds[key];
-      const label = "Building upgrade";
-      let backendStateReady = false;
-      let startedExpectation: StartedBuildingExpectation | undefined;
-      setBuildingAction({ status: "pending", buildingKey: key, label: "Refreshing infrastructure state" });
-      setFailedStartedBuildingExpectation(undefined);
+    const building = buildingContractIds[key];
+    const label = "Building upgrade";
+    let backendStateReady = false;
+    let startedExpectation: StartedBuildingExpectation | undefined;
+    setBuildingAction({ status: "pending", buildingKey: key, label: "Refreshing infrastructure state" });
+    setFailedStartedBuildingExpectation(undefined);
 
-      try {
-        const liveInfrastructure = await refreshLiveInfrastructureState();
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        const unavailableReason = refreshedInfrastructureUpgradeUnavailableReasonFor({
+    try {
+      const liveInfrastructure = await refreshLiveInfrastructureState();
+      if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+      const unavailableReason = refreshedInfrastructureUpgradeUnavailableReasonFor({
           buildingKey: key,
           gameContract,
           homePlanetId: planetId,
@@ -5724,45 +5764,67 @@ export function PlayableMvpApp({
           onChainResources,
           runtimeConfigStatus: runtimeConfig.status,
           starterPlanet: selectedManagedPlanet?.isHomePlanet ?? planetId === onChainSettlement?.homePlanetId,
-        });
-        if (unavailableReason) {
-          setBuildingAction({ status: "error", buildingKey: key, label: unavailableReason });
-          return;
-        }
+      });
+      if (unavailableReason) {
+        setBuildingAction({ status: "error", buildingKey: key, label: unavailableReason });
+        return;
+      }
 
-        backendStateReady = true;
-        const buildingRow = liveInfrastructure?.buildings.find((row) => row.id === building);
-        const currentLevel = buildingRow?.level ?? 0;
-        startedExpectation = {
-          itemId: building,
-          planetId,
-          targetLevel: currentLevel + 1,
-        };
-        setBuildingAction({ status: "pending", buildingKey: key, label: buildingWalletConfirmationLabel(label) });
-        const txHash = await sendStartBuildingUpgradeTransaction(
+      backendStateReady = true;
+      const buildingRow = liveInfrastructure?.buildings.find((row) => row.id === building);
+      const currentLevel = buildingRow?.level ?? 0;
+      const resourceBaseline = liveInfrastructure?.resourceSnapshot;
+      startedExpectation = {
+        itemId: building,
+        planetId,
+        targetLevel: currentLevel + 1,
+      };
+      await runCoordinatedWriteTransaction({
+        key: `building:start:${key}`,
+        label,
+        send: () => sendStartBuildingUpgradeTransaction(
           provider,
           account,
           gameContract,
           planetId,
           building,
-        );
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setBuildingAction({
-          status: "pending",
-          buildingKey: key,
-          label: transactionConfirmingLabel(label, txHash),
-        });
-        await confirmSubmittedTransaction(txHash);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setBuildingAction({ status: "pending", buildingKey: key, label: transactionSyncingLabel(label) });
-        await refreshStartedBuildingState(startedExpectation);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setFailedStartedBuildingExpectation(undefined);
-        setBuildingAction({ status: "success", buildingKey: key, label: "Building upgrade started." });
-      } catch (error) {
-        console.error(error);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        const actionLabel = backendStateReady ? spendTransactionErrorMessage(error) : buildingUpgradeActionErrorLabel(error);
+        ),
+        waitForIndexed: async (receipt, txHash) => {
+          const expectation = {
+            ...startedExpectation,
+            resourceIndexing: resourceIndexingExpectationForTransaction(txHash, resourceBaseline, receipt),
+          } as StartedBuildingExpectation;
+          startedExpectation = expectation;
+          await refreshStartedBuildingState(expectation);
+        },
+        errorLabel: (error) => {
+          const actionLabel = backendStateReady ? spendTransactionErrorMessage(error) : buildingUpgradeActionErrorLabel(error);
+          if (startedExpectation && isStartedBuildingQueueSyncingLabel(actionLabel)) {
+            setFailedStartedBuildingExpectation(startedExpectation);
+          }
+          return actionLabel;
+        },
+        onStateChange: (state) => {
+          if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+          if (state.phase === "success") {
+            setFailedStartedBuildingExpectation(undefined);
+            setBuildingAction({ status: "success", buildingKey: key, label: "Building upgrade started." });
+          } else if (state.phase === "error") {
+            setBuildingAction({
+              status: "error",
+              buildingKey: key,
+              label: state.label ?? "Building upgrade transaction failed.",
+              ...rejectedActionAutoDismiss(state.error),
+            });
+          } else if (state.phase !== "idle") {
+            setBuildingAction({ status: "pending", buildingKey: key, label: state.label ?? buildingWalletConfirmationLabel(label) });
+          }
+        },
+      });
+    } catch (error) {
+      console.error(error);
+      if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+      const actionLabel = backendStateReady ? spendTransactionErrorMessage(error) : buildingUpgradeActionErrorLabel(error);
         if (startedExpectation && isStartedBuildingQueueSyncingLabel(actionLabel)) {
           setFailedStartedBuildingExpectation(startedExpectation);
         }
@@ -5772,8 +5834,7 @@ export function PlayableMvpApp({
           label: actionLabel,
           ...rejectedActionAutoDismiss(error),
         });
-      }
-    });
+    }
   }, [
     account,
     activePlanetId,
@@ -5789,7 +5850,7 @@ export function PlayableMvpApp({
     refreshStartedBuildingState,
     runtimeConfig.status,
     selectedManagedPlanet?.isHomePlanet,
-    runGatedTransaction,
+    runCoordinatedWriteTransaction,
   ]);
 
   const handleUpgrade = useCallback((key: BuildingKey) => {
@@ -5800,87 +5861,75 @@ export function PlayableMvpApp({
     label: string,
     actionKey: string,
     send: () => Promise<string>,
-    afterReceipt?: (() => Promise<boolean | void>) | undefined,
+    afterReceipt?: ((receipt: TransactionReceipt, txHash: string) => Promise<boolean | void>) | undefined,
   ) => {
-    await runGatedTransaction(actionKey, async () => {
-      const planetSwitchRequestId = planetSwitchGate.current;
-      setShipyardAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
-
-      try {
-        const txHash = await send();
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setShipyardAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
-        await confirmSubmittedTransaction(txHash);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setShipyardAction({ status: "pending", label: transactionSyncingLabel(label) });
-        let synced = true;
+    const planetSwitchRequestId = planetSwitchGate.current;
+    let synced = true;
+    await runCoordinatedWriteTransaction({
+      key: actionKey,
+      label,
+      send,
+      waitForIndexed: async (receipt, txHash) => {
         if (afterReceipt) {
-          const result = await afterReceipt();
+          const result = await afterReceipt(receipt, txHash);
           synced = result !== false;
         } else {
           await Promise.allSettled([
             refreshShipyardState(),
-            // Force the post-action settlement read so the just-spent resources show without a
-            // page reload even if the backend briefly returns an equal lastSettledAt (VEY-KANEO-484).
             refreshOnChainState(undefined, { force: true }),
             refreshInfrastructureState(),
           ]);
         }
+      },
+      errorLabel: (error) => `${label} failed: ${spendTransactionErrorMessage(error)}`,
+      onStateChange: (state) => {
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setShipyardAction(synced
-          ? { status: "success", label: `${label} confirmed.` }
-          : { status: "pending", label: serverUnavailableRetryMessage() });
-      } catch (error) {
-        console.error(error);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        const message = spendTransactionErrorMessage(error);
-        setShipyardAction({
-          status: "error",
-          label: `${label} failed: ${message}`,
-        });
-      }
+        if (state.phase === "success") {
+          setShipyardAction(synced
+            ? { status: "success", label: `${label} confirmed.` }
+            : { status: "pending", label: serverUnavailableRetryMessage() });
+          return;
+        }
+        if (state.phase === "pending" || state.phase === "confirming" || state.phase === "confirmed" || state.phase === "indexing") {
+          setShipyardAction({ status: "pending", label: state.label ?? transactionSyncingLabel(label) });
+        } else if (state.phase === "error") {
+          setShipyardAction({ status: "error", label: state.label ?? `${label} failed.` });
+        }
+      },
     });
-  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, refreshShipyardState, runGatedTransaction]);
+  }, [refreshInfrastructureState, refreshOnChainState, refreshShipyardState, runCoordinatedWriteTransaction]);
 
   const runDefenseTransaction = useCallback(async (
     label: string,
     actionKey: string,
     send: () => Promise<string>,
-    afterReceipt?: (() => Promise<void>) | undefined,
+    afterReceipt?: ((receipt: TransactionReceipt, txHash: string) => Promise<void>) | undefined,
   ) => {
-    await runGatedTransaction(actionKey, async () => {
-      const planetSwitchRequestId = planetSwitchGate.current;
-      setDefenseAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
-
-      try {
-        const txHash = await send();
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setDefenseAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
-        await confirmSubmittedTransaction(txHash);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setDefenseAction({ status: "pending", label: transactionSyncingLabel(label) });
+    const planetSwitchRequestId = planetSwitchGate.current;
+    await runCoordinatedWriteTransaction({
+      key: actionKey,
+      label,
+      send,
+      waitForIndexed: async (receipt, txHash) => {
         if (afterReceipt) {
-          await afterReceipt();
+          await afterReceipt(receipt, txHash);
         } else {
           await Promise.allSettled([
             refreshDefenseState(),
-            // Force the post-action settlement read (see VEY-KANEO-484).
             refreshOnChainState(undefined, { force: true }),
             refreshInfrastructureState(),
           ]);
         }
+      },
+      errorLabel: spendTransactionErrorMessage,
+      onStateChange: (state) => {
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setDefenseAction({ status: "success", label: `${label} confirmed.` });
-      } catch (error) {
-        console.error(error);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setDefenseAction({
-          status: "error",
-          label: spendTransactionErrorMessage(error),
-        });
-      }
+        if (state.phase === "success") setDefenseAction({ status: "success", label: `${label} confirmed.` });
+        else if (state.phase === "error") setDefenseAction({ status: "error", label: state.label ?? spendTransactionErrorMessage(state.error) });
+        else if (state.phase !== "idle") setDefenseAction({ status: "pending", label: state.label ?? transactionSyncingLabel(label) });
+      },
     });
-  }, [confirmSubmittedTransaction, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, runGatedTransaction]);
+  }, [refreshDefenseState, refreshInfrastructureState, refreshOnChainState, runCoordinatedWriteTransaction]);
 
   const waitForAllianceApplicationState = useCallback((
     expectation: AllianceApplicationExpectation,
@@ -5900,102 +5949,86 @@ export function PlayableMvpApp({
     send: () => Promise<string>,
     afterReceipt?: (() => Promise<ChainAllianceState | null | undefined>) | undefined,
   ) => {
-    await runGatedTransaction(`alliance:${label}`, async () => {
-      setAllianceAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
-      setAllianceLoading(true);
-
-      try {
-        const txHash = await send();
-        setAllianceAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
-        await confirmSubmittedTransaction(txHash);
-        setAllianceAction({ status: "pending", label: transactionSyncingLabel(label) });
+    setAllianceLoading(true);
+    await runCoordinatedWriteTransaction({
+      key: `alliance:${label}`,
+      label,
+      send,
+      waitForIndexed: async () => {
         const next = await (afterReceipt ? afterReceipt() : refreshAllianceState());
         if (next) {
           setAllianceState(next);
         }
-        setAllianceAction({ status: "success", label: `${label} confirmed.` });
-      } catch (error) {
-        console.error(error);
-        void refreshAllianceState();
-        setAllianceAction({
-          status: "error",
-          label: error instanceof Error ? error.message : `${label} failed.`,
-        });
-      } finally {
-        setAllianceLoading(false);
-      }
+      },
+      onErrorRefresh: async () => {
+        await refreshAllianceState();
+      },
+      onStateChange: (state) => {
+        if (state.phase === "success") setAllianceAction({ status: "success", label: `${label} confirmed.` });
+        else if (state.phase === "error") setAllianceAction({ status: "error", label: state.label ?? `${label} failed.` });
+        else if (state.phase !== "idle") setAllianceAction({ status: "pending", label: state.label ?? transactionSyncingLabel(label) });
+        if (state.phase === "idle") {
+          setAllianceLoading(false);
+        }
+      },
     });
-  }, [confirmSubmittedTransaction, refreshAllianceState, runGatedTransaction]);
+    if (!transactionActionGate.isRunning(`alliance:${label}`)) {
+        setAllianceLoading(false);
+    }
+  }, [refreshAllianceState, runCoordinatedWriteTransaction, transactionActionGate]);
 
   const runResearchTransaction = useCallback(async (
     label: string,
     send: () => Promise<string>,
-    afterReceipt?: (() => Promise<void>) | undefined,
+    afterReceipt?: ((receipt: TransactionReceipt, txHash: string) => Promise<void>) | undefined,
   ) => {
-    await runGatedTransaction(`research:${label}`, async () => {
-      const planetSwitchRequestId = planetSwitchGate.current;
-      setResearchAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
-
-      try {
-        const txHash = await send();
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setResearchAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
-        await confirmSubmittedTransaction(txHash);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setResearchAction({ status: "pending", label: transactionSyncingLabel(label) });
+    const planetSwitchRequestId = planetSwitchGate.current;
+    await runCoordinatedWriteTransaction({
+      key: `research:${label}`,
+      label,
+      send,
+      waitForIndexed: async (receipt, txHash) => {
         if (afterReceipt) {
-          await afterReceipt();
+          await afterReceipt(receipt, txHash);
         } else {
           await Promise.allSettled([
             refreshResearchState(),
-            // Force the post-action settlement read (see VEY-KANEO-484).
             refreshOnChainState(undefined, { force: true }),
             refreshInfrastructureState(),
           ]);
         }
+      },
+      errorLabel: spendTransactionErrorMessage,
+      onStateChange: (state) => {
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setResearchAction({ status: "success", label: `${label} confirmed.` });
-      } catch (error) {
-        console.error(error);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setResearchAction({
-          status: "error",
-          label: spendTransactionErrorMessage(error),
-        });
-      }
+        if (state.phase === "success") setResearchAction({ status: "success", label: `${label} confirmed.` });
+        else if (state.phase === "error") setResearchAction({ status: "error", label: state.label ?? spendTransactionErrorMessage(state.error) });
+        else if (state.phase !== "idle") setResearchAction({ status: "pending", label: state.label ?? transactionSyncingLabel(label) });
+      },
     });
-  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, refreshResearchState, runGatedTransaction]);
+  }, [refreshInfrastructureState, refreshOnChainState, refreshResearchState, runCoordinatedWriteTransaction]);
 
   const runRiftTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
-    await runGatedTransaction(`rift:${label}`, async () => {
-      const planetSwitchRequestId = planetSwitchGate.current;
-      setRiftAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
-
-      try {
-        const txHash = await send();
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setRiftAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
-        await confirmSubmittedTransaction(txHash);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setRiftAction({ status: "pending", label: transactionSyncingLabel(label) });
+    const planetSwitchRequestId = planetSwitchGate.current;
+    await runCoordinatedWriteTransaction({
+      key: `rift:${label}`,
+      label,
+      send,
+      waitForIndexed: async () => {
         await Promise.allSettled([
           refreshRiftState(),
-          // Force the post-action settlement read (see VEY-KANEO-484).
           refreshOnChainState(undefined, { force: true }),
           refreshInfrastructureState(),
         ]);
+      },
+      onStateChange: (state) => {
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setRiftAction({ status: "success", label: `${label} confirmed.` });
-      } catch (error) {
-        console.error(error);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setRiftAction({
-          status: "error",
-          label: error instanceof Error ? error.message : `${label} failed.`,
-        });
-      }
+        if (state.phase === "success") setRiftAction({ status: "success", label: `${label} confirmed.` });
+        else if (state.phase === "error") setRiftAction({ status: "error", label: state.label ?? `${label} failed.` });
+        else if (state.phase !== "idle") setRiftAction({ status: "pending", label: state.label ?? transactionSyncingLabel(label) });
+      },
     });
-  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, refreshRiftState, runGatedTransaction]);
+  }, [refreshInfrastructureState, refreshOnChainState, refreshRiftState, runCoordinatedWriteTransaction]);
 
   const runGalaxyTransaction = useCallback(async (
     label: string,
@@ -6008,19 +6041,18 @@ export function PlayableMvpApp({
     } = {},
   ): Promise<boolean> => {
     let completed = false;
-    await runGatedTransaction(`galaxy:${label}`, async () => {
-      const planetSwitchRequestId = planetSwitchGate.current;
-      setGalaxyAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
-      let txHash: string | undefined;
+    const planetSwitchRequestId = planetSwitchGate.current;
+    setGalaxyAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
+    let txHash: string | undefined;
 
-      try {
+    try {
         if (options.validateShipInventory) {
           setGalaxyAction({ status: "pending", label: `${label}: refreshing fleet inventory.` });
           if (!apiBaseUrl || !account) {
             throw new Error("Wallet or game API is unavailable while refreshing fleet inventory.");
           }
           const freshShipyardState = await fetchShipyardState(apiBaseUrl, account, options.validateShipInventory.originPlanetId);
-          if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+          if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return false;
           setShipyardState(freshShipyardState);
           const shipBlocker = missionShipInventoryBlocker({
             shipyardState: freshShipyardState,
@@ -6036,98 +6068,95 @@ export function PlayableMvpApp({
             throw new Error("Wallet or game API is unavailable while refreshing target protection.");
           }
           const status = await fetchAttackProtectionStatus(apiBaseUrl, account, options.validateAttackProtection.targetPlanetId);
-          if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+          if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return false;
           const protectionBlocker = attackProtectionSubmitBlocker(status);
           if (protectionBlocker) {
             throw new Error(protectionBlocker);
           }
         }
-        txHash = await send();
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setGalaxyAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
-        await confirmSubmittedTransaction(txHash);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        const pendingMission = options.pendingMissionLaunch?.(txHash);
-        if (pendingMission) {
-          setPendingMissionLaunches((current) => mergePendingMissionLaunches(current, [pendingMission]));
-        }
-        const confirmedTxHash = txHash;
-        setGalaxyAction({ status: "pending", label: transactionSyncingLabel(label) });
-        await Promise.allSettled([
-          refreshShipyardState(),
-          refreshDefenseState(),
-          // Force the post-action settlement read (see VEY-KANEO-484).
-          refreshOnChainState(undefined, { force: true }),
-          refreshInfrastructureState(),
-        ]);
-        if (options.syncMissionLaunch) {
-          const missionSnapshot = await waitForMissionLaunchState(loadMissionLaunchSnapshot, txHash, {
-            expectedMission: pendingMission,
-          });
-          if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-          markFreshStateWrite(onChainRefreshGate);
-          const launchedMissions = missionLaunchMissionsForTransaction(missionSnapshot, txHash, pendingMission);
-          setFleetVisibility(missionSnapshot.fleetVisibility);
-          setAllActiveMissions(mergeActiveMissionList(missionSnapshot.allActiveMissions, launchedMissions));
-          setPendingMissionLaunches((current) => removePendingMissionLaunchForTransaction(current, confirmedTxHash));
-          if (options.validateShipInventory && apiBaseUrl && account) {
-            try {
-              const nextShipyardState = await fetchShipyardState(apiBaseUrl, account, options.validateShipInventory.originPlanetId);
-              if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-              setShipyardState(nextShipyardState);
-            } catch (error) {
-              console.error(error);
+        const result = await runCoordinatedWriteTransaction({
+          key: `galaxy:${label}`,
+          label,
+          send,
+          waitForIndexed: async (_receipt, submittedTxHash) => {
+            txHash = submittedTxHash;
+            if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+            const pendingMission = options.pendingMissionLaunch?.(submittedTxHash);
+            if (pendingMission) {
+              setPendingMissionLaunches((current) => mergePendingMissionLaunches(current, [pendingMission]));
             }
-          }
-        }
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setGalaxyAction({ status: "success", label: `${label} confirmed.` });
-        completed = true;
-      } catch (error) {
+            const confirmedTxHash = submittedTxHash;
+            await Promise.allSettled([
+              refreshShipyardState(),
+              refreshDefenseState(),
+              refreshOnChainState(undefined, { force: true }),
+              refreshInfrastructureState(),
+            ]);
+            if (options.syncMissionLaunch) {
+              const missionSnapshot = await waitForMissionLaunchState(loadMissionLaunchSnapshot, submittedTxHash, {
+                expectedMission: pendingMission,
+              });
+              if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+              markFreshStateWrite(onChainRefreshGate);
+              const launchedMissions = missionLaunchMissionsForTransaction(missionSnapshot, submittedTxHash, pendingMission);
+              setFleetVisibility(missionSnapshot.fleetVisibility);
+              setAllActiveMissions(mergeActiveMissionList(missionSnapshot.allActiveMissions, launchedMissions));
+              setPendingMissionLaunches((current) => removePendingMissionLaunchForTransaction(current, confirmedTxHash));
+              if (options.validateShipInventory && apiBaseUrl && account) {
+                try {
+                  const nextShipyardState = await fetchShipyardState(apiBaseUrl, account, options.validateShipInventory.originPlanetId);
+                  if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+                  setShipyardState(nextShipyardState);
+                } catch (error) {
+                  console.error(error);
+                }
+              }
+            }
+          },
+          errorLabel: (error) => galaxyMissionActionErrorLabel(label, error),
+          onStateChange: (state) => {
+            if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+            if (state.phase === "success") setGalaxyAction({ status: "success", label: `${label} confirmed.` });
+            else if (state.phase === "error") setGalaxyAction({ status: "error", label: state.label ?? galaxyMissionActionErrorLabel(label, state.error) });
+            else if (state.phase !== "idle") setGalaxyAction({ status: "pending", label: state.label ?? transactionSyncingLabel(label) });
+          },
+        });
+        completed = result;
+    } catch (error) {
         console.error(error);
         if (txHash) {
           const failedTxHash = txHash;
           setPendingMissionLaunches((current) => removePendingMissionLaunchForTransaction(current, failedTxHash));
         }
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return false;
         setGalaxyAction({
           status: "error",
           label: galaxyMissionActionErrorLabel(label, error),
         });
-      }
-    });
+    }
     return completed;
-  }, [account, apiBaseUrl, confirmSubmittedTransaction, loadMissionLaunchSnapshot, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState, runGatedTransaction]);
+  }, [account, apiBaseUrl, loadMissionLaunchSnapshot, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState, runCoordinatedWriteTransaction]);
 
   const runMoonTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
-    await runGatedTransaction(`moon:${label}`, async () => {
-      const planetSwitchRequestId = planetSwitchGate.current;
-      setMoonAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
-
-      try {
-        const txHash = await send();
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setMoonAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
-        await confirmSubmittedTransaction(txHash);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setMoonAction({ status: "pending", label: transactionSyncingLabel(label) });
+    const planetSwitchRequestId = planetSwitchGate.current;
+    await runCoordinatedWriteTransaction({
+      key: `moon:${label}`,
+      label,
+      send,
+      waitForIndexed: async () => {
         await Promise.allSettled([
           refreshInfrastructureState(),
-          // Force the post-action settlement read (see VEY-KANEO-484).
           refreshOnChainState(undefined, { force: true }),
         ]);
+      },
+      onStateChange: (state) => {
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setMoonAction({ status: "success", label: `${label} confirmed.` });
-      } catch (error) {
-        console.error(error);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setMoonAction({
-          status: "error",
-          label: error instanceof Error ? error.message : `${label} failed.`,
-        });
-      }
+        if (state.phase === "success") setMoonAction({ status: "success", label: `${label} confirmed.` });
+        else if (state.phase === "error") setMoonAction({ status: "error", label: state.label ?? `${label} failed.` });
+        else if (state.phase !== "idle") setMoonAction({ status: "pending", label: state.label ?? transactionSyncingLabel(label) });
+      },
     });
-  }, [confirmSubmittedTransaction, refreshInfrastructureState, refreshOnChainState, runGatedTransaction]);
+  }, [refreshInfrastructureState, refreshOnChainState, runCoordinatedWriteTransaction]);
 
   const handleBurnChickenForMoon = useCallback((tokenId: string) => {
     if (!provider || !account || !chickenBurnConfig || !activePlanetId) {
@@ -6143,30 +6172,31 @@ export function PlayableMvpApp({
       ? `${activePlanetCoords.galaxy}:${activePlanetCoords.system}:${activePlanetCoords.position}`
       : `planet #${activePlanetId}`;
     const label = `Burn Chicken #${tokenId} for ${targetLabel}`;
-    void runGatedTransaction(`moon:chicken-burn:${tokenId}`, async () => {
-      const planetSwitchRequestId = planetSwitchGate.current;
-
-      try {
+    const planetSwitchRequestId = planetSwitchGate.current;
+    void runCoordinatedWriteTransaction({
+      key: `moon:chicken-burn:${tokenId}`,
+      label,
+      send: async () => {
         setMoonAction({ status: "pending", label: `Checking Chicken #${tokenId} ownership...` });
         await fetchBurningChickenForOwner(account, tokenId, chickenBurnConfig);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setMoonAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
-        const txHash = await sendBurningChickenMoonTransaction(
+        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) {
+          throw new Error("Chicken burn was cancelled because the selected planet changed.");
+        }
+        return sendBurningChickenMoonTransaction(
           provider,
           account,
           chickenBurnConfig,
           tokenId,
           activePlanetId,
         );
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setMoonAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
-        await confirmSubmittedTransaction(txHash);
+      },
+      waitForIndexed: async () => {
         await ensureBaseSepoliaNetwork(provider);
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setMoonAction({ status: "pending", label: "Chicken burned. Waiting for Veydrift indexed moon state..." });
         if (!apiBaseUrl || !activePlanetId) {
           throw new Error("Chicken burn confirmed, but Veydrift API state is unavailable for moon confirmation.");
         }
+        setMoonAction({ status: "pending", label: "Chicken burned. Waiting for Veydrift indexed moon state..." });
         const confirmedMoonState = await waitForConfirmedChickenMoonState(apiBaseUrl, account, activePlanetId);
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         setMoonState(confirmedMoonState);
@@ -6178,21 +6208,20 @@ export function PlayableMvpApp({
         await Promise.allSettled([
           refreshOnChainState(undefined, { force: true }),
         ]);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setMoonAction({ status: "success", label: `${label} confirmed.` });
-      } catch (error) {
-        console.error(error);
+      },
+      onErrorRefresh: async () => {
         try {
           await ensureBaseSepoliaNetwork(provider);
         } catch (switchError) {
           console.error(switchError);
         }
+      },
+      onStateChange: (state) => {
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setMoonAction({
-          status: "error",
-          label: error instanceof Error ? error.message : `${label} failed.`,
-        });
-      }
+        if (state.phase === "success") setMoonAction({ status: "success", label: `${label} confirmed.` });
+        else if (state.phase === "error") setMoonAction({ status: "error", label: state.label ?? `${label} failed.` });
+        else if (state.phase !== "idle") setMoonAction({ status: "pending", label: state.label ?? transactionSyncingLabel(label) });
+      },
     });
   }, [
     account,
@@ -6200,10 +6229,9 @@ export function PlayableMvpApp({
     activePlanetCoords,
     apiBaseUrl,
     chickenBurnConfig,
-    confirmSubmittedTransaction,
     provider,
     refreshOnChainState,
-    runGatedTransaction,
+    runCoordinatedWriteTransaction,
     setActivePlanetSectionStatus,
     setMoonState,
     walletMoonCount,
@@ -6221,6 +6249,7 @@ export function PlayableMvpApp({
         ? activeShipyardProductionQueue.quantity ?? 0
         : 0;
     const expectedQuantity = currentQueuedQuantity + quantity;
+    const resourceBaseline = shipyardState?.resourceSnapshot;
 
     void runShipyardTransaction("Ship production", `shipyard:start:${shipId}`, () => sendStartShipProductionTransaction(
       provider,
@@ -6229,10 +6258,11 @@ export function PlayableMvpApp({
       planetId,
       shipId,
       quantity,
-    ), () => refreshStartedShipProductionState({
+    ), (receipt, txHash) => refreshStartedShipProductionState({
       itemId: shipId,
       planetId,
       quantity: expectedQuantity,
+      resourceIndexing: resourceIndexingExpectationForTransaction(txHash, resourceBaseline, receipt),
     }));
   }, [
     account,
@@ -6243,6 +6273,7 @@ export function PlayableMvpApp({
     runShipyardTransaction,
     shipyardState?.homePlanetId,
     shipyardState?.planetId,
+    shipyardState?.resourceSnapshot,
   ]);
 
   const handleBuildDefense = useCallback((defenseId: number, _key: DefenseKey, quantity: number) => {
@@ -6257,6 +6288,7 @@ export function PlayableMvpApp({
         ? activeDefenseProductionQueue.quantity ?? 0
         : 0;
     const expectedQuantity = currentQueuedQuantity + quantity;
+    const resourceBaseline = defenseState.resourceSnapshot;
 
     void runDefenseTransaction("Defense production", `defense:start:${defenseId}`, () => sendStartDefenseProductionTransaction(
       provider,
@@ -6265,15 +6297,17 @@ export function PlayableMvpApp({
       planetId,
       defenseId,
       quantity,
-    ), () => refreshStartedDefenseProductionState({
+    ), (receipt, txHash) => refreshStartedDefenseProductionState({
       itemId: defenseId,
       planetId,
       quantity: expectedQuantity,
+      resourceIndexing: resourceIndexingExpectationForTransaction(txHash, resourceBaseline, receipt),
     }));
   }, [
     account,
     activeDefenseProductionQueue,
     defenseState?.homePlanetId,
+    defenseState?.resourceSnapshot,
     gameContract,
     provider,
     refreshStartedDefenseProductionState,
@@ -6679,14 +6713,16 @@ export function PlayableMvpApp({
           ?? stateForTransaction.technologyLevels[technologyId.toString()]
           ?? 0;
 
+        const resourceBaseline = stateForTransaction.resourceSnapshot;
         void runResearchTransaction(researchStartTransactionLabel(technologyId, key, stateForTransaction), () => sendStartResearchTransaction(
           provider,
           account,
           gameContract,
           transactionPlanetId,
           technologyId,
-        ), () => refreshStartedResearchState({
+        ), (receipt, txHash) => refreshStartedResearchState({
           itemId: technologyId,
+          resourceIndexing: resourceIndexingExpectationForTransaction(txHash, resourceBaseline, receipt),
           targetLevel: currentLevel + 1,
         }));
       })
@@ -6883,29 +6919,24 @@ export function PlayableMvpApp({
     const trimmedName = name.trim();
     if (!trimmedName) return;
 
-    void runGatedTransaction("planet:rename", async () => {
-      setPlanetRenameAction({ status: "pending", label: transactionAwaitingWalletLabel("Planet rename") });
-      const planetSwitchRequestId = planetSwitchGate.current;
-      try {
-        const txHash = await sendRenamePlanetTransaction(provider, account, gameContract, activePlanetId, trimmedName);
+    const planetSwitchRequestId = planetSwitchGate.current;
+    void runCoordinatedWriteTransaction({
+      key: "planet:rename",
+      label: "Planet rename",
+      send: () => sendRenamePlanetTransaction(provider, account, gameContract, activePlanetId, trimmedName),
+      waitForIndexed: async () => {
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setPlanetRenameAction({ status: "pending", label: transactionConfirmingLabel("Planet rename", txHash) });
-        await confirmSubmittedTransaction(txHash);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setPlanetRenameAction({ status: "pending", label: transactionSyncingLabel("Planet rename") });
         await refreshOnChainState({ planetId: activePlanetId, name: trimmedName });
+      },
+      errorLabel: (error) => error instanceof Error ? error.message : "Rename transaction failed.",
+      onStateChange: (state) => {
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setPlanetRenameAction({ status: "success", label: "Planet renamed." });
-      } catch (error) {
-        console.error(error);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setPlanetRenameAction({
-          status: "error",
-          label: error instanceof Error ? error.message : "Rename transaction failed.",
-        });
-      }
+        if (state.phase === "success") setPlanetRenameAction({ status: "success", label: "Planet renamed." });
+        else if (state.phase === "error") setPlanetRenameAction({ status: "error", label: state.label ?? "Rename transaction failed." });
+        else if (state.phase !== "idle") setPlanetRenameAction({ status: "pending", label: state.label ?? transactionSyncingLabel("Planet rename") });
+      },
     });
-  }, [account, activePlanetId, confirmSubmittedTransaction, gameContract, provider, refreshOnChainState, runGatedTransaction]);
+  }, [account, activePlanetId, gameContract, provider, refreshOnChainState, runCoordinatedWriteTransaction]);
 
   const handleUpdatePlayerProfile = useCallback((displayName: string, description: string | null) => {
     if (!provider || !account || !apiBaseUrl) {
@@ -6948,30 +6979,25 @@ export function PlayableMvpApp({
     const label = selectedManagedPlanet?.name ?? `Planet ${selectedManagedPlanet?.coordinates ?? activePlanetId}`;
     if (!window.confirm(`Abandon ${label}? This requires an empty colony with no active queues or fleet missions.`)) return;
 
-    void runGatedTransaction("planet:abandon", async () => {
-      setPlanetManagementAction({ status: "pending", label: transactionAwaitingWalletLabel("Colony abandon") });
-      const planetSwitchRequestId = planetSwitchGate.current;
-      try {
-        const txHash = await sendAbandonPlanetTransaction(provider, account, gameContract, activePlanetId);
+    const planetSwitchRequestId = planetSwitchGate.current;
+    void runCoordinatedWriteTransaction({
+      key: "planet:abandon",
+      label: "Colony abandon",
+      send: () => sendAbandonPlanetTransaction(provider, account, gameContract, activePlanetId),
+      waitForIndexed: async () => {
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setPlanetManagementAction({ status: "pending", label: transactionConfirmingLabel("Colony abandon", txHash) });
-        await confirmSubmittedTransaction(txHash);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setPlanetManagementAction({ status: "pending", label: transactionSyncingLabel("Colony abandon") });
         setSelectedPlanetId(undefined);
         await refreshOnChainState(undefined, { force: true, forceHomePlanet: true });
+      },
+      errorLabel: (error) => error instanceof Error ? error.message : "Abandon transaction failed.",
+      onStateChange: (state) => {
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setPlanetManagementAction({ status: "success", label: "Colony abandoned." });
-      } catch (error) {
-        console.error(error);
-        if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
-        setPlanetManagementAction({
-          status: "error",
-          label: error instanceof Error ? error.message : "Abandon transaction failed.",
-        });
-      }
+        if (state.phase === "success") setPlanetManagementAction({ status: "success", label: "Colony abandoned." });
+        else if (state.phase === "error") setPlanetManagementAction({ status: "error", label: state.label ?? "Abandon transaction failed." });
+        else if (state.phase !== "idle") setPlanetManagementAction({ status: "pending", label: state.label ?? transactionSyncingLabel("Colony abandon") });
+      },
     });
-  }, [account, activePlanetId, confirmSubmittedTransaction, gameContract, provider, refreshOnChainState, runGatedTransaction, selectedManagedPlanet]);
+  }, [account, activePlanetId, gameContract, provider, refreshOnChainState, runCoordinatedWriteTransaction, selectedManagedPlanet]);
 
   const handleGalaxyAction = useCallback((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => {
     if (!action.enabled) return;
@@ -7547,24 +7573,21 @@ export function PlayableMvpApp({
       return;
     }
 
-    void runGatedTransaction(`mission:${label}`, async () => {
-      setMissionAction({ status: "pending", label: transactionAwaitingWalletLabel(label) });
-      try {
-        const txHash = await request();
-        setMissionAction({ status: "pending", label: transactionConfirmingLabel(label, txHash) });
-        await confirmSubmittedTransaction(txHash);
-        setMissionAction({ status: "pending", label: transactionSyncingLabel(label) });
+    void runCoordinatedWriteTransaction({
+      key: `mission:${label}`,
+      label,
+      send: request,
+      waitForIndexed: async () => {
         await refreshOnChainState(undefined, { force: true });
-        setMissionAction({ status: "success", label: `${label} confirmed.` });
-      } catch (error) {
-        console.error(error);
-        setMissionAction({
-          status: "error",
-          label: error instanceof Error ? error.message : `${label} transaction failed.`,
-        });
-      }
+      },
+      errorLabel: (error) => error instanceof Error ? error.message : `${label} transaction failed.`,
+      onStateChange: (state) => {
+        if (state.phase === "success") setMissionAction({ status: "success", label: `${label} confirmed.` });
+        else if (state.phase === "error") setMissionAction({ status: "error", label: state.label ?? `${label} transaction failed.` });
+        else if (state.phase !== "idle") setMissionAction({ status: "pending", label: state.label ?? transactionSyncingLabel(label) });
+      },
     });
-  }, [account, confirmSubmittedTransaction, gameContract, provider, refreshOnChainState, runGatedTransaction]);
+  }, [account, gameContract, provider, refreshOnChainState, runCoordinatedWriteTransaction]);
 
   const handleRecallMission = useCallback((missionId: string) => {
     if (!provider || !account || !gameContract) {
@@ -7984,30 +8007,30 @@ export function PlayableMvpApp({
   const allianceTransactionInputsAvailable = Boolean(provider && account && allianceContract);
   const moonTransactionInputsAvailable = Boolean(provider && account && moonContract);
   const chickenBurnTransactionInputsAvailable = Boolean(provider && account && chickenBurnConfig);
-  const gameTransactionUnavailableReason = transactionUnavailableReasonFor({
-    activeActionLabel: pendingActionLabel(
-      buildingAction,
-      defenseAction,
-      shipyardAction,
-      galaxyAction,
-      researchAction,
-      riftAction,
-      planetManagementAction,
-      planetRenameAction,
-      missionAction,
-    ),
+	  const gameTransactionUnavailableReason = transactionUnavailableReasonFor({
+	    activeActionLabel: pendingActionLabel(
+	      buildingAction,
+	      defenseAction,
+	      shipyardAction,
+	      galaxyAction,
+	      researchAction,
+	      riftAction,
+	      planetManagementAction,
+	      planetRenameAction,
+	      missionAction,
+	    ) ?? writeTransactionState.label,
     inputsAvailable: gameTransactionInputsAvailable,
     transactionPending: transactionActionPending,
     unavailableReason: "Wallet or game contract unavailable",
   });
-  const allianceTransactionUnavailableReason = transactionUnavailableReasonFor({
-    activeActionLabel: pendingActionLabel(allianceAction),
+	  const allianceTransactionUnavailableReason = transactionUnavailableReasonFor({
+	    activeActionLabel: pendingActionLabel(allianceAction) ?? writeTransactionState.label,
     inputsAvailable: allianceTransactionInputsAvailable,
     transactionPending: transactionActionPending,
     unavailableReason: "Alliance contract unavailable.",
   });
-  const moonTransactionUnavailableReason = transactionUnavailableReasonFor({
-    activeActionLabel: pendingActionLabel(moonAction),
+	  const moonTransactionUnavailableReason = transactionUnavailableReasonFor({
+	    activeActionLabel: pendingActionLabel(moonAction) ?? writeTransactionState.label,
     inputsAvailable: moonTransactionInputsAvailable,
     transactionPending: transactionActionPending,
     unavailableReason: "Wallet or moon contract unavailable.",

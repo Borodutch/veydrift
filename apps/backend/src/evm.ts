@@ -13,6 +13,14 @@ export type Resources = {
   deuterium: string;
 };
 
+export type ResourceSnapshotMetadata = {
+  planetId: string | null;
+  transactionHash: string | null;
+  blockNumber: string | null;
+  lastSettledAt: string | null;
+  resources: Resources | null;
+};
+
 export type OrbitBodyKind = "planet" | "moon";
 
 export type EnergyBalance = {
@@ -46,6 +54,7 @@ export type PlanetState = Coordinates & {
   // that expose a live balance populate it alongside `resources` rather than
   // overwriting the settled snapshot (VEY-KANEO-488).
   resourcesAsOfNow?: Resources;
+  resourceSnapshot?: ResourceSnapshotMetadata | null;
 };
 
 export type ManagedPlanet = PlanetState & {
@@ -628,6 +637,7 @@ export type ShipyardState = {
   // (capped at storage), so callers get accrued resources without re-deriving them
   // (VEY-KANEO-464). Null when the planet/derivation is unavailable.
   resourcesAsOfNow?: Resources | null;
+  resourceSnapshot?: ResourceSnapshotMetadata | null;
   fleetSlots: {
     active: number;
     limit: number;
@@ -667,6 +677,7 @@ export type DefenseState = {
   resources: Resources | null;
   // Accrued-to-now projection of `resources` (VEY-KANEO-464).
   resourcesAsOfNow?: Resources | null;
+  resourceSnapshot?: ResourceSnapshotMetadata | null;
   shipyardLevel: number;
   naniteLevel: number;
   missileSiloLevel: number;
@@ -698,6 +709,7 @@ export type InfrastructureState = {
   resources: Resources | null;
   // Accrued-to-now projection of `resources` (VEY-KANEO-464).
   resourcesAsOfNow?: Resources | null;
+  resourceSnapshot?: ResourceSnapshotMetadata | null;
   productionPerHour: Resources | null;
   crawlerProduction?: CrawlerProductionEffect | null;
   energyBalance: EnergyBalance | null;
@@ -770,6 +782,7 @@ export type ResearchState = {
   resources: Resources | null;
   // Accrued-to-now projection of `resources` (VEY-KANEO-464).
   resourcesAsOfNow?: Resources | null;
+  resourceSnapshot?: ResourceSnapshotMetadata | null;
   researchLabLevel: number;
   researchNetworkLabLevels: number[];
   technologyLevels: Record<string, number>;

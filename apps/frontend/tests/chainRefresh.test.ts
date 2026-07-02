@@ -25,7 +25,7 @@ describe("playable chain refresh", () => {
     expect(source).toContain("snapshot.subscribedToHeads && snapshot.subscribedToLogs");
     expect(source).toContain("120_000");
     expect(source).not.toMatch(/window\.setInterval\([\s\S]{0,600},\s*30_000\)/);
-    expect(source).not.toContain("2_500");
+    expect(source).not.toMatch(/window\.setInterval\([\s\S]{0,600},\s*2_500\)/);
   });
 
   test("polls the canonical wallet resource snapshot for the hydrated top bar", async () => {
@@ -144,7 +144,7 @@ describe("playable chain refresh", () => {
     expect(walletFlowSource).not.toContain("eth_estimateGas");
     expect(walletFlowSource).not.toContain("waitForReceipt(");
     expect(walletFlowSource).toContain("eth_getTransactionReceipt");
-    expect(source).toContain("confirmSubmittedTransaction(txHash)");
+    expect(source).toContain("confirm: confirmSubmittedTransaction");
     expect(source).toContain("sendStartBuildingUpgradeTransaction(\n          provider,\n          account,\n          gameContract,\n          planetId,\n          building,\n        )");
     expect(source).not.toContain("building,\n          { readProvider },");
     // VEY-KANEO-507: ready production queues reconcile inside the upgraded contracts,
@@ -157,30 +157,32 @@ describe("playable chain refresh", () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
     for (const snippet of [
-      "runGatedTransaction(`building:start:",
-      "runGatedTransaction(`alliance:",
-      "runGatedTransaction(`rift:",
-      "runGatedTransaction(`galaxy:",
-      "runGatedTransaction(`moon:",
-      "runGatedTransaction(\"planet:rename\"",
-      "runGatedTransaction(\"planet:abandon\"",
-      "runGatedTransaction(\"player-profile:update\"",
-      "runGatedTransaction(`mission:",
+      "key: `building:start:",
+      "key: `alliance:",
+      "key: `rift:",
+      "key: `galaxy:",
+      "key: `moon:",
+      "key: \"planet:rename\"",
+      "key: \"planet:abandon\"",
+      "key: `mission:",
     ]) {
       expect(source).toContain(snippet);
     }
 
-    expect(source).toContain("const gameTransactionInputsAvailable = Boolean(provider && account && gameContract)");
+    expect(source).toContain("runGatedTransaction(\"player-profile:update\"");
+    expect(source).toContain("const gameTransactionInputsAvailable = gameActionsAvailableForBody(activeBodyKind, Boolean(provider && account && gameContract))");
     expect(source).toContain("const canSubmitGameTransaction = gameTransactionInputsAvailable && !transactionActionPending");
+    expect(source).toContain("runCoordinatedWriteTransaction");
+    expect(source).toContain("resourceIndexingExpectationForTransaction(txHash, resourceBaseline, receipt)");
     expect(source).toContain("const allianceTransactionUnavailableReason = transactionUnavailableReasonFor({");
     expect(source).toContain("const moonTransactionUnavailableReason = transactionUnavailableReasonFor({");
     expect(source).toContain("setRiftAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));");
     expect(source).toContain("transactionUnavailableReason={gameTransactionUnavailableReason}");
     expect(source).toContain("transactionUnavailableReason={allianceTransactionUnavailableReason}");
     expect(source).toContain("transactionUnavailableReason={moonTransactionUnavailableReason}");
-    expect(source).toContain("await Promise.allSettled([\n            refreshShipyardState(),");
+    expect(source).toContain("await Promise.allSettled([\n              refreshShipyardState(),");
     expect(source).toContain("await Promise.allSettled([\n          refreshRiftState(),");
-    expect(source).toContain("await refreshOnChainState(undefined, { force: true });");
+    expect(source).toContain("refreshOnChainState(undefined, { force: true }),");
     expect(source).not.toContain("void refreshOnChainState(undefined, { force: true });");
   });
 
@@ -188,9 +190,10 @@ describe("playable chain refresh", () => {
     const source = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
     expect(source).toContain("): Promise<boolean> => {\n    let completed = false;");
-    expect(source).toContain("await confirmSubmittedTransaction(txHash);");
-    expect(source).toContain("await waitForMissionLaunchState(loadMissionLaunchSnapshot, txHash");
-    expect(source).toContain("setGalaxyAction({ status: \"success\", label: `${label} confirmed.` });\n        completed = true;");
+    expect(source).toContain("confirm: confirmSubmittedTransaction");
+    expect(source).toContain("await waitForMissionLaunchState(loadMissionLaunchSnapshot, submittedTxHash");
+    expect(source).toContain("if (state.phase === \"success\") setGalaxyAction({ status: \"success\", label: `${label} confirmed.` });");
+    expect(source).toContain("completed = result;");
     expect(source).toContain("const closeMissionCreationWhenComplete = (transaction: Promise<boolean>) => {");
     expect(source).toContain("if (await transaction) closeMissionCreation();");
     expect(source).toContain("closeMissionCreationWhenComplete(runGalaxyTransaction(\"Colony mission\"");
