@@ -92,7 +92,7 @@ const corsHeaders = {
 const jsonBodyLimitBytes = 32 * 1024;
 const graphqlBodyLimitBytes = 128 * 1024;
 const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
-  ["/highscores", new Set(["category", "limit", "page", "pageSize"])],
+  ["/highscores", new Set(["category", "currentWallet", "includeAttackProtection", "limit", "page", "pageSize"])],
   ["/missions", new Set(["owner", "page", "pageSize", "status"])],
   ["/raid-finder/debris", new Set(["limit", "minMetal", "minCrystal"])],
   ["/universe/systems", new Set(["center", "detail", "galaxy", "limit", "page", "radius"])],
@@ -1702,9 +1702,17 @@ function cacheableJsonRequestVersion(url: URL, indexer: SettlementIndexer): stri
 }
 
 function clientCacheControlHeader(url: URL, ttlMs: number): string {
+  if (personalizedHighscoreRequest(url)) {
+    return "private, no-store";
+  }
   const seconds = Math.max(1, Math.floor(ttlMs / 1_000));
   const scope = url.pathname.startsWith("/wallet/") ? "private" : "public";
   return `${scope}, max-age=${seconds}, stale-while-revalidate=${seconds}`;
+}
+
+function personalizedHighscoreRequest(url: URL): boolean {
+  return url.pathname === "/highscores"
+    && (url.searchParams.has("currentWallet") || url.searchParams.has("includeAttackProtection"));
 }
 
 function cachedJsonResponse(request: Request, cached: CachedJsonResponse): Response {
