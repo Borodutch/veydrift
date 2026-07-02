@@ -48,6 +48,7 @@ import {
 } from "./inspectRoutes";
 import { resetDocumentTitle } from "./pageTitle";
 import { ShareDialog } from "./components/ShareDialog";
+import { rankingsAttackProtectionForEntry } from "./rankingsAttackProtection";
 import {
   buildingKeyForContractId,
   infrastructureActionNoticeFor,
@@ -7106,22 +7107,11 @@ export function PlayableMvpApp({
     const actionsByKind = new Map(
       galaxyActionsForSlot({
         account,
-        attackProtection: entry.attackProtection
-          ? {
-              allowed: entry.attackProtection.allowed,
-              blockedReason: entry.attackProtection.blockedReason,
-              blockedReasonLabel: entry.attackProtection.blockedReasonLabel,
-              ...(entry.attackProtection.atWar === undefined ? {} : { atWar: entry.attackProtection.atWar }),
-              ...(entry.attackProtection.scoreComparison
-                ? {
-                    scoreComparison: {
-                      attackerScore: entry.attackProtection.scoreComparison.attackerScore,
-                      defenderScore: entry.attackProtection.scoreComparison.defenderScore,
-                    },
-                  }
-                : {}),
-            }
-          : undefined,
+        attackProtection: rankingsAttackProtectionForEntry({
+          currentAllianceId: allianceState?.membership.allianceId,
+          currentWallet: account,
+          entry,
+        }),
         defenseState,
         homePlanetId: onChainSettlement?.homePlanetId,
         isOrigin: false,
@@ -7143,35 +7133,24 @@ export function PlayableMvpApp({
     return defendAction
       ? [moonTargetMissionAction(defendAction, "defenseHold", "Defend")]
       : [moonTargetMissionAction(actionsByKind.get("attack"), "attack", "Attack")];
-  }, [account, defenseState, onChainSettlement?.homePlanetId, shipyardState]);
+  }, [account, allianceState?.membership.allianceId, defenseState, onChainSettlement?.homePlanetId, shipyardState]);
 
   const rankingsPlanetActionsForPlanet = useCallback((planet: HighscorePlanet, entry: HighscoreEntry): GalaxyAction[] => {
     const targetPlanet = highscorePlanetForMission(planet, entry);
     return galaxyActionsForSlot({
       account,
-      attackProtection: entry.attackProtection
-        ? {
-            allowed: entry.attackProtection.allowed,
-            blockedReason: entry.attackProtection.blockedReason,
-            blockedReasonLabel: entry.attackProtection.blockedReasonLabel,
-            ...(entry.attackProtection.atWar === undefined ? {} : { atWar: entry.attackProtection.atWar }),
-            ...(entry.attackProtection.scoreComparison
-              ? {
-                  scoreComparison: {
-                    attackerScore: entry.attackProtection.scoreComparison.attackerScore,
-                    defenderScore: entry.attackProtection.scoreComparison.defenderScore,
-                  },
-                }
-              : {}),
-          }
-        : undefined,
+      attackProtection: rankingsAttackProtectionForEntry({
+        currentAllianceId: allianceState?.membership.allianceId,
+        currentWallet: account,
+        entry,
+      }),
       defenseState,
       homePlanetId: onChainSettlement?.homePlanetId,
       isOrigin: false,
       planet: targetPlanet,
       shipyardState,
     });
-  }, [account, defenseState, onChainSettlement?.homePlanetId, shipyardState]);
+  }, [account, allianceState?.membership.allianceId, defenseState, onChainSettlement?.homePlanetId, shipyardState]);
 
   const handleRankingsMoonAction = useCallback((action: GalaxyAction, planet: HighscorePlanet, entry: HighscoreEntry) => {
     if (!action.enabled) return;
