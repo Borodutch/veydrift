@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { fleetMissionFuelCost } from "./fleetMissionRules";
+import { fleetMissionDistance, fleetMissionFuelCost } from "./fleetMissionRules";
 import type { MissionShips } from "./galaxyActions";
 
 const noShips = {
@@ -36,5 +36,19 @@ describe("fleetMissionFuelCost", () => {
     expect(fleetMissionFuelCost({ ...noShips, deathstar: 1, lightFighter: 100 }, 20_000, {}, 50)).toBeLessThan(
       fleetMissionFuelCost({ ...noShips, deathstar: 1, lightFighter: 100 }, 20_000),
     );
+  });
+});
+
+describe("fleetMissionDistance", () => {
+  const coords = { galaxy: 6, system: 3, position: 5 };
+
+  test("uses OGame classic distance 5 for local planet-moon travel", () => {
+    expect(fleetMissionDistance(coords, coords, { originIsMoon: false, targetIsMoon: true })).toBe(5);
+    expect(fleetMissionDistance(coords, coords, { originIsMoon: true, targetIsMoon: false })).toBe(5);
+  });
+
+  test("keeps same-body same-coordinate distance at zero for legacy callers", () => {
+    expect(fleetMissionDistance(coords, coords)).toBe(0);
+    expect(fleetMissionDistance(coords, coords, { originIsMoon: true, targetIsMoon: true })).toBe(0);
   });
 });

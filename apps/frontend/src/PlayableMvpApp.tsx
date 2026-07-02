@@ -2738,7 +2738,10 @@ function pendingMissionLaunchForDraft(
   context: PendingMissionLaunchContext,
 ): FleetMissionSummary {
   const originCoords = managedPlanetCoordinates(context.originPlanet);
-  const distance = originCoords ? fleetMissionDistance(originCoords, context.targetCoords) : 0;
+  const distance = originCoords ? fleetMissionDistance(originCoords, context.targetCoords, {
+    originIsMoon: context.originIsMoon,
+    targetIsMoon: context.targetIsMoon,
+  }) : 0;
   const travelSeconds = fleetMissionTravelSeconds(distance, context.draft.ships, context.driveLevels, context.draft.speedPercent);
   const fuelCost = context.fuelCost
     ?? fleetMissionFuelCost(context.draft.ships, distance, context.driveLevels, context.draft.speedPercent);

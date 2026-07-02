@@ -15,6 +15,7 @@ import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
+import {VeydriftAntiRaidPrimitives} from "../src/libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
 import {
     Building,
@@ -876,6 +877,37 @@ contract VeydriftMoonSystemTest is Test {
         vm.warp(returnAt);
         game.completeFleetMissionReturn(missionId);
         assertEq(game.shipCount(planetId, Ship.SmallCargo), 1);
+    }
+
+    function testPlanetToMoonTransportUsesOgameClassicLocalDistance() public {
+        uint256 planetId = _startPlanet();
+        _createMoon(planetId);
+        _fundPlanet(planetId, 20_000, 20_000, 20_000);
+        _setShipCount(planetId, Ship.SmallCargo, 1);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+
+        vm.warp(1_700_000_000);
+        vm.prank(player);
+        uint256 missionId = game.launchBodyFleetMission(
+            planetId,
+            planetId,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            false,
+            true
+        );
+
+        (,,,,, uint64 departureAt, uint64 arrivalAt, uint64 returnAt,,,) =
+            game.fleetMission(missionId);
+        uint256 expectedTravelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(5, 5_000, 100, 1);
+
+        assertEq(arrivalAt - departureAt, expectedTravelSeconds);
+        assertEq(returnAt - arrivalAt, expectedTravelSeconds);
+        assertGt(arrivalAt - departureAt, 10);
     }
 
     function testMoonToPlanetTransportSpendsMoonResourcesAndReturnsMoonShips() public {

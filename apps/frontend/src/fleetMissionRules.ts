@@ -136,7 +136,16 @@ const shipStats: Record<(typeof missionShipKeys)[number], ShipStats> = {
   },
 };
 
-export function fleetMissionDistance(origin: Coordinates, target: Coordinates): number {
+export type FleetMissionBodyDistanceOptions = {
+  originIsMoon?: boolean | undefined;
+  targetIsMoon?: boolean | undefined;
+};
+
+export function fleetMissionDistance(
+  origin: Coordinates,
+  target: Coordinates,
+  body: FleetMissionBodyDistanceOptions = {},
+): number {
   const galaxyDistance = Math.abs(origin.galaxy - target.galaxy);
   if (galaxyDistance !== 0) return galaxyDistance * 20_000;
 
@@ -145,6 +154,8 @@ export function fleetMissionDistance(origin: Coordinates, target: Coordinates): 
 
   const positionDistance = Math.abs(origin.position - target.position);
   if (positionDistance !== 0) return 1_000 + positionDistance * 5;
+
+  if (Boolean(body.originIsMoon) !== Boolean(body.targetIsMoon)) return 5;
 
   return 0;
 }
