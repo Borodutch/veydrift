@@ -30,6 +30,7 @@ import {
   type PlayerQueues,
   type QueueState,
   type ResearchState,
+  type ResourceSnapshotMetadata,
   type Resources,
   type RiftState,
   type RpcLog,
@@ -2176,9 +2177,11 @@ function indexedWalletSettlementPlanetState(
   planet: SettledPlanetEvent | null
 ): SettledPlanetEvent | null {
   if (!planet) return null;
+  const currentPlanet = indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet;
   return {
     ...planet,
-    resourcesAsOfNow: indexedCurrentResourcesForPlanet(indexer, planet, { allowPendingResources: true }) ?? planet.resources
+    resourcesAsOfNow: currentPlanet.resources,
+    resourceSnapshot: resourceSnapshotMetadataForPlanet(planet)
   };
 }
 
@@ -2290,8 +2293,21 @@ function indexedWalletPlanetState(indexer: SettlementIndexer, planet: ManagedPla
     ...planet,
     bodyKind: "planet",
     resourcesAsOfNow: currentPlanet.resources,
+    resourceSnapshot: resourceSnapshotMetadataForPlanet(planet),
     moon: moonSummary,
     tactical: indexedPlanetTacticalSummary(currentPlanet, buildings, ships, defenses, technologyLevels)
+  };
+}
+
+function resourceSnapshotMetadataForPlanet(planet: PlanetState | null): ResourceSnapshotMetadata | null {
+  if (!planet) return null;
+  const resourceEvent = planet as PlanetState & Partial<Pick<SettledPlanetEvent, "blockNumber" | "transactionHash">>;
+  return {
+    planetId: planet.planetId,
+    transactionHash: resourceEvent.transactionHash ?? null,
+    blockNumber: resourceEvent.blockNumber ?? null,
+    lastSettledAt: planet.lastSettledAt ?? null,
+    resources: planet.resources ?? null
   };
 }
 
@@ -2620,6 +2636,7 @@ function indexedInfrastructureState(
       : {}),
     resources: planet && !planetResourcesPending ? planet.resources : null,
     resourcesAsOfNow: currentPlanet?.resources ?? null,
+    resourceSnapshot: planetResourcesPending ? null : resourceSnapshotMetadataForPlanet(planet),
     ...derived,
     technologyLevels,
     buildings,
@@ -2660,6 +2677,7 @@ function indexedShipyardState(
     unavailableReason,
     resources: planet?.resources ?? null,
     resourcesAsOfNow: indexedCurrentResourcesForPlanet(indexer, planet),
+    resourceSnapshot: resourceSnapshotMetadataForPlanet(planet),
     fleetSlots: indexer.fleetSlots(wallet),
     ...(fleetLaunchUnavailableReason
       ? {
@@ -2694,6 +2712,7 @@ function indexedDefenseState(
     unavailableReason,
     resources: planet?.resources ?? null,
     resourcesAsOfNow: indexedCurrentResourcesForPlanet(indexer, planet),
+    resourceSnapshot: resourceSnapshotMetadataForPlanet(planet),
     shipyardLevel: buildings.find((building) => building.id === 5)?.level ?? 0,
     naniteLevel: buildings.find((building) => building.id === 11)?.level ?? 0,
     missileSiloLevel: buildings.find((building) => building.id === 14)?.level ?? 0,
@@ -2725,6 +2744,7 @@ function indexedResearchState(
     unavailableReason,
     resources: planet?.resources ?? null,
     resourcesAsOfNow: indexedCurrentResourcesForPlanet(indexer, planet),
+    resourceSnapshot: resourceSnapshotMetadataForPlanet(planet),
     researchLabLevel: buildings.find((building) => building.id === 6)?.level ?? 0,
     researchNetworkLabLevels: [],
     technologyLevels: indexer.technologyLevels(wallet),

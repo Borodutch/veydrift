@@ -449,6 +449,35 @@ describe("post-transaction refresh reconciliation", () => {
     })).toBe(true);
   });
 
+  test("keeps defense production indexing while the queue is visible but resources are stale", () => {
+    const baseline = resourceSnapshot("7", "0xold", "0x10", { metal: "10000", crystal: "10000", deuterium: "10000" });
+    const stale = startedDefenseProductionSnapshot(baseline);
+
+    expect(isStartedDefenseProductionVisible(stale, {
+      itemId: 0,
+      planetId: "7",
+      quantity: 2,
+      resourceIndexing: {
+        baseline,
+        receiptBlockNumber: "0x20",
+        transactionHash: "0xdefense",
+      },
+    })).toBe(false);
+
+    expect(isStartedDefenseProductionVisible(startedDefenseProductionSnapshot(
+      resourceSnapshot("7", "0xdefense", "0x20", { metal: "9000", crystal: "9500", deuterium: "10000" }),
+    ), {
+      itemId: 0,
+      planetId: "7",
+      quantity: 2,
+      resourceIndexing: {
+        baseline,
+        receiptBlockNumber: "0x20",
+        transactionHash: "0xdefense",
+      },
+    })).toBe(true);
+  });
+
   test("accepts started defense production when the expected item is in the backlog", () => {
     expect(isStartedDefenseProductionVisible(startedDefenseBacklogProductionSnapshot(), {
       itemId: 1,
@@ -524,6 +553,34 @@ describe("post-transaction refresh reconciliation", () => {
       itemId: 1,
       planetId: "7",
       quantity: 2,
+    })).toBe(true);
+  });
+
+  test("keeps ship production indexing while the queue is visible but resources are stale", () => {
+    const baseline = resourceSnapshot("7", "0xold", "0x10", { metal: "10000", crystal: "10000", deuterium: "10000" });
+
+    expect(isStartedShipProductionVisible(startedShipProductionSnapshot(baseline), {
+      itemId: 0,
+      planetId: "7",
+      quantity: 3,
+      resourceIndexing: {
+        baseline,
+        receiptBlockNumber: "0x20",
+        transactionHash: "0xship",
+      },
+    })).toBe(false);
+
+    expect(isStartedShipProductionVisible(startedShipProductionSnapshot(
+      resourceSnapshot("7", "0xship", "0x20", { metal: "4000", crystal: "4000", deuterium: "10000" }),
+    ), {
+      itemId: 0,
+      planetId: "7",
+      quantity: 3,
+      resourceIndexing: {
+        baseline,
+        receiptBlockNumber: "0x20",
+        transactionHash: "0xship",
+      },
     })).toBe(true);
   });
 
@@ -1034,7 +1091,7 @@ function staleDefenseProductionSnapshot(): StartedDefenseProductionSnapshot {
   };
 }
 
-function startedDefenseProductionSnapshot(): StartedDefenseProductionSnapshot {
+function startedDefenseProductionSnapshot(resourceSnapshotMetadata = resourceSnapshot("7", "0xdefense", "0x20", { metal: "1000", crystal: "5000", deuterium: "5000" })): StartedDefenseProductionSnapshot {
   const defenseQueue = {
     active: true,
     kind: "defense" as const,
@@ -1047,6 +1104,7 @@ function startedDefenseProductionSnapshot(): StartedDefenseProductionSnapshot {
   return {
     defense: {
       ...staleDefenseProductionSnapshot().defense,
+      resourceSnapshot: resourceSnapshotMetadata,
       queue: defenseQueue,
     },
     queues: {
@@ -1116,7 +1174,7 @@ function staleShipProductionSnapshot(): StartedShipProductionSnapshot {
   };
 }
 
-function startedShipProductionSnapshot(): StartedShipProductionSnapshot {
+function startedShipProductionSnapshot(resourceSnapshotMetadata = resourceSnapshot("7", "0xship", "0x20", { metal: "1000", crystal: "1000", deuterium: "5000" })): StartedShipProductionSnapshot {
   const shipQueue = {
     active: true,
     kind: "ship" as const,
@@ -1129,6 +1187,7 @@ function startedShipProductionSnapshot(): StartedShipProductionSnapshot {
   return {
     shipyard: {
       ...staleShipProductionSnapshot().shipyard,
+      resourceSnapshot: resourceSnapshotMetadata,
       queue: shipQueue,
     },
     queues: {
@@ -1479,6 +1538,21 @@ function emptyQueues() {
     defense: null,
     ship: null,
     research: null,
+  };
+}
+
+function resourceSnapshot(
+  planetId: string,
+  transactionHash: string,
+  blockNumber: string,
+  resources: { metal: string; crystal: string; deuterium: string },
+) {
+  return {
+    planetId,
+    transactionHash,
+    blockNumber,
+    lastSettledAt: String(1_770_000_000 + Number(BigInt(blockNumber))),
+    resources,
   };
 }
 

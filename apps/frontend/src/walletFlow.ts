@@ -73,9 +73,10 @@ type TransactionRequest = {
   value?: string;
 };
 
-type TransactionReceipt = {
+export type TransactionReceipt = {
   status?: string | number | bigint | null;
   transactionHash?: string;
+  blockNumber?: string | number | bigint | null;
 };
 
 export const TRANSACTION_REVERTED_MESSAGE = "Transaction reverted on-chain. No game state was changed.";
@@ -87,6 +88,14 @@ export type OnChainResources = {
   metal: string;
   crystal: string;
   deuterium: string;
+};
+
+export type ResourceSnapshotMetadata = {
+  planetId?: string | null;
+  transactionHash?: string | null;
+  blockNumber?: string | number | bigint | null;
+  lastSettledAt?: string | null;
+  resources?: OnChainResources | null;
 };
 
 export type OrbitBodyKind = "planet" | "moon";
@@ -151,6 +160,7 @@ export type WalletSettlementResponse = {
     lastSettledAt: string;
     resources: OnChainResources;
     resourcesAsOfNow?: OnChainResources | null;
+    resourceSnapshot?: ResourceSnapshotMetadata | null;
   } | null;
   source?: "contract-state-indexer" | string;
   stale?: boolean;
@@ -165,6 +175,7 @@ export type ManagedPlanetResponse = NonNullable<WalletSettlementResponse["planet
   // `previewResources`). Live consumers should prefer `resourcesAsOfNow` and fall
   // back to `resources` for older backends/warming planets (VEY-KANEO-488).
   resourcesAsOfNow?: OnChainResources;
+  resourceSnapshot?: ResourceSnapshotMetadata | null;
   coordinates: string;
   isHomePlanet: boolean;
   fieldsUsed: number;
@@ -535,6 +546,7 @@ export type ChainShipyardState = {
   }>;
   queue: QueueStateResponse | null;
   resourcesAsOfNow?: OnChainResources | null;
+  resourceSnapshot?: ResourceSnapshotMetadata | null;
 };
 
 export type ChainDefenseState = {
@@ -556,6 +568,7 @@ export type ChainDefenseState = {
   }>;
   queue: QueueStateResponse | null;
   resourcesAsOfNow?: OnChainResources | null;
+  resourceSnapshot?: ResourceSnapshotMetadata | null;
 };
 
 export type ChainInfrastructureState = {
@@ -581,6 +594,7 @@ export type ChainInfrastructureState = {
   // backend-side. The frontend displays/gates on this directly instead of
   // projecting `resources` itself (VEY-KANEO-465).
   resourcesAsOfNow?: OnChainResources | null;
+  resourceSnapshot?: ResourceSnapshotMetadata | null;
   productionPerHour: OnChainResources | null;
   crawlerProduction?: {
     total: number;
@@ -685,6 +699,7 @@ export type ChainResearchState = {
   }>;
   queue: QueueStateResponse | null;
   resourcesAsOfNow?: OnChainResources | null;
+  resourceSnapshot?: ResourceSnapshotMetadata | null;
 };
 
 export type RiftResourceKey = "metal" | "crystal" | "deuterium";

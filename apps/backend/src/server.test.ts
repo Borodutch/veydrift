@@ -5791,10 +5791,18 @@ describe("Veydrift backend", () => {
     // production-accrued balance is exposed separately as `resourcesAsOfNow` (5064).
     expect(planetsBody.planets[0].resources.metal).toBe("5000");
     expect(planetsBody.planets[0].resourcesAsOfNow.metal).toBe("5064");
+    expect(planetsBody.planets[0].resourceSnapshot).toMatchObject({
+      planetId: "7",
+      transactionHash: "0xabc",
+      blockNumber: "123",
+      lastSettledAt: settlementBody.planet.lastSettledAt,
+      resources: { metal: "5000", crystal: "4900", deuterium: "4800" }
+    });
     expect(infrastructureBody.planetId).toBe("7");
     expect(infrastructureBody.planetLastSettledAt).toBe(settlementBody.planet.lastSettledAt);
     expect(infrastructureBody.resources.metal).toBe("5000");
     expect(infrastructureBody.resourcesAsOfNow.metal).toBe("5064");
+    expect(infrastructureBody.resourceSnapshot).toMatchObject(planetsBody.planets[0].resourceSnapshot);
     // Raidable loot reflects ~50% of resources (RAID_PLUNDER_BPS), not the full 5064 (VEY-451).
     expect(infrastructureBody.raidableResources.metal).toBe("2532");
   });

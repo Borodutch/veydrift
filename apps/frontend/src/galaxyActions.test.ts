@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { galaxyActionsForSlot } from "./galaxyActions";
 import { planetDetailGalaxyActions } from "./components/PlanetDetail";
+import { rankingsAttackProtectionForEntry } from "./rankingsAttackProtection";
 import type { Planet } from "./types";
 
 const account = "0x1111111111111111111111111111111111111111";
@@ -177,6 +178,42 @@ describe("galaxyActions", () => {
       enabled: true,
     });
     expect(allyActions.map((action) => action.kind)).not.toContain("deploy");
+  });
+
+  test("blocks Rankings attack actions for alliance allies even without personalized attack protection", () => {
+    const attackProtection = rankingsAttackProtectionForEntry({
+      currentAllianceId: "5",
+      currentWallet: account,
+      entry: {
+        alliance: { allianceId: "5", tag: "ALLY", name: "Allies" },
+        attackProtection: null,
+        wallet: "0x3333333333333333333333333333333333333333",
+      },
+    });
+    const actions = galaxyActionsForSlot({
+      account,
+      attackProtection,
+      homePlanetId: "7",
+      planet: planet({
+        alliance: { allianceId: "5", tag: "ALLY", name: "Allies" },
+        ownerId: "0x3333333333333333333333333333333333333333",
+      }),
+      shipyardState: shipyardState([{ id: 1, count: 3 }]),
+    });
+
+    expect(attackProtection).toMatchObject({
+      allowed: false,
+      blockedReason: "same_alliance",
+      blockedReasonLabel: "Attack blocked: target belongs to your alliance.",
+    });
+    expect(actions.find((action) => action.kind === "defenseHold")).toMatchObject({
+      enabled: true,
+      kind: "defenseHold",
+    });
+    expect(actions.find((action) => action.kind === "attack")).toMatchObject({
+      enabled: false,
+      reason: "Attack blocked: target belongs to your alliance.",
+    });
   });
 
   test("surfaces a disabled, explained Defend on the home/launch planet so it stays discoverable", () => {

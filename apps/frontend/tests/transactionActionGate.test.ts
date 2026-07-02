@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createTransactionActionGate } from "../src/transactionActionGate";
+import { createTransactionActionGate, runWriteTransaction, type WriteTransactionPhase } from "../src/transactionActionGate";
 
 describe("transaction action gate", () => {
   test("prevents rapid duplicate start actions while the wallet path is in flight", async () => {
@@ -95,6 +95,63 @@ describe("transaction action gate", () => {
     await expect(first).resolves.toBe("0xbuilding");
     expect(gate.isRunning()).toBe(false);
     await expect(gate.run("fleet:recall:17", async () => "0xfleet")).resolves.toBe("0xfleet");
+  });
+
+  test("runs write transactions through pending, confirming, confirmed, indexing, and success phases", async () => {
+    const gate = createTransactionActionGate();
+    const phases: WriteTransactionPhase[] = [];
+
+    const completed = await runWriteTransaction(gate, {
+      key: "shipyard:start:1",
+      label: "Ship production",
+      send: async () => "0xship",
+      confirm: async () => ({ transactionHash: "0xship", blockNumber: "0x20" }),
+      waitForIndexed: async () => "indexed",
+      applyIndexedState: async (snapshot) => {
+        expect(snapshot).toBe("indexed");
+      },
+      onStateChange: (state) => {
+        phases.push(state.phase);
+      },
+    });
+
+    expect(completed).toBe(true);
+    expect(phases).toEqual(["pending", "confirming", "confirmed", "indexing", "success", "idle"]);
+  });
+
+  test("keeps other writes blocked until backend indexing and apply callbacks settle", async () => {
+    const gate = createTransactionActionGate();
+    const indexed = deferred<void>();
+    let calls = 0;
+
+    const first = runWriteTransaction(gate, {
+      key: "research:start:4",
+      label: "Research",
+      send: async () => "0xresearch",
+      confirm: async () => ({ transactionHash: "0xresearch", blockNumber: "0x20" }),
+      waitForIndexed: async () => {
+        await indexed.promise;
+      },
+      onStateChange: () => undefined,
+    });
+    const second = runWriteTransaction(gate, {
+      key: "defense:start:1",
+      label: "Defense production",
+      send: async () => {
+        calls += 1;
+        return "0xdefense";
+      },
+      confirm: async () => ({}),
+      onStateChange: () => undefined,
+    });
+
+    await expect(second).resolves.toBe(false);
+    expect(calls).toBe(0);
+    expect(gate.isRunning()).toBe(true);
+
+    indexed.resolve();
+    await expect(first).resolves.toBe(true);
+    expect(gate.isRunning()).toBe(false);
   });
 });
 
