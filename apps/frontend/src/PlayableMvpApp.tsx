@@ -4080,6 +4080,7 @@ export function PlayableMvpApp({
     return runtimeConfig.status === "ready" ? burningChickenConfig(runtimeConfig.config) : undefined;
   }, [runtimeConfig]);
   const gameActionInputsAvailable = gameActionsAvailableForBody(activeBodyKind, Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId)));
+  const missionActionInputsAvailable = Boolean(provider && account && gameContract && (activePlanetId ?? onChainSettlement?.homePlanetId));
   const allianceActionInputsAvailable = Boolean(provider && account && allianceContract);
   const moonActionInputsAvailable = Boolean(provider && account && moonContract && (activePlanetId ?? onChainSettlement?.homePlanetId));
 
@@ -4088,13 +4089,17 @@ export function PlayableMvpApp({
     setBuildingAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
     setDefenseAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
     setShipyardAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
-    setGalaxyAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
     setResearchAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
     setRiftAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
-    setMissionAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
     setPlanetManagementAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
     setPlanetRenameAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
   }, [gameActionInputsAvailable, transactionActionPending]);
+
+  useEffect(() => {
+    if (!missionActionInputsAvailable) return;
+    setGalaxyAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
+    setMissionAction((current) => clearRecoveredWalletContractUnavailableAction(current, true));
+  }, [missionActionInputsAvailable, transactionActionPending]);
 
   useEffect(() => {
     if (!allianceActionInputsAvailable) return;
@@ -7043,7 +7048,7 @@ export function PlayableMvpApp({
     setGalaxyAction({ status: "idle" });
     setPendingGalaxyMission({
       action,
-      bodySelectionDefaults: { targetIsMoon: true },
+      bodySelectionDefaults: { originIsMoon: true, targetIsMoon: false },
       coords: {
         galaxy: managedPlanet.galaxy,
         system: managedPlanet.system,
@@ -7982,7 +7987,9 @@ export function PlayableMvpApp({
   const battleReportsShareUrl = typeof window === "undefined"
     ? ""
     : `${window.location.origin}${buildInspectPath({ kind: "page", page: "battle-reports" })}`;
-  const gameTransactionInputsAvailable = gameActionsAvailableForBody(activeBodyKind, Boolean(provider && account && gameContract));
+  const gameContractTransactionInputsAvailable = Boolean(provider && account && gameContract);
+  const gameTransactionInputsAvailable = gameActionsAvailableForBody(activeBodyKind, gameContractTransactionInputsAvailable);
+  const missionTransactionInputsAvailable = gameContractTransactionInputsAvailable;
   const allianceTransactionInputsAvailable = Boolean(provider && account && allianceContract);
   const moonTransactionInputsAvailable = Boolean(provider && account && moonContract);
   const chickenBurnTransactionInputsAvailable = Boolean(provider && account && chickenBurnConfig);
@@ -8002,6 +8009,12 @@ export function PlayableMvpApp({
     transactionPending: transactionActionPending,
     unavailableReason: "Wallet or game contract unavailable",
   });
+  const missionTransactionUnavailableReason = transactionUnavailableReasonFor({
+    activeActionLabel: pendingActionLabel(galaxyAction, missionAction) ?? writeTransactionState.label,
+    inputsAvailable: missionTransactionInputsAvailable,
+    transactionPending: transactionActionPending,
+    unavailableReason: "Wallet or game contract unavailable",
+  });
 	  const allianceTransactionUnavailableReason = transactionUnavailableReasonFor({
 	    activeActionLabel: pendingActionLabel(allianceAction) ?? writeTransactionState.label,
     inputsAvailable: allianceTransactionInputsAvailable,
@@ -8015,13 +8028,14 @@ export function PlayableMvpApp({
     unavailableReason: "Wallet or moon contract unavailable.",
   });
   const canSubmitGameTransaction = gameTransactionInputsAvailable && !transactionActionPending;
+  const canSubmitMissionTransaction = missionTransactionInputsAvailable && !transactionActionPending;
   const canSubmitAllianceTransaction = allianceTransactionInputsAvailable && !transactionActionPending;
   const canSubmitMoonTransaction = moonTransactionInputsAvailable && !transactionActionPending;
   const canSubmitChickenBurnTransaction = chickenBurnTransactionInputsAvailable && !transactionActionPending;
   const canSubmitProfileMutation = Boolean(provider && account && apiBaseUrl) && !transactionActionPending;
   const effectiveConnectWallet = onConnectWallet ?? (miniAppMode ? connectMiniAppWallet : undefined);
   const walletRecoveryReadError = walletRecoveryActionMessage(onChainError) ? onChainError : undefined;
-  const missionLaunchBlocker = gameTransactionUnavailableReason ?? missionLaunchStateBlocker;
+  const missionLaunchBlocker = missionTransactionUnavailableReason ?? missionLaunchStateBlocker;
   const activePlanetSections = planetSectionAccessForPlanet(planetSectionStore, activePlanetId, {
     settlementState: () => refreshOnChainState(),
     queuesState: () => refreshOnChainState(),
@@ -8075,7 +8089,7 @@ export function PlayableMvpApp({
       return (
         <MissionDetailPage
           actionState={missionAction}
-          canTransact={canSubmitGameTransaction}
+          canTransact={canSubmitMissionTransaction}
           detail={missionDetail}
           error={missionDetailError}
           fleetVisibility={displayFleetVisibility}
@@ -8224,7 +8238,7 @@ export function PlayableMvpApp({
           onSelectMoon={handleSelectMoon}
           onSelectPlanet={handleSelectPlanet}
           system={galaxyNav.system}
-          transactionUnavailableReason={gameTransactionUnavailableReason}
+          transactionUnavailableReason={missionTransactionUnavailableReason}
           watchedPlanetIds={watchedPlanets?.watchedPlanetIds ?? []}
           watchBusyPlanetId={watchBusyPlanetId}
         />
@@ -8246,7 +8260,7 @@ export function PlayableMvpApp({
           onBack={handlePlanetDetailBack}
           onSelectMoon={handleSelectMoon}
           shipyardState={missionActionShipyardState}
-          transactionUnavailableReason={gameTransactionUnavailableReason}
+          transactionUnavailableReason={missionTransactionUnavailableReason}
         />
       );
     }
@@ -8264,7 +8278,7 @@ export function PlayableMvpApp({
           onAction={handleGalaxyAction}
           onBack={handlePlanetDetailBack}
           shipyardState={missionActionShipyardState}
-          transactionUnavailableReason={gameTransactionUnavailableReason}
+          transactionUnavailableReason={missionTransactionUnavailableReason}
         />
       );
     }
@@ -8341,7 +8355,7 @@ export function PlayableMvpApp({
         <MissionControlPage
           actionState={missionAction}
           allActiveMissions={displayAllActiveMissions}
-          canTransact={canSubmitGameTransaction}
+          canTransact={canSubmitMissionTransaction}
           fleetVisibility={displayFleetVisibility}
           globalMissionArchive={globalMissionArchive}
           globalMissionArchiveError={globalMissionArchiveSection.status.error ?? globalMissionArchiveError}
@@ -8369,7 +8383,7 @@ export function PlayableMvpApp({
           planetArchetypesByCoordinate={missionPlanetArchetypesByCoordinate}
           reportMissionId={missionReportId ?? undefined}
           reportUrlForMission={missionReportUrlForMission}
-          transactionUnavailableReason={gameTransactionUnavailableReason}
+          transactionUnavailableReason={missionTransactionUnavailableReason}
           walletPlanets={walletPlanets}
         />
       );

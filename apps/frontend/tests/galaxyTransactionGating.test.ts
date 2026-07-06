@@ -8,8 +8,8 @@ const inspectSource = await Bun.file(new URL("../src/components/InspectPages.tsx
 describe("Galaxy transaction gating", () => {
   test("threads shared transaction sync copy into mission entry and compose controls", () => {
     expect(playableSource).toContain("const missionLaunchStateBlocker = missionLaunchSubmitBlocker({");
-    expect(playableSource).toContain("const missionLaunchBlocker = gameTransactionUnavailableReason ?? missionLaunchStateBlocker;");
-    expect(playableSource).toContain("transactionUnavailableReason={gameTransactionUnavailableReason}");
+    expect(playableSource).toContain("const missionLaunchBlocker = missionTransactionUnavailableReason ?? missionLaunchStateBlocker;");
+    expect(playableSource).toContain("transactionUnavailableReason={missionTransactionUnavailableReason}");
     expect(galaxySource).toContain("transactionUnavailableReason?: string | undefined;");
     expect(galaxySource).toContain("{transactionUnavailableReason ? (");
     expect(galaxySource).toContain('busy={actionState.status === "pending" || Boolean(transactionUnavailableReason)}');

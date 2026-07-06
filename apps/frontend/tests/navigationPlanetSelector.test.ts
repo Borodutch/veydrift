@@ -89,10 +89,11 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain('if (page === "moon")');
   });
 
-  test("moon overview actions open moon-targeted mission flows", () => {
+  test("moon overview actions open moon-origin parent-planet mission flows", () => {
     expect(playableSource).toContain("moonOverviewActions");
-    expect(playableSource).toContain("bodySelectionDefaults: { targetIsMoon: true }");
+    expect(playableSource).toContain("bodySelectionDefaults: { originIsMoon: true, targetIsMoon: false }");
     expect(playableSource).toContain("defaultTargetIsMoon: pendingGalaxyMission.bodySelectionDefaults?.targetIsMoon");
+    expect(playableSource).toContain("defaultOriginIsMoon: pendingGalaxyMission.bodySelectionDefaults?.originIsMoon");
     expect(playableSource).toContain("Moon defense stationing is not available in the current mission contract.");
     expect(missionCreationSource).toContain("defaultTargetIsMoon?: boolean");
     expect(missionCreationSource).toContain("Boolean(bodySelection?.defaultTargetIsMoon) || (action.mode === \"mission\" && action.defaultTargetIsMoon === true)");
