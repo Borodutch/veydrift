@@ -625,16 +625,18 @@ export function missionLifecycleActions({
     // reverts, so the button is shown but disabled with a clear reason rather than offering a tx that
     // would fail (VEY-KANEO-424).
     const recallable = isFleetRecallable(mission, now);
-    actions.push({
-      enabled: canTransact && recallable,
-      kind: "recall",
-      label: "Recall fleet",
-      reason: recallable
-        ? walletReason(canTransact, transactionUnavailableReason)
-        : mission.missionType === "DefenseHold"
-          ? "The stationed defense hold has ended."
-          : "The recall cutoff has passed (within 60s of arrival).",
-    });
+    if (!(mission.missionType === "Deploy" && mission.targetIsMoon === true && due)) {
+      actions.push({
+        enabled: canTransact && recallable,
+        kind: "recall",
+        label: "Recall fleet",
+        reason: recallable
+          ? walletReason(canTransact, transactionUnavailableReason)
+          : mission.missionType === "DefenseHold"
+            ? "The stationed defense hold has ended."
+            : "The recall cutoff has passed (within 60s of arrival).",
+      });
+    }
   }
 
   // VEY-KANEO-465: fleet returns reconcile automatically — the backend mission
