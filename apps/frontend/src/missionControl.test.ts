@@ -1061,6 +1061,80 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Not recallable");
   });
 
+  test("VEY-KANEO-683: Mission Control hides Recall on arrived Deploy-to-moon missions", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const arrivedDeployToMoon: FleetMissionSummary = {
+      ...mission("683", "Deploy", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 5_000),
+      targetIsMoon: true,
+    };
+
+    const text = collectText(MissionControlPage(missionControlProps(now, {
+      outgoing: [arrivedDeployToMoon],
+    }))).join(" ");
+
+    expect(text).toContain("Deploy");
+    expect(text).not.toContain("Recall fleet");
+    expect(text).not.toContain("The recall cutoff has passed");
+    expect(text).toContain("Open");
+  });
+
+  test("VEY-KANEO-683: Mission Detail hides Available Orders for arrived Deploy-to-moon missions", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: {
+        ...mission("42", "Deploy", "Outbound", "0x1111111111111111111111111111111111111111", "7", "9", now - 5_000),
+        targetIsMoon: true,
+      },
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).not.toContain("Available Orders");
+    expect(text).not.toContain("Recall fleet");
+    expect(text).not.toContain("The recall cutoff has passed");
+  });
+
+  test("VEY-KANEO-683: terminal Deploy-to-moon detail hides Recall even with a stored recall cost", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: {
+        ...mission("42", "Deploy", "Resolved", "0x1111111111111111111111111111111111111111", "10", "10", now - 300_000),
+        originIsMoon: false,
+        recallCost: "1",
+        targetIsMoon: true,
+      },
+      battleReport: null,
+    }))).join(" ");
+
+    expect(text).not.toContain("Available Orders");
+    expect(text).not.toContain("Recall fleet");
+    expect(text).not.toContain("Recall cost");
+    expect(text).not.toContain("1 deuterium");
+  });
+
+  test("VEY-KANEO-683: terminal Deploy-to-moon archive cards keep only the Open action", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const resolvedDeployToMoon: FleetMissionSummary = {
+      ...mission("11921", "Deploy", "Resolved", "0x1111111111111111111111111111111111111111", "10", "10", now - 300_000),
+      originIsMoon: false,
+      recallCost: "1",
+      targetIsMoon: true,
+    };
+
+    const props = missionControlProps(now, {});
+    const text = collectText(MissionControlPage({
+      ...props,
+      fleetVisibility: {
+        ...props.fleetVisibility!,
+        completedMissions: [resolvedDeployToMoon],
+      },
+    })).join(" ");
+
+    expect(text).toContain("Deploy");
+    expect(text).toContain("Open");
+    expect(text).not.toContain("Recall fleet");
+    expect(text).not.toContain("Recall cost");
+  });
+
   test("renders the round-by-round block only when indexed round snapshots exist", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const text = collectText(MissionDetailPage({
