@@ -222,7 +222,7 @@ describe("Playable MVP app display helpers", () => {
     });
   });
 
-  test("uses moon body resources and blocks planet game actions while a moon is selected", () => {
+  test("uses moon body resources and keeps planet-only game actions blocked while moon missions can launch", () => {
     const wallet = "0x2222222222222222222222222222222222222222";
     const planet = {
       ...indexedPlanet(wallet),
@@ -274,6 +274,10 @@ describe("Playable MVP app display helpers", () => {
     });
     expect(gameActionsAvailableForBody("moon", true)).toBe(false);
     expect(gameActionsAvailableForBody("planet", true)).toBe(true);
+    expect(playableMvpSource).toContain("const missionTransactionInputsAvailable = gameContractTransactionInputsAvailable;");
+    expect(playableMvpSource).toContain("const missionLaunchBlocker = missionTransactionUnavailableReason ?? missionLaunchStateBlocker;");
+    expect(playableMvpSource).toContain("canTransact={canSubmitMissionTransaction}");
+    expect(playableMvpSource).toContain("transactionUnavailableReason={missionTransactionUnavailableReason}");
   });
 
   test("scopes production queues to the newly selected planet without carrying old queues", () => {
