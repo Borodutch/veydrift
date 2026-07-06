@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
@@ -25,7 +26,7 @@ interface IVeydriftAttackProtectionAllianceSystem {
 }
 
 /// @notice Shared storage, ABI structs, events, and owner controls for VeydriftGame modules.
-abstract contract VeydriftGameStorage {
+abstract contract VeydriftGameStorage is Initializable {
     uint256 public constant DEFAULT_START_PRICE = 0.05 ether;
     uint8 public constant MAX_BUILDING_ID = uint8(type(Building).max);
     uint8 public constant MAX_DEFENSE_ID = uint8(type(Defense).max);
@@ -309,6 +310,7 @@ abstract contract VeydriftGameStorage {
     mapping(uint256 defenderPlanetId => mapping(uint256 missionId => uint256 indexPlusOne)) internal
         _stationedDefenseMissionIndex;
     mapping(uint256 missionId => uint64 holdUntil) internal _defenseHoldUntil;
+    address internal _migrationSettlement;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -668,6 +670,15 @@ abstract contract VeydriftGameStorage {
     event FeesWithdrawn(address indexed to, uint256 amount);
 
     constructor(address admin) {
+        _initializeGameStorage(admin);
+        _disableInitializers();
+    }
+
+    function __VeydriftGameStorage_init(address admin) internal onlyInitializing {
+        _initializeGameStorage(admin);
+    }
+
+    function _initializeGameStorage(address admin) private {
         _owner = admin;
         startPrice = DEFAULT_START_PRICE;
         nextPlanetId = 1;

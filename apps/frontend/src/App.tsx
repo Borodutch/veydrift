@@ -8,6 +8,10 @@ export function App() {
     return <DocsApp />;
   }
 
+  if (typeof window !== "undefined" && window.location.pathname.startsWith("/play")) {
+    return <PlayableMvpApp />;
+  }
+
   const surface = import.meta.env.MODE === "settlement" || import.meta.env.MODE === "playable"
     ? import.meta.env.MODE
     : import.meta.env.VITE_VEYDRIFT_SURFACE;

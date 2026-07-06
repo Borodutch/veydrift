@@ -16,6 +16,7 @@ import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {Resource} from "../src/libraries/VeydriftTypes.sol";
+import {VeydriftSettlement} from "../src/VeydriftSettlement.sol";
 import {
     VeydriftCrystal,
     VeydriftDeuterium,
@@ -151,6 +152,7 @@ contract VeydriftResourceTokenTest is Test {
 
         (
             address gameAddress,
+            address settlementAddress,
             address allianceSystemAddress,
             address moonSystemAddress,
             address randomnessEngineAddress,
@@ -163,12 +165,16 @@ contract VeydriftResourceTokenTest is Test {
         VeydriftGame.Resources memory available = deployedGame.resourceReserveAvailable();
 
         assertEq(deployedGame.owner(), deployer);
+        assertEq(VeydriftSettlement(settlementAddress).owner(), deployer);
+        assertTrue(settlementAddress.code.length > 0);
         assertTrue(allianceSystemAddress.code.length > 0);
         assertTrue(moonSystemAddress.code.length > 0);
         assertTrue(randomnessEngineAddress.code.length > 0);
         assertEq(deployedGame.resourceToken(Resource.Metal), metalToken);
         assertEq(deployedGame.resourceToken(Resource.Crystal), crystalToken);
         assertEq(deployedGame.resourceToken(Resource.Deuterium), deuteriumToken);
+        _assertErc1967Proxy(gameAddress);
+        _assertErc1967Proxy(settlementAddress);
         _assertErc1967Proxy(allianceSystemAddress);
         _assertErc1967Proxy(moonSystemAddress);
         _assertErc1967Proxy(randomnessEngineAddress);
@@ -208,6 +214,7 @@ contract VeydriftResourceTokenTest is Test {
 
         (
             address gameAddress,
+            address settlementAddress,
             address allianceSystemAddress,
             address moonSystemAddress,
             address randomnessEngineAddress,
@@ -217,9 +224,12 @@ contract VeydriftResourceTokenTest is Test {
         ) = new Deploy().run();
 
         assertEq(VeydriftGame(gameAddress).owner(), deployer);
+        assertEq(VeydriftSettlement(settlementAddress).owner(), deployer);
         assertTrue(allianceSystemAddress.code.length > 0);
         assertTrue(moonSystemAddress.code.length > 0);
         assertTrue(randomnessEngineAddress.code.length > 0);
+        _assertErc1967Proxy(gameAddress);
+        _assertErc1967Proxy(settlementAddress);
         _assertErc1967Proxy(allianceSystemAddress);
         _assertErc1967Proxy(moonSystemAddress);
         _assertErc1967Proxy(randomnessEngineAddress);

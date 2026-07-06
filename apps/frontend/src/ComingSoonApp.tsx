@@ -15,6 +15,7 @@ import { TELEGRAM_SUPPORT_URL } from "./supportLinks";
 import { playableApiUrl } from "./runtimeConfig";
 
 const alphaUrl = "https://test.veydrift.com";
+const playUrl = "/play";
 const faucetUrl = "https://docs.base.org/base-chain/network-information/network-faucets";
 export const landingFeedRefreshMs = 60_000;
 export const landingAllianceRefreshMs = 300_000;
@@ -98,6 +99,16 @@ type LandingFeedItem = {
 
 type LandingLoadStatus = "empty" | "loading" | "offline" | "ready";
 
+type LandingLaunchCta = {
+  eyebrow: string;
+  primaryHref: string;
+  primaryLabel: string;
+  secondaryHref: string;
+  secondaryLabel: string;
+  supportCopy: string;
+  showFaucet: boolean;
+};
+
 type LandingMissionPlanet = {
   coordinates?: string;
   galaxy?: number;
@@ -154,6 +165,8 @@ function useLandingScrollParallax() {
 }
 
 function HeroSection() {
+  const launch = landingLaunchCtaForLocation();
+
   return (
     <section className="landing-hero relative min-h-[92svh] overflow-hidden">
       <img
@@ -165,7 +178,7 @@ function HeroSection() {
 
       <div className="relative z-10 mx-auto flex min-h-[92svh] w-full max-w-7xl flex-col justify-end px-5 pb-14 pt-24 sm:px-8 lg:px-10">
         <div className="max-w-4xl pb-[7svh]">
-          <p className="mb-4 text-sm font-semibold text-signal">Alpha test live on Base Sepolia</p>
+          <p className="mb-4 text-sm font-semibold text-signal">{launch.eyebrow}</p>
           <h1 className="max-w-4xl text-5xl font-semibold leading-none text-white sm:text-7xl lg:text-8xl">
             Veydrift
           </h1>
@@ -176,22 +189,21 @@ function HeroSection() {
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
             <a
               className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-signal/30 bg-signal px-5 py-3 text-sm font-semibold text-[#031014] shadow-[0_0_32px_rgba(128,241,255,0.22)] transition hover:bg-cyan-100"
-              href={alphaUrl}
+              href={launch.primaryHref}
             >
-              Join the alpha test
+              {launch.primaryLabel}
               <ArrowRight className="h-4 w-4" />
             </a>
             <a
               className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-white/[0.055] bg-white/8 px-5 py-3 text-sm font-semibold text-slate-100 backdrop-blur transition hover:bg-white/[0.12]"
-              href="#how-it-works"
+              href={launch.secondaryHref}
             >
-              How it works
+              {launch.secondaryLabel}
               <Orbit className="h-4 w-4" />
             </a>
           </div>
           <p className="mt-5 max-w-2xl text-sm leading-6 text-slate-300">
-            The current alpha runs on testnet. When mainnet launches, testnet resources and progress
-            are planned to migrate over, so alpha testers keep what they earn.
+            {launch.supportCopy}
           </p>
         </div>
       </div>
@@ -352,6 +364,8 @@ function FeedSection() {
 }
 
 function AlphaSection() {
+  const launch = landingLaunchCtaForLocation();
+
   return (
     <section className="relative overflow-hidden bg-[#0a0d13] px-5 py-24 sm:px-8 sm:py-28 lg:px-10">
       <img
@@ -369,9 +383,9 @@ function AlphaSection() {
         <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
           <a
             className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-signal/30 bg-signal px-5 py-3 text-sm font-semibold text-[#031014] shadow-[0_0_32px_rgba(128,241,255,0.2)] transition hover:bg-cyan-100"
-            href={alphaUrl}
+            href={launch.primaryHref}
           >
-            Join the alpha test
+            {launch.primaryLabel}
             <ArrowRight className="h-4 w-4" />
           </a>
           <a
@@ -383,17 +397,55 @@ function AlphaSection() {
             Telegram testers
             <ExternalLink className="h-4 w-4" />
           </a>
-          <a
-            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.07] px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/[0.12]"
-            href={faucetUrl}
-          >
-            Base Sepolia faucet
-            <ExternalLink className="h-4 w-4" />
-          </a>
+          {launch.showFaucet ? (
+            <a
+              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.07] px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/[0.12]"
+              href={faucetUrl}
+            >
+              Base Sepolia faucet
+              <ExternalLink className="h-4 w-4" />
+            </a>
+          ) : (
+            <a
+              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.07] px-5 py-3 text-sm font-semibold text-slate-100 transition hover:bg-white/[0.12]"
+              href={alphaUrl}
+            >
+              Testnet alpha
+              <ExternalLink className="h-4 w-4" />
+            </a>
+          )}
         </div>
       </div>
     </section>
   );
+}
+
+export function landingLaunchCtaForLocation(
+  location: Pick<Location, "hostname"> | undefined = typeof window === "undefined" ? undefined : window.location,
+): LandingLaunchCta {
+  const productionHost = location?.hostname === "veydrift.com" || location?.hostname === "www.veydrift.com";
+
+  if (productionHost) {
+    return {
+      eyebrow: "Mainnet live on Base",
+      primaryHref: playUrl,
+      primaryLabel: "Play",
+      secondaryHref: alphaUrl,
+      secondaryLabel: "Testnet alpha",
+      supportCopy: "The testnet alpha remains available while migration is prepared; mainnet play uses Base mainnet contracts on veydrift.com.",
+      showFaucet: false,
+    };
+  }
+
+  return {
+    eyebrow: "Alpha test live on Base Sepolia",
+    primaryHref: alphaUrl,
+    primaryLabel: "Join the alpha test",
+    secondaryHref: "#how-it-works",
+    secondaryLabel: "How it works",
+    supportCopy: "The current alpha runs on testnet. When mainnet launches, testnet resources and progress are planned to migrate over, so alpha testers keep what they earn.",
+    showFaucet: true,
+  };
 }
 
 function AlliancesSection() {

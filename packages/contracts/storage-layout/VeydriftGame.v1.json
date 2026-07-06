@@ -293,6 +293,12 @@
       "offset": 0,
       "slot": "50",
       "type": "mapping(uint256 => uint64)"
+    },
+    {
+      "label": "_migrationSettlement",
+      "offset": 0,
+      "slot": "51",
+      "type": "address"
     }
   ],
   "structs": {

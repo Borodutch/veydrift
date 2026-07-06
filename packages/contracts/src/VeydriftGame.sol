@@ -18,6 +18,8 @@ contract VeydriftGame is VeydriftResourceReserves {
     address private immutable _colonizationModule;
     address private immutable _defenseHoldModule;
 
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
     constructor(
         address admin,
         address gameplayModule,
@@ -38,48 +40,20 @@ contract VeydriftGame is VeydriftResourceReserves {
         _defenseHoldModule = defenseHoldModule;
     }
 
+    function initialize(address admin) external initializer {
+        if (admin == address(0)) revert Unauthorized(admin);
+        __VeydriftGameStorage_init(admin);
+    }
+
+    function transferOwnership(address nextOwner) external onlyOwner {
+        if (nextOwner == address(0)) revert Unauthorized(nextOwner);
+        address oldOwner = _owner;
+        _owner = nextOwner;
+        emit OwnershipTransferred(oldOwner, nextOwner);
+    }
+
     function startPlanet() external payable returns (uint256 planetId) {
         planetId = _startPlanet(msg.sender, msg.value);
-    }
-
-    function settleFirstPlanet() external payable returns (FirstPlanet memory settledPlanet) {
-        uint256 planetId = _startPlanet(msg.sender, msg.value);
-        return _firstPlanetFrom(planetId);
-    }
-
-    function hasFirstPlanet(address player) external view returns (bool) {
-        return homePlanetOf[player] != 0;
-    }
-
-    function firstPlanetOf(address player)
-        external
-        view
-        returns (FirstPlanet memory settledPlanet)
-    {
-        uint256 planetId = homePlanetOf[player];
-        if (planetId == 0) revert NoFirstPlanet(player);
-        return _firstPlanetFrom(planetId);
-    }
-
-    function previewFirstPlanet(address player)
-        external
-        view
-        returns (FirstPlanet memory planetPreview)
-    {
-        uint256 planetId = homePlanetOf[player];
-        if (planetId != 0) return _firstPlanetFrom(planetId);
-
-        (uint16 galaxy, uint16 system, uint8 position, uint16 fields, int16 temperature) =
-            _previewFirstPlanet(player);
-        return FirstPlanet({
-            galaxy: galaxy,
-            system: system,
-            position: position,
-            fields: fields,
-            temperature: temperature,
-            settledAt: 0,
-            settledBlock: 0
-        });
     }
 
     function settlePlanet(uint256 planetId) external {
@@ -199,6 +173,40 @@ contract VeydriftGame is VeydriftResourceReserves {
         address oldRandomnessEngine = _randomnessEngine;
         _randomnessEngine = nextRandomnessEngine;
         emit RandomnessEngineUpdated(oldRandomnessEngine, nextRandomnessEngine);
+    }
+
+    function setMigrationSettlement(address nextMigrationSettlement) external onlyOwner {
+        _migrationSettlement = nextMigrationSettlement;
+    }
+
+    function reserveMigrationCoordinates(
+        uint16[] calldata galaxies,
+        uint16[] calldata systems,
+        uint8[] calldata positions
+    ) external {
+        if (msg.sender != _owner && msg.sender != _migrationSettlement) {
+            revert Unauthorized(msg.sender);
+        }
+        uint256 count = galaxies.length;
+        if (systems.length != count || positions.length != count) revert InvalidCoordinates();
+        for (uint256 i = 0; i < count; i++) {
+            occupiedCoordinates[coordinateKey(galaxies[i], systems[i], positions[i])] = true;
+        }
+    }
+
+    function startReservedPlanet(
+        address player,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position,
+        uint16 fields,
+        int16 temperature
+    ) external payable returns (uint256 planetId) {
+        if (msg.sender != _migrationSettlement) revert Unauthorized(msg.sender);
+        if (!occupiedCoordinates[coordinateKey(galaxy, system, position)]) {
+            revert UnpopulatedCoordinates();
+        }
+        return _startPlanetAt(player, msg.value, galaxy, system, position, fields, temperature);
     }
 
     /// @dev UNUSED / DORMANT: SpaceDock is never set on the live deployment, so `_spaceDockSystem`
@@ -646,6 +654,21 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _startPlanet(address player, uint256 payment) private returns (uint256 planetId) {
+        (uint16 galaxy, uint16 system, uint8 position, uint16 fields, int16 temperature) =
+            _previewFirstPlanet(player);
+        occupiedCoordinates[coordinateKey(galaxy, system, position)] = true;
+        return _startPlanetAt(player, payment, galaxy, system, position, fields, temperature);
+    }
+
+    function _startPlanetAt(
+        address player,
+        uint256 payment,
+        uint16 galaxy,
+        uint16 system,
+        uint8 position,
+        uint16 fields,
+        int16 temperature
+    ) private returns (uint256 planetId) {
         if (homePlanetOf[player] != 0) revert AlreadyStarted();
         if (payment != startPrice) revert BadStartPayment();
         _touchPlayer(player);
@@ -654,9 +677,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         _increaseInternalResources(startingResources);
 
         planetId = nextPlanetId++;
-        (uint16 galaxy, uint16 system, uint8 position, uint16 fields, int16 temperature) =
-            _previewFirstPlanet(player);
-        occupiedCoordinates[coordinateKey(galaxy, system, position)] = true;
 
         (uint16 metalMultiplier, uint16 crystalMultiplier, uint16 deuteriumMultiplier) =
             VeydriftFormulas.planetMultipliers(temperature, fields);
@@ -711,19 +731,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         if (ship == Ship.Reaper) return ships.reaper;
         if (ship == Ship.Pathfinder) return ships.pathfinder;
         return 0;
-    }
-
-    function _firstPlanetFrom(uint256 planetId) private view returns (FirstPlanet memory) {
-        Planet storage planetRef = _planets[planetId];
-        return FirstPlanet({
-            galaxy: planetRef.galaxy,
-            system: planetRef.system,
-            position: planetRef.position,
-            fields: planetRef.fields,
-            temperature: planetRef.temperature,
-            settledAt: planetRef.lastSettledAt,
-            settledBlock: 0
-        });
     }
 
     function _previewFirstPlanet(address player)

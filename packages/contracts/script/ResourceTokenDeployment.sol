@@ -18,11 +18,20 @@ abstract contract ResourceTokenDeployment is Script {
         internal
         returns (address metalToken, address crystalToken, address deuteriumToken)
     {
+        return _deployResourceTokens(gameAddress, admin, admin, admin);
+    }
+
+    function _deployResourceTokens(
+        address gameAddress,
+        address metalAdmin,
+        address crystalAdmin,
+        address deuteriumAdmin
+    ) internal returns (address metalToken, address crystalToken, address deuteriumToken) {
         require(gameAddress != address(0), "GAME_ADDRESS_REQUIRED");
 
-        metalToken = _deployMetal(admin, gameAddress);
-        crystalToken = _deployCrystal(admin, gameAddress);
-        deuteriumToken = _deployDeuterium(admin, gameAddress);
+        metalToken = _deployMetal(metalAdmin, gameAddress);
+        crystalToken = _deployCrystal(crystalAdmin, gameAddress);
+        deuteriumToken = _deployDeuterium(deuteriumAdmin, gameAddress);
         _verifyInitialReserves(gameAddress, metalToken, crystalToken, deuteriumToken);
     }
 

@@ -137,6 +137,7 @@ type RuntimeConfig = {
     chickenBurnConfigured: boolean;
     gameConfigured: boolean;
     highscoresEndpoint: boolean;
+    migrationConfigured: boolean;
     moonConfigured: boolean;
     randomnessConfigured: boolean;
     researchEndpoint: boolean;
@@ -145,6 +146,7 @@ type RuntimeConfig = {
   };
   gameContractAddress: string | null;
   graphqlUrl: string;
+  migrationContractAddress: string | null;
   moonContractAddress: string | null;
   network: string;
   randomnessEngineAddress: string | null;
@@ -3360,6 +3362,7 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
     process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS ??
     process.env.VEYDRIFT_CONTRACT_ADDRESS ??
     null;
+  const migrationContractAddress = process.env.VEYDRIFT_MIGRATION_CONTRACT_ADDRESS ?? null;
   const moonContractAddress = process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS ?? null;
   const randomnessEngineAddress = process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS ?? null;
   const allianceContractAddress = process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS ?? null;
@@ -3396,6 +3399,7 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
       ),
       gameConfigured: Boolean(gameContractAddress),
       highscoresEndpoint: true,
+      migrationConfigured: Boolean(migrationContractAddress),
       moonConfigured: Boolean(moonContractAddress),
       randomnessConfigured: Boolean(randomnessEngineAddress),
       researchEndpoint: true,
@@ -3408,6 +3412,7 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
     },
     gameContractAddress,
     graphqlUrl,
+    migrationContractAddress,
     moonContractAddress,
     network: process.env.VEYDRIFT_NETWORK_NAME ?? "Base Sepolia",
     randomnessEngineAddress,

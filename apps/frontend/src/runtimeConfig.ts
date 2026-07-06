@@ -14,6 +14,7 @@ export type RuntimeConfig = {
     chickenBurnConfigured?: boolean;
     gameConfigured: boolean;
     highscoresEndpoint: boolean;
+    migrationConfigured?: boolean;
     moonConfigured: boolean;
     randomnessConfigured: boolean;
     researchEndpoint: boolean;
@@ -22,6 +23,7 @@ export type RuntimeConfig = {
   };
   gameContractAddress: string | null;
   graphqlUrl: string;
+  migrationContractAddress?: string | null;
   moonContractAddress: string | null;
   network: string;
   resourceTokenAddresses: {
@@ -37,12 +39,20 @@ export type RuntimeConfigState =
   | { status: "ready"; config: RuntimeConfig }
   | { status: "error" };
 
-export const defaultPlayableApiUrl = "https://api-test.veydrift.com";
+export const productionPlayableApiUrl = "https://api.veydrift.com";
+export const testPlayableApiUrl = "https://api-test.veydrift.com";
+export const defaultPlayableApiUrl = testPlayableApiUrl;
 export const burningChickenPlanetBurnSelector = "0xe1775196";
 
-export function resolvePlayableApiUrl(value: string | undefined): string {
+export function defaultPlayableApiUrlForLocation(location: Pick<Location, "hostname"> | undefined = typeof window === "undefined" ? undefined : window.location): string {
+  return location?.hostname === "veydrift.com" || location?.hostname === "www.veydrift.com"
+    ? productionPlayableApiUrl
+    : testPlayableApiUrl;
+}
+
+export function resolvePlayableApiUrl(value: string | undefined, location?: Pick<Location, "hostname">): string {
   const trimmed = value?.trim();
-  return trimmed ? trimmed.replace(/\/+$/, "") : defaultPlayableApiUrl;
+  return trimmed ? trimmed.replace(/\/+$/, "") : defaultPlayableApiUrlForLocation(location);
 }
 
 export const playableApiUrl = resolvePlayableApiUrl(import.meta.env.VITE_VEYDRIFT_API_URL);

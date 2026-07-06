@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
@@ -16,6 +17,7 @@ import {
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
+import {VeydriftMigrationSettlement} from "../src/VeydriftMigrationSettlement.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {
@@ -331,13 +333,11 @@ contract VeydriftGameTest is Test {
         vm.warp(1_800_000_000);
         vm.prevrandao(keccak256("first settlement entropy"));
 
-        VeydriftGameStorage.FirstPlanet memory preview = game.previewFirstPlanet(player);
-
         vm.expectEmit(true, true, false, false, address(game));
         emit FirstPlanetSettled(player, 1, 0, 0, 0, bytes32(0), bytes32(0));
 
         vm.prank(player);
-        VeydriftGameStorage.FirstPlanet memory settled = game.settleFirstPlanet{value: 0.05 ether}();
+        game.startPlanet{value: 0.05 ether}();
 
         uint256 planetId = game.homePlanetOf(player);
         VeydriftGameStorage.Planet memory planet = game.planet(planetId);
@@ -346,15 +346,9 @@ contract VeydriftGameTest is Test {
 
         assertEq(planetId, 1);
         assertEq(planet.owner, player);
-        assertEq(planet.galaxy, preview.galaxy);
-        assertEq(planet.system, preview.system);
-        assertEq(planet.position, preview.position);
         assertEq(planet.resources.metal, 500);
         assertEq(planet.resources.crystal, 500);
         assertEq(planet.resources.deuterium, 0);
-        assertEq(settled.galaxy, planet.galaxy);
-        assertEq(settled.system, planet.system);
-        assertEq(settled.position, planet.position);
         assertEq(required.metal, 500);
         assertEq(required.crystal, 500);
         assertEq(required.deuterium, 0);
@@ -375,6 +369,115 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         vm.expectRevert(VeydriftGameStorage.AlreadyStarted.selector);
         game.startPlanet{value: 0.05 ether}();
+    }
+
+    function testMigrationClaimCreatesReservedHomePlanetForStartPrice() public {
+        VeydriftMigrationSettlement migration = _newMigrationSettlement(admin);
+        vm.prank(admin);
+        game.setMigrationSettlement(address(migration));
+        vm.deal(player, 1 ether);
+
+        address[] memory players = new address[](1);
+        uint16[] memory galaxies = new uint16[](1);
+        uint16[] memory systems = new uint16[](1);
+        uint8[] memory positions = new uint8[](1);
+        uint16[] memory fields = new uint16[](1);
+        int16[] memory temperatures = new int16[](1);
+        players[0] = player;
+        galaxies[0] = 2;
+        systems[0] = 99;
+        positions[0] = 7;
+        fields[0] = 211;
+        temperatures[0] = -14;
+
+        vm.prank(admin);
+        migration.importReservations(players, galaxies, systems, positions, fields, temperatures);
+        assertFalse(game.isCoordinateAvailable(2, 99, 7));
+
+        vm.prank(player);
+        uint256 planetId = migration.claim{value: 0.05 ether}();
+
+        VeydriftGameStorage.Planet memory planet = game.planet(planetId);
+        assertEq(game.homePlanetOf(player), planetId);
+        assertEq(planet.owner, player);
+        assertEq(planet.galaxy, 2);
+        assertEq(planet.system, 99);
+        assertEq(planet.position, 7);
+        assertEq(planet.fields, 211);
+        assertEq(planet.temperature, -14);
+
+        (, bool claimed,,,,,) = migration.migrationReservation(player);
+        assertTrue(claimed);
+    }
+
+    function testMigrationClaimRequiresReservationAndStartPrice() public {
+        VeydriftMigrationSettlement migration = _newMigrationSettlement(admin);
+        vm.prank(admin);
+        game.setMigrationSettlement(address(migration));
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftMigrationSettlement.MigrationReservationMissing.selector, player
+            )
+        );
+        migration.claim{value: 0.05 ether}();
+
+        address[] memory players = new address[](1);
+        uint16[] memory galaxies = new uint16[](1);
+        uint16[] memory systems = new uint16[](1);
+        uint8[] memory positions = new uint8[](1);
+        uint16[] memory fields = new uint16[](1);
+        int16[] memory temperatures = new int16[](1);
+        players[0] = player;
+        galaxies[0] = 3;
+        systems[0] = 12;
+        positions[0] = 4;
+        fields[0] = 190;
+        temperatures[0] = 25;
+
+        vm.prank(admin);
+        migration.importReservations(players, galaxies, systems, positions, fields, temperatures);
+
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.BadStartPayment.selector);
+        migration.claim{value: 0.049 ether}();
+
+        vm.prank(player);
+        migration.claim{value: 0.05 ether}();
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftMigrationSettlement.MigrationReservationClaimed.selector, player
+            )
+        );
+        migration.claim{value: 0.05 ether}();
+    }
+
+    function testMigrationOwnerCanReserveCoordinatesWithoutClaimReservation() public {
+        VeydriftMigrationSettlement migration = _newMigrationSettlement(admin);
+        vm.prank(admin);
+        game.setMigrationSettlement(address(migration));
+
+        uint16[] memory galaxies = new uint16[](2);
+        uint16[] memory systems = new uint16[](2);
+        uint8[] memory positions = new uint8[](2);
+        galaxies[0] = 4;
+        systems[0] = 44;
+        positions[0] = 4;
+        galaxies[1] = 5;
+        systems[1] = 55;
+        positions[1] = 5;
+
+        vm.prank(admin);
+        migration.reserveCoordinates(galaxies, systems, positions);
+
+        assertFalse(game.isCoordinateAvailable(4, 44, 4));
+        assertFalse(game.isCoordinateAvailable(5, 55, 5));
+
+        (bool exists,,,,,,) = migration.migrationReservation(player);
+        assertFalse(exists);
     }
 
     function testConfiguredResourceTokenAddressesAreReadable() public view {
@@ -950,7 +1053,7 @@ contract VeydriftGameTest is Test {
     function testSolarSatellitesIncreasePlanetEnergy() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();
-        VeydriftGameStorage.FirstPlanet memory planet = game.firstPlanetOf(player);
+        VeydriftGameStorage.Planet memory planet = game.planet(planetId);
         uint256 perSatelliteEnergy = VeydriftFormulas.solarSatelliteEnergy(planet.temperature);
 
         _setShipCount(planetId, Ship.SolarSatellite, 3);
@@ -8174,6 +8277,18 @@ contract VeydriftGameTest is Test {
             address(attackProtectionModule),
             address(colonizationModule),
             address(defenseHoldModule)
+        );
+    }
+
+    function _newMigrationSettlement(address owner) internal returns (VeydriftMigrationSettlement) {
+        VeydriftMigrationSettlement implementation = new VeydriftMigrationSettlement();
+        return VeydriftMigrationSettlement(
+            address(
+                new ERC1967Proxy(
+                    address(implementation),
+                    abi.encodeCall(VeydriftMigrationSettlement.initialize, (owner, address(game)))
+                )
+            )
         );
     }
 

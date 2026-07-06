@@ -62,7 +62,6 @@ import { buildingUpgradeStatus, formatMissingResources } from "./buildingDetails
 import { serverUnavailableRetryMessage } from "./gameUnavailable";
 import {
   detectFarcasterMiniApp,
-  FARCASTER_BASE_SEPOLIA_CHAIN,
   FARCASTER_WALLET_CAPABILITY,
   farcasterMiniAppWalletSupport,
   hasMiniAppUrlHint,
@@ -198,7 +197,6 @@ import {
   getAvailableWalletProviderDetails,
   parseRiftTokenAmount,
   requestAccounts,
-  switchBaseSepoliaNetwork,
   unwatchPlanet,
   watchPlanet,
   sendApproveResourceTokenTransaction,
@@ -241,11 +239,16 @@ import {
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
   sendBurningChickenMoonTransaction,
-  ensureBaseSepoliaNetwork,
+  defaultVeydriftChainForLocation,
+  ensureVeydriftNetwork,
+  farcasterChainFor,
   isOnChainRevertError,
   isUserRejected,
+  switchVeydriftNetwork,
   updatePlayerProfile,
+  veydriftChainForChainId,
   WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
+  type VeydriftWalletChain,
   type ChainDefenseState,
   type ChainAllianceState,
   type ChainInfrastructureState,
@@ -3103,13 +3106,15 @@ export function PlayableMvpApp({
     setOnChainError(undefined);
 
     let support: FarcasterMiniAppWalletSupport | undefined;
+    const walletChain = defaultVeydriftChainForLocation();
+    const requiredChain = farcasterChainFor(walletChain);
     try {
       await signalFarcasterReadyOnce();
-      support = await farcasterMiniAppWalletSupport();
+      support = await farcasterMiniAppWalletSupport(undefined, { requiredChain });
       if (support.status === "unsupported") {
         showMiniAppWalletError(playableFarcasterMiniAppWalletError(
           support.code,
-          `${support.message} Required capability: ${FARCASTER_WALLET_CAPABILITY}. Required chain: ${FARCASTER_BASE_SEPOLIA_CHAIN}.`,
+          `${support.message} Required capability: ${FARCASTER_WALLET_CAPABILITY}. Required chain: ${requiredChain}.`,
           { support },
         ));
         return;
@@ -3150,10 +3155,10 @@ export function PlayableMvpApp({
       }
 
       try {
-        await switchBaseSepoliaNetwork(walletProvider.provider);
+        await switchVeydriftNetwork(walletProvider.provider, walletChain);
       } catch (error) {
         showMiniAppWalletError(playableFarcasterMiniAppWalletError(
-          "FARCASTER_BASE_SEPOLIA_SWITCH_FAILED",
+          walletChain.chainId === 8453 ? "FARCASTER_BASE_MAINNET_SWITCH_FAILED" : "FARCASTER_BASE_SEPOLIA_SWITCH_FAILED",
           walletRequestErrorMessage(error),
           { support, error },
         ));
@@ -3598,6 +3603,11 @@ export function PlayableMvpApp({
   );
   const apiBaseUrl = useMemo(() => {
     return runtimeConfig.status === "ready" ? runtimeConfig.config.apiUrl : undefined;
+  }, [runtimeConfig]);
+  const gameWalletChain = useMemo<VeydriftWalletChain>(() => {
+    return runtimeConfig.status === "ready"
+      ? veydriftChainForChainId(runtimeConfig.config.chainId)
+      : defaultVeydriftChainForLocation();
   }, [runtimeConfig]);
   const missionUniverseLookupMissions = useMemo(() => missionArchetypeLookupMissions({
     allActiveMissions: displayAllActiveMissions,
@@ -6197,7 +6207,7 @@ export function PlayableMvpApp({
         );
       },
       waitForIndexed: async () => {
-        await ensureBaseSepoliaNetwork(provider);
+        await ensureVeydriftNetwork(provider, gameWalletChain);
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         if (!apiBaseUrl || !activePlanetId) {
           throw new Error("Chicken burn confirmed, but Veydrift API state is unavailable for moon confirmation.");
@@ -6217,7 +6227,7 @@ export function PlayableMvpApp({
       },
       onErrorRefresh: async () => {
         try {
-          await ensureBaseSepoliaNetwork(provider);
+          await ensureVeydriftNetwork(provider, gameWalletChain);
         } catch (switchError) {
           console.error(switchError);
         }
@@ -6235,6 +6245,7 @@ export function PlayableMvpApp({
     activePlanetCoords,
     apiBaseUrl,
     chickenBurnConfig,
+    gameWalletChain,
     provider,
     refreshOnChainState,
     runCoordinatedWriteTransaction,

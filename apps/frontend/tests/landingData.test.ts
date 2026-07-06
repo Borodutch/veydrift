@@ -3,6 +3,7 @@ import {
   landingAllianceRefreshMs,
   landingFeedRefreshMs,
   landingFeedFromMissions,
+  landingLaunchCtaForLocation,
   topAlliancesFromHighscores,
 } from "../src/ComingSoonApp";
 
@@ -15,6 +16,26 @@ describe("landing backend data", () => {
     expect(landingSource).toContain("window.setInterval(loadLandingFeed, landingFeedRefreshMs)");
     expect(landingSource).toContain("window.setInterval(loadLandingAlliances, landingAllianceRefreshMs)");
     expect(landingSource).toContain("window.clearInterval(intervalId)");
+  });
+
+  test("points production visitors at the mainnet play surface", () => {
+    expect(landingLaunchCtaForLocation({ hostname: "veydrift.com" })).toMatchObject({
+      eyebrow: "Mainnet live on Base",
+      primaryHref: "/play",
+      primaryLabel: "Play",
+      secondaryHref: "https://test.veydrift.com",
+      showFaucet: false,
+    });
+  });
+
+  test("keeps non-production visitors on the Base Sepolia alpha flow", () => {
+    expect(landingLaunchCtaForLocation({ hostname: "test.veydrift.com" })).toMatchObject({
+      eyebrow: "Alpha test live on Base Sepolia",
+      primaryHref: "https://test.veydrift.com",
+      primaryLabel: "Join the alpha test",
+      secondaryHref: "#how-it-works",
+      showFaucet: true,
+    });
   });
 
   test("builds the live alpha feed from active backend missions", () => {

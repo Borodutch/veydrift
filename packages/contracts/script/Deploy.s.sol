@@ -3,6 +3,9 @@ pragma solidity ^0.8.28;
 
 import {ResourceTokenDeployment} from "./ResourceTokenDeployment.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {
+    TransparentUpgradeableProxy
+} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 import {RandomnessEngine} from "../src/RandomnessEngine.sol";
 import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAllianceSystem.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
@@ -11,8 +14,10 @@ import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol"
 import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
+import {VeydriftMigrationSettlement} from "../src/VeydriftMigrationSettlement.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
+import {VeydriftSettlement} from "../src/VeydriftSettlement.sol";
 
 contract Deploy is ResourceTokenDeployment {
     string internal constant ALPHA_REDEPLOY_ACK =
@@ -20,8 +25,10 @@ contract Deploy is ResourceTokenDeployment {
 
     event VeydriftDeployment(
         address indexed game,
+        address indexed settlement,
         address indexed allianceSystem,
-        address indexed moonSystem,
+        address moonSystem,
+        address migrationSettlement,
         address randomnessEngine,
         address metalToken,
         address crystalToken,
@@ -35,6 +42,7 @@ contract Deploy is ResourceTokenDeployment {
         external
         returns (
             address gameAddress,
+            address settlementAddress,
             address allianceSystemAddress,
             address moonSystemAddress,
             address randomnessEngineAddress,
@@ -47,6 +55,19 @@ contract Deploy is ResourceTokenDeployment {
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
         address admin = vm.envOr("ADMIN_ADDRESS", vm.addr(privateKey));
         require(admin == vm.addr(privateKey), "ADMIN_MUST_MATCH_BROADCASTER");
+        address gameProxyAdmin = vm.envOr("GAME_PROXY_ADMIN_ADDRESS", admin);
+        address gameOwner = vm.envOr("GAME_OWNER_ADDRESS", gameProxyAdmin);
+        address settlementAdmin = vm.envOr("SETTLEMENT_UPGRADE_ADMIN_ADDRESS", admin);
+        address allianceAdmin = vm.envOr("ALLIANCE_UPGRADE_ADMIN_ADDRESS", admin);
+        address moonAdmin = vm.envOr("MOON_UPGRADE_ADMIN_ADDRESS", admin);
+        address migrationAdmin = vm.envOr("MIGRATION_UPGRADE_ADMIN_ADDRESS", admin);
+        address randomnessAdmin = vm.envOr("RANDOMNESS_UPGRADE_ADMIN_ADDRESS", admin);
+        address randomnessFulfiller = vm.envOr("RANDOMNESS_FULFILLER_ADDRESS", admin);
+        address metalAdmin = vm.envOr("METAL_TOKEN_UPGRADE_ADMIN_ADDRESS", admin);
+        address crystalAdmin = vm.envOr("CRYSTAL_TOKEN_UPGRADE_ADMIN_ADDRESS", admin);
+        address deuteriumAdmin = vm.envOr("DEUTERIUM_TOKEN_UPGRADE_ADMIN_ADDRESS", admin);
+        bytes32 universeSalt =
+            vm.envOr("VEYDRIFT_UNIVERSE_SALT", keccak256("veydrift.base-mainnet.v1"));
 
         vm.startBroadcast(privateKey);
         VeydriftCombatRapidfire rapidfire = new VeydriftCombatRapidfire();
@@ -64,7 +85,21 @@ contract Deploy is ResourceTokenDeployment {
             address(colonizationModule),
             address(defenseHoldModule)
         );
-        gameAddress = address(game);
+        gameAddress = address(
+            new TransparentUpgradeableProxy(
+                address(game), gameProxyAdmin, abi.encodeCall(VeydriftGame.initialize, (admin))
+            )
+        );
+        game = VeydriftGame(payable(gameAddress));
+
+        VeydriftSettlement settlementImplementation = new VeydriftSettlement(universeSalt);
+        settlementAddress = address(
+            new ERC1967Proxy(
+                address(settlementImplementation),
+                abi.encodeCall(VeydriftSettlement.initialize, (settlementAdmin, universeSalt))
+            )
+        );
+
         VeydriftAllianceSystem allianceImplementation =
             new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
         allianceSystemAddress = address(
@@ -79,11 +114,11 @@ contract Deploy is ResourceTokenDeployment {
             "alliance", allianceSystemAddress, address(allianceImplementation)
         );
 
-        RandomnessEngine randomnessImplementation = new RandomnessEngine(admin, admin);
+        RandomnessEngine randomnessImplementation = new RandomnessEngine(admin, randomnessFulfiller);
         randomnessEngineAddress = address(
             new ERC1967Proxy(
                 address(randomnessImplementation),
-                abi.encodeCall(RandomnessEngine.initialize, (admin, admin))
+                abi.encodeCall(RandomnessEngine.initialize, (admin, randomnessFulfiller))
             )
         );
         emit VeydriftAuxiliaryProxyDeployed(
@@ -101,17 +136,39 @@ contract Deploy is ResourceTokenDeployment {
             )
         );
         emit VeydriftAuxiliaryProxyDeployed("moon", moonSystemAddress, address(moonImplementation));
-        (metalToken, crystalToken, deuteriumToken) = _deployResourceTokens(admin, gameAddress);
+        VeydriftMigrationSettlement migrationImplementation = new VeydriftMigrationSettlement();
+        address migrationSettlementAddress = address(
+            new ERC1967Proxy(
+                address(migrationImplementation),
+                abi.encodeCall(
+                    VeydriftMigrationSettlement.initialize, (migrationAdmin, gameAddress)
+                )
+            )
+        );
+        emit VeydriftAuxiliaryProxyDeployed(
+            "migration", migrationSettlementAddress, address(migrationImplementation)
+        );
+        (metalToken, crystalToken, deuteriumToken) =
+            _deployResourceTokens(gameAddress, metalAdmin, crystalAdmin, deuteriumAdmin);
         game.setResourceTokens(metalToken, crystalToken, deuteriumToken);
         game.setAllianceSystem(allianceSystemAddress);
         game.setMoonSystem(moonSystemAddress);
+        game.setMigrationSettlement(migrationSettlementAddress);
         game.setRandomnessEngine(randomnessEngineAddress);
         RandomnessEngine(randomnessEngineAddress).setRequesterAuthorization(gameAddress, true);
         RandomnessEngine(randomnessEngineAddress).setRequesterAuthorization(moonSystemAddress, true);
+        VeydriftAllianceSystem(allianceSystemAddress).transferOwnership(allianceAdmin);
+        VeydriftMoonSystem(moonSystemAddress).transferOwnership(moonAdmin);
+        RandomnessEngine(randomnessEngineAddress).transferOwnership(randomnessAdmin);
+        if (gameOwner != admin) {
+            game.transferOwnership(gameOwner);
+        }
         emit VeydriftDeployment(
             gameAddress,
+            settlementAddress,
             allianceSystemAddress,
             moonSystemAddress,
+            migrationSettlementAddress,
             randomnessEngineAddress,
             metalToken,
             crystalToken,
