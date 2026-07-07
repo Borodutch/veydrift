@@ -325,6 +325,22 @@ contract VeydriftGameTest is Test {
         assertEq(game.startPrice(), 0.01 ether);
     }
 
+    function testOwnerCanPauseAndUnpauseGame() public {
+        vm.prank(admin);
+        game.setGamePaused(true);
+
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
+        game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(admin);
+        game.setGamePaused(false);
+
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+        assertEq(game.homePlanetOf(player), 1);
+    }
+
     function testResourceTokensAreRequiredBeforeSettlement() public {
         VeydriftGame unfundedGame = _newGame(admin);
         vm.deal(player, 1 ether);

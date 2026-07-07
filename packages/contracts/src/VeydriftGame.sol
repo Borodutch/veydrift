@@ -182,6 +182,10 @@ contract VeydriftGame is VeydriftResourceReserves {
         _migrationSettlement = nextMigrationSettlement;
     }
 
+    function setGamePaused(bool paused) external onlyOwner {
+        _gamePaused = paused ? 1 : 0;
+    }
+
     function reserveMigrationCoordinates(
         uint16[] calldata galaxies,
         uint16[] calldata systems,
@@ -953,6 +957,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _delegateToPlayModule() private {
+        _requireGameNotPaused();
         (bool ok, bytes memory result) = _gameplayModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
@@ -965,6 +970,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _delegateToPlanetManagementModule() private {
+        _requireGameNotPaused();
         (bool ok, bytes memory result) = _planetManagementModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
@@ -1000,6 +1006,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _delegateToColonizationModule() private {
+        _requireGameNotPaused();
         (bool ok, bytes memory result) = _colonizationModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
@@ -1012,6 +1019,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _delegateToDefenseHoldModule() private {
+        _requireGameNotPaused();
         (bool ok, bytes memory result) = _defenseHoldModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
@@ -1024,6 +1032,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _delegateToStateMigrationModule() private {
+        _requireGameNotPaused();
         (bool ok, bytes memory result) = _stateMigrationModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {

@@ -311,6 +311,7 @@ abstract contract VeydriftGameStorage is Initializable {
         _stationedDefenseMissionIndex;
     mapping(uint256 missionId => uint64 holdUntil) internal _defenseHoldUntil;
     address internal _migrationSettlement;
+    uint256 internal _gamePaused;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -380,7 +381,6 @@ abstract contract VeydriftGameStorage is Initializable {
     error InvalidHoldWindow(uint256 holdSeconds);
     error DefenseHoldNotAuthorized(uint256 defenderPlanetId);
     error DefenseHoldStillActive(uint64 holdUntil);
-
     event StartPriceUpdated(uint256 oldPrice, uint256 newPrice);
     event PlanetStarted(
         address indexed player,
@@ -717,7 +717,12 @@ abstract contract VeydriftGameStorage is Initializable {
         return keccak256(abi.encode(attacker, defender));
     }
 
+    function _requireGameNotPaused() internal view {
+        if (_gamePaused != 0) revert Unauthorized(msg.sender);
+    }
+
     function _touchPlayer(address player) internal {
+        _requireGameNotPaused();
         uint64 currentTime = uint64(block.timestamp);
         if (playerLastActiveAt[player] == currentTime) return;
         playerLastActiveAt[player] = currentTime;
