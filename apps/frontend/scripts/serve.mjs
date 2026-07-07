@@ -92,6 +92,10 @@ function docsAppRouteForPathname(pathname) {
   return pathname === "/docs" || pathname.startsWith("/docs/");
 }
 
+function playAppRouteForPathname(pathname) {
+  return pathname === "/play" || pathname.startsWith("/play/");
+}
+
 function shareRouteForPathname(pathname) {
   const mission = pathname.match(/^\/mission\/([0-9]+)$/);
   if (mission) return { kind: "mission", id: mission[1] };
@@ -687,7 +691,7 @@ if (import.meta.main) {
         return responseFor(file, route);
       }
 
-      if (docsAppRouteForPathname(route)) {
+      if (docsAppRouteForPathname(route) || playAppRouteForPathname(route)) {
         return responseFor(Bun.file(staticFileUrl("/index.html")), "/index.html");
       }
 
