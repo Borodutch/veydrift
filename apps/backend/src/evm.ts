@@ -2358,7 +2358,7 @@ export class VeydriftGameReader implements ChainReader {
     const [resources, researchLabLevel, researchNetworkLabLevels, queue, technologyLevels, technologies] = await Promise.all([
       this.readResources("0x0adbf924", planetId),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(6n)]),
-      this.readResearchNetworkLabLevels(wallet, planetId),
+      this.hydrateQueueStartedAt ? this.readResearchNetworkLabLevels(wallet, planetId) : Promise.resolve([]),
       this.readResearchQueue(wallet),
       this.readTechnologyLevels(wallet),
       this.readTechnologyRows(wallet)
@@ -3035,105 +3035,117 @@ export class VeydriftGameReader implements ChainReader {
   async listCanonicalPlanetStatesForIds(planetIds: bigint[]): Promise<CanonicalPlanetChainState[]> {
     if (planetIds.length === 0) return [];
 
-    const [
-      resourceResults,
-      buildingResults,
-      defenseResults,
-      shipResults,
-      buildingQueueResults,
-      defenseQueueResults,
-      defenseBacklogResults,
-      shipQueueResults,
-      shipBacklogResults
-    ] = await Promise.all([
-      this.batchCallContract(
-        this.gameContractAddress,
-        planetIds.map((planetId) => ({
-          selector: "0x0adbf924",
-          args: [encodeUint(planetId)]
-        }))
-      ),
-      this.batchCallContract(
-        this.gameContractAddress,
-        planetIds.flatMap((planetId) =>
-          Array.from({ length: buildingCount }, (_, id) => ([
-            {
-              selector: "0xd9b24865",
-              args: [encodeUint(planetId), encodeUint(BigInt(id))]
-            },
-            {
-              selector: "0x291ee1b5",
-              args: [encodeUint(planetId), encodeUint(BigInt(id))]
-            }
-          ])).flat()
-        )
-      ),
-      this.batchCallContract(
-        this.gameContractAddress,
-        planetIds.flatMap((planetId) =>
-          Array.from({ length: defenseCount }, (_, id) => ([
-            {
-              selector: "0x836e3a32",
-              args: [encodeUint(planetId), encodeUint(BigInt(id))]
-            },
-            {
-              selector: "0x9b906295",
-              args: [encodeUint(BigInt(id))]
-            }
-          ])).flat()
-        )
-      ),
-      this.batchCallContract(
-        this.gameContractAddress,
-        planetIds.flatMap((planetId) =>
-          supportedShipIds.flatMap((id) => ([
-            {
-              selector: "0x57686701",
-              args: [encodeUint(planetId), encodeUint(BigInt(id))]
-            },
-            {
-              selector: "0xc4222030",
-              args: [encodeUint(BigInt(id))]
-            }
-          ]))
-        )
-      ),
-      this.batchCallContract(
-        this.gameContractAddress,
-        planetIds.map((planetId) => ({
-          selector: "0xb8e835ab",
-          args: [encodeUint(planetId)]
-        }))
-      ),
-      this.batchCallContract(
-        this.gameContractAddress,
-        planetIds.map((planetId) => ({
-          selector: "0x5758361d",
-          args: [encodeUint(planetId)]
-        }))
-      ),
-      this.batchCallContract(
-        this.gameContractAddress,
-        planetIds.map((planetId) => ({
-          selector: "0x4f5ed437",
-          args: [encodeUint(planetId)]
-        }))
-      ),
-      this.batchCallContract(
-        this.gameContractAddress,
-        planetIds.map((planetId) => ({
-          selector: "0xb6f4b7b7",
-          args: [encodeUint(planetId)]
-        }))
-      ),
-      this.batchCallContract(
-        this.gameContractAddress,
-        planetIds.map((planetId) => ({
-          selector: "0x52b55205",
-          args: [encodeUint(planetId)]
-        }))
+    const progress = (label: string): void => {
+      if (process.env.VEYDRIFT_MIGRATION_SNAPSHOT_VERBOSE === "1") {
+        console.info(`[migration:snapshot] bulk canonical ${label}`);
+      }
+    };
+
+    progress(`resources for ${planetIds.length} planets`);
+    const resourceResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.map((planetId) => ({
+        selector: "0x0adbf924",
+        args: [encodeUint(planetId)]
+      }))
+    );
+
+    progress("building levels/costs");
+    const buildingResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.flatMap((planetId) =>
+        Array.from({ length: buildingCount }, (_, id) => ([
+          {
+            selector: "0xd9b24865",
+            args: [encodeUint(planetId), encodeUint(BigInt(id))]
+          },
+          {
+            selector: "0x291ee1b5",
+            args: [encodeUint(planetId), encodeUint(BigInt(id))]
+          }
+        ])).flat()
       )
-    ]);
+    );
+
+    progress("defense counts/costs");
+    const defenseResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.flatMap((planetId) =>
+        Array.from({ length: defenseCount }, (_, id) => ([
+          {
+            selector: "0x836e3a32",
+            args: [encodeUint(planetId), encodeUint(BigInt(id))]
+          },
+          {
+            selector: "0x9b906295",
+            args: [encodeUint(BigInt(id))]
+          }
+        ])).flat()
+      )
+    );
+
+    progress("ship counts/costs");
+    const shipResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.flatMap((planetId) =>
+        supportedShipIds.flatMap((id) => ([
+          {
+            selector: "0x57686701",
+            args: [encodeUint(planetId), encodeUint(BigInt(id))]
+          },
+          {
+            selector: "0xc4222030",
+            args: [encodeUint(BigInt(id))]
+          }
+        ]))
+      )
+    );
+
+    progress("building queues");
+    const buildingQueueResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.map((planetId) => ({
+        selector: "0xb8e835ab",
+        args: [encodeUint(planetId)]
+      }))
+    );
+
+    progress("defense queues");
+    const defenseQueueResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.map((planetId) => ({
+        selector: "0x5758361d",
+        args: [encodeUint(planetId)]
+      }))
+    );
+
+    progress("defense queue backlogs");
+    const defenseBacklogResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.map((planetId) => ({
+        selector: "0x4f5ed437",
+        args: [encodeUint(planetId)]
+      }))
+    );
+
+    progress("ship queues");
+    const shipQueueResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.map((planetId) => ({
+        selector: "0xb6f4b7b7",
+        args: [encodeUint(planetId)]
+      }))
+    );
+
+    progress("ship queue backlogs");
+    const shipBacklogResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.map((planetId) => ({
+        selector: "0x52b55205",
+        args: [encodeUint(planetId)]
+      }))
+    );
+    progress("decoded chain responses");
 
     return planetIds.map((planetId, planetIndex) => {
       const buildingOffset = planetIndex * buildingCount * 2;
