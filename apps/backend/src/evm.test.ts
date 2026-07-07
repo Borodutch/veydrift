@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { encodeAbiParameters, keccak256 } from "viem";
 
 import type { BackendConfig } from "./config";
 import {
@@ -1067,6 +1068,75 @@ describe("moon chance report event decoding", () => {
   });
 });
 
+describe("canonical fleet mission details", () => {
+  test("reads active mission ships and body flags from packed storage", async () => {
+    const owner = "0x0000000000000000000000000000000000000abc" as Address;
+    const storageSlots: string[] = [];
+    const reader = new VeydriftGameReader(readerConfig, {
+      async request<T>(method: string, params: unknown[]): Promise<T> {
+        expect(method).toBe("eth_call");
+        const [call] = params as [{ data: string }];
+        expect(call.data.slice(0, 10)).toBe("0x80198ce1");
+        return dataWords([word(4n)]) as T;
+      },
+      async requestBatch<T>(requests: Array<{ method: string; params: unknown[] }>): Promise<T[]> {
+        if (requests[0]?.method === "eth_call") {
+          return requests.map((request, index) => {
+            const [call] = request.params as [{ data: string }];
+            expect(call.data.slice(0, 10)).toBe("0xf158c946");
+            if (index === 1) {
+              return fleetMissionResult({ status: 3n, owner });
+            }
+            return fleetMissionResult({ status: index === 0 ? 1n : 5n, owner });
+          }) as T[];
+        }
+
+        return requests.map((request, index) => {
+          expect(request.method).toBe("eth_getStorageAt");
+          const [address, slot, block] = request.params as [Address, string, string];
+          expect(address).toBe(readerConfig.gameContractAddress);
+          expect(block).toBe("latest");
+          storageSlots.push(slot);
+          const missionIndex = Math.floor(index / 3);
+          const wordIndex = index % 3;
+          if (missionIndex === 0 && wordIndex === 0) return packedUint32Word([2n, 3n]) as T;
+          if (missionIndex === 0 && wordIndex === 1) return packedUint32Word([5n, 7n]) as T;
+          if (missionIndex === 0) return word(1n) as T;
+          if (wordIndex === 0) return packedUint32Word([11n]) as T;
+          if (wordIndex === 1) return packedUint32Word([13n]) as T;
+          return word(2n) as T;
+        });
+      }
+    });
+
+    const missions = await reader.listCanonicalFleetMissionDetails();
+
+    expect(storageSlots).toEqual([
+      toQuantity(fleetMissionStorageBaseSlot(1n) + 7n),
+      toQuantity(fleetMissionStorageBaseSlot(1n) + 8n),
+      toQuantity(fleetMissionStorageBaseSlot(1n) + 11n),
+      toQuantity(fleetMissionStorageBaseSlot(3n) + 7n),
+      toQuantity(fleetMissionStorageBaseSlot(3n) + 8n),
+      toQuantity(fleetMissionStorageBaseSlot(3n) + 11n)
+    ]);
+    expect(missions).toHaveLength(2);
+    expect(missions[0]?.ships).toMatchObject({
+      smallCargo: "2",
+      lightFighter: "3",
+      bomber: "5",
+      destroyer: "7"
+    });
+    expect(missions[0]?.originIsMoon).toBe(true);
+    expect(missions[0]?.targetIsMoon).toBe(false);
+    expect(missions[1]?.ships).toMatchObject({
+      smallCargo: "11",
+      bomber: "13"
+    });
+    expect(missions[1]?.originIsMoon).toBe(false);
+    expect(missions[1]?.targetIsMoon).toBe(true);
+  });
+});
+
 describe("player queue startedAt", () => {
   const shipQueuedTopic = "0x2751e0f30801101b5ffa9787644ace0da334023e4c4376f1133f5608ec9e1118";
 
@@ -1979,6 +2049,48 @@ function makeLog(overrides: Pick<RpcLog, "topics" | "data">): RpcLog {
 
 function dataWords(words: string[]): string {
   return `0x${words.join("")}`;
+}
+
+function fleetMissionResult({
+  status,
+  owner
+}: {
+  status: bigint;
+  owner: Address;
+}): string {
+  return dataWords([
+    word(status),
+    word(0n),
+    addressWord(owner),
+    word(41n),
+    word(42n),
+    word(1_700_000_000n),
+    word(1_700_000_600n),
+    word(1_700_001_200n),
+    word(99n),
+    word(1n),
+    word(2n),
+    word(3n),
+    word(0n)
+  ]);
+}
+
+function packedUint32Word(values: bigint[]): string {
+  return word(values.reduce((packed, value, index) => packed | (value << BigInt(index * 32)), 0n));
+}
+
+function fleetMissionStorageBaseSlot(missionId: bigint): bigint {
+  return BigInt(keccak256(encodeAbiParameters(
+    [
+      { type: "uint256" },
+      { type: "uint256" }
+    ],
+    [missionId, 24n]
+  )));
+}
+
+function toQuantity(value: bigint): string {
+  return `0x${value.toString(16)}`;
 }
 
 function word(value: bigint): string {
