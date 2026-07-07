@@ -17,7 +17,9 @@ import {
 export default defineConfig(({ mode }) => {
   const isTestSurface = mode === "playable" || mode === "settlement";
   const htmlEnv = miniAppSurfaceForMode(mode);
-  const surface = mode === "playable" || mode === "settlement" ? mode : "";
+  const surface = mode === "playable" || mode === "settlement"
+    ? mode
+    : process.env.VITE_VEYDRIFT_SURFACE ?? "";
 
   return {
     build: {
