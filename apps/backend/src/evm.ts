@@ -3592,7 +3592,7 @@ export class VeydriftGameReader implements ChainReader {
       cost: decodeResources(words.slice(4, 7))
     };
 
-    if (active) {
+    if (this.hydrateQueueStartedAt && active) {
       queue.startedAt = await this.readResearchStartedAt(wallet, queue);
     }
 
