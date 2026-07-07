@@ -1162,7 +1162,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const cacheTtlMs = enableResponseCache ? cacheableJsonRequestTtlMs(request, url) : 0;
       if (cacheTtlMs > 0) {
         const cacheKey = cacheableJsonRequestKey(request, url, indexer);
-        const staleCacheKey = cacheableJsonRequestStaleKey(request, url);
+        const staleCacheKey = cacheableJsonRequestStaleKey(request, url, cacheKey);
         const cached = responseCache.get(cacheKey);
         const now = Date.now();
         if (cached && cached.expiresAt > now) {
@@ -1678,7 +1678,8 @@ function cacheableJsonRequestKey(request: Request, url: URL, indexer: Settlement
   return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=${indexerVersion}`;
 }
 
-function cacheableJsonRequestStaleKey(request: Request, url: URL): string {
+function cacheableJsonRequestStaleKey(request: Request, url: URL, cacheKey: string): string {
+  if (cacheableWalletSnapshotPath(url.pathname)) return cacheKey;
   return `${request.method} ${url.pathname}${normalizedCacheSearch(url)} indexer=stale`;
 }
 
