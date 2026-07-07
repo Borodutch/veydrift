@@ -1906,6 +1906,47 @@ describe("Veydrift backend", () => {
     }
   });
 
+  test("serves cold wallet settlement for wallets with signed migration claims", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-migration-claims-"));
+    const snapshotPath = join(dir, "claims.json");
+    writeFileSync(snapshotPath, JSON.stringify({
+      claims: {
+        [player.toLowerCase()]: {
+          signature: "0xabcd",
+          statePayload: "0x1234"
+        }
+      }
+    }));
+    const previousPath = process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+    process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH = snapshotPath;
+    try {
+      const chainReader = withoutIndexLists(new class extends MockChainReader {
+        override async getWalletSettlement(): Promise<WalletSettlement> {
+          throw new Error("migration wallet settlement reads must not call chain reader");
+        }
+      }());
+      const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+      const response = await createRequestHandler({
+        config: configuredTestConfig,
+        chainReader,
+        indexer
+      })(new Request(`http://localhost/wallet/${player}/settlement`));
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        contractKind: "game",
+        hasFirstPlanet: false,
+        homePlanetId: null,
+        source: "contract-state-indexer",
+        wallet: player
+      });
+    } finally {
+      if (previousPath === undefined) delete process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+      else process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH = previousPath;
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("serves settlement-funding from config when the indexer is warm without a request-time chain read", async () => {
     const chainReader = new class extends MockChainReader {
       override getSettlementFunding(): ReturnType<MockChainReader["getSettlementFunding"]> {

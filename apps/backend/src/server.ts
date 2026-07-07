@@ -1942,9 +1942,17 @@ function indexedWalletSettlementWarmResponse(
   indexer: SettlementIndexer | undefined,
   wallet: `0x${string}`
 ): Response | null {
-  if (!indexer || !hasWarmPlanetIndex(indexer)) return null;
-
+  if (!indexer) return null;
   const snapshot = indexer.snapshot();
+
+  if (snapshot.indexedPlanets <= 0) {
+    if (!migrationClaimPayloadForWallet(wallet)) return null;
+    return indexedJsonResponse(
+      withPlayerProfile(indexer.walletSettlement(wallet), indexer, wallet),
+      snapshot
+    );
+  }
+
   const settlement = indexedWalletSettlement(indexer, wallet, undefined)?.settlement ?? indexer.walletSettlement(wallet);
   return indexedWarmJsonResponse(withPlayerProfile(settlement, indexer, wallet), "wallet settlement", snapshot);
 }
