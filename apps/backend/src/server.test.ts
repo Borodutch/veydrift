@@ -1155,6 +1155,48 @@ describe("Veydrift backend", () => {
     expect(staleKeyUsed).toBe(true);
   });
 
+  test("does not serve versionless shared stale wallet snapshots across indexed-state versions", async () => {
+    let staleKeyUsed = false;
+    const staleBody = new TextEncoder().encode(JSON.stringify({ stale: true })).buffer as ArrayBuffer;
+    const sharedResponseCache = {
+      get(cacheKey: string, _now?: number, includeStale?: boolean) {
+        if (!includeStale || !cacheKey.endsWith(" indexer=stale")) return null;
+        staleKeyUsed = true;
+        return {
+          body: staleBody,
+          expiresAt: Date.now() - 1_000,
+          headers: [["content-type", "application/json"]],
+          status: 200,
+          statusText: ""
+        };
+      },
+      tryAcquireRefresh() {
+        return false;
+      },
+      async waitForFresh() {
+        return null;
+      },
+      set() {},
+      releaseRefresh() {}
+    } as unknown as import("./sharedResponseCache").SharedResponseCache;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: configuredTestConfig,
+      enableResponseCache: true,
+      indexer: testIndexer(),
+      prewarmResponseCache: false,
+      sharedResponseCache
+    });
+
+    const response = await handler(new Request(`http://localhost/wallet/${player}/planets`));
+    const body = await response.json() as WalletPlanets;
+
+    expect(response.status).toBe(200);
+    expect(body.wallet).toBe(player);
+    expect(body.planets).toHaveLength(1);
+    expect(staleKeyUsed).toBe(false);
+  });
+
   test("does not wait on stale shared-cache locks for cold indexed reads", async () => {
     let waitCalled = false;
     const sharedResponseCache = {
