@@ -280,7 +280,7 @@ describe("settlement screen mode", () => {
       balanceWei: 0n,
       contractKind: "game",
       startPriceWei: 1n,
-    } })).toContain("more Base Sepolia ETH");
+    } })).toContain("more ETH");
     expect(settlementLaunchBlocker(true, { status: "ready", funding: {
       affordable: true,
       balanceWei: 1n,
@@ -512,7 +512,7 @@ describe("settlement screen mode", () => {
     expect(source).toContain("setMiniAppMode(true)");
   });
 
-  test("auto-binds Farcaster wallet and retries Base Sepolia setup in Mini App mode", async () => {
+  test("auto-binds Farcaster wallet and retries the required Veydrift chain setup in Mini App mode", async () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
     expect(source).toContain("farcasterAutoConnectAttempted");
@@ -521,13 +521,13 @@ describe("settlement screen mode", () => {
     expect(source).toContain("signalFarcasterReadyOnce");
     expect(source).toContain("farcasterMiniAppWalletSupport");
     expect(source).toContain("preferFarcasterProvider: waitForFarcasterProvider");
-    expect(source).toContain("await setupBaseSepoliaNetworkForWallet(injected, context)");
-    expect(source).toContain("await switchBaseSepoliaNetwork(walletProvider)");
-    expect(source).toContain("Retry Base Sepolia");
+    expect(source).toContain("await setupVeydriftNetworkForWallet(injected, context)");
+    expect(source).toContain("await switchVeydriftNetwork(walletProvider, requiredChain)");
+    expect(source).toContain("Retry ${networkName}");
     expect(source).toContain("networkSwitchPending");
     expect(source).toContain("disabled={networkSwitchPending}");
-    expect(source).toContain("FARCASTER_BASE_SEPOLIA_SWITCH_FAILED");
-    expect(source).toContain("FARCASTER_BASE_SEPOLIA_RETRY_FAILED");
+    expect(source).toContain("FARCASTER_VEYDRIFT_CHAIN_SWITCH_FAILED");
+    expect(source).toContain("FARCASTER_VEYDRIFT_CHAIN_RETRY_FAILED");
     expect(source).toContain("FARCASTER_WALLET_PROVIDER_UNAVAILABLE");
     expect(source).toContain("showFarcasterWalletProviderUnavailable");
     expect(source).toContain("!shouldShowMiniAppWalletError(miniAppMode, planet)");

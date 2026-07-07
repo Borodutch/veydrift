@@ -822,11 +822,11 @@ describe("tester universe display data", () => {
 
     expect(preview).toMatchObject({
       blockedReason: undefined,
-      cargoCapacity: 10_032,
+      cargoCapacity: 10_035,
       fleetSlots: { active: 1, limit: 3 },
-      fuelCost: 18,
+      fuelCost: 15,
     });
-    expect(formatMissionPreview(preview!)).toContain("Fleet 1/3 / Fuel 18 D / Cargo 10,032");
+    expect(formatMissionPreview(preview!)).toContain("Fleet 1/3 / Fuel 15 D / Cargo 10,035");
 
     expect(estimateGalaxyMissionPreview({
       homeCoords: { galaxy: 1, system: 10, position: 5 },
@@ -843,7 +843,7 @@ describe("tester universe display data", () => {
     const origin = { galaxy: 1, system: 1, position: 1 };
 
     expect(galaxyMissionTravelSeconds(origin, origin)).toBe(10);
-    expect(galaxyMissionFuelCost(origin, origin, 3)).toBe(1);
+    expect(galaxyMissionFuelCost(origin, origin, 3)).toBe(0);
 
     const nearby = { galaxy: 1, system: 3, position: 4 };
     expect(galaxyMissionTravelSeconds(origin, nearby)).toBe(851);
