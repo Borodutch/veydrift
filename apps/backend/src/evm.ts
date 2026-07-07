@@ -542,6 +542,12 @@ export type CanonicalFleetMissionSnapshot = {
   randomnessRequestId: string | null;
 };
 
+export type CanonicalFleetMissionDetails = CanonicalFleetMissionSnapshot & {
+  ships: Record<string, string>;
+  originIsMoon: boolean;
+  targetIsMoon: boolean;
+};
+
 export type FleetMissionPlanetReference = {
   planetId: string;
   owner: Address;
@@ -1095,6 +1101,8 @@ export interface ChainReader {
   listAllianceDiplomacyState?(): Promise<AllianceDiplomacySnapshot[]>;
   getCanonicalFleetMission?(missionId: bigint): Promise<CanonicalFleetMissionSnapshot | null>;
   listCanonicalFleetMissions?(): Promise<CanonicalFleetMissionSnapshot[]>;
+  listCanonicalFleetMissionDetails?(): Promise<CanonicalFleetMissionDetails[]>;
+  listFleetMissionSummaries?(): Promise<FleetMissionSummary[]>;
   listCurrentPlanets?(): Promise<SettledPlanetEvent[]>;
   getCanonicalPlanetState?(planetId: bigint): Promise<CanonicalPlanetChainState>;
   listResolvableFleetMissions?(): Promise<ResolvableFleetMission[]>;
@@ -1906,6 +1914,25 @@ export class VeydriftGameReader implements ChainReader {
     return results
       .map((result, index) => this.decodeCanonicalFleetMission(BigInt(index + 1), result))
       .filter((mission): mission is CanonicalFleetMissionSnapshot => mission !== null);
+  }
+
+  async listCanonicalFleetMissionDetails(): Promise<CanonicalFleetMissionDetails[]> {
+    const nextFleetId = await this.readOptionalUintCall("0x80198ce1", []);
+    if (!nextFleetId || nextFleetId <= 1n) return [];
+
+    const calls: Array<{ selector: string; args: string[] }> = [];
+    for (let missionId = 1n; missionId < nextFleetId; missionId += 1n) {
+      calls.push({ selector: "0x6309dc24", args: [encodeUint(missionId)] });
+    }
+
+    const results = await this.batchCallContract(this.gameContractAddress, calls);
+    return results
+      .map((result, index) => this.decodeCanonicalFleetMissionDetails(BigInt(index + 1), result))
+      .filter((mission): mission is CanonicalFleetMissionDetails => mission !== null);
+  }
+
+  async listFleetMissionSummaries(): Promise<FleetMissionSummary[]> {
+    return this.readFleetMissionSummaries();
   }
 
   async getCanonicalFleetMission(missionId: bigint): Promise<CanonicalFleetMissionSnapshot | null> {
@@ -4059,6 +4086,37 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
+  private decodeCanonicalFleetMissionDetails(missionId: bigint, result: string): CanonicalFleetMissionDetails | null {
+    const words = splitWords(result);
+    const statusId = Number(decodeUintWord(wordAt(words, 0)));
+    const missionTypeId = Number(decodeUintWord(wordAt(words, 1)));
+    const owner = decodeAddressWord(wordAt(words, 2));
+    if (statusId === 0 || owner === zeroAddress) return null;
+
+    const randomnessRequestId = decodeUintWord(wordAt(words, 12)).toString();
+    return {
+      missionId: missionId.toString(),
+      statusId,
+      missionTypeId,
+      status: missionStatusLabel(BigInt(statusId)),
+      missionType: missionTypeLabel(BigInt(missionTypeId)),
+      owner,
+      originPlanetId: decodeUintWord(wordAt(words, 3)).toString(),
+      targetPlanetId: decodeUintWord(wordAt(words, 4)).toString(),
+      departureAt: decodeUintWord(wordAt(words, 5)).toString(),
+      arrivalAt: decodeUintWord(wordAt(words, 6)).toString(),
+      returnAt: decodeUintWord(wordAt(words, 7)).toString(),
+      fuelCost: decodeUintWord(wordAt(words, 8)).toString(),
+      cargo: decodeResources(words.slice(9, 12)),
+      randomnessRequestId: randomnessRequestId === "0" ? null : randomnessRequestId,
+      ships: Object.fromEntries(
+        missionShipKeys.map((key, index) => [key, decodeUintWord(wordAt(words, 13 + index)).toString()])
+      ),
+      originIsMoon: decodeBoolWord(wordAt(words, 27)),
+      targetIsMoon: decodeBoolWord(wordAt(words, 28))
+    };
+  }
+
   // VEY-KANEO-479: the set of RandomnessEngine request ids already fulfilled on-chain, or null when no
   // gating applies (no randomness engine configured, or no arrived Attack to gate). A null result means
   // "no randomness data" and leaves readiness on the plain arrival check (back-compat).
@@ -4678,6 +4736,22 @@ const maxBatchCallSize = 50;
 const buildingCount = 16;
 const defenseCount = 10;
 const supportedShipIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+const missionShipKeys = [
+  "smallCargo",
+  "lightFighter",
+  "recycler",
+  "colonyShip",
+  "largeCargo",
+  "heavyFighter",
+  "cruiser",
+  "battleship",
+  "bomber",
+  "destroyer",
+  "deathstar",
+  "battlecruiser",
+  "reaper",
+  "pathfinder"
+] as const;
 const supportedTechnologyIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 const riftBuildingId = 15;
 const riftWithdrawalDelaySeconds = 30 * 24 * 60 * 60;

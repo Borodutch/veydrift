@@ -18,6 +18,7 @@ import {VeydriftMigrationSettlement} from "../src/VeydriftMigrationSettlement.so
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {VeydriftSettlement} from "../src/VeydriftSettlement.sol";
+import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
 
 contract Deploy is ResourceTokenDeployment {
     string internal constant ALPHA_REDEPLOY_ACK =
@@ -77,13 +78,15 @@ contract Deploy is ResourceTokenDeployment {
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
+        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule();
         VeydriftGame game = new VeydriftGame(
             admin,
             address(gameplayModule),
             address(planetManagementModule),
             address(attackProtectionModule),
             address(colonizationModule),
-            address(defenseHoldModule)
+            address(defenseHoldModule),
+            address(stateMigrationModule)
         );
         gameAddress = address(
             new TransparentUpgradeableProxy(

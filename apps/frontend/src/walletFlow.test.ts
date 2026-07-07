@@ -1876,6 +1876,8 @@ describe("walletFlow", () => {
 
   test("submits migration claims to the migration contract for the normal start price", async () => {
     const migrationContract = "0x3333333333333333333333333333333333333333";
+    const statePayload = "0x1234";
+    const signature = "0xabcd";
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
       requests.push({ method, params });
@@ -1884,6 +1886,7 @@ describe("walletFlow", () => {
 
     await expect(
       sendSettlementTransaction(provider, account, { address: contract }, {
+        migrationClaim: { statePayload, signature },
         migrationContractAddress: migrationContract,
         startPriceWei: 50_000_000_000_000_000n,
       })
@@ -1896,12 +1899,32 @@ describe("walletFlow", () => {
           {
             from: account,
             to: migrationContract,
-            data: "0x4e71d92d",
+            data: "0xbe27b22c"
+              + "40".padStart(64, "0")
+              + "80".padStart(64, "0")
+              + "2".padStart(64, "0")
+              + "1234".padEnd(64, "0")
+              + "2".padStart(64, "0")
+              + "abcd".padEnd(64, "0"),
             value: "0xb1a2bc2ec50000"
           }
         ]
       }
     ]);
+  });
+
+  test("rejects migration claims before the signed state snapshot is ready", async () => {
+    const migrationContract = "0x3333333333333333333333333333333333333333";
+    const provider = mockProvider(async () => {
+      throw new Error("transaction should not be sent");
+    });
+
+    await expect(
+      sendSettlementTransaction(provider, account, { address: contract }, {
+        migrationContractAddress: migrationContract,
+        startPriceWei: 50_000_000_000_000_000n,
+      })
+    ).rejects.toThrow("Migration state snapshot is not ready for this wallet yet.");
   });
 
   test("reads an unclaimed migration reservation for the connected wallet", async () => {

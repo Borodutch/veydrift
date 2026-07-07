@@ -14,6 +14,7 @@ import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
+import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftAntiRaidPrimitives} from "../src/libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
@@ -130,13 +131,15 @@ contract VeydriftMoonSystemTest is Test {
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
+        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule();
         game = new VeydriftGame(
             admin,
             address(gameplayModule),
             address(planetManagementModule),
             address(attackProtectionModule),
             address(colonizationModule),
-            address(defenseHoldModule)
+            address(defenseHoldModule),
+            address(stateMigrationModule)
         );
         moons = new VeydriftMoonSystem(address(game), address(randomness));
         metalToken = new MoonMockResourceToken();

@@ -158,6 +158,11 @@ type RuntimeConfig = {
   rpcProvider: "alchemy" | "unknown";
 };
 
+type MigrationClaimPayload = {
+  signature: `0x${string}`;
+  statePayload: `0x${string}`;
+};
+
 type BackendDeploymentMetadata = {
   build: {
     deploymentAbiHash: string | null;
@@ -4215,6 +4220,7 @@ function indexedSettlementFundingResponse(
     balanceWei: null,
     contractKind: "game",
     startPriceWei,
+    ...(wallet ? migrationClaimPayloadFields(wallet) : {}),
     ...(resourceTokensConfigured
       ? {}
       : { unavailableReason: "Resource token reserves are not configured for this game deployment yet." }),
@@ -4222,6 +4228,50 @@ function indexedSettlementFundingResponse(
       ? { unavailableReason: "Settlement start price is not configured for this game deployment yet." }
       : {})
   }, indexer.snapshot());
+}
+
+function migrationClaimPayloadFields(wallet: `0x${string}`):
+  | { migrationClaim: MigrationClaimPayload }
+  | Record<string, never> {
+  const migrationClaim = migrationClaimPayloadForWallet(wallet);
+  return migrationClaim ? { migrationClaim } : {};
+}
+
+function migrationClaimPayloadForWallet(wallet: `0x${string}`): MigrationClaimPayload | null {
+  const path = process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+  if (!path) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const claims = migrationClaimMap(parsed);
+    const candidate = claims?.[wallet.toLowerCase()];
+    if (!candidate || typeof candidate !== "object") return null;
+    const record = candidate as Record<string, unknown>;
+    const statePayload = record.statePayload ?? record.payload;
+    const signature = record.signature;
+    if (isHexString(statePayload) && isHexString(signature)) {
+      return { statePayload, signature };
+    }
+  } catch (error) {
+    console.warn("Veydrift migration payload snapshot unavailable", reasonText(error));
+  }
+  return null;
+}
+
+function migrationClaimMap(parsed: unknown): Record<string, unknown> | null {
+  if (!parsed || typeof parsed !== "object") return null;
+  const root = parsed as Record<string, unknown>;
+  const claims = root.claims ?? root.wallets ?? root;
+  if (!claims || typeof claims !== "object" || Array.isArray(claims)) return null;
+  return Object.fromEntries(
+    Object.entries(claims as Record<string, unknown>).map(([wallet, value]) => [
+      wallet.toLowerCase(),
+      value
+    ])
+  );
+}
+
+function isHexString(value: unknown): value is `0x${string}` {
+  return typeof value === "string" && /^0x(?:[0-9a-fA-F]{2})*$/.test(value);
 }
 
 function indexedDebrisTargetsResponse(indexer: SettlementIndexer | undefined, url: URL): Response {

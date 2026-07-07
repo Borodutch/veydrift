@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -1896,6 +1896,52 @@ describe("Veydrift backend", () => {
     });
     expect(body.startPriceWei).not.toBeNull();
     expect(body.unavailableReason).toBeUndefined();
+  });
+
+  test("serves signed migration claim payloads from the configured snapshot file", async () => {
+    const chainReader = new class extends MockChainReader {
+      override getSettlementFunding(): ReturnType<MockChainReader["getSettlementFunding"]> {
+        throw new Error("warm settlement funding reads must not call chain reader");
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "100"
+    });
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-migration-claims-"));
+    const snapshotPath = join(dir, "claims.json");
+    writeFileSync(snapshotPath, JSON.stringify({
+      claims: {
+        [player.toLowerCase()]: {
+          signature: "0xabcd",
+          statePayload: "0x1234"
+        }
+      }
+    }));
+    const previousPath = process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+    process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH = snapshotPath;
+    try {
+      const response = await createRequestHandler({
+        config: configuredTestConfig,
+        chainReader,
+        indexer
+      })(new Request(`http://localhost/wallet/${player}/settlement-funding`));
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        migrationClaim: {
+          signature: "0xabcd",
+          statePayload: "0x1234"
+        }
+      });
+    } finally {
+      if (previousPath === undefined) delete process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+      else process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH = previousPath;
+      rmSync(dir, { force: true, recursive: true });
+    }
   });
 
   test("reports settlement-funding unavailable when no static start price is configured", async () => {

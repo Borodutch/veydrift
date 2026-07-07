@@ -1105,12 +1105,21 @@ export function FirstPlanetSettlementApp() {
     const migrationReservation = walletProvider
       ? await readMigrationReservation(walletProvider, settlementConfig.migrationAddress, connectedAccount)
       : null;
+    const activeMigration = Boolean(
+      migrationReservation?.exists && !migrationReservation.claimed && settlementConfig.migrationAddress
+    );
+    const migrationClaim = activeMigration ? funding.migrationClaim ?? null : null;
+    const unavailableReason = funding.unavailableReason
+      ?? (activeMigration && !migrationClaim
+        ? "Migration state snapshot is not ready for this wallet yet."
+        : undefined);
     return {
       ...funding,
-      ...(migrationReservation?.exists && !migrationReservation.claimed && settlementConfig.migrationAddress
-        ? { migrationContractAddress: settlementConfig.migrationAddress }
+      ...(activeMigration
+        ? { migrationClaim, migrationContractAddress: settlementConfig.migrationAddress }
         : {}),
       migrationReservation: migrationReservation?.claimed ? null : migrationReservation,
+      ...(unavailableReason ? { unavailableReason } : {}),
     };
   }
 
@@ -1369,6 +1378,7 @@ export function settlementLaunchBlocker(
 
 function settlementTransactionOptions(funding: SettlementFundingState): SettlementTransactionOptions {
   return {
+    ...(funding.migrationClaim ? { migrationClaim: funding.migrationClaim } : {}),
     ...(funding.migrationContractAddress
       ? { migrationContractAddress: funding.migrationContractAddress }
       : {}),

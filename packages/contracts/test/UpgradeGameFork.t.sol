@@ -19,6 +19,7 @@ import {
     VeydriftMoonSystem
 } from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
+import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
 import {Ship} from "../src/libraries/VeydriftTypes.sol";
 
 /// @notice Live-fork verification of the VeydriftGame proxy upgrade (VEY-468).
@@ -67,13 +68,15 @@ contract UpgradeGameForkTest is Test {
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
+        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule();
         VeydriftGame newImpl = new VeydriftGame(
             PROXY_ADMIN_OWNER,
             address(gameplayModule),
             address(planetManagementModule),
             address(attackProtectionModule),
             address(colonizationModule),
-            address(defenseHoldModule)
+            address(defenseHoldModule),
+            address(stateMigrationModule)
         );
 
         // Perform the upgrade as the real ProxyAdmin owner.

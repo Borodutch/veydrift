@@ -17,6 +17,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     address private immutable _attackProtectionModule;
     address private immutable _colonizationModule;
     address private immutable _defenseHoldModule;
+    address private immutable _stateMigrationModule;
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
@@ -26,18 +27,20 @@ contract VeydriftGame is VeydriftResourceReserves {
         address planetManagementModule,
         address attackProtectionModule,
         address colonizationModule,
-        address defenseHoldModule
+        address defenseHoldModule,
+        address stateMigrationModule
     ) VeydriftResourceReserves(admin) {
         if (
             gameplayModule == address(0) || planetManagementModule == address(0)
                 || attackProtectionModule == address(0) || colonizationModule == address(0)
-                || defenseHoldModule == address(0)
+                || defenseHoldModule == address(0) || stateMigrationModule == address(0)
         ) revert UnsupportedGameplayModule();
         _gameplayModule = gameplayModule;
         _planetManagementModule = planetManagementModule;
         _attackProtectionModule = attackProtectionModule;
         _colonizationModule = colonizationModule;
         _defenseHoldModule = defenseHoldModule;
+        _stateMigrationModule = stateMigrationModule;
     }
 
     function initialize(address admin) external initializer {
@@ -194,19 +197,8 @@ contract VeydriftGame is VeydriftResourceReserves {
         }
     }
 
-    function startReservedPlanet(
-        address player,
-        uint16 galaxy,
-        uint16 system,
-        uint8 position,
-        uint16 fields,
-        int16 temperature
-    ) external payable returns (uint256 planetId) {
-        if (msg.sender != _migrationSettlement) revert Unauthorized(msg.sender);
-        if (!occupiedCoordinates[coordinateKey(galaxy, system, position)]) {
-            revert UnpopulatedCoordinates();
-        }
-        return _startPlanetAt(player, msg.value, galaxy, system, position, fields, temperature);
+    function importMigratedState(address, bytes calldata) external payable {
+        _delegateToStateMigrationModule();
     }
 
     /// @dev UNUSED / DORMANT: SpaceDock is never set on the live deployment, so `_spaceDockSystem`
@@ -445,6 +437,45 @@ contract VeydriftGame is VeydriftResourceReserves {
             mission.fuelCost,
             mission.cargo,
             mission.randomnessRequestId
+        );
+    }
+
+    function fleetMissionDetails(uint256 missionId)
+        external
+        view
+        returns (
+            FleetMissionStatus status,
+            FleetMissionType missionType,
+            address owner,
+            uint256 originPlanetId,
+            uint256 targetPlanetId,
+            uint64 departureAt,
+            uint64 arrivalAt,
+            uint64 returnAt,
+            uint128 fuelCost,
+            Resources memory cargo,
+            uint256 randomnessRequestId,
+            MissionShips memory ships,
+            bool originIsMoon,
+            bool targetIsMoon
+        )
+    {
+        FleetMission storage mission = _fleetMissions[missionId];
+        return (
+            mission.status,
+            mission.missionType,
+            mission.owner,
+            mission.originPlanetId,
+            mission.targetPlanetId,
+            mission.departureAt,
+            mission.arrivalAt,
+            mission.returnAt,
+            mission.fuelCost,
+            mission.cargo,
+            mission.randomnessRequestId,
+            mission.ships,
+            mission.originIsMoon,
+            mission.targetIsMoon
         );
     }
 
@@ -1021,6 +1052,18 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     function _delegateToDefenseHoldModule() private {
         (bool ok, bytes memory result) = _defenseHoldModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        assembly ("memory-safe") {
+            return(add(result, 32), mload(result))
+        }
+    }
+
+    function _delegateToStateMigrationModule() private {
+        (bool ok, bytes memory result) = _stateMigrationModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(result, 32), mload(result))

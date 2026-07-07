@@ -69,13 +69,20 @@ export type SettlementFundingState = {
   affordable: boolean;
   balanceWei: bigint | null;
   contractKind: "game" | "legacy";
+  migrationClaim?: MigrationClaimPayload | null;
   migrationContractAddress?: string;
   migrationReservation?: MigrationReservation | null;
   startPriceWei: bigint | null;
   unavailableReason?: string;
 };
 
+export type MigrationClaimPayload = {
+  signature: string;
+  statePayload: string;
+};
+
 export type SettlementTransactionOptions = {
+  migrationClaim?: MigrationClaimPayload | null;
   migrationContractAddress?: string;
   startPriceWei?: bigint | null;
 };
@@ -1076,7 +1083,7 @@ export type VeydriftWalletChain = typeof BASE_SEPOLIA | typeof BASE_MAINNET;
 
 const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
 const START_PLANET_SELECTOR = "0xf45f1f18";
-const MIGRATION_CLAIM_SELECTOR = "0x4e71d92d";
+const MIGRATION_CLAIM_SELECTOR = "0xbe27b22c";
 const MIGRATION_RESERVATION_SELECTOR = "0xcd48c907";
 const GAME_SELECTORS = {
   abandonPlanet: "0xfa16dddc",
@@ -1956,6 +1963,13 @@ export function encodeGameCall(selector: string, values: Array<bigint | number |
   return `${selector}${values.map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")}`;
 }
 
+export function encodeMigrationClaimCall(statePayload: string, signature: string): string {
+  const encodedPayload = encodeAbiBytes(statePayload);
+  const encodedSignature = encodeAbiBytes(signature);
+  const signatureOffset = 64n + BigInt(encodedPayload.length / 2);
+  return `${MIGRATION_CLAIM_SELECTOR}${(64n).toString(16).padStart(64, "0")}${signatureOffset.toString(16).padStart(64, "0")}${encodedPayload}${encodedSignature}`;
+}
+
 export function encodeBurningChickenMoonCall(
   selector: string,
   tokenId: bigint | number | string,
@@ -2335,6 +2349,20 @@ function encodeAbiString(value: string): string {
   return `${bytes.length.toString(16).padStart(64, "0")}${body.padEnd(paddedLength, "0")}`;
 }
 
+function encodeAbiBytes(value: string): string {
+  const body = normalizeHexBytes(value);
+  const paddedLength = Math.ceil(body.length / 64) * 64;
+  return `${(body.length / 2).toString(16).padStart(64, "0")}${body.padEnd(paddedLength, "0")}`;
+}
+
+function normalizeHexBytes(value: string): string {
+  const body = value.replace(/^0x/i, "");
+  if (body.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(body)) {
+    throw new Error("Migration state payload is invalid.");
+  }
+  return body.toLowerCase();
+}
+
 export function parseRiftTokenAmount(value: string, decimals = 6): bigint {
   const trimmed = value.trim();
   if (!/^\d+(\.\d+)?$/.test(trimmed)) {
@@ -2534,10 +2562,13 @@ export async function sendSettlementTransaction(
     }
 
     if (options.migrationContractAddress) {
+      if (!options.migrationClaim?.statePayload || !options.migrationClaim.signature) {
+        throw new Error("Migration state snapshot is not ready for this wallet yet.");
+      }
       return sendWalletTransaction(provider, account, {
         from: account,
         to: options.migrationContractAddress,
-        data: MIGRATION_CLAIM_SELECTOR,
+        data: encodeMigrationClaimCall(options.migrationClaim.statePayload, options.migrationClaim.signature),
         value: encodeQuantity(options.startPriceWei)
       });
     }

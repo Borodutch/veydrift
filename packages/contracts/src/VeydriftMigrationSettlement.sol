@@ -6,6 +6,8 @@ import {
     OwnableUpgradeable
 } from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 interface IVeydriftMigrationGame {
     function reserveMigrationCoordinates(
@@ -14,14 +16,7 @@ interface IVeydriftMigrationGame {
         uint8[] calldata positions
     ) external;
 
-    function startReservedPlanet(
-        address player,
-        uint16 galaxy,
-        uint16 system,
-        uint8 position,
-        uint16 fields,
-        int16 temperature
-    ) external payable returns (uint256 planetId);
+    function importMigratedState(address player, bytes calldata payload) external payable;
 }
 
 contract VeydriftMigrationSettlement is Initializable, OwnableUpgradeable, UUPSUpgradeable {
@@ -37,6 +32,7 @@ contract VeydriftMigrationSettlement is Initializable, OwnableUpgradeable, UUPSU
 
     IVeydriftMigrationGame public game;
     mapping(address player => Reservation reservation) public reservations;
+    address public stateSigner;
 
     event MigrationReserved(
         address indexed player,
@@ -46,10 +42,13 @@ contract VeydriftMigrationSettlement is Initializable, OwnableUpgradeable, UUPSU
         uint16 fields,
         int16 temperature
     );
-    event MigrationClaimed(address indexed player, uint256 indexed planetId);
+    event MigrationStateSignerUpdated(address indexed oldSigner, address indexed newSigner);
+    event FullStateMigrationClaimed(address indexed player, bytes32 indexed stateHash);
     event MigrationCoordinatesReserved(uint256 count);
 
     error BadReservationInput();
+    error BadMigrationSignature();
+    error FullStateMigrationRequired();
     error MigrationReservationMissing(address player);
     error MigrationReservationClaimed(address player);
 
@@ -62,6 +61,7 @@ contract VeydriftMigrationSettlement is Initializable, OwnableUpgradeable, UUPSU
         if (gameAddress == address(0)) revert BadReservationInput();
         __Ownable_init(initialOwner);
         game = IVeydriftMigrationGame(gameAddress);
+        stateSigner = initialOwner;
     }
 
     function importReservations(
@@ -108,21 +108,42 @@ contract VeydriftMigrationSettlement is Initializable, OwnableUpgradeable, UUPSU
         emit MigrationCoordinatesReserved(count);
     }
 
-    function claim() external payable returns (uint256 planetId) {
+    function setStateSigner(address nextSigner) external onlyOwner {
+        if (nextSigner == address(0)) revert BadReservationInput();
+        address oldSigner = stateSigner;
+        stateSigner = nextSigner;
+        emit MigrationStateSignerUpdated(oldSigner, nextSigner);
+    }
+
+    function claim() external payable returns (uint256) {
+        revert FullStateMigrationRequired();
+    }
+
+    function claim(bytes calldata statePayload, bytes calldata signature)
+        external
+        payable
+        returns (bytes32 stateHash)
+    {
         Reservation storage reservation = reservations[msg.sender];
         if (!reservation.exists) revert MigrationReservationMissing(msg.sender);
         if (reservation.claimed) revert MigrationReservationClaimed(msg.sender);
 
+        stateHash = migrationStateHash(msg.sender, statePayload);
+        address recovered =
+            ECDSA.recover(MessageHashUtils.toEthSignedMessageHash(stateHash), signature);
+        if (recovered != stateSigner) revert BadMigrationSignature();
+
         reservation.claimed = true;
-        planetId = game.startReservedPlanet{value: msg.value}(
-            msg.sender,
-            reservation.galaxy,
-            reservation.system,
-            reservation.position,
-            reservation.fields,
-            reservation.temperature
-        );
-        emit MigrationClaimed(msg.sender, planetId);
+        game.importMigratedState{value: msg.value}(msg.sender, statePayload);
+        emit FullStateMigrationClaimed(msg.sender, stateHash);
+    }
+
+    function migrationStateHash(address player, bytes calldata statePayload)
+        public
+        view
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(block.chainid, address(this), player, statePayload));
     }
 
     function migrationReservation(address player)

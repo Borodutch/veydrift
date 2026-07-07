@@ -83,6 +83,22 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         VeydriftGameStorage.Resources cost;
     }
 
+    struct MigrationMoonBuildingConstruction {
+        bool active;
+        MoonBuilding building;
+        uint16 targetLevel;
+        uint64 readyAt;
+        VeydriftGameStorage.Resources cost;
+    }
+
+    struct MigrationMoonDefenseQueue {
+        bool active;
+        Defense defense;
+        uint32 quantity;
+        uint64 readyAt;
+        VeydriftGameStorage.Resources cost;
+    }
+
     struct MoonChanceOutcome {
         bool active;
         bool finalized;
@@ -364,6 +380,119 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         uint256 seed =
             uint256(keccak256(abi.encodePacked(MOON_SEED_DOMAIN, block.chainid, planetId)));
         createdMoon = _createMoon(planetId, planetRef, planetRef.owner, seed);
+    }
+
+    function importMigratedMoonState(
+        uint256 planetId,
+        address player,
+        uint16 fields,
+        uint16 diameterKm,
+        uint64 createdAt,
+        uint64 jumpGateReadyAt,
+        VeydriftGameStorage.Resources calldata resources,
+        uint16[4] calldata buildingLevels,
+        uint32[16] calldata shipCounts,
+        uint32[10] calldata defenseCounts,
+        MigrationMoonBuildingConstruction calldata buildingQueue,
+        MigrationMoonDefenseQueue calldata defenseQueue
+    ) external {
+        if (msg.sender != address(game)) revert NotOwner(msg.sender);
+        if (player == address(0)) revert ZeroAddress();
+        VeydriftGameStorage.Planet memory planetRef = game.planet(planetId);
+        if (planetRef.owner == address(0)) revert NoPlanet();
+        if (planetRef.owner != player) revert NotMoonOwner();
+        if (_moons[planetId].exists) revert MoonAlreadyExists(planetId);
+
+        _moons[planetId] = Moon({
+            exists: true,
+            planetId: planetId,
+            owner: player,
+            fields: fields,
+            diameterKm: diameterKm,
+            createdAt: createdAt,
+            jumpGateReadyAt: jumpGateReadyAt
+        });
+        emit MoonCreated(
+            player,
+            planetId,
+            planetRef.galaxy,
+            planetRef.system,
+            planetRef.position,
+            fields,
+            diameterKm
+        );
+
+        if (resources.metal != 0 || resources.crystal != 0 || resources.deuterium != 0) {
+            game.grantMoonResources(planetId, resources);
+            _emitMoonResourcesSettled(planetId);
+        }
+
+        for (uint8 id = 0; id <= uint8(type(MoonBuilding).max);) {
+            uint16 level = buildingLevels[id];
+            if (level != 0) {
+                _moonBuildingLevels[planetId][MoonBuilding(id)] = level;
+                emit MoonBuildingCompleted(planetId, MoonBuilding(id), level);
+            }
+            unchecked {
+                ++id;
+            }
+        }
+        for (uint8 id = 0; id <= uint8(Ship.Crawler);) {
+            uint32 count = shipCounts[id];
+            if (count != 0) {
+                game.setMoonShipCount(planetId, Ship(id), count);
+            }
+            unchecked {
+                ++id;
+            }
+        }
+        for (uint8 id = 0; id <= uint8(Defense.InterplanetaryMissile);) {
+            uint32 count = defenseCounts[id];
+            if (count != 0) {
+                _setMoonDefenseCount(planetId, Defense(id), count);
+            }
+            unchecked {
+                ++id;
+            }
+        }
+
+        if (buildingQueue.active) {
+            moonBuildingConstructions[planetId] = MoonBuildingConstruction({
+                active: true,
+                building: buildingQueue.building,
+                targetLevel: buildingQueue.targetLevel,
+                readyAt: buildingQueue.readyAt,
+                cost: buildingQueue.cost
+            });
+            emit MoonBuildingStarted(
+                planetId,
+                buildingQueue.building,
+                buildingQueue.targetLevel,
+                buildingQueue.readyAt,
+                buildingQueue.cost.metal,
+                buildingQueue.cost.crystal,
+                buildingQueue.cost.deuterium
+            );
+        }
+
+        if (defenseQueue.active) {
+            moonDefenseQueues[planetId] = MoonDefenseQueue({
+                active: true,
+                defense: defenseQueue.defense,
+                quantity: defenseQueue.quantity,
+                readyAt: defenseQueue.readyAt,
+                cost: defenseQueue.cost
+            });
+            emit MoonDefenseQueued(
+                planetId,
+                defenseQueue.defense,
+                defenseQueue.quantity,
+                defenseQueue.readyAt,
+                defenseQueue.cost.metal,
+                defenseQueue.cost.crystal,
+                defenseQueue.cost.deuterium
+            );
+        }
     }
 
     function grantMoonFromChickenBurn(bytes32 burnId, address player, uint256 planetId)

@@ -17,6 +17,7 @@ import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
 import {Resource} from "../src/libraries/VeydriftTypes.sol";
 import {VeydriftSettlement} from "../src/VeydriftSettlement.sol";
+import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
 import {
     VeydriftCrystal,
     VeydriftDeuterium,
@@ -250,13 +251,15 @@ contract VeydriftResourceTokenTest is Test {
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
+        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule();
         VeydriftGame existingGame = new VeydriftGame(
             deployer,
             address(gameplayModule),
             address(planetManagementModule),
             address(attackProtectionModule),
             address(colonizationModule),
-            address(defenseHoldModule)
+            address(defenseHoldModule),
+            address(stateMigrationModule)
         );
         vm.setEnv("VEYDRIFT_GAME_CONTRACT_ADDRESS", vm.toString(address(existingGame)));
 

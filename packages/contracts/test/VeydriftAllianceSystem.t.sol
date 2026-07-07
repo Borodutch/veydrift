@@ -13,6 +13,7 @@ import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
+import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
 import {Resource, Ship} from "../src/libraries/VeydriftTypes.sol";
 
 contract AllianceMockResourceToken {
@@ -79,13 +80,15 @@ contract VeydriftAllianceSystemTest is Test {
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
+        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule();
         game = new VeydriftGame(
             admin,
             address(gameplayModule),
             address(planetManagementModule),
             address(attackProtectionModule),
             address(colonizationModule),
-            address(defenseHoldModule)
+            address(defenseHoldModule),
+            address(stateMigrationModule)
         );
         RandomnessEngine randomness = new RandomnessEngine(admin, fulfiller);
         vm.prank(admin);
