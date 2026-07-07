@@ -5864,6 +5864,7 @@ function toQuantity(value: bigint): string {
   return `0x${value.toString(16)}`;
 }
 
+// VeydriftGameStorage layout: `_fleetMissions` follows `_fleets` at slot 24.
 const fleetMissionsStorageSlot = 24n;
 
 function fleetMissionStorageBaseSlot(missionId: bigint): bigint {
