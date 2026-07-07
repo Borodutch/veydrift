@@ -440,15 +440,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         );
     }
 
-    function fleetMissionSupplement(uint256 missionId)
-        external
-        view
-        returns (MissionShips memory ships, bool originIsMoon, bool targetIsMoon)
-    {
-        FleetMission storage mission = _fleetMissions[missionId];
-        return (mission.ships, mission.originIsMoon, mission.targetIsMoon);
-    }
-
     function debrisField(uint256) external returns (uint128, uint128) {
         _delegateToPlanetManagementModule();
     }

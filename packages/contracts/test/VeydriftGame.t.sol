@@ -6899,14 +6899,16 @@ contract VeydriftGameTest is Test {
         uint128 metalDebris,
         uint128 crystalDebris
     ) public view {
+        uint256 moonChanceDebrisUnit = 100_000;
+        uint16 maxMoonChanceBps = 2_000;
         uint256 debris = uint256(metalDebris) + crystalDebris;
-        uint256 debrisUnits = debris / moons.MOON_CHANCE_DEBRIS_UNIT();
+        uint256 debrisUnits = debris / moonChanceDebrisUnit;
         uint256 expected = debrisUnits * 100;
-        if (expected > moons.MAX_MOON_CHANCE_BPS()) expected = moons.MAX_MOON_CHANCE_BPS();
+        if (expected > maxMoonChanceBps) expected = maxMoonChanceBps;
 
         uint16 chanceBps = moons.moonChanceBps(metalDebris, crystalDebris);
         assertEq(chanceBps, expected);
-        assertLe(chanceBps, moons.MAX_MOON_CHANCE_BPS());
+        assertLe(chanceBps, maxMoonChanceBps);
     }
 
     function testQualifyingAttackCreatesMoonChanceAndFinalizesAfterRandomness() public {

@@ -1,4 +1,5 @@
 import { solarSatelliteEnergy } from "@veydrift/universe";
+import { encodeAbiParameters, keccak256 } from "viem";
 import type { BackendConfig } from "./config";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import { deriveDefenseRows, deriveShipRows, usedFieldsFromBuildingRows } from "./readModels";
@@ -543,6 +544,12 @@ export type CanonicalFleetMissionSnapshot = {
 };
 
 export type CanonicalFleetMissionDetails = CanonicalFleetMissionSnapshot & {
+  ships: Record<string, string>;
+  originIsMoon: boolean;
+  targetIsMoon: boolean;
+};
+
+type FleetMissionSupplement = {
   ships: Record<string, string>;
   originIsMoon: boolean;
   targetIsMoon: boolean;
@@ -1917,26 +1924,16 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   async listCanonicalFleetMissionDetails(): Promise<CanonicalFleetMissionDetails[]> {
-    const nextFleetId = await this.readOptionalUintCall("0x80198ce1", []);
-    if (!nextFleetId || nextFleetId <= 1n) return [];
+    const missions = await this.listCanonicalFleetMissions();
+    const activeMissions = missions.filter(isActiveCanonicalMission);
+    const supplements = await this.readFleetMissionStorageSupplements(
+      activeMissions.map((mission) => BigInt(mission.missionId))
+    );
 
-    const missionCalls: Array<{ selector: string; args: string[] }> = [];
-    const supplementCalls: Array<{ selector: string; args: string[] }> = [];
-    for (let missionId = 1n; missionId < nextFleetId; missionId += 1n) {
-      const args = [encodeUint(missionId)];
-      missionCalls.push({ selector: "0xf158c946", args });
-      supplementCalls.push({ selector: "0x3efe695a", args });
-    }
-
-    const [missionResults, supplementResults] = await Promise.all([
-      this.batchCallContract(this.gameContractAddress, missionCalls),
-      this.batchCallContract(this.gameContractAddress, supplementCalls)
-    ]);
-    return missionResults
-      .map((result, index) =>
-        this.decodeCanonicalFleetMissionDetails(BigInt(index + 1), result, supplementResults[index] ?? "0x")
-      )
-      .filter((mission): mission is CanonicalFleetMissionDetails => mission !== null);
+    return activeMissions.map((mission) => ({
+      ...mission,
+      ...(supplements.get(mission.missionId) ?? emptyFleetMissionSupplement())
+    }));
   }
 
   async listFleetMissionSummaries(): Promise<FleetMissionSummary[]> {
@@ -4094,23 +4091,45 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
-  private decodeCanonicalFleetMissionDetails(
-    missionId: bigint,
-    missionResult: string,
-    supplementResult: string
-  ): CanonicalFleetMissionDetails | null {
-    const mission = this.decodeCanonicalFleetMission(missionId, missionResult);
-    if (!mission) return null;
+  private async readFleetMissionStorageSupplements(
+    missionIds: bigint[]
+  ): Promise<Map<string, FleetMissionSupplement>> {
+    if (missionIds.length === 0) return new Map();
+    const slotRequests = missionIds.flatMap((missionId) => {
+      const baseSlot = fleetMissionStorageBaseSlot(missionId);
+      return [baseSlot + 7n, baseSlot + 8n, baseSlot + 11n];
+    });
+    const words = await this.batchStorageAt(slotRequests);
+    const supplements = new Map<string, FleetMissionSupplement>();
+    for (let index = 0; index < missionIds.length; index += 1) {
+      const firstShipsWord = words[index * 3] ?? "0x";
+      const secondShipsWord = words[index * 3 + 1] ?? "0x";
+      const flagsWord = words[index * 3 + 2] ?? "0x";
+      supplements.set(missionIds[index]?.toString() ?? "", {
+        ships: decodeMissionShipsFromStorage(firstShipsWord, secondShipsWord),
+        originIsMoon: decodePackedBool(flagsWord, 0),
+        targetIsMoon: decodePackedBool(flagsWord, 1)
+      });
+    }
+    return supplements;
+  }
 
-    const supplementWords = splitWords(supplementResult);
-    return {
-      ...mission,
-      ships: Object.fromEntries(
-        missionShipKeys.map((key, index) => [key, decodeUintWord(wordAt(supplementWords, index)).toString()])
-      ),
-      originIsMoon: decodeBoolWord(wordAt(supplementWords, missionShipKeys.length)),
-      targetIsMoon: decodeBoolWord(wordAt(supplementWords, missionShipKeys.length + 1))
-    };
+  private async batchStorageAt(slots: bigint[]): Promise<string[]> {
+    if (slots.length === 0) return [];
+    if (!this.transport.requestBatch) {
+      const results: string[] = [];
+      for (const slot of slots) {
+        results.push(await this.transport.request<string>(
+          "eth_getStorageAt",
+          [this.gameContractAddress, toQuantity(slot), "latest"]
+        ));
+      }
+      return results;
+    }
+    return this.transport.requestBatch<string>(slots.map((slot) => ({
+      method: "eth_getStorageAt",
+      params: [this.gameContractAddress, toQuantity(slot), "latest"]
+    })));
   }
 
   // VEY-KANEO-479: the set of RandomnessEngine request ids already fulfilled on-chain, or null when no
@@ -5843,6 +5862,57 @@ function encodeUint(value: bigint): string {
 
 function toQuantity(value: bigint): string {
   return `0x${value.toString(16)}`;
+}
+
+const fleetMissionsStorageSlot = 24n;
+
+function fleetMissionStorageBaseSlot(missionId: bigint): bigint {
+  return BigInt(keccak256(encodeAbiParameters(
+    [
+      { type: "uint256" },
+      { type: "uint256" }
+    ],
+    [missionId, fleetMissionsStorageSlot]
+  )));
+}
+
+function emptyFleetMissionSupplement(): FleetMissionSupplement {
+  return {
+    ships: Object.fromEntries(missionShipKeys.map((key) => [key, "0"])),
+    originIsMoon: false,
+    targetIsMoon: false
+  };
+}
+
+function isActiveCanonicalMission(mission: CanonicalFleetMissionSnapshot): boolean {
+  return mission.status === "Outbound"
+    || mission.status === "Returning"
+    || mission.status === "Recalled";
+}
+
+function decodeMissionShipsFromStorage(
+  firstWord: string,
+  secondWord: string
+): Record<string, string> {
+  return Object.fromEntries(missionShipKeys.map((key, index) => {
+    const word = index < 8 ? firstWord : secondWord;
+    const offset = (index % 8) * 4;
+    return [key, decodePackedUint32(word, offset).toString()];
+  }));
+}
+
+function decodePackedUint32(word: string, byteOffset: number): bigint {
+  return BigInt(`0x${packedStorageBytes(word, byteOffset, 4)}`);
+}
+
+function decodePackedBool(word: string, byteOffset: number): boolean {
+  return packedStorageBytes(word, byteOffset, 1) !== "00";
+}
+
+function packedStorageBytes(word: string, byteOffset: number, byteLength: number): string {
+  const normalized = (word.startsWith("0x") ? word.slice(2) : word).padStart(64, "0");
+  const start = 64 - ((byteOffset + byteLength) * 2);
+  return normalized.slice(start, start + byteLength * 2);
 }
 
 function toTopic(value: bigint): string {

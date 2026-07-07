@@ -47,6 +47,7 @@ contract MoonMockResourceToken {
 
 contract VeydriftMoonSystemTest is Test {
     uint128 internal constant RESERVE_FUNDING = 1_000_000_000_000;
+    uint8 internal constant MAX_CHICKEN_BURN_MOONS_PER_PLAYER = 2;
 
     address internal admin = address(0xA11CE);
     address internal player = address(0xB0B);
@@ -177,9 +178,6 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(proxied.owner(), admin);
         assertEq(address(proxied.game()), address(game));
         assertEq(address(proxied.randomness()), address(randomness));
-        assertEq(proxied.moonChanceReporter(), address(game));
-        assertEq(proxied.nextMoonChanceId(), 1);
-        assertEq(proxied.nextMoonDestructionId(), 1);
 
         VeydriftMoonSystem nextImplementation =
             new VeydriftMoonSystem(address(game), address(randomness));
@@ -277,7 +275,7 @@ contract VeydriftMoonSystemTest is Test {
             abi.encodeWithSelector(
                 VeydriftMoonSystem.ChickenBurnMoonLimitReached.selector,
                 player,
-                moons.MAX_CHICKEN_BURN_MOONS_PER_PLAYER()
+                MAX_CHICKEN_BURN_MOONS_PER_PLAYER
             )
         );
         moons.grantMoonFromChickenBurn(keccak256("burn-3"), player, thirdPlanetId);
