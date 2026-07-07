@@ -1094,7 +1094,7 @@ describe("canonical fleet mission details", () => {
         return requests.map((request, index) => {
           expect(request.method).toBe("eth_getStorageAt");
           const [address, slot, block] = request.params as [Address, string, string];
-          expect(address).toBe(readerConfig.gameContractAddress);
+          expect(address).toBe(readerConfig.gameContractAddress as Address);
           expect(block).toBe("latest");
           storageSlots.push(slot);
           const missionIndex = Math.floor(index / 3);
@@ -1104,7 +1104,7 @@ describe("canonical fleet mission details", () => {
           if (missionIndex === 0) return word(1n) as T;
           if (wordIndex === 0) return packedUint32Word([11n]) as T;
           if (wordIndex === 1) return packedUint32Word([13n]) as T;
-          return word(2n) as T;
+          return word(1n << 8n) as T;
         });
       }
     });
