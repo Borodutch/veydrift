@@ -18,6 +18,7 @@ cache/
 .DS_Store
 *.log
 .veydrift-backend-build-sha
+.data/
 
 # Generated image variants (build-time output)
 apps/frontend/public/assets/game/sizes/

@@ -17,11 +17,14 @@ import {
   type SettledPlanetEvent
 } from "./evm";
 
-type MigrationSnapshotReader = Pick<
-  ChainReader,
-  "getCanonicalPlanetState" | "getMoonState" | "getResearchState" | "listCurrentPlanets"
-> & {
+type MigrationSnapshotReader = {
+  getCanonicalPlanetState(planetId: bigint): Promise<CanonicalPlanetChainState>;
+  listCanonicalPlanetStatesForIds?: (planetIds: bigint[]) => Promise<CanonicalPlanetChainState[]>;
+  getMoonState(wallet: Address, planetId?: bigint): Promise<MoonState>;
+  getResearchState(wallet: Address, planetId?: bigint): Promise<ResearchState>;
+  listCurrentPlanets(): Promise<SettledPlanetEvent[]>;
   listCanonicalFleetMissionDetails?: () => Promise<CanonicalFleetMissionDetails[]>;
+  listCanonicalFleetMissionDetailsForIds?: (missionIds: bigint[]) => Promise<CanonicalFleetMissionDetails[]>;
   listFleetMissionSummaries?: () => Promise<FleetMissionSummary[]>;
 };
 
@@ -95,6 +98,8 @@ type SnapshotMission = {
   returnCargo?: Resources | null;
 };
 
+type SnapshotProgress = (message: string) => void;
+
 export type MigrationSnapshotClaim = {
   statePayload: Hex;
   signature: Hex;
@@ -126,6 +131,8 @@ export async function buildMigrationSnapshot(
     migrationContractAddress: Address;
     stateSignerPrivateKey: Hex;
     generatedAt?: Date;
+    readConcurrency?: number;
+    progress?: SnapshotProgress;
   }
 ): Promise<MigrationSnapshotOutput> {
   if (!reader.listCurrentPlanets || !reader.getCanonicalPlanetState) {
@@ -135,23 +142,53 @@ export async function buildMigrationSnapshot(
   const generatedAt = options.generatedAt ?? new Date();
   const cutoffUnix = BigInt(Math.floor(generatedAt.getTime() / 1000));
   const account = privateKeyToAccount(options.stateSignerPrivateKey);
+  const readConcurrency = options.readConcurrency ?? 25;
+  options.progress?.("reading current planets");
   const planets = await reader.listCurrentPlanets();
-  const canonicalEntries = await Promise.all(
-    planets.map(async (planet) => [planet.planetId, await reader.getCanonicalPlanetState!(BigInt(planet.planetId))] as const)
-  );
+  options.progress?.(`read ${planets.length} current planets`);
+  options.progress?.(`reading canonical planet state with concurrency ${readConcurrency}`);
+  const canonicalEntries = reader.listCanonicalPlanetStatesForIds
+    ? (await reader.listCanonicalPlanetStatesForIds(planets.map((planet) => BigInt(planet.planetId))))
+      .map((state) => [state.planetId, state] as const)
+    : await mapWithConcurrency(
+      planets,
+      readConcurrency,
+      async (planet) => {
+        const entry = [planet.planetId, await reader.getCanonicalPlanetState!(BigInt(planet.planetId))] as const;
+        return entry;
+      }
+    );
+  options.progress?.(`read canonical state for ${canonicalEntries.length}/${planets.length} planets`);
   const canonicalByPlanetId = new Map<string, CanonicalPlanetChainState>(canonicalEntries);
   const owners = uniqueOwners(planets);
+  options.progress?.(`reading research for ${owners.length} players with concurrency ${readConcurrency}`);
   const researchByOwner = new Map<string, ResearchState>();
-  for (const owner of owners) {
+  let researchReadCount = 0;
+  await mapWithConcurrency(owners, readConcurrency, async (owner) => {
     researchByOwner.set(owner.toLowerCase(), await reader.getResearchState(owner));
-  }
+    researchReadCount += 1;
+    if (researchReadCount % 25 === 0 || researchReadCount === owners.length) {
+      options.progress?.(`read research for ${researchReadCount}/${owners.length} players`);
+    }
+  });
+  options.progress?.(`read research for ${researchByOwner.size} players`);
 
+  options.progress?.(`reading moon state for ${planets.length} planets with concurrency ${readConcurrency}`);
   const moonsByPlanetId = new Map<string, MoonState>();
-  for (const planet of planets) {
+  let moonReadCount = 0;
+  await mapWithConcurrency(planets, readConcurrency, async (planet) => {
     moonsByPlanetId.set(planet.planetId, await reader.getMoonState(planet.owner, BigInt(planet.planetId)));
-  }
+    moonReadCount += 1;
+    if (moonReadCount % 50 === 0 || moonReadCount === planets.length) {
+      options.progress?.(`read moon state for ${moonReadCount}/${planets.length} planets`);
+    }
+  });
+  options.progress?.(`read moon state for ${moonsByPlanetId.size} planets`);
 
+  options.progress?.("reading active/cancellable missions");
   const missions = await readSnapshotMissions(reader);
+  options.progress?.(`read ${activeMissions(missions).length} active/cancellable missions`);
+  options.progress?.("building migration player payloads");
   const playerStates = buildMigrationPlayerStates({
     planets,
     canonicalByPlanetId,
@@ -160,7 +197,9 @@ export async function buildMigrationSnapshot(
     missions,
     cutoffUnix
   });
+  options.progress?.(`built payload state for ${playerStates.length} players`);
 
+  options.progress?.(`signing ${playerStates.length} player payloads`);
   const claims: Record<string, MigrationSnapshotClaim> = {};
   for (const state of playerStates) {
     const statePayload = encodeMigrationPlayerState(state);
@@ -173,6 +212,7 @@ export async function buildMigrationSnapshot(
     const signature = await account.signMessage({ message: { raw: stateHash } });
     claims[state.player.toLowerCase()] = { statePayload, signature, stateHash };
   }
+  options.progress?.(`signed ${Object.keys(claims).length} player payloads`);
 
   return {
     snapshotMetadata: {
@@ -255,18 +295,42 @@ export function encodeMigrationPlayerState(state: MigrationPlayerValue): Hex {
 
 async function readSnapshotMissions(reader: MigrationSnapshotReader): Promise<SnapshotMission[]> {
   if (reader.listCanonicalFleetMissionDetails) {
-    return (await reader.listCanonicalFleetMissionDetails()).map((mission) => ({
-      missionId: mission.missionId,
-      status: mission.status,
-      owner: mission.owner,
-      originPlanetId: mission.originPlanetId,
-      cargo: mission.cargo,
-      fuelCost: mission.fuelCost,
-      ships: mission.ships,
-      originIsMoon: mission.originIsMoon
-    }));
+    return (await reader.listCanonicalFleetMissionDetails()).map(snapshotMissionFromCanonical);
   }
   return reader.listFleetMissionSummaries ? await reader.listFleetMissionSummaries() : [];
+}
+
+async function mapWithConcurrency<T, U>(
+  values: readonly T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<U>
+): Promise<U[]> {
+  const limit = Math.max(1, Math.floor(concurrency));
+  const results = new Array<U>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(limit, values.length) }, async () => {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= values.length) return;
+      results[index] = await mapper(values[index] as T, index);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+function snapshotMissionFromCanonical(mission: CanonicalFleetMissionDetails): SnapshotMission {
+  return {
+    missionId: mission.missionId,
+    status: mission.status,
+    owner: mission.owner,
+    originPlanetId: mission.originPlanetId,
+    cargo: mission.cargo,
+    fuelCost: mission.fuelCost,
+    ships: mission.ships,
+    originIsMoon: mission.originIsMoon
+  };
 }
 
 function migrationPlanetValue(
@@ -475,6 +539,56 @@ function parsePositiveInteger(value: string | undefined, label: string): number 
   return parsed;
 }
 
+function snapshotReaderWithActiveMissionUrl(
+  reader: MigrationSnapshotReader,
+  activeMissionsUrl: string | undefined,
+  progress?: SnapshotProgress
+): MigrationSnapshotReader {
+  if (!activeMissionsUrl) return reader;
+  if (!reader.listCanonicalFleetMissionDetailsForIds) {
+    throw new Error("Active mission URL snapshots require canonical fleet mission detail reads by id.");
+  }
+  if (!reader.getCanonicalPlanetState || !reader.listCurrentPlanets) {
+    throw new Error("Active mission URL snapshots require canonical planet and current planet readers.");
+  }
+  return {
+    getCanonicalPlanetState: reader.getCanonicalPlanetState.bind(reader),
+    ...(reader.listCanonicalPlanetStatesForIds
+      ? { listCanonicalPlanetStatesForIds: reader.listCanonicalPlanetStatesForIds.bind(reader) }
+      : {}),
+    getMoonState: reader.getMoonState.bind(reader),
+    getResearchState: reader.getResearchState.bind(reader),
+    listCurrentPlanets: reader.listCurrentPlanets.bind(reader),
+    listCanonicalFleetMissionDetails: async () => {
+      progress?.(`fetching active mission ids from ${activeMissionsUrl}`);
+      const missionIds = await fetchActiveMissionIds(activeMissionsUrl);
+      progress?.(`fetched ${missionIds.length} active mission ids`);
+      return reader.listCanonicalFleetMissionDetailsForIds!(missionIds);
+    }
+  };
+}
+
+async function fetchActiveMissionIds(activeMissionsUrl: string): Promise<bigint[]> {
+  const response = await fetch(activeMissionsUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch active migration missions: HTTP ${response.status}`);
+  }
+  const body = await response.json() as { missions?: Array<{ missionId?: unknown }> } | Array<{ missionId?: unknown }>;
+  const missions = Array.isArray(body) ? body : body.missions;
+  if (!Array.isArray(missions)) {
+    throw new Error("Active migration missions response must include a missions array.");
+  }
+  const missionIds = new Set<bigint>();
+  for (const mission of missions) {
+    const rawMissionId = mission.missionId;
+    if (typeof rawMissionId !== "string" || !/^[1-9]\d*$/.test(rawMissionId)) {
+      throw new Error(`Invalid active migration mission id: ${String(rawMissionId)}`);
+    }
+    missionIds.add(BigInt(rawMissionId));
+  }
+  return [...missionIds].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+}
+
 async function main(): Promise<void> {
   const loaded = loadBackendConfig();
   if (loaded.problems.length > 0) {
@@ -495,15 +609,28 @@ async function main(): Promise<void> {
       ?? "8453",
     "VEYDRIFT_MIGRATION_DESTINATION_CHAIN_ID"
   );
+  const reader = new VeydriftGameReader(loaded.config, undefined, {
+    cacheTtlMs: 0,
+    hydrateQueueStartedAt: false,
+    minRequestIntervalMs: 0
+  });
+  const progress = (message: string): void => {
+    console.info(`[migration:snapshot] ${message}`);
+  };
   const snapshot = await buildMigrationSnapshot(
-    new VeydriftGameReader(loaded.config, undefined, { hydrateQueueStartedAt: false }),
+    snapshotReaderWithActiveMissionUrl(reader, process.env.VEYDRIFT_MIGRATION_ACTIVE_MISSIONS_URL, progress),
     {
       chainId: destinationChainId,
       migrationContractAddress: destinationMigrationContract,
       stateSignerPrivateKey: parsePrivateKey(
         process.env.VEYDRIFT_MIGRATION_STATE_SIGNER_PRIVATE_KEY,
         "VEYDRIFT_MIGRATION_STATE_SIGNER_PRIVATE_KEY"
-      )
+      ),
+      readConcurrency: parsePositiveInteger(
+        process.env.VEYDRIFT_MIGRATION_SNAPSHOT_CONCURRENCY ?? "25",
+        "VEYDRIFT_MIGRATION_SNAPSHOT_CONCURRENCY"
+      ),
+      progress
     }
   );
   mkdirSync(dirname(outputPath), { recursive: true });
