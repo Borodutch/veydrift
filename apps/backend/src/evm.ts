@@ -1920,14 +1920,22 @@ export class VeydriftGameReader implements ChainReader {
     const nextFleetId = await this.readOptionalUintCall("0x80198ce1", []);
     if (!nextFleetId || nextFleetId <= 1n) return [];
 
-    const calls: Array<{ selector: string; args: string[] }> = [];
+    const missionCalls: Array<{ selector: string; args: string[] }> = [];
+    const supplementCalls: Array<{ selector: string; args: string[] }> = [];
     for (let missionId = 1n; missionId < nextFleetId; missionId += 1n) {
-      calls.push({ selector: "0x6309dc24", args: [encodeUint(missionId)] });
+      const args = [encodeUint(missionId)];
+      missionCalls.push({ selector: "0xf158c946", args });
+      supplementCalls.push({ selector: "0x3efe695a", args });
     }
 
-    const results = await this.batchCallContract(this.gameContractAddress, calls);
-    return results
-      .map((result, index) => this.decodeCanonicalFleetMissionDetails(BigInt(index + 1), result))
+    const [missionResults, supplementResults] = await Promise.all([
+      this.batchCallContract(this.gameContractAddress, missionCalls),
+      this.batchCallContract(this.gameContractAddress, supplementCalls)
+    ]);
+    return missionResults
+      .map((result, index) =>
+        this.decodeCanonicalFleetMissionDetails(BigInt(index + 1), result, supplementResults[index] ?? "0x")
+      )
       .filter((mission): mission is CanonicalFleetMissionDetails => mission !== null);
   }
 
@@ -4086,34 +4094,22 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
-  private decodeCanonicalFleetMissionDetails(missionId: bigint, result: string): CanonicalFleetMissionDetails | null {
-    const words = splitWords(result);
-    const statusId = Number(decodeUintWord(wordAt(words, 0)));
-    const missionTypeId = Number(decodeUintWord(wordAt(words, 1)));
-    const owner = decodeAddressWord(wordAt(words, 2));
-    if (statusId === 0 || owner === zeroAddress) return null;
+  private decodeCanonicalFleetMissionDetails(
+    missionId: bigint,
+    missionResult: string,
+    supplementResult: string
+  ): CanonicalFleetMissionDetails | null {
+    const mission = this.decodeCanonicalFleetMission(missionId, missionResult);
+    if (!mission) return null;
 
-    const randomnessRequestId = decodeUintWord(wordAt(words, 12)).toString();
+    const supplementWords = splitWords(supplementResult);
     return {
-      missionId: missionId.toString(),
-      statusId,
-      missionTypeId,
-      status: missionStatusLabel(BigInt(statusId)),
-      missionType: missionTypeLabel(BigInt(missionTypeId)),
-      owner,
-      originPlanetId: decodeUintWord(wordAt(words, 3)).toString(),
-      targetPlanetId: decodeUintWord(wordAt(words, 4)).toString(),
-      departureAt: decodeUintWord(wordAt(words, 5)).toString(),
-      arrivalAt: decodeUintWord(wordAt(words, 6)).toString(),
-      returnAt: decodeUintWord(wordAt(words, 7)).toString(),
-      fuelCost: decodeUintWord(wordAt(words, 8)).toString(),
-      cargo: decodeResources(words.slice(9, 12)),
-      randomnessRequestId: randomnessRequestId === "0" ? null : randomnessRequestId,
+      ...mission,
       ships: Object.fromEntries(
-        missionShipKeys.map((key, index) => [key, decodeUintWord(wordAt(words, 13 + index)).toString()])
+        missionShipKeys.map((key, index) => [key, decodeUintWord(wordAt(supplementWords, index)).toString()])
       ),
-      originIsMoon: decodeBoolWord(wordAt(words, 27)),
-      targetIsMoon: decodeBoolWord(wordAt(words, 28))
+      originIsMoon: decodeBoolWord(wordAt(supplementWords, missionShipKeys.length)),
+      targetIsMoon: decodeBoolWord(wordAt(supplementWords, missionShipKeys.length + 1))
     };
   }
 
