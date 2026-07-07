@@ -4205,22 +4205,26 @@ function indexedSettlementFundingResponse(
   // first-planet funding helper. The wallet-specific native ETH balance is left
   // to the wallet/chain at transaction submission time; the start price is served
   // only when operators provide static metadata that matches the deployment.
-  if (!hasWarmPlanetIndex(indexer)) {
-    return indexedReadNotReadyResponse("settlement funding", indexer, { wallet });
-  }
-
+  const migrationClaim = wallet ? migrationClaimPayloadForWallet(wallet) : null;
   const resourceTokensConfigured = Boolean(
     config.resourceTokenAddresses.metal
       && config.resourceTokenAddresses.crystal
       && config.resourceTokenAddresses.deuterium
   );
   const startPriceWei = config.settlementStartPriceWei ?? null;
+  if (!hasWarmPlanetIndex(indexer) && !migrationClaim) {
+    return indexedReadNotReadyResponse("settlement funding", indexer, { wallet });
+  }
+  if (!indexer) {
+    return indexedReadNotReadyResponse("settlement funding", indexer, { wallet });
+  }
+
   return indexedJsonResponse({
     affordable: Boolean(startPriceWei) && resourceTokensConfigured,
     balanceWei: null,
     contractKind: "game",
     startPriceWei,
-    ...(wallet ? migrationClaimPayloadFields(wallet) : {}),
+    ...(migrationClaim ? { migrationClaim } : {}),
     ...(resourceTokensConfigured
       ? {}
       : { unavailableReason: "Resource token reserves are not configured for this game deployment yet." }),

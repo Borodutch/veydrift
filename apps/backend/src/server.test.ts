@@ -1865,6 +1865,47 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("serves migration settlement-funding claims when the mainnet index is still empty", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-migration-claims-"));
+    const snapshotPath = join(dir, "claims.json");
+    writeFileSync(snapshotPath, JSON.stringify({
+      claims: {
+        [player.toLowerCase()]: {
+          signature: "0xabcd",
+          statePayload: "0x1234"
+        }
+      }
+    }));
+    const previousPath = process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+    process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH = snapshotPath;
+    try {
+      const chainReader = withoutIndexLists(new class extends MockChainReader {
+        override getSettlementFunding(): ReturnType<MockChainReader["getSettlementFunding"]> {
+          throw new Error("migration settlement funding reads must not call chain reader");
+        }
+      }());
+      const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+      const response = await createRequestHandler({
+        config: configuredTestConfig,
+        chainReader,
+        indexer
+      })(new Request(`http://localhost/wallet/${player}/settlement-funding`));
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        migrationClaim: {
+          signature: "0xabcd",
+          statePayload: "0x1234"
+        },
+        source: "contract-state-indexer"
+      });
+    } finally {
+      if (previousPath === undefined) delete process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+      else process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH = previousPath;
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   test("serves settlement-funding from config when the indexer is warm without a request-time chain read", async () => {
     const chainReader = new class extends MockChainReader {
       override getSettlementFunding(): ReturnType<MockChainReader["getSettlementFunding"]> {
