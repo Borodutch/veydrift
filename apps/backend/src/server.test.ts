@@ -1955,6 +1955,10 @@ describe("Veydrift backend", () => {
         contractKind: "game",
         hasFirstPlanet: false,
         homePlanetId: null,
+        migrationClaim: {
+          signature: "0xabcd",
+          statePayload: "0x1234"
+        },
         source: "contract-state-indexer",
         wallet: player
       });
@@ -2035,6 +2039,69 @@ describe("Veydrift backend", () => {
         migrationClaim: {
           signature: "0xabcd",
           statePayload: "0x1234"
+        }
+      });
+    } finally {
+      if (previousPath === undefined) delete process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+      else process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH = previousPath;
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  test("keeps signed migration claim visible on warm wallet settlement when the wallet already has a normal planet", async () => {
+    const chainReader = new class extends MockChainReader {
+      override getSettlementFunding(): ReturnType<MockChainReader["getSettlementFunding"]> {
+        throw new Error("warm settlement claim should not call chain reader");
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "100"
+    });
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-migration-claims-"));
+    const snapshotPath = join(dir, "claims.json");
+    writeFileSync(snapshotPath, JSON.stringify({
+      claims: {
+        [player.toLowerCase()]: {
+          signature: "0xabcd",
+          statePayload: "0x1234",
+          reservedPlanets: [{
+            planetId: "26",
+            galaxy: 9,
+            system: 400,
+            position: 1,
+            fields: 224,
+            temperature: 55
+          }]
+        }
+      }
+    }));
+    const previousPath = process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+    process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH = snapshotPath;
+    try {
+      const response = await createRequestHandler({
+        config: configuredTestConfig,
+        chainReader,
+        indexer
+      })(new Request(`http://localhost/wallet/${player}/settlement`));
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({
+        hasFirstPlanet: true,
+        migrationClaim: {
+          signature: "0xabcd",
+          statePayload: "0x1234"
+        },
+        migrationReservation: {
+          exists: true,
+          claimed: false,
+          planetId: "26",
+          galaxy: 9,
+          system: 400,
+          position: 1
         }
       });
     } finally {

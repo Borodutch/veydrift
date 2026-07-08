@@ -1937,6 +1937,21 @@ function withPlayerProfile<T extends { wallet: `0x${string}` }>(
   };
 }
 
+function withMigrationSnapshotFields<T extends object>(
+  body: T,
+  wallet: `0x${string}`
+): T & (
+  | { migrationClaim: MigrationClaimPayload }
+  | { migrationReservation: MigrationReservedPlanet & { exists: true; claimed: false } }
+  | Record<string, never>
+) {
+  return {
+    ...body,
+    ...migrationClaimPayloadFields(wallet),
+    ...migrationReservationPayloadFields(wallet)
+  };
+}
+
 function fallbackPlayerProfile(wallet: `0x${string}`): PlayerProfile {
   const normalizedWallet = wallet.toLowerCase() as `0x${string}`;
   return {
@@ -1958,13 +1973,17 @@ function indexedWalletSettlementWarmResponse(
   if (snapshot.indexedPlanets <= 0) {
     if (!migrationClaimPayloadForWallet(wallet)) return null;
     return indexedJsonResponse(
-      withPlayerProfile(indexer.walletSettlement(wallet), indexer, wallet),
+      withMigrationSnapshotFields(withPlayerProfile(indexer.walletSettlement(wallet), indexer, wallet), wallet),
       snapshot
     );
   }
 
   const settlement = indexedWalletSettlement(indexer, wallet, undefined)?.settlement ?? indexer.walletSettlement(wallet);
-  return indexedWarmJsonResponse(withPlayerProfile(settlement, indexer, wallet), "wallet settlement", snapshot);
+  return indexedWarmJsonResponse(
+    withMigrationSnapshotFields(withPlayerProfile(settlement, indexer, wallet), wallet),
+    "wallet settlement",
+    snapshot
+  );
 }
 
 function indexedWalletPlanetsWarmResponse(
@@ -2001,7 +2020,7 @@ function indexedWalletOverviewWarmResponse(
   );
 
   return indexedWarmJsonResponse({
-    settlement: withPlayerProfile(settlement, indexer, wallet),
+    settlement: withMigrationSnapshotFields(withPlayerProfile(settlement, indexer, wallet), wallet),
     planetsResponse: withPlayerProfile(planetsResponse, indexer, wallet),
     queues,
     fleetVisibility
