@@ -132,6 +132,10 @@ export function galaxyActionsForSlot({
   // rather than re-deriving alliance membership here.
   const isAllyTarget = attackProtection?.blockedReason === "same_alliance";
 
+  if (!planet) {
+    return [];
+  }
+
   if (!isOccupied) {
     if (isMigrationReserved) {
       return [{

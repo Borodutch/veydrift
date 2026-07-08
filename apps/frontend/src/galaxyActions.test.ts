@@ -361,13 +361,7 @@ describe("galaxyActions", () => {
           "You can't station a defending fleet at the planet it launches from. Open another colony or an alliance member's planet to defend it.",
       },
     ]);
-    expect(emptyActions).toMatchObject([
-      {
-        enabled: true,
-        kind: "colonize",
-        label: "Colonize",
-      },
-    ]);
+    expect(emptyActions).toEqual([]);
   });
 });
 

@@ -795,14 +795,6 @@ function GalaxySlot({
           <div className="text-sm font-medium text-slate-500">Empty space</div>
           <div className="text-xs text-slate-700">No public planet at this position.</div>
         </div>
-        <GalaxyActionButtons
-          actions={actions}
-          busy={actionState.status === "pending" || Boolean(transactionUnavailableReason)}
-          busyReason={transactionUnavailableReason}
-          coords={coords}
-          onAction={onAction}
-          planet={undefined}
-        />
       </div>
     );
   }
