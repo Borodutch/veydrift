@@ -70,7 +70,7 @@ import {
   verifyReferralWalletSignature
 } from "./referrals";
 import { deriveInfrastructureFields, isCombatShipId, zeroResources } from "./readModels";
-import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
+import { planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
 import { responseCachePath, SharedResponseCache } from "./sharedResponseCache";
 import {
   DEFAULT_MAX_WORKER_COUNT,
@@ -103,11 +103,11 @@ const jsonBodyLimitBytes = 32 * 1024;
 const graphqlBodyLimitBytes = 128 * 1024;
 const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
   ["/highscores", new Set(["category", "currentWallet", "includeAttackProtection", "limit", "page", "pageSize"])],
-  ["/missions", new Set(["owner", "page", "pageSize", "status"])],
+  ["/missions", new Set(["missionNumber", "owner", "page", "pageSize", "status"])],
   ["/raid-finder/debris", new Set(["limit", "minMetal", "minCrystal"])],
   ["/universe/systems", new Set(["center", "detail", "galaxy", "limit", "page", "radius"])],
   ["/wallet/*/fleet-visibility", new Set(["archive", "planetId"])],
-  ["/wallet/*/missions", new Set(["page", "pageSize", "status"])],
+  ["/wallet/*/missions", new Set(["filter", "missionNumber", "page", "pageSize", "status"])],
   ["/wallet/*/overview", new Set(["planetId"])],
   ["/wallet/*/queues", new Set(["planetId"])],
   ["/wallet/*/infrastructure", new Set(["planetId"])],
@@ -147,6 +147,7 @@ type RuntimeConfig = {
     chickenBurnConfigured: boolean;
     gameConfigured: boolean;
     highscoresEndpoint: boolean;
+    migrationConfigured: boolean;
     moonConfigured: boolean;
     randomnessConfigured: boolean;
     referralsConfigured: boolean;
@@ -156,6 +157,7 @@ type RuntimeConfig = {
   };
   gameContractAddress: string | null;
   graphqlUrl: string;
+  migrationContractAddress: string | null;
   moonContractAddress: string | null;
   network: string;
   randomnessEngineAddress: string | null;
@@ -166,6 +168,21 @@ type RuntimeConfig = {
     metal: string | null;
   };
   rpcProvider: "alchemy" | "unknown";
+};
+
+type MigrationClaimPayload = {
+  signature: `0x${string}`;
+  statePayload: `0x${string}`;
+};
+
+type MigrationReservedPlanet = {
+  planetId?: string;
+  galaxy: number;
+  system: number;
+  position: number;
+  fields: number;
+  temperature: number;
+  wallet?: `0x${string}`;
 };
 
 type BackendDeploymentMetadata = {
@@ -2226,6 +2243,33 @@ function withPlayerProfile<T extends { wallet: `0x${string}` }>(
   };
 }
 
+function withMigrationSnapshotFields<T extends object>(
+  body: T,
+  wallet: `0x${string}`
+): T & {
+  migrationClaim?: MigrationClaimPayload;
+  migrationReservation?: MigrationReservedPlanet & { exists: true; claimed: boolean };
+} {
+  const reservedPlanet = migrationReservedPlanetsForWallet(wallet)[0];
+  const reservation = reservedPlanet
+    ? {
+        ...reservedPlanet,
+        exists: true as const,
+        claimed: migrationReservationClaimedByBody(body, reservedPlanet)
+      }
+    : null;
+  return {
+    ...body,
+    ...(reservation?.claimed ? {} : migrationClaimPayloadFields(wallet)),
+    ...(reservation ? { migrationReservation: reservation } : {})
+  };
+}
+
+function migrationReservationClaimedByBody(body: object, reservation: MigrationReservedPlanet): boolean {
+  const homePlanetId = (body as { homePlanetId?: unknown }).homePlanetId;
+  return typeof homePlanetId === "string" && reservation.planetId === homePlanetId;
+}
+
 function fallbackPlayerProfile(wallet: `0x${string}`): PlayerProfile {
   const normalizedWallet = wallet.toLowerCase() as `0x${string}`;
   return {
@@ -2241,11 +2285,23 @@ function indexedWalletSettlementWarmResponse(
   indexer: SettlementIndexer | undefined,
   wallet: `0x${string}`
 ): Response | null {
-  if (!indexer || !hasWarmPlanetIndex(indexer)) return null;
-
+  if (!indexer) return null;
   const snapshot = indexer.snapshot();
+
+  if (snapshot.indexedPlanets <= 0) {
+    if (!migrationClaimPayloadForWallet(wallet)) return null;
+    return indexedJsonResponse(
+      withMigrationSnapshotFields(withPlayerProfile(indexer.walletSettlement(wallet), indexer, wallet), wallet),
+      snapshot
+    );
+  }
+
   const settlement = indexedWalletSettlement(indexer, wallet, undefined)?.settlement ?? indexer.walletSettlement(wallet);
-  return indexedWarmJsonResponse(withPlayerProfile(settlement, indexer, wallet), "wallet settlement", snapshot);
+  return indexedWarmJsonResponse(
+    withMigrationSnapshotFields(withPlayerProfile(settlement, indexer, wallet), wallet),
+    "wallet settlement",
+    snapshot
+  );
 }
 
 function indexedWalletPlanetsWarmResponse(
@@ -2282,7 +2338,7 @@ function indexedWalletOverviewWarmResponse(
   );
 
   return indexedWarmJsonResponse({
-    settlement: withPlayerProfile(settlement, indexer, wallet),
+    settlement: withMigrationSnapshotFields(withPlayerProfile(settlement, indexer, wallet), wallet),
     planetsResponse: withPlayerProfile(planetsResponse, indexer, wallet),
     queues,
     fleetVisibility
@@ -3074,6 +3130,7 @@ type GalaxySystemDetail = "summary" | "full";
 
 type GalaxySystemSummaryPlanet = PlanetMetadata & {
   occupiedBy: ReturnType<typeof occupiedPlanetRef>;
+  migrationReservation?: ReturnType<typeof migrationReservationRef>;
   debrisField: ReturnType<typeof debrisFieldRef>;
   hasMoon: boolean;
   moonChance: ReturnType<typeof moonChanceReportRef>;
@@ -3206,6 +3263,12 @@ function galaxySystemPayload({
       planet
     ])
   );
+  const reserved = new Map(
+    migrationReservedPlanetsInSystem(galaxy, system).map((planet) => [
+      planet.position,
+      planet
+    ])
+  );
   const debris = new Map(
     (indexer?.debrisFieldsInSystem(galaxy, system) ?? []).map((field) => [
       field.position,
@@ -3228,15 +3291,18 @@ function galaxySystemPayload({
     planets: includeOccupiedPlanets(
       baseSnapshot.planets,
       occupied,
+      reserved,
       chainId,
       settlementContractAddress,
       galaxy,
       system
     ).map((planet) => {
       const occupiedPlanet = occupied.get(planet.position);
+      const reservedPlanet = occupiedPlanet ? undefined : reserved.get(planet.position);
       const summary: GalaxySystemSummaryPlanet = {
         ...planet,
         occupiedBy: occupiedPlanetRef(occupiedPlanet, indexer, allianceIntel),
+        migrationReservation: migrationReservationRef(reservedPlanet),
         debrisField: debrisFieldRef(debris.get(planet.position)),
         hasMoon: occupiedPlanet ? indexer?.hasMoon(occupiedPlanet.planetId) ?? false : false,
         moonChance: moonChanceReportRef(moonChance.get(planet.position))
@@ -3262,6 +3328,7 @@ function pruneGalaxySystemCache(cache: Map<string, GalaxySystemCacheEntry>): voi
 function includeOccupiedPlanets(
   planets: readonly PlanetMetadata[],
   occupied: ReadonlyMap<number, SettledPlanetEvent>,
+  reserved: ReadonlyMap<number, MigrationReservedPlanet>,
   chainId: number,
   settlementContractAddress: string,
   galaxy: number,
@@ -3284,6 +3351,20 @@ function includeOccupiedPlanets(
       archetype: planetArchetypeForTemperature(planet.temperature)
     });
   }
+  for (const planet of reserved.values()) {
+    if (byPosition.has(planet.position)) continue;
+    byPosition.set(planet.position, {
+      ...planetMetadata(chainId, settlementContractAddress, {
+        galaxy,
+        system,
+        position: planet.position
+      }),
+      fields: planet.fields,
+      temperature: planet.temperature,
+      ...planetMultipliers(planet.temperature, planet.fields),
+      archetype: planetArchetypeForTemperature(planet.temperature)
+    });
+  }
 
   return Array.from(byPosition.values()).sort((left, right) => left.position - right.position);
 }
@@ -3299,6 +3380,24 @@ function occupiedPlanetRef(
         owner: planet.owner,
         ownerDisplayName: indexer?.playerProfile(planet.owner).displayName ?? null,
         alliance: allianceIntel.get(planet.owner.toLowerCase()) ?? null
+      }
+    : null;
+}
+
+function migrationReservationRef(planet: MigrationReservedPlanet | undefined):
+  | {
+      status: "quantum-unstable";
+      label: "Quantum-unstable planet";
+      wallet: `0x${string}` | null;
+      planetId: string | null;
+    }
+  | null {
+  return planet
+    ? {
+        status: "quantum-unstable",
+        label: "Quantum-unstable planet",
+        wallet: planet.wallet ?? null,
+        planetId: planet.planetId ?? null
       }
     : null;
 }
@@ -3667,6 +3766,7 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
     process.env.VEYDRIFT_GAME_CONTRACT_ADDRESS ??
     process.env.VEYDRIFT_CONTRACT_ADDRESS ??
     null;
+  const migrationContractAddress = process.env.VEYDRIFT_MIGRATION_CONTRACT_ADDRESS ?? null;
   const moonContractAddress = process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS ?? null;
   const randomnessEngineAddress = process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS ?? null;
   const referralSystemAddress = process.env.VEYDRIFT_REFERRAL_SYSTEM_ADDRESS ?? null;
@@ -3705,6 +3805,7 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
       ),
       gameConfigured: Boolean(gameContractAddress),
       highscoresEndpoint: true,
+      migrationConfigured: Boolean(migrationContractAddress),
       moonConfigured: Boolean(moonContractAddress),
       randomnessConfigured: Boolean(randomnessEngineAddress),
       referralsConfigured: referralSignerConfigured,
@@ -3718,6 +3819,7 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
     },
     gameContractAddress,
     graphqlUrl,
+    migrationContractAddress,
     moonContractAddress,
     network: process.env.VEYDRIFT_NETWORK_NAME ?? "Base Sepolia",
     randomnessEngineAddress,
@@ -4505,21 +4607,32 @@ function indexedSettlementFundingResponse(
   // first-planet funding helper. The wallet-specific native ETH balance is left
   // to the wallet/chain at transaction submission time; the start price is served
   // only when operators provide static metadata that matches the deployment.
-  if (!hasWarmPlanetIndex(indexer)) {
-    return indexedReadNotReadyResponse("settlement funding", indexer, { wallet });
-  }
-
+  const settlement = wallet && indexer ? indexer.walletSettlement(wallet) : null;
+  const reservation = wallet ? migrationReservationPayloadForWallet(
+    wallet,
+    Boolean(settlement?.homePlanetId && settlement.homePlanetId === migrationReservedPlanetsForWallet(wallet)[0]?.planetId)
+  ) : null;
+  const migrationClaim = wallet && !reservation?.claimed ? migrationClaimPayloadForWallet(wallet) : null;
   const resourceTokensConfigured = Boolean(
     config.resourceTokenAddresses.metal
       && config.resourceTokenAddresses.crystal
       && config.resourceTokenAddresses.deuterium
   );
   const startPriceWei = config.settlementStartPriceWei ?? null;
+  if (!hasWarmPlanetIndex(indexer) && !migrationClaim) {
+    return indexedReadNotReadyResponse("settlement funding", indexer, { wallet });
+  }
+  if (!indexer) {
+    return indexedReadNotReadyResponse("settlement funding", indexer, { wallet });
+  }
+
   return indexedJsonResponse({
     affordable: Boolean(startPriceWei) && resourceTokensConfigured,
     balanceWei: null,
     contractKind: "game",
     startPriceWei,
+    ...(migrationClaim ? { migrationClaim } : {}),
+    ...(reservation ? { migrationReservation: reservation } : {}),
     ...(resourceTokensConfigured
       ? {}
       : { unavailableReason: "Resource token reserves are not configured for this game deployment yet." }),
@@ -4527,6 +4640,136 @@ function indexedSettlementFundingResponse(
       ? { unavailableReason: "Settlement start price is not configured for this game deployment yet." }
       : {})
   }, indexer.snapshot());
+}
+
+function migrationClaimPayloadFields(wallet: `0x${string}`):
+  | { migrationClaim: MigrationClaimPayload }
+  | Record<string, never> {
+  const migrationClaim = migrationClaimPayloadForWallet(wallet);
+  return migrationClaim ? { migrationClaim } : {};
+}
+
+function migrationReservationPayloadFields(
+  wallet: `0x${string}`,
+  settlement?: ReturnType<SettlementIndexer["walletSettlement"]>
+):
+  | { migrationReservation: MigrationReservedPlanet & { exists: true; claimed: boolean } }
+  | Record<string, never> {
+  const reservation = migrationReservationPayloadForWallet(
+    wallet,
+    Boolean(settlement?.homePlanetId && settlement.homePlanetId === migrationReservedPlanetsForWallet(wallet)[0]?.planetId)
+  );
+  return reservation ? { migrationReservation: reservation } : {};
+}
+
+function migrationReservationPayloadForWallet(
+  wallet: `0x${string}`,
+  claimed: boolean
+): (MigrationReservedPlanet & { exists: true; claimed: boolean }) | null {
+  const reservation = migrationReservedPlanetsForWallet(wallet)[0];
+  return reservation ? { ...reservation, exists: true, claimed } : null;
+}
+
+function migrationClaimPayloadForWallet(wallet: `0x${string}`): MigrationClaimPayload | null {
+  const path = process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+  if (!path) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const claims = migrationClaimMap(parsed);
+    const candidate = claims?.[wallet.toLowerCase()];
+    if (!candidate || typeof candidate !== "object") return null;
+    const record = candidate as Record<string, unknown>;
+    const statePayload = record.statePayload ?? record.payload;
+    const signature = record.signature;
+    if (isHexString(statePayload) && isHexString(signature)) {
+      return { statePayload, signature };
+    }
+  } catch (error) {
+    console.warn("Veydrift migration payload snapshot unavailable", reasonText(error));
+  }
+  return null;
+}
+
+function migrationReservedPlanetsForWallet(wallet: `0x${string}`): MigrationReservedPlanet[] {
+  const path = process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+  if (!path) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const claims = migrationClaimMap(parsed);
+    const candidate = claims?.[wallet.toLowerCase()];
+    if (!candidate || typeof candidate !== "object") return [];
+    return migrationReservedPlanetList((candidate as Record<string, unknown>).reservedPlanets, wallet);
+  } catch (error) {
+    console.warn("Veydrift migration reserved planet snapshot unavailable", reasonText(error));
+  }
+  return [];
+}
+
+function migrationReservedPlanetsInSystem(galaxy: number, system: number): MigrationReservedPlanet[] {
+  const path = process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+  if (!path) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const claims = migrationClaimMap(parsed);
+    if (!claims) return [];
+    return Object.entries(claims).flatMap(([wallet, candidate]) => {
+      if (!candidate || typeof candidate !== "object") return [];
+      return migrationReservedPlanetList(
+        (candidate as Record<string, unknown>).reservedPlanets,
+        wallet as `0x${string}`
+      ).filter((planet) => planet.galaxy === galaxy && planet.system === system);
+    });
+  } catch (error) {
+    console.warn("Veydrift migration reserved planet snapshot unavailable", reasonText(error));
+  }
+  return [];
+}
+
+function migrationReservedPlanetList(value: unknown, wallet: `0x${string}`): MigrationReservedPlanet[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const record = entry as Record<string, unknown>;
+    const galaxy = numberField(record.galaxy);
+    const system = numberField(record.system);
+    const position = numberField(record.position);
+    const fields = numberField(record.fields);
+    const temperature = numberField(record.temperature);
+    if (
+      galaxy === null || system === null || position === null ||
+      fields === null || temperature === null
+    ) return [];
+    return [{
+      ...(typeof record.planetId === "string" ? { planetId: record.planetId } : {}),
+      galaxy,
+      system,
+      position,
+      fields,
+      temperature,
+      wallet
+    }];
+  });
+}
+
+function numberField(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function migrationClaimMap(parsed: unknown): Record<string, unknown> | null {
+  if (!parsed || typeof parsed !== "object") return null;
+  const root = parsed as Record<string, unknown>;
+  const claims = root.claims ?? root.wallets ?? root;
+  if (!claims || typeof claims !== "object" || Array.isArray(claims)) return null;
+  return Object.fromEntries(
+    Object.entries(claims as Record<string, unknown>).map(([wallet, value]) => [
+      wallet.toLowerCase(),
+      value
+    ])
+  );
+}
+
+function isHexString(value: unknown): value is `0x${string}` {
+  return typeof value === "string" && /^0x(?:[0-9a-fA-F]{2})*$/.test(value);
 }
 
 function indexedDebrisTargetsResponse(indexer: SettlementIndexer | undefined, url: URL): Response {

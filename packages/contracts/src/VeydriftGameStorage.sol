@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {Building, Defense, Resource, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
@@ -25,31 +26,31 @@ interface IVeydriftAttackProtectionAllianceSystem {
 }
 
 /// @notice Shared storage, ABI structs, events, and owner controls for VeydriftGame modules.
-abstract contract VeydriftGameStorage {
-    uint256 internal constant DEFAULT_START_PRICE = 0.05 ether;
-    uint8 internal constant MAX_BUILDING_ID = uint8(type(Building).max);
-    uint8 internal constant MAX_DEFENSE_ID = uint8(type(Defense).max);
-    uint8 internal constant MAX_SHIP_ID = uint8(type(Ship).max);
-    uint8 internal constant MAX_TECHNOLOGY_ID = uint8(type(Technology).max);
-    uint8 internal constant MAX_RESOURCE_ID = uint8(type(Resource).max);
-    uint16 internal constant MAX_LEVEL = 50;
-    uint16 internal constant BPS = 10_000;
-    uint16 internal constant QUEUE_UNIVERSE_SPEED = 1;
-    uint16 internal constant FLEET_UNIVERSE_SPEED = 1;
-    uint32 internal constant MIN_QUEUE_SECONDS = 1;
-    uint32 internal constant MIN_FLEET_TRAVEL_SECONDS = 10;
-    uint32 internal constant FLEET_RECALL_CUTOFF_SECONDS = 60;
-    uint16 internal constant FLEET_RECALL_COST_BPS = 2_500;
-    uint64 internal constant MARKET_WITHDRAWAL_DELAY = 30 days;
-    uint16 internal constant MAX_GALAXY = 9;
-    uint16 internal constant MAX_SYSTEM = 499;
-    uint8 internal constant MAX_POSITION = 15;
-    bytes32 internal constant FIRST_PLANET_DOMAIN = keccak256("veydrift.first-planet.v1");
-    bytes32 internal constant PLANET_SEED_DOMAIN = keccak256("veydrift.planet.v1");
-    bytes32 internal constant ATTACK_BATTLE_DOMAIN = keccak256("veydrift.attack-battle.v1");
-    uint8 internal constant BATTLE_MAX_ROUNDS = 6;
-    uint16 internal constant RAID_LOOT_BPS = VeydriftAntiRaidPrimitives.BASE_RAID_LOOT_BPS;
-    uint16 internal constant RAID_PROTECTED_STORAGE_BPS =
+abstract contract VeydriftGameStorage is Initializable {
+    uint256 public constant DEFAULT_START_PRICE = 0.05 ether;
+    uint8 public constant MAX_BUILDING_ID = uint8(type(Building).max);
+    uint8 public constant MAX_DEFENSE_ID = uint8(type(Defense).max);
+    uint8 public constant MAX_SHIP_ID = uint8(type(Ship).max);
+    uint8 public constant MAX_TECHNOLOGY_ID = uint8(type(Technology).max);
+    uint8 public constant MAX_RESOURCE_ID = uint8(type(Resource).max);
+    uint16 public constant MAX_LEVEL = 50;
+    uint16 public constant BPS = 10_000;
+    uint16 public constant QUEUE_UNIVERSE_SPEED = 1;
+    uint16 public constant FLEET_UNIVERSE_SPEED = 1;
+    uint32 public constant MIN_QUEUE_SECONDS = 1;
+    uint32 public constant MIN_FLEET_TRAVEL_SECONDS = 10;
+    uint32 public constant FLEET_RECALL_CUTOFF_SECONDS = 60;
+    uint16 public constant FLEET_RECALL_COST_BPS = 2_500;
+    uint64 public constant MARKET_WITHDRAWAL_DELAY = 30 days;
+    uint16 public constant MAX_GALAXY = 9;
+    uint16 public constant MAX_SYSTEM = 499;
+    uint8 public constant MAX_POSITION = 15;
+    bytes32 public constant FIRST_PLANET_DOMAIN = keccak256("veydrift.first-planet.v1");
+    bytes32 public constant PLANET_SEED_DOMAIN = keccak256("veydrift.planet.v1");
+    bytes32 public constant ATTACK_BATTLE_DOMAIN = keccak256("veydrift.attack-battle.v1");
+    uint8 public constant BATTLE_MAX_ROUNDS = 6;
+    uint16 public constant RAID_LOOT_BPS = VeydriftAntiRaidPrimitives.BASE_RAID_LOOT_BPS;
+    uint16 public constant RAID_PROTECTED_STORAGE_BPS =
         VeydriftAntiRaidPrimitives.PROTECTED_STORAGE_BPS;
     uint16 internal constant COMBAT_DEBRIS_BPS = 3_000;
     uint16 internal constant REFERRAL_INVITER_FEE_BPS = 5_000;
@@ -310,6 +311,8 @@ abstract contract VeydriftGameStorage {
     mapping(uint256 defenderPlanetId => mapping(uint256 missionId => uint256 indexPlusOne)) internal
         _stationedDefenseMissionIndex;
     mapping(uint256 missionId => uint64 holdUntil) internal _defenseHoldUntil;
+    address internal _migrationSettlement;
+    uint256 internal _gamePaused;
 
     error AlreadyStarted();
     error BadStartPayment();
@@ -388,7 +391,6 @@ abstract contract VeydriftGameStorage {
     error InvalidHoldWindow(uint256 holdSeconds);
     error DefenseHoldNotAuthorized(uint256 defenderPlanetId);
     error DefenseHoldStillActive(uint64 holdUntil);
-
     event StartPriceUpdated(uint256 oldPrice, uint256 newPrice);
     event PlanetStarted(
         address indexed player,
@@ -678,6 +680,15 @@ abstract contract VeydriftGameStorage {
     event FeesWithdrawn(address indexed to, uint256 amount);
 
     constructor(address admin) {
+        _initializeGameStorage(admin);
+        _disableInitializers();
+    }
+
+    function __VeydriftGameStorage_init(address admin) internal onlyInitializing {
+        _initializeGameStorage(admin);
+    }
+
+    function _initializeGameStorage(address admin) private {
         _owner = admin;
         startPrice = DEFAULT_START_PRICE;
         nextPlanetId = 1;
@@ -716,7 +727,12 @@ abstract contract VeydriftGameStorage {
         return keccak256(abi.encode(attacker, defender));
     }
 
+    function _requireGameNotPaused() internal view {
+        if (_gamePaused != 0) revert Unauthorized(msg.sender);
+    }
+
     function _touchPlayer(address player) internal {
+        _requireGameNotPaused();
         uint64 currentTime = uint64(block.timestamp);
         if (playerLastActiveAt[player] == currentTime) return;
         playerLastActiveAt[player] = currentTime;

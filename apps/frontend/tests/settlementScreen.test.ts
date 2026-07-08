@@ -3,6 +3,7 @@ import {
   farcasterMiniAppReportableWalletError,
   farcasterMiniAppSupportErrorMessage,
   indexedSettlementState,
+  migrationReservationForSettlementFunding,
   noWalletDetectedMessage,
   POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE,
   settlementErrorStateMessage,
@@ -19,7 +20,7 @@ import {
   walletConnectionAccounts,
 } from "../src/FirstPlanetSettlementApp";
 import { preSettlementMode, type PlanetState, type WalletState } from "../src/settlementScreen";
-import type { Eip1193Provider } from "../src/walletFlow";
+import type { Eip1193Provider, MigrationReservation } from "../src/walletFlow";
 
 const connected = {
   account: "0x1111111111111111111111111111111111111111",
@@ -280,13 +281,33 @@ describe("settlement screen mode", () => {
       balanceWei: 0n,
       contractKind: "game",
       startPriceWei: 1n,
-    } })).toContain("more Base Sepolia ETH");
+    } })).toContain("more ETH");
     expect(settlementLaunchBlocker(true, { status: "ready", funding: {
       affordable: true,
       balanceWei: 1n,
       contractKind: "game",
       startPriceWei: 1n,
     } })).toBeUndefined();
+  });
+
+  test("keeps backend migration reservation when Mini App contract reads are unavailable", () => {
+    const backendReservation = {
+      claimed: false,
+      exists: true,
+      fields: 209,
+      galaxy: 5,
+      position: 13,
+      system: 200,
+      temperature: -111,
+    } satisfies MigrationReservation;
+    const chainReservation = {
+      ...backendReservation,
+      galaxy: 6,
+    } satisfies MigrationReservation;
+
+    expect(migrationReservationForSettlementFunding(null, backendReservation)).toBe(backendReservation);
+    expect(migrationReservationForSettlementFunding(chainReservation, backendReservation)).toBe(chainReservation);
+    expect(migrationReservationForSettlementFunding({ ...chainReservation, claimed: true }, backendReservation)).toBeNull();
   });
 
   test("auto-connects only the Farcaster wallet provider in Mini App mode", () => {
@@ -512,7 +533,7 @@ describe("settlement screen mode", () => {
     expect(source).toContain("setMiniAppMode(true)");
   });
 
-  test("auto-binds Farcaster wallet and retries Base Sepolia setup in Mini App mode", async () => {
+  test("auto-binds Farcaster wallet and retries the required Veydrift chain setup in Mini App mode", async () => {
     const source = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
 
     expect(source).toContain("farcasterAutoConnectAttempted");
@@ -521,13 +542,13 @@ describe("settlement screen mode", () => {
     expect(source).toContain("signalFarcasterReadyOnce");
     expect(source).toContain("farcasterMiniAppWalletSupport");
     expect(source).toContain("preferFarcasterProvider: waitForFarcasterProvider");
-    expect(source).toContain("await setupBaseSepoliaNetworkForWallet(injected, context)");
-    expect(source).toContain("await switchBaseSepoliaNetwork(walletProvider)");
-    expect(source).toContain("Retry Base Sepolia");
+    expect(source).toContain("await setupVeydriftNetworkForWallet(injected, context)");
+    expect(source).toContain("await switchVeydriftNetwork(walletProvider, requiredChain)");
+    expect(source).toContain("Retry ${networkName}");
     expect(source).toContain("networkSwitchPending");
     expect(source).toContain("disabled={networkSwitchPending}");
-    expect(source).toContain("FARCASTER_BASE_SEPOLIA_SWITCH_FAILED");
-    expect(source).toContain("FARCASTER_BASE_SEPOLIA_RETRY_FAILED");
+    expect(source).toContain("FARCASTER_VEYDRIFT_CHAIN_SWITCH_FAILED");
+    expect(source).toContain("FARCASTER_VEYDRIFT_CHAIN_RETRY_FAILED");
     expect(source).toContain("FARCASTER_WALLET_PROVIDER_UNAVAILABLE");
     expect(source).toContain("showFarcasterWalletProviderUnavailable");
     expect(source).toContain("!shouldShowMiniAppWalletError(miniAppMode, planet)");

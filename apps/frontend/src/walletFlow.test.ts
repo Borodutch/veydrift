@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  BASE_MAINNET,
   BASE_SEPOLIA,
   __clearGameApiReadPoolForTests,
   assertWalletUnlocked,
@@ -44,10 +45,14 @@ import {
   getCurrentAccounts,
   getInjectedProvider,
   confirmTransactionReceipt,
+  defaultVeydriftChainForLocation,
+  ensureVeydriftNetwork,
+  farcasterChainFor,
   createReferralInvite,
   isBaseSepoliaChain,
   isTransientWalletBootstrapError,
   isUserRejected,
+  isVeydriftChain,
   miniAppUnsupportedChainMessage,
   mergePlayerProfile,
   parseRiftTokenAmount,
@@ -82,6 +87,7 @@ import {
   recordReferralClaimTransaction,
   referralWalletMessage,
   requestWatchedPlanetSignature,
+  readMigrationReservation,
   sendSettlementTransaction,
   sendStartBuildingUpgradeTransaction,
   sendStartMoonBuildingUpgradeTransaction,
@@ -90,6 +96,7 @@ import {
   sendStartShipProductionTransaction,
   settlementTransactionData,
   switchBaseSepoliaNetwork,
+  veydriftChainForChainId,
   isOnChainRevertError,
   playerProfileMessage,
   updatePlayerProfile,
@@ -98,6 +105,7 @@ import {
   watchPlanet,
   WATCHED_PLANETS_API_READ_TIMEOUT_MS,
   waitForBaseSepoliaNetwork,
+  waitForVeydriftNetwork,
   walletRecoveryActionMessage,
   walletRequestErrorMessage,
   type Eip1193Provider
@@ -145,6 +153,19 @@ describe("walletFlow", () => {
     expect(isBaseSepoliaChain("84532")).toBe(true);
     expect(isBaseSepoliaChain(84532)).toBe(true);
     expect(isBaseSepoliaChain("0x1")).toBe(false);
+  });
+
+  test("selects Veydrift wallet chain from host and runtime chain id", () => {
+    expect(defaultVeydriftChainForLocation({ hostname: "veydrift.com" })).toBe(BASE_MAINNET);
+    expect(defaultVeydriftChainForLocation({ hostname: "www.veydrift.com" })).toBe(BASE_MAINNET);
+    expect(defaultVeydriftChainForLocation({ hostname: "test.veydrift.com" })).toBe(BASE_SEPOLIA);
+    expect(defaultVeydriftChainForLocation({ hostname: "localhost" })).toBe(BASE_SEPOLIA);
+    expect(veydriftChainForChainId(BASE_MAINNET.chainId)).toBe(BASE_MAINNET);
+    expect(veydriftChainForChainId(BASE_SEPOLIA.chainId)).toBe(BASE_SEPOLIA);
+    expect(farcasterChainFor(BASE_MAINNET)).toBe("eip155:8453");
+    expect(farcasterChainFor(BASE_SEPOLIA)).toBe("eip155:84532");
+    expect(isVeydriftChain(BASE_MAINNET.chainIdHex, BASE_MAINNET)).toBe(true);
+    expect(isVeydriftChain(BASE_SEPOLIA.chainIdHex, BASE_MAINNET)).toBe(false);
   });
 
   test("encodes Burning Chicken moon burns with token id and planet id", () => {
@@ -727,7 +748,7 @@ describe("walletFlow", () => {
     const source = await Bun.file(new URL("./walletFlow.ts", import.meta.url)).text();
 
     expect(source).toContain("FARCASTER_WALLET_PROVIDER_TIMEOUT_MS");
-    expect(source).toContain("\"Farcaster wallet provider\"");
+    expect(source).toContain("\"wallet provider\"");
     expect(source).toContain("method: \"eth_requestAccounts\"");
     expect(source).toContain("\"wallet account authorization\"");
     expect(source).not.toContain("const accounts = await provider.request<string[]>({\n    method: \"eth_requestAccounts\"");
@@ -1582,6 +1603,32 @@ describe("walletFlow", () => {
     expect(params).toEqual([BASE_SEPOLIA]);
   });
 
+  test("adds Base mainnet when the wallet does not know the production chain", async () => {
+    const calls: string[] = [];
+    const params: unknown[] = [];
+    const provider = mockProvider(async ({ method, params: requestParams }) => {
+      calls.push(method);
+      if (method === "wallet_switchEthereumChain") {
+        if (calls.filter((call) => call === "wallet_switchEthereumChain").length > 1) {
+          return null;
+        }
+        throw { code: 4902 };
+      }
+
+      params.push(requestParams?.[0]);
+      return null;
+    });
+
+    await ensureVeydriftNetwork(provider, BASE_MAINNET);
+
+    expect(calls).toEqual([
+      "wallet_switchEthereumChain",
+      "wallet_addEthereumChain",
+      "wallet_switchEthereumChain",
+    ]);
+    expect(params).toEqual([BASE_MAINNET]);
+  });
+
   test("adds Base Sepolia on wallet unknown-chain messages before retrying switch", async () => {
     const calls: string[] = [];
     const provider = mockProvider(async ({ method }) => {
@@ -1647,6 +1694,27 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("waits for Base mainnet after a successful production switch", async () => {
+    const chainReads = [BASE_SEPOLIA.chainIdHex, BASE_MAINNET.chainIdHex];
+    const calls: string[] = [];
+    const provider = mockProvider(async ({ method }) => {
+      calls.push(method);
+      if (method === "eth_chainId") {
+        return chainReads.shift() ?? BASE_MAINNET.chainIdHex;
+      }
+      return null;
+    });
+
+    await ensureBaseMainnetNetwork(provider);
+    await expect(waitForVeydriftNetwork(provider, BASE_MAINNET, { attempts: 2, intervalMs: 0 })).resolves.toBe(BASE_MAINNET.chainIdHex);
+
+    expect(calls).toEqual([
+      "wallet_switchEthereumChain",
+      "eth_chainId",
+      "eth_chainId",
+    ]);
+  });
+
   test("surfaces rejected Base Sepolia add requests when the chain is genuinely missing", async () => {
     const calls: string[] = [];
     const provider = mockProvider(async ({ method }) => {
@@ -1683,9 +1751,9 @@ describe("walletFlow", () => {
 
     expect(message).toContain("Base mainnet (0x2105)");
     expect(message).toContain("requires Base Sepolia (0x14a34)");
-    expect(message).toContain("ask the Farcaster wallet to switch or add Base Sepolia");
-    expect(message).toContain("host rejects that request");
-    expect(message).toContain("desktop browser wallet flow");
+    expect(message).toContain("ask your wallet to switch or add Base Sepolia");
+    expect(message).toContain("wallet rejects that request");
+    expect(message).toContain("browser wallet flow");
   });
 
   test("formats raw JSON-RPC provider errors into an actionable wallet message", () => {
@@ -1826,6 +1894,45 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("submits migration claims to the migration contract for the normal start price", async () => {
+    const migrationContract = "0x3333333333333333333333333333333333333333";
+    const statePayload = "0x1234";
+    const signature = "0xabcd";
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return "0xabc";
+    });
+
+    await expect(
+      sendSettlementTransaction(provider, account, { address: contract }, {
+        migrationClaim: { statePayload, signature },
+        migrationContractAddress: migrationContract,
+        startPriceWei: 50_000_000_000_000_000n,
+      })
+    ).resolves.toBe("0xabc");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: migrationContract,
+            data: "0xbe27b22c"
+              + "40".padStart(64, "0")
+              + "80".padStart(64, "0")
+              + "2".padStart(64, "0")
+              + "1234".padEnd(64, "0")
+              + "2".padStart(64, "0")
+              + "abcd".padEnd(64, "0"),
+            value: "0xb1a2bc2ec50000"
+          }
+        ]
+      }
+    ]);
+  });
+
   test("submits a value-bearing VeydriftGame startPlanetWithReferral transaction", async () => {
     const requests: unknown[] = [];
     const provider = mockProvider(async ({ method, params }) => {
@@ -1852,6 +1959,60 @@ describe("walletFlow", () => {
           }
         ]
       }
+    ]);
+  });
+
+  test("rejects migration claims before the signed state snapshot is ready", async () => {
+    const migrationContract = "0x3333333333333333333333333333333333333333";
+    const provider = mockProvider(async () => {
+      throw new Error("transaction should not be sent");
+    });
+
+    await expect(
+      sendSettlementTransaction(provider, account, { address: contract }, {
+        migrationContractAddress: migrationContract,
+        startPriceWei: 50_000_000_000_000_000n,
+      })
+    ).rejects.toThrow("Migration state snapshot is not ready for this wallet yet.");
+  });
+
+  test("reads an unclaimed migration reservation for the connected wallet", async () => {
+    const migrationContract = "0x3333333333333333333333333333333333333333";
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return `0x${[
+        1n,
+        0n,
+        2n,
+        99n,
+        7n,
+        211n,
+        BigInt.asUintN(256, -14n),
+      ].map(word).join("")}`;
+    });
+
+    await expect(readMigrationReservation(provider, migrationContract, account)).resolves.toEqual({
+      claimed: false,
+      exists: true,
+      fields: 211,
+      galaxy: 2,
+      position: 7,
+      system: 99,
+      temperature: -14,
+    });
+
+    expect(requests).toEqual([
+      {
+        method: "eth_call",
+        params: [
+          {
+            to: migrationContract,
+            data: `0xcd48c907${account.replace(/^0x/, "").padStart(64, "0")}`,
+          },
+          "latest",
+        ],
+      },
     ]);
   });
 

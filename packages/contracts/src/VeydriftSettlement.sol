@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import {
+    OwnableUpgradeable
+} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+
 /// @notice Compact first-planet settlement contract for the Veydrift Base Sepolia MVP.
-contract VeydriftSettlement {
+contract VeydriftSettlement is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     struct FirstPlanet {
         uint16 galaxy;
         uint16 system;
@@ -23,8 +29,8 @@ contract VeydriftSettlement {
     bytes32 public constant COORDINATE_DOMAIN = keccak256("veydrift.coordinate.v1");
     bytes32 public constant PLANET_DOMAIN = keccak256("veydrift.planet.v1");
 
-    address public immutable deployer;
-    bytes32 public immutable universeSalt;
+    address public deployer;
+    bytes32 public universeSalt;
 
     mapping(address player => bool settled) public hasFirstPlanet;
     mapping(address player => FirstPlanet planet) private _firstPlanets;
@@ -45,6 +51,12 @@ contract VeydriftSettlement {
     error UniverseFull();
 
     constructor(bytes32 initialUniverseSalt) {
+        initialize(msg.sender, initialUniverseSalt);
+        _disableInitializers();
+    }
+
+    function initialize(address initialOwner, bytes32 initialUniverseSalt) public initializer {
+        __Ownable_init(initialOwner);
         deployer = msg.sender;
         universeSalt = initialUniverseSalt;
     }
@@ -180,4 +192,6 @@ contract VeydriftSettlement {
             revert InvalidCoordinate(galaxy, system, position);
         }
     }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
 }

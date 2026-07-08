@@ -10,8 +10,6 @@ import { privateKeyToAccount } from "viem/accounts";
 
 import type { ChickenBurnEvent } from "./events";
 
-export const maxChickenBurnMoonsPerPlayer = 2;
-
 export const moonGrantAbi = [
   {
     type: "function",
@@ -51,14 +49,6 @@ export const moonGrantAbi = [
     stateMutability: "view",
     inputs: [{ name: "player", type: "address" }],
     outputs: [{ name: "count", type: "uint8" }]
-  },
-  {
-    type: "error",
-    name: "ChickenBurnMoonLimitReached",
-    inputs: [
-      { name: "player", type: "address" },
-      { name: "limit", type: "uint256" }
-    ]
   }
 ] as const satisfies Abi;
 
@@ -73,16 +63,6 @@ export class MoonGrantAlreadyProcessedError extends Error {
   constructor(readonly burnId: `0x${string}`) {
     super(`burn ${burnId} already granted on-chain`);
     this.name = "MoonGrantAlreadyProcessedError";
-  }
-}
-
-export class MoonGrantLimitReachedError extends Error {
-  constructor(
-    readonly player: `0x${string}`,
-    readonly limit = maxChickenBurnMoonsPerPlayer
-  ) {
-    super(`chicken burn moon limit reached for ${player} (${limit})`);
-    this.name = "MoonGrantLimitReachedError";
   }
 }
 
@@ -145,9 +125,6 @@ export class ViemMoonGrantClient implements MoonGrantClient {
     if (await this.isBurnGranted(event.burnId)) {
       throw new MoonGrantAlreadyProcessedError(event.burnId);
     }
-    if (await this.chickenBurnMoonGrantCount(event.burner) >= maxChickenBurnMoonsPerPlayer) {
-      throw new MoonGrantLimitReachedError(event.burner);
-    }
 
     const args = [
       event.burnId,
@@ -166,9 +143,6 @@ export class ViemMoonGrantClient implements MoonGrantClient {
         data
       });
     } catch (error) {
-      if (isChickenBurnMoonLimitReachedRevert(error)) {
-        throw new MoonGrantLimitReachedError(event.burner);
-      }
       throw error;
     }
     const hash = await this.walletClient.writeContract({
@@ -187,8 +161,4 @@ export class ViemMoonGrantClient implements MoonGrantClient {
     }
     return hash;
   }
-}
-
-function isChickenBurnMoonLimitReachedRevert(error: unknown): boolean {
-  return String(error).includes("ChickenBurnMoonLimitReached");
 }

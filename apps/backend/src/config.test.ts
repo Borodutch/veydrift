@@ -158,7 +158,7 @@ describe("backend config", () => {
     expect(invalid.config.fleetMissionSyncIntervalMs).toBe(0);
   });
 
-  test("enables the public mission resolver only for test deployments with a resolver address", () => {
+  test("enables the public mission resolver whenever a resolver address is configured", () => {
     const result = loadBackendConfig({
       VEYDRIFT_DEPLOYMENT_MODE: "test",
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
@@ -177,10 +177,10 @@ describe("backend config", () => {
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
       VEYDRIFT_MISSION_RESOLVER_ADDRESS: "0x4444444444444444444444444444444444444444",
       VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
-    }).config.missionResolutionEnabled).toBe(false);
+    }).config.missionResolutionEnabled).toBe(true);
   });
 
-  test("enables the public mission resolver in test deployments with a resolver private key", () => {
+  test("enables the public mission resolver when a resolver private key is configured", () => {
     const result = loadBackendConfig({
       VEYDRIFT_DEPLOYMENT_MODE: "test",
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",

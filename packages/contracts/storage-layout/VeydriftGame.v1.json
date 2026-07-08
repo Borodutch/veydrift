@@ -293,6 +293,18 @@
       "offset": 0,
       "slot": "50",
       "type": "mapping(uint256 => uint64)"
+    },
+    {
+      "label": "_migrationSettlement",
+      "offset": 0,
+      "slot": "51",
+      "type": "address"
+    },
+    {
+      "label": "_gamePaused",
+      "offset": 0,
+      "slot": "52",
+      "type": "uint256"
     }
   ],
   "structs": {

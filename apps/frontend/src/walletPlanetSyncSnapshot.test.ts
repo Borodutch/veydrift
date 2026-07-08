@@ -55,12 +55,35 @@ function queues() {
 }
 
 describe("loadWalletPlanetSyncSnapshot", () => {
-  test("skips the overview fast path before an active planet is known", async () => {
+  test("uses the overview fast path before an active planet is known", async () => {
     let overviewCalled = false;
     const result = await loadWalletPlanetSyncSnapshot("https://api.test", wallet, undefined, {}, {
       fetchWalletOverviewSnapshot: async () => {
         overviewCalled = true;
-        throw new Error("overview should not be called");
+        return {
+          fleetVisibility: {
+            wallet,
+            homePlanetId: "7",
+            incoming: [],
+            outgoing: [],
+            returning: [],
+            joinableAttacks: [],
+            completedMissions: [],
+            battleReports: [],
+          },
+          planetsResponse: {
+            wallet,
+            homePlanetId: "7",
+            planets: [planet()],
+          },
+          queues: queues() as any,
+          settlement: {
+            wallet,
+            hasFirstPlanet: true,
+            homePlanetId: "7",
+            planet: planet(),
+          },
+        } as any;
       },
       fetchWalletPlanets: async () => ({
         wallet,
@@ -80,7 +103,7 @@ describe("loadWalletPlanetSyncSnapshot", () => {
       } as any),
     });
 
-    expect(overviewCalled).toBe(false);
+    expect(overviewCalled).toBe(true);
     expect(result.settlement.homePlanetId).toBe("7");
     expect(result.planetsResponse.planets).toHaveLength(1);
   });

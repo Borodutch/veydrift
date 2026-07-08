@@ -51,19 +51,40 @@ const gameApiReadQueue: Array<() => void> = [];
 export type SettlementConfig = {
   address?: string;
   legacyAddress?: string;
+  migrationAddress?: string;
   referralSystemAddress?: string;
   resourceTokensConfigured?: boolean;
+};
+
+export type MigrationReservation = {
+  claimed: boolean;
+  exists: boolean;
+  galaxy: number;
+  system: number;
+  position: number;
+  fields: number;
+  temperature: number;
 };
 
 export type SettlementFundingState = {
   affordable: boolean;
   balanceWei: bigint | null;
   contractKind: "game" | "legacy";
+  migrationClaim?: MigrationClaimPayload | null;
+  migrationContractAddress?: string;
+  migrationReservation?: MigrationReservation | null;
   startPriceWei: bigint | null;
   unavailableReason?: string;
 };
 
+export type MigrationClaimPayload = {
+  signature: string;
+  statePayload: string;
+};
+
 export type SettlementTransactionOptions = {
+  migrationClaim?: MigrationClaimPayload | null;
+  migrationContractAddress?: string;
   referral?: ReferralRedemption | null;
   startPriceWei?: bigint | null;
 };
@@ -1094,10 +1115,13 @@ export const BASE_MAINNET = {
 const BASE_MAINNET_CHAIN_ID_HEX = BASE_MAINNET.chainIdHex;
 const BASE_SEPOLIA_SWITCH_CONFIRM_ATTEMPTS = 6;
 const BASE_SEPOLIA_SWITCH_CONFIRM_INTERVAL_MS = 250;
+export type VeydriftWalletChain = typeof BASE_SEPOLIA | typeof BASE_MAINNET;
 
 const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
 const SETTLE_FIRST_PLANET_WITH_REFERRAL_SELECTOR = "0x2f7a1ec2";
 const START_PLANET_SELECTOR = "0xf45f1f18";
+const MIGRATION_CLAIM_SELECTOR = "0xbe27b22c";
+const MIGRATION_RESERVATION_SELECTOR = "0xcd48c907";
 const CLAIM_REFERRAL_CODE_SELECTOR = "0x760c4e71";
 const START_PLANET_WITH_REFERRAL_SELECTOR = "0xdad57ff9";
 const GAME_SELECTORS = {
@@ -1262,7 +1286,7 @@ async function getFarcasterEthereumProvider(
   try {
     const providerRequest = farcasterClient.wallet?.getEthereumProvider?.();
     const provider = providerRequest
-      ? await timeoutPromise(Promise.resolve(providerRequest), FARCASTER_WALLET_PROVIDER_TIMEOUT_MS, "Farcaster wallet provider")
+      ? await timeoutPromise(Promise.resolve(providerRequest), FARCASTER_WALLET_PROVIDER_TIMEOUT_MS, "wallet provider")
       : undefined;
     if (isEip1193Provider(provider)) {
       return provider;
@@ -1772,26 +1796,45 @@ function isAccountProbeWallet(provider: Eip1193Provider): boolean {
 }
 
 export function isBaseSepoliaChain(chainId: string | number | bigint): boolean {
+  return isVeydriftChain(chainId, BASE_SEPOLIA);
+}
+
+export function isVeydriftChain(chainId: string | number | bigint, chain: VeydriftWalletChain): boolean {
   if (typeof chainId === "string") {
     const normalized = chainId.trim().toLowerCase();
-    if (normalized === BASE_SEPOLIA.chainIdHex) {
+    if (normalized === chain.chainIdHex) {
       return true;
     }
 
     const decimalChainId = Number(normalized);
-    return Number.isFinite(decimalChainId) && decimalChainId === BASE_SEPOLIA.chainId;
+    return Number.isFinite(decimalChainId) && decimalChainId === chain.chainId;
   }
 
-  return Number(chainId) === BASE_SEPOLIA.chainId;
+  return Number(chainId) === chain.chainId;
 }
 
-export function miniAppUnsupportedChainMessage(chainId: string): string {
+export function veydriftChainForChainId(chainId: number | undefined): VeydriftWalletChain {
+  return chainId === BASE_MAINNET.chainId ? BASE_MAINNET : BASE_SEPOLIA;
+}
+
+export function defaultVeydriftChainForLocation(location: Pick<Location, "hostname"> | undefined = typeof window === "undefined" ? undefined : window.location): VeydriftWalletChain {
+  return location?.hostname === "veydrift.com" || location?.hostname === "www.veydrift.com"
+    ? BASE_MAINNET
+    : BASE_SEPOLIA;
+}
+
+export function farcasterChainFor(chain: VeydriftWalletChain): string {
+  return `eip155:${chain.chainId}`;
+}
+
+export function miniAppUnsupportedChainMessage(chainId: string, requiredChain: VeydriftWalletChain = BASE_SEPOLIA): string {
   const normalized = chainId.toLowerCase();
   const currentChain = normalized === BASE_MAINNET_CHAIN_ID_HEX
     ? `Base mainnet (${BASE_MAINNET_CHAIN_ID_HEX})`
     : `chain ${chainId}`;
+  const host = requiredChain.chainId === BASE_MAINNET.chainId ? "veydrift.com" : "test.veydrift.com";
 
-  return `${currentChain} is active in this Farcaster client, but test.veydrift.com requires Base Sepolia (${BASE_SEPOLIA.chainIdHex}). Veydrift can ask the Farcaster wallet to switch or add Base Sepolia; if the host rejects that request, use a Farcaster client with Base Sepolia support or open the desktop browser wallet flow.`;
+  return `${currentChain} is active in this wallet, but ${host} requires ${requiredChain.chainName} (${requiredChain.chainIdHex}). Veydrift can ask your wallet to switch or add ${requiredChain.chainName}; if the wallet rejects that request, use a wallet with ${requiredChain.chainName} support or open the browser wallet flow.`;
 }
 
 export function shortAddress(address: string): string {
@@ -1886,6 +1929,63 @@ export function settlementContractConfigured(config: SettlementConfig): config i
   return Boolean(config.address && /^0x[a-fA-F0-9]{40}$/.test(config.address));
 }
 
+export function migrationContractConfigured(config: SettlementConfig): config is SettlementConfig & { migrationAddress: string } {
+  return Boolean(config.migrationAddress && /^0x[a-fA-F0-9]{40}$/.test(config.migrationAddress));
+}
+
+export async function readMigrationReservation(
+  provider: Eip1193Provider,
+  migrationContractAddress: string | undefined,
+  account: string,
+): Promise<MigrationReservation | null> {
+  if (!migrationContractAddress || !/^0x[a-fA-F0-9]{40}$/.test(migrationContractAddress)) {
+    return null;
+  }
+
+  let result: string;
+  try {
+    result = await provider.request<string>({
+      method: "eth_call",
+      params: [{
+        to: migrationContractAddress,
+        data: encodeAddressCall(MIGRATION_RESERVATION_SELECTOR, account),
+      }, "latest"],
+    });
+  } catch {
+    return null;
+  }
+  const words = splitAbiWords(result);
+  if (words.length < 7) return null;
+
+  const exists = decodeAbiBool(words[0]);
+  const claimed = decodeAbiBool(words[1]);
+  if (!exists) return null;
+
+  return {
+    exists,
+    claimed,
+    galaxy: Number(decodeAbiUint(words[2])),
+    system: Number(decodeAbiUint(words[3])),
+    position: Number(decodeAbiUint(words[4])),
+    fields: Number(decodeAbiUint(words[5])),
+    temperature: Number(BigInt.asIntN(256, decodeAbiUint(words[6]))),
+  };
+}
+
+function splitAbiWords(value: string): string[] {
+  const hex = value.replace(/^0x/, "");
+  if (!hex) return [];
+  return hex.match(/.{1,64}/g) ?? [];
+}
+
+function decodeAbiUint(word: string | undefined): bigint {
+  return BigInt(`0x${word ?? "0"}`);
+}
+
+function decodeAbiBool(word: string | undefined): boolean {
+  return decodeAbiUint(word) !== 0n;
+}
+
 export function settlementTransactionData(): string {
   return SETTLE_FIRST_PLANET_SELECTOR;
 }
@@ -1900,6 +2000,13 @@ export function encodeUintCall(selector: string, value: bigint | number | string
 
 export function encodeGameCall(selector: string, values: Array<bigint | number | string>): string {
   return `${selector}${values.map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")}`;
+}
+
+export function encodeMigrationClaimCall(statePayload: string, signature: string): string {
+  const encodedPayload = encodeAbiBytes(statePayload);
+  const encodedSignature = encodeAbiBytes(signature);
+  const signatureOffset = 64n + BigInt(encodedPayload.length / 2);
+  return `${MIGRATION_CLAIM_SELECTOR}${(64n).toString(16).padStart(64, "0")}${signatureOffset.toString(16).padStart(64, "0")}${encodedPayload}${encodedSignature}`;
 }
 
 function encodeHexWord(value: string, label: string): string {
@@ -2300,6 +2407,20 @@ function encodeAbiString(value: string): string {
   return `${bytes.length.toString(16).padStart(64, "0")}${body.padEnd(paddedLength, "0")}`;
 }
 
+function encodeAbiBytes(value: string): string {
+  const body = normalizeHexBytes(value);
+  const paddedLength = Math.ceil(body.length / 64) * 64;
+  return `${(body.length / 2).toString(16).padStart(64, "0")}${body.padEnd(paddedLength, "0")}`;
+}
+
+function normalizeHexBytes(value: string): string {
+  const body = value.replace(/^0x/i, "");
+  if (body.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(body)) {
+    throw new Error("Migration state payload is invalid.");
+  }
+  return body.toLowerCase();
+}
+
 export function parseRiftTokenAmount(value: string, decimals = 6): bigint {
   const trimmed = value.trim();
   if (!/^\d+(\.\d+)?$/.test(trimmed)) {
@@ -2378,13 +2499,25 @@ export async function waitForBaseSepoliaNetwork(
     readTimeoutMs?: number;
   } = {}
 ): Promise<string> {
+  return waitForVeydriftNetwork(provider, BASE_SEPOLIA, options);
+}
+
+export async function waitForVeydriftNetwork(
+  provider: Eip1193Provider,
+  chain: VeydriftWalletChain,
+  options: {
+    attempts?: number;
+    intervalMs?: number;
+    readTimeoutMs?: number;
+  } = {}
+): Promise<string> {
   const attempts = Math.max(1, options.attempts ?? BASE_SEPOLIA_SWITCH_CONFIRM_ATTEMPTS);
   const intervalMs = Math.max(0, options.intervalMs ?? BASE_SEPOLIA_SWITCH_CONFIRM_INTERVAL_MS);
   let lastChainId = "unknown";
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     lastChainId = await getChainId(provider, options.readTimeoutMs);
-    if (isBaseSepoliaChain(lastChainId)) {
+    if (isVeydriftChain(lastChainId, chain)) {
       return lastChainId;
     }
 
@@ -2393,12 +2526,16 @@ export async function waitForBaseSepoliaNetwork(
     }
   }
 
-  throw new Error(`Wallet switched networks, but still reports chain ${lastChainId}. Select Base Sepolia (${BASE_SEPOLIA.chainIdHex}) in the wallet and try again.`);
+  throw new Error(`Wallet switched networks, but still reports chain ${lastChainId}. Select ${chain.chainName} (${chain.chainIdHex}) in the wallet and try again.`);
 }
 
 export async function ensureBaseSepoliaNetwork(provider: Eip1193Provider): Promise<void> {
+  await ensureVeydriftNetwork(provider, BASE_SEPOLIA);
+}
+
+export async function ensureVeydriftNetwork(provider: Eip1193Provider, chain: VeydriftWalletChain): Promise<void> {
   try {
-    await switchToBaseSepolia(provider);
+    await switchVeydriftNetwork(provider, chain);
   } catch (error) {
     if (!isUnknownChainError(error)) {
       throw error;
@@ -2408,7 +2545,7 @@ export async function ensureBaseSepoliaNetwork(provider: Eip1193Provider): Promi
       await provider.request({
         method: "wallet_addEthereumChain",
         params: [
-          BASE_SEPOLIA
+          chain
         ]
       });
     } catch (addError) {
@@ -2416,55 +2553,24 @@ export async function ensureBaseSepoliaNetwork(provider: Eip1193Provider): Promi
         throw addError;
       }
     }
-    await switchToBaseSepolia(provider);
+    await switchVeydriftNetwork(provider, chain);
   }
 }
 
 export async function switchBaseSepoliaNetwork(provider: Eip1193Provider): Promise<void> {
-  await switchToBaseSepolia(provider);
+  await switchVeydriftNetwork(provider, BASE_SEPOLIA);
 }
 
 export async function ensureBaseMainnetNetwork(provider: Eip1193Provider): Promise<void> {
-  try {
-    await switchToBaseMainnet(provider);
-  } catch (error) {
-    if (!isUnknownChainError(error)) {
-      throw error;
-    }
-
-    try {
-      await provider.request({
-        method: "wallet_addEthereumChain",
-        params: [
-          BASE_MAINNET
-        ]
-      });
-    } catch (addError) {
-      if (!isAlreadyAddedChainError(addError)) {
-        throw addError;
-      }
-    }
-    await switchToBaseMainnet(provider);
-  }
+  await ensureVeydriftNetwork(provider, BASE_MAINNET);
 }
 
-function switchToBaseSepolia(provider: Eip1193Provider): Promise<unknown> {
+export function switchVeydriftNetwork(provider: Eip1193Provider, chain: VeydriftWalletChain): Promise<unknown> {
   return provider.request({
     method: "wallet_switchEthereumChain",
     params: [
       {
-        chainId: BASE_SEPOLIA.chainIdHex
-      }
-    ]
-  });
-}
-
-function switchToBaseMainnet(provider: Eip1193Provider): Promise<unknown> {
-  return provider.request({
-    method: "wallet_switchEthereumChain",
-    params: [
-      {
-        chainId: BASE_MAINNET.chainIdHex
+        chainId: chain.chainIdHex
       }
     ]
   });
@@ -2511,6 +2617,18 @@ export async function sendSettlementTransaction(
   if (options.startPriceWei !== null) {
     if (config.resourceTokensConfigured === false) {
       throw new Error("Resource token reserves are not configured for this game deployment yet.");
+    }
+
+    if (options.migrationContractAddress) {
+      if (!options.migrationClaim?.statePayload || !options.migrationClaim.signature) {
+        throw new Error("Migration state snapshot is not ready for this wallet yet.");
+      }
+      return sendWalletTransaction(provider, account, {
+        from: account,
+        to: options.migrationContractAddress,
+        data: encodeMigrationClaimCall(options.migrationClaim.statePayload, options.migrationClaim.signature),
+        value: encodeQuantity(options.startPriceWei)
+      });
     }
 
     return sendWalletTransaction(provider, account, {

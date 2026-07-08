@@ -12,7 +12,6 @@ import {
   farcasterMiniAppPlatformType,
   hasMiniAppUrlHint,
   signalFarcasterReadyOnce,
-  FARCASTER_BASE_SEPOLIA_CHAIN,
   FARCASTER_WALLET_CAPABILITY,
   type FarcasterMiniAppPlatformType,
   type FarcasterMiniAppWalletSupport,
@@ -24,18 +23,20 @@ import {
   transactionSyncingLabel,
 } from "./transactionActionGate";
 import {
-  BASE_SEPOLIA,
+  defaultVeydriftChainForLocation,
+  ensureVeydriftNetwork,
   createReferralInvite,
-  ensureBaseSepoliaNetwork,
   fetchReferralDashboard,
   fetchSettlementFundingState,
   fetchWalletSettlement,
+  farcasterChainFor,
   getChainId,
   getCurrentAccounts,
-  isBaseSepoliaChain,
+  isVeydriftChain,
   isGameBackendUnavailableMessage,
   isTransientWalletBootstrapError,
   isUserRejected,
+  readMigrationReservation,
   miniAppUnsupportedChainMessage,
   WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
   requestAccounts,
@@ -46,16 +47,18 @@ import {
   sendReferralClaimTransaction,
   sendSettlementTransaction,
   settlementContractConfigured,
-  switchBaseSepoliaNetwork,
-  waitForBaseSepoliaNetwork,
+  switchVeydriftNetwork,
+  waitForVeydriftNetwork,
   walletRequestErrorMessage,
   type Eip1193Provider,
+  type MigrationReservation,
   type PlanetSummary,
   type ReferralDashboard,
   type ReferralRedemption,
   type SettlementTransactionOptions,
   type SettlementFundingState,
   type SettlementConfig,
+  type VeydriftWalletChain,
   type WalletSettlementResponse
 } from "./walletFlow";
 
@@ -94,10 +97,11 @@ export function shouldAttemptFarcasterNetworkSetup(input: {
   walletProviderSource: "injected" | "farcaster" | undefined;
   chainId: string;
   lastAttemptedChainId: string | undefined;
+  requiredChain?: VeydriftWalletChain;
 }): boolean {
   return input.miniAppMode
     && input.walletProviderSource === "farcaster"
-    && !isBaseSepoliaChain(input.chainId)
+    && !isVeydriftChain(input.chainId, input.requiredChain ?? defaultVeydriftChainForLocation())
     && input.lastAttemptedChainId !== input.chainId;
 }
 
@@ -159,7 +163,7 @@ export function farcasterMiniAppReportableWalletError(
     ...walletErrorDetails(details?.error),
   ].filter((value): value is string => Boolean(value)).join("; ");
   const detailsCopy = detailRows ? ` Details: ${detailRows}.` : "";
-  return `Farcaster Mini App wallet setup failed (${code}). ${message}${detailsCopy} ${FARCASTER_MINIAPP_REPORT_SUFFIX}`;
+  return `Wallet setup failed (${code}). ${message}${detailsCopy} ${FARCASTER_MINIAPP_REPORT_SUFFIX}`;
 }
 
 export function farcasterMiniAppSupportErrorMessage(
@@ -167,9 +171,10 @@ export function farcasterMiniAppSupportErrorMessage(
 ): string {
   const capabilities = support.capabilities.length > 0 ? support.capabilities.join(",") : "none";
   const chains = support.chains.length > 0 ? support.chains.join(",") : "none";
+  const requiredChain = farcasterChainFor(defaultVeydriftChainForLocation());
   return farcasterMiniAppReportableWalletError(
     support.code,
-    `${support.message} Required capability: ${FARCASTER_WALLET_CAPABILITY}. Required chain: ${FARCASTER_BASE_SEPOLIA_CHAIN}. Reported capabilities: ${capabilities}. Reported chains: ${chains}.`,
+    `${support.message} Required capability: ${FARCASTER_WALLET_CAPABILITY}. Required chain: ${requiredChain}. Reported capabilities: ${capabilities}. Reported chains: ${chains}.`,
   );
 }
 
@@ -295,6 +300,7 @@ export function FirstPlanetSettlementApp() {
   const account = "account" in wallet ? wallet.account : undefined;
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
   const settlementConfig = settlementConfigState.config;
+  const requiredChain = defaultVeydriftChainForLocation();
 
   useEffect(() => {
     let disposed = false;
@@ -377,6 +383,9 @@ export function FirstPlanetSettlementApp() {
           config: address ? {
             address,
             ...(legacyAddress ? { legacyAddress } : {}),
+            ...(runtimeConfig.migrationContractAddress ? {
+              migrationAddress: runtimeConfig.migrationContractAddress,
+            } : {}),
             ...(runtimeConfig.referralSystemAddress ? {
               referralSystemAddress: runtimeConfig.referralSystemAddress
             } : {}),
@@ -566,7 +575,9 @@ export function FirstPlanetSettlementApp() {
     }
 
     await signalFarcasterReadyOnce();
-    return farcasterMiniAppWalletSupport();
+    return farcasterMiniAppWalletSupport(undefined, {
+      requiredChain: farcasterChainFor(requiredChain),
+    });
   }
 
   function blockUnsupportedFarcasterMiniAppWalletSupport(
@@ -604,16 +615,16 @@ export function FirstPlanetSettlementApp() {
     setSettlementFunding({ status: "idle" });
   }
 
-  async function setupBaseSepoliaNetworkForWallet(
+  async function setupVeydriftNetworkForWallet(
     walletProvider: Eip1193Provider,
     context: WalletProviderContext,
   ): Promise<void> {
     if (context.miniAppMode && context.walletProviderSource === "farcaster") {
-      await switchBaseSepoliaNetwork(walletProvider);
+      await switchVeydriftNetwork(walletProvider, requiredChain);
       return;
     }
 
-    await ensureBaseSepoliaNetwork(walletProvider);
+    await ensureVeydriftNetwork(walletProvider, requiredChain);
   }
 
   function bindWalletProviderDetails(
@@ -716,11 +727,12 @@ export function FirstPlanetSettlementApp() {
       // bootstrap retries.
       walletBootstrapAttempts.current = 0;
 
-      if (!isBaseSepoliaChain(chainId)) {
+      if (!isVeydriftChain(chainId, requiredChain)) {
         if (shouldAttemptFarcasterNetworkSetup({
           chainId,
           lastAttemptedChainId: farcasterNetworkSetupAttempted.current,
           miniAppMode: context.miniAppMode,
+          requiredChain,
           walletProviderSource: context.walletProviderSource,
         })) {
           farcasterNetworkSetupAttempted.current = chainId;
@@ -739,13 +751,13 @@ export function FirstPlanetSettlementApp() {
             if (blockUnsupportedFarcasterMiniAppWalletSupport(support)) {
               return;
             }
-            await setupBaseSepoliaNetworkForWallet(injected, context);
-            await waitForBaseSepoliaNetwork(injected, {
+            await setupVeydriftNetworkForWallet(injected, context);
+            await waitForVeydriftNetwork(injected, requiredChain, {
               readTimeoutMs: WALLET_BOOTSTRAP_READ_TIMEOUT_MS
             });
             await refreshWallet(injected, accounts[0], context);
           } catch (error) {
-            console.error("Mini App Base Sepolia setup failed", error);
+            console.error("Mini App Veydrift network setup failed", error);
             setWallet({
               kind: "wrong-network",
               account: accounts[0],
@@ -754,11 +766,11 @@ export function FirstPlanetSettlementApp() {
             setPlanet({
               kind: "error",
               message: farcasterMiniAppReportableWalletError(
-                "FARCASTER_BASE_SEPOLIA_SWITCH_FAILED",
+                "FARCASTER_VEYDRIFT_CHAIN_SWITCH_FAILED",
                 walletRequestErrorMessage(error),
                 {
                   chainId,
-                  requestedChainId: BASE_SEPOLIA.chainIdHex,
+                  requestedChainId: requiredChain.chainIdHex,
                   source: context.walletProviderSource,
                   support,
                   error,
@@ -832,7 +844,7 @@ export function FirstPlanetSettlementApp() {
     }
   }
 
-  async function refreshPlanet(_injected: Eip1193Provider, connectedAccount: string) {
+  async function refreshPlanet(injected: Eip1193Provider, connectedAccount: string) {
     setPlanet({
       kind: "checking"
     });
@@ -870,7 +882,7 @@ export function FirstPlanetSettlementApp() {
         setPlanet({
           kind: "not-settled"
         });
-        await refreshSettlementFunding(connectedAccount);
+        await refreshSettlementFunding(injected, connectedAccount);
       }
     } catch (error) {
       console.error("Indexed settlement state read failed", error);
@@ -882,7 +894,10 @@ export function FirstPlanetSettlementApp() {
     }
   }
 
-  async function refreshSettlementFunding(connectedAccount: string) {
+  async function refreshSettlementFunding(
+    walletProvider: Eip1193Provider | undefined,
+    connectedAccount: string,
+  ) {
     setSettlementFunding({ status: "loading" });
     try {
       if (!settlementConfigState.apiUrl) {
@@ -890,7 +905,7 @@ export function FirstPlanetSettlementApp() {
       }
       setSettlementFunding({
         status: "ready",
-        funding: await fetchSettlementFundingState(settlementConfigState.apiUrl, connectedAccount)
+        funding: await fetchSettlementFundingWithMigration(walletProvider, connectedAccount)
       });
     } catch (error) {
       setSettlementFunding({
@@ -989,8 +1004,8 @@ export function FirstPlanetSettlementApp() {
         return;
       }
       const context = walletProviderContext();
-      await setupBaseSepoliaNetworkForWallet(provider, context);
-      await waitForBaseSepoliaNetwork(provider, {
+      await setupVeydriftNetworkForWallet(provider, context);
+      await waitForVeydriftNetwork(provider, requiredChain, {
         readTimeoutMs: WALLET_BOOTSTRAP_READ_TIMEOUT_MS
       });
       await refreshWallet(provider, account);
@@ -1001,11 +1016,11 @@ export function FirstPlanetSettlementApp() {
         setPlanet({
           kind: "error",
           message: farcasterMiniAppReportableWalletError(
-            "FARCASTER_BASE_SEPOLIA_RETRY_FAILED",
+            "FARCASTER_VEYDRIFT_CHAIN_RETRY_FAILED",
             walletRequestErrorMessage(error),
             {
               chainId: wallet.chainId,
-              requestedChainId: BASE_SEPOLIA.chainIdHex,
+              requestedChainId: requiredChain.chainIdHex,
               source: walletProviderSource,
               support,
               error,
@@ -1043,7 +1058,9 @@ export function FirstPlanetSettlementApp() {
       });
 
       try {
-        const referral = await referralRedemptionForSettlement(wallet.account);
+        const referral = funding.migrationContractAddress
+          ? undefined
+          : await referralRedemptionForSettlement(wallet.account);
         const txHash = await sendSettlementTransaction(
           provider,
           wallet.account,
@@ -1193,7 +1210,7 @@ export function FirstPlanetSettlementApp() {
       }
       const nextFunding: SettlementFunding = {
         status: "ready",
-        funding: await fetchSettlementFundingState(settlementConfigState.apiUrl, connectedAccount),
+        funding: await fetchSettlementFundingWithMigration(provider, connectedAccount),
       };
       setSettlementFunding(nextFunding);
 
@@ -1208,6 +1225,36 @@ export function FirstPlanetSettlementApp() {
       });
       return undefined;
     }
+  }
+
+  async function fetchSettlementFundingWithMigration(
+    walletProvider: Eip1193Provider | undefined,
+    connectedAccount: string,
+  ): Promise<SettlementFundingState> {
+    const funding = await fetchSettlementFundingState(settlementConfigState.apiUrl!, connectedAccount);
+    const chainMigrationReservation = walletProvider
+      ? await readMigrationReservation(walletProvider, settlementConfig.migrationAddress, connectedAccount)
+      : null;
+    const migrationReservation = migrationReservationForSettlementFunding(
+      chainMigrationReservation,
+      funding.migrationReservation
+    );
+    const activeMigration = Boolean(
+      migrationReservation?.exists && !migrationReservation.claimed && settlementConfig.migrationAddress
+    );
+    const migrationClaim = activeMigration ? funding.migrationClaim ?? null : null;
+    const unavailableReason = funding.unavailableReason
+      ?? (activeMigration && !migrationClaim
+        ? "Migration state snapshot is not ready for this wallet yet."
+        : undefined);
+    return {
+      ...funding,
+      ...(activeMigration
+        ? { migrationClaim, migrationContractAddress: settlementConfig.migrationAddress }
+        : {}),
+      migrationReservation,
+      ...(unavailableReason ? { unavailableReason } : {}),
+    };
   }
 
   if (hasOverview) {
@@ -1269,6 +1316,7 @@ export function FirstPlanetSettlementApp() {
             wallet={wallet}
             networkSwitchPending={networkSwitchPending}
             miniAppMode={miniAppMode}
+            requiredChain={requiredChain}
           />
         </div>
 
@@ -1424,7 +1472,8 @@ function FlowBody({
   settlementReady,
   wallet,
   networkSwitchPending,
-  miniAppMode
+  miniAppMode,
+  requiredChain
 }: {
   mode: ReturnType<typeof preSettlementMode>;
   onConnect: () => void;
@@ -1437,7 +1486,9 @@ function FlowBody({
   wallet: WalletState;
   networkSwitchPending: boolean;
   miniAppMode: boolean;
+  requiredChain: VeydriftWalletChain;
 }) {
+  const networkName = requiredChain.chainName;
   if (mode === "resolving") {
     return <StateMessage tone="scanning" title="Reading wallet link" body="Checking wallet signal and first-planet settlement state." />;
   }
@@ -1456,9 +1507,9 @@ function FlowBody({
   if (mode === "connect") {
     return (
       <StateMessage
-        title={wallet.kind === "connecting" ? "Waiting for pilot authorization" : miniAppMode ? "Link Farcaster Wallet" : "Link pilot wallet"}
-        body={miniAppMode ? "Connect Farcaster Wallet to claim your first home world." : "Connect a wallet to claim your first home world."}
-        action={<PrimaryButton disabled={wallet.kind === "connecting"} onClick={onConnect}>{miniAppMode ? "Connect Farcaster Wallet" : "Link wallet"}</PrimaryButton>}
+        title={wallet.kind === "connecting" ? "Waiting for wallet authorization" : "Link wallet"}
+        body="Connect a wallet to claim your first home world."
+        action={<PrimaryButton disabled={wallet.kind === "connecting"} onClick={onConnect}>Link wallet</PrimaryButton>}
         tone={wallet.kind === "connecting" ? "scanning" : "ready"}
       />
     );
@@ -1468,11 +1519,11 @@ function FlowBody({
     if (miniAppMode) {
       return (
         <StateMessage
-          title="Base Sepolia required"
-          body={miniAppUnsupportedChainMessage(wallet.chainId)}
+          title={`${networkName} required`}
+          body={miniAppUnsupportedChainMessage(wallet.chainId, requiredChain)}
           action={
             <PrimaryButton disabled={networkSwitchPending} onClick={onSwitchNetwork}>
-              {networkSwitchPending ? "Requesting Base Sepolia" : "Retry Base Sepolia"}
+              {networkSwitchPending ? `Requesting ${networkName}` : `Retry ${networkName}`}
             </PrimaryButton>
           }
           tone="warning"
@@ -1483,7 +1534,7 @@ function FlowBody({
     return (
       <StateMessage
         title="Wrong network"
-        body={`Current chain ${wallet.chainId}. Switch to Base Sepolia to enter the settlement sector.`}
+        body={`Current chain ${wallet.chainId}. Switch to ${networkName} to enter the settlement sector.`}
         action={
           <PrimaryButton disabled={networkSwitchPending} onClick={onSwitchNetwork}>
             {networkSwitchPending ? "Switching network" : "Switch network"}
@@ -1498,7 +1549,7 @@ function FlowBody({
     return (
       <StateMessage
         title="Settlement beacon offline"
-        body="Set VITE_VEYDRIFT_SETTLEMENT_ADDRESS to the Base Sepolia settlement contract."
+        body={`Set VITE_VEYDRIFT_SETTLEMENT_ADDRESS to the ${networkName} settlement contract.`}
         tone="warning"
       />
     );
@@ -1537,15 +1588,20 @@ function FlowBody({
   }
 
   const actionBlocked = settlementLaunchBlocker(settlementReady, settlementFunding) !== undefined;
+  const migrationReservation = activeMigrationReservation(settlementFunding);
   const actionLabel = settlementFunding.status === "idle" || settlementFunding.status === "loading"
     ? "Checking balance"
-    : "Launch settlement";
+    : migrationReservation
+      ? "Migrate planet"
+      : "Launch settlement";
   const title = settlementFunding.status === "error"
     ? "Settlement info unavailable"
     : settlementFunding.status === "ready" && settlementFunding.funding.unavailableReason
     ? "Settlement setup incomplete"
     : settlementFunding.status === "ready" && !settlementFunding.funding.affordable
-    ? "More Base Sepolia ETH required"
+    ? `More ${networkName} ETH required`
+    : migrationReservation
+      ? "Reserved planet found"
     : planet.kind === "legacy-settled"
       ? "Legacy planet detected"
       : "Found your first world";
@@ -1553,7 +1609,7 @@ function FlowBody({
   return (
     <StateMessage
       title={title}
-      body={settlementBody(planet, settlementFunding, referralCodeInput)}
+      body={settlementBody(planet, settlementFunding, networkName, referralCodeInput)}
       action={<PrimaryButton disabled={actionBlocked} onClick={onSettle}>{actionLabel}</PrimaryButton>}
       tone={actionBlocked ? "warning" : "ready"}
     />
@@ -1562,7 +1618,7 @@ function FlowBody({
 
 export function noWalletDetectedMessage(miniAppMode: boolean): string {
   return miniAppMode
-    ? "This Farcaster client does not expose a Base wallet. Open Veydrift in a Farcaster/Base client with wallet support, or use a browser wallet."
+    ? "This client does not expose a Base wallet. Open Veydrift with wallet support, or use a browser wallet."
     : "Open the bridge with an injected EVM wallet or browser wallet.";
 }
 
@@ -1581,7 +1637,7 @@ export function settlementLaunchBlocker(
     return settlementFunding.funding.unavailableReason;
   }
   if (!settlementFunding.funding.affordable) {
-    return "This wallet needs more Base Sepolia ETH before launching settlement.";
+    return "This wallet needs more ETH before launching settlement.";
   }
 
   return undefined;
@@ -1592,16 +1648,42 @@ function settlementTransactionOptions(
   referral?: ReferralRedemption
 ): SettlementTransactionOptions {
   return {
+    ...(funding.migrationClaim ? { migrationClaim: funding.migrationClaim } : {}),
+    ...(funding.migrationContractAddress
+      ? { migrationContractAddress: funding.migrationContractAddress }
+      : {}),
     ...(referral ? { referral } : {}),
     startPriceWei: funding.startPriceWei,
   };
 }
 
-function settlementBody(planet: PlanetState, settlementFunding: SettlementFunding, referralCode = ""): string {
+function activeMigrationReservation(settlementFunding: SettlementFunding): MigrationReservation | null {
+  if (settlementFunding.status !== "ready") return null;
+  const reservation = settlementFunding.funding.migrationReservation;
+  return reservation?.exists && !reservation.claimed ? reservation : null;
+}
+
+export function migrationReservationForSettlementFunding(
+  chainReservation: MigrationReservation | null,
+  backendReservation: MigrationReservation | null | undefined,
+): MigrationReservation | null {
+  const reservation = chainReservation ?? backendReservation ?? null;
+  return reservation?.claimed ? null : reservation;
+}
+
+function settlementBody(
+  planet: PlanetState,
+  settlementFunding: SettlementFunding,
+  networkName: string,
+  referralCode = "",
+): string {
+  const migrationReservation = activeMigrationReservation(settlementFunding);
   const prefix = planet.kind === "legacy-settled"
     ? "This wallet has a legacy first planet but no game home planet yet. Launch a new game settlement to continue."
-    : "Launch settlement and mint this wallet's home planet.";
-  const referralPreview = referralCode.trim()
+    : migrationReservation
+      ? `Claim the reserved testnet planet at ${migrationReservation.galaxy}:${migrationReservation.system}:${migrationReservation.position}.`
+      : "Launch settlement and mint this wallet's home planet.";
+  const referralPreview = referralCode.trim() && !migrationReservation
     ? " Invite code ready: a successful referral settlement starts this planet with 2x metal and crystal."
     : "";
 
@@ -1620,11 +1702,11 @@ function settlementBody(planet: PlanetState, settlementFunding: SettlementFundin
     }
 
     if (settlementFunding.funding.balanceWei === null) {
-      return `${prefix} Settlement costs ${startPrice} ETH; Farcaster Wallet will verify this wallet's Base Sepolia balance before submission.${referralPreview}`;
+      return `${prefix} Settlement costs ${startPrice} ETH; your wallet will verify the ${networkName} balance before submission.${referralPreview}`;
     }
 
     const balance = formatEth(settlementFunding.funding.balanceWei);
-    return `${prefix} Settlement costs ${startPrice} ETH; this wallet has ${balance} ETH on Base Sepolia.${referralPreview}`;
+    return `${prefix} Settlement costs ${startPrice} ETH; this wallet has ${balance} ETH on ${networkName}.${referralPreview}`;
   }
 
   return `${prefix}${referralPreview}`;
@@ -1787,12 +1869,14 @@ function PrimaryButton({
 
 function buildSettlementConfig(): SettlementConfig {
   const address = import.meta.env.VITE_VEYDRIFT_SETTLEMENT_ADDRESS;
+  const migrationAddress = import.meta.env.VITE_VEYDRIFT_MIGRATION_CONTRACT_ADDRESS;
   const referralSystemAddress = import.meta.env.VITE_VEYDRIFT_REFERRAL_SYSTEM_ADDRESS;
 
-  return {
-    ...(address ? { address } : {}),
+  return address ? {
+    address,
+    ...(migrationAddress ? { migrationAddress } : {}),
     ...(referralSystemAddress ? { referralSystemAddress } : {}),
-  };
+  } : {};
 }
 
 type WaitForIndexedSettledPlanetOptions = {

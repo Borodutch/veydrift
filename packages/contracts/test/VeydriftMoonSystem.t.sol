@@ -15,6 +15,7 @@ import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
+import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
 import {VeydriftDependencies} from "../src/libraries/VeydriftDependencies.sol";
 import {VeydriftAntiRaidPrimitives} from "../src/libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftCatalog} from "../src/libraries/VeydriftCatalog.sol";
@@ -131,6 +132,7 @@ contract VeydriftMoonSystemTest is Test {
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
+        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule();
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
             new VeydriftFirstPlanetSettlementModule(address(0xBEEF));
         game = new VeydriftGame(
@@ -140,7 +142,8 @@ contract VeydriftMoonSystemTest is Test {
             address(planetManagementModule),
             address(attackProtectionModule),
             address(colonizationModule),
-            address(defenseHoldModule)
+            address(defenseHoldModule),
+            address(stateMigrationModule)
         );
         moons = new VeydriftMoonSystem(address(game), address(randomness));
         metalToken = new MoonMockResourceToken();
@@ -178,9 +181,6 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(proxied.owner(), admin);
         assertEq(address(proxied.game()), address(game));
         assertEq(address(proxied.randomness()), address(randomness));
-        assertEq(proxied.moonChanceReporter(), address(game));
-        assertEq(proxied.nextMoonChanceId(), 1);
-        assertEq(proxied.nextMoonDestructionId(), 1);
 
         VeydriftMoonSystem nextImplementation =
             new VeydriftMoonSystem(address(game), address(randomness));
@@ -264,7 +264,7 @@ contract VeydriftMoonSystemTest is Test {
         moons.grantMoonFromChickenBurn(burnId, player, secondPlanetId);
     }
 
-    function testChickenBurnGrantCapsEachPlayerAtTwoIntegrationMoons() public {
+    function testChickenBurnGrantAllowsMoreThanTwoMoonsForAPlayer() public {
         uint256 firstPlanetId = _startPlanet();
         uint256 secondPlanetId = 1_002;
         uint256 thirdPlanetId = 1_003;
@@ -273,15 +273,13 @@ contract VeydriftMoonSystemTest is Test {
 
         moons.grantMoonFromChickenBurn(keccak256("burn-1"), player, firstPlanetId);
         moons.grantMoonFromChickenBurn(keccak256("burn-2"), player, secondPlanetId);
+        VeydriftMoonSystem.Moon memory moon =
+            moons.grantMoonFromChickenBurn(keccak256("burn-3"), player, thirdPlanetId);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftMoonSystem.ChickenBurnMoonLimitReached.selector,
-                player,
-                moons.MAX_CHICKEN_BURN_MOONS_PER_PLAYER()
-            )
-        );
-        moons.grantMoonFromChickenBurn(keccak256("burn-3"), player, thirdPlanetId);
+        assertTrue(moon.exists);
+        assertEq(moon.owner, player);
+        assertEq(moon.planetId, thirdPlanetId);
+        assertEq(moons.chickenBurnMoonGrantCountOf(player), 3);
     }
 
     function testChickenBurnGrantRejectsWrongOwnerAndMissingPlanet() public {

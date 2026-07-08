@@ -126,14 +126,26 @@ export function galaxyActionsForSlot({
   const accountLower = account?.toLowerCase();
   const isOwnTarget = Boolean(owner && accountLower && owner === accountLower);
   const isOccupied = Boolean(owner);
+  const isMigrationReserved = Boolean(planet?.migrationReservation);
   // VEY-KANEO-440: a same-alliance member's planet is a valid proactive-defense target. The backend
   // already surfaces this through the attack guard (you cannot attack an ally), so reuse that signal
   // rather than re-deriving alliance membership here.
   const isAllyTarget = attackProtection?.blockedReason === "same_alliance";
 
-  if (!planet) return [];
+  if (!planet) {
+    return [];
+  }
 
   if (!isOccupied) {
+    if (isMigrationReserved) {
+      return [{
+        enabled: false,
+        kind: "colonize",
+        label: "Quantum locked",
+        mode: "colonize",
+        reason: "This testnet migration planet is quantum-unstable until its commander claims it on mainnet.",
+      }];
+    }
     return [
       enabledOrDisabled({
         blocker: commonBlocker ?? shipRequirementBlocker(shipyardState, "colonyShip", "Requires a colony ship on your home planet."),

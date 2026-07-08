@@ -3,8 +3,10 @@ import {
   burningChickenConfig,
   defaultPlayableApiUrl,
   gameContractAddress,
+  productionPlayableApiUrl,
   resolvePlayableApiUrl,
   runtimeConfigUrl,
+  testPlayableApiUrl,
   type RuntimeConfig,
 } from "../src/runtimeConfig";
 
@@ -21,9 +23,22 @@ describe("runtime config URL", () => {
     expect(resolvePlayableApiUrl("   ")).toBe(defaultPlayableApiUrl);
   });
 
+  test("defaults veydrift.com to the production API", () => {
+    expect(resolvePlayableApiUrl(undefined, { hostname: "veydrift.com" })).toBe(productionPlayableApiUrl);
+    expect(resolvePlayableApiUrl(undefined, { hostname: "www.veydrift.com" })).toBe(productionPlayableApiUrl);
+  });
+
+  test("keeps non-production hosts on the test API by default", () => {
+    expect(resolvePlayableApiUrl(undefined, { hostname: "test.veydrift.com" })).toBe(testPlayableApiUrl);
+    expect(resolvePlayableApiUrl(undefined, { hostname: "localhost" })).toBe(testPlayableApiUrl);
+  });
+
   test("normalizes explicit deployment API URLs", () => {
     expect(resolvePlayableApiUrl("https://custom-api.veydrift.test///")).toBe(
       "https://custom-api.veydrift.test",
+    );
+    expect(resolvePlayableApiUrl("https://api.example.com///", { hostname: "veydrift.com" })).toBe(
+      "https://api.example.com",
     );
   });
 

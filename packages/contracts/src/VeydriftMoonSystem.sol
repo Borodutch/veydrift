@@ -45,17 +45,16 @@ interface IVeydriftRandomnessEngine {
 contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     using SafeCast for uint256;
 
-    uint16 public constant MAX_LEVEL = 50;
-    uint16 public constant QUEUE_UNIVERSE_SPEED = 1;
-    uint32 public constant MIN_QUEUE_SECONDS = 1;
-    bytes32 public constant MOON_SEED_DOMAIN = keccak256("veydrift.moon.v1");
-    bytes32 public constant MOON_CHANCE_DOMAIN = keccak256("veydrift.moon-chance.v1");
-    bytes32 public constant MOON_DESTRUCTION_DOMAIN = keccak256("veydrift.moon-destruction.v1");
-    bytes32 public constant CHICKEN_BURN_MOON_DOMAIN = keccak256("veydrift.chicken-burn-moon.v1");
-    uint16 public constant BPS = 10_000;
-    uint256 public constant MOON_CHANCE_DEBRIS_UNIT = 100_000;
-    uint16 public constant MAX_MOON_CHANCE_BPS = 2_000;
-    uint8 public constant MAX_CHICKEN_BURN_MOONS_PER_PLAYER = 2;
+    uint16 internal constant MAX_LEVEL = 50;
+    uint16 internal constant QUEUE_UNIVERSE_SPEED = 1;
+    uint32 internal constant MIN_QUEUE_SECONDS = 1;
+    bytes32 internal constant MOON_SEED_DOMAIN = keccak256("veydrift.moon.v1");
+    bytes32 internal constant MOON_CHANCE_DOMAIN = keccak256("veydrift.moon-chance.v1");
+    bytes32 internal constant MOON_DESTRUCTION_DOMAIN = keccak256("veydrift.moon-destruction.v1");
+    bytes32 internal constant CHICKEN_BURN_MOON_DOMAIN = keccak256("veydrift.chicken-burn-moon.v1");
+    uint16 internal constant BPS = 10_000;
+    uint256 internal constant MOON_CHANCE_DEBRIS_UNIT = 100_000;
+    uint16 internal constant MAX_MOON_CHANCE_BPS = 2_000;
 
     struct Moon {
         bool exists;
@@ -123,31 +122,30 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     IVeydriftMoonGame public game;
     IVeydriftRandomnessEngine public randomness;
     address public owner;
-    address public moonChanceReporter;
-    uint256 public nextMoonChanceId = 1;
-    uint256 public nextMoonDestructionId = 1;
+    address internal moonChanceReporter;
+    uint256 internal nextMoonChanceId = 1;
+    uint256 internal nextMoonDestructionId = 1;
     mapping(uint256 planetId => Moon moon) internal _moons;
     mapping(uint256 planetId => mapping(MoonBuilding building => uint16 level)) internal
         _moonBuildingLevels;
-    mapping(uint256 planetId => MoonBuildingConstruction construction) public
+    mapping(uint256 planetId => MoonBuildingConstruction construction) internal
         moonBuildingConstructions;
     // Dormant legacy storage retained for upgrade layout. Game is the moon resource/ship authority.
     mapping(uint256 planetId => VeydriftGameStorage.Resources resources) internal _moonResources;
     mapping(uint256 planetId => mapping(Ship ship => uint32 count)) internal _moonShipCounts;
     mapping(uint256 planetId => mapping(Defense defense => uint32 count)) internal
         _moonDefenseCounts;
-    mapping(uint256 planetId => MoonDefenseQueue queue) public moonDefenseQueues;
+    mapping(uint256 planetId => MoonDefenseQueue queue) internal moonDefenseQueues;
     mapping(uint256 outcomeId => MoonChanceOutcome outcome) internal _moonChanceOutcomes;
-    mapping(uint256 requestId => uint256 outcomeId) public moonChanceOutcomeByRequestId;
+    mapping(uint256 requestId => uint256 outcomeId) internal moonChanceOutcomeByRequestId;
     mapping(bytes32 battleKey => uint256 outcomeId) public moonChanceOutcomeByBattle;
     mapping(uint256 outcomeId => MoonDestructionOutcome outcome) internal _moonDestructionOutcomes;
-    mapping(uint256 requestId => uint256 outcomeId) public moonDestructionOutcomeByRequestId;
-    mapping(bytes32 battleKey => uint256 outcomeId) public moonDestructionOutcomeByBattle;
+    mapping(uint256 requestId => uint256 outcomeId) internal moonDestructionOutcomeByRequestId;
+    mapping(bytes32 battleKey => uint256 outcomeId) internal moonDestructionOutcomeByBattle;
     mapping(bytes32 burnId => bool granted) public chickenBurnMoonGranted;
     mapping(address player => uint8 count) public chickenBurnMoonGrantCountOf;
 
     error ChickenBurnAlreadyGranted(bytes32 burnId);
-    error ChickenBurnMoonLimitReached(address player, uint256 limit);
     error ConstructionActive();
     error ConstructionInactive();
     error ConstructionNotReady(uint64 readyAt);
@@ -366,6 +364,119 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         createdMoon = _createMoon(planetId, planetRef, planetRef.owner, seed);
     }
 
+    function importMigratedMoonState(
+        uint256 planetId,
+        address player,
+        uint16 fields,
+        uint16 diameterKm,
+        uint64 createdAt,
+        uint64 jumpGateReadyAt,
+        VeydriftGameStorage.Resources calldata resources,
+        uint16[4] calldata buildingLevels,
+        uint32[16] calldata shipCounts,
+        uint32[10] calldata defenseCounts,
+        MoonBuildingConstruction calldata buildingQueue,
+        MoonDefenseQueue calldata defenseQueue
+    ) external {
+        if (msg.sender != address(game)) {
+            revert NotOwner(msg.sender);
+        }
+        if (player == address(0)) revert ZeroAddress();
+        VeydriftGameStorage.Planet memory planetRef = game.planet(planetId);
+        if (planetRef.owner == address(0)) revert NoPlanet();
+        if (planetRef.owner != player) revert NotMoonOwner();
+        if (_moons[planetId].exists) revert MoonAlreadyExists(planetId);
+
+        _moons[planetId] = Moon({
+            exists: true,
+            planetId: planetId,
+            owner: player,
+            fields: fields,
+            diameterKm: diameterKm,
+            createdAt: createdAt,
+            jumpGateReadyAt: jumpGateReadyAt
+        });
+        emit MoonCreated(
+            player,
+            planetId,
+            planetRef.galaxy,
+            planetRef.system,
+            planetRef.position,
+            fields,
+            diameterKm
+        );
+
+        game.grantMoonResources(planetId, resources);
+        _emitMoonResourcesSettled(planetId);
+
+        for (uint8 id = 0; id <= uint8(type(MoonBuilding).max);) {
+            uint16 level = buildingLevels[id];
+            if (level != 0) {
+                _moonBuildingLevels[planetId][MoonBuilding(id)] = level;
+                emit MoonBuildingCompleted(planetId, MoonBuilding(id), level);
+            }
+            unchecked {
+                ++id;
+            }
+        }
+        for (uint8 id = 0; id <= uint8(Ship.Crawler);) {
+            uint32 count = shipCounts[id];
+            if (count != 0) {
+                game.setMoonShipCount(planetId, Ship(id), count);
+            }
+            unchecked {
+                ++id;
+            }
+        }
+        for (uint8 id = 0; id <= uint8(Defense.InterplanetaryMissile);) {
+            uint32 count = defenseCounts[id];
+            if (count != 0) {
+                _setMoonDefenseCount(planetId, Defense(id), count);
+            }
+            unchecked {
+                ++id;
+            }
+        }
+
+        if (buildingQueue.active) {
+            moonBuildingConstructions[planetId] = MoonBuildingConstruction({
+                active: true,
+                building: buildingQueue.building,
+                targetLevel: buildingQueue.targetLevel,
+                readyAt: buildingQueue.readyAt,
+                cost: buildingQueue.cost
+            });
+            emit MoonBuildingStarted(
+                planetId,
+                buildingQueue.building,
+                buildingQueue.targetLevel,
+                buildingQueue.readyAt,
+                buildingQueue.cost.metal,
+                buildingQueue.cost.crystal,
+                buildingQueue.cost.deuterium
+            );
+        }
+
+        if (defenseQueue.active) {
+            moonDefenseQueues[planetId] = MoonDefenseQueue({
+                active: true,
+                defense: defenseQueue.defense,
+                quantity: defenseQueue.quantity,
+                readyAt: defenseQueue.readyAt,
+                cost: defenseQueue.cost
+            });
+            emit MoonDefenseQueued(
+                planetId,
+                defenseQueue.defense,
+                defenseQueue.quantity,
+                defenseQueue.readyAt,
+                defenseQueue.cost.metal,
+                defenseQueue.cost.crystal,
+                defenseQueue.cost.deuterium
+            );
+        }
+    }
+
     function grantMoonFromChickenBurn(bytes32 burnId, address player, uint256 planetId)
         external
         onlyOwner
@@ -379,13 +490,9 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         if (planetRef.owner != player) revert NotMoonOwner();
         if (_moons[planetId].exists) revert MoonAlreadyExists(planetId);
 
-        uint8 currentCount = chickenBurnMoonGrantCountOf[player];
-        if (currentCount >= MAX_CHICKEN_BURN_MOONS_PER_PLAYER) {
-            revert ChickenBurnMoonLimitReached(player, MAX_CHICKEN_BURN_MOONS_PER_PLAYER);
-        }
-
         chickenBurnMoonGranted[burnId] = true;
-        uint8 nextCount = currentCount + 1;
+        uint8 currentCount = chickenBurnMoonGrantCountOf[player];
+        uint8 nextCount = currentCount == type(uint8).max ? currentCount : currentCount + 1;
         chickenBurnMoonGrantCountOf[player] = nextCount;
 
         uint256 seed = uint256(

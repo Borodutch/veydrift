@@ -92,6 +92,10 @@ function docsAppRouteForPathname(pathname) {
   return pathname === "/docs" || pathname.startsWith("/docs/");
 }
 
+function playAppRouteForPathname(pathname) {
+  return pathname === "/play" || pathname.startsWith("/play/");
+}
+
 export function shareRouteForUrl(url) {
   if ((url.pathname === "/" || url.pathname === "/index.html") && hasReferralCode(url)) {
     return { kind: "referral" };
@@ -782,7 +786,7 @@ if (import.meta.main) {
         return responseFor(file, route);
       }
 
-      if (docsAppRouteForPathname(route)) {
+      if (docsAppRouteForPathname(route) || playAppRouteForPathname(route)) {
         return responseFor(Bun.file(staticFileUrl("/index.html")), "/index.html");
       }
 

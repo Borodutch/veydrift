@@ -1,4 +1,4 @@
-import type { DebrisField, MoonChanceReport, OccupiedPlanet, Planet, PlanetType, PublicMoonState, PublicPlanetState, Resources } from "../types";
+import type { DebrisField, MigrationReservation, MoonChanceReport, OccupiedPlanet, Planet, PlanetType, PublicMoonState, PublicPlanetState, Resources } from "../types";
 
 const PLANET_IMAGES: Record<PlanetType, string> = {
   "scorching-molten": "/assets/game/style-pass/generated/planets/scorching-molten.webp",
@@ -54,6 +54,7 @@ export type ApiPlanet = {
   deuteriumMultiplierBps?: number;
   archetype?: PlanetType;
   occupiedBy?: OccupiedPlanet | null;
+  migrationReservation?: MigrationReservation | null;
   publicState?: PublicPlanetState | null;
   publicMoonState?: PublicMoonState | null;
   debrisField?: {
@@ -232,6 +233,7 @@ function planetFromApi(planet: ApiPlanet): Planet | null {
     ownerId: occupiedBy?.owner ?? null,
     alliance,
     occupiedBy,
+    migrationReservation: planet.migrationReservation ?? null,
     publicState: planet.publicState ?? null,
     publicMoonState: planet.publicMoonState ?? null,
     debrisField: debrisFieldFromApi(planet.debrisField),

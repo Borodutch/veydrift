@@ -208,6 +208,28 @@ The token deploy script emits and returns the Metal, Crystal, and Deuterium
 proxy addresses. Configure those addresses as backend/runtime environment
 variables after deployment.
 
+Referral system deployment for an already deployed game contract:
+
+```sh
+cd packages/contracts
+export REFERRAL_SIGNER_ADDRESS="$(cast wallet address --private-key "$VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY")"
+
+GAME_PROXY_ADDRESS=<VeydriftGame proxy> \
+REFERRAL_SIGNER_ADDRESS="$REFERRAL_SIGNER_ADDRESS" \
+PRIVATE_KEY=<referral-owner-key> \
+  forge script script/DeployReferralSystem.s.sol:DeployReferralSystem --rpc-url "$VEYDRIFT_RPC_URL"
+
+GAME_PROXY_ADDRESS=<VeydriftGame proxy> \
+REFERRAL_SIGNER_ADDRESS="$REFERRAL_SIGNER_ADDRESS" \
+PRIVATE_KEY=<referral-owner-key> \
+  forge script script/DeployReferralSystem.s.sol:DeployReferralSystem --rpc-url "$VEYDRIFT_RPC_URL" --broadcast
+```
+
+Use the emitted `VeydriftReferralSystem` address as
+`VEYDRIFT_REFERRAL_SYSTEM_ADDRESS` before running the game proxy upgrade script
+that wires `VeydriftFirstPlanetSettlementModule(referralSystem)`. Keep the
+referral owner key, backend signer key, and full RPC URL in secret storage.
+
 ### Circuits
 
 Veydrift gameplay state is public onchain state. There is no privacy, zk,

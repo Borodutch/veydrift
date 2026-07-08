@@ -207,8 +207,6 @@ describe("Moon page helpers", () => {
     const page = MoonPage({
       burningChicken: {
         configured: true,
-        maxMoonsPerPlayer: 2,
-        moonCount: 0,
       },
       canBurnChicken: true,
       moonState: {
@@ -223,11 +221,12 @@ describe("Moon page helpers", () => {
 
     expect(text).toContain("Chicken ID");
     expect(text).toContain("Burn for Moon");
-    expect(text).toContain("Browse Chickens");
     expect(text).toContain("Any Chicken NFT from the OpenSea collection can be burned for a moon at any planet.");
     expect(text).not.toContain("verifies this wallet owns the chicken");
     expect(text).not.toContain("Example Chicken");
     expect(text).not.toContain("#73166 on OpenSea");
+    expect(text).not.toContain("During testnet");
+    expect(text).not.toContain("testnet Chicken moons used");
     expect(text).not.toContain("No eligible Burning Chickens");
     expect(moonPageSource).toContain("https://opensea.io/collection/chickens-by-eggs");
     expect(moonPageSource).not.toContain("https://opensea.io/item/base/0x84eea2be67b17698b0e09b57eeeda47aa921bbf0/73166");
@@ -237,8 +236,6 @@ describe("Moon page helpers", () => {
     const page = MoonPage({
       burningChicken: {
         configured: false,
-        maxMoonsPerPlayer: 2,
-        moonCount: 0,
       },
       moonState: {
         wallet: "0x1111111111111111111111111111111111111111",
@@ -258,8 +255,6 @@ describe("Moon page helpers", () => {
       action: { status: "error", label: "Chicken #164 was not found on Base mainnet." },
       burningChicken: {
         configured: true,
-        maxMoonsPerPlayer: 2,
-        moonCount: 0,
       },
       canBurnChicken: true,
       moonState: {
@@ -275,12 +270,10 @@ describe("Moon page helpers", () => {
     expect(visibleText(page)).toContain("Chicken #164 was not found on Base mainnet.");
   });
 
-  test("disables chicken burns at the two-moon limit", () => {
+  test("does not show a per-wallet Chicken moon limit", () => {
     const page = MoonPage({
       burningChicken: {
         configured: true,
-        maxMoonsPerPlayer: 2,
-        moonCount: 2,
       },
       canBurnChicken: true,
       moonState: {
@@ -292,9 +285,9 @@ describe("Moon page helpers", () => {
       },
       selectedCoordinates: { galaxy: 1, system: 44, position: 8 },
     });
-    expect(visibleText(page)).toContain("Moon limit reached");
-    expect(visibleText(page)).toContain("this wallet already has 2 of 2 testnet Chicken moons");
     expect(visibleText(page)).toContain("Burn for Moon");
+    expect(visibleText(page)).not.toContain("Moon limit reached");
+    expect(visibleText(page)).not.toContain("testnet Chicken moons used");
   });
 
   test("previews moon structures before a moon is granted", () => {

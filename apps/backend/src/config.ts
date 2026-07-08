@@ -5,6 +5,7 @@ export type BackendConfig = {
   chainId: number;
   deploymentMode: DeploymentMode;
   gameContractAddress?: `0x${string}`;
+  migrationContractAddress?: `0x${string}`;
   indexDbPath: string;
   indexFromBlock: bigint;
   currentStateHealRunId?: string;
@@ -78,6 +79,7 @@ export type SafeConfigSummary = {
   gameContractConfigured: boolean;
   hasRpcUrl: boolean;
   moonContractConfigured: boolean;
+  migrationContractConfigured: boolean;
   missionResolutionEnabled: boolean;
   missionResolverConfigured: boolean;
   randomnessEngineConfigured: boolean;
@@ -181,6 +183,11 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     "VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS",
     problems
   );
+  const migrationContractAddress = parseAddress(
+    env.VEYDRIFT_MIGRATION_CONTRACT_ADDRESS,
+    "VEYDRIFT_MIGRATION_CONTRACT_ADDRESS",
+    problems
+  );
   const moonContractAddress = parseAddress(
     env.VEYDRIFT_MOON_CONTRACT_ADDRESS,
     "VEYDRIFT_MOON_CONTRACT_ADDRESS",
@@ -269,9 +276,10 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       logChunkSpan,
       rebuildDeadlineMs,
       pollIntervalMs,
-      missionResolutionEnabled: deploymentMode === "test" && Boolean(missionResolverAddress || missionResolverPrivateKey),
+      missionResolutionEnabled: Boolean(missionResolverAddress || missionResolverPrivateKey),
       ...(missionResolverAddress ? { missionResolverAddress } : {}),
       ...(missionResolverPrivateKey ? { missionResolverPrivateKey } : {}),
+      ...(migrationContractAddress ? { migrationContractAddress } : {}),
       qaSyntheticStationedDefenders,
       ...(moonContractAddress ? { moonContractAddress } : {}),
       ...(randomnessEngineAddress ? { randomnessEngineAddress } : {}),
@@ -301,6 +309,7 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
     gameContractConfigured: Boolean(config.gameContractAddress),
     hasRpcUrl: Boolean(config.rpcUrl),
     moonContractConfigured: Boolean(config.moonContractAddress),
+    migrationContractConfigured: Boolean(config.migrationContractAddress),
     missionResolutionEnabled: config.missionResolutionEnabled,
     missionResolverConfigured: Boolean(config.missionResolverAddress || config.missionResolverPrivateKey),
     randomnessEngineConfigured: Boolean(config.randomnessEngineAddress),

@@ -18,6 +18,9 @@ contract VeydriftGame is VeydriftResourceReserves {
     address private immutable _attackProtectionModule;
     address private immutable _colonizationModule;
     address private immutable _defenseHoldModule;
+    address private immutable _stateMigrationModule;
+
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     constructor(
         address admin,
@@ -26,12 +29,14 @@ contract VeydriftGame is VeydriftResourceReserves {
         address planetManagementModule,
         address attackProtectionModule,
         address colonizationModule,
-        address defenseHoldModule
+        address defenseHoldModule,
+        address stateMigrationModule
     ) VeydriftResourceReserves(admin) {
         if (
             firstPlanetSettlementModule == address(0) || gameplayModule == address(0)
                 || planetManagementModule == address(0) || attackProtectionModule == address(0)
                 || colonizationModule == address(0) || defenseHoldModule == address(0)
+                || stateMigrationModule == address(0)
         ) revert UnsupportedGameplayModule();
         _firstPlanetSettlementModule = firstPlanetSettlementModule;
         _gameplayModule = gameplayModule;
@@ -39,6 +44,19 @@ contract VeydriftGame is VeydriftResourceReserves {
         _attackProtectionModule = attackProtectionModule;
         _colonizationModule = colonizationModule;
         _defenseHoldModule = defenseHoldModule;
+        _stateMigrationModule = stateMigrationModule;
+    }
+
+    function initialize(address admin) external initializer {
+        if (admin == address(0)) revert Unauthorized(admin);
+        __VeydriftGameStorage_init(admin);
+    }
+
+    function transferOwnership(address nextOwner) external onlyOwner {
+        if (nextOwner == address(0)) revert Unauthorized(nextOwner);
+        address oldOwner = _owner;
+        _owner = nextOwner;
+        emit OwnershipTransferred(oldOwner, nextOwner);
     }
 
     function startPlanet() external payable returns (uint256) {
@@ -217,6 +235,33 @@ contract VeydriftGame is VeydriftResourceReserves {
         address oldRandomnessEngine = _randomnessEngine;
         _randomnessEngine = nextRandomnessEngine;
         emit RandomnessEngineUpdated(oldRandomnessEngine, nextRandomnessEngine);
+    }
+
+    function setMigrationSettlement(address nextMigrationSettlement) external onlyOwner {
+        _migrationSettlement = nextMigrationSettlement;
+    }
+
+    function setGamePaused(bool paused) external onlyOwner {
+        _gamePaused = paused ? 1 : 0;
+    }
+
+    function reserveMigrationCoordinates(
+        uint16[] calldata galaxies,
+        uint16[] calldata systems,
+        uint8[] calldata positions
+    ) external {
+        if (msg.sender != _owner && msg.sender != _migrationSettlement) {
+            revert Unauthorized(msg.sender);
+        }
+        uint256 count = galaxies.length;
+        if (systems.length != count || positions.length != count) revert InvalidCoordinates();
+        for (uint256 i = 0; i < count; i++) {
+            occupiedCoordinates[coordinateKey(galaxies[i], systems[i], positions[i])] = true;
+        }
+    }
+
+    function importMigratedState(address, bytes calldata) external payable {
+        _delegateToStateMigrationModule();
     }
 
     /// @dev UNUSED / DORMANT: SpaceDock is never set on the live deployment, so `_spaceDockSystem`
@@ -926,6 +971,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _delegateToPlayModule() private {
+        _requireGameNotPaused();
         (bool ok, bytes memory result) = _gameplayModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
@@ -950,6 +996,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _delegateToPlanetManagementModule() private {
+        _requireGameNotPaused();
         (bool ok, bytes memory result) = _planetManagementModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
@@ -985,6 +1032,7 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _delegateToColonizationModule() private {
+        _requireGameNotPaused();
         (bool ok, bytes memory result) = _colonizationModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
@@ -997,7 +1045,21 @@ contract VeydriftGame is VeydriftResourceReserves {
     }
 
     function _delegateToDefenseHoldModule() private {
+        _requireGameNotPaused();
         (bool ok, bytes memory result) = _defenseHoldModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        assembly ("memory-safe") {
+            return(add(result, 32), mload(result))
+        }
+    }
+
+    function _delegateToStateMigrationModule() private {
+        _requireGameNotPaused();
+        (bool ok, bytes memory result) = _stateMigrationModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(result, 32), mload(result))

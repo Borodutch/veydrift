@@ -2429,15 +2429,15 @@ function missionStatusLabel(status: string): string {
 // fleet that has already arrived (or "returning" for one that has already landed). Keeps the report
 // surfaces consistent with the time-aware list pills and the mission-detail timeline.
 export function missionDisplayStatusLabel(mission: FleetMissionSummary, now: number): string {
+  if (mission.status === "Outbound" && mission.missionType === "DefenseHold" && isDefenseHoldStationed(mission, now)) {
+    return "stationed";
+  }
   // VEY-KANEO-468: a leg whose clock has passed but whose on-chain status has not advanced is
   // mid-settlement (lazy reconcile / battle keeper), so it reads "resolving" until the chain
   // reflects it — mirroring the "Resolving" list pill.
   if (mission.status === "Outbound" && isMissionDue(mission, now)) {
     if (mission.resolutionBlocker === "randomness_pending") return "awaiting randomness";
     return "resolving";
-  }
-  if (mission.status === "Outbound" && mission.missionType === "DefenseHold" && isDefenseHoldStationed(mission, now)) {
-    return "stationed";
   }
   if ((mission.status === "Returning" || mission.status === "Recalled") && isMissionReturned(mission, now)) {
     return "resolving";

@@ -62,7 +62,6 @@ import { buildingUpgradeStatus, formatMissingResources } from "./buildingDetails
 import { serverUnavailableRetryMessage } from "./gameUnavailable";
 import {
   detectFarcasterMiniApp,
-  FARCASTER_BASE_SEPOLIA_CHAIN,
   FARCASTER_WALLET_CAPABILITY,
   farcasterMiniAppWalletSupport,
   hasMiniAppUrlHint,
@@ -203,7 +202,6 @@ import {
   getAvailableWalletProviderDetails,
   parseRiftTokenAmount,
   requestAccounts,
-  switchBaseSepoliaNetwork,
   unwatchPlanet,
   watchPlanet,
   sendApproveResourceTokenTransaction,
@@ -246,11 +244,16 @@ import {
   sendStartShipProductionTransaction,
   sendCreateAllianceTransaction,
   sendBurningChickenMoonTransaction,
-  ensureBaseSepoliaNetwork,
+  defaultVeydriftChainForLocation,
+  ensureVeydriftNetwork,
+  farcasterChainFor,
   isOnChainRevertError,
   isUserRejected,
+  switchVeydriftNetwork,
   updatePlayerProfile,
+  veydriftChainForChainId,
   WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
+  type VeydriftWalletChain,
   type ChainDefenseState,
   type ChainAllianceState,
   type ChainInfrastructureState,
@@ -299,7 +302,6 @@ import {
   type AutoDismissableActionState,
 } from "./actionNoticeAutoDismiss";
 
-const maxChickenBurnMoonsPerPlayer = 2;
 
 export function researchStartTransactionLabel(
   technologyId: number,
@@ -1738,7 +1740,7 @@ function playableFarcasterMiniAppWalletError(
     ...playableFarcasterRawErrorDiagnostics(details.error),
   ].filter((part): part is string => Boolean(part));
   const detailText = detailParts.length > 0 ? ` Details: ${detailParts.join("; ")}.` : "";
-  return `Farcaster Mini App wallet setup failed (${code}). ${message}${detailText} ${farcasterWalletReportInstruction}`;
+  return `Wallet setup failed (${code}). ${message}${detailText} ${farcasterWalletReportInstruction}`;
 }
 
 function playableFarcasterSupportDiagnostics(support: FarcasterMiniAppWalletSupport): string {
@@ -3108,13 +3110,15 @@ export function PlayableMvpApp({
     setOnChainError(undefined);
 
     let support: FarcasterMiniAppWalletSupport | undefined;
+    const walletChain = defaultVeydriftChainForLocation();
+    const requiredChain = farcasterChainFor(walletChain);
     try {
       await signalFarcasterReadyOnce();
-      support = await farcasterMiniAppWalletSupport();
+      support = await farcasterMiniAppWalletSupport(undefined, { requiredChain });
       if (support.status === "unsupported") {
         showMiniAppWalletError(playableFarcasterMiniAppWalletError(
           support.code,
-          `${support.message} Required capability: ${FARCASTER_WALLET_CAPABILITY}. Required chain: ${FARCASTER_BASE_SEPOLIA_CHAIN}.`,
+          `${support.message} Required capability: ${FARCASTER_WALLET_CAPABILITY}. Required chain: ${requiredChain}.`,
           { support },
         ));
         return;
@@ -3148,17 +3152,17 @@ export function PlayableMvpApp({
       if (!accounts[0]) {
         showMiniAppWalletError(playableFarcasterMiniAppWalletError(
           "FARCASTER_WALLET_ACCOUNT_UNAVAILABLE",
-          "Farcaster Wallet authorization completed without returning an account.",
+          "Wallet authorization completed without returning an account.",
           { support },
         ));
         return;
       }
 
       try {
-        await switchBaseSepoliaNetwork(walletProvider.provider);
+        await switchVeydriftNetwork(walletProvider.provider, walletChain);
       } catch (error) {
         showMiniAppWalletError(playableFarcasterMiniAppWalletError(
-          "FARCASTER_BASE_SEPOLIA_SWITCH_FAILED",
+          walletChain.chainId === 8453 ? "FARCASTER_BASE_MAINNET_SWITCH_FAILED" : "FARCASTER_BASE_SEPOLIA_SWITCH_FAILED",
           walletRequestErrorMessage(error),
           { support, error },
         ));
@@ -3245,10 +3249,6 @@ export function PlayableMvpApp({
   const activePlanetId = selectedManagedPlanet?.planetId ?? onChainSettlementState?.homePlanetId ?? undefined;
   const selectedMoonBody = selectedManagedPlanet?.moon?.exists ? selectedManagedPlanet.moon : null;
   const activeBodyKind = resolvedOrbitBodyKind(selectedBodyKind, selectedManagedPlanet);
-  const walletMoonCount = useMemo(
-    () => walletPlanets.filter((item) => item.moon?.exists).length,
-    [walletPlanets],
-  );
   const [planetSectionStore, setPlanetSectionStore] = useState<PlanetSectionStore>({});
   const activePlanetSection = useMemo(
     () => planetSectionForPlanet(planetSectionStore, activePlanetId),
@@ -3603,6 +3603,11 @@ export function PlayableMvpApp({
   );
   const apiBaseUrl = useMemo(() => {
     return runtimeConfig.status === "ready" ? runtimeConfig.config.apiUrl : undefined;
+  }, [runtimeConfig]);
+  const gameWalletChain = useMemo<VeydriftWalletChain>(() => {
+    return runtimeConfig.status === "ready"
+      ? veydriftChainForChainId(runtimeConfig.config.chainId)
+      : defaultVeydriftChainForLocation();
   }, [runtimeConfig]);
   const missionUniverseLookupMissions = useMemo(() => missionArchetypeLookupMissions({
     allActiveMissions: displayAllActiveMissions,
@@ -6174,11 +6179,6 @@ export function PlayableMvpApp({
       setMoonAction({ status: "error", label: "Wallet, Burning Chicken config, or selected planet is unavailable." });
       return;
     }
-    if (walletMoonCount >= maxChickenBurnMoonsPerPlayer) {
-      setMoonAction({ status: "error", label: "This wallet has reached the two-moon limit." });
-      return;
-    }
-
     const targetLabel = activePlanetCoords
       ? `${activePlanetCoords.galaxy}:${activePlanetCoords.system}:${activePlanetCoords.position}`
       : `planet #${activePlanetId}`;
@@ -6202,7 +6202,7 @@ export function PlayableMvpApp({
         );
       },
       waitForIndexed: async () => {
-        await ensureBaseSepoliaNetwork(provider);
+        await ensureVeydriftNetwork(provider, gameWalletChain);
         if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
         if (!apiBaseUrl || !activePlanetId) {
           throw new Error("Chicken burn confirmed, but Veydrift API state is unavailable for moon confirmation.");
@@ -6222,7 +6222,7 @@ export function PlayableMvpApp({
       },
       onErrorRefresh: async () => {
         try {
-          await ensureBaseSepoliaNetwork(provider);
+          await ensureVeydriftNetwork(provider, gameWalletChain);
         } catch (switchError) {
           console.error(switchError);
         }
@@ -6240,12 +6240,12 @@ export function PlayableMvpApp({
     activePlanetCoords,
     apiBaseUrl,
     chickenBurnConfig,
+    gameWalletChain,
     provider,
     refreshOnChainState,
     runCoordinatedWriteTransaction,
     setActivePlanetSectionStatus,
     setMoonState,
-    walletMoonCount,
   ]);
 
   const handleBuildShip = useCallback((shipId: number, _key: ShipKey, quantity: number) => {
@@ -8334,8 +8334,6 @@ export function PlayableMvpApp({
           action={moonAction}
           burningChicken={{
             configured: Boolean(chickenBurnConfig),
-            maxMoonsPerPlayer: maxChickenBurnMoonsPerPlayer,
-            moonCount: walletMoonCount,
           }}
           canBurnChicken={canSubmitChickenBurnTransaction}
           canTransact={canSubmitMoonTransaction}

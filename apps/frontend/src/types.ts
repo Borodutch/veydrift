@@ -12,6 +12,7 @@ export interface Planet {
   occupiedBy: OccupiedPlanet | null;
   debrisField: DebrisField | null;
   moonChance: MoonChanceReport | null;
+  migrationReservation?: MigrationReservation | null;
   publicState?: PublicPlanetState | null;
   publicMoonState?: PublicMoonState | null;
   resources: Resources;
@@ -23,6 +24,13 @@ export interface Planet {
   metalMultiplierBps?: number;
   crystalMultiplierBps?: number;
   deuteriumMultiplierBps?: number;
+}
+
+export interface MigrationReservation {
+  status: "quantum-unstable";
+  label: string;
+  wallet?: string | null;
+  planetId?: string | null;
 }
 
 export interface PublicMoonState {

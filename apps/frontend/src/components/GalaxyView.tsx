@@ -57,6 +57,7 @@ export function formatAllianceLabel(alliance: Planet["alliance"]): string {
 }
 
 export function formatGalaxyCommanderLabel(planet: Planet): string {
+  if (planet.migrationReservation) return planet.migrationReservation.label || "Quantum-unstable planet";
   if (planet.occupiedBy?.ownerDisplayName) return planet.occupiedBy.ownerDisplayName;
   if (planet.ownerId) return shortAddress(planet.ownerId);
   return "Unclaimed";
@@ -792,16 +793,7 @@ function GalaxySlot({
         <SlotNumber position={position} muted />
         <div className="min-w-0">
           <div className="text-sm font-medium text-slate-500">Empty space</div>
-          <div className="text-xs text-slate-700">No public planet at this position.</div>
         </div>
-        <GalaxyActionButtons
-          actions={actions}
-          busy={actionState.status === "pending" || Boolean(transactionUnavailableReason)}
-          busyReason={transactionUnavailableReason}
-          coords={coords}
-          onAction={onAction}
-          planet={undefined}
-        />
       </div>
     );
   }
@@ -819,6 +811,7 @@ function GalaxySlot({
   const meta: PlanetMetaItem[] = [
     { label: formatGalaxyHeatLabel(planet.temperature) },
     { label: `${planet.fields} fields` },
+    ...(planet.migrationReservation ? [{ label: "Reserved", tone: "info" as const }] : []),
     ...(planet.hasMoon ? [{ label: "Moon" }] : []),
     ...(attackProtection?.defenderInactive ? [{ label: "Inactive", tone: "warning" as const }] : []),
     ...(attackBlockLabel ? [{ label: attackBlockLabel, tone: "warning" as const }] : []),

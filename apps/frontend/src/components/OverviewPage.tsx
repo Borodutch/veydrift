@@ -1184,12 +1184,17 @@ export function summarizeFleets(fleetVisibility: FleetMissionVisibilityResponse,
 
   for (const mission of outgoing) {
     const arrivalMs = timestampToMs(mission.arrivalAt);
+    const defenseHoldUntilMs = mission.missionType === "DefenseHold"
+      ? timestampToMs(mission.defenseHoldUntil ?? mission.returnAt)
+      : undefined;
     const timing = arrivalMs === undefined
       ? "ETA unknown"
+      : mission.missionType === "DefenseHold" && arrivalMs <= now && defenseHoldUntilMs !== undefined && defenseHoldUntilMs > now
+        ? `holding for ${formatDurationUntil(defenseHoldUntilMs, now)}`
       // Lazy on-chain reconciliation (VEY-KANEO-468): once the arrival time passes, the mission is
       // settled lazily on the next mutating call (combat is resolved by the battle keeper), so until
       // the chain reflects it the honest state is "resolving", not a finished "arrived".
-      : arrivalMs > now ? `arrives in ${formatDurationUntil(arrivalMs, now)}` : "resolving";
+        : arrivalMs > now ? `arrives in ${formatDurationUntil(arrivalMs, now)}` : "resolving";
     lines.push({
       hostile: false,
       key: `out-${mission.missionId}`,

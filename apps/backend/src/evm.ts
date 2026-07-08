@@ -1,4 +1,5 @@
 import { solarSatelliteEnergy } from "@veydrift/universe";
+import { encodeAbiParameters, keccak256 } from "viem";
 import type { BackendConfig } from "./config";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
 import { deriveDefenseRows, deriveShipRows, usedFieldsFromBuildingRows } from "./readModels";
@@ -540,6 +541,18 @@ export type CanonicalFleetMissionSnapshot = {
   fuelCost: string;
   cargo: Resources;
   randomnessRequestId: string | null;
+};
+
+export type CanonicalFleetMissionDetails = CanonicalFleetMissionSnapshot & {
+  ships: Record<string, string>;
+  originIsMoon: boolean;
+  targetIsMoon: boolean;
+};
+
+type FleetMissionSupplement = {
+  ships: Record<string, string>;
+  originIsMoon: boolean;
+  targetIsMoon: boolean;
 };
 
 export type FleetMissionPlanetReference = {
@@ -1116,8 +1129,11 @@ export interface ChainReader {
   listAllianceDiplomacyState?(): Promise<AllianceDiplomacySnapshot[]>;
   getCanonicalFleetMission?(missionId: bigint): Promise<CanonicalFleetMissionSnapshot | null>;
   listCanonicalFleetMissions?(): Promise<CanonicalFleetMissionSnapshot[]>;
+  listCanonicalFleetMissionDetails?(): Promise<CanonicalFleetMissionDetails[]>;
+  listFleetMissionSummaries?(): Promise<FleetMissionSummary[]>;
   listCurrentPlanets?(): Promise<SettledPlanetEvent[]>;
   getCanonicalPlanetState?(planetId: bigint): Promise<CanonicalPlanetChainState>;
+  listCanonicalPlanetStatesForIds?(planetIds: bigint[]): Promise<CanonicalPlanetChainState[]>;
   listResolvableFleetMissions?(): Promise<ResolvableFleetMission[]>;
   listReturnableFleetMissions?(): Promise<ReturnableFleetMission[]>;
   listSettledPlanetEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<SettledPlanetEvent[]>;
@@ -1145,7 +1161,10 @@ export type RpcMetrics = {
 };
 
 export type VeydriftGameReaderOptions = {
+  cacheTtlMs?: number;
   hydrateQueueStartedAt?: boolean;
+  minRequestIntervalMs?: number;
+  requestTimeoutMs?: number;
 };
 
 type RpcCacheEntry<T> = {
@@ -1642,10 +1661,23 @@ export class VeydriftGameReader implements ChainReader {
       throw new Error("VeydriftGame contract address is required.");
     }
 
+    const transportOptions: {
+      cacheTtlMs?: number;
+      minRequestIntervalMs?: number;
+      requestTimeoutMs?: number;
+    } = {};
+    if (options.cacheTtlMs !== undefined) transportOptions.cacheTtlMs = options.cacheTtlMs;
+    if (options.minRequestIntervalMs !== undefined) {
+      transportOptions.minRequestIntervalMs = options.minRequestIntervalMs;
+    }
+    if (options.requestTimeoutMs !== undefined) {
+      transportOptions.requestTimeoutMs = options.requestTimeoutMs;
+    }
+
     this.transport = transport ?? new HttpJsonRpcTransport([
       config.rpcUrl,
       ...(config.rpcFallbackUrls ?? [])
-    ]);
+    ], transportOptions);
     this.allianceContractAddress = config.allianceContractAddress;
     this.gameContractAddress = config.gameContractAddress;
     this.moonContractAddress = config.moonContractAddress;
@@ -1903,10 +1935,11 @@ export class VeydriftGameReader implements ChainReader {
     const nowSeconds = Math.floor(Date.now() / 1_000);
     return summaries
       .filter((mission) =>
-        mission.status === "Returning"
+        (mission.status === "Returning" || mission.status === "Recalled")
           && Number(mission.returnAt) > 0
           && Number(mission.returnAt) <= nowSeconds
       )
+      .sort((left, right) => Number(right.returnAt) - Number(left.returnAt))
       .map(({ missionId, missionType, originPlanetId, returnAt, targetPlanetId }) => ({
         missionId,
         missionType,
@@ -1929,6 +1962,43 @@ export class VeydriftGameReader implements ChainReader {
     return results
       .map((result, index) => this.decodeCanonicalFleetMission(BigInt(index + 1), result))
       .filter((mission): mission is CanonicalFleetMissionSnapshot => mission !== null);
+  }
+
+  async listCanonicalFleetMissionDetails(): Promise<CanonicalFleetMissionDetails[]> {
+    const missions = await this.listCanonicalFleetMissions();
+    const activeMissions = missions.filter(isActiveCanonicalMission);
+    return this.hydrateCanonicalFleetMissionDetails(activeMissions);
+  }
+
+  async listCanonicalFleetMissionDetailsForIds(missionIds: bigint[]): Promise<CanonicalFleetMissionDetails[]> {
+    if (missionIds.length === 0) return [];
+    const calls = missionIds.map((missionId) => ({
+      selector: "0xf158c946",
+      args: [encodeUint(missionId)]
+    }));
+    const results = await this.batchCallContract(this.gameContractAddress, calls);
+    const missions = results
+      .map((result, index) => this.decodeCanonicalFleetMission(missionIds[index] ?? 0n, result))
+      .filter((mission): mission is CanonicalFleetMissionSnapshot => mission !== null)
+      .filter(isActiveCanonicalMission);
+    return this.hydrateCanonicalFleetMissionDetails(missions);
+  }
+
+  private async hydrateCanonicalFleetMissionDetails(
+    activeMissions: CanonicalFleetMissionSnapshot[]
+  ): Promise<CanonicalFleetMissionDetails[]> {
+    const supplements = await this.readFleetMissionStorageSupplements(
+      activeMissions.map((mission) => BigInt(mission.missionId))
+    );
+
+    return activeMissions.map((mission) => ({
+      ...mission,
+      ...(supplements.get(mission.missionId) ?? emptyFleetMissionSupplement())
+    }));
+  }
+
+  async listFleetMissionSummaries(): Promise<FleetMissionSummary[]> {
+    return this.readFleetMissionSummaries();
   }
 
   async getCanonicalFleetMission(missionId: bigint): Promise<CanonicalFleetMissionSnapshot | null> {
@@ -2312,7 +2382,7 @@ export class VeydriftGameReader implements ChainReader {
     const [resources, researchLabLevel, researchNetworkLabLevels, queue, technologyLevels, technologies] = await Promise.all([
       this.readResources("0x0adbf924", planetId),
       this.readUintCall("0xd9b24865", [encodeUint(planetId), encodeUint(6n)]),
-      this.readResearchNetworkLabLevels(wallet, planetId),
+      this.hydrateQueueStartedAt ? this.readResearchNetworkLabLevels(wallet, planetId) : Promise.resolve([]),
       this.readResearchQueue(wallet),
       this.readTechnologyLevels(wallet),
       this.readTechnologyRows(wallet)
@@ -2986,6 +3056,163 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
+  async listCanonicalPlanetStatesForIds(planetIds: bigint[]): Promise<CanonicalPlanetChainState[]> {
+    if (planetIds.length === 0) return [];
+
+    const progress = (label: string): void => {
+      if (process.env.VEYDRIFT_MIGRATION_SNAPSHOT_VERBOSE === "1") {
+        console.info(`[migration:snapshot] bulk canonical ${label}`);
+      }
+    };
+
+    progress(`resources for ${planetIds.length} planets`);
+    const resourceResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.map((planetId) => ({
+        selector: "0x0adbf924",
+        args: [encodeUint(planetId)]
+      }))
+    );
+
+    progress("building levels/costs");
+    const buildingResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.flatMap((planetId) =>
+        Array.from({ length: buildingCount }, (_, id) => ([
+          {
+            selector: "0xd9b24865",
+            args: [encodeUint(planetId), encodeUint(BigInt(id))]
+          },
+          {
+            selector: "0x291ee1b5",
+            args: [encodeUint(planetId), encodeUint(BigInt(id))]
+          }
+        ])).flat()
+      )
+    );
+
+    progress("defense counts/costs");
+    const defenseResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.flatMap((planetId) =>
+        Array.from({ length: defenseCount }, (_, id) => ([
+          {
+            selector: "0x836e3a32",
+            args: [encodeUint(planetId), encodeUint(BigInt(id))]
+          },
+          {
+            selector: "0x9b906295",
+            args: [encodeUint(BigInt(id))]
+          }
+        ])).flat()
+      )
+    );
+
+    progress("ship counts/costs");
+    const shipResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.flatMap((planetId) =>
+        supportedShipIds.flatMap((id) => ([
+          {
+            selector: "0x57686701",
+            args: [encodeUint(planetId), encodeUint(BigInt(id))]
+          },
+          {
+            selector: "0xc4222030",
+            args: [encodeUint(BigInt(id))]
+          }
+        ]))
+      )
+    );
+
+    progress("building queues");
+    const buildingQueueResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.map((planetId) => ({
+        selector: "0xb8e835ab",
+        args: [encodeUint(planetId)]
+      }))
+    );
+
+    progress("defense queues");
+    const defenseQueueResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.map((planetId) => ({
+        selector: "0x5758361d",
+        args: [encodeUint(planetId)]
+      }))
+    );
+
+    progress("defense queue backlogs");
+    const defenseBacklogResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.map((planetId) => ({
+        selector: "0x4f5ed437",
+        args: [encodeUint(planetId)]
+      }))
+    );
+
+    progress("ship queues");
+    const shipQueueResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.map((planetId) => ({
+        selector: "0xb6f4b7b7",
+        args: [encodeUint(planetId)]
+      }))
+    );
+
+    progress("ship queue backlogs");
+    const shipBacklogResults = await this.batchCallContract(
+      this.gameContractAddress,
+      planetIds.map((planetId) => ({
+        selector: "0x52b55205",
+        args: [encodeUint(planetId)]
+      }))
+    );
+    progress("decoded chain responses");
+
+    return planetIds.map((planetId, planetIndex) => {
+      const buildingOffset = planetIndex * buildingCount * 2;
+      const defenseOffset = planetIndex * defenseCount * 2;
+      const shipOffset = planetIndex * supportedShipIds.length * 2;
+      const buildingQueue = this.decodePlanetQueueResult(buildingQueueResults[planetIndex] ?? "0x", "building");
+      const defenseQueue = this.decodePlanetQueueResult(defenseQueueResults[planetIndex] ?? "0x", "defense");
+      const defenseBacklog = this.decodeProductionQueueBacklogResult(defenseBacklogResults[planetIndex] ?? "0x", "defense");
+      if (defenseBacklog.length > 0) defenseQueue.backlog = defenseBacklog;
+      const shipQueue = this.decodePlanetQueueResult(shipQueueResults[planetIndex] ?? "0x", "ship");
+      const shipBacklog = this.decodeProductionQueueBacklogResult(shipBacklogResults[planetIndex] ?? "0x", "ship");
+      if (shipBacklog.length > 0) shipQueue.backlog = shipBacklog;
+
+      return {
+        planetId: planetId.toString(),
+        resources: decodeResources(splitWords(resourceResults[planetIndex] ?? "0x")),
+        buildings: Array.from({ length: buildingCount }, (_, id) => {
+          const levelResult = buildingResults[buildingOffset + id * 2];
+          const costResult = buildingResults[buildingOffset + id * 2 + 1];
+          if (!levelResult || !costResult) {
+            throw new Error("RPC batch response missing building row.");
+          }
+          return {
+            id,
+            level: Number(decodeUintWord(wordAt(splitWords(levelResult), 0))),
+            cost: decodeResources(splitWords(costResult))
+          };
+        }),
+        defenses: Array.from({ length: defenseCount }, (_, id) => ({
+          id,
+          count: Number(decodeUintWord(wordAt(splitWords(defenseResults[defenseOffset + id * 2] ?? "0x"), 0))),
+          cost: decodeResources(splitWords(defenseResults[defenseOffset + id * 2 + 1] ?? "0x"))
+        })),
+        ships: supportedShipIds.map((id, index) => ({
+          id,
+          count: Number(decodeUintWord(wordAt(splitWords(shipResults[shipOffset + index * 2] ?? "0x"), 0))),
+          cost: decodeResources(splitWords(shipResults[shipOffset + index * 2 + 1] ?? "0x"))
+        })),
+        queues: { building: buildingQueue, defense: defenseQueue, ship: shipQueue }
+      };
+    });
+  }
+
   async listMoonChanceReportEvents(
     fromBlock: bigint,
     toBlock: bigint | "latest" = "latest"
@@ -3103,20 +3330,9 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   private async readPlanetQueue(selector: string, planetId: bigint, kind: "building" | "defense" | "ship"): Promise<QueueState> {
-    const words = splitWords(await this.call(selector, [encodeUint(planetId)]));
-    const active = decodeBoolWord(wordAt(words, 0));
-    const queue: QueueState = {
-      active,
-      kind: active ? kind : null,
-      ...(active ? { itemId: Number(decodeUintWord(wordAt(words, 1))) } : {}),
-      ...(kind === "building"
-        ? { targetLevel: Number(decodeUintWord(wordAt(words, 2))) }
-        : { quantity: Number(decodeUintWord(wordAt(words, 2))) }),
-      readyAt: active ? decodeUintWord(wordAt(words, 3)).toString() : null,
-      cost: decodeResources(words.slice(4, 7))
-    };
+    const queue = this.decodePlanetQueueResult(await this.call(selector, [encodeUint(planetId)]), kind);
 
-    if (!this.hydrateQueueStartedAt || !active) {
+    if (!this.hydrateQueueStartedAt || !queue.active) {
       return queue;
     }
 
@@ -3129,6 +3345,21 @@ export class VeydriftGameReader implements ChainReader {
     }
 
     return queue;
+  }
+
+  private decodePlanetQueueResult(result: string, kind: "building" | "defense" | "ship"): QueueState {
+    const words = splitWords(result);
+    const active = decodeBoolWord(wordAt(words, 0));
+    return {
+      active,
+      kind: active ? kind : null,
+      ...(active ? { itemId: Number(decodeUintWord(wordAt(words, 1))) } : {}),
+      ...(kind === "building"
+        ? { targetLevel: Number(decodeUintWord(wordAt(words, 2))) }
+        : { quantity: Number(decodeUintWord(wordAt(words, 2))) }),
+      readyAt: active ? decodeUintWord(wordAt(words, 3)).toString() : null,
+      cost: decodeResources(words.slice(4, 7))
+    };
   }
 
   private async readDefenseQueue(planetId: bigint): Promise<QueueState> {
@@ -3155,26 +3386,30 @@ export class VeydriftGameReader implements ChainReader {
     kind: "defense" | "ship"
   ): Promise<QueueState[]> {
     try {
-      const words = splitWords(await this.call(selector, [encodeUint(planetId)]));
-      const length = Number(decodeUintWord(wordAt(words, 1)));
-      const backlog: QueueState[] = [];
-      for (let index = 0; index < length; index += 1) {
-        const offset = 2 + index * 7;
-        const active = decodeBoolWord(wordAt(words, offset));
-        backlog.push({
-          active,
-          kind: active ? kind : null,
-          ...(active ? { itemId: Number(decodeUintWord(wordAt(words, offset + 1))) } : {}),
-          quantity: Number(decodeUintWord(wordAt(words, offset + 2))),
-          readyAt: active ? decodeUintWord(wordAt(words, offset + 3)).toString() : null,
-          cost: decodeResources(words.slice(offset + 4, offset + 7))
-        });
-      }
-      return backlog;
+      return this.decodeProductionQueueBacklogResult(await this.call(selector, [encodeUint(planetId)]), kind);
     } catch (error) {
       if (isRpcRevert(error)) return [];
       throw error;
     }
+  }
+
+  private decodeProductionQueueBacklogResult(result: string, kind: "defense" | "ship"): QueueState[] {
+    const words = splitWords(result);
+    const length = Number(decodeUintWord(wordAt(words, 1)));
+    const backlog: QueueState[] = [];
+    for (let index = 0; index < length; index += 1) {
+      const offset = 2 + index * 7;
+      const active = decodeBoolWord(wordAt(words, offset));
+      backlog.push({
+        active,
+        kind: active ? kind : null,
+        ...(active ? { itemId: Number(decodeUintWord(wordAt(words, offset + 1))) } : {}),
+        quantity: Number(decodeUintWord(wordAt(words, offset + 2))),
+        readyAt: active ? decodeUintWord(wordAt(words, offset + 3)).toString() : null,
+        cost: decodeResources(words.slice(offset + 4, offset + 7))
+      });
+    }
+    return backlog;
   }
 
   private async readMoonQueue(planetId: bigint): Promise<QueueState> {
@@ -3394,7 +3629,7 @@ export class VeydriftGameReader implements ChainReader {
       cost: decodeResources(words.slice(4, 7))
     };
 
-    if (active) {
+    if (this.hydrateQueueStartedAt && active) {
       queue.startedAt = await this.readResearchStartedAt(wallet, queue);
     }
 
@@ -4083,6 +4318,47 @@ export class VeydriftGameReader implements ChainReader {
     };
   }
 
+  private async readFleetMissionStorageSupplements(
+    missionIds: bigint[]
+  ): Promise<Map<string, FleetMissionSupplement>> {
+    if (missionIds.length === 0) return new Map();
+    const slotRequests = missionIds.flatMap((missionId) => {
+      const baseSlot = fleetMissionStorageBaseSlot(missionId);
+      return [baseSlot + 7n, baseSlot + 8n, baseSlot + 11n];
+    });
+    const words = await this.batchStorageAt(slotRequests);
+    const supplements = new Map<string, FleetMissionSupplement>();
+    for (let index = 0; index < missionIds.length; index += 1) {
+      const firstShipsWord = words[index * 3] ?? "0x";
+      const secondShipsWord = words[index * 3 + 1] ?? "0x";
+      const flagsWord = words[index * 3 + 2] ?? "0x";
+      supplements.set(missionIds[index]?.toString() ?? "", {
+        ships: decodeMissionShipsFromStorage(firstShipsWord, secondShipsWord),
+        originIsMoon: decodePackedBool(flagsWord, 0),
+        targetIsMoon: decodePackedBool(flagsWord, 1)
+      });
+    }
+    return supplements;
+  }
+
+  private async batchStorageAt(slots: bigint[]): Promise<string[]> {
+    if (slots.length === 0) return [];
+    if (!this.transport.requestBatch) {
+      const results: string[] = [];
+      for (const slot of slots) {
+        results.push(await this.transport.request<string>(
+          "eth_getStorageAt",
+          [this.gameContractAddress, toQuantity(slot), "latest"]
+        ));
+      }
+      return results;
+    }
+    return this.transport.requestBatch<string>(slots.map((slot) => ({
+      method: "eth_getStorageAt",
+      params: [this.gameContractAddress, toQuantity(slot), "latest"]
+    })));
+  }
+
   // VEY-KANEO-479: the set of RandomnessEngine request ids already fulfilled on-chain, or null when no
   // gating applies (no randomness engine configured, or no arrived Attack to gate). A null result means
   // "no randomness data" and leaves readiness on the plain arrival check (back-compat).
@@ -4702,6 +4978,22 @@ const maxBatchCallSize = 50;
 const buildingCount = 16;
 const defenseCount = 10;
 const supportedShipIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+const missionShipKeys = [
+  "smallCargo",
+  "lightFighter",
+  "recycler",
+  "colonyShip",
+  "largeCargo",
+  "heavyFighter",
+  "cruiser",
+  "battleship",
+  "bomber",
+  "destroyer",
+  "deathstar",
+  "battlecruiser",
+  "reaper",
+  "pathfinder"
+] as const;
 const supportedTechnologyIds = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 const riftBuildingId = 15;
 const riftWithdrawalDelaySeconds = 30 * 24 * 60 * 60;
@@ -5836,6 +6128,58 @@ function encodeUint(value: bigint): string {
 
 function toQuantity(value: bigint): string {
   return `0x${value.toString(16)}`;
+}
+
+// VeydriftGameStorage layout: `_fleetMissions` follows `_fleets` at slot 24.
+const fleetMissionsStorageSlot = 24n;
+
+function fleetMissionStorageBaseSlot(missionId: bigint): bigint {
+  return BigInt(keccak256(encodeAbiParameters(
+    [
+      { type: "uint256" },
+      { type: "uint256" }
+    ],
+    [missionId, fleetMissionsStorageSlot]
+  )));
+}
+
+function emptyFleetMissionSupplement(): FleetMissionSupplement {
+  return {
+    ships: Object.fromEntries(missionShipKeys.map((key) => [key, "0"])),
+    originIsMoon: false,
+    targetIsMoon: false
+  };
+}
+
+function isActiveCanonicalMission(mission: CanonicalFleetMissionSnapshot): boolean {
+  return mission.status === "Outbound"
+    || mission.status === "Returning"
+    || mission.status === "Recalled";
+}
+
+function decodeMissionShipsFromStorage(
+  firstWord: string,
+  secondWord: string
+): Record<string, string> {
+  return Object.fromEntries(missionShipKeys.map((key, index) => {
+    const word = index < 8 ? firstWord : secondWord;
+    const offset = (index % 8) * 4;
+    return [key, decodePackedUint32(word, offset).toString()];
+  }));
+}
+
+function decodePackedUint32(word: string, byteOffset: number): bigint {
+  return BigInt(`0x${packedStorageBytes(word, byteOffset, 4)}`);
+}
+
+function decodePackedBool(word: string, byteOffset: number): boolean {
+  return packedStorageBytes(word, byteOffset, 1) !== "00";
+}
+
+function packedStorageBytes(word: string, byteOffset: number, byteLength: number): string {
+  const normalized = (word.startsWith("0x") ? word.slice(2) : word).padStart(64, "0");
+  const start = 64 - ((byteOffset + byteLength) * 2);
+  return normalized.slice(start, start + byteLength * 2);
 }
 
 function toTopic(value: bigint): string {

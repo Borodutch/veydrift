@@ -14,6 +14,7 @@ import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSet
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
+import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
 
 /// @title UpgradeGame
 /// @notice Upgrades the live VeydriftGame Transparent ERC1967 proxy in place to a freshly
@@ -62,6 +63,7 @@ contract UpgradeGame is Script {
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
+        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule();
         address referralSystem = vm.envAddress("VEYDRIFT_REFERRAL_SYSTEM_ADDRESS");
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
             new VeydriftFirstPlanetSettlementModule(referralSystem);
@@ -73,7 +75,8 @@ contract UpgradeGame is Script {
             address(planetManagementModule),
             address(attackProtectionModule),
             address(colonizationModule),
-            address(defenseHoldModule)
+            address(defenseHoldModule),
+            address(stateMigrationModule)
         );
         newImplementation = address(newImpl);
 

@@ -37,12 +37,12 @@ import {
 } from "./ProductionCatalog";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 
+const burningChickensOpenSeaCollectionUrl = "https://opensea.io/collection/chickens-by-eggs";
+
 interface MoonPageProps {
   action?: { status: "idle" | "pending" | "success" | "error"; label?: string } | undefined;
   burningChicken?: {
     configured: boolean;
-    maxMoonsPerPlayer: number;
-    moonCount: number;
   } | undefined;
   canTransact?: boolean | undefined;
   canBurnChicken?: boolean | undefined;
@@ -61,8 +61,6 @@ interface MoonPageProps {
   parentPlanetType?: PlanetType | null | undefined;
   transactionUnavailableReason?: string | undefined;
 }
-
-const burningChickensOpenSeaCollectionUrl = "https://opensea.io/collection/chickens-by-eggs";
 
 export type MoonOverviewAction = {
   disabledReason?: string | undefined;
@@ -173,16 +171,10 @@ function ChickenBurnPanel({
 }) {
   const pending = action?.status === "pending";
   const configured = Boolean(burningChicken?.configured);
-  const capCount = burningChicken?.moonCount ?? 0;
-  const capMax = burningChicken?.maxMoonsPerPlayer ?? 2;
-  const moonLimitReached = Boolean(
-    burningChicken && capCount >= capMax
-  );
   const disabledReason = chickenBurnDisabledReason({
     canBurnChicken,
     configured,
     hasMoon,
-    moonLimitReached,
     pending,
     transactionUnavailableReason,
   });
@@ -225,12 +217,6 @@ function ChickenBurnPanel({
         </p>
       ) : null}
 
-      {moonLimitReached ? (
-        <p className="mt-3 rounded border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
-          Moon limit reached: this wallet already has {capCount} of {capMax} testnet Chicken moons.
-        </p>
-      ) : null}
-
       <form className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]" onSubmit={submitChickenBurn}>
         <label className="grid gap-1 text-xs text-slate-300">
           <span>Chicken ID</span>
@@ -269,20 +255,17 @@ function chickenBurnDisabledReason({
   canBurnChicken,
   configured,
   hasMoon,
-  moonLimitReached,
   pending,
   transactionUnavailableReason,
 }: {
   canBurnChicken?: boolean | undefined;
   configured: boolean;
   hasMoon: boolean;
-  moonLimitReached: boolean;
   pending: boolean;
   transactionUnavailableReason?: string | undefined;
 }): string | undefined {
   if (!configured) return "Burning Chicken burn config is unavailable.";
   if (hasMoon) return "The selected planet already has a moon.";
-  if (moonLimitReached) return "This wallet has reached the two-moon limit.";
   if (!canBurnChicken) return transactionUnavailableReason ?? "Wallet or Burning Chicken contract unavailable.";
   if (pending) return "A moon transaction is already pending.";
   return undefined;
@@ -303,8 +286,8 @@ function NoMoonGuidance({
     <section className="rounded-md border border-white/10 bg-[#101624] p-4">
       <div className="grid gap-4">
         <div className="min-w-0">
-          <div className="mb-3 grid h-10 w-10 place-items-center rounded border border-cyan-200/20 bg-cyan-200/10 text-cyan-200">
-            <MoonImage className="h-full w-full object-cover" planetType={parentPlanetType} />
+          <div className="mb-3 grid h-10 w-10 place-items-center overflow-hidden rounded-full border border-cyan-200/20 bg-cyan-200/10 text-cyan-200">
+            <MoonImage className="h-full w-full rounded-full object-cover" planetType={parentPlanetType} />
           </div>
           <h3 className="text-base font-semibold text-white">No moon in orbit</h3>
           {reason ? <p className="mt-2 text-xs text-slate-500">{reason}</p> : null}

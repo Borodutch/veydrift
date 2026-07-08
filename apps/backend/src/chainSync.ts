@@ -729,6 +729,7 @@ export class ChainSyncService {
     return [
       this.config.gameContractAddress,
       this.config.moonContractAddress,
+      this.config.migrationContractAddress,
       this.config.allianceContractAddress,
       this.config.resourceTokenAddresses.metal,
       this.config.resourceTokenAddresses.crystal,
