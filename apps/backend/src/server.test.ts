@@ -1872,7 +1872,15 @@ describe("Veydrift backend", () => {
       claims: {
         [player.toLowerCase()]: {
           signature: "0xabcd",
-          statePayload: "0x1234"
+          statePayload: "0x1234",
+          reservedPlanets: [{
+            planetId: "1",
+            galaxy: 2,
+            system: 99,
+            position: 7,
+            fields: 211,
+            temperature: -14
+          }]
         }
       }
     }));
@@ -1896,6 +1904,16 @@ describe("Veydrift backend", () => {
         migrationClaim: {
           signature: "0xabcd",
           statePayload: "0x1234"
+        },
+        migrationReservation: {
+          exists: true,
+          claimed: false,
+          planetId: "1",
+          galaxy: 2,
+          system: 99,
+          position: 7,
+          fields: 211,
+          temperature: -14
         },
         source: "contract-state-indexer"
       });

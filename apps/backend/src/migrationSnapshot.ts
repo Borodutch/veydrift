@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { encodeAbiParameters, isHex, keccak256, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -104,6 +104,14 @@ export type MigrationSnapshotClaim = {
   statePayload: Hex;
   signature: Hex;
   stateHash: Hex;
+  reservedPlanets?: Array<{
+    planetId: string;
+    galaxy: number;
+    system: number;
+    position: number;
+    fields: number;
+    temperature: number;
+  }>;
 };
 
 export type MigrationSnapshotOutput = {
@@ -210,7 +218,19 @@ export async function buildMigrationSnapshot(
       statePayload
     });
     const signature = await account.signMessage({ message: { raw: stateHash } });
-    claims[state.player.toLowerCase()] = { statePayload, signature, stateHash };
+    claims[state.player.toLowerCase()] = {
+      statePayload,
+      signature,
+      stateHash,
+      reservedPlanets: state.planets.map((planet) => ({
+        planetId: planet.planetId.toString(),
+        galaxy: planet.galaxy,
+        system: planet.system,
+        position: planet.position,
+        fields: planet.fields,
+        temperature: planet.temperature
+      }))
+    };
   }
   options.progress?.(`signed ${Object.keys(claims).length} player payloads`);
 
@@ -569,11 +589,11 @@ function snapshotReaderWithActiveMissionUrl(
 }
 
 async function fetchActiveMissionIds(activeMissionsUrl: string): Promise<bigint[]> {
-  const response = await fetch(activeMissionsUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch active migration missions: HTTP ${response.status}`);
-  }
-  const body = await response.json() as { missions?: Array<{ missionId?: unknown }> } | Array<{ missionId?: unknown }>;
+  const body = activeMissionsUrl.startsWith("http://") || activeMissionsUrl.startsWith("https://")
+    ? await fetchActiveMissionJson(activeMissionsUrl)
+    : JSON.parse(readFileSync(activeMissionsUrl.startsWith("file://")
+      ? new URL(activeMissionsUrl)
+      : activeMissionsUrl, "utf8")) as { missions?: Array<{ missionId?: unknown }> } | Array<{ missionId?: unknown }>;
   const missions = Array.isArray(body) ? body : body.missions;
   if (!Array.isArray(missions)) {
     throw new Error("Active migration missions response must include a missions array.");
@@ -587,6 +607,15 @@ async function fetchActiveMissionIds(activeMissionsUrl: string): Promise<bigint[
     missionIds.add(BigInt(rawMissionId));
   }
   return [...missionIds].sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+}
+
+async function fetchActiveMissionJson(activeMissionsUrl: string):
+  Promise<{ missions?: Array<{ missionId?: unknown }> } | Array<{ missionId?: unknown }>> {
+  const response = await fetch(activeMissionsUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch active migration missions: HTTP ${response.status}`);
+  }
+  return await response.json() as { missions?: Array<{ missionId?: unknown }> } | Array<{ missionId?: unknown }>;
 }
 
 async function main(): Promise<void> {

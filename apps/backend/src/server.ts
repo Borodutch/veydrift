@@ -60,7 +60,7 @@ import {
   type PlayerProfile
 } from "./playerProfiles";
 import { deriveInfrastructureFields, isCombatShipId, zeroResources } from "./readModels";
-import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
+import { planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
 import { responseCachePath, SharedResponseCache } from "./sharedResponseCache";
 import {
   DEFAULT_MAX_WORKER_COUNT,
@@ -161,6 +161,16 @@ type RuntimeConfig = {
 type MigrationClaimPayload = {
   signature: `0x${string}`;
   statePayload: `0x${string}`;
+};
+
+type MigrationReservedPlanet = {
+  planetId?: string;
+  galaxy: number;
+  system: number;
+  position: number;
+  fields: number;
+  temperature: number;
+  wallet?: `0x${string}`;
 };
 
 type BackendDeploymentMetadata = {
@@ -2783,6 +2793,7 @@ type GalaxySystemDetail = "summary" | "full";
 
 type GalaxySystemSummaryPlanet = PlanetMetadata & {
   occupiedBy: ReturnType<typeof occupiedPlanetRef>;
+  migrationReservation?: ReturnType<typeof migrationReservationRef>;
   debrisField: ReturnType<typeof debrisFieldRef>;
   hasMoon: boolean;
   moonChance: ReturnType<typeof moonChanceReportRef>;
@@ -2915,6 +2926,12 @@ function galaxySystemPayload({
       planet
     ])
   );
+  const reserved = new Map(
+    migrationReservedPlanetsInSystem(galaxy, system).map((planet) => [
+      planet.position,
+      planet
+    ])
+  );
   const debris = new Map(
     (indexer?.debrisFieldsInSystem(galaxy, system) ?? []).map((field) => [
       field.position,
@@ -2937,15 +2954,18 @@ function galaxySystemPayload({
     planets: includeOccupiedPlanets(
       baseSnapshot.planets,
       occupied,
+      reserved,
       chainId,
       settlementContractAddress,
       galaxy,
       system
     ).map((planet) => {
       const occupiedPlanet = occupied.get(planet.position);
+      const reservedPlanet = occupiedPlanet ? undefined : reserved.get(planet.position);
       const summary: GalaxySystemSummaryPlanet = {
         ...planet,
         occupiedBy: occupiedPlanetRef(occupiedPlanet, indexer, allianceIntel),
+        migrationReservation: migrationReservationRef(reservedPlanet),
         debrisField: debrisFieldRef(debris.get(planet.position)),
         hasMoon: occupiedPlanet ? indexer?.hasMoon(occupiedPlanet.planetId) ?? false : false,
         moonChance: moonChanceReportRef(moonChance.get(planet.position))
@@ -2971,6 +2991,7 @@ function pruneGalaxySystemCache(cache: Map<string, GalaxySystemCacheEntry>): voi
 function includeOccupiedPlanets(
   planets: readonly PlanetMetadata[],
   occupied: ReadonlyMap<number, SettledPlanetEvent>,
+  reserved: ReadonlyMap<number, MigrationReservedPlanet>,
   chainId: number,
   settlementContractAddress: string,
   galaxy: number,
@@ -2993,6 +3014,20 @@ function includeOccupiedPlanets(
       archetype: planetArchetypeForTemperature(planet.temperature)
     });
   }
+  for (const planet of reserved.values()) {
+    if (byPosition.has(planet.position)) continue;
+    byPosition.set(planet.position, {
+      ...planetMetadata(chainId, settlementContractAddress, {
+        galaxy,
+        system,
+        position: planet.position
+      }),
+      fields: planet.fields,
+      temperature: planet.temperature,
+      ...planetMultipliers(planet.temperature, planet.fields),
+      archetype: planetArchetypeForTemperature(planet.temperature)
+    });
+  }
 
   return Array.from(byPosition.values()).sort((left, right) => left.position - right.position);
 }
@@ -3008,6 +3043,24 @@ function occupiedPlanetRef(
         owner: planet.owner,
         ownerDisplayName: indexer?.playerProfile(planet.owner).displayName ?? null,
         alliance: allianceIntel.get(planet.owner.toLowerCase()) ?? null
+      }
+    : null;
+}
+
+function migrationReservationRef(planet: MigrationReservedPlanet | undefined):
+  | {
+      status: "quantum-unstable";
+      label: "Quantum-unstable planet";
+      wallet: `0x${string}` | null;
+      planetId: string | null;
+    }
+  | null {
+  return planet
+    ? {
+        status: "quantum-unstable",
+        label: "Quantum-unstable planet",
+        wallet: planet.wallet ?? null,
+        planetId: planet.planetId ?? null
       }
     : null;
 }
@@ -4233,6 +4286,7 @@ function indexedSettlementFundingResponse(
     contractKind: "game",
     startPriceWei,
     ...(migrationClaim ? { migrationClaim } : {}),
+    ...(wallet ? migrationReservationPayloadFields(wallet) : {}),
     ...(resourceTokensConfigured
       ? {}
       : { unavailableReason: "Resource token reserves are not configured for this game deployment yet." }),
@@ -4247,6 +4301,13 @@ function migrationClaimPayloadFields(wallet: `0x${string}`):
   | Record<string, never> {
   const migrationClaim = migrationClaimPayloadForWallet(wallet);
   return migrationClaim ? { migrationClaim } : {};
+}
+
+function migrationReservationPayloadFields(wallet: `0x${string}`):
+  | { migrationReservation: MigrationReservedPlanet & { exists: true; claimed: false } }
+  | Record<string, never> {
+  const reservation = migrationReservedPlanetsForWallet(wallet)[0];
+  return reservation ? { migrationReservation: { ...reservation, exists: true, claimed: false } } : {};
 }
 
 function migrationClaimPayloadForWallet(wallet: `0x${string}`): MigrationClaimPayload | null {
@@ -4267,6 +4328,71 @@ function migrationClaimPayloadForWallet(wallet: `0x${string}`): MigrationClaimPa
     console.warn("Veydrift migration payload snapshot unavailable", reasonText(error));
   }
   return null;
+}
+
+function migrationReservedPlanetsForWallet(wallet: `0x${string}`): MigrationReservedPlanet[] {
+  const path = process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+  if (!path) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const claims = migrationClaimMap(parsed);
+    const candidate = claims?.[wallet.toLowerCase()];
+    if (!candidate || typeof candidate !== "object") return [];
+    return migrationReservedPlanetList((candidate as Record<string, unknown>).reservedPlanets, wallet);
+  } catch (error) {
+    console.warn("Veydrift migration reserved planet snapshot unavailable", reasonText(error));
+  }
+  return [];
+}
+
+function migrationReservedPlanetsInSystem(galaxy: number, system: number): MigrationReservedPlanet[] {
+  const path = process.env.VEYDRIFT_MIGRATION_STATE_PAYLOADS_PATH;
+  if (!path) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const claims = migrationClaimMap(parsed);
+    if (!claims) return [];
+    return Object.entries(claims).flatMap(([wallet, candidate]) => {
+      if (!candidate || typeof candidate !== "object") return [];
+      return migrationReservedPlanetList(
+        (candidate as Record<string, unknown>).reservedPlanets,
+        wallet as `0x${string}`
+      ).filter((planet) => planet.galaxy === galaxy && planet.system === system);
+    });
+  } catch (error) {
+    console.warn("Veydrift migration reserved planet snapshot unavailable", reasonText(error));
+  }
+  return [];
+}
+
+function migrationReservedPlanetList(value: unknown, wallet: `0x${string}`): MigrationReservedPlanet[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const record = entry as Record<string, unknown>;
+    const galaxy = numberField(record.galaxy);
+    const system = numberField(record.system);
+    const position = numberField(record.position);
+    const fields = numberField(record.fields);
+    const temperature = numberField(record.temperature);
+    if (
+      galaxy === null || system === null || position === null ||
+      fields === null || temperature === null
+    ) return [];
+    return [{
+      ...(typeof record.planetId === "string" ? { planetId: record.planetId } : {}),
+      galaxy,
+      system,
+      position,
+      fields,
+      temperature,
+      wallet
+    }];
+  });
+}
+
+function numberField(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function migrationClaimMap(parsed: unknown): Record<string, unknown> | null {

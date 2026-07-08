@@ -59,6 +59,38 @@ describe("migration snapshot state builder", () => {
     expect(migratedMoon.shipCounts[2]).toBe(3);
   });
 
+  test("preserves active and backlog production queues in migration state", () => {
+    const states = buildMigrationPlayerStates({
+      planets: [planet()],
+      canonicalByPlanetId: new Map([["1", canonicalPlanet({
+        queues: {
+          building: queue({ itemId: 2, targetLevel: 4, readyAt: "200" }),
+          defense: queue({ itemId: 3, quantity: 5, readyAt: "210", backlog: [queue({ itemId: 4, quantity: 6, readyAt: "220" })] }),
+          ship: queue({ itemId: 5, quantity: 7, readyAt: "230", backlog: [queue({ itemId: 6, quantity: 8, readyAt: "240" })] })
+        }
+      })]]),
+      researchByOwner: new Map([[owner.toLowerCase(), research({
+        queue: queue({ itemId: 1, targetLevel: 2, readyAt: "190" })
+      })]]),
+      moonsByPlanetId: new Map([["1", moon({
+        queue: queue({ itemId: 7, targetLevel: 3, readyAt: "250" }),
+        defenseQueue: queue({ itemId: 8, quantity: 9, readyAt: "260" })
+      })]]),
+      missions: [],
+      cutoffUnix: 123n
+    });
+
+    const migrated = states[0]!;
+    expect(migrated.researchQueue).toMatchObject({ active: true, itemId: 1, targetLevel: 2, readyAt: 190n });
+    expect(migrated.planets[0]!.buildingQueue).toMatchObject({ active: true, itemId: 2, targetLevel: 4, readyAt: 200n });
+    expect(migrated.planets[0]!.defenseQueue).toMatchObject({ active: true, itemId: 3, quantity: 5, readyAt: 210n });
+    expect(migrated.planets[0]!.defenseBacklog[0]).toMatchObject({ active: true, itemId: 4, quantity: 6, readyAt: 220n });
+    expect(migrated.planets[0]!.shipQueue).toMatchObject({ active: true, itemId: 5, quantity: 7, readyAt: 230n });
+    expect(migrated.planets[0]!.shipBacklog[0]).toMatchObject({ active: true, itemId: 6, quantity: 8, readyAt: 240n });
+    expect(migrated.planets[0]!.moon.buildingQueue).toMatchObject({ active: true, itemId: 7, targetLevel: 3, readyAt: 250n });
+    expect(migrated.planets[0]!.moon.defenseQueue).toMatchObject({ active: true, itemId: 8, quantity: 9, readyAt: 260n });
+  });
+
   test("encodes migration payloads as ABI bytes", () => {
     const state = buildMigrationPlayerStates({
       planets: [planet()],
@@ -106,7 +138,7 @@ function canonicalPlanet(overrides: Partial<CanonicalPlanetChainState>): Canonic
   };
 }
 
-function research(): ResearchState {
+function research(overrides: Partial<ResearchState> = {}): ResearchState {
   return {
     wallet: owner,
     homePlanetId: "1",
@@ -116,11 +148,12 @@ function research(): ResearchState {
     researchNetworkLabLevels: [],
     technologyLevels: {},
     technologies: [{ id: 0, level: 3, cost: zeroResources() }],
-    queue: null
+    queue: null,
+    ...overrides
   };
 }
 
-function noMoon(): MoonState {
+function noMoon(overrides: Partial<MoonState> = {}): MoonState {
   return {
     wallet: owner,
     bodyKind: "moon",
@@ -135,11 +168,12 @@ function noMoon(): MoonState {
     buildings: [],
     queue: null,
     technologyLevels: {},
-    defenseQueue: null
+    defenseQueue: null,
+    ...overrides
   };
 }
 
-function moon(): MoonState {
+function moon(overrides: Partial<MoonState> = {}): MoonState {
   return {
     ...noMoon(),
     resources: { metal: "10", crystal: "20", deuterium: "30" },
@@ -152,10 +186,24 @@ function moon(): MoonState {
       diameterKm: 8774,
       createdAt: "10",
       jumpGateReadyAt: "0"
-    }
+    },
+    ...overrides
   };
 }
 
 function zeroResources() {
   return { metal: "0", crystal: "0", deuterium: "0" };
+}
+
+function queue(overrides: Partial<NonNullable<ResearchState["queue"]>> = {}): NonNullable<ResearchState["queue"]> {
+  return {
+    active: true,
+    kind: null,
+    itemId: 0,
+    targetLevel: 0,
+    quantity: 0,
+    readyAt: "100",
+    cost: zeroResources(),
+    ...overrides
+  };
 }

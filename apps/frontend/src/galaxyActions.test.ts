@@ -121,6 +121,32 @@ describe("galaxyActions", () => {
     ]);
   });
 
+  test("blocks colonization of quantum-unstable migration reservations", () => {
+    const actions = galaxyActionsForSlot({
+      account,
+      homePlanetId: "7",
+      planet: planet({
+        owner: null,
+        ownerId: null,
+        occupiedBy: null,
+        migrationReservation: {
+          status: "quantum-unstable",
+          label: "Quantum-unstable planet",
+        },
+      }),
+      shipyardState: shipyardState([{ id: 3, count: 1 }]),
+    });
+
+    expect(actions).toMatchObject([
+      {
+        enabled: false,
+        kind: "colonize",
+        label: "Quantum locked",
+        reason: "This testnet migration planet is quantum-unstable until its commander claims it on mainnet.",
+      },
+    ]);
+  });
+
   test("offers proactive Defend, but not transport, on a same-alliance member's planet", () => {
     const allyPlanet = planet({
       ownerId: "0x3333333333333333333333333333333333333333",
