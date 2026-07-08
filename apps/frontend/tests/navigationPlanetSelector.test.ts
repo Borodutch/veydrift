@@ -80,6 +80,16 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("h-14 w-14 overflow-hidden rounded-full bg-black/30");
   });
 
+  test("shows per-planet queue progress bars in the selector", () => {
+    expect(playableSource).toContain("<PlanetSelectorProgressBars now={now} planet={planet} />");
+    expect(playableSource).toContain("data-planet-selector-progress-bars={planet.planetId}");
+    expect(playableSource).toContain("data-planet-selector-progress={bar.kind}");
+    expect(playableSource).toContain("buildingQueuePreview(planet.queues.building)");
+    expect(playableSource).toContain("defenseQueuePreview(planet.queues.defense)");
+    expect(playableSource).toContain("shipQueuePreview(planet.queues.ship)");
+    expect(playableSource).toContain("queueProgress({ readyAt, startedAt }, now)");
+  });
+
   test("nests moon picker controls under parent planet items with generated moon imagery", () => {
     expect(playableSource).toContain("data-planet-selector-item={planet.planetId}");
     expect(playableSource).toContain('data-planet-selector-moon="true"');

@@ -82,6 +82,7 @@ import {
   buildingContractIds,
   canAfford,
   progress,
+  queueProgress,
   researchCatalog,
   researchRequirementsFor,
   type BuildingKey,
@@ -107,11 +108,15 @@ import {
   resourcesFromChain,
 } from "./chainState";
 import {
+  buildingQueuePreview,
+  defenseQueuePreview,
   isWalletPlanetHydrated,
   safeResourceNumber,
+  shipQueuePreview,
   usedFieldsFromBuildings,
   type ChainLoadStatus,
 } from "./overviewData";
+import { formatDurationUntil } from "./durationFormat";
 import {
   hasPlanetSectionData,
   planetSectionAccessForPlanet,
@@ -7955,6 +7960,7 @@ export function PlayableMvpApp({
     <PlanetSelector
       fleetVisibility={displayFleetVisibility}
       layout="mobile"
+      now={now}
       onSelect={handleSelectManagedPlanet}
       planets={walletPlanets}
       selectedBodyKind={activeBodyKind}
@@ -7974,6 +7980,7 @@ export function PlayableMvpApp({
     <PlanetSelector
       fleetVisibility={displayFleetVisibility}
       layout="sidebar"
+      now={now}
       onSelect={handleSelectManagedPlanet}
       planets={walletPlanets}
       selectedBodyKind={activeBodyKind}
@@ -8687,6 +8694,7 @@ export function PlayableMvpApp({
 function PlanetSelector({
   fleetVisibility,
   layout,
+  now,
   onSelect,
   planets,
   selectedBodyKind,
@@ -8694,6 +8702,7 @@ function PlanetSelector({
 }: {
   fleetVisibility: FleetMissionVisibilityResponse | undefined;
   layout: "mobile" | "sidebar";
+  now: number;
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planets: ManagedPlanetResponse[];
   selectedBodyKind: OrbitBodyKind;
@@ -8710,6 +8719,7 @@ function PlanetSelector({
             <PlanetSelectorItem
               fleetVisibility={fleetVisibility}
               key={planet.planetId}
+              now={now}
               onSelect={onSelect}
               planet={planet}
               selectedBodyKind={selectedBodyKind}
@@ -8728,6 +8738,7 @@ function PlanetSelector({
           <PlanetSelectorItem
             fleetVisibility={fleetVisibility}
             key={planet.planetId}
+            now={now}
             onSelect={onSelect}
             planet={planet}
             selectedBodyKind={selectedBodyKind}
@@ -8741,12 +8752,14 @@ function PlanetSelector({
 
 function PlanetSelectorItem({
   fleetVisibility,
+  now,
   onSelect,
   planet,
   selectedBodyKind,
   selectedPlanet,
 }: {
   fleetVisibility: FleetMissionVisibilityResponse | undefined;
+  now: number;
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planet: ManagedPlanetResponse;
   selectedBodyKind: OrbitBodyKind;
@@ -8763,6 +8776,7 @@ function PlanetSelectorItem({
       <PlanetSelectorButton
         bodyKind="planet"
         hasIncomingAttack={planetHasIncomingAttack(fleetVisibility, planet.planetId)}
+        now={now}
         onSelect={onSelect}
         planet={planet}
         selected={selectedPlanetBody}
@@ -8782,6 +8796,7 @@ function PlanetSelectorItem({
 function PlanetSelectorButton({
   bodyKind,
   hasIncomingAttack,
+  now,
   onSelect,
   planet,
   selected,
@@ -8789,6 +8804,7 @@ function PlanetSelectorButton({
 }: {
   bodyKind: OrbitBodyKind;
   hasIncomingAttack: boolean;
+  now: number;
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planet: ManagedPlanetResponse;
   selected: boolean;
@@ -8835,8 +8851,128 @@ function PlanetSelectorButton({
       <span className="block max-w-full truncate font-mono text-[0.6rem] leading-3 text-slate-400">
         {planet.coordinates}
       </span>
+      <PlanetSelectorProgressBars now={now} planet={planet} />
     </button>
   );
+}
+
+function PlanetSelectorProgressBars({
+  now,
+  planet,
+}: {
+  now: number;
+  planet: ManagedPlanetResponse;
+}) {
+  const bars = planetSelectorQueueProgressBars(planet, now);
+  const summary = bars.map((bar) => bar.title).join(". ");
+  return (
+    <span
+      aria-label={`Planet production progress. ${summary}`}
+      className="grid w-full grid-cols-3 gap-1"
+      data-planet-selector-progress-bars={planet.planetId}
+    >
+      {bars.map((bar) => (
+        <span
+          className={`h-1.5 overflow-hidden rounded-full border border-white/5 bg-white/10 ${bar.active ? "opacity-100" : "opacity-45"}`}
+          data-planet-selector-progress={bar.kind}
+          data-planet-selector-progress-active={bar.active ? "true" : "false"}
+          key={bar.kind}
+          title={bar.title}
+        >
+          <span
+            className={`block h-full rounded-full ${bar.color} ${bar.indeterminate ? "w-2/3 animate-pulse" : "transition-[width]"}`}
+            style={bar.indeterminate ? undefined : { width: `${Math.round(bar.progress * 100)}%` }}
+          />
+        </span>
+      ))}
+    </span>
+  );
+}
+
+type PlanetSelectorProgressBar = {
+  active: boolean;
+  color: string;
+  indeterminate: boolean;
+  kind: "building" | "defense" | "ship";
+  progress: number;
+  title: string;
+};
+
+function planetSelectorQueueProgressBars(
+  planet: ManagedPlanetResponse,
+  now: number,
+): PlanetSelectorProgressBar[] {
+  return [
+    planetSelectorQueueProgressBar({
+      color: "bg-amber-300",
+      kind: "building",
+      label: "Building",
+      now,
+      preview: buildingQueuePreview(planet.queues.building),
+      queue: planet.queues.building,
+    }),
+    planetSelectorQueueProgressBar({
+      color: "bg-rose-300",
+      kind: "defense",
+      label: "Defense",
+      now,
+      preview: defenseQueuePreview(planet.queues.defense),
+      queue: planet.queues.defense,
+    }),
+    planetSelectorQueueProgressBar({
+      color: "bg-sky-300",
+      kind: "ship",
+      label: "Shipyard",
+      now,
+      preview: shipQueuePreview(planet.queues.ship),
+      queue: planet.queues.ship,
+    }),
+  ];
+}
+
+function planetSelectorQueueProgressBar({
+  color,
+  kind,
+  label,
+  now,
+  preview,
+  queue,
+}: {
+  color: string;
+  kind: PlanetSelectorProgressBar["kind"];
+  label: string;
+  now: number;
+  preview: { label: string };
+  queue: QueueStateResponse | null | undefined;
+}): PlanetSelectorProgressBar {
+  if (!queue?.active) {
+    return {
+      active: false,
+      color,
+      indeterminate: false,
+      kind,
+      progress: 0,
+      title: `${label}: idle`,
+    };
+  }
+
+  const readyAt = timestampToMs(queue.readyAt);
+  const startedAt = timestampToMs(queue.startedAt);
+  const complete = queue.asOfNow?.complete === true;
+  const remaining = complete
+    ? "Ready"
+    : readyAt === undefined
+    ? "syncing"
+    : formatDurationUntil(readyAt, now);
+  const hasTimeline = readyAt !== undefined && startedAt !== undefined && startedAt < readyAt;
+  return {
+    active: true,
+    color,
+    indeterminate: !complete && !hasTimeline,
+    kind,
+    progress: complete ? 1 : hasTimeline ? queueProgress({ readyAt, startedAt }, now) : 0,
+    title: `${label}: ${preview.label}, ${remaining}`,
+  };
 }
 
 function PlanetSelectorMoonButton({
