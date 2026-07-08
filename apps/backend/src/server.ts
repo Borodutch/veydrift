@@ -1940,16 +1940,28 @@ function withPlayerProfile<T extends { wallet: `0x${string}` }>(
 function withMigrationSnapshotFields<T extends object>(
   body: T,
   wallet: `0x${string}`
-): T & (
-  | { migrationClaim: MigrationClaimPayload }
-  | { migrationReservation: MigrationReservedPlanet & { exists: true; claimed: false } }
-  | Record<string, never>
-) {
+): T & {
+  migrationClaim?: MigrationClaimPayload;
+  migrationReservation?: MigrationReservedPlanet & { exists: true; claimed: boolean };
+} {
+  const reservedPlanet = migrationReservedPlanetsForWallet(wallet)[0];
+  const reservation = reservedPlanet
+    ? {
+        ...reservedPlanet,
+        exists: true as const,
+        claimed: migrationReservationClaimedByBody(body, reservedPlanet)
+      }
+    : null;
   return {
     ...body,
-    ...migrationClaimPayloadFields(wallet),
-    ...migrationReservationPayloadFields(wallet)
+    ...(reservation?.claimed ? {} : migrationClaimPayloadFields(wallet)),
+    ...(reservation ? { migrationReservation: reservation } : {})
   };
+}
+
+function migrationReservationClaimedByBody(body: object, reservation: MigrationReservedPlanet): boolean {
+  const homePlanetId = (body as { homePlanetId?: unknown }).homePlanetId;
+  return typeof homePlanetId === "string" && reservation.planetId === homePlanetId;
 }
 
 function fallbackPlayerProfile(wallet: `0x${string}`): PlayerProfile {
@@ -4285,7 +4297,12 @@ function indexedSettlementFundingResponse(
   // first-planet funding helper. The wallet-specific native ETH balance is left
   // to the wallet/chain at transaction submission time; the start price is served
   // only when operators provide static metadata that matches the deployment.
-  const migrationClaim = wallet ? migrationClaimPayloadForWallet(wallet) : null;
+  const settlement = wallet && indexer ? indexer.walletSettlement(wallet) : null;
+  const reservation = wallet ? migrationReservationPayloadForWallet(
+    wallet,
+    Boolean(settlement?.homePlanetId && settlement.homePlanetId === migrationReservedPlanetsForWallet(wallet)[0]?.planetId)
+  ) : null;
+  const migrationClaim = wallet && !reservation?.claimed ? migrationClaimPayloadForWallet(wallet) : null;
   const resourceTokensConfigured = Boolean(
     config.resourceTokenAddresses.metal
       && config.resourceTokenAddresses.crystal
@@ -4305,7 +4322,7 @@ function indexedSettlementFundingResponse(
     contractKind: "game",
     startPriceWei,
     ...(migrationClaim ? { migrationClaim } : {}),
-    ...(wallet ? migrationReservationPayloadFields(wallet) : {}),
+    ...(reservation ? { migrationReservation: reservation } : {}),
     ...(resourceTokensConfigured
       ? {}
       : { unavailableReason: "Resource token reserves are not configured for this game deployment yet." }),
@@ -4322,11 +4339,25 @@ function migrationClaimPayloadFields(wallet: `0x${string}`):
   return migrationClaim ? { migrationClaim } : {};
 }
 
-function migrationReservationPayloadFields(wallet: `0x${string}`):
-  | { migrationReservation: MigrationReservedPlanet & { exists: true; claimed: false } }
+function migrationReservationPayloadFields(
+  wallet: `0x${string}`,
+  settlement?: ReturnType<SettlementIndexer["walletSettlement"]>
+):
+  | { migrationReservation: MigrationReservedPlanet & { exists: true; claimed: boolean } }
   | Record<string, never> {
+  const reservation = migrationReservationPayloadForWallet(
+    wallet,
+    Boolean(settlement?.homePlanetId && settlement.homePlanetId === migrationReservedPlanetsForWallet(wallet)[0]?.planetId)
+  );
+  return reservation ? { migrationReservation: reservation } : {};
+}
+
+function migrationReservationPayloadForWallet(
+  wallet: `0x${string}`,
+  claimed: boolean
+): (MigrationReservedPlanet & { exists: true; claimed: boolean }) | null {
   const reservation = migrationReservedPlanetsForWallet(wallet)[0];
-  return reservation ? { migrationReservation: { ...reservation, exists: true, claimed: false } } : {};
+  return reservation ? { ...reservation, exists: true, claimed } : null;
 }
 
 function migrationClaimPayloadForWallet(wallet: `0x${string}`): MigrationClaimPayload | null {
