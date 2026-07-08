@@ -8722,7 +8722,7 @@ function PlanetSelector({
   }
 
   return (
-    <aside aria-label="Select planet" className="hidden w-28 shrink-0 border-l border-white/10 bg-[#07111d]/92 p-2 shadow-2xl shadow-black/20 backdrop-blur-xl lg:flex lg:flex-col">
+    <aside aria-label="Select planet" className="hidden w-32 shrink-0 border-l border-white/10 bg-[#07111d]/92 p-2 shadow-2xl shadow-black/20 backdrop-blur-xl lg:flex lg:flex-col">
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
         {planets.map((planet) => (
           <PlanetSelectorItem
@@ -8757,7 +8757,7 @@ function PlanetSelectorItem({
   const hasDedicatedMoonSelector = Boolean(planet.moon?.exists);
   return (
     <div
-      className="grid w-20 min-w-0 shrink-0 gap-1"
+      className="grid w-24 min-w-0 shrink-0 gap-1"
       data-planet-selector-item={planet.planetId}
     >
       <PlanetSelectorButton
@@ -8808,6 +8808,7 @@ function PlanetSelectorButton({
           : "border-white/10 bg-white/[0.045] hover:border-cyan-200/40 hover:bg-white/[0.075]"
       }`}
       onClick={() => onSelect(planet.planetId, bodyKind)}
+      title={label}
       type="button"
     >
       {hasIncomingAttack ? (
@@ -8828,7 +8829,7 @@ function PlanetSelectorButton({
         />
         {showMoonIndicator ? <PlanetMoonIndicator compact planetType={planetTypeFromTemperature(planet.temperature)} /> : null}
       </span>
-      <span className="block max-w-full truncate text-[0.68rem] font-medium leading-4 text-slate-200">
+      <span className="line-clamp-2 block min-h-8 max-w-full text-[0.68rem] font-medium leading-4 text-slate-200 [overflow-wrap:anywhere]">
         {planetDisplayName(planet)}
       </span>
       <span className="block max-w-full truncate font-mono text-[0.6rem] leading-3 text-slate-400">

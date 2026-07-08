@@ -65,6 +65,17 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).not.toContain("ring-inset");
   });
 
+  test("shows full planet names in the picker without permanent truncation", () => {
+    expect(playableSource).toContain('aria-label="Select planet" className="hidden w-32 shrink-0');
+    expect(playableSource).toContain('className="grid w-24 min-w-0 shrink-0 gap-1"');
+    expect(playableSource).toContain("title={label}");
+    expect(playableSource).toContain("line-clamp-2 block min-h-8 max-w-full");
+    expect(playableSource).toContain("[overflow-wrap:anywhere]");
+    expect(playableSource).not.toContain('aria-label="Select planet" className="hidden w-28 shrink-0');
+    expect(playableSource).not.toContain('className="grid w-20 min-w-0 shrink-0 gap-1"');
+    expect(playableSource).not.toContain("block max-w-full truncate text-[0.68rem]");
+  });
+
   test("renders planet selector thumbnails as circles", () => {
     expect(playableSource).toContain("h-14 w-14 overflow-hidden rounded-full bg-black/30");
   });
@@ -73,7 +84,7 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("data-planet-selector-item={planet.planetId}");
     expect(playableSource).toContain('data-planet-selector-moon="true"');
     expect(playableSource).toContain("<PlanetSelectorMoonButton");
-    expect(playableSource).toContain('className="grid w-20 min-w-0 shrink-0 gap-1"');
+    expect(playableSource).toContain('className="grid w-24 min-w-0 shrink-0 gap-1"');
     expect(playableSource).toContain("grid w-full min-w-0 grid-cols-[1.25rem_minmax(0,1fr)] items-center gap-1 overflow-hidden");
     expect(playableSource).not.toContain("planets.flatMap((planet) => planetSelectorButtons");
     expect(gameAssetsSource).toContain("frozen-ice.webp");
