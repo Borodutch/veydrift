@@ -167,6 +167,28 @@ describe("Overview fleets summary", () => {
     }), now);
     expect(summary.lines[0]?.text).toBe("Deploy → Planet #77 · arrives in 1m");
   });
+
+  test("labels stationed DefenseHold missions as holding instead of resolving", () => {
+    const now = Date.parse("2026-06-07T22:00:00.000Z");
+    const summary = summarizeFleets(visibility({
+      outgoing: [
+        mission({
+          missionId: "67",
+          missionType: "DefenseHold",
+          status: "Outbound",
+          owner: PLAYER_WALLET,
+          originPlanetId: "1",
+          targetPlanetId: "23",
+          arrivalMs: now - 2 * 60_000,
+          returnMs: now + 45 * 60_000,
+          targetPlanet: planetRef("23", PLAYER_WALLET, "Bastion", 7, 14, 2),
+        }),
+      ],
+    }), now);
+
+    expect(summary.lines[0]?.text).toBe("DefenseHold → Bastion [7:14:2] · holding for 45m");
+    expect(summary.lines[0]?.text).not.toContain("resolving");
+  });
 });
 
 describe("Overview planet display name", () => {
