@@ -47,6 +47,7 @@ const configuredTestConfig: BackendConfig = {
   qaSyntheticStationedDefenders: false,
   indexDbPath: ":memory:",
   randomnessCommitmentStorePath: ".data/test-randomness.json",
+  referralStorePath: ".data/test-referrals.json",
   indexFromBlock: 100n,
   missionResolutionEnabled: false,
   resourceTokenAddresses: {
@@ -821,6 +822,7 @@ describe("Veydrift backend", () => {
         moonContractConfigured: false,
         randomnessEngineConfigured: false,
         randomnessCommitterConfigured: false,
+        referralSignerConfigured: false,
         gameContractConfigured: false,
         qaSyntheticStationedDefenders: false
       },
@@ -1329,6 +1331,7 @@ describe("Veydrift backend", () => {
         highscoresEndpoint: true,
         moonConfigured: false,
         randomnessConfigured: false,
+        referralsConfigured: false,
         researchEndpoint: true,
         resourceTokensConfigured: false,
         settlementConfigured: false
@@ -1338,6 +1341,7 @@ describe("Veydrift backend", () => {
       moonContractAddress: null,
       network: "Base Sepolia",
       randomnessEngineAddress: null,
+      referralSystemAddress: null,
       resourceTokenAddresses: {
         crystal: null,
         deuterium: null,
@@ -1781,6 +1785,7 @@ describe("Veydrift backend", () => {
               highscoresEndpoint: true,
               moonConfigured: false,
               randomnessConfigured: false,
+              referralsConfigured: false,
               researchEndpoint: true,
               resourceTokensConfigured: false,
               settlementConfigured: false
@@ -1790,6 +1795,7 @@ describe("Veydrift backend", () => {
             moonContractAddress: null,
             network: "Base Sepolia",
             randomnessEngineAddress: null,
+            referralSystemAddress: null,
             resourceTokenAddresses: {
               crystal: null,
               deuterium: null,

@@ -59,6 +59,16 @@ import {
   verifyWatchedPlanetSignature,
   type PlayerProfile
 } from "./playerProfiles";
+import {
+  buildReferralRedemption,
+  createReferralStore,
+  ReferralInviteeAlreadyRedeemedError,
+  ReferralInviteUnclaimedError,
+  ReferralInviteStore,
+  ReferralQuotaError,
+  ReferralSelfInviteError,
+  verifyReferralWalletSignature
+} from "./referrals";
 import { deriveInfrastructureFields, isCombatShipId, zeroResources } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
 import { responseCachePath, SharedResponseCache } from "./sharedResponseCache";
@@ -139,6 +149,7 @@ type RuntimeConfig = {
     highscoresEndpoint: boolean;
     moonConfigured: boolean;
     randomnessConfigured: boolean;
+    referralsConfigured: boolean;
     researchEndpoint: boolean;
     resourceTokensConfigured: boolean;
     settlementConfigured: boolean;
@@ -148,6 +159,7 @@ type RuntimeConfig = {
   moonContractAddress: string | null;
   network: string;
   randomnessEngineAddress: string | null;
+  referralSystemAddress: string | null;
   resourceTokenAddresses: {
     crystal: string | null;
     deuterium: string | null;
@@ -196,6 +208,7 @@ export type ServerDependencies = {
   // Test seam for request access logging. Production construction enables it by default.
   logRequests?: boolean;
   sharedResponseCache?: SharedResponseCache | null;
+  referralStore?: ReferralInviteStore;
 };
 
 const defaultUniverseSeed = "veydrift-mainnet-preview";
@@ -337,6 +350,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     : enableResponseCache && loaded.problems.length === 0
       ? sharedResponseCacheForIndex(loaded.config.indexDbPath)
       : null;
+  const referralStore = dependencies.referralStore ?? createReferralStore(loaded.config);
   // Prewarming walks broad indexed read surfaces. Keep it on the private writer by default so public
   // readers do not block their event loops while building broad route caches.
   const prewarmResponseCache = dependencies.prewarmResponseCache ?? (
@@ -527,6 +541,285 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         assertAddress(wallet);
         return indexedSettlementFundingResponse(indexer, loaded.config, wallet);
       } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname.match(/^\/wallet\/[^/]+\/referrals$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        const verified = await verifyReferralWalletSignature({
+          action: "dashboard",
+          signature: url.searchParams.get("signature"),
+          wallet
+        });
+        if (!verified) return invalidReferralSignatureResponse();
+        return Response.json({
+          ...referralStore.dashboard(wallet),
+          configured: Boolean(loaded.config.referralSignerPrivateKey)
+        }, {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname.match(/^\/wallet\/[^/]+\/referrals$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        const body = await readJsonBody(request);
+        const verified = await verifyReferralWalletSignature({
+          action: "create",
+          signature: body?.signature,
+          wallet
+        });
+        if (!verified) return invalidReferralSignatureResponse();
+        if (!loaded.config.referralSignerPrivateKey) {
+          return Response.json({
+            error: "referral_signer_unconfigured",
+            message: "Referral invites are not configured on this deployment."
+          }, {
+            headers: corsHeaders,
+            status: 503
+          });
+        }
+        if (!indexer) return indexedReadNotReadyResponse("referral invites", indexer, { wallet });
+        const settlement = indexer.walletSettlement(wallet);
+        if (!settlement.homePlanetId) {
+          return Response.json({
+            error: "no_home_planet",
+            message: "Settle a first planet before claiming a referral invite code."
+          }, {
+            headers: corsHeaders,
+            status: 403
+          });
+        }
+        return Response.json(referralStore.createInvite(wallet), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        if (error instanceof ReferralQuotaError) {
+          return Response.json({
+            error: "referral_redemption_quota_exceeded",
+            message: "Referral redemption quota exceeded.",
+            nextRedemptionAt: error.nextClaimAt
+          }, {
+            headers: corsHeaders,
+            status: 429
+          });
+        }
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname.match(/^\/wallet\/[^/]+\/referrals\/claim-transaction$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        const body = await readJsonBody(request);
+        const commitment = String(body?.commitment ?? "");
+        const txHash = String(body?.txHash ?? "");
+        if (!/^0x[a-fA-F0-9]{64}$/.test(commitment)) {
+          throw new Error("commitment must be a 0x-prefixed 32-byte hex value.");
+        }
+        if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+          throw new Error("txHash must be a 0x-prefixed 32-byte transaction hash.");
+        }
+        const verified = await verifyReferralWalletSignature({
+          action: "claim-transaction",
+          commitment,
+          signature: body?.signature,
+          wallet
+        });
+        if (!verified) return invalidReferralSignatureResponse();
+        if (!indexer) return indexedReadNotReadyResponse("referral claim", indexer, { wallet });
+        const claim = indexer.referralClaim(wallet, commitment as `0x${string}`, txHash as `0x${string}`);
+        if (!claim) {
+          return Response.json({
+            error: "referral_claim_unconfirmed",
+            message: "Referral claim transaction is not indexed for this wallet and commitment yet."
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+        return Response.json(referralStore.recordClaimTransaction(wallet, commitment, txHash), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname === "/referrals/redeem") {
+      try {
+        const body = await readJsonBody(request);
+        const invitee = String(body?.invitee ?? "");
+        assertAddress(invitee);
+        if (!loaded.config.referralSignerPrivateKey) {
+          return Response.json({
+            error: "referral_signer_unconfigured",
+            message: "Referral invites are not configured on this deployment."
+          }, {
+            headers: corsHeaders,
+            status: 503
+          });
+        }
+        if (!loaded.config.gameContractAddress) {
+          return Response.json({
+            error: "referral_contract_unconfigured",
+            message: "Referral settlement is not configured on this deployment."
+          }, {
+            headers: corsHeaders,
+            status: 503
+          });
+        }
+        const invite = referralStore.pendingRedemption(body?.code, invitee);
+        if (!invite) {
+          return Response.json({
+            error: "referral_code_not_found",
+            message: "Referral code was not found."
+          }, {
+            headers: corsHeaders,
+            status: 404
+          });
+        }
+        return Response.json(await buildReferralRedemption(loaded.config, invite, invitee), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        if (error instanceof ReferralInviteUnclaimedError) {
+          return Response.json({
+            error: "referral_invite_unclaimed",
+            message: error.message
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+        if (error instanceof ReferralInviteeAlreadyRedeemedError) {
+          return Response.json({
+            error: "referral_invitee_already_redeemed",
+            message: error.message
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+        if (error instanceof ReferralSelfInviteError) {
+          return Response.json({
+            error: "referral_self_invite",
+            message: error.message
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+        if (error instanceof ReferralQuotaError) {
+          return Response.json({
+            error: "referral_redemption_quota_exceeded",
+            message: "Referral redemption quota exceeded.",
+            nextRedemptionAt: error.nextClaimAt
+          }, {
+            headers: corsHeaders,
+            status: 429
+          });
+        }
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname === "/referrals/redeem-transaction") {
+      try {
+        const body = await readJsonBody(request);
+        const invitee = String(body?.invitee ?? "");
+        const txHash = String(body?.txHash ?? "");
+        assertAddress(invitee);
+        if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+          throw new Error("txHash must be a 0x-prefixed 32-byte transaction hash.");
+        }
+        if (!indexer) return indexedReadNotReadyResponse("referral redemption", indexer, { invitee });
+        const storedInvite = referralStore.findByCode(body?.code);
+        if (!storedInvite) {
+          return Response.json({
+            error: "referral_code_not_found",
+            message: "Referral code was not found."
+          }, {
+            headers: corsHeaders,
+            status: 404
+          });
+        }
+        const redemption = indexer.referralRedemption(
+          storedInvite.owner as `0x${string}`,
+          invitee,
+          storedInvite.commitment,
+          txHash as `0x${string}`
+        );
+        if (!redemption) {
+          return Response.json({
+            error: "referral_redemption_unconfirmed",
+            message: "Referral redemption transaction is not indexed for this invitee and commitment yet."
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+        const invite = referralStore.recordRedemption(body?.code, invitee, txHash);
+        if (!invite) {
+          return Response.json({
+            error: "referral_code_not_found",
+            message: "Referral code was not found."
+          }, {
+            headers: corsHeaders,
+            status: 404
+          });
+        }
+        return Response.json({
+          invite: referralStore.dashboard(invite.owner).invite
+        }, {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        if (error instanceof ReferralInviteUnclaimedError) {
+          return Response.json({
+            error: "referral_invite_unclaimed",
+            message: error.message
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+        if (error instanceof ReferralInviteeAlreadyRedeemedError) {
+          return Response.json({
+            error: "referral_invitee_already_redeemed",
+            message: error.message
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+        if (error instanceof ReferralSelfInviteError) {
+          return Response.json({
+            error: "referral_self_invite",
+            message: error.message
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+        if (error instanceof ReferralQuotaError) {
+          return Response.json({
+            error: "referral_redemption_quota_exceeded",
+            message: "Referral redemption quota exceeded.",
+            nextRedemptionAt: error.nextClaimAt
+          }, {
+            headers: corsHeaders,
+            status: 429
+          });
+        }
         return errorResponse(error, 400);
       }
     }
@@ -1905,6 +2198,19 @@ function playerProfilesUnavailableResponse(): Response {
     {
       headers: corsHeaders,
       status: 503
+    }
+  );
+}
+
+function invalidReferralSignatureResponse(): Response {
+  return Response.json(
+    {
+      error: "invalid_signature",
+      message: "Sign the Veydrift referral invite message with the connected wallet."
+    },
+    {
+      headers: corsHeaders,
+      status: 401
     }
   );
 }
@@ -3363,6 +3669,8 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
     null;
   const moonContractAddress = process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS ?? null;
   const randomnessEngineAddress = process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS ?? null;
+  const referralSystemAddress = process.env.VEYDRIFT_REFERRAL_SYSTEM_ADDRESS ?? null;
+  const referralSignerConfigured = Boolean(process.env.VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY);
   const allianceContractAddress = process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS ?? null;
   const burningChickenNftContractAddress = process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS ?? null;
   const burningChickenBurnContractAddress = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS ?? null;
@@ -3399,6 +3707,7 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
       highscoresEndpoint: true,
       moonConfigured: Boolean(moonContractAddress),
       randomnessConfigured: Boolean(randomnessEngineAddress),
+      referralsConfigured: referralSignerConfigured,
       researchEndpoint: true,
       resourceTokensConfigured: Boolean(
         resourceTokenAddresses.metal
@@ -3412,6 +3721,7 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
     moonContractAddress,
     network: process.env.VEYDRIFT_NETWORK_NAME ?? "Base Sepolia",
     randomnessEngineAddress,
+    referralSystemAddress,
     resourceTokenAddresses,
     rpcProvider: rpcUrl.includes("alchemy") ? "alchemy" : "unknown"
   };

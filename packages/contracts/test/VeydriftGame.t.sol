@@ -13,11 +13,13 @@ import {
     IVeydriftEffectiveStateGame,
     VeydriftEffectiveStateLens
 } from "../src/VeydriftEffectiveStateLens.sol";
+import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSettlementModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
+import {VeydriftReferralSystem} from "../src/VeydriftReferralSystem.sol";
 import {
     IVeydriftResourceProjectionGame,
     VeydriftResourceProjectionLens
@@ -153,8 +155,14 @@ contract VeydriftGameTest is Test {
     bytes32 internal constant COMPUTER_10 = "COMPUTER_10";
     bytes32 internal constant ENERGY_12 = "ENERGY_12";
     bytes32 internal constant TEST_ATTACK_BATTLE_DOMAIN = keccak256("veydrift.attack-battle.v1");
+    bytes32 internal constant TEST_PLANET_SEED_DOMAIN = keccak256("veydrift.planet.v1");
     bytes32 internal constant TEST_COMBAT_STREAM_DOMAIN =
         keccak256("veydrift.classic-combat-random-stream.v1");
+    uint16 internal constant TEST_FLEET_UNIVERSE_SPEED = 1;
+    uint32 internal constant TEST_FLEET_RECALL_CUTOFF_SECONDS = 60;
+    uint16 internal constant TEST_MAX_GALAXY = 9;
+    uint16 internal constant TEST_MAX_SYSTEM = 499;
+    uint8 internal constant TEST_MAX_POSITION = 15;
     uint8 internal constant ATTACK_RELATION_WEAKER_FLAG = 2;
     uint8 internal constant ATTACK_BANDIT_FLAG = 8;
     uint8 internal constant ATTACK_INACTIVE_FLAG = 16;
@@ -162,7 +170,9 @@ contract VeydriftGameTest is Test {
     address internal admin = address(0xA11CE);
     address internal player = address(0xB0B);
     address internal fulfiller = address(0xF111);
+    uint256 internal referralSignerKey = 0xA11CE1;
     VeydriftGame internal game;
+    VeydriftReferralSystem internal referralSystem;
     VeydriftEffectiveStateLens internal effectiveStateLens;
     VeydriftAllianceSystem internal allianceSystem;
     RandomnessEngine internal randomness;
@@ -375,6 +385,203 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         vm.expectRevert(VeydriftGameStorage.AlreadyStarted.selector);
         game.startPlanet{value: 0.05 ether}();
+    }
+
+    function testReferralClaimRejectsDuplicateCommitment() public {
+        bytes32 commitment = keccak256("ref-1");
+
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(player);
+        referralSystem.claimReferralCode(commitment);
+
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.ReferralCommitmentAlreadyClaimed.selector, commitment
+            )
+        );
+        referralSystem.claimReferralCode(commitment);
+    }
+
+    function testReferralClaimRequiresFirstPlanet() public {
+        vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftReferralSystem.Unauthorized.selector, player)
+        );
+        referralSystem.claimReferralCode(keccak256("ref-no-planet"));
+    }
+
+    function testReferralClaimRejectsSecondActiveCode() public {
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+
+        bytes32 firstCommitment = keccak256("ref-active-1");
+        vm.startPrank(player);
+        referralSystem.claimReferralCode(firstCommitment);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftReferralSystem.ReferralInviteAlreadyClaimed.selector,
+                player,
+                firstCommitment
+            )
+        );
+        referralSystem.claimReferralCode(keccak256("ref-active-2"));
+        vm.stopPrank();
+    }
+
+    function testReferralSettlementDoublesStartingResourcesAndPaysInviter() public {
+        address invitee = address(0xCAFE);
+        bytes32 commitment = keccak256("high entropy invite code");
+        vm.deal(invitee, 1 ether);
+
+        vm.prank(admin);
+        referralSystem.setReferralSigner(vm.addr(referralSignerKey));
+
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+        uint256 inviterBalanceAfterStart = player.balance;
+
+        vm.prank(player);
+        referralSystem.claimReferralCode(commitment);
+
+        (uint8 v, bytes32 r, bytes32 s) = _referralSignature(invitee, commitment);
+        vm.prank(invitee);
+        uint256 planetId = game.startPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
+
+        VeydriftGameStorage.Planet memory planet = game.planet(planetId);
+        address inviter = referralSystem.referralInvites(commitment);
+
+        assertEq(inviter, player);
+        assertTrue(referralSystem.referralRedemptions(commitment, invitee));
+        assertEq(planet.owner, invitee);
+        assertEq(planet.resources.metal, 1_000);
+        assertEq(planet.resources.crystal, 1_000);
+        assertEq(planet.resources.deuterium, 0);
+        assertEq(player.balance, inviterBalanceAfterStart + 0.025 ether);
+        assertEq(address(game).balance, 0.075 ether);
+    }
+
+    function testReferralSettleFirstPlanetCompatibilityPathPaysInviter() public {
+        address invitee = address(0xBEEF);
+        bytes32 commitment = keccak256("legacy high entropy invite code");
+        vm.deal(invitee, 1 ether);
+
+        vm.prank(admin);
+        referralSystem.setReferralSigner(vm.addr(referralSignerKey));
+
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+        uint256 inviterBalanceAfterStart = player.balance;
+
+        vm.prank(player);
+        referralSystem.claimReferralCode(commitment);
+
+        (uint8 v, bytes32 r, bytes32 s) = _referralSignature(invitee, commitment);
+        vm.prank(invitee);
+        VeydriftGameStorage.FirstPlanet memory settled =
+            game.settleFirstPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
+
+        uint256 planetId = game.homePlanetOf(invitee);
+        VeydriftGameStorage.Planet memory planet = game.planet(planetId);
+
+        assertTrue(referralSystem.referralRedemptions(commitment, invitee));
+        assertEq(planet.owner, invitee);
+        assertEq(planet.resources.metal, 1_000);
+        assertEq(planet.resources.crystal, 1_000);
+        assertEq(settled.galaxy, planet.galaxy);
+        assertEq(settled.system, planet.system);
+        assertEq(settled.position, planet.position);
+        assertEq(player.balance, inviterBalanceAfterStart + 0.025 ether);
+    }
+
+    function testReferralSettlementRejectsDuplicateInviteeSelfInviteAndWrongInviteeSignature()
+        public
+    {
+        address invitee = address(0xCAFE);
+        address otherInvitee = address(0xD00D);
+        bytes32 commitment = keccak256("another high entropy invite code");
+        vm.deal(invitee, 1 ether);
+        vm.deal(otherInvitee, 1 ether);
+
+        vm.prank(admin);
+        referralSystem.setReferralSigner(vm.addr(referralSignerKey));
+
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+        vm.prank(player);
+        referralSystem.claimReferralCode(commitment);
+
+        (uint8 inviteeV, bytes32 inviteeR, bytes32 inviteeS) =
+            _referralSignature(invitee, commitment);
+        vm.prank(otherInvitee);
+        vm.expectRevert(VeydriftGameStorage.ReferralSignatureInvalid.selector);
+        game.startPlanetWithReferral{value: 0.05 ether}(commitment, inviteeV, inviteeR, inviteeS);
+
+        (uint8 selfV, bytes32 selfR, bytes32 selfS) = _referralSignature(player, commitment);
+        vm.prank(player);
+        vm.expectRevert(VeydriftGameStorage.ReferralSelfInvite.selector);
+        game.startPlanetWithReferral{value: 0.05 ether}(commitment, selfV, selfR, selfS);
+
+        vm.prank(invitee);
+        game.startPlanetWithReferral{value: 0.05 ether}(commitment, inviteeV, inviteeR, inviteeS);
+
+        vm.deal(invitee, 1 ether);
+        (uint8 replayV, bytes32 replayR, bytes32 replayS) = _referralSignature(invitee, commitment);
+        vm.prank(invitee);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.ReferralInviteeAlreadyRedeemed.selector, commitment, invitee
+            )
+        );
+        game.startPlanetWithReferral{value: 0.05 ether}(commitment, replayV, replayR, replayS);
+    }
+
+    function testReferralSettlementAllowsThreeDistinctInviteesPerRollingDay() public {
+        bytes32 commitment = keccak256("rolling high entropy invite code");
+        address inviteeOne = address(0xCAFE1);
+        address inviteeTwo = address(0xCAFE2);
+        address inviteeThree = address(0xCAFE3);
+        address inviteeFour = address(0xCAFE4);
+        vm.deal(inviteeOne, 1 ether);
+        vm.deal(inviteeTwo, 1 ether);
+        vm.deal(inviteeThree, 1 ether);
+        vm.deal(inviteeFour, 1 ether);
+
+        vm.prank(admin);
+        referralSystem.setReferralSigner(vm.addr(referralSignerKey));
+
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+        vm.prank(player);
+        referralSystem.claimReferralCode(commitment);
+
+        uint64 firstRedemptionAt = uint64(block.timestamp);
+        _startPlanetWithReferral(inviteeOne, commitment);
+        vm.warp(firstRedemptionAt + 10 hours);
+        _startPlanetWithReferral(inviteeTwo, commitment);
+        vm.warp(firstRedemptionAt + 20 hours);
+        _startPlanetWithReferral(inviteeThree, commitment);
+
+        (uint8 remaining, uint64 nextRedemptionAt) =
+            referralSystem.referralRedemptionQuota(commitment);
+        assertEq(remaining, 0);
+        assertEq(nextRedemptionAt, firstRedemptionAt + 1 days);
+
+        (uint8 v, bytes32 r, bytes32 s) = _referralSignature(inviteeFour, commitment);
+        vm.prank(inviteeFour);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.ReferralRedemptionQuotaExceeded.selector,
+                commitment,
+                nextRedemptionAt
+            )
+        );
+        game.startPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
+
+        vm.warp(nextRedemptionAt);
+        _startPlanetWithReferral(inviteeFour, commitment);
     }
 
     function testConfiguredResourceTokenAddressesAreReadable() public view {
@@ -3043,7 +3250,7 @@ contract VeydriftGameTest is Test {
             expectedDistance,
             colonySpeed,
             VeydriftAntiRaidPrimitives.FULL_MISSION_SPEED_PERCENT,
-            game.FLEET_UNIVERSE_SPEED()
+            TEST_FLEET_UNIVERSE_SPEED
         );
 
         (VeydriftGameStorage.FleetMissionStatus status, uint64 arrivalAt,,) =
@@ -4550,7 +4757,7 @@ contract VeydriftGameTest is Test {
         );
 
         (, uint64 arrivalAt,,) = _fleetMission(recalledMissionId);
-        assertGt(arrivalAt, block.timestamp + game.FLEET_RECALL_CUTOFF_SECONDS());
+        assertGt(arrivalAt, block.timestamp + TEST_FLEET_RECALL_CUTOFF_SECONDS);
 
         uint128 deuteriumBeforeRecall = game.planet(originPlanetId).resources.deuterium;
         uint64 expectedReturnAt = uint64(block.timestamp + 180 seconds);
@@ -4584,8 +4791,8 @@ contract VeydriftGameTest is Test {
             456
         );
         (, uint64 cutoffArrivalAt,,) = _fleetMission(cutoffMissionId);
-        uint64 recallDeadline = cutoffArrivalAt - game.FLEET_RECALL_CUTOFF_SECONDS();
-        vm.warp(cutoffArrivalAt - game.FLEET_RECALL_CUTOFF_SECONDS() + 1);
+        uint64 recallDeadline = cutoffArrivalAt - TEST_FLEET_RECALL_CUTOFF_SECONDS;
+        vm.warp(cutoffArrivalAt - TEST_FLEET_RECALL_CUTOFF_SECONDS + 1);
         vm.prank(player);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -5791,7 +5998,7 @@ contract VeydriftGameTest is Test {
         );
 
         (, uint64 arrivalAt,,) = _fleetMission(attackMissionId);
-        vm.warp(arrivalAt - game.FLEET_RECALL_CUTOFF_SECONDS());
+        vm.warp(arrivalAt - TEST_FLEET_RECALL_CUTOFF_SECONDS);
         vm.prank(ally);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -6356,7 +6563,7 @@ contract VeydriftGameTest is Test {
         assertNotEq(actualRequestId, requestId);
 
         bytes32 expectedPurposeHash =
-            keccak256(abi.encode(game.ATTACK_BATTLE_DOMAIN(), block.chainid, missionId));
+            keccak256(abi.encode(TEST_ATTACK_BATTLE_DOMAIN, block.chainid, missionId));
         RandomnessEngine.Request memory request = randomness.request(actualRequestId);
         assertEq(request.requester, address(game));
         assertEq(request.purposeHash, expectedPurposeHash);
@@ -6383,7 +6590,7 @@ contract VeydriftGameTest is Test {
         uint256 expectedSeed = uint256(
             keccak256(
                 abi.encode(
-                    game.ATTACK_BATTLE_DOMAIN(),
+                    TEST_ATTACK_BATTLE_DOMAIN,
                     block.chainid,
                     missionId,
                     actualRequestId,
@@ -7858,7 +8065,7 @@ contract VeydriftGameTest is Test {
         view
         returns (uint8)
     {
-        for (uint8 position = 1; position <= game.MAX_POSITION();) {
+        for (uint8 position = 1; position <= TEST_MAX_POSITION;) {
             if (
                 position != avoidPosition && _isPopulatedColonySlot(galaxy, system, position)
                     && !game.occupiedCoordinates(game.coordinateKey(galaxy, system, position))
@@ -7877,7 +8084,7 @@ contract VeydriftGameTest is Test {
         view
         returns (uint8)
     {
-        for (uint8 position = 1; position <= game.MAX_POSITION();) {
+        for (uint8 position = 1; position <= TEST_MAX_POSITION;) {
             if (
                 position != avoidPosition && !_isPopulatedColonySlot(galaxy, system, position)
                     && !game.occupiedCoordinates(game.coordinateKey(galaxy, system, position))
@@ -7902,9 +8109,9 @@ contract VeydriftGameTest is Test {
             galaxy,
             system,
             position,
-            game.MAX_GALAXY(),
-            game.MAX_SYSTEM(),
-            game.MAX_POSITION()
+            TEST_MAX_GALAXY,
+            TEST_MAX_SYSTEM,
+            TEST_MAX_POSITION
         );
     }
 
@@ -7916,7 +8123,7 @@ contract VeydriftGameTest is Test {
         for (uint256 attempt = 0; attempt < 64; attempt++) {
             bytes32 seed = keccak256(
                 abi.encode(
-                    game.PLANET_SEED_DOMAIN(),
+                    TEST_PLANET_SEED_DOMAIN,
                     block.chainid,
                     account,
                     salt,
@@ -7924,9 +8131,9 @@ contract VeydriftGameTest is Test {
                     attempt
                 )
             );
-            galaxy = uint16((uint256(seed) % game.MAX_GALAXY()) + 1);
-            system = uint16(((uint256(seed) >> 16) % game.MAX_SYSTEM()) + 1);
-            position = uint8(((uint256(seed) >> 32) % game.MAX_POSITION()) + 1);
+            galaxy = uint16((uint256(seed) % TEST_MAX_GALAXY) + 1);
+            system = uint16(((uint256(seed) >> 16) % TEST_MAX_SYSTEM) + 1);
+            position = uint8(((uint256(seed) >> 32) % TEST_MAX_POSITION) + 1);
             if (
                 _isPopulatedColonySlot(galaxy, system, position)
                     && !game.occupiedCoordinates(game.coordinateKey(galaxy, system, position))
@@ -8119,7 +8326,7 @@ contract VeydriftGameTest is Test {
         galaxy = origin.galaxy;
         system = origin.system;
 
-        uint256 maxPosition = game.MAX_POSITION();
+        uint256 maxPosition = TEST_MAX_POSITION;
         for (uint256 offset = 1; offset < maxPosition; offset++) {
             uint8 candidatePosition =
                 uint8(((uint256(origin.position) + salt + offset - 1) % maxPosition) + 1);
@@ -8134,7 +8341,7 @@ contract VeydriftGameTest is Test {
             }
         }
 
-        uint256 maxSystem = game.MAX_SYSTEM();
+        uint256 maxSystem = TEST_MAX_SYSTEM;
         for (uint256 systemOffset = 1; systemOffset < maxSystem; systemOffset++) {
             uint16 candidateSystem =
                 uint16(((uint256(origin.system) + systemOffset - 1) % maxSystem) + 1);
@@ -8155,6 +8362,32 @@ contract VeydriftGameTest is Test {
         return bytes32((uint256(crystal) << 128) | uint256(metal));
     }
 
+    function _referralSignature(address invitee, bytes32 commitment)
+        internal
+        view
+        returns (uint8 v, bytes32 r, bytes32 s)
+    {
+        bytes32 payloadHash = keccak256(
+            abi.encode(
+                referralSystem.REFERRAL_REDEEM_DOMAIN(),
+                block.chainid,
+                address(game),
+                invitee,
+                commitment
+            )
+        );
+        bytes32 digest =
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", payloadHash));
+        (v, r, s) = vm.sign(referralSignerKey, digest);
+        assertEq(ecrecover(digest, v, r, s), vm.addr(referralSignerKey));
+    }
+
+    function _startPlanetWithReferral(address invitee, bytes32 commitment) internal {
+        (uint8 v, bytes32 r, bytes32 s) = _referralSignature(invitee, commitment);
+        vm.prank(invitee);
+        game.startPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
+    }
+
     function _fundGameReserves(uint256 amount) internal {
         _fundGameReserves(game, metalToken, crystalToken, deuteriumToken, amount);
     }
@@ -8167,14 +8400,22 @@ contract VeydriftGameTest is Test {
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
-        return new VeydriftGame(
+        VeydriftReferralSystem deployedReferralSystem = new VeydriftReferralSystem(owner);
+        VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
+            new VeydriftFirstPlanetSettlementModule(address(deployedReferralSystem));
+        VeydriftGame deployedGame = new VeydriftGame(
             owner,
+            address(firstPlanetSettlementModule),
             address(gameplayModule),
             address(planetManagementModule),
             address(attackProtectionModule),
             address(colonizationModule),
             address(defenseHoldModule)
         );
+        vm.prank(owner);
+        deployedReferralSystem.setGame(address(deployedGame));
+        referralSystem = deployedReferralSystem;
+        return deployedGame;
     }
 
     function _fundGameReserves(

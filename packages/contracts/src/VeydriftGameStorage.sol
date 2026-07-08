@@ -26,32 +26,33 @@ interface IVeydriftAttackProtectionAllianceSystem {
 
 /// @notice Shared storage, ABI structs, events, and owner controls for VeydriftGame modules.
 abstract contract VeydriftGameStorage {
-    uint256 public constant DEFAULT_START_PRICE = 0.05 ether;
-    uint8 public constant MAX_BUILDING_ID = uint8(type(Building).max);
-    uint8 public constant MAX_DEFENSE_ID = uint8(type(Defense).max);
-    uint8 public constant MAX_SHIP_ID = uint8(type(Ship).max);
-    uint8 public constant MAX_TECHNOLOGY_ID = uint8(type(Technology).max);
-    uint8 public constant MAX_RESOURCE_ID = uint8(type(Resource).max);
-    uint16 public constant MAX_LEVEL = 50;
-    uint16 public constant BPS = 10_000;
-    uint16 public constant QUEUE_UNIVERSE_SPEED = 1;
-    uint16 public constant FLEET_UNIVERSE_SPEED = 1;
-    uint32 public constant MIN_QUEUE_SECONDS = 1;
-    uint32 public constant MIN_FLEET_TRAVEL_SECONDS = 10;
-    uint32 public constant FLEET_RECALL_CUTOFF_SECONDS = 60;
-    uint16 public constant FLEET_RECALL_COST_BPS = 2_500;
-    uint64 public constant MARKET_WITHDRAWAL_DELAY = 30 days;
-    uint16 public constant MAX_GALAXY = 9;
-    uint16 public constant MAX_SYSTEM = 499;
-    uint8 public constant MAX_POSITION = 15;
-    bytes32 public constant FIRST_PLANET_DOMAIN = keccak256("veydrift.first-planet.v1");
-    bytes32 public constant PLANET_SEED_DOMAIN = keccak256("veydrift.planet.v1");
-    bytes32 public constant ATTACK_BATTLE_DOMAIN = keccak256("veydrift.attack-battle.v1");
-    uint8 public constant BATTLE_MAX_ROUNDS = 6;
-    uint16 public constant RAID_LOOT_BPS = VeydriftAntiRaidPrimitives.BASE_RAID_LOOT_BPS;
-    uint16 public constant RAID_PROTECTED_STORAGE_BPS =
+    uint256 internal constant DEFAULT_START_PRICE = 0.05 ether;
+    uint8 internal constant MAX_BUILDING_ID = uint8(type(Building).max);
+    uint8 internal constant MAX_DEFENSE_ID = uint8(type(Defense).max);
+    uint8 internal constant MAX_SHIP_ID = uint8(type(Ship).max);
+    uint8 internal constant MAX_TECHNOLOGY_ID = uint8(type(Technology).max);
+    uint8 internal constant MAX_RESOURCE_ID = uint8(type(Resource).max);
+    uint16 internal constant MAX_LEVEL = 50;
+    uint16 internal constant BPS = 10_000;
+    uint16 internal constant QUEUE_UNIVERSE_SPEED = 1;
+    uint16 internal constant FLEET_UNIVERSE_SPEED = 1;
+    uint32 internal constant MIN_QUEUE_SECONDS = 1;
+    uint32 internal constant MIN_FLEET_TRAVEL_SECONDS = 10;
+    uint32 internal constant FLEET_RECALL_CUTOFF_SECONDS = 60;
+    uint16 internal constant FLEET_RECALL_COST_BPS = 2_500;
+    uint64 internal constant MARKET_WITHDRAWAL_DELAY = 30 days;
+    uint16 internal constant MAX_GALAXY = 9;
+    uint16 internal constant MAX_SYSTEM = 499;
+    uint8 internal constant MAX_POSITION = 15;
+    bytes32 internal constant FIRST_PLANET_DOMAIN = keccak256("veydrift.first-planet.v1");
+    bytes32 internal constant PLANET_SEED_DOMAIN = keccak256("veydrift.planet.v1");
+    bytes32 internal constant ATTACK_BATTLE_DOMAIN = keccak256("veydrift.attack-battle.v1");
+    uint8 internal constant BATTLE_MAX_ROUNDS = 6;
+    uint16 internal constant RAID_LOOT_BPS = VeydriftAntiRaidPrimitives.BASE_RAID_LOOT_BPS;
+    uint16 internal constant RAID_PROTECTED_STORAGE_BPS =
         VeydriftAntiRaidPrimitives.PROTECTED_STORAGE_BPS;
-    uint16 public constant COMBAT_DEBRIS_BPS = 3_000;
+    uint16 internal constant COMBAT_DEBRIS_BPS = 3_000;
+    uint16 internal constant REFERRAL_INVITER_FEE_BPS = 5_000;
 
     struct Resources {
         uint128 metal;
@@ -354,6 +355,15 @@ abstract contract VeydriftGameStorage {
     error WithdrawalNotReady(uint64 unlocksAt);
     error TransferFailed();
     error Unauthorized(address account);
+    error ReferralSignerUnset();
+    error ReferralCommitmentInvalid();
+    error ReferralCommitmentAlreadyClaimed(bytes32 commitment);
+    error ReferralInviteInvalid(bytes32 commitment);
+    error ReferralInviteAlreadyClaimed(address inviter, bytes32 commitment);
+    error ReferralInviteeAlreadyRedeemed(bytes32 commitment, address invitee);
+    error ReferralSignatureInvalid();
+    error ReferralSelfInvite();
+    error ReferralRedemptionQuotaExceeded(bytes32 commitment, uint64 resetsAt);
     error InvalidResource(Resource resource);
     error ResourceTokenUnset(Resource resource);
     error ResourceTransferFailed(Resource resource, address token, uint256 amount);

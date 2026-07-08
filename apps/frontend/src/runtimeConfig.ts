@@ -16,6 +16,7 @@ export type RuntimeConfig = {
     highscoresEndpoint: boolean;
     moonConfigured: boolean;
     randomnessConfigured: boolean;
+    referralsConfigured?: boolean;
     researchEndpoint: boolean;
     resourceTokensConfigured: boolean;
     settlementConfigured: boolean;
@@ -24,6 +25,7 @@ export type RuntimeConfig = {
   graphqlUrl: string;
   moonContractAddress: string | null;
   network: string;
+  referralSystemAddress?: string | null;
   resourceTokenAddresses: {
     crystal: string | null;
     deuterium: string | null;
