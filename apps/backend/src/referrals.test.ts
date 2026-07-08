@@ -6,9 +6,11 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { BackendConfig } from "./config";
 import type { SettlementIndexer } from "./indexer";
 import { createRequestHandler } from "./server";
-import { ReferralInviteStore, referralCommitment, referralQuota } from "./referrals";
+import { ReferralInviteStore, referralCommitment, referralQuota, referralWalletMessage } from "./referrals";
 
-const player = "0x2222222222222222222222222222222222222222";
+const playerAccount = privateKeyToAccount("0x2222222222222222222222222222222222222222222222222222222222222222");
+const attackerAccount = privateKeyToAccount("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+const player = playerAccount.address;
 const invitee = "0x3333333333333333333333333333333333333333";
 const signerKey = "0x1111111111111111111111111111111111111111111111111111111111111111";
 
@@ -89,8 +91,29 @@ describe("referral invites", () => {
         referralStore: store,
         role: "reader"
       });
+      const dashboardSignature = await playerAccount.signMessage({
+        message: referralWalletMessage(player, "dashboard")
+      });
+      const createSignature = await playerAccount.signMessage({
+        message: referralWalletMessage(player, "create")
+      });
+      const attackerCreateSignature = await attackerAccount.signMessage({
+        message: referralWalletMessage(player, "create")
+      });
+
+      const missingSignatureDashboardResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals`));
+      expect(missingSignatureDashboardResponse.status).toBe(401);
+
+      const attackerCreateResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals`, {
+        body: JSON.stringify({ signature: attackerCreateSignature }),
+        headers: { "content-type": "application/json" },
+        method: "POST"
+      }));
+      expect(attackerCreateResponse.status).toBe(401);
 
       const createdResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals`, {
+        body: JSON.stringify({ signature: createSignature }),
+        headers: { "content-type": "application/json" },
         method: "POST"
       }));
       const created = await createdResponse.json() as {
@@ -104,6 +127,8 @@ describe("referral invites", () => {
       expect(created.link).toBe(`https://veydrift.com?ref=${created.code}`);
 
       const duplicateCreateResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals`, {
+        body: JSON.stringify({ signature: createSignature }),
+        headers: { "content-type": "application/json" },
         method: "POST"
       }));
       const duplicateCreate = await duplicateCreateResponse.json() as {
@@ -113,8 +138,22 @@ describe("referral invites", () => {
       expect(duplicateCreate.code).toBe(created.code);
       expect(duplicateCreate.commitment).toBe(created.commitment);
 
+      const claimSignature = await playerAccount.signMessage({
+        message: referralWalletMessage(player, "claim-transaction", created.commitment)
+      });
+      const attackerClaimSignature = await attackerAccount.signMessage({
+        message: referralWalletMessage(player, "claim-transaction", created.commitment)
+      });
+      const attackerClaimResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals/claim-transaction`, {
+        body: JSON.stringify({ commitment: created.commitment, signature: attackerClaimSignature, txHash: claimTxHash }),
+        headers: { "content-type": "application/json" },
+        method: "POST"
+      }));
+      expect(attackerClaimResponse.status).toBe(401);
+
       const unindexedClaimResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals/claim-transaction`, {
-        body: JSON.stringify({ commitment: created.commitment, txHash: claimTxHash }),
+        body: JSON.stringify({ commitment: created.commitment, signature: claimSignature, txHash: claimTxHash }),
+        headers: { "content-type": "application/json" },
         method: "POST"
       }));
       expect(unindexedClaimResponse.status).toBe(409);
@@ -127,7 +166,8 @@ describe("referral invites", () => {
 
       claimIndexed = true;
       const txResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals/claim-transaction`, {
-        body: JSON.stringify({ commitment: created.commitment, txHash: claimTxHash }),
+        body: JSON.stringify({ commitment: created.commitment, signature: claimSignature, txHash: claimTxHash }),
+        headers: { "content-type": "application/json" },
         method: "POST"
       }));
       expect(txResponse.status).toBe(200);
@@ -157,7 +197,7 @@ describe("referral invites", () => {
       }));
       expect(duplicateRedeemResponse.status).toBe(200);
 
-      const beforeConfirmationDashboardResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals`));
+      const beforeConfirmationDashboardResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals?signature=${encodeURIComponent(dashboardSignature)}`));
       const beforeConfirmationDashboard = await beforeConfirmationDashboardResponse.json() as {
         invite: { redemptionCount: number } | null;
         remainingRedemptions: number;
@@ -196,7 +236,13 @@ describe("referral invites", () => {
       }));
       expect(duplicateConfirmedRedeemResponse.status).toBe(409);
 
-      const dashboardResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals`));
+      const attackerDashboardSignature = await attackerAccount.signMessage({
+        message: referralWalletMessage(player, "dashboard")
+      });
+      const attackerDashboardResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals?signature=${encodeURIComponent(attackerDashboardSignature)}`));
+      expect(attackerDashboardResponse.status).toBe(401);
+
+      const dashboardResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals?signature=${encodeURIComponent(dashboardSignature)}`));
       const dashboard = await dashboardResponse.json() as {
         invite: { status: string; txHash: string | null; redemptionCount: number } | null;
         invites: Array<{ status: string; txHash: string | null; redemptionCount: number }>;

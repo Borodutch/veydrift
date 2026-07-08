@@ -391,14 +391,14 @@ export function FirstPlanetSettlementApp() {
   }, []);
 
   useEffect(() => {
-    if (!hasOverview || !account || !settlementConfigState.apiUrl) {
+    if (!hasOverview || !account || !provider || !settlementConfigState.apiUrl) {
       setReferralProgram({ status: "idle" });
       return;
     }
 
     let disposed = false;
     setReferralProgram({ status: "loading" });
-    void fetchReferralDashboard(settlementConfigState.apiUrl, account)
+    void fetchReferralDashboard(settlementConfigState.apiUrl, provider, account)
       .then((dashboard) => {
         if (!disposed) setReferralProgram({ status: "ready", dashboard });
       })
@@ -414,7 +414,7 @@ export function FirstPlanetSettlementApp() {
     return () => {
       disposed = true;
     };
-  }, [account, hasOverview, settlementConfigState.apiUrl]);
+  }, [account, hasOverview, provider, settlementConfigState.apiUrl]);
 
   useEffect(() => {
     let disposed = false;
@@ -1102,12 +1102,12 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function refreshReferralProgram(connectedAccount = account) {
-    if (!connectedAccount || !settlementConfigState.apiUrl) return;
+    if (!connectedAccount || !provider || !settlementConfigState.apiUrl) return;
     setReferralProgram({ status: "loading" });
     try {
       setReferralProgram({
         status: "ready",
-        dashboard: await fetchReferralDashboard(settlementConfigState.apiUrl, connectedAccount)
+        dashboard: await fetchReferralDashboard(settlementConfigState.apiUrl, provider, connectedAccount)
       });
     } catch (error) {
       setReferralProgram({
@@ -1132,7 +1132,7 @@ export function FirstPlanetSettlementApp() {
       }
 
       try {
-        const invite = await createReferralInvite(settlementConfigState.apiUrl, wallet.account);
+        const invite = await createReferralInvite(settlementConfigState.apiUrl, provider, wallet.account);
         const txHash = await sendReferralClaimTransaction(
           provider,
           wallet.account,
@@ -1141,6 +1141,7 @@ export function FirstPlanetSettlementApp() {
         );
         await recordReferralClaimTransaction(
           settlementConfigState.apiUrl,
+          provider,
           wallet.account,
           invite.commitment,
           txHash
@@ -1258,6 +1259,7 @@ export function FirstPlanetSettlementApp() {
           />
           <FlowBody
             mode={mode}
+            referralCodeInput={referralCodeInput}
             onConnect={connectWallet}
             onSettle={settlePlanet}
             onSwitchNetwork={switchNetwork}
@@ -1417,6 +1419,7 @@ function FlowBody({
   onSettle,
   onSwitchNetwork,
   planet,
+  referralCodeInput,
   settlementFunding,
   settlementReady,
   wallet,
@@ -1428,6 +1431,7 @@ function FlowBody({
   onSettle: () => void;
   onSwitchNetwork: () => void;
   planet: PlanetState;
+  referralCodeInput: string;
   settlementFunding: SettlementFunding;
   settlementReady: boolean;
   wallet: WalletState;
@@ -1549,7 +1553,7 @@ function FlowBody({
   return (
     <StateMessage
       title={title}
-      body={settlementBody(planet, settlementFunding)}
+      body={settlementBody(planet, settlementFunding, referralCodeInput)}
       action={<PrimaryButton disabled={actionBlocked} onClick={onSettle}>{actionLabel}</PrimaryButton>}
       tone={actionBlocked ? "warning" : "ready"}
     />
@@ -1593,34 +1597,37 @@ function settlementTransactionOptions(
   };
 }
 
-function settlementBody(planet: PlanetState, settlementFunding: SettlementFunding): string {
+function settlementBody(planet: PlanetState, settlementFunding: SettlementFunding, referralCode = ""): string {
   const prefix = planet.kind === "legacy-settled"
     ? "This wallet has a legacy first planet but no game home planet yet. Launch a new game settlement to continue."
     : "Launch settlement and mint this wallet's home planet.";
+  const referralPreview = referralCode.trim()
+    ? " Invite code ready: a successful referral settlement starts this planet with 2x metal and crystal."
+    : "";
 
   if (settlementFunding.status === "idle" || settlementFunding.status === "loading") {
-    return `${prefix} Checking the game start price and wallet balance.`;
+    return `${prefix} Checking the game start price and wallet balance.${referralPreview}`;
   }
 
   if (settlementFunding.status === "error") {
-    return `Could not verify settlement launch info before asking your wallet to send a transaction: ${settlementFunding.message}`;
+    return `Could not verify settlement launch info before asking your wallet to send a transaction: ${settlementFunding.message}${referralPreview}`;
   }
 
   if (settlementFunding.status === "ready" && settlementFunding.funding.contractKind === "game") {
     const startPrice = formatEth(settlementFunding.funding.startPriceWei ?? 0n);
     if (settlementFunding.funding.unavailableReason) {
-      return `${prefix} ${settlementFunding.funding.unavailableReason}`;
+      return `${prefix} ${settlementFunding.funding.unavailableReason}${referralPreview}`;
     }
 
     if (settlementFunding.funding.balanceWei === null) {
-      return `${prefix} Settlement costs ${startPrice} ETH; Farcaster Wallet will verify this wallet's Base Sepolia balance before submission.`;
+      return `${prefix} Settlement costs ${startPrice} ETH; Farcaster Wallet will verify this wallet's Base Sepolia balance before submission.${referralPreview}`;
     }
 
     const balance = formatEth(settlementFunding.funding.balanceWei);
-    return `${prefix} Settlement costs ${startPrice} ETH; this wallet has ${balance} ETH on Base Sepolia.`;
+    return `${prefix} Settlement costs ${startPrice} ETH; this wallet has ${balance} ETH on Base Sepolia.${referralPreview}`;
   }
 
-  return prefix;
+  return `${prefix}${referralPreview}`;
 }
 
 function formatEth(wei: bigint): string {

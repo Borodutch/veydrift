@@ -31,6 +31,7 @@ import {
   fetchInfrastructureState,
   fetchMoonState,
   fetchPlayerProfile,
+  fetchReferralDashboard,
   fetchResearchState,
   fetchShipyardState,
   fetchWalletPlanets,
@@ -43,6 +44,7 @@ import {
   getCurrentAccounts,
   getInjectedProvider,
   confirmTransactionReceipt,
+  createReferralInvite,
   isBaseSepoliaChain,
   isTransientWalletBootstrapError,
   isUserRejected,
@@ -77,6 +79,8 @@ import {
   sendDismissAllianceJoinRequestTransaction,
   sendRequestResourceWithdrawalTransaction,
   requestAccounts,
+  recordReferralClaimTransaction,
+  referralWalletMessage,
   requestWatchedPlanetSignature,
   sendSettlementTransaction,
   sendStartBuildingUpgradeTransaction,
@@ -2685,6 +2689,110 @@ describe("walletFlow", () => {
         description,
         displayName: "borodutch"
       });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("signs referral dashboard reads before fetching private invite code custody", async () => {
+    const originalFetch = globalThis.fetch;
+    const provider = mockProvider(async ({ method, params }) => {
+      expect(method).toBe("personal_sign");
+      expect(params).toEqual([referralWalletMessage(account, "dashboard"), account]);
+      return "0xreferraldashboard";
+    });
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = new URL(String(input));
+      expect(`${url.origin}${url.pathname}`).toBe(`https://api.example.test/wallet/${account}/referrals`);
+      expect(url.searchParams.get("signature")).toBe("0xreferraldashboard");
+      expect(init).toEqual({
+        cache: "no-store",
+        headers: { accept: "application/json" },
+        signal: expect.any(AbortSignal),
+      });
+      return new Response(JSON.stringify({
+        configured: true,
+        invite: null,
+        invites: [],
+        nextClaimAt: null,
+        nextRedemptionAt: null,
+        remainingClaims: 3,
+        remainingRedemptions: 3
+      }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchReferralDashboard("https://api.example.test///", provider, account)).resolves.toMatchObject({
+        configured: true,
+        remainingRedemptions: 3
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("signs referral invite create and claim-record mutations", async () => {
+    const originalFetch = globalThis.fetch;
+    const commitment = `0x${"aa".repeat(32)}`;
+    const txHash = `0x${"bb".repeat(32)}`;
+    const signatures = ["0xreferralcreate", "0xreferralclaim"];
+    const provider = mockProvider(async ({ method, params }) => {
+      expect(method).toBe("personal_sign");
+      const signature = signatures.shift();
+      expect(signature).toBeDefined();
+      if (signature === "0xreferralcreate") {
+        expect(params).toEqual([referralWalletMessage(account, "create"), account]);
+      } else {
+        expect(params).toEqual([referralWalletMessage(account, "claim-transaction", commitment), account]);
+      }
+      return signature!;
+    });
+    const requests: Array<{ body: unknown; url: string }> = [];
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      requests.push({
+        body: JSON.parse(String(init?.body)),
+        url: String(input)
+      });
+      expect(init?.method).toBe("POST");
+      expect(init?.headers).toEqual({
+        accept: "application/json",
+        "content-type": "application/json"
+      });
+      return new Response(JSON.stringify({
+        claimedAt: "2026-07-08T12:00:00.000Z",
+        code: "abcDEF_123-abcDEF_123-abcDEF_123-abcDEF_123",
+        commitment,
+        link: "https://veydrift.com?ref=abcDEF_123-abcDEF_123-abcDEF_123-abcDEF_123",
+        nextRedemptionAt: null,
+        owner: account.toLowerCase(),
+        redemptionCount: 0,
+        remainingRedemptions: 3,
+        status: "pending_claim",
+        txHash: null
+      }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await createReferralInvite("https://api.example.test///", provider, account);
+      await recordReferralClaimTransaction("https://api.example.test///", provider, account, commitment, txHash);
+      expect(requests).toEqual([
+        {
+          body: { signature: "0xreferralcreate" },
+          url: `https://api.example.test/wallet/${account}/referrals`
+        },
+        {
+          body: { commitment, signature: "0xreferralclaim", txHash },
+          url: `https://api.example.test/wallet/${account}/referrals/claim-transaction`
+        }
+      ]);
     } finally {
       globalThis.fetch = originalFetch;
     }

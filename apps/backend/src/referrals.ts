@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
-import { encodeAbiParameters, keccak256, parseAbiParameters, toHex, type Address, type Hex } from "viem";
+import { encodeAbiParameters, getAddress, keccak256, parseAbiParameters, toHex, verifyMessage, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { BackendConfig } from "./config";
 
@@ -56,6 +56,8 @@ export type ReferralRedemption = {
   r: Hex;
   s: Hex;
 };
+
+export type ReferralWalletAction = "dashboard" | "create" | "claim-transaction";
 
 export class ReferralInviteStore {
   constructor(private readonly path: string) {}
@@ -327,6 +329,45 @@ export function normalizeReferralCode(value: unknown): string {
     throw new Error("Referral code is invalid.");
   }
   return code;
+}
+
+export function referralWalletMessage(wallet: string, action: ReferralWalletAction, commitment?: string): string {
+  const lines = [
+    "Veydrift referral invites",
+    `Wallet: ${normalizeAddress(wallet).toLowerCase()}`,
+    `Action: ${action}`
+  ];
+  if (commitment !== undefined) {
+    lines.push(`Commitment: ${normalizeHex32(commitment, "commitment").toLowerCase()}`);
+  }
+  lines.push("Only sign this message if you want to manage your private Veydrift referral invite.");
+  return lines.join("\n");
+}
+
+export async function verifyReferralWalletSignature({
+  action,
+  commitment,
+  signature,
+  wallet
+}: {
+  action: ReferralWalletAction;
+  commitment?: string;
+  signature: unknown;
+  wallet: string;
+}): Promise<boolean> {
+  if (typeof signature !== "string" || !/^0x[a-fA-F0-9]+$/.test(signature)) {
+    return false;
+  }
+
+  try {
+    return await verifyMessage({
+      address: getAddress(normalizeAddress(wallet)),
+      message: referralWalletMessage(wallet, action, commitment),
+      signature: signature as Hex
+    });
+  } catch {
+    return false;
+  }
 }
 
 function normalizeHex32(value: unknown, label: string): Hex {

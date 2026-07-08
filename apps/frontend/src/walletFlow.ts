@@ -100,6 +100,8 @@ export type ReferralRedemption = {
   v: number;
 };
 
+export type ReferralWalletAction = "dashboard" | "create" | "claim-transaction";
+
 type TransactionRequest = {
   from: string;
   to: string;
@@ -3393,27 +3395,62 @@ export async function fetchSettlementFundingState(apiUrl: string, wallet: string
   };
 }
 
-export async function fetchReferralDashboard(apiUrl: string, wallet: string): Promise<ReferralDashboard> {
-  return fetchWalletJson<ReferralDashboard>(apiUrl, wallet, "referrals", "Referral invites");
+export function referralWalletMessage(wallet: string, action: ReferralWalletAction, commitment?: string): string {
+  const lines = [
+    "Veydrift referral invites",
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Action: ${action}`
+  ];
+  if (commitment !== undefined) {
+    lines.push(`Commitment: ${commitment.toLowerCase()}`);
+  }
+  lines.push("Only sign this message if you want to manage your private Veydrift referral invite.");
+  return lines.join("\n");
 }
 
-export async function createReferralInvite(apiUrl: string, wallet: string): Promise<ReferralInviteSummary> {
+export async function requestReferralWalletSignature(
+  provider: Eip1193Provider,
+  wallet: string,
+  action: ReferralWalletAction,
+  commitment?: string
+): Promise<string> {
+  return provider.request<string>({
+    method: "personal_sign",
+    params: [referralWalletMessage(wallet, action, commitment), wallet]
+  });
+}
+
+export async function fetchReferralDashboard(apiUrl: string, provider: Eip1193Provider, wallet: string): Promise<ReferralDashboard> {
+  const signature = await requestReferralWalletSignature(provider, wallet, "dashboard");
+  return fetchWalletJson<ReferralDashboard>(
+    apiUrl,
+    wallet,
+    `referrals?${new URLSearchParams({ signature }).toString()}`,
+    "Referral invites"
+  );
+}
+
+export async function createReferralInvite(apiUrl: string, provider: Eip1193Provider, wallet: string): Promise<ReferralInviteSummary> {
+  const signature = await requestReferralWalletSignature(provider, wallet, "create");
   return fetchGameApiMutation<ReferralInviteSummary>(
     `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals`,
-    "Referral invite"
+    "Referral invite",
+    { signature }
   );
 }
 
 export async function recordReferralClaimTransaction(
   apiUrl: string,
+  provider: Eip1193Provider,
   wallet: string,
   commitment: string,
   txHash: string
 ): Promise<ReferralInviteSummary> {
+  const signature = await requestReferralWalletSignature(provider, wallet, "claim-transaction", commitment);
   return fetchGameApiMutation<ReferralInviteSummary>(
     `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals/claim-transaction`,
     "Referral claim transaction",
-    { commitment, txHash }
+    { commitment, signature, txHash }
   );
 }
 
