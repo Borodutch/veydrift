@@ -221,12 +221,15 @@ describe("Moon page helpers", () => {
 
     expect(text).toContain("Chicken ID");
     expect(text).toContain("Burn for Moon");
+    expect(text).toContain("Any Chicken NFT from the OpenSea collection can be burned for a moon at any planet.");
     expect(text).not.toContain("verifies this wallet owns the chicken");
-    expect(text).toContain("Any Chicken NFT can be burned for a moon at any planet.");
-    expect(text).toContain("#73166 on OpenSea");
+    expect(text).not.toContain("Example Chicken");
+    expect(text).not.toContain("#73166 on OpenSea");
     expect(text).not.toContain("During testnet");
     expect(text).not.toContain("testnet Chicken moons used");
     expect(text).not.toContain("No eligible Burning Chickens");
+    expect(moonPageSource).toContain("https://opensea.io/collection/chickens-by-eggs");
+    expect(moonPageSource).not.toContain("https://opensea.io/item/base/0x84eea2be67b17698b0e09b57eeeda47aa921bbf0/73166");
   });
 
   test("renders Burning Chicken config unavailable state", () => {

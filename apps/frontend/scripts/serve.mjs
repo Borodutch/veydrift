@@ -96,6 +96,19 @@ function playAppRouteForPathname(pathname) {
   return pathname === "/play" || pathname.startsWith("/play/");
 }
 
+export function shareRouteForUrl(url) {
+  if ((url.pathname === "/" || url.pathname === "/index.html") && hasReferralCode(url)) {
+    return { kind: "referral" };
+  }
+
+  return shareRouteForPathname(url.pathname);
+}
+
+function hasReferralCode(url) {
+  const value = url.searchParams.get("ref");
+  return typeof value === "string" && value.trim() !== "";
+}
+
 function shareRouteForPathname(pathname) {
   const mission = pathname.match(/^\/mission\/([0-9]+)$/);
   if (mission) return { kind: "mission", id: mission[1] };
@@ -133,6 +146,8 @@ function shareRouteForPathname(pathname) {
 }
 
 function imageRouteForPathname(pathname) {
+  if (pathname === "/og/referral.png") return { kind: "referral" };
+
   const mission = pathname.match(/^\/og\/mission\/([0-9]+)\.png$/);
   if (mission) return { kind: "mission", id: mission[1] };
 
@@ -166,6 +181,7 @@ function imageRouteForPathname(pathname) {
 }
 
 function sharePathForRoute(route) {
+  if (route.kind === "referral") return "/";
   if (route.kind === "mission") return `/mission/${encodeURIComponent(route.id)}`;
   if (route.kind === "planet") return `/planet/${route.galaxy}/${route.system}/${route.position}`;
   if (route.kind === "moon") return `/moon/${route.galaxy}/${route.system}/${route.position}`;
@@ -174,6 +190,7 @@ function sharePathForRoute(route) {
 }
 
 function imagePathForRoute(route) {
+  if (route.kind === "referral") return "/og/referral.png";
   if (route.kind === "mission") return `/og/mission/${encodeURIComponent(route.id)}.png`;
   if (route.kind === "planet") return `/og/planet/${route.galaxy}/${route.system}/${route.position}.png`;
   if (route.kind === "moon") return `/og/moon/${route.galaxy}/${route.system}/${route.position}.png`;
@@ -192,11 +209,27 @@ export async function routeMeta(route) {
 }
 
 async function buildRouteMeta(route) {
+  if (route.kind === "referral") return referralMeta();
   if (route.kind === "mission") return missionMeta(route.id);
   if (route.kind === "planet") return planetMeta(route);
   if (route.kind === "moon") return moonMeta(route);
   if (route.kind === "player") return playerMeta(route.wallet);
   return allianceMeta(route.allianceId);
+}
+
+function referralMeta() {
+  return {
+    kind: "referral",
+    title: "Join Veydrift with a boosted start",
+    imageTitle: "Veydrift Invite",
+    description: "Use an invite link for 2x starting resources. Your inviter earns rewards when you settle.",
+    status: "INVITE BONUS",
+    subtitle: "2x starting resources",
+    accent: "#5eead4",
+    footer: "veydrift.com/invite",
+    commander: true,
+    planetAssets: [planetAssets["temperate-ocean"], planetAssets["crystal-violet"]],
+  };
 }
 
 async function missionMeta(id) {
@@ -304,6 +337,8 @@ async function allianceMeta(allianceId) {
 }
 
 function fallbackMeta(route) {
+  if (route.kind === "referral") return referralMeta();
+
   if (route.kind === "mission") {
     return {
       kind: "mission",
@@ -439,14 +474,16 @@ async function shareHtmlResponse(request, route) {
   const url = new URL(request.url);
   const origin = publicOrigin(request, url);
   const meta = await routeMeta(route);
-  const canonicalPath = sharePathForRoute(route);
+  const canonicalPath = canonicalSharePathForRoute(route, url);
   const canonicalUrl = `${origin}${canonicalPath}`;
   const imageUrl = `${origin}${imagePathForRoute(route)}`;
+  const launchUrl = route.kind === "referral" ? miniAppLaunchUrl(canonicalUrl) : null;
   const appHtml = await readFile(staticFileUrl("/index.html"), "utf8");
   const html = injectShareMeta(appHtml, {
     canonicalUrl,
     description: meta.description,
     imageUrl,
+    launchUrl,
     title: meta.title,
   });
 
@@ -458,7 +495,44 @@ async function shareHtmlResponse(request, route) {
   });
 }
 
-function injectShareMeta(html, { canonicalUrl, description, imageUrl, title }) {
+function canonicalSharePathForRoute(route, url) {
+  if (route.kind !== "referral") return sharePathForRoute(route);
+
+  const code = referralCodeForCanonical(url.searchParams.get("ref"));
+  return code ? `/?ref=${encodeURIComponent(code)}` : "/";
+}
+
+function referralCodeForCanonical(value) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  return text.slice(0, 160);
+}
+
+function miniAppLaunchUrl(canonicalUrl) {
+  const url = new URL(canonicalUrl);
+  url.searchParams.set("miniApp", "true");
+  return url.toString();
+}
+
+export function buildReferralMiniAppEmbed({ imageUrl, launchUrl, actionType = "launch_miniapp" }) {
+  return {
+    version: "1",
+    imageUrl,
+    aspectRatio: "3:2",
+    button: {
+      title: "Accept invite",
+      action: {
+        type: actionType,
+        name: "Veydrift",
+        url: launchUrl,
+        splashImageUrl: `${new URL(launchUrl).origin}/assets/miniapp/splash.png`,
+        splashBackgroundColor: "#05070d",
+      },
+    },
+  };
+}
+
+export function injectShareMeta(html, { canonicalUrl, description, imageUrl, launchUrl, title }) {
   let nextHtml = html;
   nextHtml = replaceHeadTag(nextHtml, /<title>.*?<\/title>/s, `<title>${escapeHtml(title)}</title>`);
   nextHtml = replaceHeadTag(
@@ -516,6 +590,18 @@ function injectShareMeta(html, { canonicalUrl, description, imageUrl, title }) {
     /<meta\s+name="twitter:image"\s+content="[^"]*"\s*\/>/s,
     `<meta name="twitter:image" content="${escapeHtml(imageUrl)}" />`,
   );
+  if (launchUrl) {
+    nextHtml = replaceHeadTag(
+      nextHtml,
+      /<meta\s+name="fc:miniapp"\s+content='[^']*'\s*\/>/s,
+      `<meta name="fc:miniapp" content='${escapeHtml(JSON.stringify(buildReferralMiniAppEmbed({ imageUrl, launchUrl })))}' />`,
+    );
+    nextHtml = replaceHeadTag(
+      nextHtml,
+      /<meta\s+name="fc:frame"\s+content='[^']*'\s*\/>/s,
+      `<meta name="fc:frame" content='${escapeHtml(JSON.stringify(buildReferralMiniAppEmbed({ imageUrl, launchUrl, actionType: "launch_frame" })))}' />`,
+    );
+  }
   return nextHtml;
 }
 
@@ -555,14 +641,23 @@ function ogImageHeaders() {
 
 async function ogSvg(meta) {
   const background = await assetDataUri(fallbackBackgroundAsset, 1200);
-  const title = fitText(meta.title, 26);
+  const title = fitText(meta.imageTitle ?? meta.title, 26);
   const subtitle = fitText(meta.subtitle ?? meta.description, 32);
   const status = fitText(meta.status, 24).toUpperCase();
+  const footer = fitText(meta.footer ?? "test.veydrift.com", 34);
   const accent = meta.accent ?? "#7dd3fc";
   const commander = meta.commander ? await assetDataUri(commanderAsset, 860) : null;
   const planets = await Promise.all((meta.planetAssets ?? []).map((asset) => assetDataUri(asset, 600)));
 
-  const visual = meta.kind === "mission"
+  const visual = meta.kind === "referral"
+    ? `<image href="${planets[0] ?? ""}" x="710" y="16" width="470" height="470" preserveAspectRatio="xMidYMid meet" clip-path="url(#singlePlanet)"/>
+  <image href="${commander ?? ""}" x="548" y="92" width="360" height="360" preserveAspectRatio="xMidYMid meet" opacity=".98"/>
+  <path d="M722 386 C814 320 924 272 1088 180" fill="none" stroke="${accent}" stroke-width="2" stroke-opacity=".46"/>
+  <circle cx="722" cy="386" r="4" fill="${accent}"/>
+  <circle cx="1088" cy="180" r="4" fill="${accent}"/>
+  <rect x="790" y="434" width="214" height="44" rx="22" fill="#02050b" fill-opacity=".72" stroke="${accent}" stroke-opacity=".52"/>
+  <text x="897" y="463" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="22" font-weight="850" fill="${accent}">2x resources</text>`
+    : meta.kind === "mission"
     ? `<image href="${planets[0] ?? ""}" x="624" y="266" width="320" height="320" preserveAspectRatio="xMidYMid meet" clip-path="url(#missionPlanetA)"/>
   <image href="${planets[1] ?? planets[0] ?? ""}" x="854" y="44" width="320" height="320" preserveAspectRatio="xMidYMid meet" clip-path="url(#missionPlanetB)"/>
   <path d="M812 421 C858 360 906 304 976 218" fill="none" stroke="${accent}" stroke-width="2" stroke-opacity=".58"/>
@@ -611,7 +706,7 @@ async function ogSvg(meta) {
   <text x="62" y="304" font-family="DejaVu Sans, Arial, sans-serif" font-size="40" font-weight="780" fill="#d8e2f1">${escapeXml(subtitle)}</text>
   <rect x="64" y="358" width="10" height="38" fill="${accent}"/>
   <text x="92" y="386" font-family="DejaVu Sans, Arial, sans-serif" font-size="27" font-weight="850" fill="${accent}">${escapeXml(status)}</text>
-  <text x="64" y="596" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" font-weight="760" fill="#71839a">test.veydrift.com</text>
+  <text x="64" y="596" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" font-weight="760" fill="#71839a">${escapeXml(footer)}</text>
 </svg>`;
 }
 
@@ -675,12 +770,12 @@ if (import.meta.main) {
       }
 
       const route = pathname === "/" ? "/index.html" : pathname;
-      const imageRoute = imageRouteForPathname(route);
+      const imageRoute = imageRouteForPathname(pathname);
       if (imageRoute) {
         return ogImageResponse(imageRoute);
       }
 
-      const shareRoute = shareRouteForPathname(route);
+      const shareRoute = shareRouteForUrl(url);
       if (shareRoute) {
         return shareHtmlResponse(request, shareRoute);
       }

@@ -1,4 +1,4 @@
-import { ArrowLeftRight, Crosshair, Eye, Flame, Info, Orbit, Rocket, Shield, X } from "lucide-preact";
+import { ArrowLeftRight, Crosshair, ExternalLink, Eye, Flame, Info, Orbit, Rocket, Shield, X } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
@@ -36,6 +36,8 @@ import {
   productionQueueViewModel,
 } from "./ProductionCatalog";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
+
+const burningChickensOpenSeaCollectionUrl = "https://opensea.io/collection/chickens-by-eggs";
 
 interface MoonPageProps {
   action?: { status: "idle" | "pending" | "success" | "error"; label?: string } | undefined;
@@ -192,6 +194,15 @@ function ChickenBurnPanel({
           </div>
           <h3 className="text-base font-semibold text-white">Burning Chickens</h3>
         </div>
+        <a
+          className="inline-flex h-9 items-center gap-2 rounded border border-amber-200/20 bg-amber-200/10 px-3 text-xs font-semibold text-amber-100 transition hover:border-amber-200/40 hover:bg-amber-200/20"
+          href={burningChickensOpenSeaCollectionUrl}
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          <ExternalLink aria-hidden="true" size={14} strokeWidth={1.8} />
+          Browse Chickens
+        </a>
       </div>
 
       {!configured ? (
@@ -202,16 +213,7 @@ function ChickenBurnPanel({
 
       {configured ? (
         <p className="mt-3 rounded border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
-          Any Chicken NFT can be burned for a moon at any planet. Example Chicken:{" "}
-          <a
-            className="font-semibold text-cyan-50 underline decoration-cyan-200/50 underline-offset-2 hover:text-white"
-            href="https://opensea.io/item/base/0x84eea2be67b17698b0e09b57eeeda47aa921bbf0/73166"
-            rel="noreferrer"
-            target="_blank"
-          >
-            #73166 on OpenSea
-          </a>
-          .
+          Any Chicken NFT from the OpenSea collection can be burned for a moon at any planet.
         </p>
       ) : null}
 
