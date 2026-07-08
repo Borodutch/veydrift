@@ -91,11 +91,13 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
     function importMigratedState(address player, bytes calldata payload) external payable {
         if (msg.sender != _migrationSettlement) revert Unauthorized(msg.sender);
         if (msg.value != startPrice) revert BadStartPayment();
-        if (homePlanetOf[player] != 0) revert AlreadyStarted();
 
         MigrationPlayerState memory state = abi.decode(payload, (MigrationPlayerState));
         if (state.player != player || state.homePlanetId == 0 || state.planets.length == 0) {
             revert InvalidId();
+        }
+        if (homePlanetOf[player] != 0) {
+            _discardSingleStartedPlanetBeforeMigration(player);
         }
 
         Resources memory totalResources;
@@ -143,6 +145,55 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
         }
 
         emit MigrationStateImported(player, state.homePlanetId, state.planets.length);
+    }
+
+    function _discardSingleStartedPlanetBeforeMigration(address player) private {
+        if (planetCountOf[player] != 1 || activeFleetMissionCount[player] != 0) {
+            revert AlreadyStarted();
+        }
+        uint256 planetId = homePlanetOf[player];
+        Planet storage planetRef = _planets[planetId];
+        if (planetId == 0 || planetRef.owner != player) revert AlreadyStarted();
+
+        bytes32 key = VeydriftPlanetGeneration.coordinateKey(
+            block.chainid,
+            planetRef.galaxy,
+            planetRef.system,
+            planetRef.position,
+            MAX_GALAXY,
+            MAX_SYSTEM,
+            MAX_POSITION
+        );
+        occupiedCoordinates[key] = false;
+        _decreaseInternalResources(planetRef.resources);
+        delete _planets[planetId];
+        delete planetNames[planetId];
+        delete buildingConstructions[planetId];
+        delete defenseQueues[planetId];
+        delete shipQueues[planetId];
+        delete _defenseQueueBacklogs[planetId];
+        delete _shipQueueBacklogs[planetId];
+        for (uint8 id = 0; id <= MAX_BUILDING_ID;) {
+            delete _buildingLevels[planetId][Building(id)];
+            unchecked {
+                ++id;
+            }
+        }
+        for (uint8 id = 0; id <= MAX_SHIP_ID;) {
+            _setPlanetShipCount(planetId, Ship(id), 0);
+            unchecked {
+                ++id;
+            }
+        }
+        for (uint8 id = 0; id <= MAX_DEFENSE_ID;) {
+            _setPlanetDefenseCount(planetId, Defense(id), 0);
+            unchecked {
+                ++id;
+            }
+        }
+        _unregisterOwnedPlanet(player, planetId);
+        homePlanetOf[player] = 0;
+        planetCountOf[player] = 0;
     }
 
     function _importMigratedPlanet(address player, MigrationPlanetState memory planetState)
