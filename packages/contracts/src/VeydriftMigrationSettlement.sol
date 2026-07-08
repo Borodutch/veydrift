@@ -124,18 +124,16 @@ contract VeydriftMigrationSettlement is Initializable, OwnableUpgradeable, UUPSU
         payable
         returns (bytes32 stateHash)
     {
-        Reservation storage reservation = reservations[msg.sender];
-        if (!reservation.exists) revert MigrationReservationMissing(msg.sender);
-        if (reservation.claimed) revert MigrationReservationClaimed(msg.sender);
+        return _claimFor(msg.sender, statePayload, signature);
+    }
 
-        stateHash = migrationStateHash(msg.sender, statePayload);
-        address recovered =
-            ECDSA.recover(MessageHashUtils.toEthSignedMessageHash(stateHash), signature);
-        if (recovered != stateSigner) revert BadMigrationSignature();
-
-        reservation.claimed = true;
-        game.importMigratedState{value: msg.value}(msg.sender, statePayload);
-        emit FullStateMigrationClaimed(msg.sender, stateHash);
+    function claimFor(address player, bytes calldata statePayload, bytes calldata signature)
+        external
+        payable
+        onlyOwner
+        returns (bytes32 stateHash)
+    {
+        return _claimFor(player, statePayload, signature);
     }
 
     function migrationStateHash(address player, bytes calldata statePayload)
@@ -172,4 +170,22 @@ contract VeydriftMigrationSettlement is Initializable, OwnableUpgradeable, UUPSU
     }
 
     function _authorizeUpgrade(address) internal override onlyOwner {}
+
+    function _claimFor(address player, bytes calldata statePayload, bytes calldata signature)
+        private
+        returns (bytes32 stateHash)
+    {
+        Reservation storage reservation = reservations[player];
+        if (!reservation.exists) revert MigrationReservationMissing(player);
+        if (reservation.claimed) revert MigrationReservationClaimed(player);
+
+        stateHash = migrationStateHash(player, statePayload);
+        address recovered =
+            ECDSA.recover(MessageHashUtils.toEthSignedMessageHash(stateHash), signature);
+        if (recovered != stateSigner) revert BadMigrationSignature();
+
+        reservation.claimed = true;
+        game.importMigratedState{value: msg.value}(player, statePayload);
+        emit FullStateMigrationClaimed(player, stateHash);
+    }
 }
