@@ -54,7 +54,6 @@ interface AlliancePageProps {
   loading: boolean;
   selectedAllianceId?: string | null | undefined;
   transactionUnavailableReason?: string | undefined;
-  onAcceptInvite: (allianceId: string) => void;
   onApproveJoinRequest: (playerAddress: string) => void;
   onBatchKick: (playerAddresses: string[]) => void;
   onBatchSetRole: (playerAddresses: string[], role: "member" | "officer") => void;
@@ -74,6 +73,17 @@ interface AlliancePageProps {
   onUpdateProfile: (tag: string, name: string, description: string) => void;
 }
 
+interface AllianceInvitesPageProps {
+  actionState: AllianceActionState;
+  allianceState: ChainAllianceState | null;
+  canTransact: boolean;
+  error?: string | undefined;
+  loading: boolean;
+  transactionUnavailableReason?: string | undefined;
+  onAcceptInvite: (allianceId: string) => void;
+  onRefresh: () => void;
+}
+
 export function AlliancePage({
   actionState,
   allianceState,
@@ -83,7 +93,6 @@ export function AlliancePage({
   loading,
   selectedAllianceId,
   transactionUnavailableReason,
-  onAcceptInvite,
   onApproveJoinRequest,
   onBatchKick,
   onBatchSetRole,
@@ -256,14 +265,6 @@ export function AlliancePage({
               />
             ) : null}
 
-            <PendingInvites
-              allianceState={allianceState}
-              disabled={disabled}
-              invites={allianceState?.pendingInvites ?? []}
-              directory={directory}
-              onAcceptInvite={onAcceptInvite}
-            />
-
             {canManageMembers ? (
               <JoinRequests
                 allianceState={allianceState}
@@ -300,6 +301,50 @@ export function AlliancePage({
             </aside>
           ) : null}
         </div>
+      )}
+    </section>
+  );
+}
+
+export function AllianceInvitesPage({
+  actionState,
+  allianceState,
+  canTransact,
+  error,
+  loading,
+  transactionUnavailableReason,
+  onAcceptInvite,
+  onRefresh,
+}: AllianceInvitesPageProps) {
+  const disabled = !canTransact || actionState.status === "pending";
+
+  return (
+    <section className="grid min-h-0 gap-4">
+      <PageHeader
+        actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh alliance invites" />}
+        title="Invites"
+        titleSize="xl"
+      />
+
+      {error ? (
+        isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <Notice tone="error">{error}</Notice>
+      ) : null}
+      {allianceState?.allianceAvailable === false ? (
+        <Notice>{allianceState.unavailableReason ?? "Alliance contract is not configured."}</Notice>
+      ) : null}
+      {transactionUnavailableReason ? <Notice>{transactionUnavailableReason}</Notice> : null}
+      {actionState.status !== "idle" ? <Notice tone={actionState.status === "error" ? "error" : "info"}>{actionState.label}</Notice> : null}
+
+      {shouldShowAllianceInitialLoader({ allianceState, loading }) ? (
+        <AllianceSkeleton />
+      ) : (
+        <PendingInvites
+          allianceState={allianceState}
+          disabled={disabled}
+          invites={allianceState?.pendingInvites ?? []}
+          directory={allianceState?.directory ?? []}
+          onAcceptInvite={onAcceptInvite}
+        />
       )}
     </section>
   );

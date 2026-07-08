@@ -21,6 +21,7 @@ const pageNames = new Set<Page>([
   "mission-control",
   "moon",
   "alliance",
+  "alliance-invites",
   "rift",
   "rankings",
   "galaxy",
