@@ -260,7 +260,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       logChunkSpan,
       rebuildDeadlineMs,
       pollIntervalMs,
-      missionResolutionEnabled: deploymentMode === "test" && Boolean(missionResolverAddress || missionResolverPrivateKey),
+      missionResolutionEnabled: Boolean(missionResolverAddress || missionResolverPrivateKey),
       ...(missionResolverAddress ? { missionResolverAddress } : {}),
       ...(missionResolverPrivateKey ? { missionResolverPrivateKey } : {}),
       ...(migrationContractAddress ? { migrationContractAddress } : {}),
