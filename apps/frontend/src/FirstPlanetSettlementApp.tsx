@@ -1269,8 +1269,16 @@ function ReferralProgramPanel({
   const dashboard = state.status === "ready" || state.status === "claiming" || state.status === "error"
     ? state.dashboard
     : undefined;
+  const invite = dashboard?.invite ?? dashboard?.invites[0];
   const claiming = state.status === "claiming";
-  const canClaim = Boolean(dashboard?.configured && dashboard.remainingClaims > 0 && !claiming);
+  const canClaim = Boolean(dashboard?.configured && (!invite || invite.status === "pending_claim") && !claiming);
+  const claimLabel = claiming
+    ? "Claiming"
+    : invite?.status === "pending_claim"
+      ? "Finish claim"
+      : invite
+        ? "Code active"
+        : "Claim code";
 
   return (
     <section className="referral-program" aria-label="Referral invites">
@@ -1286,12 +1294,12 @@ function ReferralProgramPanel({
             onClick={onClaim}
             type="button"
           >
-            {claiming ? "Claiming" : `Claim code${dashboard ? ` (${dashboard.remainingClaims}/3)` : ""}`}
+            {claimLabel}
           </button>
         </div>
 
         {state.status === "loading" ? (
-          <p className="referral-muted">Loading invite slots.</p>
+          <p className="referral-muted">Loading invite code.</p>
         ) : state.status === "error" ? (
           <p className="referral-error">{state.message}</p>
         ) : null}
@@ -1300,30 +1308,32 @@ function ReferralProgramPanel({
           <p className="referral-muted">Referral invites are not configured on this deployment.</p>
         ) : null}
 
-        {dashboard?.nextClaimAt ? (
-          <p className="referral-muted">Next slot opens {formatDateTime(dashboard.nextClaimAt)}.</p>
+        {dashboard?.nextRedemptionAt ? (
+          <p className="referral-muted">Next invite use opens {formatDateTime(dashboard.nextRedemptionAt)}.</p>
         ) : null}
 
-        {dashboard?.invites.length ? (
-          <div className="referral-link-list">
-            {dashboard.invites.slice(0, 3).map((invite) => (
-              <div className="referral-link-row" key={invite.commitment}>
-                <div>
-                  <strong>{invite.link}</strong>
-                  <span>{invite.status === "unused" ? "Unused" : "Awaiting wallet claim"}</span>
-                </div>
-                <button
-                  className="referral-copy-button"
-                  onClick={() => void navigator.clipboard?.writeText(invite.link)}
-                  type="button"
-                >
-                  Copy
-                </button>
-              </div>
-            ))}
+        {invite ? (
+          <div className="referral-link-row">
+            <div>
+              <strong>{invite.link}</strong>
+              <span>
+                {invite.status === "active"
+                  ? `${invite.remainingRedemptions}/3 uses left today`
+                  : "Awaiting wallet claim"}
+              </span>
+              <span>{invite.redemptionCount} total invite use{invite.redemptionCount === 1 ? "" : "s"}</span>
+            </div>
+            <button
+              className="referral-copy-button"
+              disabled={invite.status !== "active"}
+              onClick={() => void navigator.clipboard?.writeText(invite.link)}
+              type="button"
+            >
+              Copy
+            </button>
           </div>
         ) : (
-          state.status !== "loading" ? <p className="referral-muted">No invite links claimed yet.</p> : null
+          state.status !== "loading" ? <p className="referral-muted">No invite link claimed yet.</p> : null
         )}
       </div>
     </section>

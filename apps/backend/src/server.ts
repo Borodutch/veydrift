@@ -62,8 +62,11 @@ import {
 import {
   buildReferralRedemption,
   createReferralStore,
+  ReferralInviteeAlreadyRedeemedError,
+  ReferralInviteUnclaimedError,
   ReferralInviteStore,
-  ReferralQuotaError
+  ReferralQuotaError,
+  ReferralSelfInviteError
 } from "./referrals";
 import { deriveInfrastructureFields, isCombatShipId, zeroResources } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
@@ -574,7 +577,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         if (!settlement.homePlanetId) {
           return Response.json({
             error: "no_home_planet",
-            message: "Settle a first planet before claiming referral invite codes."
+            message: "Settle a first planet before claiming a referral invite code."
           }, {
             headers: corsHeaders,
             status: 403
@@ -586,9 +589,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       } catch (error) {
         if (error instanceof ReferralQuotaError) {
           return Response.json({
-            error: "referral_quota_exceeded",
-            message: "Referral claim quota exceeded.",
-            nextClaimAt: error.nextClaimAt
+            error: "referral_redemption_quota_exceeded",
+            message: "Referral redemption quota exceeded.",
+            nextRedemptionAt: error.nextClaimAt
           }, {
             headers: corsHeaders,
             status: 429
@@ -621,7 +624,25 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const body = await readJsonBody(request);
         const invitee = String(body?.invitee ?? "");
         assertAddress(invitee);
-        const invite = referralStore.findByCode(body?.code);
+        if (!loaded.config.referralSignerPrivateKey) {
+          return Response.json({
+            error: "referral_signer_unconfigured",
+            message: "Referral invites are not configured on this deployment."
+          }, {
+            headers: corsHeaders,
+            status: 503
+          });
+        }
+        if (!(loaded.config.settlementContractAddress ?? loaded.config.gameContractAddress)) {
+          return Response.json({
+            error: "referral_contract_unconfigured",
+            message: "Referral settlement is not configured on this deployment."
+          }, {
+            headers: corsHeaders,
+            status: 503
+          });
+        }
+        const invite = referralStore.recordRedemption(body?.code, invitee);
         if (!invite) {
           return Response.json({
             error: "referral_code_not_found",
@@ -635,6 +656,43 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           headers: corsHeaders
         });
       } catch (error) {
+        if (error instanceof ReferralInviteUnclaimedError) {
+          return Response.json({
+            error: "referral_invite_unclaimed",
+            message: error.message
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+        if (error instanceof ReferralInviteeAlreadyRedeemedError) {
+          return Response.json({
+            error: "referral_invitee_already_redeemed",
+            message: error.message
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+        if (error instanceof ReferralSelfInviteError) {
+          return Response.json({
+            error: "referral_self_invite",
+            message: error.message
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+        if (error instanceof ReferralQuotaError) {
+          return Response.json({
+            error: "referral_redemption_quota_exceeded",
+            message: "Referral redemption quota exceeded.",
+            nextRedemptionAt: error.nextClaimAt
+          }, {
+            headers: corsHeaders,
+            status: 429
+          });
+        }
         return errorResponse(error, 400);
       }
     }

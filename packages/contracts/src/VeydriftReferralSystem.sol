@@ -12,34 +12,43 @@ contract VeydriftReferralSystem {
 
     struct ReferralInvite {
         address inviter;
-        bool used;
     }
 
-    struct ReferralClaimWindow {
-        uint64 startedAt;
-        uint8 count;
+    struct ReferralRedemptionWindow {
+        uint64[3] redeemedAt;
     }
 
     address public owner;
     address public game;
     address public referralSigner;
     mapping(bytes32 commitment => ReferralInvite invite) public referralInvites;
-    mapping(address inviter => ReferralClaimWindow claimWindow) public referralClaimWindows;
+    mapping(address inviter => bytes32 commitment) public referralCommitmentOf;
+    mapping(bytes32 commitment => ReferralRedemptionWindow redemptionWindow) private
+        _referralRedemptionWindows;
+    mapping(bytes32 commitment => mapping(address invitee => bool redeemed)) public
+        referralRedemptions;
 
     error Unauthorized(address account);
     error ReferralSignerUnset();
     error ReferralCommitmentInvalid();
     error ReferralCommitmentAlreadyClaimed(bytes32 commitment);
     error ReferralInviteInvalid(bytes32 commitment);
-    error ReferralInviteUsed(bytes32 commitment);
+    error ReferralInviteAlreadyClaimed(address inviter, bytes32 commitment);
+    error ReferralInviteeAlreadyRedeemed(bytes32 commitment, address invitee);
     error ReferralSignatureInvalid();
     error ReferralSelfInvite();
-    error ReferralClaimQuotaExceeded(uint64 resetsAt);
+    error ReferralRedemptionQuotaExceeded(bytes32 commitment, uint64 resetsAt);
 
     event ReferralGameUpdated(address indexed oldGame, address indexed newGame);
     event ReferralSignerUpdated(address indexed oldSigner, address indexed newSigner);
     event ReferralCodeClaimed(
         address indexed inviter, bytes32 indexed commitment, uint64 claimedAt
+    );
+    event ReferralInviteRedeemed(
+        address indexed inviter,
+        address indexed invitee,
+        bytes32 indexed commitment,
+        uint64 redeemedAt
     );
 
     constructor(address initialOwner) {
@@ -74,12 +83,16 @@ contract VeydriftReferralSystem {
         if (referralInvites[commitment].inviter != address(0)) {
             revert ReferralCommitmentAlreadyClaimed(commitment);
         }
+        bytes32 existingCommitment = referralCommitmentOf[msg.sender];
+        if (existingCommitment != bytes32(0)) {
+            revert ReferralInviteAlreadyClaimed(msg.sender, existingCommitment);
+        }
         if (game == address(0) || IVeydriftReferralGame(game).homePlanetOf(msg.sender) == 0) {
             revert Unauthorized(msg.sender);
         }
 
-        _consumeClaimQuota(msg.sender);
-        referralInvites[commitment] = ReferralInvite({inviter: msg.sender, used: false});
+        referralCommitmentOf[msg.sender] = commitment;
+        referralInvites[commitment] = ReferralInvite({inviter: msg.sender});
         emit ReferralCodeClaimed(msg.sender, commitment, uint64(block.timestamp));
     }
 
@@ -97,13 +110,17 @@ contract VeydriftReferralSystem {
         ReferralInvite storage invite = referralInvites[commitment];
         inviter = invite.inviter;
         if (inviter == address(0)) revert ReferralInviteInvalid(commitment);
-        if (invite.used) revert ReferralInviteUsed(commitment);
         if (inviter == invitee) revert ReferralSelfInvite();
+        if (referralRedemptions[commitment][invitee]) {
+            revert ReferralInviteeAlreadyRedeemed(commitment, invitee);
+        }
         if (!_validReferralSignature(invitee, commitment, v, r, s, signer)) {
             revert ReferralSignatureInvalid();
         }
 
-        invite.used = true;
+        _consumeRedemptionQuota(commitment);
+        referralRedemptions[commitment][invitee] = true;
+        emit ReferralInviteRedeemed(inviter, invitee, commitment, uint64(block.timestamp));
     }
 
     function _validReferralSignature(
@@ -124,16 +141,53 @@ contract VeydriftReferralSystem {
         return ecrecover(digest, v, r, s) == signer;
     }
 
-    function _consumeClaimQuota(address inviter) private {
-        ReferralClaimWindow storage window = referralClaimWindows[inviter];
+    function _consumeRedemptionQuota(bytes32 commitment) private {
+        ReferralRedemptionWindow storage window = _referralRedemptionWindows[commitment];
         uint64 nowTimestamp = uint64(block.timestamp);
-        uint64 resetsAt = window.startedAt + REFERRAL_CLAIM_WINDOW;
-        if (window.count == 0 || nowTimestamp >= resetsAt) {
-            window.startedAt = nowTimestamp;
-            window.count = 1;
-            return;
+        uint256 oldestIndex = 0;
+        uint64 oldestActive = type(uint64).max;
+
+        for (uint256 index = 0; index < REFERRAL_CLAIM_LIMIT; index++) {
+            uint64 redeemedAt = window.redeemedAt[index];
+            if (redeemedAt == 0 || nowTimestamp >= redeemedAt + REFERRAL_CLAIM_WINDOW) {
+                window.redeemedAt[index] = nowTimestamp;
+                return;
+            }
+            if (redeemedAt < oldestActive) {
+                oldestActive = redeemedAt;
+                oldestIndex = index;
+            }
         }
-        if (window.count >= REFERRAL_CLAIM_LIMIT) revert ReferralClaimQuotaExceeded(resetsAt);
-        window.count += 1;
+
+        uint64 resetsAt = oldestActive + REFERRAL_CLAIM_WINDOW;
+        if (nowTimestamp < resetsAt) {
+            revert ReferralRedemptionQuotaExceeded(commitment, resetsAt);
+        }
+        window.redeemedAt[oldestIndex] = nowTimestamp;
+    }
+
+    function referralRedemptionQuota(bytes32 commitment)
+        external
+        view
+        returns (uint8 remainingRedemptions, uint64 nextRedemptionAt)
+    {
+        ReferralRedemptionWindow storage window = _referralRedemptionWindows[commitment];
+        uint64 nowTimestamp = uint64(block.timestamp);
+        uint64 oldestActive = type(uint64).max;
+        uint8 active;
+
+        for (uint256 index = 0; index < REFERRAL_CLAIM_LIMIT; index++) {
+            uint64 redeemedAt = window.redeemedAt[index];
+            if (redeemedAt == 0 || nowTimestamp >= redeemedAt + REFERRAL_CLAIM_WINDOW) {
+                continue;
+            }
+            active += 1;
+            if (redeemedAt < oldestActive) oldestActive = redeemedAt;
+        }
+
+        remainingRedemptions = REFERRAL_CLAIM_LIMIT - active;
+        if (remainingRedemptions == 0) {
+            nextRedemptionAt = oldestActive + REFERRAL_CLAIM_WINDOW;
+        }
     }
 }

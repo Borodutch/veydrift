@@ -359,9 +359,11 @@ abstract contract VeydriftGameStorage {
     error ReferralCommitmentInvalid();
     error ReferralCommitmentAlreadyClaimed(bytes32 commitment);
     error ReferralInviteInvalid(bytes32 commitment);
-    error ReferralInviteUsed(bytes32 commitment);
+    error ReferralInviteAlreadyClaimed(address inviter, bytes32 commitment);
+    error ReferralInviteeAlreadyRedeemed(bytes32 commitment, address invitee);
     error ReferralSignatureInvalid();
     error ReferralSelfInvite();
+    error ReferralRedemptionQuotaExceeded(bytes32 commitment, uint64 resetsAt);
     error InvalidResource(Resource resource);
     error ResourceTokenUnset(Resource resource);
     error ResourceTransferFailed(Resource resource, address token, uint256 amount);

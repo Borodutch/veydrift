@@ -413,25 +413,21 @@ contract VeydriftGameTest is Test {
         referralSystem.claimReferralCode(keccak256("ref-no-planet"));
     }
 
-    function testReferralClaimQuotaAllowsThreePerTwentyFourHours() public {
+    function testReferralClaimRejectsSecondActiveCode() public {
         vm.prank(player);
         game.startPlanet{value: 0.05 ether}();
 
+        bytes32 firstCommitment = keccak256("ref-active-1");
         vm.startPrank(player);
-        referralSystem.claimReferralCode(keccak256("ref-quota-1"));
-        referralSystem.claimReferralCode(keccak256("ref-quota-2"));
-        referralSystem.claimReferralCode(keccak256("ref-quota-3"));
-
-        uint64 resetsAt = uint64(block.timestamp + referralSystem.REFERRAL_CLAIM_WINDOW());
+        referralSystem.claimReferralCode(firstCommitment);
         vm.expectRevert(
             abi.encodeWithSelector(
-                VeydriftReferralSystem.ReferralClaimQuotaExceeded.selector, resetsAt
+                VeydriftReferralSystem.ReferralInviteAlreadyClaimed.selector,
+                player,
+                firstCommitment
             )
         );
-        referralSystem.claimReferralCode(keccak256("ref-quota-4"));
-
-        vm.warp(resetsAt);
-        referralSystem.claimReferralCode(keccak256("ref-quota-reset"));
+        referralSystem.claimReferralCode(keccak256("ref-active-2"));
         vm.stopPrank();
     }
 
@@ -455,10 +451,10 @@ contract VeydriftGameTest is Test {
         uint256 planetId = game.startPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
 
         VeydriftGameStorage.Planet memory planet = game.planet(planetId);
-        (address inviter, bool used) = referralSystem.referralInvites(commitment);
+        address inviter = referralSystem.referralInvites(commitment);
 
         assertEq(inviter, player);
-        assertTrue(used);
+        assertTrue(referralSystem.referralRedemptions(commitment, invitee));
         assertEq(planet.owner, invitee);
         assertEq(planet.resources.metal, 1_000);
         assertEq(planet.resources.crystal, 1_000);
@@ -467,7 +463,9 @@ contract VeydriftGameTest is Test {
         assertEq(address(game).balance, 0.075 ether);
     }
 
-    function testReferralSettlementRejectsReplaySelfInviteAndWrongInviteeSignature() public {
+    function testReferralSettlementRejectsDuplicateInviteeSelfInviteAndWrongInviteeSignature()
+        public
+    {
         address invitee = address(0xCAFE);
         address otherInvitee = address(0xD00D);
         bytes32 commitment = keccak256("another high entropy invite code");
@@ -496,13 +494,61 @@ contract VeydriftGameTest is Test {
         vm.prank(invitee);
         game.startPlanetWithReferral{value: 0.05 ether}(commitment, inviteeV, inviteeR, inviteeS);
 
-        (uint8 otherV, bytes32 otherR, bytes32 otherS) =
-            _referralSignature(otherInvitee, commitment);
-        vm.prank(otherInvitee);
+        vm.deal(invitee, 1 ether);
+        (uint8 replayV, bytes32 replayR, bytes32 replayS) = _referralSignature(invitee, commitment);
+        vm.prank(invitee);
         vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGameStorage.ReferralInviteUsed.selector, commitment)
+            abi.encodeWithSelector(
+                VeydriftGameStorage.ReferralInviteeAlreadyRedeemed.selector, commitment, invitee
+            )
         );
-        game.startPlanetWithReferral{value: 0.05 ether}(commitment, otherV, otherR, otherS);
+        game.startPlanetWithReferral{value: 0.05 ether}(commitment, replayV, replayR, replayS);
+    }
+
+    function testReferralSettlementAllowsThreeDistinctInviteesPerRollingDay() public {
+        bytes32 commitment = keccak256("rolling high entropy invite code");
+        address inviteeOne = address(0xCAFE1);
+        address inviteeTwo = address(0xCAFE2);
+        address inviteeThree = address(0xCAFE3);
+        address inviteeFour = address(0xCAFE4);
+        vm.deal(inviteeOne, 1 ether);
+        vm.deal(inviteeTwo, 1 ether);
+        vm.deal(inviteeThree, 1 ether);
+        vm.deal(inviteeFour, 1 ether);
+
+        vm.prank(admin);
+        referralSystem.setReferralSigner(vm.addr(referralSignerKey));
+
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+        vm.prank(player);
+        referralSystem.claimReferralCode(commitment);
+
+        uint64 firstRedemptionAt = uint64(block.timestamp);
+        _startPlanetWithReferral(inviteeOne, commitment);
+        vm.warp(firstRedemptionAt + 10 hours);
+        _startPlanetWithReferral(inviteeTwo, commitment);
+        vm.warp(firstRedemptionAt + 20 hours);
+        _startPlanetWithReferral(inviteeThree, commitment);
+
+        (uint8 remaining, uint64 nextRedemptionAt) =
+            referralSystem.referralRedemptionQuota(commitment);
+        assertEq(remaining, 0);
+        assertEq(nextRedemptionAt, firstRedemptionAt + 1 days);
+
+        (uint8 v, bytes32 r, bytes32 s) = _referralSignature(inviteeFour, commitment);
+        vm.prank(inviteeFour);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.ReferralRedemptionQuotaExceeded.selector,
+                commitment,
+                nextRedemptionAt
+            )
+        );
+        game.startPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
+
+        vm.warp(nextRedemptionAt);
+        _startPlanetWithReferral(inviteeFour, commitment);
     }
 
     function testConfiguredResourceTokenAddressesAreReadable() public view {
@@ -8301,6 +8347,12 @@ contract VeydriftGameTest is Test {
             keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", payloadHash));
         (v, r, s) = vm.sign(referralSignerKey, digest);
         assertEq(ecrecover(digest, v, r, s), vm.addr(referralSignerKey));
+    }
+
+    function _startPlanetWithReferral(address invitee, bytes32 commitment) internal {
+        (uint8 v, bytes32 r, bytes32 s) = _referralSignature(invitee, commitment);
+        vm.prank(invitee);
+        game.startPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
     }
 
     function _fundGameReserves(uint256 amount) internal {

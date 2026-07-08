@@ -73,16 +73,22 @@ export type ReferralInviteSummary = {
   code: string;
   commitment: string;
   link: string;
+  nextRedemptionAt: string | null;
   owner: string;
-  status: "pending_claim" | "unused";
+  redemptionCount: number;
+  remainingRedemptions: number;
+  status: "pending_claim" | "active";
   txHash?: string | null;
 };
 
 export type ReferralDashboard = {
   configured: boolean;
+  invite: ReferralInviteSummary | null;
   invites: ReferralInviteSummary[];
   nextClaimAt: string | null;
+  nextRedemptionAt: string | null;
   remainingClaims: number;
+  remainingRedemptions: number;
 };
 
 export type ReferralRedemption = {

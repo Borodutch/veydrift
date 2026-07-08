@@ -38,16 +38,16 @@ function testConfig(referralStorePath: string): BackendConfig {
 }
 
 describe("referral invites", () => {
-  test("generates high-entropy commitments and computes rolling quota", () => {
+  test("generates high-entropy commitments and computes rolling redemption quota", () => {
     const code = "abcDEF_123-abcDEF_123-abcDEF_123-abcDEF_123";
     expect(referralCommitment(code)).toMatch(/^0x[a-fA-F0-9]{64}$/);
     expect(referralCommitment(code)).toBe(referralCommitment(` ${code} `));
 
     const now = new Date("2026-07-08T12:00:00.000Z");
     const quota = referralQuota([
-      { claimedAt: "2026-07-08T11:00:00.000Z" },
-      { claimedAt: "2026-07-08T10:00:00.000Z" },
-      { claimedAt: "2026-07-08T09:00:00.000Z" }
+      { redeemedAt: "2026-07-08T11:00:00.000Z" },
+      { redeemedAt: "2026-07-08T10:00:00.000Z" },
+      { redeemedAt: "2026-07-08T09:00:00.000Z" }
     ], now);
     expect(quota.remainingClaims).toBe(0);
     expect(quota.nextClaimAt).toBe("2026-07-09T09:00:00.000Z");
@@ -82,6 +82,16 @@ describe("referral invites", () => {
       expect(created.commitment).toMatch(/^0x[a-fA-F0-9]{64}$/);
       expect(created.link).toBe(`https://veydrift.com?ref=${created.code}`);
 
+      const duplicateCreateResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals`, {
+        method: "POST"
+      }));
+      const duplicateCreate = await duplicateCreateResponse.json() as {
+        code: string;
+        commitment: string;
+      };
+      expect(duplicateCreate.code).toBe(created.code);
+      expect(duplicateCreate.commitment).toBe(created.commitment);
+
       const txHash = `0x${"aa".repeat(32)}`;
       const txResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals/claim-transaction`, {
         body: JSON.stringify({ commitment: created.commitment, txHash }),
@@ -108,13 +118,25 @@ describe("referral invites", () => {
       expect(redeem.signature).toMatch(/^0x[a-fA-F0-9]{130}$/);
       expect(privateKeyToAccount(signerKey).address.toLowerCase()).toBe("0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a");
 
+      const duplicateRedeemResponse = await handler(new Request("http://localhost/referrals/redeem", {
+        body: JSON.stringify({ code: created.code, invitee }),
+        method: "POST"
+      }));
+      expect(duplicateRedeemResponse.status).toBe(409);
+
       const dashboardResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals`));
       const dashboard = await dashboardResponse.json() as {
-        invites: Array<{ status: string; txHash: string | null }>;
+        invite: { status: string; txHash: string | null; redemptionCount: number } | null;
+        invites: Array<{ status: string; txHash: string | null; redemptionCount: number }>;
         remainingClaims: number;
+        remainingRedemptions: number;
       };
       expect(dashboard.remainingClaims).toBe(2);
-      expect(dashboard.invites[0]?.status).toBe("unused");
+      expect(dashboard.remainingRedemptions).toBe(2);
+      expect(dashboard.invite?.status).toBe("active");
+      expect(dashboard.invite?.redemptionCount).toBe(1);
+      expect(dashboard.invites).toHaveLength(1);
+      expect(dashboard.invites[0]?.status).toBe("active");
       expect(dashboard.invites[0]?.txHash).toBe(txHash);
     } finally {
       rmSync(dir, { force: true, recursive: true });
