@@ -51,6 +51,7 @@ const gameApiReadQueue: Array<() => void> = [];
 export type SettlementConfig = {
   address?: string;
   legacyAddress?: string;
+  referralSystemAddress?: string;
   resourceTokensConfigured?: boolean;
 };
 
@@ -63,7 +64,34 @@ export type SettlementFundingState = {
 };
 
 export type SettlementTransactionOptions = {
+  referral?: ReferralRedemption | null;
   startPriceWei?: bigint | null;
+};
+
+export type ReferralInviteSummary = {
+  claimedAt: string;
+  code: string;
+  commitment: string;
+  link: string;
+  owner: string;
+  status: "pending_claim" | "unused";
+  txHash?: string | null;
+};
+
+export type ReferralDashboard = {
+  configured: boolean;
+  invites: ReferralInviteSummary[];
+  nextClaimAt: string | null;
+  remainingClaims: number;
+};
+
+export type ReferralRedemption = {
+  code: string;
+  commitment: string;
+  r: string;
+  s: string;
+  signature: string;
+  v: number;
 };
 
 type TransactionRequest = {
@@ -1061,6 +1089,8 @@ const BASE_SEPOLIA_SWITCH_CONFIRM_INTERVAL_MS = 250;
 
 const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
 const START_PLANET_SELECTOR = "0xf45f1f18";
+const CLAIM_REFERRAL_CODE_SELECTOR = "0x760c4e71";
+const START_PLANET_WITH_REFERRAL_SELECTOR = "0xdad57ff9";
 const GAME_SELECTORS = {
   abandonPlanet: "0xfa16dddc",
   completeFleetMissionReturn: "0xc2472852",
@@ -1863,6 +1893,25 @@ export function encodeGameCall(selector: string, values: Array<bigint | number |
   return `${selector}${values.map((value) => BigInt(value).toString(16).padStart(64, "0")).join("")}`;
 }
 
+function encodeHexWord(value: string, label: string): string {
+  if (!/^0x[a-fA-F0-9]{64}$/.test(value)) {
+    throw new Error(`${label} must be a 0x-prefixed 32-byte hex value.`);
+  }
+  return value.replace(/^0x/, "").toLowerCase();
+}
+
+function encodeReferralSettlementData(selector: string, referral: ReferralRedemption): string {
+  return `${selector}${
+    encodeHexWord(referral.commitment, "Referral commitment")
+  }${
+    BigInt(referral.v).toString(16).padStart(64, "0")
+  }${
+    encodeHexWord(referral.r, "Referral signature r")
+  }${
+    encodeHexWord(referral.s, "Referral signature s")
+  }`;
+}
+
 export function encodeBurningChickenMoonCall(
   selector: string,
   tokenId: bigint | number | string,
@@ -2458,7 +2507,9 @@ export async function sendSettlementTransaction(
     return sendWalletTransaction(provider, account, {
       from: account,
       to: config.address,
-      data: START_PLANET_SELECTOR,
+      data: options.referral
+        ? encodeReferralSettlementData(START_PLANET_WITH_REFERRAL_SELECTOR, options.referral)
+        : START_PLANET_SELECTOR,
       value: encodeQuantity(options.startPriceWei)
     });
   }
@@ -2467,6 +2518,25 @@ export async function sendSettlementTransaction(
     from: account,
     to: config.address,
     data: settlementTransactionData()
+  });
+}
+
+export async function sendReferralClaimTransaction(
+  provider: Eip1193Provider,
+  account: string,
+  config: SettlementConfig,
+  commitment: string
+): Promise<string> {
+  if (!settlementContractConfigured(config)) {
+    throw new Error("Settlement contract address is not configured.");
+  }
+  if (!config.referralSystemAddress || !/^0x[a-fA-F0-9]{40}$/.test(config.referralSystemAddress)) {
+    throw new Error("Referral system address is not configured.");
+  }
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: config.referralSystemAddress,
+    data: `${CLAIM_REFERRAL_CODE_SELECTOR}${encodeHexWord(commitment, "Referral commitment")}`
   });
 }
 
@@ -3314,6 +3384,38 @@ export async function fetchSettlementFundingState(apiUrl: string, wallet: string
   };
 }
 
+export async function fetchReferralDashboard(apiUrl: string, wallet: string): Promise<ReferralDashboard> {
+  return fetchWalletJson<ReferralDashboard>(apiUrl, wallet, "referrals", "Referral invites");
+}
+
+export async function createReferralInvite(apiUrl: string, wallet: string): Promise<ReferralInviteSummary> {
+  return fetchGameApiMutation<ReferralInviteSummary>(
+    `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals`,
+    "Referral invite"
+  );
+}
+
+export async function recordReferralClaimTransaction(
+  apiUrl: string,
+  wallet: string,
+  commitment: string,
+  txHash: string
+): Promise<ReferralInviteSummary> {
+  return fetchGameApiMutation<ReferralInviteSummary>(
+    `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals/claim-transaction`,
+    "Referral claim transaction",
+    { commitment, txHash }
+  );
+}
+
+export async function redeemReferralCode(apiUrl: string, code: string, invitee: string): Promise<ReferralRedemption> {
+  return fetchGameApiMutation<ReferralRedemption>(
+    `${apiUrl.replace(/\/+$/, "")}/referrals/redeem`,
+    "Referral code",
+    { code, invitee }
+  );
+}
+
 export async function fetchWalletPlanets(apiUrl: string, wallet: string, options: WalletReadOptions = {}): Promise<WalletPlanetsResponse> {
   return fetchWalletJson<WalletPlanetsResponse>(apiUrl, wallet, withWalletReadOptions("planets", undefined, options), "Planets");
 }
@@ -3706,6 +3808,50 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+async function fetchGameApiMutation<T>(
+  url: string,
+  label: string,
+  body?: Record<string, unknown>
+): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error(`Timed out writing ${label.toLowerCase()} to the game API after ${Math.round(WALLET_API_READ_TIMEOUT_MS / 1_000)} seconds.`));
+  }, WALLET_API_READ_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...(body ? {
+        body: JSON.stringify(body),
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json"
+        }
+      } : {
+        headers: {
+          accept: "application/json"
+        }
+      }),
+      method: "POST",
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw controller.signal.reason instanceof Error
+        ? controller.signal.reason
+        : new Error(`Timed out writing ${label.toLowerCase()} to the game API after ${Math.round(WALLET_API_READ_TIMEOUT_MS / 1_000)} seconds.`);
+    }
+    throw new Error(walletApiNetworkFailureMessage(label, error));
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!response.ok) {
+    throw new Error(await apiErrorMessage(response, label));
+  }
+  return response.json() as Promise<T>;
 }
 
 async function fetchWalletJson<T>(

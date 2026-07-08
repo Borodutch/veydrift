@@ -25,7 +25,9 @@ import {
 } from "./transactionActionGate";
 import {
   BASE_SEPOLIA,
+  createReferralInvite,
   ensureBaseSepoliaNetwork,
+  fetchReferralDashboard,
   fetchSettlementFundingState,
   fetchWalletSettlement,
   getChainId,
@@ -38,6 +40,9 @@ import {
   WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
   requestAccounts,
   getAvailableWalletProviderDetails,
+  recordReferralClaimTransaction,
+  redeemReferralCode,
+  sendReferralClaimTransaction,
   sendSettlementTransaction,
   settlementContractConfigured,
   switchBaseSepoliaNetwork,
@@ -45,6 +50,8 @@ import {
   walletRequestErrorMessage,
   type Eip1193Provider,
   type PlanetSummary,
+  type ReferralDashboard,
+  type ReferralRedemption,
   type SettlementTransactionOptions,
   type SettlementFundingState,
   type SettlementConfig,
@@ -235,6 +242,13 @@ type SettlementFunding =
   | { status: "ready"; funding: SettlementFundingState }
   | { status: "error"; message: string };
 
+type ReferralProgramState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; dashboard: ReferralDashboard }
+  | { status: "claiming"; dashboard: ReferralDashboard }
+  | { status: "error"; message: string; dashboard?: ReferralDashboard };
+
 type WalletProviderDetails = Awaited<ReturnType<typeof getAvailableWalletProviderDetails>>;
 type WalletProviderContext = {
   miniAppMode: boolean;
@@ -268,6 +282,8 @@ export function FirstPlanetSettlementApp() {
   ));
   const [miniAppPlatformType, setMiniAppPlatformType] = useState<FarcasterMiniAppPlatformType | undefined>();
   const [settlementFunding, setSettlementFunding] = useState<SettlementFunding>({ status: "idle" });
+  const [referralProgram, setReferralProgram] = useState<ReferralProgramState>({ status: "idle" });
+  const [referralCodeInput, setReferralCodeInput] = useState(() => referralCodeFromCurrentUrl());
   const transactionActionGate = useRef(createTransactionActionGate()).current;
   const farcasterAutoConnectAttempted = useRef(false);
   const farcasterNetworkSetupAttempted = useRef<string>();
@@ -360,6 +376,9 @@ export function FirstPlanetSettlementApp() {
           config: address ? {
             address,
             ...(legacyAddress ? { legacyAddress } : {}),
+            ...(runtimeConfig.referralSystemAddress ? {
+              referralSystemAddress: runtimeConfig.referralSystemAddress
+            } : {}),
             resourceTokensConfigured: Boolean(
               runtimeConfig.resourceTokenAddresses.metal
                 && runtimeConfig.resourceTokenAddresses.crystal
@@ -369,6 +388,32 @@ export function FirstPlanetSettlementApp() {
         });
     }
   }, []);
+
+  useEffect(() => {
+    if (!hasOverview || !account || !settlementConfigState.apiUrl) {
+      setReferralProgram({ status: "idle" });
+      return;
+    }
+
+    let disposed = false;
+    setReferralProgram({ status: "loading" });
+    void fetchReferralDashboard(settlementConfigState.apiUrl, account)
+      .then((dashboard) => {
+        if (!disposed) setReferralProgram({ status: "ready", dashboard });
+      })
+      .catch((error) => {
+        if (!disposed) {
+          setReferralProgram({
+            status: "error",
+            message: walletRequestErrorMessage(error)
+          });
+        }
+      });
+
+    return () => {
+      disposed = true;
+    };
+  }, [account, hasOverview, settlementConfigState.apiUrl]);
 
   useEffect(() => {
     let disposed = false;
@@ -997,11 +1042,12 @@ export function FirstPlanetSettlementApp() {
       });
 
       try {
+        const referral = await referralRedemptionForSettlement(wallet.account);
         const txHash = await sendSettlementTransaction(
           provider,
           wallet.account,
           settlementConfig,
-          settlementTransactionOptions(funding)
+          settlementTransactionOptions(funding, referral)
         );
         setPlanet({
           kind: "pending",
@@ -1024,6 +1070,70 @@ export function FirstPlanetSettlementApp() {
         setPlanet({
           kind: isUserRejected(error) ? "rejected" : "error",
           message: isUserRejected(error) ? "Settlement transaction was rejected." : walletRequestErrorMessage(error)
+        });
+      }
+    });
+  }
+
+  async function referralRedemptionForSettlement(invitee: string): Promise<ReferralRedemption | undefined> {
+    const code = referralCodeInput.trim();
+    if (!code) return undefined;
+    if (!settlementConfigState.apiUrl) {
+      throw new Error("Referral codes are unavailable because the game API is not configured.");
+    }
+    return redeemReferralCode(settlementConfigState.apiUrl, code, invitee);
+  }
+
+  async function refreshReferralProgram(connectedAccount = account) {
+    if (!connectedAccount || !settlementConfigState.apiUrl) return;
+    setReferralProgram({ status: "loading" });
+    try {
+      setReferralProgram({
+        status: "ready",
+        dashboard: await fetchReferralDashboard(settlementConfigState.apiUrl, connectedAccount)
+      });
+    } catch (error) {
+      setReferralProgram({
+        status: "error",
+        message: walletRequestErrorMessage(error)
+      });
+    }
+  }
+
+  async function claimReferralInvite() {
+    await transactionActionGate.run("referral:claim", async () => {
+      if (!provider || wallet.kind !== "connected" || !settlementConfigState.apiUrl) return;
+      const currentDashboard = referralProgram.status === "ready"
+          || referralProgram.status === "claiming"
+          || referralProgram.status === "error"
+        ? referralProgram.dashboard
+        : undefined;
+      if (currentDashboard) {
+        setReferralProgram({ status: "claiming", dashboard: currentDashboard });
+      } else {
+        setReferralProgram({ status: "loading" });
+      }
+
+      try {
+        const invite = await createReferralInvite(settlementConfigState.apiUrl, wallet.account);
+        const txHash = await sendReferralClaimTransaction(
+          provider,
+          wallet.account,
+          settlementConfig,
+          invite.commitment
+        );
+        await recordReferralClaimTransaction(
+          settlementConfigState.apiUrl,
+          wallet.account,
+          invite.commitment,
+          txHash
+        );
+        await refreshReferralProgram(wallet.account);
+      } catch (error) {
+        setReferralProgram({
+          status: "error",
+          message: isUserRejected(error) ? "Referral claim transaction was rejected." : walletRequestErrorMessage(error),
+          ...(currentDashboard ? { dashboard: currentDashboard } : {})
         });
       }
     });
@@ -1084,12 +1194,18 @@ export function FirstPlanetSettlementApp() {
 
   if (hasOverview) {
     return (
-      <PlayableMvpApp
-        provider={provider}
-        account={account}
-        miniAppMode={miniAppMode}
-        planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
-      />
+      <>
+        <ReferralProgramPanel
+          onClaim={claimReferralInvite}
+          state={referralProgram}
+        />
+        <PlayableMvpApp
+          provider={provider}
+          account={account}
+          miniAppMode={miniAppMode}
+          planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
+        />
+      </>
     );
   }
 
@@ -1118,6 +1234,11 @@ export function FirstPlanetSettlementApp() {
 
       <section className="settlement-shell" aria-label="First planet settlement">
         <div className="settlement-command">
+          <ReferralCodeField
+            disabled={planet.kind === "pending"}
+            onChange={setReferralCodeInput}
+            value={referralCodeInput}
+          />
           <FlowBody
             mode={mode}
             onConnect={connectWallet}
@@ -1138,6 +1259,101 @@ export function FirstPlanetSettlementApp() {
   );
 }
 
+function ReferralProgramPanel({
+  onClaim,
+  state,
+}: {
+  onClaim: () => void;
+  state: ReferralProgramState;
+}) {
+  const dashboard = state.status === "ready" || state.status === "claiming" || state.status === "error"
+    ? state.dashboard
+    : undefined;
+  const claiming = state.status === "claiming";
+  const canClaim = Boolean(dashboard?.configured && dashboard.remainingClaims > 0 && !claiming);
+
+  return (
+    <section className="referral-program" aria-label="Referral invites">
+      <div className="referral-program-inner">
+        <div className="referral-program-header">
+          <div>
+            <span className="referral-kicker">Referral invites</span>
+            <h2>Invite commanders</h2>
+          </div>
+          <button
+            className="referral-claim-button"
+            disabled={!canClaim}
+            onClick={onClaim}
+            type="button"
+          >
+            {claiming ? "Claiming" : `Claim code${dashboard ? ` (${dashboard.remainingClaims}/3)` : ""}`}
+          </button>
+        </div>
+
+        {state.status === "loading" ? (
+          <p className="referral-muted">Loading invite slots.</p>
+        ) : state.status === "error" ? (
+          <p className="referral-error">{state.message}</p>
+        ) : null}
+
+        {dashboard && !dashboard.configured ? (
+          <p className="referral-muted">Referral invites are not configured on this deployment.</p>
+        ) : null}
+
+        {dashboard?.nextClaimAt ? (
+          <p className="referral-muted">Next slot opens {formatDateTime(dashboard.nextClaimAt)}.</p>
+        ) : null}
+
+        {dashboard?.invites.length ? (
+          <div className="referral-link-list">
+            {dashboard.invites.slice(0, 3).map((invite) => (
+              <div className="referral-link-row" key={invite.commitment}>
+                <div>
+                  <strong>{invite.link}</strong>
+                  <span>{invite.status === "unused" ? "Unused" : "Awaiting wallet claim"}</span>
+                </div>
+                <button
+                  className="referral-copy-button"
+                  onClick={() => void navigator.clipboard?.writeText(invite.link)}
+                  type="button"
+                >
+                  Copy
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          state.status !== "loading" ? <p className="referral-muted">No invite links claimed yet.</p> : null
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ReferralCodeField({
+  disabled,
+  onChange,
+  value,
+}: {
+  disabled?: boolean;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  return (
+    <label className="referral-code-field">
+      <span>Got invite code?</span>
+      <input
+        autoComplete="off"
+        disabled={disabled}
+        inputMode="text"
+        onInput={(event) => onChange((event.currentTarget as HTMLInputElement).value)}
+        placeholder="Paste invite code"
+        value={value}
+      />
+    </label>
+  );
+}
+
 export function SettlementSupportLink() {
   return (
     <a
@@ -1152,6 +1368,20 @@ export function SettlementSupportLink() {
       <span>Telegram</span>
     </a>
   );
+}
+
+function referralCodeFromCurrentUrl(): string {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("ref")?.trim() ?? "";
+}
+
+function formatDateTime(value: string): string {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return value;
+  return new Date(timestamp).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short"
+  });
 }
 
 function FlowBody({
@@ -1326,8 +1556,12 @@ export function settlementLaunchBlocker(
   return undefined;
 }
 
-function settlementTransactionOptions(funding: SettlementFundingState): SettlementTransactionOptions {
+function settlementTransactionOptions(
+  funding: SettlementFundingState,
+  referral?: ReferralRedemption
+): SettlementTransactionOptions {
   return {
+    ...(referral ? { referral } : {}),
     startPriceWei: funding.startPriceWei,
   };
 }
@@ -1519,8 +1753,12 @@ function PrimaryButton({
 
 function buildSettlementConfig(): SettlementConfig {
   const address = import.meta.env.VITE_VEYDRIFT_SETTLEMENT_ADDRESS;
+  const referralSystemAddress = import.meta.env.VITE_VEYDRIFT_REFERRAL_SYSTEM_ADDRESS;
 
-  return address ? { address } : {};
+  return {
+    ...(address ? { address } : {}),
+    ...(referralSystemAddress ? { referralSystemAddress } : {}),
+  };
 }
 
 type WaitForIndexedSettledPlanetOptions = {

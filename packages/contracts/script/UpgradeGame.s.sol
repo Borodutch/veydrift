@@ -10,6 +10,7 @@ import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionMod
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
+import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSettlementModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
@@ -61,9 +62,13 @@ contract UpgradeGame is Script {
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
+        address referralSystem = vm.envAddress("VEYDRIFT_REFERRAL_SYSTEM_ADDRESS");
+        VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
+            new VeydriftFirstPlanetSettlementModule(referralSystem);
 
         VeydriftGame newImpl = new VeydriftGame(
             moduleAdmin,
+            address(firstPlanetSettlementModule),
             address(gameplayModule),
             address(planetManagementModule),
             address(attackProtectionModule),

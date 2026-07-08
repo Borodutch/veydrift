@@ -117,13 +117,11 @@ library VeydriftPlanetGeneration {
         uint8 maxPosition
     ) internal pure returns (bool) {
         validateCoordinates(galaxy, system, position, maxGalaxy, maxSystem, maxPosition);
-        int256[15] memory margins;
         uint256 populatedCount;
         int256 targetMargin;
 
         for (uint8 slot = 1; slot <= maxPosition;) {
             int256 margin = _slotOccupancyMargin(chainId, universeAddress, galaxy, system, slot);
-            margins[slot - 1] = margin;
             if (margin > 0) populatedCount += 1;
             if (slot == position) targetMargin = margin;
             unchecked {
@@ -135,7 +133,7 @@ library VeydriftPlanetGeneration {
             if (targetMargin <= 0) return false;
             uint256 rank = 1;
             for (uint8 slot = 1; slot <= maxPosition;) {
-                int256 margin = margins[slot - 1];
+                int256 margin = _slotOccupancyMargin(chainId, universeAddress, galaxy, system, slot);
                 if (margin > targetMargin || (margin == targetMargin && slot < position)) {
                     rank += 1;
                 }
@@ -151,7 +149,7 @@ library VeydriftPlanetGeneration {
             uint256 needed = MIN_POPULATED_SLOTS - populatedCount;
             uint256 rank = 1;
             for (uint8 slot = 1; slot <= maxPosition;) {
-                int256 margin = margins[slot - 1];
+                int256 margin = _slotOccupancyMargin(chainId, universeAddress, galaxy, system, slot);
                 if (
                     margin <= 0
                         && (margin > targetMargin || (margin == targetMargin && slot < position))
