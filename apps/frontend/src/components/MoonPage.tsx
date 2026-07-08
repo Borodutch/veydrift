@@ -1,4 +1,4 @@
-import { ArrowLeftRight, Crosshair, Eye, Flame, Info, Orbit, Rocket, Shield, X } from "lucide-preact";
+import { ArrowLeftRight, Crosshair, ExternalLink, Eye, Flame, Info, Orbit, Rocket, Shield, X } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
@@ -61,6 +61,8 @@ interface MoonPageProps {
   parentPlanetType?: PlanetType | null | undefined;
   transactionUnavailableReason?: string | undefined;
 }
+
+const burningChickensOpenSeaCollectionUrl = "https://opensea.io/collection/chickens-by-eggs";
 
 export type MoonOverviewAction = {
   disabledReason?: string | undefined;
@@ -200,6 +202,15 @@ function ChickenBurnPanel({
           </div>
           <h3 className="text-base font-semibold text-white">Burning Chickens</h3>
         </div>
+        <a
+          className="inline-flex h-9 items-center gap-2 rounded border border-amber-200/20 bg-amber-200/10 px-3 text-xs font-semibold text-amber-100 transition hover:border-amber-200/40 hover:bg-amber-200/20"
+          href={burningChickensOpenSeaCollectionUrl}
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          <ExternalLink aria-hidden="true" size={14} strokeWidth={1.8} />
+          Browse Chickens
+        </a>
       </div>
 
       {!configured ? (
@@ -210,7 +221,7 @@ function ChickenBurnPanel({
 
       {configured ? (
         <p className="mt-3 rounded border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
-          During testnet, each account can receive only {capMax} Chicken moons. {capCount} / {capMax} testnet Chicken moons used.
+          Any Chicken NFT from the OpenSea collection can be burned for a moon at any planet.
         </p>
       ) : null}
 
