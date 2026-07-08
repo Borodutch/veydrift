@@ -463,6 +463,39 @@ contract VeydriftGameTest is Test {
         assertEq(address(game).balance, 0.075 ether);
     }
 
+    function testReferralSettleFirstPlanetCompatibilityPathPaysInviter() public {
+        address invitee = address(0xBEEF);
+        bytes32 commitment = keccak256("legacy high entropy invite code");
+        vm.deal(invitee, 1 ether);
+
+        vm.prank(admin);
+        referralSystem.setReferralSigner(vm.addr(referralSignerKey));
+
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+        uint256 inviterBalanceAfterStart = player.balance;
+
+        vm.prank(player);
+        referralSystem.claimReferralCode(commitment);
+
+        (uint8 v, bytes32 r, bytes32 s) = _referralSignature(invitee, commitment);
+        vm.prank(invitee);
+        VeydriftGameStorage.FirstPlanet memory settled =
+            game.settleFirstPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
+
+        uint256 planetId = game.homePlanetOf(invitee);
+        VeydriftGameStorage.Planet memory planet = game.planet(planetId);
+
+        assertTrue(referralSystem.referralRedemptions(commitment, invitee));
+        assertEq(planet.owner, invitee);
+        assertEq(planet.resources.metal, 1_000);
+        assertEq(planet.resources.crystal, 1_000);
+        assertEq(settled.galaxy, planet.galaxy);
+        assertEq(settled.system, planet.system);
+        assertEq(settled.position, planet.position);
+        assertEq(player.balance, inviterBalanceAfterStart + 0.025 ether);
+    }
+
     function testReferralSettlementRejectsDuplicateInviteeSelfInviteAndWrongInviteeSignature()
         public
     {

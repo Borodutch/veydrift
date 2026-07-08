@@ -59,8 +59,11 @@ describe("referral invites", () => {
       const storePath = join(dir, "referrals.json");
       const config = testConfig(storePath);
       const store = new ReferralInviteStore(storePath);
+      let inviteeHomePlanetId: string | null = null;
       const indexer = {
-        walletSettlement: () => ({ homePlanetId: "1" })
+        walletSettlement: (wallet: string) => ({
+          homePlanetId: wallet.toLowerCase() === player.toLowerCase() ? "1" : inviteeHomePlanetId
+        })
       } as unknown as SettlementIndexer;
       const handler = createRequestHandler({
         config,
@@ -122,7 +125,34 @@ describe("referral invites", () => {
         body: JSON.stringify({ code: created.code, invitee }),
         method: "POST"
       }));
-      expect(duplicateRedeemResponse.status).toBe(409);
+      expect(duplicateRedeemResponse.status).toBe(200);
+
+      const beforeConfirmationDashboardResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals`));
+      const beforeConfirmationDashboard = await beforeConfirmationDashboardResponse.json() as {
+        invite: { redemptionCount: number } | null;
+        remainingRedemptions: number;
+      };
+      expect(beforeConfirmationDashboard.remainingRedemptions).toBe(3);
+      expect(beforeConfirmationDashboard.invite?.redemptionCount).toBe(0);
+
+      const unconfirmedRedemptionResponse = await handler(new Request("http://localhost/referrals/redeem-transaction", {
+        body: JSON.stringify({ code: created.code, invitee, txHash: `0x${"bb".repeat(32)}` }),
+        method: "POST"
+      }));
+      expect(unconfirmedRedemptionResponse.status).toBe(409);
+
+      inviteeHomePlanetId = "2";
+      const confirmedRedemptionResponse = await handler(new Request("http://localhost/referrals/redeem-transaction", {
+        body: JSON.stringify({ code: created.code, invitee, txHash: `0x${"bb".repeat(32)}` }),
+        method: "POST"
+      }));
+      expect(confirmedRedemptionResponse.status).toBe(200);
+
+      const duplicateConfirmedRedeemResponse = await handler(new Request("http://localhost/referrals/redeem", {
+        body: JSON.stringify({ code: created.code, invitee }),
+        method: "POST"
+      }));
+      expect(duplicateConfirmedRedeemResponse.status).toBe(409);
 
       const dashboardResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals`));
       const dashboard = await dashboardResponse.json() as {

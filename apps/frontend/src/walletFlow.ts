@@ -1094,6 +1094,7 @@ const BASE_SEPOLIA_SWITCH_CONFIRM_ATTEMPTS = 6;
 const BASE_SEPOLIA_SWITCH_CONFIRM_INTERVAL_MS = 250;
 
 const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
+const SETTLE_FIRST_PLANET_WITH_REFERRAL_SELECTOR = "0x2f7a1ec2";
 const START_PLANET_SELECTOR = "0xf45f1f18";
 const CLAIM_REFERRAL_CODE_SELECTOR = "0x760c4e71";
 const START_PLANET_WITH_REFERRAL_SELECTOR = "0xdad57ff9";
@@ -2523,7 +2524,9 @@ export async function sendSettlementTransaction(
   return sendWalletTransaction(provider, account, {
     from: account,
     to: config.address,
-    data: settlementTransactionData()
+    data: options.referral
+      ? encodeReferralSettlementData(SETTLE_FIRST_PLANET_WITH_REFERRAL_SELECTOR, options.referral)
+      : settlementTransactionData()
   });
 }
 
@@ -3419,6 +3422,19 @@ export async function redeemReferralCode(apiUrl: string, code: string, invitee: 
     `${apiUrl.replace(/\/+$/, "")}/referrals/redeem`,
     "Referral code",
     { code, invitee }
+  );
+}
+
+export async function recordReferralRedemptionTransaction(
+  apiUrl: string,
+  code: string,
+  invitee: string,
+  txHash: string
+): Promise<void> {
+  await fetchGameApiMutation(
+    `${apiUrl.replace(/\/+$/, "")}/referrals/redeem-transaction`,
+    "Referral redemption transaction",
+    { code, invitee, txHash }
   );
 }
 

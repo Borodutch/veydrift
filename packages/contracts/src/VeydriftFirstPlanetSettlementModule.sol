@@ -42,6 +42,17 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         return _firstPlanetFrom(planetId);
     }
 
+    function settleFirstPlanetWithReferral(bytes32 commitment, uint8 v, bytes32 r, bytes32 s)
+        external
+        payable
+        returns (FirstPlanet memory settledPlanet)
+    {
+        address inviter = IVeydriftReferralSystem(_referralSystem)
+            .redeemReferralInvite(msg.sender, commitment, v, r, s);
+        uint256 planetId = _startPlanet(msg.sender, msg.value, inviter);
+        return _firstPlanetFrom(planetId);
+    }
+
     function _startPlanet(address player, uint256 payment, address inviter)
         private
         returns (uint256 planetId)

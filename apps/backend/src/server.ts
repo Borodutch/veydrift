@@ -642,7 +642,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             status: 503
           });
         }
-        const invite = referralStore.recordRedemption(body?.code, invitee);
+        const invite = referralStore.pendingRedemption(body?.code, invitee);
         if (!invite) {
           return Response.json({
             error: "referral_code_not_found",
@@ -653,6 +653,83 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           });
         }
         return Response.json(await buildReferralRedemption(loaded.config, invite, invitee), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        if (error instanceof ReferralInviteUnclaimedError) {
+          return Response.json({
+            error: "referral_invite_unclaimed",
+            message: error.message
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+        if (error instanceof ReferralInviteeAlreadyRedeemedError) {
+          return Response.json({
+            error: "referral_invitee_already_redeemed",
+            message: error.message
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+        if (error instanceof ReferralSelfInviteError) {
+          return Response.json({
+            error: "referral_self_invite",
+            message: error.message
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+        if (error instanceof ReferralQuotaError) {
+          return Response.json({
+            error: "referral_redemption_quota_exceeded",
+            message: "Referral redemption quota exceeded.",
+            nextRedemptionAt: error.nextClaimAt
+          }, {
+            headers: corsHeaders,
+            status: 429
+          });
+        }
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname === "/referrals/redeem-transaction") {
+      try {
+        const body = await readJsonBody(request);
+        const invitee = String(body?.invitee ?? "");
+        const txHash = String(body?.txHash ?? "");
+        assertAddress(invitee);
+        if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+          throw new Error("txHash must be a 0x-prefixed 32-byte transaction hash.");
+        }
+        if (!indexer) return indexedReadNotReadyResponse("referral redemption", indexer, { invitee });
+        const settlement = indexer.walletSettlement(invitee);
+        if (!settlement.homePlanetId) {
+          return Response.json({
+            error: "referral_redemption_unconfirmed",
+            message: "Referral redemption is not indexed as a settled first planet yet."
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
+        }
+        const invite = referralStore.recordRedemption(body?.code, invitee, txHash);
+        if (!invite) {
+          return Response.json({
+            error: "referral_code_not_found",
+            message: "Referral code was not found."
+          }, {
+            headers: corsHeaders,
+            status: 404
+          });
+        }
+        return Response.json({
+          invite: referralStore.dashboard(invite.owner).invite
+        }, {
           headers: corsHeaders
         });
       } catch (error) {

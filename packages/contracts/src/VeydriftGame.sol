@@ -57,6 +57,14 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToFirstPlanetSettlementModule();
     }
 
+    function settleFirstPlanetWithReferral(bytes32, uint8, bytes32, bytes32)
+        external
+        payable
+        returns (FirstPlanet memory)
+    {
+        _delegateToFirstPlanetSettlementModule();
+    }
+
     function hasFirstPlanet(address player) external view returns (bool) {
         return homePlanetOf[player] != 0;
     }

@@ -41,6 +41,7 @@ import {
   requestAccounts,
   getAvailableWalletProviderDetails,
   recordReferralClaimTransaction,
+  recordReferralRedemptionTransaction,
   redeemReferralCode,
   sendReferralClaimTransaction,
   sendSettlementTransaction,
@@ -1060,7 +1061,23 @@ export function FirstPlanetSettlementApp() {
           txHash
         });
 
-        const settlement = await waitForIndexedSettledPlanet(settlementConfigState.apiUrl, wallet.account);
+        const apiUrl = settlementConfigState.apiUrl;
+        if (!apiUrl) {
+          throw new Error("Settlement indexing is unavailable because the game API is not configured.");
+        }
+        const settlement = await waitForIndexedSettledPlanet(apiUrl, wallet.account);
+        if (referral) {
+          try {
+            await recordReferralRedemptionTransaction(
+              apiUrl,
+              referral.code,
+              wallet.account,
+              txHash
+            );
+          } catch (error) {
+            console.error("Failed to record confirmed referral redemption", error);
+          }
+        }
 
         setPlanet({
           kind: "success",

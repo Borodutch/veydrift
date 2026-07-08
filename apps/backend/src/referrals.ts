@@ -13,6 +13,7 @@ export const referralClaimsPerWindow = 3;
 export type ReferralRedemptionRecord = {
   invitee: string;
   redeemedAt: string;
+  txHash?: string | null;
 };
 
 export type ReferralInviteRecord = {
@@ -120,12 +121,38 @@ export class ReferralInviteStore {
     return referralInviteSummary(invite);
   }
 
-  recordRedemption(code: unknown, invitee: string, now = new Date()): ReferralInviteRecord | undefined {
+  pendingRedemption(code: unknown, invitee: string, now = new Date()): ReferralInviteRecord | undefined {
     const normalized = normalizeReferralCode(code);
     const normalizedInvitee = normalizeAddress(invitee).toLowerCase();
+    const invite = this.read().invites.find((candidate) => candidate.code === normalized);
+    if (!invite) return undefined;
+    this.assertRedeemable(invite, normalizedInvitee, now);
+    return invite;
+  }
+
+  recordRedemption(code: unknown, invitee: string, txHash: string, now = new Date()): ReferralInviteRecord | undefined {
+    const normalized = normalizeReferralCode(code);
+    const normalizedInvitee = normalizeAddress(invitee).toLowerCase();
+    const normalizedTxHash = normalizeTxHash(txHash);
     const store = this.read();
     const invite = store.invites.find((candidate) => candidate.code === normalized);
     if (!invite) return undefined;
+    this.assertRedeemable(invite, normalizedInvitee, now);
+
+    const redemptions = invite.redemptions ?? [];
+    invite.redemptions = [
+      ...redemptions,
+      {
+        invitee: normalizedInvitee,
+        redeemedAt: now.toISOString(),
+        txHash: normalizedTxHash
+      }
+    ];
+    this.write(store);
+    return invite;
+  }
+
+  private assertRedeemable(invite: ReferralInviteRecord, normalizedInvitee: string, now: Date): void {
     if (!invite.txHash) {
       throw new ReferralInviteUnclaimedError();
     }
@@ -140,15 +167,6 @@ export class ReferralInviteStore {
     if (quota.remainingClaims <= 0) {
       throw new ReferralQuotaError(quota.nextClaimAt);
     }
-    invite.redemptions = [
-      ...redemptions,
-      {
-        invitee: normalizedInvitee,
-        redeemedAt: now.toISOString()
-      }
-    ];
-    this.write(store);
-    return invite;
   }
 
   findByCode(code: unknown): ReferralInviteRecord | undefined {
@@ -316,6 +334,10 @@ function normalizeHex32(value: unknown, label: string): Hex {
     throw new Error(`${label} must be a 0x-prefixed 32-byte hex value.`);
   }
   return value as Hex;
+}
+
+function normalizeTxHash(value: unknown): Hex {
+  return normalizeHex32(value, "txHash");
 }
 
 function normalizeAddress(value: string): Address {

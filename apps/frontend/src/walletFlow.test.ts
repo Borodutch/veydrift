@@ -106,6 +106,22 @@ afterEach(() => {
 
 const account = "0x1111111111111111111111111111111111111111";
 const contract = "0x2222222222222222222222222222222222222222";
+const referralRedemption = {
+  code: "abcDEF_123-abcDEF_123-abcDEF_123-abcDEF_123",
+  commitment: `0x${"aa".repeat(32)}`,
+  r: `0x${"bb".repeat(32)}`,
+  s: `0x${"cc".repeat(32)}`,
+  signature: `0x${"bb".repeat(32)}${"cc".repeat(32)}1b`,
+  v: 27,
+};
+
+function encodedReferralCall(selector: string): string {
+  return selector
+    + referralRedemption.commitment.slice(2)
+    + referralRedemption.v.toString(16).padStart(64, "0")
+    + referralRedemption.r.slice(2)
+    + referralRedemption.s.slice(2);
+}
 
 function customErrorData(selector: string, args: Array<number | bigint> = []): string {
   return selector + args.map((value) => BigInt(value).toString(16).padStart(64, "0")).join("");
@@ -1806,6 +1822,35 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("submits a value-bearing VeydriftGame startPlanetWithReferral transaction", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return "0xabc";
+    });
+
+    await expect(
+      sendSettlementTransaction(provider, account, { address: contract }, {
+        referral: referralRedemption,
+        startPriceWei: 50_000_000_000_000_000n,
+      })
+    ).resolves.toBe("0xabc");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodedReferralCall("0xdad57ff9"),
+            value: "0xb1a2bc2ec50000"
+          }
+        ]
+      }
+    ]);
+  });
+
   test("requires backend settlement funding before submitting first planet transactions", async () => {
     const provider = mockProvider(async ({ method }) => {
       throw new Error(`Unexpected ${method}`);
@@ -1837,6 +1882,34 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: "0x59268393"
+          }
+        ]
+      }
+    ]);
+  });
+
+  test("submits legacy settleFirstPlanetWithReferral when backend reports no game start price", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return "0xabc";
+    });
+
+    await expect(
+      sendSettlementTransaction(provider, account, { address: contract }, {
+        referral: referralRedemption,
+        startPriceWei: null
+      })
+    ).resolves.toBe("0xabc");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodedReferralCall("0x2f7a1ec2")
           }
         ]
       }
