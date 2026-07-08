@@ -66,10 +66,37 @@ describe("MissionResolutionService", () => {
     expect(calls).toEqual([]);
     expect(service.snapshot().enabled).toBe(false);
   });
+
+  test("continues past failed return candidates until the per-tick success cap", async () => {
+    const calls: string[] = [];
+    const service = new MissionResolutionService(config, {
+      chainClient: fakeClient({
+        calls,
+        failReturns: ["1"],
+        resolvable: [],
+        returnable: ["1", "2", "3"]
+      }),
+      logger: silentLogger(),
+      maxMissionsPerTick: 2
+    });
+
+    await service.tick();
+
+    expect(calls).toEqual([
+      "return:1",
+      "return:2",
+      "return:3"
+    ]);
+    expect(service.snapshot()).toMatchObject({
+      lastReturnedMissionId: "3",
+      returnedCount: 2
+    });
+  });
 });
 
 function fakeClient(input: {
   calls: string[];
+  failReturns?: string[];
   resolvable: string[];
   returnable: string[];
 }): MissionResolutionChainClient {
@@ -98,6 +125,9 @@ function fakeClient(input: {
     },
     async completeFleetMissionReturn(missionId: string) {
       input.calls.push(`return:${missionId}`);
+      if (input.failReturns?.includes(missionId)) {
+        throw new Error(`return ${missionId} failed`);
+      }
       return `0xreturn${missionId}`;
     }
   };

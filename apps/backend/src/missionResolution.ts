@@ -149,11 +149,14 @@ export class MissionResolutionService {
   private async resolveDueMissions(): Promise<void> {
     if (!this.chainClient) return;
     const missions = await this.chainClient.listResolvableFleetMissions();
-    for (const mission of missions.slice(0, this.maxMissionsPerTick)) {
+    let resolvedThisTick = 0;
+    for (const mission of missions.slice(0, this.maxMissionsPerTick * 5)) {
+      if (resolvedThisTick >= this.maxMissionsPerTick) break;
       try {
         await this.chainClient.resolveFleetMission(mission.missionId);
         this.lastResolvedMissionId = mission.missionId;
         this.resolvedCount += 1;
+        resolvedThisTick += 1;
       } catch (error) {
         this.logger.warn(`[mission-resolution] resolveFleetMission(${mission.missionId}) failed: ${reasonText(error)}`);
       }
@@ -163,11 +166,14 @@ export class MissionResolutionService {
   private async returnDueMissions(): Promise<void> {
     if (!this.chainClient) return;
     const missions = await this.chainClient.listReturnableFleetMissions();
-    for (const mission of missions.slice(0, this.maxMissionsPerTick)) {
+    let returnedThisTick = 0;
+    for (const mission of missions.slice(0, this.maxMissionsPerTick * 5)) {
+      if (returnedThisTick >= this.maxMissionsPerTick) break;
       try {
         await this.chainClient.completeFleetMissionReturn(mission.missionId);
         this.lastReturnedMissionId = mission.missionId;
         this.returnedCount += 1;
+        returnedThisTick += 1;
       } catch (error) {
         this.logger.warn(`[mission-resolution] completeFleetMissionReturn(${mission.missionId}) failed: ${reasonText(error)}`);
       }

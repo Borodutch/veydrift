@@ -1916,6 +1916,7 @@ export class VeydriftGameReader implements ChainReader {
           && Number(mission.returnAt) > 0
           && Number(mission.returnAt) <= nowSeconds
       )
+      .sort((left, right) => Number(right.returnAt) - Number(left.returnAt))
       .map(({ missionId, missionType, originPlanetId, returnAt, targetPlanetId }) => ({
         missionId,
         missionType,
