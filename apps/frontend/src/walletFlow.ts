@@ -1247,7 +1247,7 @@ async function getFarcasterEthereumProvider(
   try {
     const providerRequest = farcasterClient.wallet?.getEthereumProvider?.();
     const provider = providerRequest
-      ? await timeoutPromise(Promise.resolve(providerRequest), FARCASTER_WALLET_PROVIDER_TIMEOUT_MS, "Farcaster wallet provider")
+      ? await timeoutPromise(Promise.resolve(providerRequest), FARCASTER_WALLET_PROVIDER_TIMEOUT_MS, "wallet provider")
       : undefined;
     if (isEip1193Provider(provider)) {
       return provider;
@@ -1795,7 +1795,7 @@ export function miniAppUnsupportedChainMessage(chainId: string, requiredChain: V
     : `chain ${chainId}`;
   const host = requiredChain.chainId === BASE_MAINNET.chainId ? "veydrift.com" : "test.veydrift.com";
 
-  return `${currentChain} is active in this Farcaster client, but ${host} requires ${requiredChain.chainName} (${requiredChain.chainIdHex}). Veydrift can ask the Farcaster wallet to switch or add ${requiredChain.chainName}; if the host rejects that request, use a Farcaster client with ${requiredChain.chainName} support or open the desktop browser wallet flow.`;
+  return `${currentChain} is active in this wallet, but ${host} requires ${requiredChain.chainName} (${requiredChain.chainIdHex}). Veydrift can ask your wallet to switch or add ${requiredChain.chainName}; if the wallet rejects that request, use a wallet with ${requiredChain.chainName} support or open the browser wallet flow.`;
 }
 
 export function shortAddress(address: string): string {

@@ -728,7 +728,7 @@ describe("walletFlow", () => {
     const source = await Bun.file(new URL("./walletFlow.ts", import.meta.url)).text();
 
     expect(source).toContain("FARCASTER_WALLET_PROVIDER_TIMEOUT_MS");
-    expect(source).toContain("\"Farcaster wallet provider\"");
+    expect(source).toContain("\"wallet provider\"");
     expect(source).toContain("method: \"eth_requestAccounts\"");
     expect(source).toContain("\"wallet account authorization\"");
     expect(source).not.toContain("const accounts = await provider.request<string[]>({\n    method: \"eth_requestAccounts\"");
@@ -1731,9 +1731,9 @@ describe("walletFlow", () => {
 
     expect(message).toContain("Base mainnet (0x2105)");
     expect(message).toContain("requires Base Sepolia (0x14a34)");
-    expect(message).toContain("ask the Farcaster wallet to switch or add Base Sepolia");
-    expect(message).toContain("host rejects that request");
-    expect(message).toContain("desktop browser wallet flow");
+    expect(message).toContain("ask your wallet to switch or add Base Sepolia");
+    expect(message).toContain("wallet rejects that request");
+    expect(message).toContain("browser wallet flow");
   });
 
   test("formats raw JSON-RPC provider errors into an actionable wallet message", () => {

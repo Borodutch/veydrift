@@ -155,7 +155,7 @@ export function farcasterMiniAppReportableWalletError(
     ...walletErrorDetails(details?.error),
   ].filter((value): value is string => Boolean(value)).join("; ");
   const detailsCopy = detailRows ? ` Details: ${detailRows}.` : "";
-  return `Farcaster Mini App wallet setup failed (${code}). ${message}${detailsCopy} ${FARCASTER_MINIAPP_REPORT_SUFFIX}`;
+  return `Wallet setup failed (${code}). ${message}${detailsCopy} ${FARCASTER_MINIAPP_REPORT_SUFFIX}`;
 }
 
 export function farcasterMiniAppSupportErrorMessage(
@@ -1240,9 +1240,9 @@ function FlowBody({
   if (mode === "connect") {
     return (
       <StateMessage
-        title={wallet.kind === "connecting" ? "Waiting for pilot authorization" : miniAppMode ? "Link Farcaster Wallet" : "Link pilot wallet"}
-        body={miniAppMode ? "Connect Farcaster Wallet to claim your first home world." : "Connect a wallet to claim your first home world."}
-        action={<PrimaryButton disabled={wallet.kind === "connecting"} onClick={onConnect}>{miniAppMode ? "Connect Farcaster Wallet" : "Link wallet"}</PrimaryButton>}
+        title={wallet.kind === "connecting" ? "Waiting for wallet authorization" : "Link wallet"}
+        body="Connect a wallet to claim your first home world."
+        action={<PrimaryButton disabled={wallet.kind === "connecting"} onClick={onConnect}>Link wallet</PrimaryButton>}
         tone={wallet.kind === "connecting" ? "scanning" : "ready"}
       />
     );
@@ -1351,7 +1351,7 @@ function FlowBody({
 
 export function noWalletDetectedMessage(miniAppMode: boolean): string {
   return miniAppMode
-    ? "This Farcaster client does not expose a Base wallet. Open Veydrift in a Farcaster/Base client with wallet support, or use a browser wallet."
+    ? "This client does not expose a Base wallet. Open Veydrift with wallet support, or use a browser wallet."
     : "Open the bridge with an injected EVM wallet or browser wallet.";
 }
 
@@ -1419,7 +1419,7 @@ function settlementBody(
     }
 
     if (settlementFunding.funding.balanceWei === null) {
-      return `${prefix} Settlement costs ${startPrice} ETH; Farcaster Wallet will verify this wallet's ${networkName} balance before submission.`;
+      return `${prefix} Settlement costs ${startPrice} ETH; your wallet will verify the ${networkName} balance before submission.`;
     }
 
     const balance = formatEth(settlementFunding.funding.balanceWei);

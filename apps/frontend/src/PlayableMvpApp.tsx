@@ -1736,7 +1736,7 @@ function playableFarcasterMiniAppWalletError(
     ...playableFarcasterRawErrorDiagnostics(details.error),
   ].filter((part): part is string => Boolean(part));
   const detailText = detailParts.length > 0 ? ` Details: ${detailParts.join("; ")}.` : "";
-  return `Farcaster Mini App wallet setup failed (${code}). ${message}${detailText} ${farcasterWalletReportInstruction}`;
+  return `Wallet setup failed (${code}). ${message}${detailText} ${farcasterWalletReportInstruction}`;
 }
 
 function playableFarcasterSupportDiagnostics(support: FarcasterMiniAppWalletSupport): string {
@@ -3148,7 +3148,7 @@ export function PlayableMvpApp({
       if (!accounts[0]) {
         showMiniAppWalletError(playableFarcasterMiniAppWalletError(
           "FARCASTER_WALLET_ACCOUNT_UNAVAILABLE",
-          "Farcaster Wallet authorization completed without returning an account.",
+          "Wallet authorization completed without returning an account.",
           { support },
         ));
         return;
