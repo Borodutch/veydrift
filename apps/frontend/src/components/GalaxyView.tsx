@@ -793,7 +793,6 @@ function GalaxySlot({
         <SlotNumber position={position} muted />
         <div className="min-w-0">
           <div className="text-sm font-medium text-slate-500">Empty space</div>
-          <div className="text-xs text-slate-700">No public planet at this position.</div>
         </div>
       </div>
     );
