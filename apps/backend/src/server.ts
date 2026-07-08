@@ -93,11 +93,11 @@ const jsonBodyLimitBytes = 32 * 1024;
 const graphqlBodyLimitBytes = 128 * 1024;
 const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
   ["/highscores", new Set(["category", "currentWallet", "includeAttackProtection", "limit", "page", "pageSize"])],
-  ["/missions", new Set(["owner", "page", "pageSize", "status"])],
+  ["/missions", new Set(["missionNumber", "owner", "page", "pageSize", "status"])],
   ["/raid-finder/debris", new Set(["limit", "minMetal", "minCrystal"])],
   ["/universe/systems", new Set(["center", "detail", "galaxy", "limit", "page", "radius"])],
   ["/wallet/*/fleet-visibility", new Set(["archive", "planetId"])],
-  ["/wallet/*/missions", new Set(["page", "pageSize", "status"])],
+  ["/wallet/*/missions", new Set(["filter", "missionNumber", "page", "pageSize", "status"])],
   ["/wallet/*/overview", new Set(["planetId"])],
   ["/wallet/*/queues", new Set(["planetId"])],
   ["/wallet/*/infrastructure", new Set(["planetId"])],

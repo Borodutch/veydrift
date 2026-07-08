@@ -2297,6 +2297,58 @@ describe("Veydrift backend", () => {
     ]);
   });
 
+  test("keeps cached mission archive filters and search queries separate", async () => {
+    const attacker = "0x5555555555555555555555555555555555555555" as Address;
+    const chainReader = new class extends MockChainReader {
+      override async getFleetMissionVisibility(): Promise<never> {
+        throw new Error("cached mission archive reads must not call chain reader");
+      }
+    }();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    indexer.applyEvent({
+      ...planet,
+      eventName: "PlanetStarted",
+      transactionHash: "0xabc",
+      blockNumber: "100"
+    });
+    for (const missionId of [112n, 212n, 330n]) {
+      for (const log of completedFleetMissionLogs({ missionId, owner: player, originPlanetId: 7n, targetPlanetId: 8n })) {
+        indexer.applyLog(log);
+      }
+    }
+    for (const log of completedFleetMissionLogs({ missionId: 413n, missionTypeId: 3n, owner: attacker, originPlanetId: 9n, targetPlanetId: 7n })) {
+      indexer.applyLog(log);
+    }
+    const handler = createRequestHandler({
+      config: configuredTestConfig,
+      chainReader,
+      enableResponseCache: true,
+      indexer,
+      prewarmResponseCache: false
+    });
+
+    const unfiltered = await handler(new Request(`http://localhost/wallet/${player}/missions?status=completed&page=1&pageSize=25`));
+    const unfilteredBody = await unfiltered.json();
+    const searched = await handler(new Request(`http://localhost/wallet/${player}/missions?status=completed&missionNumber=12&page=1&pageSize=25`));
+    const searchedBody = await searched.json();
+    const incoming = await handler(new Request(`http://localhost/wallet/${player}/missions?status=completed&filter=incomingAttacks&page=1&pageSize=25`));
+    const incomingBody = await incoming.json();
+
+    expect(unfiltered.status).toBe(200);
+    expect(unfilteredBody.pagination.totalEntries).toBe(4);
+    expect(searched.status).toBe(200);
+    expect(searchedBody.rows.map((row: { mission: FleetMissionSummary }) => row.mission.missionId).sort()).toEqual(["112", "212"]);
+    expect(incoming.status).toBe(200);
+    expect(incomingBody.rows).toEqual([
+      expect.objectContaining({
+        mission: expect.objectContaining({
+          missionId: "413",
+          owner: attacker
+        })
+      })
+    ]);
+  });
+
   test("serves completed attack archive rows without rebuilding battle reports", async () => {
     const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
     const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
