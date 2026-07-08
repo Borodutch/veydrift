@@ -34,6 +34,10 @@ await checkJson("runtime-config", "/runtime-config", (body) => {
     expect(eqAddress(body.allianceContractAddress, manifest.contracts.allianceSystem), "runtime alliance address must match manifest");
     expect(eqAddress(body.moonContractAddress, manifest.contracts.moonSystem), "runtime moon address must match manifest");
     expect(eqAddress(body.randomnessEngineAddress, manifest.contracts.randomnessEngine), "runtime randomness address must match manifest");
+    if (manifest.contracts.referralSystem) {
+      expect(eqAddress(body.referralSystemAddress, manifest.contracts.referralSystem), "runtime referral system address must match manifest");
+      expect(body.featureSupport?.referralsConfigured === true, "runtime featureSupport.referralsConfigured must be true when referral system is in manifest");
+    }
     expect(eqAddress(body.resourceTokenAddresses?.metal, manifest.contracts.resourceTokens.metal), "runtime metal token must match manifest");
     expect(eqAddress(body.resourceTokenAddresses?.crystal, manifest.contracts.resourceTokens.crystal), "runtime crystal token must match manifest");
     expect(eqAddress(body.resourceTokenAddresses?.deuterium, manifest.contracts.resourceTokens.deuterium), "runtime deuterium token must match manifest");

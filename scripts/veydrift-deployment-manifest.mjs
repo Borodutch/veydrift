@@ -36,12 +36,16 @@ const manifest = {
     allianceSystem: requiredAddress(value("alliance", "VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS"), "alliance"),
     randomnessEngine: requiredAddress(value("randomness", "VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS"), "randomness"),
     moonSystem: requiredAddress(value("moon", "VEYDRIFT_MOON_CONTRACT_ADDRESS"), "moon"),
+    referralSystem: optionalAddress(value("referral", "VEYDRIFT_REFERRAL_SYSTEM_ADDRESS"), "referral"),
     auxiliary: auxiliaryContracts(options)
   }
 };
 
 if (manifest.deployment.deployer.address === undefined) {
   delete manifest.deployment.deployer.address;
+}
+if (manifest.contracts.referralSystem === undefined) {
+  delete manifest.contracts.referralSystem;
 }
 
 validateManifest(manifest);
@@ -150,7 +154,7 @@ function validateManifest(current) {
 }
 
 function usage(message) {
-  const text = `Usage: node scripts/veydrift-deployment-manifest.mjs --deploy-block <block> --game <address> --metal <address> --crystal <address> --deuterium <address> --alliance <address> --randomness <address> --moon <address> [--settlement <address>] [--from-env] [--out <file>]`;
+  const text = `Usage: node scripts/veydrift-deployment-manifest.mjs --deploy-block <block> --game <address> --metal <address> --crystal <address> --deuterium <address> --alliance <address> --randomness <address> --moon <address> [--settlement <address>] [--referral <address>] [--from-env] [--out <file>]`;
   fail(`${message}\n${text}`);
 }
 

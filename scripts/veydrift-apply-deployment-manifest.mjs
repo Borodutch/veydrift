@@ -18,6 +18,7 @@ const backendEnv = {
   VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS: manifest.contracts.allianceSystem,
   VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS: manifest.contracts.randomnessEngine,
   VEYDRIFT_MOON_CONTRACT_ADDRESS: manifest.contracts.moonSystem,
+  ...(manifest.contracts.referralSystem ? { VEYDRIFT_REFERRAL_SYSTEM_ADDRESS: manifest.contracts.referralSystem } : {}),
   VEYDRIFT_METAL_TOKEN_ADDRESS: manifest.contracts.resourceTokens.metal,
   VEYDRIFT_CRYSTAL_TOKEN_ADDRESS: manifest.contracts.resourceTokens.crystal,
   VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS: manifest.contracts.resourceTokens.deuterium,
@@ -72,6 +73,7 @@ function validateManifest(current) {
     allianceSystem: current.contracts?.allianceSystem,
     randomnessEngine: current.contracts?.randomnessEngine,
     moonSystem: current.contracts?.moonSystem,
+    ...(current.contracts?.referralSystem ? { referralSystem: current.contracts.referralSystem } : {}),
     metal: current.contracts?.resourceTokens?.metal,
     crystal: current.contracts?.resourceTokens?.crystal,
     deuterium: current.contracts?.resourceTokens?.deuterium
