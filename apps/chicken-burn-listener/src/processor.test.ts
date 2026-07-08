@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import type { ChickenBurnEvent } from "./events";
-import { MoonGrantLimitReachedError, type MoonGrantClient } from "./grant";
+import type { MoonGrantClient } from "./grant";
 import { ChickenBurnProcessor } from "./processor";
 import { JsonStateStore } from "./store";
 
@@ -71,33 +71,5 @@ describe("ChickenBurnProcessor", () => {
     const reloaded = new JsonStateStore(join(tempDir, "state.json"));
     await reloaded.load();
     expect(reloaded.hasProcessed(event.burnId)).toBe(true);
-  });
-
-  test("marks over-limit burns processed without retrying a failed grant", async () => {
-    tempDir = await mkdtemp(join(tmpdir(), "chicken-burn-listener-"));
-    const store = new JsonStateStore(join(tempDir, "state.json"));
-    await store.load();
-    const grants = new MockGrantClient();
-    grants.grantMoon = async () => {
-      grants.calls += 1;
-      throw new MoonGrantLimitReachedError(event.burner);
-    };
-    const processor = new ChickenBurnProcessor(store, grants, {
-      info: () => {},
-      warn: () => {},
-      error: () => {}
-    });
-
-    await processor.processBurn(event);
-    await processor.processBurn(event);
-
-    expect(grants.calls).toBe(1);
-    expect(processor.snapshot()).toMatchObject({
-      duplicateCount: 1,
-      grantFailureCount: 0,
-      lastProcessedBurnId: event.burnId,
-      skippedLimitCount: 1
-    });
-    expect(store.hasProcessed(event.burnId)).toBe(true);
   });
 });

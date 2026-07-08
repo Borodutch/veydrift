@@ -297,7 +297,6 @@ import {
   type AutoDismissableActionState,
 } from "./actionNoticeAutoDismiss";
 
-const maxChickenBurnMoonsPerPlayer = 2;
 
 export function researchStartTransactionLabel(
   technologyId: number,
@@ -3245,10 +3244,6 @@ export function PlayableMvpApp({
   const activePlanetId = selectedManagedPlanet?.planetId ?? onChainSettlementState?.homePlanetId ?? undefined;
   const selectedMoonBody = selectedManagedPlanet?.moon?.exists ? selectedManagedPlanet.moon : null;
   const activeBodyKind = resolvedOrbitBodyKind(selectedBodyKind, selectedManagedPlanet);
-  const walletMoonCount = useMemo(
-    () => walletPlanets.filter((item) => item.moon?.exists).length,
-    [walletPlanets],
-  );
   const [planetSectionStore, setPlanetSectionStore] = useState<PlanetSectionStore>({});
   const activePlanetSection = useMemo(
     () => planetSectionForPlanet(planetSectionStore, activePlanetId),
@@ -6179,11 +6174,6 @@ export function PlayableMvpApp({
       setMoonAction({ status: "error", label: "Wallet, Burning Chicken config, or selected planet is unavailable." });
       return;
     }
-    if (walletMoonCount >= maxChickenBurnMoonsPerPlayer) {
-      setMoonAction({ status: "error", label: "This wallet has reached the two-moon limit." });
-      return;
-    }
-
     const targetLabel = activePlanetCoords
       ? `${activePlanetCoords.galaxy}:${activePlanetCoords.system}:${activePlanetCoords.position}`
       : `planet #${activePlanetId}`;
@@ -6251,7 +6241,6 @@ export function PlayableMvpApp({
     runCoordinatedWriteTransaction,
     setActivePlanetSectionStatus,
     setMoonState,
-    walletMoonCount,
   ]);
 
   const handleBuildShip = useCallback((shipId: number, _key: ShipKey, quantity: number) => {
@@ -8338,8 +8327,6 @@ export function PlayableMvpApp({
           action={moonAction}
           burningChicken={{
             configured: Boolean(chickenBurnConfig),
-            maxMoonsPerPlayer: maxChickenBurnMoonsPerPlayer,
-            moonCount: walletMoonCount,
           }}
           canBurnChicken={canSubmitChickenBurnTransaction}
           canTransact={canSubmitMoonTransaction}

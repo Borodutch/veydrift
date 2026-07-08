@@ -80,7 +80,7 @@ Fields limit how many building levels can fit on a body. Terraformer and Lunar B
 
 Moons are separate bodies attached to planets. They have their own resources, ships, defenses, buildings, fields, and Jump Gate state. Moon fleets can use moon resources and moon ship inventory. Jump Gates move moon fleets only and do not carry resources.
 
-In the current testnet, moons may also be granted by burning eligible Burning Chicken NFTs through the Moon page. The UI verifies the typed Chicken ID is owned by the connected wallet on Base mainnet before opening the burn transaction. The app waits for indexed Veydrift state before showing the moon. Accounts are limited to two Chicken-granted moons.
+Moons may also be granted by burning Burning Chicken NFTs through the Moon page. The UI verifies the typed Chicken ID is owned by the connected wallet on Base mainnet before opening the burn transaction. The app waits for indexed Veydrift state before showing the moon. Any Chicken NFT can be burned for a moon at any planet.
 
 ### Resources And Queues
 
@@ -262,7 +262,7 @@ ACS Defend stations an allied fleet at the defended planet until the hostile att
 
 ### Moon Actions
 
-Moon buildings and defenses use moon resources and moon queues. Jump Gate transfers move moon ships between owned moons after both gates are ready. Chicken moon grants are testnet-limited: the user types a Chicken ID, the app verifies ownership on Base mainnet, sends the burn, and waits for indexed moon state.
+Moon buildings and defenses use moon resources and moon queues. Jump Gate transfers move moon ships between owned moons after both gates are ready. For Chicken moon grants, the user types a Chicken ID, the app verifies ownership on Base mainnet, sends the burn, and waits for indexed moon state.
 
 ## Formulas
 

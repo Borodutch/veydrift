@@ -47,7 +47,6 @@ contract MoonMockResourceToken {
 
 contract VeydriftMoonSystemTest is Test {
     uint128 internal constant RESERVE_FUNDING = 1_000_000_000_000;
-    uint8 internal constant MAX_CHICKEN_BURN_MOONS_PER_PLAYER = 2;
 
     address internal admin = address(0xA11CE);
     address internal player = address(0xB0B);
@@ -261,7 +260,7 @@ contract VeydriftMoonSystemTest is Test {
         moons.grantMoonFromChickenBurn(burnId, player, secondPlanetId);
     }
 
-    function testChickenBurnGrantCapsEachPlayerAtTwoIntegrationMoons() public {
+    function testChickenBurnGrantAllowsMoreThanTwoMoonsForAPlayer() public {
         uint256 firstPlanetId = _startPlanet();
         uint256 secondPlanetId = 1_002;
         uint256 thirdPlanetId = 1_003;
@@ -270,15 +269,13 @@ contract VeydriftMoonSystemTest is Test {
 
         moons.grantMoonFromChickenBurn(keccak256("burn-1"), player, firstPlanetId);
         moons.grantMoonFromChickenBurn(keccak256("burn-2"), player, secondPlanetId);
+        VeydriftMoonSystem.Moon memory moon =
+            moons.grantMoonFromChickenBurn(keccak256("burn-3"), player, thirdPlanetId);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftMoonSystem.ChickenBurnMoonLimitReached.selector,
-                player,
-                MAX_CHICKEN_BURN_MOONS_PER_PLAYER
-            )
-        );
-        moons.grantMoonFromChickenBurn(keccak256("burn-3"), player, thirdPlanetId);
+        assertTrue(moon.exists);
+        assertEq(moon.owner, player);
+        assertEq(moon.planetId, thirdPlanetId);
+        assertEq(moons.chickenBurnMoonGrantCountOf(player), 3);
     }
 
     function testChickenBurnGrantRejectsWrongOwnerAndMissingPlanet() public {

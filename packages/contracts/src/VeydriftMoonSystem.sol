@@ -55,7 +55,6 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     uint16 internal constant BPS = 10_000;
     uint256 internal constant MOON_CHANCE_DEBRIS_UNIT = 100_000;
     uint16 internal constant MAX_MOON_CHANCE_BPS = 2_000;
-    uint8 internal constant MAX_CHICKEN_BURN_MOONS_PER_PLAYER = 2;
 
     struct Moon {
         bool exists;
@@ -147,7 +146,6 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     mapping(address player => uint8 count) public chickenBurnMoonGrantCountOf;
 
     error ChickenBurnAlreadyGranted(bytes32 burnId);
-    error ChickenBurnMoonLimitReached(address player, uint256 limit);
     error ConstructionActive();
     error ConstructionInactive();
     error ConstructionNotReady(uint64 readyAt);
@@ -492,13 +490,10 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         if (planetRef.owner != player) revert NotMoonOwner();
         if (_moons[planetId].exists) revert MoonAlreadyExists(planetId);
 
-        uint8 currentCount = chickenBurnMoonGrantCountOf[player];
-        if (currentCount >= MAX_CHICKEN_BURN_MOONS_PER_PLAYER) {
-            revert ChickenBurnMoonLimitReached(player, MAX_CHICKEN_BURN_MOONS_PER_PLAYER);
-        }
-
         chickenBurnMoonGranted[burnId] = true;
-        uint8 nextCount = currentCount + 1;
+        uint8 currentCount = chickenBurnMoonGrantCountOf[player];
+        uint8 nextCount =
+            currentCount == type(uint8).max ? currentCount : currentCount + 1;
         chickenBurnMoonGrantCountOf[player] = nextCount;
 
         uint256 seed = uint256(
