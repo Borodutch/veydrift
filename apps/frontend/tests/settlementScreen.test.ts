@@ -3,6 +3,7 @@ import {
   farcasterMiniAppReportableWalletError,
   farcasterMiniAppSupportErrorMessage,
   indexedSettlementState,
+  migrationReservationForSettlementFunding,
   noWalletDetectedMessage,
   POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE,
   settlementErrorStateMessage,
@@ -19,7 +20,7 @@ import {
   walletConnectionAccounts,
 } from "../src/FirstPlanetSettlementApp";
 import { preSettlementMode, type PlanetState, type WalletState } from "../src/settlementScreen";
-import type { Eip1193Provider } from "../src/walletFlow";
+import type { Eip1193Provider, MigrationReservation } from "../src/walletFlow";
 
 const connected = {
   account: "0x1111111111111111111111111111111111111111",
@@ -287,6 +288,26 @@ describe("settlement screen mode", () => {
       contractKind: "game",
       startPriceWei: 1n,
     } })).toBeUndefined();
+  });
+
+  test("keeps backend migration reservation when Mini App contract reads are unavailable", () => {
+    const backendReservation = {
+      claimed: false,
+      exists: true,
+      fields: 209,
+      galaxy: 5,
+      position: 13,
+      system: 200,
+      temperature: -111,
+    } satisfies MigrationReservation;
+    const chainReservation = {
+      ...backendReservation,
+      galaxy: 6,
+    } satisfies MigrationReservation;
+
+    expect(migrationReservationForSettlementFunding(null, backendReservation)).toBe(backendReservation);
+    expect(migrationReservationForSettlementFunding(chainReservation, backendReservation)).toBe(chainReservation);
+    expect(migrationReservationForSettlementFunding({ ...chainReservation, claimed: true }, backendReservation)).toBeNull();
   });
 
   test("auto-connects only the Farcaster wallet provider in Mini App mode", () => {

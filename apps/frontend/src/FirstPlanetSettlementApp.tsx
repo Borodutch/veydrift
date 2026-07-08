@@ -1102,9 +1102,13 @@ export function FirstPlanetSettlementApp() {
     connectedAccount: string,
   ): Promise<SettlementFundingState> {
     const funding = await fetchSettlementFundingState(settlementConfigState.apiUrl!, connectedAccount);
-    const migrationReservation = walletProvider
+    const chainMigrationReservation = walletProvider
       ? await readMigrationReservation(walletProvider, settlementConfig.migrationAddress, connectedAccount)
       : null;
+    const migrationReservation = migrationReservationForSettlementFunding(
+      chainMigrationReservation,
+      funding.migrationReservation
+    );
     const activeMigration = Boolean(
       migrationReservation?.exists && !migrationReservation.claimed && settlementConfig.migrationAddress
     );
@@ -1118,7 +1122,7 @@ export function FirstPlanetSettlementApp() {
       ...(activeMigration
         ? { migrationClaim, migrationContractAddress: settlementConfig.migrationAddress }
         : {}),
-      migrationReservation: migrationReservation?.claimed ? null : migrationReservation,
+      migrationReservation,
       ...(unavailableReason ? { unavailableReason } : {}),
     };
   }
@@ -1390,6 +1394,14 @@ function activeMigrationReservation(settlementFunding: SettlementFunding): Migra
   if (settlementFunding.status !== "ready") return null;
   const reservation = settlementFunding.funding.migrationReservation;
   return reservation?.exists && !reservation.claimed ? reservation : null;
+}
+
+export function migrationReservationForSettlementFunding(
+  chainReservation: MigrationReservation | null,
+  backendReservation: MigrationReservation | null | undefined,
+): MigrationReservation | null {
+  const reservation = chainReservation ?? backendReservation ?? null;
+  return reservation?.claimed ? null : reservation;
 }
 
 function settlementBody(
