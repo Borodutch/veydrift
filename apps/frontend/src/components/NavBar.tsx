@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { LucideIcon } from "lucide-preact";
-import { ArrowLeftRight, Check, Crosshair, Factory, FlaskConical, Menu, Moon, Orbit, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
+import { ArrowLeftRight, Check, Crosshair, Factory, FlaskConical, Mail, Menu, Moon, Orbit, Pencil, Radar, Rocket, SatelliteDish, Shield, Trophy, Users, X } from "lucide-preact";
 
 import {
   playerDisplayLabel,
@@ -22,6 +22,7 @@ export type Page =
   | "mission-control"
   | "moon"
   | "alliance"
+  | "alliance-invites"
   | "rift"
   | "rankings"
   | "galaxy"
@@ -69,6 +70,7 @@ const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: Lucide
   { key: "mission-control", label: "Mission Control", mobileLabel: "Mission", icon: SatelliteDish },
   { key: "moon", label: "Moon", mobileLabel: "Moon", icon: Moon },
   { key: "alliance", label: "Alliance", mobileLabel: "Ally", icon: Users },
+  { key: "alliance-invites", label: "Invites", mobileLabel: "Invites", icon: Mail },
   { key: "rift", label: "Rift", mobileLabel: "Rift", icon: ArrowLeftRight },
   { key: "rankings", label: "Rankings", mobileLabel: "Ranks", icon: Trophy },
   { key: "galaxy", label: "Galaxy", mobileLabel: "Galaxy", icon: Orbit },

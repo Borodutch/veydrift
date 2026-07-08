@@ -16,7 +16,7 @@ import {
 } from "./components/OverviewPage";
 import { InfrastructurePage } from "./components/InfrastructurePage";
 import { DefensePage } from "./components/DefensePage";
-import { AlliancePage, allianceInviteAcceptanceState, allianceJoinRequestApprovalState, allianceJoinRequestDismissalState } from "./components/AlliancePage";
+import { AllianceInvitesPage, AlliancePage, allianceInviteAcceptanceState, allianceJoinRequestApprovalState, allianceJoinRequestDismissalState } from "./components/AlliancePage";
 import { ResearchPage, type ResearchActionState } from "./components/ResearchPage";
 import { ShipyardPage } from "./components/ShipyardPage";
 import type { RequirementTarget } from "./components/RequirementFlairs";
@@ -840,7 +840,7 @@ export function planOnChainRefresh(
 }
 
 export function shouldRefreshAllianceStateForPage(page: Page): boolean {
-  return page === "alliance" || page === "rankings" || page === "raid-target-finder" || page === "alliance-inspect";
+  return page === "alliance" || page === "alliance-invites" || page === "rankings" || page === "raid-target-finder" || page === "alliance-inspect";
 }
 
 export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
@@ -8451,7 +8451,6 @@ export function PlayableMvpApp({
           loading={allianceLoading}
           selectedAllianceId={selectedAllianceId}
           transactionUnavailableReason={allianceTransactionUnavailableReason}
-          onAcceptInvite={handleAcceptAllianceInvite}
           onApproveJoinRequest={handleApproveAllianceJoinRequest}
           onBatchKick={handleBatchKickAllianceMembers}
           onBatchSetRole={handleBatchSetAllianceRole}
@@ -8469,6 +8468,21 @@ export function PlayableMvpApp({
           onSetRole={handleSetAllianceRole}
           onTransferOwnership={handleTransferAllianceOwnership}
           onUpdateProfile={handleUpdateAllianceProfile}
+        />
+      );
+    }
+
+    if (page === "alliance-invites") {
+      return (
+        <AllianceInvitesPage
+          actionState={allianceAction}
+          allianceState={allianceState}
+          canTransact={canSubmitAllianceTransaction}
+          error={allianceError}
+          loading={allianceLoading}
+          transactionUnavailableReason={allianceTransactionUnavailableReason}
+          onAcceptInvite={handleAcceptAllianceInvite}
+          onRefresh={refreshAllianceState}
         />
       );
     }
