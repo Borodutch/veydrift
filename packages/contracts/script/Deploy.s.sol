@@ -12,11 +12,13 @@ import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionMod
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
+import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSettlementModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftMigrationSettlement} from "../src/VeydriftMigrationSettlement.sol";
 import {VeydriftMoonSystem} from "../src/VeydriftMoonSystem.sol";
 import {VeydriftPlanetManagementModule} from "../src/VeydriftPlanetManagementModule.sol";
+import {VeydriftReferralSystem} from "../src/VeydriftReferralSystem.sol";
 import {VeydriftSettlement} from "../src/VeydriftSettlement.sol";
 import {VeydriftStateMigrationModule} from "../src/VeydriftStateMigrationModule.sol";
 
@@ -79,8 +81,12 @@ contract Deploy is ResourceTokenDeployment {
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
         VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule();
+        VeydriftReferralSystem referralSystem = new VeydriftReferralSystem(admin);
+        VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
+            new VeydriftFirstPlanetSettlementModule(address(referralSystem));
         VeydriftGame game = new VeydriftGame(
             admin,
+            address(firstPlanetSettlementModule),
             address(gameplayModule),
             address(planetManagementModule),
             address(attackProtectionModule),
@@ -103,6 +109,10 @@ contract Deploy is ResourceTokenDeployment {
             )
         );
 
+        referralSystem.setGame(gameAddress);
+        emit VeydriftAuxiliaryProxyDeployed(
+            "referral", address(referralSystem), address(referralSystem)
+        );
         VeydriftAllianceSystem allianceImplementation =
             new VeydriftAllianceSystem(IVeydriftAllianceGame(address(game)));
         allianceSystemAddress = address(

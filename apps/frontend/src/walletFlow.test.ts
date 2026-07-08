@@ -32,6 +32,7 @@ import {
   fetchInfrastructureState,
   fetchMoonState,
   fetchPlayerProfile,
+  fetchReferralDashboard,
   fetchResearchState,
   fetchShipyardState,
   fetchWalletPlanets,
@@ -47,6 +48,7 @@ import {
   defaultVeydriftChainForLocation,
   ensureVeydriftNetwork,
   farcasterChainFor,
+  createReferralInvite,
   isBaseSepoliaChain,
   isTransientWalletBootstrapError,
   isUserRejected,
@@ -82,6 +84,8 @@ import {
   sendDismissAllianceJoinRequestTransaction,
   sendRequestResourceWithdrawalTransaction,
   requestAccounts,
+  recordReferralClaimTransaction,
+  referralWalletMessage,
   requestWatchedPlanetSignature,
   readMigrationReservation,
   sendSettlementTransaction,
@@ -114,6 +118,22 @@ afterEach(() => {
 
 const account = "0x1111111111111111111111111111111111111111";
 const contract = "0x2222222222222222222222222222222222222222";
+const referralRedemption = {
+  code: "abcDEF_123-abcDEF_123-abcDEF_123-abcDEF_123",
+  commitment: `0x${"aa".repeat(32)}`,
+  r: `0x${"bb".repeat(32)}`,
+  s: `0x${"cc".repeat(32)}`,
+  signature: `0x${"bb".repeat(32)}${"cc".repeat(32)}1b`,
+  v: 27,
+};
+
+function encodedReferralCall(selector: string): string {
+  return selector
+    + referralRedemption.commitment.slice(2)
+    + referralRedemption.v.toString(16).padStart(64, "0")
+    + referralRedemption.r.slice(2)
+    + referralRedemption.s.slice(2);
+}
 
 function customErrorData(selector: string, args: Array<number | bigint> = []): string {
   return selector + args.map((value) => BigInt(value).toString(16).padStart(64, "0")).join("");
@@ -1913,6 +1933,35 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("submits a value-bearing VeydriftGame startPlanetWithReferral transaction", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return "0xabc";
+    });
+
+    await expect(
+      sendSettlementTransaction(provider, account, { address: contract }, {
+        referral: referralRedemption,
+        startPriceWei: 50_000_000_000_000_000n,
+      })
+    ).resolves.toBe("0xabc");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodedReferralCall("0xdad57ff9"),
+            value: "0xb1a2bc2ec50000"
+          }
+        ]
+      }
+    ]);
+  });
+
   test("rejects migration claims before the signed state snapshot is ready", async () => {
     const migrationContract = "0x3333333333333333333333333333333333333333";
     const provider = mockProvider(async () => {
@@ -1998,6 +2047,34 @@ describe("walletFlow", () => {
             from: account,
             to: contract,
             data: "0x59268393"
+          }
+        ]
+      }
+    ]);
+  });
+
+  test("submits legacy settleFirstPlanetWithReferral when backend reports no game start price", async () => {
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return "0xabc";
+    });
+
+    await expect(
+      sendSettlementTransaction(provider, account, { address: contract }, {
+        referral: referralRedemption,
+        startPriceWei: null
+      })
+    ).resolves.toBe("0xabc");
+
+    expect(requests).toEqual([
+      {
+        method: "eth_sendTransaction",
+        params: [
+          {
+            from: account,
+            to: contract,
+            data: encodedReferralCall("0x2f7a1ec2")
           }
         ]
       }
@@ -2773,6 +2850,110 @@ describe("walletFlow", () => {
         description,
         displayName: "borodutch"
       });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("signs referral dashboard reads before fetching private invite code custody", async () => {
+    const originalFetch = globalThis.fetch;
+    const provider = mockProvider(async ({ method, params }) => {
+      expect(method).toBe("personal_sign");
+      expect(params).toEqual([referralWalletMessage(account, "dashboard"), account]);
+      return "0xreferraldashboard";
+    });
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const url = new URL(String(input));
+      expect(`${url.origin}${url.pathname}`).toBe(`https://api.example.test/wallet/${account}/referrals`);
+      expect(url.searchParams.get("signature")).toBe("0xreferraldashboard");
+      expect(init).toEqual({
+        cache: "no-store",
+        headers: { accept: "application/json" },
+        signal: expect.any(AbortSignal),
+      });
+      return new Response(JSON.stringify({
+        configured: true,
+        invite: null,
+        invites: [],
+        nextClaimAt: null,
+        nextRedemptionAt: null,
+        remainingClaims: 3,
+        remainingRedemptions: 3
+      }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await expect(fetchReferralDashboard("https://api.example.test///", provider, account)).resolves.toMatchObject({
+        configured: true,
+        remainingRedemptions: 3
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("signs referral invite create and claim-record mutations", async () => {
+    const originalFetch = globalThis.fetch;
+    const commitment = `0x${"aa".repeat(32)}`;
+    const txHash = `0x${"bb".repeat(32)}`;
+    const signatures = ["0xreferralcreate", "0xreferralclaim"];
+    const provider = mockProvider(async ({ method, params }) => {
+      expect(method).toBe("personal_sign");
+      const signature = signatures.shift();
+      expect(signature).toBeDefined();
+      if (signature === "0xreferralcreate") {
+        expect(params).toEqual([referralWalletMessage(account, "create"), account]);
+      } else {
+        expect(params).toEqual([referralWalletMessage(account, "claim-transaction", commitment), account]);
+      }
+      return signature!;
+    });
+    const requests: Array<{ body: unknown; url: string }> = [];
+
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      requests.push({
+        body: JSON.parse(String(init?.body)),
+        url: String(input)
+      });
+      expect(init?.method).toBe("POST");
+      expect(init?.headers).toEqual({
+        accept: "application/json",
+        "content-type": "application/json"
+      });
+      return new Response(JSON.stringify({
+        claimedAt: "2026-07-08T12:00:00.000Z",
+        code: "abcDEF_123-abcDEF_123-abcDEF_123-abcDEF_123",
+        commitment,
+        link: "https://veydrift.com?ref=abcDEF_123-abcDEF_123-abcDEF_123-abcDEF_123",
+        nextRedemptionAt: null,
+        owner: account.toLowerCase(),
+        redemptionCount: 0,
+        remainingRedemptions: 3,
+        status: "pending_claim",
+        txHash: null
+      }), {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      });
+    }) as unknown as typeof fetch;
+
+    try {
+      await createReferralInvite("https://api.example.test///", provider, account);
+      await recordReferralClaimTransaction("https://api.example.test///", provider, account, commitment, txHash);
+      expect(requests).toEqual([
+        {
+          body: { signature: "0xreferralcreate" },
+          url: `https://api.example.test/wallet/${account}/referrals`
+        },
+        {
+          body: { commitment, signature: "0xreferralclaim", txHash },
+          url: `https://api.example.test/wallet/${account}/referrals/claim-transaction`
+        }
+      ]);
     } finally {
       globalThis.fetch = originalFetch;
     }

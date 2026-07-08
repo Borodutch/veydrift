@@ -9,6 +9,7 @@ import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionMod
 import {VeydriftCombatModule, VeydriftCombatRapidfire} from "../src/VeydriftCombatModule.sol";
 import {VeydriftColonizationModule} from "../src/VeydriftColonizationModule.sol";
 import {VeydriftDefenseHoldModule} from "../src/VeydriftDefenseHoldModule.sol";
+import {VeydriftFirstPlanetSettlementModule} from "../src/VeydriftFirstPlanetSettlementModule.sol";
 import {VeydriftGame} from "../src/VeydriftGame.sol";
 import {VeydriftGameplayModule} from "../src/VeydriftGameplayModule.sol";
 import {VeydriftGameStorage} from "../src/VeydriftGameStorage.sol";
@@ -646,8 +647,11 @@ contract VeydriftCombatReferenceParityTest is Test {
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
         VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule();
+        VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
+            new VeydriftFirstPlanetSettlementModule(address(0xBEEF));
         return new VeydriftGame(
             owner,
+            address(firstPlanetSettlementModule),
             address(gameplayModule),
             address(planetManagementModule),
             address(attackProtectionModule),

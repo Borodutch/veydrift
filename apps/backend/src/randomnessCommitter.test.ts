@@ -17,6 +17,7 @@ const baseConfig: BackendConfig = {
   indexFromBlock: 0n,
   missionResolutionEnabled: false,
   randomnessCommitmentStorePath: ".data/test-randomness.json",
+  referralStorePath: ".data/test-referrals.json",
   resourceTokenAddresses: {},
   rpcSource: "custom-url",
   rpcUrl: "https://rpc.example",

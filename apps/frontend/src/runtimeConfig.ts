@@ -17,6 +17,7 @@ export type RuntimeConfig = {
     migrationConfigured?: boolean;
     moonConfigured: boolean;
     randomnessConfigured: boolean;
+    referralsConfigured?: boolean;
     researchEndpoint: boolean;
     resourceTokensConfigured: boolean;
     settlementConfigured: boolean;
@@ -26,6 +27,7 @@ export type RuntimeConfig = {
   migrationContractAddress?: string | null;
   moonContractAddress: string | null;
   network: string;
+  referralSystemAddress?: string | null;
   resourceTokenAddresses: {
     crystal: string | null;
     deuterium: string | null;

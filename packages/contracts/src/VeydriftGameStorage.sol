@@ -52,7 +52,8 @@ abstract contract VeydriftGameStorage is Initializable {
     uint16 public constant RAID_LOOT_BPS = VeydriftAntiRaidPrimitives.BASE_RAID_LOOT_BPS;
     uint16 public constant RAID_PROTECTED_STORAGE_BPS =
         VeydriftAntiRaidPrimitives.PROTECTED_STORAGE_BPS;
-    uint16 public constant COMBAT_DEBRIS_BPS = 3_000;
+    uint16 internal constant COMBAT_DEBRIS_BPS = 3_000;
+    uint16 internal constant REFERRAL_INVITER_FEE_BPS = 5_000;
 
     struct Resources {
         uint128 metal;
@@ -357,6 +358,15 @@ abstract contract VeydriftGameStorage is Initializable {
     error WithdrawalNotReady(uint64 unlocksAt);
     error TransferFailed();
     error Unauthorized(address account);
+    error ReferralSignerUnset();
+    error ReferralCommitmentInvalid();
+    error ReferralCommitmentAlreadyClaimed(bytes32 commitment);
+    error ReferralInviteInvalid(bytes32 commitment);
+    error ReferralInviteAlreadyClaimed(address inviter, bytes32 commitment);
+    error ReferralInviteeAlreadyRedeemed(bytes32 commitment, address invitee);
+    error ReferralSignatureInvalid();
+    error ReferralSelfInvite();
+    error ReferralRedemptionQuotaExceeded(bytes32 commitment, uint64 resetsAt);
     error InvalidResource(Resource resource);
     error ResourceTokenUnset(Resource resource);
     error ResourceTransferFailed(Resource resource, address token, uint256 amount);

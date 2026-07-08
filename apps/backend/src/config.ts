@@ -40,6 +40,9 @@ export type BackendConfig = {
   randomnessEngineAddress?: `0x${string}`;
   randomnessFulfillerPrivateKey?: `0x${string}`;
   randomnessCommitmentStorePath: string;
+  referralSystemAddress?: `0x${string}`;
+  referralSignerPrivateKey?: `0x${string}`;
+  referralStorePath: string;
   resourceTokenAddresses: ResourceTokenAddresses;
   rpcUrl?: string;
   rpcFallbackUrls?: string[];
@@ -81,6 +84,7 @@ export type SafeConfigSummary = {
   missionResolverConfigured: boolean;
   randomnessEngineConfigured: boolean;
   randomnessCommitterConfigured: boolean;
+  referralSignerConfigured: boolean;
   resourceTokensConfigured: {
     crystal: boolean;
     deuterium: boolean;
@@ -103,6 +107,7 @@ const defaultChainId = 84532;
 const defaultDeploymentMode: DeploymentMode = "local";
 const defaultIndexDbPath = ".data/contract-state.sqlite";
 const defaultRandomnessCommitmentStorePath = ".data/randomness-commitments.json";
+const defaultReferralStorePath = ".data/referral-invites.json";
 // VEY-KANEO-485: the self-hosted Base Sepolia node (now the ONLY RPC — Alchemy is permanently dead)
 // caps eth_getLogs at a 100,000-block range. The old 2,000-block default needed ~180 sequential
 // getLogs per event type to page the ~360k-block deploy->head history, so the cold wipe->reindex
@@ -214,6 +219,17 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
   );
   const randomnessCommitmentStorePath =
     env.VEYDRIFT_RANDOMNESS_COMMITMENT_STORE_PATH ?? defaultRandomnessCommitmentStorePath;
+  const referralSignerPrivateKey = parsePrivateKey(
+    env.VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY,
+    "VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY",
+    problems
+  );
+  const referralSystemAddress = parseAddress(
+    env.VEYDRIFT_REFERRAL_SYSTEM_ADDRESS,
+    "VEYDRIFT_REFERRAL_SYSTEM_ADDRESS",
+    problems
+  );
+  const referralStorePath = env.VEYDRIFT_REFERRAL_STORE_PATH ?? defaultReferralStorePath;
   const metalTokenAddress = parseAddress(env.VEYDRIFT_METAL_TOKEN_ADDRESS, "VEYDRIFT_METAL_TOKEN_ADDRESS", problems);
   const crystalTokenAddress = parseAddress(
     env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS,
@@ -269,6 +285,9 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       ...(randomnessEngineAddress ? { randomnessEngineAddress } : {}),
       ...(randomnessFulfillerPrivateKey ? { randomnessFulfillerPrivateKey } : {}),
       randomnessCommitmentStorePath,
+      ...(referralSystemAddress ? { referralSystemAddress } : {}),
+      ...(referralSignerPrivateKey ? { referralSignerPrivateKey } : {}),
+      referralStorePath,
       resourceTokenAddresses,
       rpcSource,
       ...(rpcUrl ? { rpcUrl } : {}),
@@ -297,6 +316,7 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
     randomnessCommitterConfigured: Boolean(
       config.randomnessEngineAddress && config.randomnessFulfillerPrivateKey && config.rpcUrl
     ),
+    referralSignerConfigured: Boolean(config.referralSignerPrivateKey),
     resourceTokensConfigured: {
       crystal: Boolean(config.resourceTokenAddresses.crystal),
       deuterium: Boolean(config.resourceTokenAddresses.deuterium),
