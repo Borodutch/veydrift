@@ -223,10 +223,14 @@ describe("Moon page helpers", () => {
 
     expect(text).toContain("Chicken ID");
     expect(text).toContain("Burn for Moon");
+    expect(text).toContain("Browse Chickens");
+    expect(text).toContain("Any Chicken NFT from the OpenSea collection can be burned for a moon at any planet.");
     expect(text).not.toContain("verifies this wallet owns the chicken");
-    expect(text).toContain("During testnet, each account can receive only 2 Chicken moons.");
-    expect(text).toContain("0 / 2 testnet Chicken moons used.");
+    expect(text).not.toContain("Example Chicken");
+    expect(text).not.toContain("#73166 on OpenSea");
     expect(text).not.toContain("No eligible Burning Chickens");
+    expect(moonPageSource).toContain("https://opensea.io/collection/chickens-by-eggs");
+    expect(moonPageSource).not.toContain("https://opensea.io/item/base/0x84eea2be67b17698b0e09b57eeeda47aa921bbf0/73166");
   });
 
   test("renders Burning Chicken config unavailable state", () => {
@@ -289,7 +293,6 @@ describe("Moon page helpers", () => {
       selectedCoordinates: { galaxy: 1, system: 44, position: 8 },
     });
     expect(visibleText(page)).toContain("Moon limit reached");
-    expect(visibleText(page)).toContain("2 / 2 testnet Chicken moons used.");
     expect(visibleText(page)).toContain("this wallet already has 2 of 2 testnet Chicken moons");
     expect(visibleText(page)).toContain("Burn for Moon");
   });
