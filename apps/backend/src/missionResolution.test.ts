@@ -16,6 +16,7 @@ const config: BackendConfig = {
   missionResolverAddress: "0x4444444444444444444444444444444444444444",
   qaSyntheticStationedDefenders: false,
   randomnessCommitmentStorePath: ".data/test-randomness.json",
+  referralStorePath: ".data/test-referrals.json",
   resourceTokenAddresses: {},
   rpcSource: "custom-url",
   rpcUrl: "https://example.invalid/rpc",

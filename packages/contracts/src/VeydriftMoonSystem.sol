@@ -492,8 +492,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
 
         chickenBurnMoonGranted[burnId] = true;
         uint8 currentCount = chickenBurnMoonGrantCountOf[player];
-        uint8 nextCount =
-            currentCount == type(uint8).max ? currentCount : currentCount + 1;
+        uint8 nextCount = currentCount == type(uint8).max ? currentCount : currentCount + 1;
         chickenBurnMoonGrantCountOf[player] = nextCount;
 
         uint256 seed = uint256(

@@ -31,6 +31,8 @@ import {
   decodePlanetRenamedLog,
   decodeFleetMissionLogs,
   decodeRandomnessFulfilledRequestId,
+  decodeReferralClaimLog,
+  decodeReferralRedemptionLog,
   decodeRiftResourceLog,
   decodeSettledPlanetLog,
   decodeShipCountChangedLog,
@@ -54,6 +56,8 @@ import {
   isMoonShipCountChangedLog,
   isPlanetSettledLog,
   isPlanetRenamedLog,
+  isReferralClaimLog,
+  isReferralRedemptionLog,
   isRiftResourceLog,
   isSettledPlanetLog,
   isShipCountChangedLog,
@@ -77,6 +81,8 @@ import {
   type StationedDefenderSummary,
   type IndexedQueueCompletedEvent,
   type IndexedQueueStartedEvent,
+  type IndexedReferralClaimEvent,
+  type IndexedReferralRedemptionEvent,
   type IndexedAllianceEvent,
   type IndexedMoonCreatedEvent,
   type IndexedMoonDefenseCountChangedEvent,
@@ -346,6 +352,14 @@ type IndexedTechnologyLevelRow = LevelRow & {
 };
 
 type MoonRow = {
+  event_json: string;
+};
+
+type ReferralClaimRow = {
+  event_json: string;
+};
+
+type ReferralRedemptionRow = {
   event_json: string;
 };
 
@@ -1242,6 +1256,33 @@ export class SettlementIndexer {
       planet,
       contractKind: "game"
     };
+  }
+
+  referralClaim(owner: `0x${string}`, commitment: `0x${string}`, txHash: `0x${string}`): IndexedReferralClaimEvent | null {
+    const row = this.db.query(`
+      SELECT event_json
+      FROM indexed_referral_claims
+      WHERE owner = lower(?) AND commitment = lower(?) AND transaction_hash = lower(?)
+      LIMIT 1
+    `).get(owner, commitment, txHash) as ReferralClaimRow | null;
+
+    return row ? parseEvent<IndexedReferralClaimEvent>(row.event_json) : null;
+  }
+
+  referralRedemption(
+    inviter: `0x${string}`,
+    invitee: `0x${string}`,
+    commitment: `0x${string}`,
+    txHash: `0x${string}`
+  ): IndexedReferralRedemptionEvent | null {
+    const row = this.db.query(`
+      SELECT event_json
+      FROM indexed_referral_redemptions
+      WHERE inviter = lower(?) AND invitee = lower(?) AND commitment = lower(?) AND transaction_hash = lower(?)
+      LIMIT 1
+    `).get(inviter, invitee, commitment, txHash) as ReferralRedemptionRow | null;
+
+    return row ? parseEvent<IndexedReferralRedemptionEvent>(row.event_json) : null;
   }
 
   walletPlanets(wallet: `0x${string}`): WalletPlanets {
@@ -2303,6 +2344,14 @@ export class SettlementIndexer {
       this.applyInterplanetaryMissileAttackCompatibilityEvent(decodeInterplanetaryMissileAttackLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
+    if (isReferralClaimLog(log)) {
+      this.applyReferralClaimEvent(eventId, decodeReferralClaimLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isReferralRedemptionLog(log)) {
+      this.applyReferralRedemptionEvent(eventId, decodeReferralRedemptionLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
     if (isIndexedQueueStartedLog(log)) {
       this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), {
         settledAt: blockTimestampSeconds(log) ?? Math.floor(Date.now() / 1_000).toString()
@@ -3004,6 +3053,27 @@ export class SettlementIndexer {
         ON indexed_event_logs (transaction_hash);
       CREATE INDEX IF NOT EXISTS indexed_event_logs_transaction_lower_idx
         ON indexed_event_logs (lower(transaction_hash));
+      CREATE TABLE IF NOT EXISTS indexed_referral_claims (
+        event_id TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        commitment TEXT NOT NULL,
+        transaction_hash TEXT NOT NULL,
+        block_number TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS indexed_referral_claims_owner_commitment_tx_idx
+        ON indexed_referral_claims (owner, commitment, transaction_hash);
+      CREATE TABLE IF NOT EXISTS indexed_referral_redemptions (
+        event_id TEXT PRIMARY KEY,
+        inviter TEXT NOT NULL,
+        invitee TEXT NOT NULL,
+        commitment TEXT NOT NULL,
+        transaction_hash TEXT NOT NULL,
+        block_number TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS indexed_referral_redemptions_lookup_idx
+        ON indexed_referral_redemptions (inviter, invitee, commitment, transaction_hash);
       CREATE TABLE IF NOT EXISTS indexed_mission_event_logs (
         event_id TEXT PRIMARY KEY,
         event_kind TEXT NOT NULL,
@@ -6504,6 +6574,37 @@ export class SettlementIndexer {
     this.recentBattleReportsCache.clear();
   }
 
+  private applyReferralClaimEvent(eventId: string, event: IndexedReferralClaimEvent): void {
+    this.db.query(`
+      INSERT OR REPLACE INTO indexed_referral_claims
+        (event_id, owner, commitment, transaction_hash, block_number, event_json)
+      VALUES (?, lower(?), lower(?), lower(?), ?, ?)
+    `).run(
+      eventId,
+      event.inviter,
+      event.commitment,
+      event.transactionHash,
+      event.blockNumber,
+      JSON.stringify(event)
+    );
+  }
+
+  private applyReferralRedemptionEvent(eventId: string, event: IndexedReferralRedemptionEvent): void {
+    this.db.query(`
+      INSERT OR REPLACE INTO indexed_referral_redemptions
+        (event_id, inviter, invitee, commitment, transaction_hash, block_number, event_json)
+      VALUES (?, lower(?), lower(?), lower(?), lower(?), ?, ?)
+    `).run(
+      eventId,
+      event.inviter,
+      event.invitee,
+      event.commitment,
+      event.transactionHash,
+      event.blockNumber,
+      JSON.stringify(event)
+    );
+  }
+
   private recordLog(eventId: string, log: IndexedRpcLog): boolean {
     const result = this.db.query(`
       INSERT INTO indexed_event_logs (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
@@ -6569,6 +6670,24 @@ export class SettlementIndexer {
         .get(eventId);
       if (!existingUnitCountEvent) {
         this.recordUnitCountEventLog(eventId, log);
+        repairedRows += 1;
+      }
+    }
+
+    if (isReferralClaimLog(log)) {
+      const existingReferralClaim = this.db
+        .query("SELECT 1 FROM indexed_referral_claims WHERE event_id = ?")
+        .get(eventId);
+      if (!existingReferralClaim) {
+        this.applyReferralClaimEvent(eventId, decodeReferralClaimLog(log));
+        repairedRows += 1;
+      }
+    } else if (isReferralRedemptionLog(log)) {
+      const existingReferralRedemption = this.db
+        .query("SELECT 1 FROM indexed_referral_redemptions WHERE event_id = ?")
+        .get(eventId);
+      if (!existingReferralRedemption) {
+        this.applyReferralRedemptionEvent(eventId, decodeReferralRedemptionLog(log));
         repairedRows += 1;
       }
     }

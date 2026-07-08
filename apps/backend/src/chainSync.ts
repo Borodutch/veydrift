@@ -735,7 +735,8 @@ export class ChainSyncService {
       this.config.resourceTokenAddresses.crystal,
       this.config.resourceTokenAddresses.deuterium,
       // VEY-KANEO-479: the RandomnessEngine feeds RandomnessFulfilled into the index.
-      this.config.randomnessEngineAddress
+      this.config.randomnessEngineAddress,
+      this.config.referralSystemAddress
     ].filter((address): address is `0x${string}` => Boolean(address));
   }
 }

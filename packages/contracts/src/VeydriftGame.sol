@@ -12,6 +12,7 @@ import {Building, Defense, Resource, Ship, Technology} from "./libraries/Veydrif
 /// @notice Deployable Base Sepolia test MVP for first-planet settlement and resource-token wiring.
 /// @dev Advanced gameplay entrypoints stay in the ABI and fail explicitly until they are split into modules.
 contract VeydriftGame is VeydriftResourceReserves {
+    address private immutable _firstPlanetSettlementModule;
     address private immutable _gameplayModule;
     address private immutable _planetManagementModule;
     address private immutable _attackProtectionModule;
@@ -23,6 +24,7 @@ contract VeydriftGame is VeydriftResourceReserves {
 
     constructor(
         address admin,
+        address firstPlanetSettlementModule,
         address gameplayModule,
         address planetManagementModule,
         address attackProtectionModule,
@@ -31,10 +33,12 @@ contract VeydriftGame is VeydriftResourceReserves {
         address stateMigrationModule
     ) VeydriftResourceReserves(admin) {
         if (
-            gameplayModule == address(0) || planetManagementModule == address(0)
-                || attackProtectionModule == address(0) || colonizationModule == address(0)
-                || defenseHoldModule == address(0) || stateMigrationModule == address(0)
+            firstPlanetSettlementModule == address(0) || gameplayModule == address(0)
+                || planetManagementModule == address(0) || attackProtectionModule == address(0)
+                || colonizationModule == address(0) || defenseHoldModule == address(0)
+                || stateMigrationModule == address(0)
         ) revert UnsupportedGameplayModule();
+        _firstPlanetSettlementModule = firstPlanetSettlementModule;
         _gameplayModule = gameplayModule;
         _planetManagementModule = planetManagementModule;
         _attackProtectionModule = attackProtectionModule;
@@ -55,8 +59,63 @@ contract VeydriftGame is VeydriftResourceReserves {
         emit OwnershipTransferred(oldOwner, nextOwner);
     }
 
-    function startPlanet() external payable returns (uint256 planetId) {
-        planetId = _startPlanet(msg.sender, msg.value);
+    function startPlanet() external payable returns (uint256) {
+        _delegateToFirstPlanetSettlementModule();
+    }
+
+    function startPlanetWithReferral(bytes32, uint8, bytes32, bytes32)
+        external
+        payable
+        returns (uint256)
+    {
+        _delegateToFirstPlanetSettlementModule();
+    }
+
+    function settleFirstPlanet() external payable returns (FirstPlanet memory) {
+        _delegateToFirstPlanetSettlementModule();
+    }
+
+    function settleFirstPlanetWithReferral(bytes32, uint8, bytes32, bytes32)
+        external
+        payable
+        returns (FirstPlanet memory)
+    {
+        _delegateToFirstPlanetSettlementModule();
+    }
+
+    function hasFirstPlanet(address player) external view returns (bool) {
+        return homePlanetOf[player] != 0;
+    }
+
+    function firstPlanetOf(address player)
+        external
+        view
+        returns (FirstPlanet memory settledPlanet)
+    {
+        uint256 planetId = homePlanetOf[player];
+        if (planetId == 0) revert NoFirstPlanet(player);
+        return _firstPlanetFrom(planetId);
+    }
+
+    function previewFirstPlanet(address player)
+        external
+        view
+        returns (FirstPlanet memory planetPreview)
+    {
+        uint256 planetId = homePlanetOf[player];
+        if (planetId != 0) return _firstPlanetFrom(planetId);
+
+        (uint16 galaxy, uint16 system, uint8 position, uint16 fields, int16 temperature) =
+            _previewFirstPlanet(player);
+        return FirstPlanet({
+            galaxy: galaxy,
+            system: system,
+            position: position,
+            fields: fields,
+            temperature: temperature,
+            settledAt: 0,
+            settledBlock: 0
+        });
     }
 
     function settlePlanet(uint256 planetId) external {
@@ -649,64 +708,6 @@ contract VeydriftGame is VeydriftResourceReserves {
         return Resources(metal, crystal, deuterium);
     }
 
-    function _startPlanet(address player, uint256 payment) private returns (uint256 planetId) {
-        (uint16 galaxy, uint16 system, uint8 position, uint16 fields, int16 temperature) =
-            _previewFirstPlanet(player);
-        occupiedCoordinates[coordinateKey(galaxy, system, position)] = true;
-        return _startPlanetAt(player, payment, galaxy, system, position, fields, temperature);
-    }
-
-    function _startPlanetAt(
-        address player,
-        uint256 payment,
-        uint16 galaxy,
-        uint16 system,
-        uint8 position,
-        uint16 fields,
-        int16 temperature
-    ) private returns (uint256 planetId) {
-        if (homePlanetOf[player] != 0) revert AlreadyStarted();
-        if (payment != startPrice) revert BadStartPayment();
-        _touchPlayer(player);
-
-        Resources memory startingResources = Resources({metal: 500, crystal: 500, deuterium: 0});
-        _increaseInternalResources(startingResources);
-
-        planetId = nextPlanetId++;
-
-        (uint16 metalMultiplier, uint16 crystalMultiplier, uint16 deuteriumMultiplier) =
-            VeydriftFormulas.planetMultipliers(temperature, fields);
-
-        homePlanetOf[player] = planetId;
-        planetCountOf[player] = 1;
-        _registerOwnedPlanet(player, planetId);
-        _planets[planetId] = Planet({
-            owner: player,
-            galaxy: galaxy,
-            system: system,
-            position: position,
-            fields: fields,
-            temperature: temperature,
-            metalMultiplierBps: metalMultiplier,
-            crystalMultiplierBps: crystalMultiplier,
-            deuteriumMultiplierBps: deuteriumMultiplier,
-            lastSettledAt: uint64(block.timestamp),
-            resources: startingResources
-        });
-
-        emit PlanetStarted(player, planetId, galaxy, system, position, fields, temperature);
-        emit FirstPlanetSettled(
-            player,
-            planetId,
-            galaxy,
-            system,
-            position,
-            coordinateKey(galaxy, system, position),
-            planetSeed(galaxy, system, position)
-        );
-        _emitPlanetSettled(planetId);
-    }
-
     function _missionShipQuantity(MissionShips calldata ships, Ship ship)
         private
         pure
@@ -727,6 +728,19 @@ contract VeydriftGame is VeydriftResourceReserves {
         if (ship == Ship.Reaper) return ships.reaper;
         if (ship == Ship.Pathfinder) return ships.pathfinder;
         return 0;
+    }
+
+    function _firstPlanetFrom(uint256 planetId) private view returns (FirstPlanet memory) {
+        Planet storage planetRef = _planets[planetId];
+        return FirstPlanet({
+            galaxy: planetRef.galaxy,
+            system: planetRef.system,
+            position: planetRef.position,
+            fields: planetRef.fields,
+            temperature: planetRef.temperature,
+            settledAt: planetRef.lastSettledAt,
+            settledBlock: 0
+        });
     }
 
     function _previewFirstPlanet(address player)
@@ -959,6 +973,18 @@ contract VeydriftGame is VeydriftResourceReserves {
     function _delegateToPlayModule() private {
         _requireGameNotPaused();
         (bool ok, bytes memory result) = _gameplayModule.delegatecall(msg.data);
+        if (!ok) {
+            assembly ("memory-safe") {
+                revert(add(result, 32), mload(result))
+            }
+        }
+        assembly ("memory-safe") {
+            return(add(result, 32), mload(result))
+        }
+    }
+
+    function _delegateToFirstPlanetSettlementModule() private {
+        (bool ok, bytes memory result) = _firstPlanetSettlementModule.delegatecall(msg.data);
         if (!ok) {
             assembly ("memory-safe") {
                 revert(add(result, 32), mload(result))
