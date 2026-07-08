@@ -240,9 +240,9 @@ export async function buildReferralRedemption(
   if (!config.referralSignerPrivateKey) {
     throw new Error("Referral signer is not configured.");
   }
-  const contractAddress = config.settlementContractAddress ?? config.gameContractAddress;
+  const contractAddress = config.gameContractAddress;
   if (!contractAddress) {
-    throw new Error("Settlement contract address is not configured.");
+    throw new Error("Game contract address is not configured.");
   }
 
   const account = privateKeyToAccount(config.referralSignerPrivateKey);

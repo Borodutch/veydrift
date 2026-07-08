@@ -608,8 +608,22 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const body = await readJsonBody(request);
         const commitment = String(body?.commitment ?? "");
         const txHash = String(body?.txHash ?? "");
+        if (!/^0x[a-fA-F0-9]{64}$/.test(commitment)) {
+          throw new Error("commitment must be a 0x-prefixed 32-byte hex value.");
+        }
         if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
           throw new Error("txHash must be a 0x-prefixed 32-byte transaction hash.");
+        }
+        if (!indexer) return indexedReadNotReadyResponse("referral claim", indexer, { wallet });
+        const claim = indexer.referralClaim(wallet, commitment as `0x${string}`, txHash as `0x${string}`);
+        if (!claim) {
+          return Response.json({
+            error: "referral_claim_unconfirmed",
+            message: "Referral claim transaction is not indexed for this wallet and commitment yet."
+          }, {
+            headers: corsHeaders,
+            status: 409
+          });
         }
         return Response.json(referralStore.recordClaimTransaction(wallet, commitment, txHash), {
           headers: corsHeaders
@@ -633,7 +647,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             status: 503
           });
         }
-        if (!(loaded.config.settlementContractAddress ?? loaded.config.gameContractAddress)) {
+        if (!loaded.config.gameContractAddress) {
           return Response.json({
             error: "referral_contract_unconfigured",
             message: "Referral settlement is not configured on this deployment."
@@ -707,11 +721,26 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           throw new Error("txHash must be a 0x-prefixed 32-byte transaction hash.");
         }
         if (!indexer) return indexedReadNotReadyResponse("referral redemption", indexer, { invitee });
-        const settlement = indexer.walletSettlement(invitee);
-        if (!settlement.homePlanetId) {
+        const storedInvite = referralStore.findByCode(body?.code);
+        if (!storedInvite) {
+          return Response.json({
+            error: "referral_code_not_found",
+            message: "Referral code was not found."
+          }, {
+            headers: corsHeaders,
+            status: 404
+          });
+        }
+        const redemption = indexer.referralRedemption(
+          storedInvite.owner as `0x${string}`,
+          invitee,
+          storedInvite.commitment,
+          txHash as `0x${string}`
+        );
+        if (!redemption) {
           return Response.json({
             error: "referral_redemption_unconfirmed",
-            message: "Referral redemption is not indexed as a settled first planet yet."
+            message: "Referral redemption transaction is not indexed for this invitee and commitment yet."
           }, {
             headers: corsHeaders,
             status: 409

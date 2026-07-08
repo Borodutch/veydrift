@@ -1023,6 +1023,27 @@ export type PlanetRenamedEvent = {
   name: string;
 };
 
+export type IndexedReferralClaimEvent = {
+  eventName: "ReferralCodeClaimed";
+  transactionHash: string;
+  blockNumber: string;
+  logIndex: string;
+  inviter: Address;
+  commitment: `0x${string}`;
+  claimedAt: string;
+};
+
+export type IndexedReferralRedemptionEvent = {
+  eventName: "ReferralInviteRedeemed";
+  transactionHash: string;
+  blockNumber: string;
+  logIndex: string;
+  inviter: Address;
+  invitee: Address;
+  commitment: `0x${string}`;
+  redeemedAt: string;
+};
+
 export type MoonChanceReportEvent = {
   eventName:
     | "MoonChanceRequested"
@@ -1602,6 +1623,7 @@ export class VeydriftGameReader implements ChainReader {
   private readonly resourceTokenAddresses: Partial<Record<RiftResourceKey, Address>>;
   private readonly settlementContractAddress: Address | undefined;
   private readonly randomnessEngineAddress: Address | undefined;
+  private readonly referralSystemAddress: Address | undefined;
   private readonly hydrateQueueStartedAt: boolean;
   // The first-planet start price is an immutable game constant. Memoize the first chain
   // read so serving settlement funding never reissues a per-request game-state eth_call
@@ -1633,6 +1655,7 @@ export class VeydriftGameReader implements ChainReader {
     this.resourceTokenAddresses = config.resourceTokenAddresses ?? {};
     this.settlementContractAddress = config.settlementContractAddress;
     this.randomnessEngineAddress = config.randomnessEngineAddress;
+    this.referralSystemAddress = config.referralSystemAddress;
     this.hydrateQueueStartedAt = options.hydrateQueueStartedAt ?? true;
   }
 
@@ -3061,7 +3084,8 @@ export class VeydriftGameReader implements ChainReader {
       this.resourceTokenAddresses.deuterium,
       // VEY-KANEO-479: include the RandomnessEngine so RandomnessFulfilled logs are backfilled/ingested,
       // letting the read model gate an arrived Attack's readiness on its battle randomness.
-      this.randomnessEngineAddress
+      this.randomnessEngineAddress,
+      this.referralSystemAddress
     ].filter((address): address is Address => Boolean(address));
   }
 
@@ -4731,6 +4755,8 @@ const interplanetaryMissileAttackTopic = "0x44a8c2b7632935050468ed4d9acfb1e99a09
 // reveals the random word for a request — the moment a randomness-gated mission (an Attack battle)
 // actually becomes resolvable (consumeRandomness reverts with PendingRandomness until then).
 const randomnessFulfilledTopic = "0x864b23caf5999ffe7e7b5bc685db237bcef9eb7bd6423c2fd395d9b4663372f5";
+const referralCodeClaimedTopic = "0xa7124569721bd8a9fca99961778919ebde17b82e397d5dbeb14eb7b5e1e051fb";
+const referralInviteRedeemedTopic = "0x897cc27985afe9fc1880f96288d655b8348796f5ab4cda3eb835be64f8b97088";
 const missionTypes = ["Transport", "Deploy", "Colonize", "Attack", "Harvest", "AcsDefend", "Intercept", "MissileAttack", "AcsAttack", "DefenseHold"] as const;
 const missionStatuses = ["None", "Outbound", "Returning", "Resolved", "Returned", "Recalled"] as const;
 const battleOutcomes = ["Draw", "AttackerWin", "DefenderWin"] as const;
@@ -4799,6 +4825,8 @@ const eventNamesByTopic = new Map<string, string>([
   [combatDebrisSignaledTopic, "CombatDebrisSignaled"],
   [interplanetaryMissileAttackTopic, "InterplanetaryMissileAttack"],
   [randomnessFulfilledTopic, "RandomnessFulfilled"],
+  [referralCodeClaimedTopic, "ReferralCodeClaimed"],
+  [referralInviteRedeemedTopic, "ReferralInviteRedeemed"],
   [moonChanceRequestedTopic, "MoonChanceRequested"],
   [moonChanceFinalizedTopic, "MoonChanceFinalized"],
   [moonChanceSkippedExistingMoonTopic, "MoonChanceSkippedExistingMoon"],
@@ -4977,6 +5005,14 @@ export function isInterplanetaryMissileAttackLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === interplanetaryMissileAttackTopic;
 }
 
+export function isReferralClaimLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === referralCodeClaimedTopic;
+}
+
+export function isReferralRedemptionLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === referralInviteRedeemedTopic;
+}
+
 export function isIndexedQueueStartedLog(log: RpcLog): boolean {
   const topic = topicAt(log.topics, 0);
   return topic === buildingStartedTopic
@@ -5151,6 +5187,33 @@ export function decodePlanetSettledLog(log: RpcLog): PlanetSettledEvent {
     planetId: decodeUint(topicAt(log.topics, 1)).toString(),
     resources: decodeResources(words.slice(0, 3)),
     lastSettledAt: decodeUintWord(wordAt(words, 3)).toString()
+  };
+}
+
+export function decodeReferralClaimLog(log: RpcLog): IndexedReferralClaimEvent {
+  const words = splitWords(log.data);
+  return {
+    eventName: "ReferralCodeClaimed",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    logIndex: (log as RpcLog & { logIndex?: string }).logIndex ?? "0x0",
+    inviter: decodeAddressWord(topicAt(log.topics, 1)),
+    commitment: topicAt(log.topics, 2) as `0x${string}`,
+    claimedAt: decodeUintWord(wordAt(words, 0)).toString()
+  };
+}
+
+export function decodeReferralRedemptionLog(log: RpcLog): IndexedReferralRedemptionEvent {
+  const words = splitWords(log.data);
+  return {
+    eventName: "ReferralInviteRedeemed",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    logIndex: (log as RpcLog & { logIndex?: string }).logIndex ?? "0x0",
+    inviter: decodeAddressWord(topicAt(log.topics, 1)),
+    invitee: decodeAddressWord(topicAt(log.topics, 2)),
+    commitment: topicAt(log.topics, 3) as `0x${string}`,
+    redeemedAt: decodeUintWord(wordAt(words, 0)).toString()
   };
 }
 

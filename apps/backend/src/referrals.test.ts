@@ -59,11 +59,29 @@ describe("referral invites", () => {
       const storePath = join(dir, "referrals.json");
       const config = testConfig(storePath);
       const store = new ReferralInviteStore(storePath);
-      let inviteeHomePlanetId: string | null = null;
+      let claimIndexed = false;
+      let redemptionIndexed = false;
+      const claimTxHash = `0x${"aa".repeat(32)}` as `0x${string}`;
+      const redemptionTxHash = `0x${"bb".repeat(32)}` as `0x${string}`;
       const indexer = {
         walletSettlement: (wallet: string) => ({
-          homePlanetId: wallet.toLowerCase() === player.toLowerCase() ? "1" : inviteeHomePlanetId
-        })
+          homePlanetId: wallet.toLowerCase() === player.toLowerCase() ? "1" : wallet.toLowerCase() === invitee.toLowerCase() ? "2" : null
+        }),
+        referralClaim: (owner: string, commitment: string, txHash: string) =>
+          claimIndexed
+          && owner.toLowerCase() === player.toLowerCase()
+          && commitment.toLowerCase() === created.commitment.toLowerCase()
+          && txHash.toLowerCase() === claimTxHash.toLowerCase()
+            ? { owner, commitment, txHash }
+            : null,
+        referralRedemption: (owner: string, wallet: string, commitment: string, txHash: string) =>
+          redemptionIndexed
+          && owner.toLowerCase() === player.toLowerCase()
+          && wallet.toLowerCase() === invitee.toLowerCase()
+          && commitment.toLowerCase() === created.commitment.toLowerCase()
+          && txHash.toLowerCase() === redemptionTxHash.toLowerCase()
+            ? { owner, wallet, commitment, txHash }
+            : null
       } as unknown as SettlementIndexer;
       const handler = createRequestHandler({
         config,
@@ -95,9 +113,21 @@ describe("referral invites", () => {
       expect(duplicateCreate.code).toBe(created.code);
       expect(duplicateCreate.commitment).toBe(created.commitment);
 
-      const txHash = `0x${"aa".repeat(32)}`;
+      const unindexedClaimResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals/claim-transaction`, {
+        body: JSON.stringify({ commitment: created.commitment, txHash: claimTxHash }),
+        method: "POST"
+      }));
+      expect(unindexedClaimResponse.status).toBe(409);
+
+      const unclaimedRedeemResponse = await handler(new Request("http://localhost/referrals/redeem", {
+        body: JSON.stringify({ code: created.code, invitee }),
+        method: "POST"
+      }));
+      expect(unclaimedRedeemResponse.status).toBe(409);
+
+      claimIndexed = true;
       const txResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals/claim-transaction`, {
-        body: JSON.stringify({ commitment: created.commitment, txHash }),
+        body: JSON.stringify({ commitment: created.commitment, txHash: claimTxHash }),
         method: "POST"
       }));
       expect(txResponse.status).toBe(200);
@@ -136,14 +166,26 @@ describe("referral invites", () => {
       expect(beforeConfirmationDashboard.invite?.redemptionCount).toBe(0);
 
       const unconfirmedRedemptionResponse = await handler(new Request("http://localhost/referrals/redeem-transaction", {
-        body: JSON.stringify({ code: created.code, invitee, txHash: `0x${"bb".repeat(32)}` }),
+        body: JSON.stringify({ code: created.code, invitee, txHash: redemptionTxHash }),
         method: "POST"
       }));
       expect(unconfirmedRedemptionResponse.status).toBe(409);
 
-      inviteeHomePlanetId = "2";
+      redemptionIndexed = true;
+      const unrelatedRedemptionResponse = await handler(new Request("http://localhost/referrals/redeem-transaction", {
+        body: JSON.stringify({ code: created.code, invitee, txHash: `0x${"cc".repeat(32)}` }),
+        method: "POST"
+      }));
+      expect(unrelatedRedemptionResponse.status).toBe(409);
+
+      const mismatchedInviteeResponse = await handler(new Request("http://localhost/referrals/redeem-transaction", {
+        body: JSON.stringify({ code: created.code, invitee: "0x4444444444444444444444444444444444444444", txHash: redemptionTxHash }),
+        method: "POST"
+      }));
+      expect(mismatchedInviteeResponse.status).toBe(409);
+
       const confirmedRedemptionResponse = await handler(new Request("http://localhost/referrals/redeem-transaction", {
-        body: JSON.stringify({ code: created.code, invitee, txHash: `0x${"bb".repeat(32)}` }),
+        body: JSON.stringify({ code: created.code, invitee, txHash: redemptionTxHash }),
         method: "POST"
       }));
       expect(confirmedRedemptionResponse.status).toBe(200);
@@ -167,7 +209,7 @@ describe("referral invites", () => {
       expect(dashboard.invite?.redemptionCount).toBe(1);
       expect(dashboard.invites).toHaveLength(1);
       expect(dashboard.invites[0]?.status).toBe("active");
-      expect(dashboard.invites[0]?.txHash).toBe(txHash);
+      expect(dashboard.invites[0]?.txHash).toBe(claimTxHash);
     } finally {
       rmSync(dir, { force: true, recursive: true });
     }

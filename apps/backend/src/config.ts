@@ -39,6 +39,7 @@ export type BackendConfig = {
   randomnessEngineAddress?: `0x${string}`;
   randomnessFulfillerPrivateKey?: `0x${string}`;
   randomnessCommitmentStorePath: string;
+  referralSystemAddress?: `0x${string}`;
   referralSignerPrivateKey?: `0x${string}`;
   referralStorePath: string;
   resourceTokenAddresses: ResourceTokenAddresses;
@@ -216,6 +217,11 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     "VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY",
     problems
   );
+  const referralSystemAddress = parseAddress(
+    env.VEYDRIFT_REFERRAL_SYSTEM_ADDRESS,
+    "VEYDRIFT_REFERRAL_SYSTEM_ADDRESS",
+    problems
+  );
   const referralStorePath = env.VEYDRIFT_REFERRAL_STORE_PATH ?? defaultReferralStorePath;
   const metalTokenAddress = parseAddress(env.VEYDRIFT_METAL_TOKEN_ADDRESS, "VEYDRIFT_METAL_TOKEN_ADDRESS", problems);
   const crystalTokenAddress = parseAddress(
@@ -271,6 +277,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       ...(randomnessEngineAddress ? { randomnessEngineAddress } : {}),
       ...(randomnessFulfillerPrivateKey ? { randomnessFulfillerPrivateKey } : {}),
       randomnessCommitmentStorePath,
+      ...(referralSystemAddress ? { referralSystemAddress } : {}),
       ...(referralSignerPrivateKey ? { referralSignerPrivateKey } : {}),
       referralStorePath,
       resourceTokenAddresses,
