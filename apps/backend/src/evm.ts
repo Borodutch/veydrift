@@ -1912,7 +1912,7 @@ export class VeydriftGameReader implements ChainReader {
     const nowSeconds = Math.floor(Date.now() / 1_000);
     return summaries
       .filter((mission) =>
-        mission.status === "Returning"
+        (mission.status === "Returning" || mission.status === "Recalled")
           && Number(mission.returnAt) > 0
           && Number(mission.returnAt) <= nowSeconds
       )

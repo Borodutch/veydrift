@@ -1436,6 +1436,19 @@ describe("fleet mission resolution scheduling", () => {
     });
   }
 
+  function recalledMissionLog({
+    missionId,
+    returnAt
+  }: {
+    missionId: bigint;
+    returnAt: bigint;
+  }): RpcLog {
+    return makeLog({
+      topics: [fleetMissionRecalledTopic, topic(missionId), addressTopic(owner)],
+      data: dataWords([word(returnAt), word(25n)])
+    });
+  }
+
   function readerFor(logs: RpcLog[]): VeydriftGameReader {
     return new VeydriftGameReader(readerConfig, {
       async request<T>(method: string): Promise<T> {
@@ -1461,12 +1474,14 @@ describe("fleet mission resolution scheduling", () => {
     expect(resolvable.map((mission) => mission.missionType)).toEqual(["Transport", "Deploy", "Attack"]);
   });
 
-  test("surfaces returning missions whose return leg is due across all mission types", async () => {
+  test("surfaces returning and recalled missions whose return leg is due across all mission types", async () => {
     const reader = readerFor([
       ...outboundMissionLogs({ missionId: 10n, missionType: 3n, arrivalAt: pastSeconds }),
       returningMissionLog({ missionId: 10n, missionType: 3n, returnAt: pastSeconds }),
       ...outboundMissionLogs({ missionId: 11n, missionType: 0n, arrivalAt: pastSeconds }),
       returningMissionLog({ missionId: 11n, missionType: 0n, returnAt: pastSeconds }),
+      ...outboundMissionLogs({ missionId: 13n, missionType: 3n, arrivalAt: futureSeconds }),
+      recalledMissionLog({ missionId: 13n, returnAt: pastSeconds }),
       // Returning but not yet due — must not be surfaced.
       ...outboundMissionLogs({ missionId: 12n, missionType: 3n, arrivalAt: pastSeconds }),
       returningMissionLog({ missionId: 12n, missionType: 3n, returnAt: futureSeconds })
@@ -1474,7 +1489,7 @@ describe("fleet mission resolution scheduling", () => {
 
     const returnable = await reader.listReturnableFleetMissions();
 
-    expect(returnable.map((mission) => mission.missionId)).toEqual(["10", "11"]);
+    expect(returnable.map((mission) => mission.missionId)).toEqual(["10", "11", "13"]);
     expect(returnable.every((mission) => Number(mission.returnAt) <= Math.floor(Date.now() / 1_000))).toBe(true);
     // Resolved/Returning missions are not arrival-resolvable any more.
     expect(await reader.listResolvableFleetMissions()).toEqual([]);
