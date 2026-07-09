@@ -63,11 +63,11 @@ import {
   buildReferralRedemption,
   createReferralStore,
   ReferralInviteeAlreadyRedeemedError,
+  ReferralInviteExpiredError,
   ReferralInviteUnclaimedError,
   ReferralInviteStore,
   ReferralQuotaError,
-  ReferralSelfInviteError,
-  verifyReferralWalletSignature
+  ReferralSelfInviteError
 } from "./referrals";
 import { deriveInfrastructureFields, isCombatShipId, zeroResources } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
@@ -566,12 +566,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        const verified = await verifyReferralWalletSignature({
-          action: "dashboard",
-          signature: url.searchParams.get("signature"),
-          wallet
-        });
-        if (!verified) return invalidReferralSignatureResponse();
         return Response.json({
           ...referralStore.dashboard(wallet),
           configured: Boolean(loaded.config.referralSignerPrivateKey)
@@ -587,13 +581,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
-        const body = await readJsonBody(request);
-        const verified = await verifyReferralWalletSignature({
-          action: "create",
-          signature: body?.signature,
-          wallet
-        });
-        if (!verified) return invalidReferralSignatureResponse();
         if (!loaded.config.referralSignerPrivateKey) {
           return Response.json({
             error: "referral_signer_unconfigured",
@@ -645,13 +632,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
           throw new Error("txHash must be a 0x-prefixed 32-byte transaction hash.");
         }
-        const verified = await verifyReferralWalletSignature({
-          action: "claim-transaction",
-          commitment,
-          signature: body?.signature,
-          wallet
-        });
-        if (!verified) return invalidReferralSignatureResponse();
         if (!indexer) return indexedReadNotReadyResponse("referral claim", indexer, { wallet });
         const claim = indexer.referralClaim(wallet, commitment as `0x${string}`, txHash as `0x${string}`);
         if (!claim) {
@@ -715,6 +695,15 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           }, {
             headers: corsHeaders,
             status: 409
+          });
+        }
+        if (error instanceof ReferralInviteExpiredError) {
+          return Response.json({
+            error: "referral_invite_expired",
+            message: error.message
+          }, {
+            headers: corsHeaders,
+            status: 410
           });
         }
         if (error instanceof ReferralInviteeAlreadyRedeemedError) {
@@ -807,6 +796,15 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           }, {
             headers: corsHeaders,
             status: 409
+          });
+        }
+        if (error instanceof ReferralInviteExpiredError) {
+          return Response.json({
+            error: "referral_invite_expired",
+            message: error.message
+          }, {
+            headers: corsHeaders,
+            status: 410
           });
         }
         if (error instanceof ReferralInviteeAlreadyRedeemedError) {

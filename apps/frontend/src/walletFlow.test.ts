@@ -85,7 +85,6 @@ import {
   sendRequestResourceWithdrawalTransaction,
   requestAccounts,
   recordReferralClaimTransaction,
-  referralWalletMessage,
   requestWatchedPlanetSignature,
   readMigrationReservation,
   sendSettlementTransaction,
@@ -2855,18 +2854,13 @@ describe("walletFlow", () => {
     }
   });
 
-  test("signs referral dashboard reads before fetching private invite code custody", async () => {
+  test("fetches referral dashboard from the backend without asking for a wallet signature", async () => {
     const originalFetch = globalThis.fetch;
-    const provider = mockProvider(async ({ method, params }) => {
-      expect(method).toBe("personal_sign");
-      expect(params).toEqual([referralWalletMessage(account, "dashboard"), account]);
-      return "0xreferraldashboard";
-    });
 
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const url = new URL(String(input));
       expect(`${url.origin}${url.pathname}`).toBe(`https://api.example.test/wallet/${account}/referrals`);
-      expect(url.searchParams.get("signature")).toBe("0xreferraldashboard");
+      expect(url.searchParams.get("signature")).toBeNull();
       expect(init).toEqual({
         cache: "no-store",
         headers: { accept: "application/json" },
@@ -2887,7 +2881,7 @@ describe("walletFlow", () => {
     }) as unknown as typeof fetch;
 
     try {
-      await expect(fetchReferralDashboard("https://api.example.test///", provider, account)).resolves.toMatchObject({
+      await expect(fetchReferralDashboard("https://api.example.test///", account)).resolves.toMatchObject({
         configured: true,
         remainingRedemptions: 3
       });
@@ -2896,22 +2890,10 @@ describe("walletFlow", () => {
     }
   });
 
-  test("signs referral invite create and claim-record mutations", async () => {
+  test("creates referral invites and records claim transactions without extra wallet signatures", async () => {
     const originalFetch = globalThis.fetch;
     const commitment = `0x${"aa".repeat(32)}`;
     const txHash = `0x${"bb".repeat(32)}`;
-    const signatures = ["0xreferralcreate", "0xreferralclaim"];
-    const provider = mockProvider(async ({ method, params }) => {
-      expect(method).toBe("personal_sign");
-      const signature = signatures.shift();
-      expect(signature).toBeDefined();
-      if (signature === "0xreferralcreate") {
-        expect(params).toEqual([referralWalletMessage(account, "create"), account]);
-      } else {
-        expect(params).toEqual([referralWalletMessage(account, "claim-transaction", commitment), account]);
-      }
-      return signature!;
-    });
     const requests: Array<{ body: unknown; url: string }> = [];
 
     globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
@@ -2928,6 +2910,7 @@ describe("walletFlow", () => {
         claimedAt: "2026-07-08T12:00:00.000Z",
         code: "abcDEF_123-abcDEF_123-abcDEF_123-abcDEF_123",
         commitment,
+        expiresAt: "2026-07-09T12:00:00.000Z",
         link: "https://veydrift.com?ref=abcDEF_123-abcDEF_123-abcDEF_123-abcDEF_123",
         nextRedemptionAt: null,
         owner: account.toLowerCase(),
@@ -2942,15 +2925,15 @@ describe("walletFlow", () => {
     }) as unknown as typeof fetch;
 
     try {
-      await createReferralInvite("https://api.example.test///", provider, account);
-      await recordReferralClaimTransaction("https://api.example.test///", provider, account, commitment, txHash);
+      await createReferralInvite("https://api.example.test///", account);
+      await recordReferralClaimTransaction("https://api.example.test///", account, commitment, txHash);
       expect(requests).toEqual([
         {
-          body: { signature: "0xreferralcreate" },
+          body: {},
           url: `https://api.example.test/wallet/${account}/referrals`
         },
         {
-          body: { commitment, signature: "0xreferralclaim", txHash },
+          body: { commitment, txHash },
           url: `https://api.example.test/wallet/${account}/referrals/claim-transaction`
         }
       ]);

@@ -400,14 +400,14 @@ export function FirstPlanetSettlementApp() {
   }, []);
 
   useEffect(() => {
-    if (!hasOverview || !account || !provider || !settlementConfigState.apiUrl) {
+    if (!hasOverview || !account || !settlementConfigState.apiUrl) {
       setReferralProgram({ status: "idle" });
       return;
     }
 
     let disposed = false;
     setReferralProgram({ status: "loading" });
-    void fetchReferralDashboard(settlementConfigState.apiUrl, provider, account)
+    void fetchReferralDashboard(settlementConfigState.apiUrl, account)
       .then((dashboard) => {
         if (!disposed) setReferralProgram({ status: "ready", dashboard });
       })
@@ -423,7 +423,7 @@ export function FirstPlanetSettlementApp() {
     return () => {
       disposed = true;
     };
-  }, [account, hasOverview, provider, settlementConfigState.apiUrl]);
+  }, [account, hasOverview, settlementConfigState.apiUrl]);
 
   useEffect(() => {
     let disposed = false;
@@ -1119,12 +1119,12 @@ export function FirstPlanetSettlementApp() {
   }
 
   async function refreshReferralProgram(connectedAccount = account) {
-    if (!connectedAccount || !provider || !settlementConfigState.apiUrl) return;
+    if (!connectedAccount || !settlementConfigState.apiUrl) return;
     setReferralProgram({ status: "loading" });
     try {
       setReferralProgram({
         status: "ready",
-        dashboard: await fetchReferralDashboard(settlementConfigState.apiUrl, provider, connectedAccount)
+        dashboard: await fetchReferralDashboard(settlementConfigState.apiUrl, connectedAccount)
       });
     } catch (error) {
       setReferralProgram({
@@ -1149,7 +1149,7 @@ export function FirstPlanetSettlementApp() {
       }
 
       try {
-        const invite = await createReferralInvite(settlementConfigState.apiUrl, provider, wallet.account);
+        const invite = await createReferralInvite(settlementConfigState.apiUrl, wallet.account);
         const txHash = await sendReferralClaimTransaction(
           provider,
           wallet.account,
@@ -1158,7 +1158,6 @@ export function FirstPlanetSettlementApp() {
         );
         await recordReferralClaimTransaction(
           settlementConfigState.apiUrl,
-          provider,
           wallet.account,
           invite.commitment,
           txHash
@@ -1338,11 +1337,13 @@ function ReferralProgramPanel({
     : undefined;
   const invite = dashboard?.invite ?? dashboard?.invites[0];
   const claiming = state.status === "claiming";
-  const canClaim = Boolean(dashboard?.configured && (!invite || invite.status === "pending_claim") && !claiming);
+  const canClaim = Boolean(dashboard?.configured && (!invite || invite.status === "pending_claim" || invite.status === "expired") && !claiming);
   const claimLabel = claiming
     ? "Claiming"
     : invite?.status === "pending_claim"
       ? "Finish claim"
+      : invite?.status === "expired"
+        ? "Claim new code"
       : invite
         ? "Code active"
         : "Claim code";
@@ -1386,8 +1387,11 @@ function ReferralProgramPanel({
               <span>
                 {invite.status === "active"
                   ? `${invite.remainingRedemptions}/3 uses left today`
-                  : "Awaiting wallet claim"}
+                  : invite.status === "expired"
+                    ? "Expired"
+                    : "Awaiting wallet claim"}
               </span>
+              {invite.expiresAt ? <span>Expires {formatDateTime(invite.expiresAt)}</span> : null}
               <span>{invite.redemptionCount} total invite use{invite.redemptionCount === 1 ? "" : "s"}</span>
             </div>
             <button
