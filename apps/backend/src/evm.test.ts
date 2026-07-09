@@ -1459,19 +1459,20 @@ describe("fleet mission resolution scheduling", () => {
     });
   }
 
-  test("includes transport and deploy arrivals while excluding unsupported and not-yet-due missions", async () => {
+  test("includes transport, deploy, and DefenseHold arrivals while excluding unsupported and not-yet-due missions", async () => {
     const reader = readerFor([
       ...outboundMissionLogs({ missionId: 1n, missionType: 0n, arrivalAt: pastSeconds }), // Transport
       ...outboundMissionLogs({ missionId: 2n, missionType: 1n, arrivalAt: pastSeconds }), // Deploy
       ...outboundMissionLogs({ missionId: 3n, missionType: 3n, arrivalAt: pastSeconds }), // Attack
       ...outboundMissionLogs({ missionId: 4n, missionType: 6n, arrivalAt: pastSeconds }), // Intercept (unsupported)
-      ...outboundMissionLogs({ missionId: 5n, missionType: 0n, arrivalAt: futureSeconds }) // Transport, not yet arrived
+      ...outboundMissionLogs({ missionId: 5n, missionType: 0n, arrivalAt: futureSeconds }), // Transport, not yet arrived
+      ...outboundMissionLogs({ missionId: 6n, missionType: 9n, arrivalAt: pastSeconds }) // DefenseHold
     ]);
 
     const resolvable = await reader.listResolvableFleetMissions();
 
-    expect(resolvable.map((mission) => mission.missionId)).toEqual(["1", "2", "3"]);
-    expect(resolvable.map((mission) => mission.missionType)).toEqual(["Transport", "Deploy", "Attack"]);
+    expect(resolvable.map((mission) => mission.missionId)).toEqual(["1", "2", "3", "6"]);
+    expect(resolvable.map((mission) => mission.missionType)).toEqual(["Transport", "Deploy", "Attack", "DefenseHold"]);
   });
 
   test("surfaces returning and recalled missions whose return leg is due across all mission types", async () => {
