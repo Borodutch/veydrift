@@ -945,6 +945,13 @@ h4 {
   padding: 10px 12px;
 }
 
+.referral-copy-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .referral-link-row strong,
 .referral-link-row span {
   display: block;
