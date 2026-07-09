@@ -74,15 +74,7 @@ interface AlliancePageProps {
 }
 
 interface AllianceInvitesPageProps {
-  actionState: AllianceActionState;
-  allianceState: ChainAllianceState | null;
-  canTransact: boolean;
-  error?: string | undefined;
-  loading: boolean;
   referralProgramPanel?: ComponentChildren | undefined;
-  transactionUnavailableReason?: string | undefined;
-  onAcceptInvite: (allianceId: string) => void;
-  onRefresh: () => void;
 }
 
 export function AlliancePage({
@@ -308,47 +300,16 @@ export function AlliancePage({
 }
 
 export function AllianceInvitesPage({
-  actionState,
-  allianceState,
-  canTransact,
-  error,
-  loading,
   referralProgramPanel,
-  transactionUnavailableReason,
-  onAcceptInvite,
-  onRefresh,
 }: AllianceInvitesPageProps) {
-  const disabled = !canTransact || actionState.status === "pending";
-
   return (
     <section className="grid min-h-0 gap-4">
       <PageHeader
-        actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh alliance invites" />}
         title="Invite"
         titleSize="xl"
       />
 
-      {error ? (
-        isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <Notice tone="error">{error}</Notice>
-      ) : null}
-      {allianceState?.allianceAvailable === false ? (
-        <Notice>{allianceState.unavailableReason ?? "Alliance contract is not configured."}</Notice>
-      ) : null}
-      {transactionUnavailableReason ? <Notice>{transactionUnavailableReason}</Notice> : null}
-      {actionState.status !== "idle" ? <Notice tone={actionState.status === "error" ? "error" : "info"}>{actionState.label}</Notice> : null}
       {referralProgramPanel}
-
-      {shouldShowAllianceInitialLoader({ allianceState, loading }) ? (
-        <AllianceSkeleton />
-      ) : (
-        <PendingInvites
-          allianceState={allianceState}
-          disabled={disabled}
-          invites={allianceState?.pendingInvites ?? []}
-          directory={allianceState?.directory ?? []}
-          onAcceptInvite={onAcceptInvite}
-        />
-      )}
     </section>
   );
 }
@@ -1074,50 +1035,6 @@ export function AllianceDescription({
         <span key={`${part.text}-${index}`}>{part.text}</span>
       ))}
     </>
-  );
-}
-
-function PendingInvites({
-  allianceState,
-  directory,
-  disabled,
-  invites,
-  onAcceptInvite,
-}: {
-  allianceState: ChainAllianceState | null;
-  directory: DirectoryEntry[];
-  disabled: boolean;
-  invites: ChainAllianceState["pendingInvites"];
-  onAcceptInvite: (allianceId: string) => void;
-}) {
-  return (
-    <Panel title="Alliance invitations">
-      {invites.length ? (
-        <div className="grid gap-2">
-          {invites.map((invite) => {
-            const alliance = directory.find((entry) => entry.allianceId === invite.allianceId);
-            const acceptance = allianceInviteAcceptanceState(allianceState, invite);
-            return (
-              <div className="rounded border border-white/10 bg-black/20 p-3" key={invite.allianceId}>
-                <p className="text-sm font-semibold text-white">{alliance ? allianceDisplayName(alliance) : `Alliance #${invite.allianceId}`}</p>
-                <p className="mt-1 text-sm text-slate-400">Invited by {playerLabel(invite.inviterDisplayName, invite.inviter)}</p>
-                {acceptance.reason ? <p className="mt-2 rounded border border-amber-300/20 bg-amber-300/10 px-2 py-1.5 text-xs text-amber-100">{acceptance.reason}</p> : null}
-                <button
-                  className="mt-3 w-full rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={disabled || !acceptance.canAccept}
-                  onClick={() => onAcceptInvite(invite.allianceId)}
-                  type="button"
-                >
-                  Accept Invite
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <p className="text-sm text-slate-400">No alliance invitations to accept.</p>
-      )}
-    </Panel>
   );
 }
 

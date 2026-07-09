@@ -88,6 +88,9 @@ function parseInspectPathValue(rawPath: string): InspectRoute | null {
     }
     return { kind: "page", page: "moon" };
   }
+  if (kind === "invite" || kind === "alliance-invites") {
+    return { kind: "page", page: "alliance-invites" };
+  }
   if (pageNames.has(kind as Page)) {
     return { kind: "page", page: kind as Page };
   }
@@ -130,6 +133,7 @@ export function buildInspectHash(route: InspectRoute): string {
   if (route.kind === "alliance") return `#/alliance/${encodeURIComponent(route.allianceId)}`;
   if (route.kind === "mission") return `#/mission/${encodeURIComponent(route.missionId)}`;
   if (route.kind === "mission-report") return `#/mission-control/report/${encodeURIComponent(route.missionId)}`;
+  if (route.page === "alliance-invites") return "#/invite";
   return route.page === "overview" ? "#/" : `#/${route.page}`;
 }
 
@@ -144,6 +148,7 @@ export function buildInspectPath(route: InspectRoute): string {
   if (route.kind === "alliance") return `/alliance/${encodeURIComponent(route.allianceId)}`;
   if (route.kind === "mission") return `/mission/${encodeURIComponent(route.missionId)}`;
   if (route.kind === "mission-report") return `/mission-control/report/${encodeURIComponent(route.missionId)}`;
+  if (route.page === "alliance-invites") return "/invite";
   return route.page === "overview" ? "/#/" : `/#/${route.page}`;
 }
 
