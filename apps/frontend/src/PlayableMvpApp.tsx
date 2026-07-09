@@ -7974,7 +7974,7 @@ export function PlayableMvpApp({
   // Below `md` the picker lives inside the hamburger menu; between `md` and `lg`
   // (no right sidebar, no hamburger) it stays as a compact row above content.
   const compactPlanetSelector = mobilePlanetPicker ? (
-    <div className="mb-3 hidden md:block lg:hidden">
+    <div className="mb-3 hidden min-w-0 max-w-full overflow-hidden md:block lg:hidden">
       {mobilePlanetPicker}
     </div>
   ) : null;
@@ -8667,10 +8667,10 @@ export function PlayableMvpApp({
   })();
 
   return (
-    <div className="playable-starfield relative isolate min-h-dvh overflow-hidden bg-[#05070f] text-slate-100">
+    <div className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-hidden bg-[#05070f] text-slate-100">
       {topBar}
 
-      <div className="relative z-10 mx-auto flex max-w-[96rem] flex-col md:h-[calc(100dvh-2.75rem)] md:flex-row md:overflow-hidden">
+      <div className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-hidden md:h-[calc(100dvh-2.75rem)] md:flex-row">
         <NavBar
           account={account}
           active={page}
@@ -8684,7 +8684,7 @@ export function PlayableMvpApp({
           playerProfileAction={playerProfileAction}
         />
 
-        <main className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">
+        <main className="min-w-0 max-w-full flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6">
           {compactPlanetSelector}
           {content}
         </main>
@@ -8721,7 +8721,7 @@ function PlanetSelector({
 
   if (layout === "mobile") {
     return (
-      <section aria-label="Select planet" className="min-w-0 max-w-full overflow-x-auto overscroll-x-contain">
+      <section aria-label="Select planet" className="block min-w-0 max-w-full overflow-x-auto overscroll-x-contain">
         <div className="flex w-max min-w-full gap-2 pb-1">
           {planets.map((planet) => (
             <PlanetSelectorItem
