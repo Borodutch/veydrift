@@ -70,11 +70,11 @@ const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: Lucide
   { key: "mission-control", label: "Mission Control", mobileLabel: "Mission", icon: SatelliteDish },
   { key: "moon", label: "Moon", mobileLabel: "Moon", icon: Moon },
   { key: "alliance", label: "Alliance", mobileLabel: "Ally", icon: Users },
-  { key: "alliance-invites", label: "Invites", mobileLabel: "Invites", icon: Mail },
   { key: "rift", label: "Rift", mobileLabel: "Rift", icon: ArrowLeftRight },
   { key: "rankings", label: "Rankings", mobileLabel: "Ranks", icon: Trophy },
   { key: "galaxy", label: "Galaxy", mobileLabel: "Galaxy", icon: Orbit },
   { key: "raid-target-finder", label: "Raid Finder", mobileLabel: "Raids", icon: Crosshair },
+  { key: "alliance-invites", label: "Invite", mobileLabel: "Invite", icon: Mail },
 ];
 
 export function NavBar({

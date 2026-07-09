@@ -163,7 +163,9 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("moves alliance invites into their own sidebar tab", () => {
-    expect(navSource).toContain('{ key: "alliance-invites", label: "Invites"');
+    expect(navSource).toContain('{ key: "raid-target-finder", label: "Raid Finder"');
+    expect(navSource).toContain('{ key: "alliance-invites", label: "Invite"');
+    expect(navSource.indexOf('{ key: "raid-target-finder"')).toBeLessThan(navSource.indexOf('{ key: "alliance-invites"'));
     expect(playableSource).toContain('if (page === "alliance-invites")');
     expect(playableSource).toContain("<AllianceInvitesPage");
     expect(playableSource).toContain('page === "alliance-invites"');
