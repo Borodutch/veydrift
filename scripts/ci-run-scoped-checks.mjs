@@ -49,6 +49,7 @@ function scopeFromEnvOrGit(args) {
 const flaggedOutput = /(^|[^a-z])(warning|warn:|error:)/i;
 const allowedFlaggedOutputLines = [
   /^Missing dependencies found\. Installing now\.\.\.$/,
+  /^\|\s+Errors\s+\|/,
 ];
 
 export function outputContainsFlaggedOutput(output) {

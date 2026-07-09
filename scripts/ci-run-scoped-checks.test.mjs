@@ -12,6 +12,12 @@ test("allows Foundry dependency bootstrap notice", () => {
   assert.equal(outputContainsFlaggedOutput(output), false);
 });
 
+test("allows Foundry contract size table Errors library row", () => {
+  const output = "| Errors                              | 3                | 31                | 24,573             | 49,121              |";
+
+  assert.equal(outputContainsFlaggedOutput(output), false);
+});
+
 test("still flags warnings and errors", () => {
   assert.equal(outputContainsFlaggedOutput("warning: unused variable"), true);
   assert.equal(outputContainsFlaggedOutput("::error::contracts-fast-check failed"), true);
