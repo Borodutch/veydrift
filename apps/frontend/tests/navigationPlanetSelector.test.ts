@@ -90,6 +90,13 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("queueProgress({ readyAt, startedAt }, now)");
   });
 
+  test("hides planet selector progress rows when no displayed queue is active", () => {
+    expect(playableSource).toContain("if (bars.every((bar) => !bar.active)) return null;");
+    expect(playableSource).toContain("data-planet-selector-progress-active={bar.active ? \"true\" : \"false\"}");
+    expect(playableSource).not.toContain("data-planet-selector-progress-bars={planet.planetId} className=\"hidden\"");
+    expect(playableSource).not.toContain('className="grid w-full grid-cols-3 gap-1 min-h-');
+  });
+
   test("nests moon picker controls under parent planet items with generated moon imagery", () => {
     expect(playableSource).toContain("data-planet-selector-item={planet.planetId}");
     expect(playableSource).toContain('data-planet-selector-moon="true"');
