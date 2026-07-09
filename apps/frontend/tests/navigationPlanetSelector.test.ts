@@ -95,17 +95,31 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain("<PlanetSelectorProgressBars now={now} planet={planet} />");
     expect(playableSource).toContain("data-planet-selector-progress-bars={planet.planetId}");
     expect(playableSource).toContain("data-planet-selector-progress={bar.kind}");
+    expect(playableSource).toContain("const bars = planetSelectorQueueProgressBars(planet, now).filter((bar) => bar.active);");
+    expect(playableSource).toContain('className="grid w-full gap-1"');
     expect(playableSource).toContain("buildingQueuePreview(planet.queues.building)");
     expect(playableSource).toContain("defenseQueuePreview(planet.queues.defense)");
     expect(playableSource).toContain("shipQueuePreview(planet.queues.ship)");
     expect(playableSource).toContain("queueProgress({ readyAt, startedAt }, now)");
+    expect(playableSource).not.toContain('className="grid w-full grid-cols-3 gap-1"');
+    expect(playableSource).not.toContain("opacity-45");
   });
 
   test("hides planet selector progress rows when no displayed queue is active", () => {
-    expect(playableSource).toContain("if (bars.every((bar) => !bar.active)) return null;");
-    expect(playableSource).toContain("data-planet-selector-progress-active={bar.active ? \"true\" : \"false\"}");
+    expect(playableSource).toContain("if (bars.length === 0) return null;");
+    expect(playableSource).toContain('data-planet-selector-progress-active="true"');
     expect(playableSource).not.toContain("data-planet-selector-progress-bars={planet.planetId} className=\"hidden\"");
     expect(playableSource).not.toContain('className="grid w-full grid-cols-3 gap-1 min-h-');
+  });
+
+  test("renders research as the fourth selector progress category without per-planet duplication", () => {
+    expect(playableSource).toContain("researchQueue={activeResearchQueue(effectiveResearchState?.queue) ?? activeResearchQueue(onChainQueues?.research) ?? null}");
+    expect(playableSource).toContain("<PlanetSelectorResearchProgress now={now} queue={researchQueue} />");
+    expect(playableSource).toContain('data-planet-selector-research-progress="true"');
+    expect(playableSource).toContain('data-planet-selector-progress="research"');
+    expect(playableSource).toContain("Research is wallet/global, so the selector renders it once");
+    expect(playableSource).toContain("function researchQueuePreview(queue: QueueStateResponse | null | undefined)");
+    expect(playableSource).not.toContain("planet.queues.research");
   });
 
   test("nests moon picker controls under parent planet items with generated moon imagery", () => {
