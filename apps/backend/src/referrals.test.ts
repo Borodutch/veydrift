@@ -230,17 +230,20 @@ describe("referral invites", () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-referrals-"));
     try {
       const store = new ReferralInviteStore(join(dir, "referrals.json"));
-      const first = store.createInvite(player, new Date("2026-07-08T12:00:00.000Z"));
+      const claimedAt = new Date(Date.now() - 1_000);
+      const expiresAt = new Date(claimedAt.getTime() + 24 * 60 * 60 * 1_000);
+      const afterExpiry = new Date(expiresAt.getTime() + 1_000);
+      const first = store.createInvite(player, claimedAt);
       const active = store.recordClaimTransaction(player, first.commitment, `0x${"aa".repeat(32)}`);
       expect(active.status).toBe("active");
-      expect(active.expiresAt).toBe("2026-07-09T12:00:00.000Z");
+      expect(active.expiresAt).toBe(expiresAt.toISOString());
 
-      const expiredDashboard = store.dashboard(player, new Date("2026-07-09T12:00:00.000Z"));
+      const expiredDashboard = store.dashboard(player, expiresAt);
       expect(expiredDashboard.invite?.status).toBe("expired");
       expect(expiredDashboard.invite?.expired).toBe(true);
-      expect(() => store.pendingRedemption(first.code, invitee, new Date("2026-07-09T12:00:00.000Z"))).toThrow("expired");
+      expect(() => store.pendingRedemption(first.code, invitee, expiresAt)).toThrow("expired");
 
-      const next = store.createInvite(player, new Date("2026-07-09T12:00:01.000Z"));
+      const next = store.createInvite(player, afterExpiry);
       expect(next.code).not.toBe(first.code);
       expect(next.status).toBe("pending_claim");
     } finally {

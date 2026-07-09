@@ -1919,6 +1919,7 @@ export class VeydriftGameReader implements ChainReader {
               || mission.missionType === "Colonize"
               || mission.missionType === "Transport"
               || mission.missionType === "Deploy"
+              || mission.missionType === "DefenseHold"
           )
       )
       .map(({ arrivalAt, missionId, missionType, originPlanetId, targetPlanetId }) => ({
