@@ -322,7 +322,7 @@ export function AllianceInvitesPage({
     <section className="grid min-h-0 gap-4">
       <PageHeader
         actions={<RefreshButton loading={loading} onRefresh={onRefresh} title="Refresh alliance invites" />}
-        title="Invites"
+        title="Invite"
         titleSize="xl"
       />
 

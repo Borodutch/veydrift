@@ -27,11 +27,13 @@ export type ReferralInviteRecord = {
 
 export type ReferralInviteSummary = Omit<ReferralInviteRecord, "code"> & {
   code: string;
+  expiresAt: string;
+  expired: boolean;
   link: string;
   remainingRedemptions: number;
   nextRedemptionAt: string | null;
   redemptionCount: number;
-  status: "pending_claim" | "active";
+  status: "pending_claim" | "active" | "expired";
 };
 
 type ReferralStoreJson = {
@@ -81,7 +83,7 @@ export class ReferralInviteStore {
     const owner = wallet.toLowerCase();
     const store = this.read();
     const existing = this.ownerInvite(store, owner);
-    if (existing) return referralInviteSummary(existing, now);
+    if (existing && !isReferralInviteExpired(existing, now)) return referralInviteSummary(existing, now);
 
     let record: ReferralInviteRecord | undefined;
     for (let attempt = 0; attempt < 8 && !record; attempt++) {
@@ -158,6 +160,9 @@ export class ReferralInviteStore {
     if (!invite.txHash) {
       throw new ReferralInviteUnclaimedError();
     }
+    if (isReferralInviteExpired(invite, now)) {
+      throw new ReferralInviteExpiredError();
+    }
     if (invite.owner.toLowerCase() === normalizedInvitee) {
       throw new ReferralSelfInviteError();
     }
@@ -215,6 +220,12 @@ export class ReferralQuotaError extends Error {
 export class ReferralInviteUnclaimedError extends Error {
   constructor() {
     super("Referral invite has not been claimed on-chain yet.");
+  }
+}
+
+export class ReferralInviteExpiredError extends Error {
+  constructor() {
+    super("Referral invite code has expired.");
   }
 }
 
@@ -310,14 +321,29 @@ export function referralQuota(
 
 export function referralInviteSummary(invite: ReferralInviteRecord, now = new Date()): ReferralInviteSummary {
   const quota = referralQuota(invite.redemptions ?? [], now);
+  const expiresAt = referralInviteExpiresAt(invite);
+  const expired = isReferralInviteExpired(invite, now);
   return {
     ...invite,
+    expiresAt,
+    expired,
     link: `${referralInviteUrlBase}?ref=${encodeURIComponent(invite.code)}`,
     nextRedemptionAt: quota.nextClaimAt,
     remainingRedemptions: quota.remainingClaims,
     redemptionCount: invite.redemptions?.length ?? 0,
-    status: invite.txHash ? "active" : "pending_claim"
+    status: expired ? "expired" : invite.txHash ? "active" : "pending_claim"
   };
+}
+
+export function referralInviteExpiresAt(invite: Pick<ReferralInviteRecord, "claimedAt">): string {
+  const claimedAt = new Date(invite.claimedAt).getTime();
+  const baseTime = Number.isFinite(claimedAt) ? claimedAt : 0;
+  return new Date(baseTime + referralClaimWindowMs).toISOString();
+}
+
+export function isReferralInviteExpired(invite: Pick<ReferralInviteRecord, "claimedAt">, now = new Date()): boolean {
+  const claimedAt = new Date(invite.claimedAt).getTime();
+  return Number.isFinite(claimedAt) && now.getTime() - claimedAt >= referralClaimWindowMs;
 }
 
 export function normalizeReferralCode(value: unknown): string {

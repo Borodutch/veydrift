@@ -93,12 +93,14 @@ export type ReferralInviteSummary = {
   claimedAt: string;
   code: string;
   commitment: string;
+  expired?: boolean;
+  expiresAt?: string;
   link: string;
   nextRedemptionAt: string | null;
   owner: string;
   redemptionCount: number;
   remainingRedemptions: number;
-  status: "pending_claim" | "active";
+  status: "pending_claim" | "active" | "expired";
   txHash?: string | null;
 };
 
@@ -3538,37 +3540,33 @@ export async function requestReferralWalletSignature(
   });
 }
 
-export async function fetchReferralDashboard(apiUrl: string, provider: Eip1193Provider, wallet: string): Promise<ReferralDashboard> {
-  const signature = await requestReferralWalletSignature(provider, wallet, "dashboard");
+export async function fetchReferralDashboard(apiUrl: string, wallet: string): Promise<ReferralDashboard> {
   return fetchWalletJson<ReferralDashboard>(
     apiUrl,
     wallet,
-    `referrals?${new URLSearchParams({ signature }).toString()}`,
+    "referrals",
     "Referral invites"
   );
 }
 
-export async function createReferralInvite(apiUrl: string, provider: Eip1193Provider, wallet: string): Promise<ReferralInviteSummary> {
-  const signature = await requestReferralWalletSignature(provider, wallet, "create");
+export async function createReferralInvite(apiUrl: string, wallet: string): Promise<ReferralInviteSummary> {
   return fetchGameApiMutation<ReferralInviteSummary>(
     `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals`,
     "Referral invite",
-    { signature }
+    {}
   );
 }
 
 export async function recordReferralClaimTransaction(
   apiUrl: string,
-  provider: Eip1193Provider,
   wallet: string,
   commitment: string,
   txHash: string
 ): Promise<ReferralInviteSummary> {
-  const signature = await requestReferralWalletSignature(provider, wallet, "claim-transaction", commitment);
   return fetchGameApiMutation<ReferralInviteSummary>(
     `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals/claim-transaction`,
     "Referral claim transaction",
-    { commitment, signature, txHash }
+    { commitment, txHash }
   );
 }
 
