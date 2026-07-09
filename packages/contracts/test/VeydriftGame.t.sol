@@ -1487,6 +1487,91 @@ contract VeydriftGameTest is Test {
         assertLt(energyAfter, energyBefore);
     }
 
+    function testDestroyedSolarSatellitesContributeToCombatLossesAndDebris() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setShipCount(originPlanetId, Ship.Battleship, 100);
+        _setShipCount(targetPlanetId, Ship.SmallCargo, 13);
+        _setShipCount(targetPlanetId, Ship.SolarSatellite, 60);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(targetPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.battleship = 100;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            901
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(missionId);
+        vm.warp(arrivalAt);
+        _fulfillAttackBattleRandomness(missionId, 901);
+
+        vm.recordLogs();
+        game.resolveFleetMission(missionId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 lossesSig =
+            keccak256("CombatLosses(uint256,uint128,uint128,uint128,uint128,uint128,uint128)");
+        bytes32 debrisSig = keccak256("CombatDebrisSignaled(uint256,uint256,uint128,uint128)");
+        bool lossesFound;
+        bool debrisFound;
+        uint128 attackerLossMetal;
+        uint128 attackerLossCrystal;
+        uint128 defenderLossMetal;
+        uint128 defenderLossCrystal;
+        uint128 debrisMetal;
+        uint128 debrisCrystal;
+        for (uint256 i = 0; i < logs.length;) {
+            Vm.Log memory entry = logs[i];
+            if (entry.emitter == address(game)) {
+                if (entry.topics[0] == lossesSig && entry.topics[1] == bytes32(missionId)) {
+                    (
+                        attackerLossMetal,
+                        attackerLossCrystal,,
+                        defenderLossMetal,
+                        defenderLossCrystal,
+                    ) =
+                        abi.decode(
+                            entry.data, (uint128, uint128, uint128, uint128, uint128, uint128)
+                        );
+                    lossesFound = true;
+                } else if (
+                    entry.topics[0] == debrisSig && entry.topics[1] == bytes32(missionId)
+                        && entry.topics[2] == bytes32(targetPlanetId)
+                ) {
+                    (debrisMetal, debrisCrystal) = abi.decode(entry.data, (uint128, uint128));
+                    debrisFound = true;
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+
+        assertTrue(lossesFound, "combat losses event missing");
+        assertTrue(debrisFound, "combat debris event missing");
+        assertEq(attackerLossMetal, 0, "attacker metal loss");
+        assertEq(attackerLossCrystal, 0, "attacker crystal loss");
+        assertEq(defenderLossMetal, 26_000, "small cargo metal loss");
+        assertEq(defenderLossCrystal, 146_000, "small cargo plus solar satellite crystal loss");
+        assertEq(debrisMetal, ((uint256(attackerLossMetal) + defenderLossMetal) * 3_000) / 10_000);
+        assertEq(
+            debrisCrystal, ((uint256(attackerLossCrystal) + defenderLossCrystal) * 3_000) / 10_000
+        );
+        (uint128 storedMetal, uint128 storedCrystal) = game.debrisField(targetPlanetId);
+        assertEq(debrisMetal, 7_800, "small cargo metal debris");
+        assertEq(debrisCrystal, 43_800, "small cargo plus solar satellite crystal debris");
+        assertEq(storedMetal, debrisMetal);
+        assertEq(storedCrystal, debrisCrystal);
+        assertEq(game.shipCount(targetPlanetId, Ship.SmallCargo), 0);
+        assertEq(game.shipCount(targetPlanetId, Ship.SolarSatellite), 0);
+    }
+
     function testCombatLossesEmitShipAndDefenseCountChanged() public {
         // Pin the settlement entropy so planet attributes (and therefore the battle outcome) are
         // deterministic; foundry otherwise randomizes block.prevrandao per run, which would make the

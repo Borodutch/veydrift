@@ -421,8 +421,24 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
             // Stationary planet support is wiped when the defense is cleared, with one
             // canonical total emitted for indexers.
             if (!mission.targetIsMoon) {
-                _setPlanetShipCount(mission.targetPlanetId, Ship.SolarSatellite, 0);
-                _setPlanetShipCount(mission.targetPlanetId, Ship.Crawler, 0);
+                uint256 targetPlanetId = mission.targetPlanetId;
+                // Keep this bytecode-light: Ship.SolarSatellite is enum id 9, and
+                // BattleSettlement.defenderLosses is a memory pointer at offset 0x80 whose crystal
+                // field sits at +0x20.
+                assembly ("memory-safe") {
+                    mstore(0x00, targetPlanetId)
+                    mstore(0x20, _shipCounts.slot)
+                    mstore(0x20, keccak256(0x00, 0x40))
+                    mstore(0x00, 9)
+                    let solarSatellites := sload(keccak256(0x00, 0x40))
+                    let defenderCrystalLoss := add(mload(add(settlement, 0x80)), 0x20)
+                    mstore(
+                        defenderCrystalLoss,
+                        add(mload(defenderCrystalLoss), mul(solarSatellites, 2000))
+                    )
+                }
+                _setPlanetShipCount(targetPlanetId, Ship.SolarSatellite, 0);
+                _setPlanetShipCount(targetPlanetId, Ship.Crawler, 0);
             }
             _raidResourcesForAttackGroup(missionId, mission);
         }
