@@ -23,6 +23,7 @@ contract VeydriftReferralSystem {
     address public referralSigner;
     mapping(bytes32 commitment => ReferralInvite invite) public referralInvites;
     mapping(address inviter => bytes32 commitment) public referralCommitmentOf;
+    mapping(bytes32 commitment => uint64 claimedAt) public referralClaimedAt;
     mapping(bytes32 commitment => ReferralRedemptionWindow redemptionWindow) private
         _referralRedemptionWindows;
     mapping(bytes32 commitment => mapping(address invitee => bool redeemed)) public
@@ -34,6 +35,7 @@ contract VeydriftReferralSystem {
     error ReferralCommitmentAlreadyClaimed(bytes32 commitment);
     error ReferralInviteInvalid(bytes32 commitment);
     error ReferralInviteAlreadyClaimed(address inviter, bytes32 commitment);
+    error ReferralInviteExpired(bytes32 commitment, uint64 expiredAt);
     error ReferralInviteeAlreadyRedeemed(bytes32 commitment, address invitee);
     error ReferralSignatureInvalid();
     error ReferralSelfInvite();
@@ -80,20 +82,30 @@ contract VeydriftReferralSystem {
 
     function claimReferralCode(bytes32 commitment) external {
         if (commitment == bytes32(0)) revert ReferralCommitmentInvalid();
-        if (referralInvites[commitment].inviter != address(0)) {
+        uint64 nowTimestamp = uint64(block.timestamp);
+        address existingInviter = referralInvites[commitment].inviter;
+        if (existingInviter != address(0) && existingInviter != msg.sender) {
             revert ReferralCommitmentAlreadyClaimed(commitment);
         }
         bytes32 existingCommitment = referralCommitmentOf[msg.sender];
-        if (existingCommitment != bytes32(0)) {
+        if (
+            existingCommitment != bytes32(0) && existingCommitment != commitment
+                && !_isExpired(existingCommitment)
+        ) {
             revert ReferralInviteAlreadyClaimed(msg.sender, existingCommitment);
         }
         if (game == address(0) || IVeydriftReferralGame(game).homePlanetOf(msg.sender) == 0) {
             revert Unauthorized(msg.sender);
         }
 
+        if (existingCommitment != bytes32(0) && existingCommitment != commitment) {
+            delete referralInvites[existingCommitment];
+            delete referralClaimedAt[existingCommitment];
+        }
         referralCommitmentOf[msg.sender] = commitment;
         referralInvites[commitment] = ReferralInvite({inviter: msg.sender});
-        emit ReferralCodeClaimed(msg.sender, commitment, uint64(block.timestamp));
+        referralClaimedAt[commitment] = nowTimestamp;
+        emit ReferralCodeClaimed(msg.sender, commitment, nowTimestamp);
     }
 
     function redeemReferralInvite(
@@ -110,6 +122,11 @@ contract VeydriftReferralSystem {
         ReferralInvite storage invite = referralInvites[commitment];
         inviter = invite.inviter;
         if (inviter == address(0)) revert ReferralInviteInvalid(commitment);
+        uint64 claimedAt = referralClaimedAt[commitment];
+        uint64 expiredAt = claimedAt + REFERRAL_CLAIM_WINDOW;
+        if (claimedAt == 0 || block.timestamp >= expiredAt) {
+            revert ReferralInviteExpired(commitment, expiredAt);
+        }
         if (inviter == invitee) revert ReferralSelfInvite();
         if (referralRedemptions[commitment][invitee]) {
             revert ReferralInviteeAlreadyRedeemed(commitment, invitee);
@@ -164,6 +181,11 @@ contract VeydriftReferralSystem {
             revert ReferralRedemptionQuotaExceeded(commitment, resetsAt);
         }
         window.redeemedAt[oldestIndex] = nowTimestamp;
+    }
+
+    function _isExpired(bytes32 commitment) private view returns (bool) {
+        uint64 claimedAt = referralClaimedAt[commitment];
+        return claimedAt == 0 || block.timestamp >= claimedAt + REFERRAL_CLAIM_WINDOW;
     }
 
     function referralRedemptionQuota(bytes32 commitment)

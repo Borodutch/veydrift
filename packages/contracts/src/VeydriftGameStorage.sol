@@ -363,6 +363,7 @@ abstract contract VeydriftGameStorage is Initializable {
     error ReferralCommitmentAlreadyClaimed(bytes32 commitment);
     error ReferralInviteInvalid(bytes32 commitment);
     error ReferralInviteAlreadyClaimed(address inviter, bytes32 commitment);
+    error ReferralInviteExpired(bytes32 commitment, uint64 expiredAt);
     error ReferralInviteeAlreadyRedeemed(bytes32 commitment, address invitee);
     error ReferralSignatureInvalid();
     error ReferralSelfInvite();
