@@ -7966,6 +7966,7 @@ export function PlayableMvpApp({
       now={now}
       onSelect={handleSelectManagedPlanet}
       planets={walletPlanets}
+      researchQueue={activeResearchQueue(effectiveResearchState?.queue) ?? activeResearchQueue(onChainQueues?.research) ?? null}
       selectedBodyKind={activeBodyKind}
       selectedPlanetId={activePlanetId}
     />
@@ -7986,6 +7987,7 @@ export function PlayableMvpApp({
       now={now}
       onSelect={handleSelectManagedPlanet}
       planets={walletPlanets}
+      researchQueue={activeResearchQueue(effectiveResearchState?.queue) ?? activeResearchQueue(onChainQueues?.research) ?? null}
       selectedBodyKind={activeBodyKind}
       selectedPlanetId={activePlanetId}
     />
@@ -8705,6 +8707,7 @@ function PlanetSelector({
   now,
   onSelect,
   planets,
+  researchQueue,
   selectedBodyKind,
   selectedPlanetId,
 }: {
@@ -8713,6 +8716,7 @@ function PlanetSelector({
   now: number;
   onSelect: (planetId: string, bodyKind?: OrbitBodyKind) => void;
   planets: ManagedPlanetResponse[];
+  researchQueue: QueueStateResponse | null | undefined;
   selectedBodyKind: OrbitBodyKind;
   selectedPlanetId: string | undefined;
 }) {
@@ -8722,6 +8726,7 @@ function PlanetSelector({
   if (layout === "mobile") {
     return (
       <section aria-label="Select planet" className="block min-w-0 max-w-full overflow-x-auto overscroll-x-contain">
+        <PlanetSelectorResearchProgress now={now} queue={researchQueue} />
         <div className="flex w-max min-w-full gap-2 pb-1">
           {planets.map((planet) => (
             <PlanetSelectorItem
@@ -8741,6 +8746,7 @@ function PlanetSelector({
 
   return (
     <aside aria-label="Select planet" className="hidden w-32 shrink-0 border-l border-white/10 bg-[#07111d]/92 p-2 shadow-2xl shadow-black/20 backdrop-blur-xl lg:flex lg:flex-col">
+      <PlanetSelectorResearchProgress now={now} queue={researchQueue} />
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
         {planets.map((planet) => (
           <PlanetSelectorItem
@@ -8871,21 +8877,21 @@ function PlanetSelectorProgressBars({
   now: number;
   planet: ManagedPlanetResponse;
 }) {
-  const bars = planetSelectorQueueProgressBars(planet, now);
-  if (bars.every((bar) => !bar.active)) return null;
+  const bars = planetSelectorQueueProgressBars(planet, now).filter((bar) => bar.active);
+  if (bars.length === 0) return null;
 
   const summary = bars.map((bar) => bar.title).join(". ");
   return (
     <span
       aria-label={`Planet production progress. ${summary}`}
-      className="grid w-full grid-cols-3 gap-1"
+      className="grid w-full gap-1"
       data-planet-selector-progress-bars={planet.planetId}
     >
       {bars.map((bar) => (
         <span
-          className={`h-1.5 overflow-hidden rounded-full border border-white/5 bg-white/10 ${bar.active ? "opacity-100" : "opacity-45"}`}
+          className="h-1.5 overflow-hidden rounded-full border border-white/5 bg-white/10 opacity-100"
           data-planet-selector-progress={bar.kind}
-          data-planet-selector-progress-active={bar.active ? "true" : "false"}
+          data-planet-selector-progress-active="true"
           key={bar.kind}
           title={bar.title}
         >
@@ -8903,10 +8909,60 @@ type PlanetSelectorProgressBar = {
   active: boolean;
   color: string;
   indeterminate: boolean;
-  kind: "building" | "defense" | "ship";
+  kind: "building" | "defense" | "research" | "ship";
   progress: number;
   title: string;
 };
+
+function PlanetSelectorResearchProgress({
+  now,
+  queue,
+}: {
+  now: number;
+  queue: QueueStateResponse | null | undefined;
+}) {
+  const bar = planetSelectorQueueProgressBar({
+    color: "bg-violet-300",
+    kind: "research",
+    label: "Research",
+    now,
+    preview: researchQueuePreview(queue),
+    queue,
+  });
+  if (!bar.active) return null;
+
+  // Research is wallet/global, so the selector renders it once instead of copying
+  // the same queue onto every planet card.
+  return (
+    <div
+      aria-label={`Selector research progress. ${bar.title}`}
+      className="mb-2 grid min-w-0 gap-1 rounded border border-violet-200/15 bg-violet-200/[0.055] p-1.5 text-left"
+      data-planet-selector-research-progress="true"
+      title={bar.title}
+    >
+      <div className="flex min-w-0 items-center justify-between gap-1 text-[0.6rem] leading-3 text-violet-100">
+        <span className="truncate font-semibold">Research</span>
+        <span className="truncate text-violet-200/80">{bar.title.replace(/^Research: /, "")}</span>
+      </div>
+      <span className="h-1.5 overflow-hidden rounded-full border border-white/5 bg-white/10">
+        <span
+          className={`block h-full rounded-full ${bar.color} ${bar.indeterminate ? "w-2/3 animate-pulse" : "transition-[width]"}`}
+          data-planet-selector-progress="research"
+          data-planet-selector-progress-active="true"
+          style={bar.indeterminate ? undefined : { width: `${Math.round(bar.progress * 100)}%` }}
+        />
+      </span>
+    </div>
+  );
+}
+
+function researchQueuePreview(queue: QueueStateResponse | null | undefined): { label: string } {
+  const research = queue?.itemId === undefined
+    ? undefined
+    : researchCatalog.find((item) => item.id === queue.itemId);
+  const targetLevel = queue?.targetLevel ? ` Level ${queue.targetLevel}` : "";
+  return { label: `${research?.label ?? "Research"}${targetLevel}` };
+}
 
 function planetSelectorQueueProgressBars(
   planet: ManagedPlanetResponse,
