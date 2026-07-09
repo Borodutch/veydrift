@@ -96,6 +96,10 @@ function playAppRouteForPathname(pathname) {
   return pathname === "/play" || pathname.startsWith("/play/");
 }
 
+export function inviteAppRouteForPathname(pathname) {
+  return pathname === "/invite" || pathname === "/alliance-invites";
+}
+
 export function shareRouteForUrl(url) {
   if ((url.pathname === "/" || url.pathname === "/index.html") && hasReferralCode(url)) {
     return { kind: "referral" };
@@ -786,7 +790,7 @@ if (import.meta.main) {
         return responseFor(file, route);
       }
 
-      if (docsAppRouteForPathname(route) || playAppRouteForPathname(route)) {
+      if (docsAppRouteForPathname(route) || playAppRouteForPathname(route) || inviteAppRouteForPathname(route)) {
         return responseFor(Bun.file(staticFileUrl("/index.html")), "/index.html");
       }
 
