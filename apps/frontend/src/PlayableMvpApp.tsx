@@ -8876,6 +8876,8 @@ function PlanetSelectorProgressBars({
   planet: ManagedPlanetResponse;
 }) {
   const bars = planetSelectorQueueProgressBars(planet, now);
+  if (bars.every((bar) => !bar.active)) return null;
+
   const summary = bars.map((bar) => bar.title).join(". ");
   return (
     <span
