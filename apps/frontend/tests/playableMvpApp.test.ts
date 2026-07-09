@@ -77,6 +77,7 @@ import {
   walletSettlementForManagedPlanet,
   walletSpendableResourcesFor,
   walletSnapshotHydrationKey,
+  acsDefendCoordinationBlocker,
 } from "../src/PlayableMvpApp";
 import {
   infrastructureUpgradeButtonLabel,
@@ -84,7 +85,7 @@ import {
 import { createInitialPlayableState } from "../src/playableMvp";
 import type { RaidTarget } from "../src/raidTargetFinder";
 import type { Planet } from "../src/types";
-import type { ChainDefenseState, ChainInfrastructureState, ChainResearchState, ChainShipyardState, FleetMissionSummary, PlayerQueuesResponse, QueueStateResponse, WalletPlanetsResponse, WalletSettlementResponse } from "../src/walletFlow";
+import type { ChainAllianceState, ChainDefenseState, ChainInfrastructureState, ChainResearchState, ChainShipyardState, FleetMissionSummary, PlayerQueuesResponse, QueueStateResponse, WalletPlanetsResponse, WalletSettlementResponse } from "../src/walletFlow";
 
 const playableMvpSource = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 
@@ -967,6 +968,39 @@ describe("Playable MVP app display helpers", () => {
       code: -32603,
       message: "Internal JSON-RPC error.",
     })).toBe("Servers are unavailable. Retrying in 10 seconds.");
+  });
+
+  test("keeps Group Defend submit gating aligned with contract coordination rules", () => {
+    const account = "0x1111111111111111111111111111111111111111";
+    const defender = "0x2222222222222222222222222222222222222222";
+    const missionForOwner = (owner: string | undefined): FleetMissionSummary => ({
+      targetPlanet: owner ? { owner } : null,
+    } as FleetMissionSummary);
+    const allianceState = (memberAddresses: string[], allianceId = "7"): ChainAllianceState => ({
+      wallet: account,
+      allianceAvailable: true,
+      membership: { allianceId, role: "member", joinedAt: "1" },
+      profile: null,
+      directory: [],
+      pendingInvites: [],
+      pendingJoinRequests: [],
+      allianceJoinRequests: [],
+      diplomacy: [],
+      activeWars: [],
+      members: memberAddresses.map((address) => ({ address, role: "member", joinedAt: "1" })),
+    });
+
+    expect(acsDefendCoordinationBlocker(missionForOwner(account), account, null)).toBeUndefined();
+    expect(acsDefendCoordinationBlocker(missionForOwner(defender), account, allianceState([account, defender]))).toBeUndefined();
+    expect(acsDefendCoordinationBlocker(missionForOwner(defender), account, allianceState([account], "0"))).toBe(
+      "Group defense is only available for your own planets or same-alliance planets."
+    );
+    expect(acsDefendCoordinationBlocker(missionForOwner(defender), account, allianceState([account]))).toBe(
+      "Group defense is only available for your own planets or same-alliance planets."
+    );
+    expect(acsDefendCoordinationBlocker(missionForOwner(undefined), account, allianceState([account]))).toBe(
+      "Defended planet state is still syncing."
+    );
   });
 
   test("blocks stale attack submissions after target protection refresh", () => {

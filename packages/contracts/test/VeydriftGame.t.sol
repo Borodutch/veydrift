@@ -5602,7 +5602,7 @@ contract VeydriftGameTest is Test {
         assertEq(maxLoot.deuterium, 0);
     }
 
-    function testFleetCounterplayRequiresAlliancePermission() public {
+    function testFleetCounterplayAcsDefendAllowsOwnDefenseWithoutAlliance() public {
         (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
         _setShipCount(targetPlanetId, Ship.LightFighter, 1);
@@ -5624,9 +5624,48 @@ contract VeydriftGameTest is Test {
         VeydriftGameStorage.MissionShips memory defenders;
         defenders.lightFighter = 1;
         vm.prank(defender);
+        uint256 counterplayMissionId = game.launchFleetMission(
+            targetPlanetId,
+            hostileMissionId,
+            VeydriftGameStorage.FleetMissionType.AcsDefend,
+            defenders,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(counterplayMissionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+    }
+
+    function testFleetCounterplayRequiresAlliancePermissionForAlliedDefense() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        address stranger = address(0xBAD);
+        vm.deal(stranger, 1 ether);
+        vm.prank(stranger);
+        uint256 strangerPlanetId = game.startPlanet{value: 0.05 ether}();
+        _setPlanetCoordinates(strangerPlanetId, 1, 100, 10);
+        _setShipCount(originPlanetId, Ship.SmallCargo, 1);
+        _setShipCount(strangerPlanetId, Ship.LightFighter, 1);
+        _setResources(originPlanetId, 10_000, 10_000, 10_000);
+        _setResources(strangerPlanetId, 10_000, 10_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory attackers;
+        attackers.smallCargo = 1;
+        vm.prank(player);
+        uint256 hostileMissionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Attack,
+            attackers,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            801
+        );
+
+        VeydriftGameStorage.MissionShips memory defenders;
+        defenders.lightFighter = 1;
+        vm.prank(stranger);
         vm.expectRevert(VeydriftGameStorage.InvalidQuantity.selector);
         game.launchFleetMission(
-            targetPlanetId,
+            strangerPlanetId,
             hostileMissionId,
             VeydriftGameStorage.FleetMissionType.AcsDefend,
             defenders,
