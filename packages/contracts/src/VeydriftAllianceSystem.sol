@@ -669,6 +669,10 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         uint256 hostileMissionId
     ) private view returns (bool) {
         VeydriftGameStorage.Planet memory target = game.planet(defenderPlanetId);
+        if (target.owner == viewer) {
+            return true;
+        }
+
         Membership memory targetMembership = _memberships[target.owner];
         Membership memory viewerMembership = _memberships[viewer];
         if (

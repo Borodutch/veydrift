@@ -2845,6 +2845,26 @@ function backendMissionTypeLabel(kind: string): string {
   return kind.charAt(0).toUpperCase() + kind.slice(1);
 }
 
+export function acsDefendCoordinationBlocker(
+  mission: FleetMissionSummary,
+  account: string,
+  allianceState: ChainAllianceState | null,
+): string | undefined {
+  const defendedOwner = mission.targetPlanet?.owner;
+  if (!defendedOwner) return "Defended planet state is still syncing.";
+  if (defendedOwner.toLowerCase() === account.toLowerCase()) return undefined;
+
+  const allianceId = allianceState?.membership.allianceId;
+  if (!allianceId || allianceId === "0") {
+    return "Group defense is only available for your own planets or same-alliance planets.";
+  }
+
+  const defendedOwnerLower = defendedOwner.toLowerCase();
+  return allianceState.members.some((member) => member.address.toLowerCase() === defendedOwnerLower)
+    ? undefined
+    : "Group defense is only available for your own planets or same-alliance planets.";
+}
+
 export function defenseCompletionPlanetIdFor({
   activePlanetId,
   defenseState,
@@ -3434,6 +3454,7 @@ export function PlayableMvpApp({
     coords: Coordinates;
     hostileArrivalMs: number;
     depotLevel: number;
+    coordinationBlocker?: string | undefined;
   } | null>(null);
   const researchState = activePlanetSection.researchState;
   const setResearchState = useCallback((
@@ -7600,6 +7621,11 @@ export function PlayableMvpApp({
       setMissionAction({ status: "error", label: "Wallet, game contract, or home planet is unavailable." });
       return;
     }
+    const coordinationBlocker = acsDefendCoordinationBlocker(mission, account, allianceState);
+    if (coordinationBlocker) {
+      setMissionAction({ status: "error", label: coordinationBlocker });
+      return;
+    }
 
     const defended = mission.targetPlanet;
     const coords: Coordinates = defended
@@ -7613,8 +7639,9 @@ export function PlayableMvpApp({
       coords,
       hostileArrivalMs: Number(mission.arrivalAt) * 1_000,
       depotLevel: defended?.allianceDepotLevel ?? 0,
+      coordinationBlocker,
     });
-  }, [account, gameContract, onChainSettlement?.homePlanetId, provider]);
+  }, [account, allianceState, gameContract, onChainSettlement?.homePlanetId, provider]);
 
   const handleConfirmAcsDefend = useCallback((draft: MissionLaunchDraft) => {
     const pending = pendingAcsDefend;
@@ -7622,6 +7649,10 @@ export function PlayableMvpApp({
     const originPlanetId = activePlanetId ?? onChainSettlement?.homePlanetId;
     if (!provider || !account || !gameContract || !originPlanetId) {
       setGalaxyAction({ status: "error", label: "Wallet, game contract, or origin planet is unavailable." });
+      return;
+    }
+    if (pending.coordinationBlocker) {
+      setGalaxyAction({ status: "error", label: pending.coordinationBlocker });
       return;
     }
 
