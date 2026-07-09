@@ -1394,14 +1394,24 @@ function ReferralProgramPanel({
               {invite.expiresAt ? <span>Expires {formatDateTime(invite.expiresAt)}</span> : null}
               <span>{invite.redemptionCount} total invite use{invite.redemptionCount === 1 ? "" : "s"}</span>
             </div>
-            <button
-              className="referral-copy-button"
-              disabled={invite.status !== "active"}
-              onClick={() => void navigator.clipboard?.writeText(invite.link)}
-              type="button"
-            >
-              Copy
-            </button>
+            <div className="referral-copy-actions">
+              <button
+                className="referral-copy-button"
+                disabled={invite.status !== "active"}
+                onClick={() => void navigator.clipboard?.writeText(invite.code)}
+                type="button"
+              >
+                Copy code
+              </button>
+              <button
+                className="referral-copy-button"
+                disabled={invite.status !== "active"}
+                onClick={() => void navigator.clipboard?.writeText(invite.link)}
+                type="button"
+              >
+                Copy link
+              </button>
+            </div>
           </div>
         ) : (
           state.status !== "loading" ? <p className="referral-muted">No invite link claimed yet.</p> : null

@@ -1091,7 +1091,7 @@ function PendingInvites({
   onAcceptInvite: (allianceId: string) => void;
 }) {
   return (
-    <Panel title="Invitations">
+    <Panel title="Alliance invitations">
       {invites.length ? (
         <div className="grid gap-2">
           {invites.map((invite) => {
@@ -1115,7 +1115,7 @@ function PendingInvites({
           })}
         </div>
       ) : (
-        <p className="text-sm text-slate-400">No pending invitations.</p>
+        <p className="text-sm text-slate-400">No alliance invitations to accept.</p>
       )}
     </Panel>
   );
