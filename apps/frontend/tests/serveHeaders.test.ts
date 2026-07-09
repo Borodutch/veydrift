@@ -3,6 +3,7 @@ import {
   buildReferralMiniAppEmbed,
   cacheControl,
   injectShareMeta,
+  inviteAppRouteForPathname,
   responseHeadersFor,
   routeMeta,
   shareRouteForUrl,
@@ -23,6 +24,12 @@ describe("frontend static server headers", () => {
 
   test("serves raw docs markdown with a markdown content type", () => {
     expect(responseHeadersFor("/docs.md")["content-type"]).toBe("text/markdown; charset=utf-8");
+  });
+
+  test("treats clean invite URLs as app routes", () => {
+    expect(inviteAppRouteForPathname("/invite")).toBe(true);
+    expect(inviteAppRouteForPathname("/alliance-invites")).toBe(true);
+    expect(inviteAppRouteForPathname("/alliance")).toBe(false);
   });
 
   test("falls back quickly when mission share metadata is slow", async () => {
