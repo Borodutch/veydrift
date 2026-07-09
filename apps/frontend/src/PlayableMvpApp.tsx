@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
+import type { ComponentChildren } from "preact";
 import type { Coordinates, Planet, PlanetType } from "./types";
 import {
   GalaxyView,
@@ -1723,6 +1724,7 @@ interface PlayableMvpAppProps {
   miniAppMode?: boolean | undefined;
   onConnectWallet?: (() => void) | undefined;
   planet?: PlanetSummary | undefined;
+  referralProgramPanel?: ComponentChildren | undefined;
 }
 
 const farcasterWalletReportInstruction = "Please send this exact message to Veydrift support.";
@@ -3079,6 +3081,7 @@ export function PlayableMvpApp({
   miniAppMode: providedMiniAppMode = false,
   onConnectWallet,
   planet,
+  referralProgramPanel,
 }: PlayableMvpAppProps = {}) {
   const [miniAppProvider, setMiniAppProvider] = useState<Eip1193Provider>();
   const [miniAppAccount, setMiniAppAccount] = useState<string | undefined>();
@@ -8480,6 +8483,7 @@ export function PlayableMvpApp({
           canTransact={canSubmitAllianceTransaction}
           error={allianceError}
           loading={allianceLoading}
+          referralProgramPanel={referralProgramPanel}
           transactionUnavailableReason={allianceTransactionUnavailableReason}
           onAcceptInvite={handleAcceptAllianceInvite}
           onRefresh={refreshAllianceState}
