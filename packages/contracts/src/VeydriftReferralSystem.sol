@@ -9,9 +9,11 @@ contract VeydriftReferralSystem {
     bytes32 public constant REFERRAL_REDEEM_DOMAIN = keccak256("veydrift.referral.redeem.v1");
     uint8 public constant REFERRAL_CLAIM_LIMIT = 3;
     uint64 public constant REFERRAL_CLAIM_WINDOW = 1 days;
+    uint64 public constant REFERRAL_INVITE_VALIDITY = 1 days;
 
     struct ReferralInvite {
         address inviter;
+        uint64 claimedAt;
     }
 
     struct ReferralRedemptionWindow {
@@ -34,6 +36,7 @@ contract VeydriftReferralSystem {
     error ReferralCommitmentAlreadyClaimed(bytes32 commitment);
     error ReferralInviteInvalid(bytes32 commitment);
     error ReferralInviteAlreadyClaimed(address inviter, bytes32 commitment);
+    error ReferralInviteExpired(bytes32 commitment);
     error ReferralInviteeAlreadyRedeemed(bytes32 commitment, address invitee);
     error ReferralSignatureInvalid();
     error ReferralSelfInvite();
@@ -80,20 +83,38 @@ contract VeydriftReferralSystem {
 
     function claimReferralCode(bytes32 commitment) external {
         if (commitment == bytes32(0)) revert ReferralCommitmentInvalid();
-        if (referralInvites[commitment].inviter != address(0)) {
+        uint64 nowTimestamp = uint64(block.timestamp);
+        ReferralInvite memory requestedInvite = referralInvites[commitment];
+        if (
+            requestedInvite.inviter != address(0)
+                && nowTimestamp < requestedInvite.claimedAt + REFERRAL_INVITE_VALIDITY
+        ) {
             revert ReferralCommitmentAlreadyClaimed(commitment);
         }
         bytes32 existingCommitment = referralCommitmentOf[msg.sender];
         if (existingCommitment != bytes32(0)) {
-            revert ReferralInviteAlreadyClaimed(msg.sender, existingCommitment);
+            ReferralInvite memory existingInvite = referralInvites[existingCommitment];
+            if (
+                existingInvite.inviter == msg.sender
+                    && nowTimestamp < existingInvite.claimedAt + REFERRAL_INVITE_VALIDITY
+            ) {
+                revert ReferralInviteAlreadyClaimed(msg.sender, existingCommitment);
+            }
+            delete referralInvites[existingCommitment];
+        }
+        if (
+            requestedInvite.inviter != address(0)
+                && referralCommitmentOf[requestedInvite.inviter] == commitment
+        ) {
+            delete referralCommitmentOf[requestedInvite.inviter];
         }
         if (game == address(0) || IVeydriftReferralGame(game).homePlanetOf(msg.sender) == 0) {
             revert Unauthorized(msg.sender);
         }
 
         referralCommitmentOf[msg.sender] = commitment;
-        referralInvites[commitment] = ReferralInvite({inviter: msg.sender});
-        emit ReferralCodeClaimed(msg.sender, commitment, uint64(block.timestamp));
+        referralInvites[commitment] = ReferralInvite({inviter: msg.sender, claimedAt: nowTimestamp});
+        emit ReferralCodeClaimed(msg.sender, commitment, nowTimestamp);
     }
 
     function redeemReferralInvite(
@@ -110,6 +131,9 @@ contract VeydriftReferralSystem {
         ReferralInvite storage invite = referralInvites[commitment];
         inviter = invite.inviter;
         if (inviter == address(0)) revert ReferralInviteInvalid(commitment);
+        if (uint64(block.timestamp) >= invite.claimedAt + REFERRAL_INVITE_VALIDITY) {
+            revert ReferralInviteExpired(commitment);
+        }
         if (inviter == invitee) revert ReferralSelfInvite();
         if (referralRedemptions[commitment][invitee]) {
             revert ReferralInviteeAlreadyRedeemed(commitment, invitee);

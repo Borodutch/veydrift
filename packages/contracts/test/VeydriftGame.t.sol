@@ -715,6 +715,51 @@ contract VeydriftGameTest is Test {
         vm.stopPrank();
     }
 
+    function testReferralClaimAllowsFreshCodeAfterDailyExpiry() public {
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+
+        bytes32 firstCommitment = keccak256("ref-expiring-1");
+        bytes32 secondCommitment = keccak256("ref-expiring-2");
+
+        vm.prank(player);
+        referralSystem.claimReferralCode(firstCommitment);
+
+        vm.warp(block.timestamp + 1 days);
+
+        vm.prank(player);
+        referralSystem.claimReferralCode(secondCommitment);
+
+        assertEq(referralSystem.referralCommitmentOf(player), secondCommitment);
+        (address oldInviter,) = referralSystem.referralInvites(firstCommitment);
+        (address newInviter,) = referralSystem.referralInvites(secondCommitment);
+        assertEq(oldInviter, address(0));
+        assertEq(newInviter, player);
+    }
+
+    function testReferralSettlementRejectsExpiredInviteCode() public {
+        address invitee = address(0xCAFE);
+        bytes32 commitment = keccak256("expired invite code");
+        vm.prank(admin);
+        referralSystem.setReferralSigner(vm.addr(referralSignerKey));
+
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+
+        vm.prank(player);
+        referralSystem.claimReferralCode(commitment);
+
+        vm.warp(block.timestamp + 1 days);
+
+        (uint8 v, bytes32 r, bytes32 s) = _referralSignature(invitee, commitment);
+        vm.deal(invitee, 1 ether);
+        vm.prank(invitee);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftReferralSystem.ReferralInviteExpired.selector, commitment)
+        );
+        game.startPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
+    }
+
     function testReferralSettlementDoublesStartingResourcesAndPaysInviter() public {
         address invitee = address(0xCAFE);
         bytes32 commitment = keccak256("high entropy invite code");
@@ -735,7 +780,7 @@ contract VeydriftGameTest is Test {
         uint256 planetId = game.startPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
 
         VeydriftGameStorage.Planet memory planet = game.planet(planetId);
-        address inviter = referralSystem.referralInvites(commitment);
+        (address inviter,) = referralSystem.referralInvites(commitment);
 
         assertEq(inviter, player);
         assertTrue(referralSystem.referralRedemptions(commitment, invitee));
@@ -865,7 +910,12 @@ contract VeydriftGameTest is Test {
         game.startPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
 
         vm.warp(nextRedemptionAt);
-        _startPlanetWithReferral(inviteeFour, commitment);
+        (v, r, s) = _referralSignature(inviteeFour, commitment);
+        vm.prank(inviteeFour);
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftReferralSystem.ReferralInviteExpired.selector, commitment)
+        );
+        game.startPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
     }
 
     function testConfiguredResourceTokenAddressesAreReadable() public view {
