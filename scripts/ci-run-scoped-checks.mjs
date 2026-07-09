@@ -49,14 +49,18 @@ function scopeFromEnvOrGit(args) {
 const flaggedOutput = /(^|[^a-z])(warning|warn:|error:)/i;
 const allowedFlaggedOutputLines = [
   /^Missing dependencies found\. Installing now\.\.\.$/,
+  /^[╭╰├+|│]/,
 ];
 
 export function outputContainsFlaggedOutput(output) {
   return output
     .split(/\r?\n/)
     .some((line) => {
-      if (allowedFlaggedOutputLines.some((pattern) => pattern.test(line.trim()))) return false;
-      return flaggedOutput.test(line);
+      const normalizedLine = line
+        .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
+        .trim();
+      if (allowedFlaggedOutputLines.some((pattern) => pattern.test(normalizedLine))) return false;
+      return flaggedOutput.test(normalizedLine);
     });
 }
 
