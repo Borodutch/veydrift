@@ -1156,7 +1156,7 @@ export function FirstPlanetSettlementApp() {
           settlementConfig,
           invite.commitment
         );
-        await recordReferralClaimTransaction(
+        await recordReferralClaimTransactionAfterIndexing(
           settlementConfigState.apiUrl,
           wallet.account,
           invite.commitment,
@@ -1933,4 +1933,30 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+async function recordReferralClaimTransactionAfterIndexing(
+  apiUrl: string,
+  wallet: string,
+  commitment: string,
+  txHash: string
+): Promise<void> {
+  const attempts = 12;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      await recordReferralClaimTransaction(apiUrl, wallet, commitment, txHash);
+      return;
+    } catch (error) {
+      if (!isReferralClaimIndexingLag(error) || attempt === attempts - 1) {
+        throw error;
+      }
+      await delay(2_500);
+    }
+  }
+}
+
+function isReferralClaimIndexingLag(error: unknown): boolean {
+  return /referral claim transaction is not indexed|referral_claim_unconfirmed/i.test(
+    error instanceof Error ? error.message : String(error),
+  );
 }

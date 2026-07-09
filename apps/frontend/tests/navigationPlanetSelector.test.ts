@@ -162,13 +162,15 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(navSource).not.toContain("tracking-[0.16em]");
   });
 
-  test("moves alliance invites into their own sidebar tab", () => {
+  test("moves referral invites into their own sidebar tab", () => {
     expect(navSource).toContain('{ key: "raid-target-finder", label: "Raid Finder"');
     expect(navSource).toContain('{ key: "alliance-invites", label: "Invite"');
     expect(navSource.indexOf('{ key: "raid-target-finder"')).toBeLessThan(navSource.indexOf('{ key: "alliance-invites"'));
     expect(playableSource).toContain('if (page === "alliance-invites")');
     expect(playableSource).toContain("<AllianceInvitesPage");
     expect(playableSource).toContain('page === "alliance-invites"');
+    expect(playableSource).toContain("referralProgramPanel={referralProgramPanel}");
+    expect(playableSource).not.toContain("onAcceptInvite={handleAcceptAllianceInvite}");
   });
 
   test("makes Commander card value fields copy full values with local fade-up feedback", () => {

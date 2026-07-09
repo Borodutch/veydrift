@@ -841,7 +841,7 @@ export function planOnChainRefresh(
 }
 
 export function shouldRefreshAllianceStateForPage(page: Page): boolean {
-  return page === "alliance" || page === "alliance-invites" || page === "rankings" || page === "raid-target-finder" || page === "alliance-inspect";
+  return page === "alliance" || page === "rankings" || page === "raid-target-finder" || page === "alliance-inspect";
 }
 
 export function shouldRefreshMissionActionStateForPage(page: Page): boolean {
@@ -8478,15 +8478,7 @@ export function PlayableMvpApp({
     if (page === "alliance-invites") {
       return (
         <AllianceInvitesPage
-          actionState={allianceAction}
-          allianceState={allianceState}
-          canTransact={canSubmitAllianceTransaction}
-          error={allianceError}
-          loading={allianceLoading}
           referralProgramPanel={referralProgramPanel}
-          transactionUnavailableReason={allianceTransactionUnavailableReason}
-          onAcceptInvite={handleAcceptAllianceInvite}
-          onRefresh={refreshAllianceState}
         />
       );
     }

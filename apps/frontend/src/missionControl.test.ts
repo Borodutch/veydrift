@@ -23,6 +23,10 @@ describe("Mission Control battle reports", () => {
     expect(parseInspectPath("/moon/6/9/1")).toEqual({ kind: "moon", coords: { galaxy: 6, system: 9, position: 1 } });
     expect(buildInspectHash({ kind: "moon", coords: { galaxy: 6, system: 9, position: 1 } })).toBe("#/moon/6/9/1");
     expect(buildInspectPath({ kind: "moon", coords: { galaxy: 6, system: 9, position: 1 } })).toBe("/moon/6/9/1");
+    expect(parseInspectPath("/invite")).toEqual({ kind: "page", page: "alliance-invites" });
+    expect(parseInspectPath("/alliance-invites")).toEqual({ kind: "page", page: "alliance-invites" });
+    expect(buildInspectHash({ kind: "page", page: "alliance-invites" })).toBe("#/invite");
+    expect(buildInspectPath({ kind: "page", page: "alliance-invites" })).toBe("/invite");
   });
 
   test("fetches public battle report lists without wallet scope", async () => {
