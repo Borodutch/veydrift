@@ -122,9 +122,10 @@ contract VeydriftReferralSystem {
         ReferralInvite storage invite = referralInvites[commitment];
         inviter = invite.inviter;
         if (inviter == address(0)) revert ReferralInviteInvalid(commitment);
+        uint64 nowTimestamp = uint64(block.timestamp);
         uint64 claimedAt = referralClaimedAt[commitment];
         uint64 expiredAt = claimedAt + REFERRAL_CLAIM_WINDOW;
-        if (claimedAt == 0 || block.timestamp >= expiredAt) {
+        if (claimedAt == 0 || nowTimestamp >= expiredAt) {
             revert ReferralInviteExpired(commitment, expiredAt);
         }
         if (inviter == invitee) revert ReferralSelfInvite();
@@ -137,7 +138,7 @@ contract VeydriftReferralSystem {
 
         _consumeRedemptionQuota(commitment);
         referralRedemptions[commitment][invitee] = true;
-        emit ReferralInviteRedeemed(inviter, invitee, commitment, uint64(block.timestamp));
+        emit ReferralInviteRedeemed(inviter, invitee, commitment, nowTimestamp);
     }
 
     function _validReferralSignature(
@@ -185,7 +186,8 @@ contract VeydriftReferralSystem {
 
     function _isExpired(bytes32 commitment) private view returns (bool) {
         uint64 claimedAt = referralClaimedAt[commitment];
-        return claimedAt == 0 || block.timestamp >= claimedAt + REFERRAL_CLAIM_WINDOW;
+        uint64 nowTimestamp = uint64(block.timestamp);
+        return claimedAt == 0 || nowTimestamp >= claimedAt + REFERRAL_CLAIM_WINDOW;
     }
 
     function referralRedemptionQuota(bytes32 commitment)
