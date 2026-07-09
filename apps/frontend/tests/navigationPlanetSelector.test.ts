@@ -31,10 +31,11 @@ describe("navigation and planet selector UI source contracts", () => {
   });
 
   test("contains mobile planet picker horizontal overflow inside its own scroller", () => {
-    expect(playableSource).toContain('aria-label="Select planet" className="min-w-0 max-w-full overflow-x-auto overscroll-x-contain"');
+    expect(playableSource).toContain('aria-label="Select planet" className="block min-w-0 max-w-full overflow-x-auto overscroll-x-contain"');
     expect(playableSource).toContain('className="flex w-max min-w-full gap-2 pb-1"');
-    expect(playableSource).toContain('className="playable-starfield relative isolate min-h-dvh overflow-hidden bg-[#05070f] text-slate-100"');
-    expect(playableSource).toContain('className="min-w-0 flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6"');
+    expect(playableSource).toContain('className="playable-starfield relative isolate min-h-dvh w-full max-w-full overflow-hidden bg-[#05070f] text-slate-100"');
+    expect(playableSource).toContain('className="relative z-10 mx-auto flex w-full max-w-[96rem] flex-col overflow-hidden md:h-[calc(100dvh-2.75rem)] md:flex-row"');
+    expect(playableSource).toContain('className="min-w-0 max-w-full flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6"');
     expect(playableSource).not.toContain("flex min-w-max gap-2 pb-1");
   });
 
@@ -55,7 +56,17 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(navSource).toContain("{planetPicker}");
     // The compact row only fills the md-to-lg gap (no hamburger, no right sidebar),
     // so it must be hidden below `md` and at/above `lg`.
-    expect(playableSource).toContain("mb-3 hidden md:block lg:hidden");
+    expect(playableSource).toContain("mb-3 hidden min-w-0 max-w-full overflow-hidden md:block lg:hidden");
+  });
+
+  test("constrains mobile nav menu and tiles to the viewport width", () => {
+    expect(navSource).toContain('className="w-full max-w-full overflow-hidden border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden"');
+    expect(navSource).toContain('className="grid min-w-0 max-w-full gap-3 overflow-hidden border-t border-white/10 bg-[#08101d]/98 p-3 shadow-2xl shadow-black/30"');
+    expect(navSource).toContain('className="min-w-0 max-w-full overflow-hidden rounded border border-white/10 bg-white/[0.03] p-2"');
+    expect(navSource).toContain('className="grid min-w-0 grid-cols-[repeat(3,minmax(0,1fr))] gap-1.5 sm:grid-cols-[repeat(4,minmax(0,1fr))]"');
+    expect(navSource).toContain("max-w-full flex-col items-center justify-center");
+    expect(navSource).toContain("overflow-hidden rounded border px-1");
+    expect(navSource).not.toContain('className="grid grid-cols-3 gap-1.5 sm:grid-cols-4"');
   });
 
   test("keeps the desktop planet selector compact and selection-only", () => {

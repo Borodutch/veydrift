@@ -430,8 +430,8 @@ export function NavBar({
       </nav>
 
       {/* Mobile navigation */}
-      <div className="border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden">
-        <div className="flex h-12 items-center justify-between gap-3 px-3">
+      <div className="w-full max-w-full overflow-hidden border-b border-white/10 bg-[#0c111b]/95 backdrop-blur md:hidden">
+        <div className="flex h-12 min-w-0 items-center justify-between gap-3 px-3">
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-white">Veydrift</p>
             <p className="font-mono text-[11px] leading-none text-slate-500">
@@ -452,13 +452,13 @@ export function NavBar({
 
         {mobileMenuOpen && (
           <div
-            className="grid gap-3 border-t border-white/10 bg-[#08101d]/98 p-3 shadow-2xl shadow-black/30"
+            className="grid min-w-0 max-w-full gap-3 overflow-hidden border-t border-white/10 bg-[#08101d]/98 p-3 shadow-2xl shadow-black/30"
             id="mobile-navigation-menu"
           >
             {accountSummary("rounded border border-white/10 bg-white/[0.03] p-2")}
             {planetPicker ? (
               <div
-                className="rounded border border-white/10 bg-white/[0.03] p-2"
+                className="min-w-0 max-w-full overflow-hidden rounded border border-white/10 bg-white/[0.03] p-2"
                 // Close the menu once a planet is picked, matching nav-item behavior.
                 onClick={(event) => {
                   if ((event.target as HTMLElement).closest("button")) setMobileMenuOpen(false);
@@ -470,7 +470,7 @@ export function NavBar({
                 {planetPicker}
               </div>
             ) : null}
-            <nav aria-label="Mobile app sections" className="grid grid-cols-3 gap-1.5 sm:grid-cols-4">
+            <nav aria-label="Mobile app sections" className="grid min-w-0 grid-cols-[repeat(3,minmax(0,1fr))] gap-1.5 sm:grid-cols-[repeat(4,minmax(0,1fr))]">
               {pages.map((page) => (
                 <MobileTab
                   active={active === page.key || (active === "planet" && page.key === "galaxy") || (active === "alliance-inspect" && page.key === "alliance") || (active === "player-inspect" && page.key === "rankings")}
@@ -586,7 +586,7 @@ function MobileTab({
 }) {
   return (
     <button
-      className={`flex h-12 min-w-0 flex-col items-center justify-center gap-0.5 rounded border px-1 text-[11px] font-medium transition ${
+      className={`flex h-12 min-w-0 max-w-full flex-col items-center justify-center gap-0.5 overflow-hidden rounded border px-1 text-[11px] font-medium transition ${
         active
           ? "border-cyan-300/45 bg-cyan-300/10 text-cyan-200"
           : "border-white/10 bg-white/[0.04] text-slate-400 hover:bg-white/[0.075] hover:text-slate-200"
