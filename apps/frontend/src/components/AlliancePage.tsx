@@ -79,6 +79,7 @@ interface AllianceInvitesPageProps {
   canTransact: boolean;
   error?: string | undefined;
   loading: boolean;
+  referralProgramPanel?: ComponentChildren | undefined;
   transactionUnavailableReason?: string | undefined;
   onAcceptInvite: (allianceId: string) => void;
   onRefresh: () => void;
@@ -312,6 +313,7 @@ export function AllianceInvitesPage({
   canTransact,
   error,
   loading,
+  referralProgramPanel,
   transactionUnavailableReason,
   onAcceptInvite,
   onRefresh,
@@ -334,6 +336,7 @@ export function AllianceInvitesPage({
       ) : null}
       {transactionUnavailableReason ? <Notice>{transactionUnavailableReason}</Notice> : null}
       {actionState.status !== "idle" ? <Notice tone={actionState.status === "error" ? "error" : "info"}>{actionState.label}</Notice> : null}
+      {referralProgramPanel}
 
       {shouldShowAllianceInitialLoader({ allianceState, loading }) ? (
         <AllianceSkeleton />

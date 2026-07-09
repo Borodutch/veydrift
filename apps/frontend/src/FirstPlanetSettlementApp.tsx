@@ -1258,18 +1258,18 @@ export function FirstPlanetSettlementApp() {
 
   if (hasOverview) {
     return (
-      <>
-        <ReferralProgramPanel
-          onClaim={claimReferralInvite}
-          state={referralProgram}
-        />
-        <PlayableMvpApp
-          provider={provider}
-          account={account}
-          miniAppMode={miniAppMode}
-          planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
-        />
-      </>
+      <PlayableMvpApp
+        provider={provider}
+        account={account}
+        miniAppMode={miniAppMode}
+        planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
+        referralProgramPanel={(
+          <ReferralProgramPanel
+            onClaim={claimReferralInvite}
+            state={referralProgram}
+          />
+        )}
+      />
     );
   }
 
