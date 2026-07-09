@@ -755,7 +755,9 @@ contract VeydriftGameTest is Test {
         vm.deal(invitee, 1 ether);
         vm.prank(invitee);
         vm.expectRevert(
-            abi.encodeWithSelector(VeydriftReferralSystem.ReferralInviteExpired.selector, commitment)
+            abi.encodeWithSelector(
+                VeydriftReferralSystem.ReferralInviteExpired.selector, commitment
+            )
         );
         game.startPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
     }
@@ -913,7 +915,9 @@ contract VeydriftGameTest is Test {
         (v, r, s) = _referralSignature(inviteeFour, commitment);
         vm.prank(inviteeFour);
         vm.expectRevert(
-            abi.encodeWithSelector(VeydriftReferralSystem.ReferralInviteExpired.selector, commitment)
+            abi.encodeWithSelector(
+                VeydriftReferralSystem.ReferralInviteExpired.selector, commitment
+            )
         );
         game.startPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
     }
