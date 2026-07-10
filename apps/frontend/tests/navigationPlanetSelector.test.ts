@@ -80,8 +80,9 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain('aria-label="Select planet" className="hidden w-32 shrink-0');
     expect(playableSource).toContain('className="grid w-24 min-w-0 shrink-0 gap-1"');
     expect(playableSource).toContain("title={label}");
-    expect(playableSource).toContain("line-clamp-2 block min-h-8 max-w-full");
+    expect(playableSource).toContain("line-clamp-2 block max-w-full");
     expect(playableSource).toContain("[overflow-wrap:anywhere]");
+    expect(playableSource).not.toContain("line-clamp-2 block min-h-8");
     expect(playableSource).not.toContain('aria-label="Select planet" className="hidden w-28 shrink-0');
     expect(playableSource).not.toContain('className="grid w-20 min-w-0 shrink-0 gap-1"');
     expect(playableSource).not.toContain("block max-w-full truncate text-[0.68rem]");
