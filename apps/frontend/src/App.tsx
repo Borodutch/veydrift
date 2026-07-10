@@ -1,7 +1,6 @@
 import { ComingSoonApp } from "./ComingSoonApp";
 import { DocsApp } from "./components/DocsPage";
 import { FirstPlanetSettlementApp } from "./FirstPlanetSettlementApp";
-import { PlayableMvpApp } from "./PlayableMvpApp";
 
 export function App() {
   if (typeof window !== "undefined" && window.location.pathname.startsWith("/docs")) {
@@ -9,7 +8,7 @@ export function App() {
   }
 
   if (typeof window !== "undefined" && window.location.pathname.startsWith("/play")) {
-    return <PlayableMvpApp />;
+    return <FirstPlanetSettlementApp />;
   }
 
   const surface = import.meta.env.MODE === "settlement" || import.meta.env.MODE === "playable"
@@ -17,7 +16,7 @@ export function App() {
     : import.meta.env.VITE_VEYDRIFT_SURFACE;
 
   if (surface === "playable") {
-    return <PlayableMvpApp />;
+    return <FirstPlanetSettlementApp />;
   }
 
   if (surface === "settlement" || surface === "test") {

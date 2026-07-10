@@ -1490,6 +1490,122 @@ h4 {
   line-height: 1.55;
 }
 
+.retro-cd-stage {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  overflow: hidden;
+  background: #03050b;
+  color: #ecfdf5;
+  padding: clamp(18px, 4vw, 42px);
+}
+
+.retro-cd-backdrop,
+.retro-cd-starfield,
+.retro-cd-nebula,
+.retro-cd-scanlines {
+  position: fixed;
+  inset: 0;
+}
+
+.retro-cd-backdrop {
+  z-index: -1;
+  overflow: hidden;
+}
+
+.retro-cd-starfield {
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(255, 255, 255, 0.88) 0 1px, transparent 1.6px),
+    radial-gradient(circle at 28% 72%, rgba(128, 241, 255, 0.72) 0 1px, transparent 1.7px),
+    radial-gradient(circle at 58% 28%, rgba(246, 179, 92, 0.64) 0 1px, transparent 1.8px),
+    radial-gradient(circle at 84% 64%, rgba(190, 138, 255, 0.66) 0 1px, transparent 1.8px);
+  background-size: 240px 240px, 310px 310px, 380px 380px, 460px 460px;
+  opacity: 0.52;
+}
+
+.retro-cd-starfield-one {
+  opacity: 0.48;
+}
+
+.retro-cd-starfield-two {
+  transform: scale(1.7);
+  opacity: 0.24;
+}
+
+.retro-cd-nebula {
+  background:
+    radial-gradient(ellipse at 72% 40%, rgba(128, 241, 255, 0.16), transparent 46%),
+    radial-gradient(ellipse at 22% 72%, rgba(246, 179, 92, 0.12), transparent 36%),
+    linear-gradient(115deg, rgba(3, 5, 11, 0.9) 0%, rgba(6, 12, 24, 0.78) 46%, rgba(9, 16, 18, 0.62) 100%);
+}
+
+.retro-cd-scanlines {
+  opacity: 0.18;
+  background: repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px 7px);
+  mask-image: linear-gradient(90deg, transparent, #000 18%, #000 88%, transparent);
+}
+
+.retro-cd-shell {
+  display: grid;
+  width: min(1180px, 100%);
+  min-height: min(720px, calc(100dvh - 84px));
+  grid-template-columns: minmax(300px, 0.82fr) minmax(380px, 1.18fr);
+  gap: clamp(24px, 5vw, 72px);
+  align-items: center;
+}
+
+.retro-cd-copy-panel {
+  container-type: inline-size;
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  gap: 20px;
+  padding: clamp(4px, 1vw, 18px);
+}
+
+.retro-cd-art {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: min(62dvh, 640px);
+  place-items: center;
+  margin: 0;
+}
+
+.retro-cd-art::before {
+  position: absolute;
+  inset: 10% 4% 12% 8%;
+  background:
+    radial-gradient(ellipse at 54% 52%, rgba(128, 241, 255, 0.2), transparent 58%),
+    radial-gradient(ellipse at 50% 54%, rgba(246, 179, 92, 0.14), transparent 46%);
+  content: "";
+  filter: blur(20px);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.retro-cd-box {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: min(100%, 720px);
+  max-height: min(72dvh, 680px);
+  object-fit: contain;
+  filter:
+    drop-shadow(0 28px 54px rgba(0, 0, 0, 0.52))
+    drop-shadow(0 0 34px rgba(128, 241, 255, 0.18));
+}
+
+.retro-cd-copy-panel .settlement-state {
+  min-height: 0;
+}
+
+.retro-cd-copy-panel .settlement-state h1 {
+  max-width: 620px;
+}
+
 .settlement-stage {
   position: relative;
   isolation: isolate;
@@ -1873,6 +1989,21 @@ h4 {
     grid-column: 1 / -1;
   }
 
+  .retro-cd-shell {
+    min-height: auto;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+
+  .retro-cd-art {
+    min-height: min(46dvh, 420px);
+    order: -1;
+  }
+
+  .retro-cd-box {
+    max-height: min(44dvh, 410px);
+  }
+
   .settlement-shell {
     min-height: auto;
     grid-template-columns: minmax(0, 1fr);
@@ -1950,6 +2081,26 @@ h4 {
     padding-top: 62px;
   }
 
+  .retro-cd-stage {
+    align-items: start;
+    padding: 66px 18px 22px;
+  }
+
+  .retro-cd-shell,
+  .retro-cd-copy-panel,
+  .retro-cd-art {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .retro-cd-copy-panel {
+    padding: 0;
+  }
+
+  .retro-cd-copy-panel .settlement-state {
+    gap: 20px;
+  }
+
   .settlement-shell,
   .settlement-command,
   .scanner-frame {
@@ -2000,6 +2151,19 @@ h4 {
 }
 
 @media (max-width: 600px) {
+  .retro-cd-shell {
+    justify-self: start;
+    max-width: min(calc(100vw - 36px), 420px);
+  }
+
+  .retro-cd-art {
+    min-height: min(36dvh, 300px);
+  }
+
+  .retro-cd-box {
+    max-height: min(34dvh, 290px);
+  }
+
   .settlement-shell {
     justify-self: start;
     max-width: min(calc(100vw - 36px), 354px);
@@ -2033,6 +2197,10 @@ h4 {
     padding-top: 58px;
   }
 
+  .retro-cd-stage {
+    padding: 58px 12px 18px;
+  }
+
   .settlement-support-link {
     top: 12px;
     right: 12px;
@@ -2041,6 +2209,14 @@ h4 {
 
   .settlement-shell {
     max-width: calc(100vw - 24px);
+  }
+
+  .retro-cd-shell {
+    max-width: calc(100vw - 24px);
+  }
+
+  .retro-cd-copy-panel .settlement-state p {
+    font-size: 0.95rem;
   }
 
   .settlement-command,
