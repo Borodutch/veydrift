@@ -671,7 +671,7 @@ contract VeydriftGameTest is Test {
         assertFalse(exists);
     }
 
-    function testReferralClaimRefreshesDuplicateCommitmentForOwner() public {
+    function testReferralClaimRejectsDuplicateCommitmentUntilExpiry() public {
         bytes32 commitment = keccak256("ref-1");
 
         vm.prank(player);
@@ -683,11 +683,20 @@ contract VeydriftGameTest is Test {
 
         vm.warp(block.timestamp + 2 hours);
         vm.prank(player);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftReferralSystem.ReferralInviteAlreadyClaimed.selector, player, commitment
+            )
+        );
+        referralSystem.claimReferralCode(commitment);
+
+        vm.warp(firstClaimedAt + 1 days);
+        vm.prank(player);
         referralSystem.claimReferralCode(commitment);
 
         assertEq(referralSystem.referralInvites(commitment), player);
         assertEq(referralSystem.referralCommitmentOf(player), commitment);
-        assertEq(referralSystem.referralClaimedAt(commitment), firstClaimedAt + 2 hours);
+        assertEq(referralSystem.referralClaimedAt(commitment), firstClaimedAt + 1 days);
     }
 
     function testReferralClaimRequiresFirstPlanet() public {
@@ -720,9 +729,38 @@ contract VeydriftGameTest is Test {
         vm.stopPrank();
 
         assertEq(referralSystem.referralCommitmentOf(player), secondCommitment);
-        assertEq(referralSystem.referralInvites(firstCommitment), address(0));
-        assertEq(referralSystem.referralClaimedAt(firstCommitment), 0);
+        assertEq(referralSystem.referralInvites(firstCommitment), player);
+        assertGt(referralSystem.referralClaimedAt(firstCommitment), 0);
         assertEq(referralSystem.referralInvites(secondCommitment), player);
+    }
+
+    function testReferralClaimKeepsExpiredCodeReservedToFirstOwner() public {
+        address otherPlayer = address(0xBEEF);
+        vm.deal(otherPlayer, 1 ether);
+
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+        vm.prank(otherPlayer);
+        game.startPlanet{value: 0.05 ether}();
+
+        bytes32 commitment = keccak256("ref-owned");
+        vm.prank(player);
+        referralSystem.claimReferralCode(commitment);
+
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(otherPlayer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftReferralSystem.ReferralCommitmentAlreadyClaimed.selector, commitment
+            )
+        );
+        referralSystem.claimReferralCode(commitment);
+
+        vm.prank(player);
+        referralSystem.claimReferralCode(commitment);
+
+        assertEq(referralSystem.referralInvites(commitment), player);
+        assertEq(referralSystem.referralCommitmentOf(player), commitment);
     }
 
     function testReferralSettlementRejectsExpiredInvite() public {

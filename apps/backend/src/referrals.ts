@@ -1,6 +1,5 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { randomBytes } from "node:crypto";
 import { encodeAbiParameters, getAddress, keccak256, parseAbiParameters, toHex, verifyMessage, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { BackendConfig } from "./config";
@@ -9,6 +8,7 @@ export const referralRedeemDomain = keccak256(toHex("veydrift.referral.redeem.v1
 export const referralInviteUrlBase = "https://veydrift.com";
 export const referralClaimWindowMs = 24 * 60 * 60 * 1000;
 export const referralClaimsPerWindow = 3;
+export const referralCodePattern = /^[A-Za-z0-9_-]{9}$/;
 
 export type ReferralRedemptionRecord = {
   invitee: string;
@@ -59,7 +59,7 @@ export type ReferralRedemption = {
   s: Hex;
 };
 
-export type ReferralWalletAction = "dashboard" | "create" | "claim-transaction";
+export type ReferralWalletAction = "dashboard" | "claim-transaction";
 
 export class ReferralInviteStore {
   constructor(private readonly path: string) {}
@@ -72,57 +72,59 @@ export class ReferralInviteStore {
       configured: true,
       invite: summary,
       invites: summary ? [summary] : [],
-      nextClaimAt: summary?.nextRedemptionAt ?? null,
+      nextClaimAt: summary && !summary.expired ? summary.expiresAt : null,
       nextRedemptionAt: summary?.nextRedemptionAt ?? null,
       remainingClaims: summary?.remainingRedemptions ?? referralClaimsPerWindow,
       remainingRedemptions: summary?.remainingRedemptions ?? referralClaimsPerWindow
     };
   }
 
-  createInvite(wallet: string, now = new Date()): ReferralInviteSummary {
+  recordClaimTransaction(
+    wallet: string,
+    code: unknown,
+    commitment: string,
+    txHash: string,
+    now = new Date()
+  ): ReferralInviteSummary {
     const owner = wallet.toLowerCase();
+    const normalizedCode = normalizeReferralCode(code);
+    const normalizedCommitment = normalizeHex32(commitment, "commitment");
+    const expectedCommitment = referralCommitment(normalizedCode);
+    if (expectedCommitment.toLowerCase() !== normalizedCommitment.toLowerCase()) {
+      throw new Error("Referral code does not match the claimed commitment.");
+    }
+    const normalizedTxHash = normalizeTxHash(txHash);
     const store = this.read();
-    const existing = this.ownerInvite(store, owner);
-    if (existing && !isReferralInviteExpired(existing, now)) return referralInviteSummary(existing, now);
+    const matchingInvite = store.invites.find((candidate) =>
+      candidate.code === normalizedCode
+      || candidate.commitment.toLowerCase() === normalizedCommitment.toLowerCase()
+    );
 
-    let record: ReferralInviteRecord | undefined;
-    for (let attempt = 0; attempt < 8 && !record; attempt++) {
-      const code = randomBytes(32).toString("base64url");
-      const commitment = referralCommitment(code);
-      if (!store.invites.some((invite) => invite.commitment.toLowerCase() === commitment.toLowerCase())) {
-        record = {
-          code,
-          commitment,
-          owner,
-          claimedAt: now.toISOString(),
-          redemptions: [],
-          txHash: null
-        };
-      }
+    if (matchingInvite && matchingInvite.owner.toLowerCase() !== owner) {
+      throw new Error("Referral code is already claimed by another wallet.");
     }
-    if (!record) {
-      throw new Error("Could not generate a unique referral code.");
+    if (matchingInvite && matchingInvite.code !== normalizedCode) {
+      throw new Error("Referral commitment is already stored with a different code.");
     }
 
+    if (matchingInvite) {
+      matchingInvite.claimedAt = now.toISOString();
+      matchingInvite.txHash = normalizedTxHash;
+      this.write(store);
+      return referralInviteSummary(matchingInvite, now);
+    }
+
+    const record: ReferralInviteRecord = {
+      code: normalizedCode,
+      commitment: normalizedCommitment,
+      owner,
+      claimedAt: now.toISOString(),
+      redemptions: [],
+      txHash: normalizedTxHash
+    };
     store.invites.push(record);
     this.write(store);
     return referralInviteSummary(record, now);
-  }
-
-  recordClaimTransaction(wallet: string, commitment: string, txHash: string): ReferralInviteSummary {
-    const owner = wallet.toLowerCase();
-    const normalizedCommitment = normalizeHex32(commitment, "commitment");
-    const store = this.read();
-    const invite = store.invites.find((candidate) =>
-      candidate.owner.toLowerCase() === owner
-      && candidate.commitment.toLowerCase() === normalizedCommitment.toLowerCase()
-    );
-    if (!invite) {
-      throw new Error("Referral invite was not generated for this wallet.");
-    }
-    invite.txHash = txHash;
-    this.write(store);
-    return referralInviteSummary(invite);
   }
 
   pendingRedemption(code: unknown, invitee: string, now = new Date()): ReferralInviteRecord | undefined {
@@ -351,8 +353,8 @@ export function normalizeReferralCode(value: unknown): string {
     throw new Error("Referral code is required.");
   }
   const code = value.trim();
-  if (!/^[A-Za-z0-9_-]{32,96}$/.test(code)) {
-    throw new Error("Referral code is invalid.");
+  if (!referralCodePattern.test(code)) {
+    throw new Error("Referral code must be 9 letters, numbers, underscores, or hyphens.");
   }
   return code;
 }
