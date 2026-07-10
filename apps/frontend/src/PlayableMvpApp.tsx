@@ -8890,7 +8890,7 @@ function PlanetSelectorButton({
         />
         {showMoonIndicator ? <PlanetMoonIndicator compact planetType={planetTypeFromTemperature(planet.temperature)} /> : null}
       </span>
-      <span className="line-clamp-2 block min-h-8 max-w-full text-[0.68rem] font-medium leading-4 text-slate-200 [overflow-wrap:anywhere]">
+      <span className="line-clamp-2 block max-w-full text-[0.68rem] font-medium leading-4 text-slate-200 [overflow-wrap:anywhere]">
         {planetDisplayName(planet)}
       </span>
       <span className="block max-w-full truncate font-mono text-[0.6rem] leading-3 text-slate-400">
