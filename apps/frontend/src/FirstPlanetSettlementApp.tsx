@@ -1,7 +1,7 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { Copy, Link, TicketCheck } from "lucide-preact";
-import heroUrl from "./assets/veydrift-hero.webp";
+import { RetroCdBoxHero } from "./components/RetroCdBoxHero";
 import { TelegramIcon } from "./components/TelegramIcon";
 import { PlayableMvpApp } from "./PlayableMvpApp";
 import { gameContractAddress, playableApiUrl, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
@@ -63,7 +63,6 @@ import {
   type WalletSettlementResponse
 } from "./walletFlow";
 
-const FIRST_PLANET_URL = "/assets/game/planets/temperate-ocean.webp";
 const POST_SETTLEMENT_READ_ATTEMPTS = 8;
 const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
 const RUNTIME_CONFIG_RETRY_MS = 5_000;
@@ -126,8 +125,9 @@ export function shouldShowMiniAppWalletError(miniAppMode: boolean, planet: Plane
 }
 
 export function shouldShowPublicPlayableApp(wallet: WalletState, planet: PlanetState): boolean {
-  if (planet.kind === "success" || planet.kind === "already-settled") return false;
-  return wallet.kind === "disconnected" || wallet.kind === "no-wallet";
+  void wallet;
+  void planet;
+  return false;
 }
 
 export function shouldRefreshWalletOnProviderReady(input: {
@@ -1274,55 +1274,30 @@ export function FirstPlanetSettlementApp() {
     );
   }
 
-  if (shouldShowPublicPlayableApp(wallet, planet) && !shouldShowMiniAppWalletError(miniAppMode, planet)) {
-    return (
-      <PlayableMvpApp
-        miniAppMode={miniAppMode}
-        onConnectWallet={connectWallet}
-      />
-    );
-  }
-
   const mode = preSettlementMode(wallet, planet);
 
   return (
-    <main className="settlement-stage">
-      <div className="settlement-backdrop" aria-hidden="true">
-        <img alt="" src={heroUrl} />
-        <div className="settlement-starfield settlement-starfield-one" />
-        <div className="settlement-starfield settlement-starfield-two" />
-        <div className="settlement-nebula" />
-        <div className="settlement-scanlines" />
-      </div>
-
-      <SettlementSupportLink />
-
-      <section className="settlement-shell" aria-label="First planet settlement">
-        <div className="settlement-command">
-          <ReferralCodeField
-            disabled={planet.kind === "pending"}
-            onChange={setReferralCodeInput}
-            value={referralCodeInput}
-          />
-          <FlowBody
-            mode={mode}
-            referralCodeInput={referralCodeInput}
-            onConnect={connectWallet}
-            onSettle={settlePlanet}
-            onSwitchNetwork={switchNetwork}
-            planet={planet}
-            settlementFunding={settlementFunding}
-            settlementReady={settlementContractConfigured(settlementConfig)}
-            wallet={wallet}
-            networkSwitchPending={networkSwitchPending}
-            miniAppMode={miniAppMode}
-            requiredChain={requiredChain}
-          />
-        </div>
-
-        <SettlementScanner mode={mode} />
-      </section>
-    </main>
+    <RetroCdBoxHero ariaLabel="First planet settlement" support={<SettlementSupportLink />}>
+      <ReferralCodeField
+        disabled={planet.kind === "pending"}
+        onChange={setReferralCodeInput}
+        value={referralCodeInput}
+      />
+      <FlowBody
+        mode={mode}
+        referralCodeInput={referralCodeInput}
+        onConnect={connectWallet}
+        onSettle={settlePlanet}
+        onSwitchNetwork={switchNetwork}
+        planet={planet}
+        settlementFunding={settlementFunding}
+        settlementReady={settlementContractConfigured(settlementConfig)}
+        wallet={wallet}
+        networkSwitchPending={networkSwitchPending}
+        miniAppMode={miniAppMode}
+        requiredChain={requiredChain}
+      />
+    </RetroCdBoxHero>
   );
 }
 
@@ -1829,38 +1804,6 @@ function StateMessage({
       </div>
       {action ? <div className="settlement-action">{action}</div> : null}
     </div>
-  );
-}
-
-function SettlementScanner({ mode }: { mode: ReturnType<typeof preSettlementMode> }) {
-  const status = mode === "pending"
-    ? "Drop vector locked"
-    : mode === "wrong-network"
-      ? "Network mismatch"
-      : mode === "settle"
-        ? "Settlement site ready"
-        : "Awaiting wallet";
-
-  return (
-    <aside className="settlement-scanner" aria-label="Orbital settlement scanner">
-      <div className="scanner-frame">
-        <div className="scanner-hud scanner-hud-top">
-          <span>Orbital scan</span>
-          <strong>{status}</strong>
-        </div>
-        <div className="planet-orbit planet-orbit-a" />
-        <div className="planet-orbit planet-orbit-b" />
-        <img alt="" className="scanner-planet" src={FIRST_PLANET_URL} />
-        <div className="scanner-site scanner-site-a" />
-        <div className="scanner-site scanner-site-b" />
-        <div className="scanner-site scanner-site-c" />
-        <div className="scanner-reticle" />
-        <div className="scanner-hud scanner-hud-bottom">
-          <span>Atmosphere</span>
-          <strong>Habitable</strong>
-        </div>
-      </div>
-    </aside>
   );
 }
 

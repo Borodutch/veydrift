@@ -38,9 +38,9 @@ describe("settlement screen mode", () => {
     expect(preSettlementMode(connected, { kind: "not-settled" })).toBe("settle");
   });
 
-  test("routes logged-out viewers to public game pages but keeps unsettled wallets on settlement", () => {
-    expect(shouldShowPublicPlayableApp({ kind: "disconnected" }, { kind: "idle" })).toBe(true);
-    expect(shouldShowPublicPlayableApp({ kind: "no-wallet" }, { kind: "idle" })).toBe(true);
+  test("keeps logged-out and unsettled viewers on the pre-play gate", () => {
+    expect(shouldShowPublicPlayableApp({ kind: "disconnected" }, { kind: "idle" })).toBe(false);
+    expect(shouldShowPublicPlayableApp({ kind: "no-wallet" }, { kind: "idle" })).toBe(false);
     expect(shouldShowPublicPlayableApp(connected, { kind: "not-settled" })).toBe(false);
     expect(shouldShowPublicPlayableApp(connected, { kind: "checking" })).toBe(false);
     expect(shouldShowPublicPlayableApp(connected, { kind: "already-settled", planet: {
@@ -49,6 +49,22 @@ describe("settlement screen mode", () => {
     } })).toBe(false);
     expect(shouldShowMiniAppWalletError(true, { kind: "error", message: "Farcaster Mini App wallet setup failed (FARCASTER_BASE_SEPOLIA_UNSUPPORTED)." })).toBe(true);
     expect(shouldShowMiniAppWalletError(false, { kind: "error", message: "Farcaster Mini App wallet setup failed (FARCASTER_BASE_SEPOLIA_UNSUPPORTED)." })).toBe(false);
+  });
+
+  test("routes /play through the retro CD box pre-play gate before playable state", async () => {
+    const appSource = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
+    const settlementSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
+    const heroSource = await Bun.file(new URL("../src/components/RetroCdBoxHero.tsx", import.meta.url)).text();
+    const stylesSource = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
+
+    expect(appSource).toContain('window.location.pathname.startsWith("/play")');
+    expect(appSource).toContain("return <FirstPlanetSettlementApp />;");
+    expect(appSource).not.toContain("return <PlayableMvpApp />;");
+    expect(settlementSource).toContain("<RetroCdBoxHero");
+    expect(settlementSource).not.toContain("<SettlementScanner");
+    expect(heroSource).toContain("veydrift-retro-cd-box-hero.webp");
+    expect(heroSource).toContain("Retro Veydrift PC CD box floating in space");
+    expect(stylesSource).toContain(".retro-cd-box");
   });
 
   test("keeps no-wallet copy wallet-neutral outside Mini App mode", () => {
@@ -551,7 +567,7 @@ describe("settlement screen mode", () => {
     expect(source).toContain("FARCASTER_VEYDRIFT_CHAIN_RETRY_FAILED");
     expect(source).toContain("FARCASTER_WALLET_PROVIDER_UNAVAILABLE");
     expect(source).toContain("showFarcasterWalletProviderUnavailable");
-    expect(source).toContain("!shouldShowMiniAppWalletError(miniAppMode, planet)");
+    expect(source).toContain("<RetroCdBoxHero");
   });
 
   test("formats reportable Farcaster Mini App wallet errors with host diagnostics", () => {
