@@ -924,7 +924,7 @@ export function staleSelectedShipQuantityBlocker(
     .filter((row): row is string => Boolean(row));
 
   if (overSelected.length <= 0) return undefined;
-  return `Selected ship quantities are stale: ${overSelected.join(", ")}. Refresh mission state or reduce the quantities before launching.`;
+  return `Selected ships are not available on the selected origin body: ${overSelected.join(", ")}. Switch the origin body or reduce the quantity before launching.`;
 }
 
 export function missionTimingSummary(travelSeconds: number, nowMs: number = Date.now()): {
