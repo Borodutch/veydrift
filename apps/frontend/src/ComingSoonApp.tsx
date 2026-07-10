@@ -10,7 +10,7 @@ import {
   Rocket,
   Users,
 } from "lucide-preact";
-import heroUrl from "./assets/veydrift-hero.webp";
+import { RetroCdBoxHero } from "./components/RetroCdBoxHero";
 import { TELEGRAM_SUPPORT_URL } from "./supportLinks";
 import { playableApiUrl } from "./runtimeConfig";
 
@@ -168,46 +168,27 @@ function HeroSection() {
   const launch = landingLaunchCtaForLocation();
 
   return (
-    <section className="landing-hero relative min-h-[92svh] overflow-hidden">
-      <img
-        alt=""
-        className="absolute inset-0 h-full w-full object-cover"
-        src={heroUrl}
-      />
-      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(5,7,13,0.35)_0%,rgba(5,7,13,0.76)_78%,#05070d_100%),linear-gradient(90deg,rgba(5,7,13,0.95)_0%,rgba(5,7,13,0.52)_54%,rgba(5,7,13,0.82)_100%)]" />
-
-      <div className="relative z-10 mx-auto flex min-h-[92svh] w-full max-w-7xl flex-col justify-end px-5 pb-14 pt-24 sm:px-8 lg:px-10">
-        <div className="max-w-4xl pb-[7svh]">
-          <p className="mb-4 text-sm font-semibold text-signal">{launch.eyebrow}</p>
-          <h1 className="max-w-4xl text-5xl font-semibold leading-none text-white sm:text-7xl lg:text-8xl">
-            Veydrift
-          </h1>
-          <p className="mt-6 max-w-3xl text-xl leading-8 text-slate-100 sm:text-2xl sm:leading-9">
-            Take command in a vast onchain universe. Build the economy, marshal fleets,
-            coordinate with alliance members and turn the Rift into a weapon of conquest.
-          </p>
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-            <a
-              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-signal/30 bg-signal px-5 py-3 text-sm font-semibold text-[#031014] shadow-[0_0_32px_rgba(128,241,255,0.22)] transition hover:bg-cyan-100"
-              href={launch.primaryHref}
-            >
-              {launch.primaryLabel}
-              <ArrowRight className="h-4 w-4" />
-            </a>
-            <a
-              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-white/[0.055] bg-white/8 px-5 py-3 text-sm font-semibold text-slate-100 backdrop-blur transition hover:bg-white/[0.12]"
-              href={launch.secondaryHref}
-            >
-              {launch.secondaryLabel}
-              <Orbit className="h-4 w-4" />
-            </a>
-          </div>
-          <p className="mt-5 max-w-2xl text-sm leading-6 text-slate-300">
-            {launch.supportCopy}
-          </p>
+    <RetroCdBoxHero ariaLabel="Veydrift landing" stage="section">
+      <div className="landing-cd-copy">
+        <p className="landing-cd-eyebrow">{launch.eyebrow}</p>
+        <h1>Veydrift</h1>
+        <p>
+          Take command in a vast onchain universe. Build the economy, marshal fleets,
+          coordinate with alliance members and turn the Rift into a weapon of conquest.
+        </p>
+        <div className="landing-cd-actions">
+          <a className="landing-cd-primary" href={launch.primaryHref}>
+            {launch.primaryLabel}
+            <ArrowRight className="h-4 w-4" />
+          </a>
+          <a className="landing-cd-secondary" href={launch.secondaryHref}>
+            {launch.secondaryLabel}
+            <Orbit className="h-4 w-4" />
+          </a>
         </div>
+        <p className="landing-cd-support">{launch.supportCopy}</p>
       </div>
-    </section>
+    </RetroCdBoxHero>
   );
 }
 

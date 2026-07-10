@@ -53,6 +53,7 @@ describe("settlement screen mode", () => {
 
   test("routes /play through the retro CD box pre-play gate before playable state", async () => {
     const appSource = await Bun.file(new URL("../src/App.tsx", import.meta.url)).text();
+    const landingSource = await Bun.file(new URL("../src/ComingSoonApp.tsx", import.meta.url)).text();
     const settlementSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
     const heroSource = await Bun.file(new URL("../src/components/RetroCdBoxHero.tsx", import.meta.url)).text();
     const stylesSource = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
@@ -62,9 +63,17 @@ describe("settlement screen mode", () => {
     expect(appSource).not.toContain("return <PlayableMvpApp />;");
     expect(settlementSource).toContain("<RetroCdBoxHero");
     expect(settlementSource).not.toContain("<SettlementScanner");
-    expect(heroSource).toContain("veydrift-retro-cd-box-hero.webp");
-    expect(heroSource).toContain("Retro Veydrift PC CD box floating in space");
-    expect(stylesSource).toContain(".retro-cd-box");
+    expect(landingSource).toContain("<RetroCdBoxHero ariaLabel=\"Veydrift landing\" stage=\"section\">");
+    expect(landingSource).toContain("className=\"landing-cd-primary\"");
+    expect(heroSource).toContain("retro-cd-case");
+    expect(heroSource).toContain("retro-cd-front");
+    expect(heroSource).toContain("retro-cd-back");
+    expect(heroSource).toContain("/assets/landing/qa-screens/overview-desktop.jpg");
+    expect(heroSource).toContain("/assets/landing/qa-screens/shipyard-desktop.jpg");
+    expect(heroSource).toContain("/assets/landing/qa-screens/missions-desktop.jpg");
+    expect(stylesSource).toContain(".retro-cd-case");
+    expect(stylesSource).toContain(".retro-cd-front");
+    expect(stylesSource).toContain(".retro-cd-back");
   });
 
   test("keeps no-wallet copy wallet-neutral outside Mini App mode", () => {
