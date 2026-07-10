@@ -26,22 +26,24 @@ import {
 import {
   defaultVeydriftChainForLocation,
   ensureVeydriftNetwork,
-  createReferralInvite,
   fetchReferralDashboard,
   fetchSettlementFundingState,
   fetchWalletSettlement,
   farcasterChainFor,
+  generateReferralClaimCode,
   getChainId,
   getCurrentAccounts,
   isVeydriftChain,
   isGameBackendUnavailableMessage,
   isTransientWalletBootstrapError,
   isUserRejected,
+  normalizeReferralClaimCode,
   readMigrationReservation,
   miniAppUnsupportedChainMessage,
   WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
   requestAccounts,
   getAvailableWalletProviderDetails,
+  referralCommitment,
   recordReferralClaimTransaction,
   recordReferralRedemptionTransaction,
   redeemReferralCode,
@@ -66,6 +68,8 @@ import {
 const POST_SETTLEMENT_READ_ATTEMPTS = 8;
 const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
 const RUNTIME_CONFIG_RETRY_MS = 5_000;
+const DEFAULT_SETTLEMENT_START_PRICE_WEI = 50_000_000_000_000_000n;
+const REFERRAL_ETH_USD_ESTIMATE = 3_000;
 export const POST_SETTLEMENT_INDEXING_LABEL = "Settlement confirmed. Indexing starting resources before opening planetary overview.";
 export const POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE = "Settlement is confirmed, but the game API is still indexing starter resources. Retry once backend sync catches up.";
 const GAME_BACKEND_UNAVAILABLE_BODY =
@@ -291,6 +295,7 @@ export function FirstPlanetSettlementApp() {
   const [settlementFunding, setSettlementFunding] = useState<SettlementFunding>({ status: "idle" });
   const [referralProgram, setReferralProgram] = useState<ReferralProgramState>({ status: "idle" });
   const [referralCodeInput, setReferralCodeInput] = useState(() => referralCodeFromCurrentUrl());
+  const [referralClaimCodeInput, setReferralClaimCodeInput] = useState(() => generateReferralClaimCode());
   const transactionActionGate = useRef(createTransactionActionGate()).current;
   const farcasterAutoConnectAttempted = useRef(false);
   const farcasterNetworkSetupAttempted = useRef<string>();
@@ -302,6 +307,20 @@ export function FirstPlanetSettlementApp() {
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
   const settlementConfig = settlementConfigState.config;
   const requiredChain = defaultVeydriftChainForLocation();
+
+  useEffect(() => {
+    const dashboard = referralProgram.status === "ready"
+        || referralProgram.status === "claiming"
+        || referralProgram.status === "error"
+      ? referralProgram.dashboard
+      : undefined;
+    const invite = dashboard?.invite ?? dashboard?.invites[0];
+    if (invite?.code) {
+      setReferralClaimCodeInput(invite.code);
+    } else if (referralProgram.status === "ready") {
+      setReferralClaimCodeInput((current) => current.trim() ? current : generateReferralClaimCode());
+    }
+  }, [referralProgram]);
 
   useEffect(() => {
     let disposed = false;
@@ -1150,17 +1169,19 @@ export function FirstPlanetSettlementApp() {
       }
 
       try {
-        const invite = await createReferralInvite(settlementConfigState.apiUrl, wallet.account);
+        const inviteCode = normalizeReferralClaimCode(referralClaimCodeInput);
+        const commitment = referralCommitment(inviteCode);
         const txHash = await sendReferralClaimTransaction(
           provider,
           wallet.account,
           settlementConfig,
-          invite.commitment
+          commitment
         );
         await recordReferralClaimTransactionAfterIndexing(
           settlementConfigState.apiUrl,
           wallet.account,
-          invite.commitment,
+          inviteCode,
+          commitment,
           txHash
         );
         await refreshReferralProgram(wallet.account);
@@ -1266,8 +1287,11 @@ export function FirstPlanetSettlementApp() {
         planet={planet.kind === "success" || planet.kind === "already-settled" ? planet.planet : undefined}
         referralProgramPanel={(
           <ReferralProgramPanel
+            claimCode={referralClaimCodeInput}
+            onClaimCodeChange={setReferralClaimCodeInput}
             onClaim={claimReferralInvite}
             state={referralProgram}
+            startPriceWei={referralBenefitStartPriceWei(settlementFunding)}
           />
         )}
       />
@@ -1302,10 +1326,16 @@ export function FirstPlanetSettlementApp() {
 }
 
 function ReferralProgramPanel({
+  claimCode,
   onClaim,
+  onClaimCodeChange,
+  startPriceWei,
   state,
 }: {
+  claimCode: string;
   onClaim: () => void;
+  onClaimCodeChange: (value: string) => void;
+  startPriceWei: bigint;
   state: ReferralProgramState;
 }) {
   const dashboard = state.status === "ready" || state.status === "claiming" || state.status === "error"
@@ -1313,16 +1343,18 @@ function ReferralProgramPanel({
     : undefined;
   const invite = dashboard?.invite ?? dashboard?.invites[0];
   const claiming = state.status === "claiming";
-  const canClaim = Boolean(dashboard?.configured && (!invite || invite.status === "pending_claim" || invite.status === "expired") && !claiming);
+  const inviteActive = invite?.status === "active";
+  const claimCodeValid = /^[A-Za-z0-9_-]{9}$/.test(claimCode.trim());
+  const canClaim = Boolean(dashboard?.configured && (!invite || invite.status === "pending_claim" || invite.status === "expired") && !claiming && claimCodeValid);
   const claimLabel = claiming
-    ? "Claiming"
+    ? "Claiming invites"
     : invite?.status === "pending_claim"
-      ? "Finish claim"
+      ? "Finish invite claim"
       : invite?.status === "expired"
-        ? "Claim new code"
+        ? "Claim invites"
       : invite
-        ? "Code active"
-        : "Claim code";
+        ? "Invites active"
+        : "Claim invites";
 
   return (
     <section className="referral-program" aria-label="Referral invites">
@@ -1331,6 +1363,9 @@ function ReferralProgramPanel({
           <div>
             <span className="referral-kicker">Referral invites</span>
             <h2>Invite commanders</h2>
+            <span className="referral-benefit-copy">
+              Earn {referralInviterRewardLabel(startPriceWei)}. Invitees start with 1,000 M / 1,000 C / 0 D.
+            </span>
           </div>
           <button
             className="referral-claim-button"
@@ -1342,6 +1377,33 @@ function ReferralProgramPanel({
             {claimLabel}
           </button>
         </div>
+
+        <div className="referral-benefits" aria-label="Referral benefits">
+          <div>
+            <strong>Inviter</strong>
+            <span>50% starting fee: {referralInviterRewardLabel(startPriceWei)}</span>
+          </div>
+          <div>
+            <strong>Invitee</strong>
+            <span>2x starting resources: 1,000 M / 1,000 C / 0 D</span>
+          </div>
+        </div>
+
+        <label className="referral-claim-code-field">
+          <span>Invite code</span>
+          <input
+            autoComplete="off"
+            disabled={claiming || inviteActive}
+            inputMode="text"
+            maxLength={9}
+            onInput={(event) => onClaimCodeChange((event.currentTarget as HTMLInputElement).value)}
+            placeholder="borodutch"
+            value={claimCode}
+          />
+        </label>
+        {!claimCodeValid && !inviteActive ? (
+          <p className="referral-muted">Use 9 letters, numbers, underscores, or hyphens.</p>
+        ) : null}
 
         {state.status === "loading" ? (
           <p className="referral-muted">Loading invite code.</p>
@@ -1443,6 +1505,27 @@ export function SettlementSupportLink() {
 function referralCodeFromCurrentUrl(): string {
   if (typeof window === "undefined") return "";
   return new URLSearchParams(window.location.search).get("ref")?.trim() ?? "";
+}
+
+function referralBenefitStartPriceWei(settlementFunding: SettlementFunding): bigint {
+  return settlementFunding.status === "ready"
+    ? settlementFunding.funding.startPriceWei ?? DEFAULT_SETTLEMENT_START_PRICE_WEI
+    : DEFAULT_SETTLEMENT_START_PRICE_WEI;
+}
+
+function referralInviterRewardLabel(startPriceWei: bigint): string {
+  const rewardWei = startPriceWei / 2n;
+  const rewardEth = Number(rewardWei) / 1_000_000_000_000_000_000;
+  const usd = rewardEth * REFERRAL_ETH_USD_ESTIMATE;
+  return `${formatEth(rewardWei)} ETH (~${formatUsd(usd)} at $${REFERRAL_ETH_USD_ESTIMATE.toLocaleString("en-US")}/ETH)`;
+}
+
+function formatUsd(value: number): string {
+  return new Intl.NumberFormat("en-US", {
+    currency: "USD",
+    maximumFractionDigits: 0,
+    style: "currency"
+  }).format(value);
 }
 
 function formatDateTime(value: string): string {
@@ -1885,13 +1968,14 @@ function delay(ms: number): Promise<void> {
 async function recordReferralClaimTransactionAfterIndexing(
   apiUrl: string,
   wallet: string,
+  code: string,
   commitment: string,
   txHash: string
 ): Promise<void> {
   const attempts = 12;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
-      await recordReferralClaimTransaction(apiUrl, wallet, commitment, txHash);
+      await recordReferralClaimTransaction(apiUrl, wallet, code, commitment, txHash);
       return;
     } catch (error) {
       if (!isReferralClaimIndexingLag(error) || attempt === attempts - 1) {

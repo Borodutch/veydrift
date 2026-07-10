@@ -577,53 +577,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       }
     }
 
-    if (request.method === "POST" && url.pathname.match(/^\/wallet\/[^/]+\/referrals$/)) {
-      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      try {
-        assertAddress(wallet);
-        if (!loaded.config.referralSignerPrivateKey) {
-          return Response.json({
-            error: "referral_signer_unconfigured",
-            message: "Referral invites are not configured on this deployment."
-          }, {
-            headers: corsHeaders,
-            status: 503
-          });
-        }
-        if (!indexer) return indexedReadNotReadyResponse("referral invites", indexer, { wallet });
-        const settlement = indexer.walletSettlement(wallet);
-        if (!settlement.homePlanetId) {
-          return Response.json({
-            error: "no_home_planet",
-            message: "Settle a first planet before claiming a referral invite code."
-          }, {
-            headers: corsHeaders,
-            status: 403
-          });
-        }
-        return Response.json(referralStore.createInvite(wallet), {
-          headers: corsHeaders
-        });
-      } catch (error) {
-        if (error instanceof ReferralQuotaError) {
-          return Response.json({
-            error: "referral_redemption_quota_exceeded",
-            message: "Referral redemption quota exceeded.",
-            nextRedemptionAt: error.nextClaimAt
-          }, {
-            headers: corsHeaders,
-            status: 429
-          });
-        }
-        return errorResponse(error, 400);
-      }
-    }
-
     if (request.method === "POST" && url.pathname.match(/^\/wallet\/[^/]+\/referrals\/claim-transaction$/)) {
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
         const body = await readJsonBody(request);
+        const code = body?.code;
         const commitment = String(body?.commitment ?? "");
         const txHash = String(body?.txHash ?? "");
         if (!/^0x[a-fA-F0-9]{64}$/.test(commitment)) {
@@ -643,7 +602,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             status: 409
           });
         }
-        return Response.json(referralStore.recordClaimTransaction(wallet, commitment, txHash), {
+        const claimedAtSeconds = Number(claim.claimedAt);
+        const claimedAt = Number.isFinite(claimedAtSeconds) ? new Date(claimedAtSeconds * 1_000) : new Date();
+        return Response.json(referralStore.recordClaimTransaction(wallet, code, commitment, txHash, claimedAt), {
           headers: corsHeaders
         });
       } catch (error) {

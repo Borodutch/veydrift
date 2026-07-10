@@ -48,7 +48,7 @@ import {
   defaultVeydriftChainForLocation,
   ensureVeydriftNetwork,
   farcasterChainFor,
-  createReferralInvite,
+  generateReferralClaimCode,
   isBaseSepoliaChain,
   isTransientWalletBootstrapError,
   isUserRejected,
@@ -84,6 +84,7 @@ import {
   sendDismissAllianceJoinRequestTransaction,
   sendRequestResourceWithdrawalTransaction,
   requestAccounts,
+  referralCommitment,
   recordReferralClaimTransaction,
   requestWatchedPlanetSignature,
   readMigrationReservation,
@@ -2890,9 +2891,10 @@ describe("walletFlow", () => {
     }
   });
 
-  test("creates referral invites and records claim transactions without extra wallet signatures", async () => {
+  test("records frontend-generated referral claim transactions without extra wallet signatures", async () => {
     const originalFetch = globalThis.fetch;
-    const commitment = `0x${"aa".repeat(32)}`;
+    const code = "borodutch";
+    const commitment = referralCommitment(code);
     const txHash = `0x${"bb".repeat(32)}`;
     const requests: Array<{ body: unknown; url: string }> = [];
 
@@ -2908,10 +2910,10 @@ describe("walletFlow", () => {
       });
       return new Response(JSON.stringify({
         claimedAt: "2026-07-08T12:00:00.000Z",
-        code: "abcDEF_123-abcDEF_123-abcDEF_123-abcDEF_123",
+        code,
         commitment,
         expiresAt: "2026-07-09T12:00:00.000Z",
-        link: "https://veydrift.com?ref=abcDEF_123-abcDEF_123-abcDEF_123-abcDEF_123",
+        link: `https://veydrift.com?ref=${code}`,
         nextRedemptionAt: null,
         owner: account.toLowerCase(),
         redemptionCount: 0,
@@ -2925,15 +2927,12 @@ describe("walletFlow", () => {
     }) as unknown as typeof fetch;
 
     try {
-      await createReferralInvite("https://api.example.test///", account);
-      await recordReferralClaimTransaction("https://api.example.test///", account, commitment, txHash);
+      expect(generateReferralClaimCode()).toMatch(/^[A-Za-z0-9]{9}$/);
+      expect(referralCommitment(` ${code} `)).toBe(commitment);
+      await recordReferralClaimTransaction("https://api.example.test///", account, code, commitment, txHash);
       expect(requests).toEqual([
         {
-          body: {},
-          url: `https://api.example.test/wallet/${account}/referrals`
-        },
-        {
-          body: { commitment, txHash },
+          body: { code, commitment, txHash },
           url: `https://api.example.test/wallet/${account}/referrals/claim-transaction`
         }
       ]);

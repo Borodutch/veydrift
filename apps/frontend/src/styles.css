@@ -914,6 +914,45 @@ h4 {
   line-height: 1.2;
 }
 
+.referral-benefit-copy {
+  display: block;
+  margin-top: 6px;
+  color: #b8ccc7;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.referral-benefits {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.referral-benefits div {
+  min-width: 0;
+  border: 1px solid rgba(128, 241, 255, 0.13);
+  border-radius: 8px;
+  background: rgba(236, 253, 245, 0.045);
+  padding: 10px 12px;
+}
+
+.referral-benefits strong,
+.referral-benefits span {
+  display: block;
+}
+
+.referral-benefits strong {
+  color: #ecfdf5;
+  font-size: 0.82rem;
+}
+
+.referral-benefits span {
+  margin-top: 4px;
+  color: #b8ccc7;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
 .referral-claim-button,
 .referral-copy-button {
   min-height: 38px;
@@ -975,12 +1014,17 @@ h4 {
   font-size: 0.86rem;
 }
 
+.referral-claim-code-field,
 .referral-code-field {
   display: grid;
   gap: 8px;
+}
+
+.referral-code-field {
   margin-bottom: 18px;
 }
 
+.referral-claim-code-field span,
 .referral-code-field span {
   color: #80f1ff;
   font-size: 0.78rem;
@@ -988,6 +1032,7 @@ h4 {
   text-transform: uppercase;
 }
 
+.referral-claim-code-field input,
 .referral-code-field input {
   min-width: 0;
   min-height: 42px;
@@ -1000,6 +1045,7 @@ h4 {
   padding: 0 12px;
 }
 
+.referral-claim-code-field input:focus,
 .referral-code-field input:focus {
   border-color: #80f1ff;
 }
@@ -1030,6 +1076,24 @@ h4 {
 .invite-page .referral-program h2 {
   color: #ffffff;
   font-size: 1rem;
+}
+
+.invite-page .referral-benefit-copy {
+  color: #94a3b8;
+}
+
+.invite-page .referral-benefits div {
+  border-color: rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.invite-page .referral-benefits strong {
+  color: #f8fafc;
+}
+
+.invite-page .referral-benefits span {
+  color: #94a3b8;
 }
 
 .invite-page .referral-link-row {
@@ -1072,6 +1136,10 @@ h4 {
 }
 
 @media (max-width: 640px) {
+  .referral-benefits {
+    grid-template-columns: 1fr;
+  }
+
   .invite-page .referral-program-header,
   .invite-page .referral-link-row {
     align-items: stretch;
