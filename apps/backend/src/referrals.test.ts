@@ -39,8 +39,8 @@ function testConfig(referralStorePath: string): BackendConfig {
 }
 
 describe("referral invites", () => {
-  test("generates high-entropy commitments and computes rolling redemption quota", () => {
-    const code = "abcDEF_123-abcDEF_123-abcDEF_123-abcDEF_123";
+  test("hashes editable invite codes and computes rolling redemption quota", () => {
+    const code = "borodutch";
     expect(referralCommitment(code)).toMatch(/^0x[a-fA-F0-9]{64}$/);
     expect(referralCommitment(code)).toBe(referralCommitment(` ${code} `));
 
@@ -64,6 +64,9 @@ describe("referral invites", () => {
       let redemptionIndexed = false;
       const claimTxHash = `0x${"aa".repeat(32)}` as `0x${string}`;
       const redemptionTxHash = `0x${"bb".repeat(32)}` as `0x${string}`;
+      const code = "borodutch";
+      const claimedCommitment = referralCommitment(code);
+      const indexedClaimedAt = Math.floor(Date.now() / 1_000).toString();
       const indexer = {
         walletSettlement: (wallet: string) => ({
           homePlanetId: wallet.toLowerCase() === player.toLowerCase() ? "1" : wallet.toLowerCase() === invitee.toLowerCase() ? "2" : null
@@ -71,15 +74,15 @@ describe("referral invites", () => {
         referralClaim: (owner: string, commitment: string, txHash: string) =>
           claimIndexed
           && owner.toLowerCase() === player.toLowerCase()
-          && commitment.toLowerCase() === created.commitment.toLowerCase()
+          && commitment.toLowerCase() === claimedCommitment.toLowerCase()
           && txHash.toLowerCase() === claimTxHash.toLowerCase()
-            ? { owner, commitment, txHash }
+            ? { claimedAt: indexedClaimedAt, owner, commitment, txHash }
             : null,
         referralRedemption: (owner: string, wallet: string, commitment: string, txHash: string) =>
           redemptionIndexed
           && owner.toLowerCase() === player.toLowerCase()
           && wallet.toLowerCase() === invitee.toLowerCase()
-          && commitment.toLowerCase() === created.commitment.toLowerCase()
+          && commitment.toLowerCase() === claimedCommitment.toLowerCase()
           && txHash.toLowerCase() === redemptionTxHash.toLowerCase()
             ? { owner, wallet, commitment, txHash }
             : null
@@ -93,58 +96,40 @@ describe("referral invites", () => {
       const dashboardResponseWithoutSignature = await handler(new Request(`http://localhost/wallet/${player}/referrals`));
       expect(dashboardResponseWithoutSignature.status).toBe(200);
 
-      const createdResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals`, {
-        body: JSON.stringify({}),
-        headers: { "content-type": "application/json" },
-        method: "POST"
-      }));
-      const created = await createdResponse.json() as {
-        code: string;
-        commitment: string;
-        expiresAt: string;
-        link: string;
-      };
-      expect(createdResponse.status).toBe(200);
-      expect(created.code.length).toBeGreaterThanOrEqual(32);
-      expect(created.commitment).toMatch(/^0x[a-fA-F0-9]{64}$/);
-      expect(created.expiresAt).toBeDefined();
-      expect(created.link).toBe(`https://veydrift.com?ref=${created.code}`);
-
-      const duplicateCreateResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals`, {
-        body: JSON.stringify({}),
-        headers: { "content-type": "application/json" },
-        method: "POST"
-      }));
-      const duplicateCreate = await duplicateCreateResponse.json() as {
-        code: string;
-        commitment: string;
-      };
-      expect(duplicateCreate.code).toBe(created.code);
-      expect(duplicateCreate.commitment).toBe(created.commitment);
-
       const unindexedClaimResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals/claim-transaction`, {
-        body: JSON.stringify({ commitment: created.commitment, txHash: claimTxHash }),
+        body: JSON.stringify({ code, commitment: claimedCommitment, txHash: claimTxHash }),
         headers: { "content-type": "application/json" },
         method: "POST"
       }));
       expect(unindexedClaimResponse.status).toBe(409);
 
       const unclaimedRedeemResponse = await handler(new Request("http://localhost/referrals/redeem", {
-        body: JSON.stringify({ code: created.code, invitee }),
+        body: JSON.stringify({ code, invitee }),
         method: "POST"
       }));
-      expect(unclaimedRedeemResponse.status).toBe(409);
+      expect(unclaimedRedeemResponse.status).toBe(404);
 
       claimIndexed = true;
       const txResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals/claim-transaction`, {
-        body: JSON.stringify({ commitment: created.commitment, txHash: claimTxHash }),
+        body: JSON.stringify({ code, commitment: claimedCommitment, txHash: claimTxHash }),
         headers: { "content-type": "application/json" },
         method: "POST"
       }));
       expect(txResponse.status).toBe(200);
+      const claimed = await txResponse.json() as {
+        code: string;
+        commitment: string;
+        expiresAt: string;
+        link: string;
+      };
+      expect(claimed.code).toBe(code);
+      expect(claimed.commitment).toBe(claimedCommitment);
+      expect(claimed.expiresAt).toBe(new Date((Number(indexedClaimedAt) * 1_000) + 24 * 60 * 60 * 1_000).toISOString());
+      expect(claimed.expiresAt).toBeDefined();
+      expect(claimed.link).toBe(`https://veydrift.com?ref=${code}`);
 
       const redeemResponse = await handler(new Request("http://localhost/referrals/redeem", {
-        body: JSON.stringify({ code: created.code, invitee }),
+        body: JSON.stringify({ code, invitee }),
         method: "POST"
       }));
       const redeem = await redeemResponse.json() as {
@@ -155,7 +140,7 @@ describe("referral invites", () => {
         v: number;
       };
       expect(redeemResponse.status).toBe(200);
-      expect(redeem.commitment).toBe(created.commitment);
+      expect(redeem.commitment).toBe(claimedCommitment);
       expect(redeem.r).toMatch(/^0x[a-fA-F0-9]{64}$/);
       expect(redeem.s).toMatch(/^0x[a-fA-F0-9]{64}$/);
       expect([27, 28]).toContain(redeem.v);
@@ -163,7 +148,7 @@ describe("referral invites", () => {
       expect(privateKeyToAccount(signerKey).address.toLowerCase()).toBe("0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a");
 
       const duplicateRedeemResponse = await handler(new Request("http://localhost/referrals/redeem", {
-        body: JSON.stringify({ code: created.code, invitee }),
+        body: JSON.stringify({ code, invitee }),
         method: "POST"
       }));
       expect(duplicateRedeemResponse.status).toBe(200);
@@ -177,32 +162,32 @@ describe("referral invites", () => {
       expect(beforeConfirmationDashboard.invite?.redemptionCount).toBe(0);
 
       const unconfirmedRedemptionResponse = await handler(new Request("http://localhost/referrals/redeem-transaction", {
-        body: JSON.stringify({ code: created.code, invitee, txHash: redemptionTxHash }),
+        body: JSON.stringify({ code, invitee, txHash: redemptionTxHash }),
         method: "POST"
       }));
       expect(unconfirmedRedemptionResponse.status).toBe(409);
 
       redemptionIndexed = true;
       const unrelatedRedemptionResponse = await handler(new Request("http://localhost/referrals/redeem-transaction", {
-        body: JSON.stringify({ code: created.code, invitee, txHash: `0x${"cc".repeat(32)}` }),
+        body: JSON.stringify({ code, invitee, txHash: `0x${"cc".repeat(32)}` }),
         method: "POST"
       }));
       expect(unrelatedRedemptionResponse.status).toBe(409);
 
       const mismatchedInviteeResponse = await handler(new Request("http://localhost/referrals/redeem-transaction", {
-        body: JSON.stringify({ code: created.code, invitee: "0x4444444444444444444444444444444444444444", txHash: redemptionTxHash }),
+        body: JSON.stringify({ code, invitee: "0x4444444444444444444444444444444444444444", txHash: redemptionTxHash }),
         method: "POST"
       }));
       expect(mismatchedInviteeResponse.status).toBe(409);
 
       const confirmedRedemptionResponse = await handler(new Request("http://localhost/referrals/redeem-transaction", {
-        body: JSON.stringify({ code: created.code, invitee, txHash: redemptionTxHash }),
+        body: JSON.stringify({ code, invitee, txHash: redemptionTxHash }),
         method: "POST"
       }));
       expect(confirmedRedemptionResponse.status).toBe(200);
 
       const duplicateConfirmedRedeemResponse = await handler(new Request("http://localhost/referrals/redeem", {
-        body: JSON.stringify({ code: created.code, invitee }),
+        body: JSON.stringify({ code, invitee }),
         method: "POST"
       }));
       expect(duplicateConfirmedRedeemResponse.status).toBe(409);
@@ -226,26 +211,29 @@ describe("referral invites", () => {
     }
   });
 
-  test("expires claimed invite codes after 24 hours and creates a fresh code", async () => {
+  test("expires claimed invite codes after 24 hours and reclaims the remembered preimage", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-referrals-"));
     try {
       const store = new ReferralInviteStore(join(dir, "referrals.json"));
       const claimedAt = new Date(Date.now() - 1_000);
       const expiresAt = new Date(claimedAt.getTime() + 24 * 60 * 60 * 1_000);
       const afterExpiry = new Date(expiresAt.getTime() + 1_000);
-      const first = store.createInvite(player, claimedAt);
-      const active = store.recordClaimTransaction(player, first.commitment, `0x${"aa".repeat(32)}`);
+      const code = "borodutch";
+      const commitment = referralCommitment(code);
+      const active = store.recordClaimTransaction(player, code, commitment, `0x${"aa".repeat(32)}`, claimedAt);
       expect(active.status).toBe("active");
       expect(active.expiresAt).toBe(expiresAt.toISOString());
 
       const expiredDashboard = store.dashboard(player, expiresAt);
       expect(expiredDashboard.invite?.status).toBe("expired");
       expect(expiredDashboard.invite?.expired).toBe(true);
-      expect(() => store.pendingRedemption(first.code, invitee, expiresAt)).toThrow("expired");
+      expect(expiredDashboard.invite?.code).toBe(code);
+      expect(() => store.pendingRedemption(code, invitee, expiresAt)).toThrow("expired");
 
-      const next = store.createInvite(player, afterExpiry);
-      expect(next.code).not.toBe(first.code);
-      expect(next.status).toBe("pending_claim");
+      const next = store.recordClaimTransaction(player, code, commitment, `0x${"cc".repeat(32)}`, afterExpiry);
+      expect(next.code).toBe(code);
+      expect(next.commitment).toBe(commitment);
+      expect(next.status).toBe("active");
     } finally {
       rmSync(dir, { force: true, recursive: true });
     }

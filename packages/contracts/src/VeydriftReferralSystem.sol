@@ -88,20 +88,13 @@ contract VeydriftReferralSystem {
             revert ReferralCommitmentAlreadyClaimed(commitment);
         }
         bytes32 existingCommitment = referralCommitmentOf[msg.sender];
-        if (
-            existingCommitment != bytes32(0) && existingCommitment != commitment
-                && !_isExpired(existingCommitment)
-        ) {
+        if (existingCommitment != bytes32(0) && !_isExpired(existingCommitment)) {
             revert ReferralInviteAlreadyClaimed(msg.sender, existingCommitment);
         }
         if (game == address(0) || IVeydriftReferralGame(game).homePlanetOf(msg.sender) == 0) {
             revert Unauthorized(msg.sender);
         }
 
-        if (existingCommitment != bytes32(0) && existingCommitment != commitment) {
-            delete referralInvites[existingCommitment];
-            delete referralClaimedAt[existingCommitment];
-        }
         referralCommitmentOf[msg.sender] = commitment;
         referralInvites[commitment] = ReferralInvite({inviter: msg.sender});
         referralClaimedAt[commitment] = nowTimestamp;

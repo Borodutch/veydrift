@@ -1,4 +1,5 @@
 import { sdk } from "@farcaster/miniapp-sdk";
+import { keccak256, toHex } from "viem";
 import { GAME_UNAVAILABLE_MESSAGE, serverUnavailableRetryMessage } from "./gameUnavailable";
 import type { ApiPlanet } from "./data/mockUniverse";
 import type { PlanetType } from "./types";
@@ -40,6 +41,9 @@ export const WALLET_LOCKED_MESSAGE = "Wallet is locked. Please unlock your walle
 export const WALLET_ACCOUNT_UNAVAILABLE_MESSAGE = "Wallet account is unavailable. Reconnect your wallet, then retry.";
 export const WALLET_CONNECTION_REJECTED_MESSAGE = "Wallet connection was rejected. Reconnect your wallet, then retry.";
 export const WALLET_ACCOUNT_MISMATCH_MESSAGE = "The selected wallet account changed. Reconnect the active wallet, then retry.";
+const REFERRAL_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+export const REFERRAL_DEFAULT_CODE_LENGTH = 9;
+export const REFERRAL_CODE_PATTERN = /^[A-Za-z0-9_-]{9}$/;
 
 const GAME_API_RECENT_READ_TTL_MS = 750;
 const GAME_API_MAX_CONCURRENT_READS = 3;
@@ -123,7 +127,7 @@ export type ReferralRedemption = {
   v: number;
 };
 
-export type ReferralWalletAction = "dashboard" | "create" | "claim-transaction";
+export type ReferralWalletAction = "dashboard" | "claim-transaction";
 
 type TransactionRequest = {
   from: string;
@@ -3549,25 +3553,36 @@ export async function fetchReferralDashboard(apiUrl: string, wallet: string): Pr
   );
 }
 
-export async function createReferralInvite(apiUrl: string, wallet: string): Promise<ReferralInviteSummary> {
-  return fetchGameApiMutation<ReferralInviteSummary>(
-    `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals`,
-    "Referral invite",
-    {}
-  );
-}
-
 export async function recordReferralClaimTransaction(
   apiUrl: string,
   wallet: string,
+  code: string,
   commitment: string,
   txHash: string
 ): Promise<ReferralInviteSummary> {
   return fetchGameApiMutation<ReferralInviteSummary>(
     `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals/claim-transaction`,
     "Referral claim transaction",
-    { commitment, txHash }
+    { code, commitment, txHash }
   );
+}
+
+export function generateReferralClaimCode(length = REFERRAL_DEFAULT_CODE_LENGTH): string {
+  const bytes = new Uint8Array(length);
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => REFERRAL_CODE_ALPHABET[byte % REFERRAL_CODE_ALPHABET.length]).join("");
+}
+
+export function normalizeReferralClaimCode(code: string): string {
+  const normalized = code.trim();
+  if (!REFERRAL_CODE_PATTERN.test(normalized)) {
+    throw new Error("Invite code must be 9 letters, numbers, underscores, or hyphens.");
+  }
+  return normalized;
+}
+
+export function referralCommitment(code: string): string {
+  return keccak256(toHex(normalizeReferralClaimCode(code)));
 }
 
 export async function redeemReferralCode(apiUrl: string, code: string, invitee: string): Promise<ReferralRedemption> {
