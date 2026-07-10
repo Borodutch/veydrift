@@ -23,6 +23,7 @@ import {
   TargetIntelCard,
   targetResourceIntel,
 } from "./components/MissionCreationPage";
+import { transportCargoForOrigin } from "./PlayableMvpApp";
 import type { GalaxyAction } from "./galaxyActions";
 import type { Planet } from "./types";
 
@@ -268,6 +269,42 @@ describe("mission creation", () => {
     expect(moonResourceIntel.projectionDetail).toContain("current public moon resource snapshot");
     expect(moonBattleForecast.defenderPower).toBeNull();
     expect(moonBattleForecast.detail).toContain("Moon fleet and defense intel");
+  });
+
+  test("auto-filled body cargo reserves fuel for same-coordinate planet to moon deploy", () => {
+    const cargo = transportCargoForOrigin(
+      { metal: 10_459, crystal: 14_541, deuterium: 0 },
+      { ...deployAction.ships, smallCargo: 0, largeCargo: 1 },
+      { galaxy: 4, system: 291, position: 3 },
+      { galaxy: 4, system: 291, position: 3 },
+      {},
+      100,
+      { originIsMoon: false, targetIsMoon: true },
+    );
+
+    expect(cargo).toEqual({
+      metal: "10459",
+      crystal: "14540",
+      deuterium: "0",
+    });
+  });
+
+  test("auto-filled moon-origin cargo reads the selected moon resources", () => {
+    const cargo = transportCargoForOrigin(
+      { metal: 123, crystal: 456, deuterium: 789 },
+      { ...transportAction.ships, smallCargo: 1 },
+      { galaxy: 4, system: 291, position: 3 },
+      { galaxy: 4, system: 291, position: 3 },
+      {},
+      100,
+      { originIsMoon: true, targetIsMoon: false },
+    );
+
+    expect(cargo).toEqual({
+      metal: "123",
+      crystal: "456",
+      deuterium: "788",
+    });
   });
 
   test("shows body selectors only for route sides with moons", () => {
@@ -1080,7 +1117,7 @@ describe("mission creation", () => {
     );
 
     expect(staleBlocker).toBe(
-      "Selected ship quantities are stale: Light Fighter 5 selected / 2 available. Refresh mission state or reduce the quantities before launching."
+      "Selected ships are not available on the selected origin body: Light Fighter 5 selected / 2 available. Switch the origin body or reduce the quantity before launching."
     );
     expect(missionDraftBlocker({
       action: attackAction,

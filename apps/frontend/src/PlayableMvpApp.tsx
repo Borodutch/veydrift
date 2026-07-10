@@ -2446,28 +2446,33 @@ function moonOverviewMissionAction(
   };
 }
 
-function transportCargoForSelectedPlanet(
-  planet: ManagedPlanetResponse | undefined,
+type MissionCargoResourceSnapshot = Pick<OnChainResources, "metal" | "crystal" | "deuterium"> | PlayableState["resources"];
+
+export function transportCargoForOrigin(
+  resources: MissionCargoResourceSnapshot | undefined,
   ships: MissionShips,
+  origin: Coordinates,
   target: Coordinates,
   driveLevels: FleetDriveLevels = {},
   speedPercent = 100,
+  body: {
+    originIsMoon?: boolean | undefined;
+    targetIsMoon?: boolean | undefined;
+  } = {},
 ): Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined {
-  if (!planet?.resources) return undefined;
-  // Transport defaults to the live settled-to-now balance, not the settled snapshot (VEY-KANEO-488).
-  const planetResources = planet.resourcesAsOfNow ?? planet.resources;
+  if (!resources) return undefined;
 
-  const distance = fleetMissionDistance(planet, target);
+  const distance = fleetMissionDistance(origin, target, body);
   const fuelCost = fleetMissionFuelCost(ships, distance, driveLevels, speedPercent);
   let remaining = fleetMissionAvailableCargoCapacity(ships, distance, driveLevels, speedPercent);
   if (remaining <= 0) return undefined;
 
-  const metal = Math.min(safeResourceNumber(planetResources.metal) ?? 0, remaining);
+  const metal = Math.min(safeResourceNumber(resources.metal) ?? 0, remaining);
   remaining -= metal;
-  const crystal = Math.min(safeResourceNumber(planetResources.crystal) ?? 0, remaining);
+  const crystal = Math.min(safeResourceNumber(resources.crystal) ?? 0, remaining);
   remaining -= crystal;
 
-  const deuteriumAvailable = Math.max(0, (safeResourceNumber(planetResources.deuterium) ?? 0) - fuelCost);
+  const deuteriumAvailable = Math.max(0, (safeResourceNumber(resources.deuterium) ?? 0) - fuelCost);
   const deuterium = Math.min(deuteriumAvailable, remaining);
 
   if (metal === 0 && crystal === 0 && deuterium === 0) return undefined;
@@ -2476,6 +2481,38 @@ function transportCargoForSelectedPlanet(
     crystal: String(crystal),
     deuterium: String(deuterium),
   };
+}
+
+function transportCargoForSelectedOrigin({
+  originPlanet,
+  originResources,
+  originIsMoon,
+  ships,
+  target,
+  targetIsMoon,
+  driveLevels,
+  speedPercent,
+}: {
+  originPlanet: ManagedPlanetResponse | undefined;
+  originResources: MissionCargoResourceSnapshot | undefined;
+  originIsMoon: boolean;
+  ships: MissionShips;
+  target: Coordinates;
+  targetIsMoon: boolean;
+  driveLevels?: FleetDriveLevels | undefined;
+  speedPercent?: number | undefined;
+}): Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined {
+  const originCoords = managedPlanetCoordinates(originPlanet);
+  if (!originCoords) return undefined;
+  return transportCargoForOrigin(
+    originResources,
+    ships,
+    originCoords,
+    target,
+    driveLevels,
+    speedPercent,
+    { originIsMoon, targetIsMoon },
+  );
 }
 
 function missionCargoFromDraft(cargo: MissionCargoDraft | undefined): Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined {
@@ -7419,6 +7456,9 @@ export function PlayableMvpApp({
     const supportsBodyMission = supportsCargoMission || action.kind === "attack";
     const originIsMoon = supportsBodyMission && draft.originIsMoon === true;
     const targetIsMoon = supportsBodyMission && draft.targetIsMoon === true;
+    const originCargoResources = originIsMoon
+      ? missionMoonResources(moonState)
+      : missionResourcesForOrigin(missionOriginPlanet);
 
     if (action.kind === "attack" && draft.lootRatio && !originIsMoon && !targetIsMoon) {
       const { metal, crystal, deuterium } = draft.lootRatio;
@@ -7448,13 +7488,16 @@ export function PlayableMvpApp({
       return;
     }
     const cargo = supportsCargoMission
-      ? missionCargoFromDraft(draft.cargo) ?? transportCargoForSelectedPlanet(
-          missionOriginPlanet,
-          draft.ships,
-          coords,
+      ? missionCargoFromDraft(draft.cargo) ?? transportCargoForSelectedOrigin({
+          originPlanet: missionOriginPlanet,
+          originResources: originCargoResources,
+          originIsMoon,
+          ships: draft.ships,
+          target: coords,
+          targetIsMoon,
           driveLevels,
-          draft.speedPercent,
-        )
+          speedPercent: draft.speedPercent,
+        })
       : undefined;
     const launchParams = {
       originPlanetId,
@@ -7495,6 +7538,8 @@ export function PlayableMvpApp({
     runGalaxyTransaction,
     selectedManagedPlanet,
     shipyardState?.technologyLevels,
+    moonState,
+    missionResourcesForOrigin,
     walletPlanets.length,
   ]);
 
