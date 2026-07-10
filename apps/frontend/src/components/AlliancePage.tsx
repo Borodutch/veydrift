@@ -303,7 +303,7 @@ export function AllianceInvitesPage({
   referralProgramPanel,
 }: AllianceInvitesPageProps) {
   return (
-    <section className="grid min-h-0 gap-4">
+    <section className="invite-page grid min-h-0 gap-4">
       <PageHeader
         title="Invite"
         titleSize="xl"

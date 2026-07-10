@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { Copy, Link, TicketCheck } from "lucide-preact";
 import heroUrl from "./assets/veydrift-hero.webp";
 import { TelegramIcon } from "./components/TelegramIcon";
 import { PlayableMvpApp } from "./PlayableMvpApp";
@@ -1362,6 +1363,7 @@ function ReferralProgramPanel({
             onClick={onClaim}
             type="button"
           >
+            <TicketCheck aria-hidden="true" size={15} />
             {claimLabel}
           </button>
         </div>
@@ -1401,6 +1403,7 @@ function ReferralProgramPanel({
                 onClick={() => void navigator.clipboard?.writeText(invite.code)}
                 type="button"
               >
+                <Copy aria-hidden="true" size={14} />
                 Copy code
               </button>
               <button
@@ -1409,6 +1412,7 @@ function ReferralProgramPanel({
                 onClick={() => void navigator.clipboard?.writeText(invite.link)}
                 type="button"
               >
+                <Link aria-hidden="true" size={14} />
                 Copy link
               </button>
             </div>

@@ -26,6 +26,7 @@ import type { ChainAllianceState } from "../src/walletFlow";
 
 const alliancePageSource = await Bun.file(new URL("../src/components/AlliancePage.tsx", import.meta.url)).text();
 const inspectPagesSource = await Bun.file(new URL("../src/components/InspectPages.tsx", import.meta.url)).text();
+const stylesSource = await Bun.file(new URL("../src/styles.css", import.meta.url)).text();
 const walletFlowSource = await Bun.file(new URL("../src/walletFlow.ts", import.meta.url)).text();
 
 describe("AlliancePage loading display", () => {
@@ -33,6 +34,14 @@ describe("AlliancePage loading display", () => {
     expect(alliancePageSource).toContain('<section className="grid min-h-0 gap-4">');
     expect(alliancePageSource).not.toContain('className="min-h-0 overflow-auto bg-[#080d16]"');
     expect(alliancePageSource).not.toContain('className="mx-auto grid w-full max-w-7xl gap-4 p-4"');
+  });
+
+  test("restyles the Invite referral panel as a core app page surface", () => {
+    expect(alliancePageSource).toContain('<section className="invite-page grid min-h-0 gap-4">');
+    expect(stylesSource).toContain(".invite-page .referral-program");
+    expect(stylesSource).toContain("border: 1px solid rgba(255, 255, 255, 0.1);");
+    expect(stylesSource).toContain("background: rgba(255, 255, 255, 0.04);");
+    expect(stylesSource).toContain(".invite-page .referral-copy-button");
   });
 
   test("uses the shared labeled refresh button treatment", () => {
