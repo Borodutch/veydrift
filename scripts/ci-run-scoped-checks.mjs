@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { computeScope } from "./ci-scope.mjs";
 
@@ -67,66 +67,72 @@ export function outputContainsFlaggedOutput(output) {
 function runLogged(label, command, args) {
   console.log(`\n== ${label} ==`);
   console.log(`$ ${[command, ...args].join(" ")}`);
-  const result = spawnSync(command, args, {
-    encoding: "utf8",
-    // Backend tests intentionally emit structured diagnostics. Keep enough output for the whole
-    // suite so a healthy run cannot fail with spawnSync's ENOBUFS before we can inspect it.
-    maxBuffer: 1024 * 1024 * 256,
-    stdio: ["ignore", "pipe", "pipe"],
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let pendingLine = "";
+    let flagged = false;
+    let tail = "";
+    const tailLimit = 128 * 1024;
+
+    const consume = (chunk) => {
+      const output = chunk.toString();
+      tail = `${tail}${output}`.slice(-tailLimit);
+      const lines = `${pendingLine}${output}`.split(/\r?\n/);
+      pendingLine = lines.pop();
+      if (outputContainsFlaggedOutput(lines.join("\n"))) flagged = true;
+    };
+
+    child.stdout.on("data", consume);
+    child.stderr.on("data", consume);
+    child.on("error", (error) => reject(new Error(`${label} failed to run: ${error.message}`)));
+    child.on("close", (code) => {
+      if (pendingLine && outputContainsFlaggedOutput(pendingLine)) flagged = true;
+      if (code !== 0 || flagged) {
+        process.stdout.write(tail);
+        reject(new Error(code !== 0 ? `${label} exited with ${code}` : `${label} output contains flagged output.`));
+        return;
+      }
+      console.log(`${label}: passed`);
+      resolve();
+    });
   });
-  const output = `${result.stdout || ""}${result.stderr || ""}`;
-  process.stdout.write(output);
-
-  if (result.error) {
-    console.error(`::error::${label} failed to run: ${result.error.message}`);
-    process.exit(1);
-  }
-
-  if (result.status !== 0) {
-    process.exit(result.status || 1);
-  }
-
-  if (outputContainsFlaggedOutput(output)) {
-    console.error(`::error::${label} output contains flagged output.`);
-    process.exit(1);
-  }
 }
 
-function main() {
+async function main() {
   const args = parseArgs(process.argv.slice(2));
   const scope = scopeFromEnvOrGit(args);
 
   if (scope.universe) {
-    runLogged("universe-check", "bun", ["run", "check:universe"]);
-    runLogged("universe-test", "bun", ["run", "test:universe"]);
+    await runLogged("universe-check", "bun", ["run", "check:universe"]);
+    await runLogged("universe-test", "bun", ["run", "test:universe"]);
   }
 
   if (scope.backend) {
-    runLogged("backend-check", "bun", ["run", "check:backend"]);
-    runLogged("backend-test", "bun", ["run", "test:backend"]);
+    await runLogged("backend-check", "bun", ["run", "check:backend"]);
+    await runLogged("backend-test", "bun", ["run", "test:backend"]);
   }
 
   if (scope.frontend) {
-    runLogged("frontend-precheck", "bash", ["-lc", "cd apps/frontend && bun scripts/generate-image-variants.mjs"]);
-    runLogged("frontend-typecheck", "bash", ["-lc", "cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json"]);
+    await runLogged("frontend-precheck", "bash", ["-lc", "cd apps/frontend && bun scripts/generate-image-variants.mjs"]);
+    await runLogged("frontend-typecheck", "bash", ["-lc", "cd apps/frontend && ../../node_modules/.bin/tsc --project tsconfig.json"]);
   }
 
   if (scope.circuits) {
-    runLogged("circuits-check", "bun", ["run", "check:circuits"]);
+    await runLogged("circuits-check", "bun", ["run", "check:circuits"]);
   }
 
   if (scope.contracts) {
-    runLogged("contracts-fast-check", "bun", ["run", "check:contracts:fast"]);
-    runLogged("contracts-test", "bun", ["run", "test:contracts"]);
+    await runLogged("contracts-fast-check", "bun", ["run", "check:contracts:fast"]);
+    await runLogged("contracts-test", "bun", ["run", "test:contracts"]);
     if (scope.storage_layout) {
-      runLogged("contracts-storage-check", "bun", ["run", "check:contracts:storage"]);
+      await runLogged("contracts-storage-check", "bun", ["run", "check:contracts:storage"]);
     } else {
       console.log("\n== contracts-storage-check ==\nSkipped: no storage-relevant contract files changed.");
     }
   }
 
   if (scope.full_build) {
-    runLogged("build", "bun", ["run", "build"]);
+    await runLogged("build", "bun", ["run", "build"]);
   }
 
   if (!scope.frontend && !scope.backend && !scope.universe && !scope.contracts && !scope.circuits && !scope.full_build) {
@@ -135,5 +141,8 @@ function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
+  main().catch((error) => {
+    console.error(`::error::${error.message}`);
+    process.exit(1);
+  });
 }
