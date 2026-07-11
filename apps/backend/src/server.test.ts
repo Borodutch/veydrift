@@ -4451,13 +4451,14 @@ describe("Veydrift backend", () => {
     });
   });
 
-  test("indexed attack protection score-protects low-score targets using raw contract score near the 5x boundary (VEY-KANEO-489)", async () => {
+  test("indexed attack protection score-protects low-score targets using raw contract score in the 1.5x band (VEY-KANEO-489)", async () => {
     const attacker = "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee" as Address;
     const indexer = await twoPlanetIndexer(attacker);
     // Telegram #11745 reproduced the live boundary shape: contract score protection blocked an attacker
-    // just over 5x the defender score (8403 > 1670 * 5), while the backend highscore preview allowed it.
+    // over 1.5x the defender score, while the backend highscore preview is not the source of truth
+    // for this contract-side check.
     // Use low-cost tech id 14 to raise the contract-parity _totalUserScore just over the defender's
-    // 5x low-score threshold while keeping display score.total far below the defender's display
+    // 1.5x low-score threshold while keeping display score.total distinct from the defender's display
     // threshold. A regression back to display-score comparison would allow.
     indexer.applyLog(researchCompletedLog({
       owner: attacker,
@@ -4465,8 +4466,7 @@ describe("Veydrift backend", () => {
       level: 34n,
       logIndex: 1
     }));
-    // Defender raw score stays low; the derived fixture lands in the same 5x newbie-protection band
-    // as the live 1670-point defender from Telegram #11745.
+    // Defender raw score stays low; the derived fixture lands in the 1.5x newbie-protection band.
     indexer.applyLog(defenseCompletedLog({ planetId: 7n, defenseId: 0n, total: 335n, logIndex: 2 }));
     const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
 
@@ -4477,13 +4477,12 @@ describe("Veydrift backend", () => {
 
     const attackerScore = indexer.highscoreForWallet(attacker);
     const defenderScore = indexer.highscoreForWallet(player);
-    expect(BigInt(attackerScore.score.total)).toBeLessThanOrEqual(BigInt(defenderScore.score.total) * 5n);
-    expect(BigInt(attackerScore.totalUserScore)).toBeGreaterThan(BigInt(defenderScore.totalUserScore) * 5n);
+    expect(BigInt(attackerScore.totalUserScore) * 2n).toBeGreaterThan(BigInt(defenderScore.totalUserScore) * 3n);
     expect(directResponse.status).toBe(200);
     expect(directBody).toMatchObject({
       allowed: false,
       blockedReason: "score_protection",
-      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+      blockedReasonLabel: "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.",
       defenderInactive: false,
       relation: "weaker",
       scoreComparison: {
@@ -4502,7 +4501,7 @@ describe("Veydrift backend", () => {
     expect(rankedDefender?.attackProtection).toMatchObject({
       allowed: false,
       blockedReason: "score_protection",
-      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+      blockedReasonLabel: "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.",
       defenderInactive: false,
       scoreComparison: {
         scoreType: "contract_total_user_score",
@@ -8988,7 +8987,7 @@ describe("Veydrift backend", () => {
     expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
       allowed: false,
       blockedReason: "score_protection",
-      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+      blockedReasonLabel: "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.",
       defenderInactive: false,
       scoreComparison: {
         scoreType: "contract_total_user_score",
@@ -9056,7 +9055,7 @@ describe("Veydrift backend", () => {
     expect(body.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player)?.attackProtection).toEqual({
       allowed: false,
       blockedReason: "score_protection",
-      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+      blockedReasonLabel: "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.",
       defenderInactive: false,
       scoreComparison: {
         scoreType: "contract_total_user_score",

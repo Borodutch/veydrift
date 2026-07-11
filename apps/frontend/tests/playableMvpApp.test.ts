@@ -1007,8 +1007,8 @@ describe("Playable MVP app display helpers", () => {
     expect(attackProtectionSubmitBlocker({
       allowed: false,
       blockedReason: "score_protection",
-      blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
-    })).toBe("Attack blocked: target is protected by newbie or score-ratio protection.");
+      blockedReasonLabel: "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.",
+    })).toBe("Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.");
 
     expect(attackProtectionSubmitBlocker({
       allowed: false,

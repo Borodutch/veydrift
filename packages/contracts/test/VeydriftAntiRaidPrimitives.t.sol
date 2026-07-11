@@ -138,7 +138,7 @@ contract VeydriftAntiRaidPrimitivesTest is Test {
         assertTrue(VeydriftAntiRaidPrimitives.isBashingLimitReached(6, false));
         assertFalse(VeydriftAntiRaidPrimitives.isBashingLimitReached(6, true));
 
-        assertEq(VeydriftAntiRaidPrimitives.newbieProtectionRatioBps(49_999), 50_000);
+        assertEq(VeydriftAntiRaidPrimitives.newbieProtectionRatioBps(49_999), 15_000);
         assertEq(VeydriftAntiRaidPrimitives.newbieProtectionRatioBps(50_000), 100_000);
         assertEq(VeydriftAntiRaidPrimitives.newbieProtectionRatioBps(500_000), 0);
 
@@ -158,13 +158,13 @@ contract VeydriftAntiRaidPrimitivesTest is Test {
     }
 
     function testScoreProtectionTierBoundariesAndExceptions() public pure {
-        assertEq(VeydriftAntiRaidPrimitives.newbieProtectionRatioBps(49_999), 50_000);
+        assertEq(VeydriftAntiRaidPrimitives.newbieProtectionRatioBps(49_999), 15_000);
         assertEq(VeydriftAntiRaidPrimitives.newbieProtectionRatioBps(50_000), 100_000);
         assertEq(VeydriftAntiRaidPrimitives.newbieProtectionRatioBps(499_999), 100_000);
         assertEq(VeydriftAntiRaidPrimitives.newbieProtectionRatioBps(500_000), 0);
 
-        assertFalse(VeydriftAntiRaidPrimitives.isScoreProtected(249_995, 49_999, false, false));
-        assertTrue(VeydriftAntiRaidPrimitives.isScoreProtected(249_996, 49_999, false, false));
+        assertFalse(VeydriftAntiRaidPrimitives.isScoreProtected(74_998, 49_999, false, false));
+        assertTrue(VeydriftAntiRaidPrimitives.isScoreProtected(74_999, 49_999, false, false));
         assertFalse(VeydriftAntiRaidPrimitives.isScoreProtected(500_000, 50_000, false, false));
         assertTrue(VeydriftAntiRaidPrimitives.isScoreProtected(500_001, 50_000, false, false));
         assertFalse(VeydriftAntiRaidPrimitives.isScoreProtected(5_000_000, 500_000, false, false));

@@ -485,7 +485,7 @@ describe("RankingsPage", () => {
       attackProtection: {
         allowed: false,
         blockedReason: "score_protection",
-        blockedReasonLabel: "Attack blocked: target is protected by newbie or score-ratio protection.",
+        blockedReasonLabel: "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.",
         scoreComparison: {
           scoreType: "contract_total_user_score",
           attackerScore: "25437",

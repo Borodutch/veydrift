@@ -6334,7 +6334,7 @@ export function attackBlockReasonLabel(reason: AttackBlockReason): string | null
     return "Attack blocked: bashing limit reached for this attacker, defender, and planet in the current 24-hour window.";
   }
   if (reason === "score_protection") {
-    return "Attack blocked: target is protected by newbie or score-ratio protection.";
+    return "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.";
   }
   if (reason === "same_alliance") {
     return "Attack blocked: target belongs to your alliance.";

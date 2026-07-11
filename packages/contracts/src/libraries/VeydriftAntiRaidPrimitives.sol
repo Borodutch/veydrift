@@ -31,7 +31,8 @@ library VeydriftAntiRaidPrimitives {
 
     uint256 public constant NEWBIE_PROTECTION_LOW_SCORE = 50_000;
     uint256 public constant NEWBIE_PROTECTION_HIGH_SCORE = 500_000;
-    uint32 public constant NEWBIE_PROTECTION_LOW_RATIO_BPS = 50_000;
+    // Commanders below 50k score may only fight within a 1.5x score range.
+    uint32 public constant NEWBIE_PROTECTION_LOW_RATIO_BPS = 15_000;
     uint32 public constant NEWBIE_PROTECTION_HIGH_RATIO_BPS = 100_000;
     uint64 public constant PLAYER_INACTIVE_SECONDS = 7 days;
     int256 public constant BANDIT_HONOR_THRESHOLD = -500;

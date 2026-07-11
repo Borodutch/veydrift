@@ -112,7 +112,7 @@ Attack protection prevents invalid or abusive launches. The backend reports prot
 
 | Rule | Effect |
 | --- | --- |
-| New or low-score protection | Blocks attacks when the score ratio is outside allowed bounds. |
+| New or low-score protection | Below 50,000 score, attacks are limited to a 1.5× gap. From 50,000 to 499,999, the limit is 10×. |
 | Same alliance | Blocks hostile attacks against current allies. |
 | Bashing window | Tracks repeated attacks by attacker, defender, and planet in the 24 hour window. |
 | Inactive defender | May remove some protection gates when the indexed player activity marks the defender inactive. |
@@ -397,7 +397,7 @@ If 2 Rocket Launchers were destroyed and the defender does not win earlier, floo
 
 ### Protection And Bashing
 
-Score uses the same contract formula for ranking and attack protection: economy, research, fleet, and defense components are indexed into one player score. New or low-score protection blocks attacks outside allowed score thresholds unless an explicit exception applies. The bashing window is evaluated by attacker, defender, and planet over 24 hours.
+Score uses the same contract formula for ranking and attack protection: economy, research, fleet, and defense components are indexed into one player score. Below 50,000 score, players are protected from opponents more than 1.5× stronger or weaker. From 50,000 through 499,999, the limit is 10×; at 500,000 and above, score protection does not apply. Explicit exceptions can bypass score protection. The bashing window is evaluated by attacker, defender, and planet over 24 hours.
 
 ### Moon Chance And Jump Gates
 

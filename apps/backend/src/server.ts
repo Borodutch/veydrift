@@ -4325,7 +4325,7 @@ function isIndexedScoreProtected(attackerScore: bigint, defenderScore: bigint): 
 }
 
 function indexedNewbieProtectionRatioBps(score: bigint): bigint {
-  if (score < 50_000n) return 50_000n;
+  if (score < 50_000n) return 15_000n;
   if (score < 500_000n) return 100_000n;
   return 0n;
 }
@@ -4828,8 +4828,8 @@ function indexedAttackProtectionResponse(
     && attackerAlliance.allianceId === defenderAlliance.allianceId;
   const atWar = indexer.allianceRelationship(attackerAlliance?.allianceId, defenderAlliance?.allianceId) === "war";
   // VEY-KANEO-489: use the contract-faithful newbie/score-ratio gate (VeydriftAntiRaidPrimitives.
-  // isScoreProtected) instead of a naive 5x-score heuristic. The old heuristic false-blocked any two
-  // players whose scores differed >5x — including two veterans both past the newbie-protection ceiling,
+  // isScoreProtected) instead of a naive score-ratio heuristic. A fixed ratio false-blocks players
+  // past the newbie-protection ceiling,
   // who the contract never score-protects (both ratios are 0). Kept raw (not gated by sameAlliance) so
   // plunderBps below still reflects the score-protection state.
   const scoreProtected = !defenderInactive
