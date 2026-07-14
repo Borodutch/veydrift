@@ -1133,6 +1133,15 @@ export function attackProtectionSubmitBlocker(status: Pick<AttackProtectionStatu
   return "Attack blocked.";
 }
 
+export async function revalidateAttackProtectionBeforeSubmit<T extends Pick<AttackProtectionStatus, "allowed" | "blockedReason" | "blockedReasonLabel">>(
+  loadStatus: () => Promise<T>,
+): Promise<T> {
+  const status = await loadStatus();
+  const blocker = attackProtectionSubmitBlocker(status);
+  if (blocker) throw new Error(blocker);
+  return status;
+}
+
 function errorLabelMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
@@ -6140,16 +6149,15 @@ export function PlayableMvpApp({
           }
         }
         if (options.validateAttackProtection) {
+          const { targetPlanetId } = options.validateAttackProtection;
           setGalaxyAction({ status: "pending", label: `${label}: refreshing target protection.` });
           if (!apiBaseUrl || !account) {
             throw new Error("Wallet or game API is unavailable while refreshing target protection.");
           }
-          const status = await fetchAttackProtectionStatus(apiBaseUrl, account, options.validateAttackProtection.targetPlanetId);
+          await revalidateAttackProtectionBeforeSubmit(
+            () => fetchAttackProtectionStatus(apiBaseUrl, account, targetPlanetId),
+          );
           if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return false;
-          const protectionBlocker = attackProtectionSubmitBlocker(status);
-          if (protectionBlocker) {
-            throw new Error(protectionBlocker);
-          }
         }
         const result = await runCoordinatedWriteTransaction({
           key: `galaxy:${label}`,

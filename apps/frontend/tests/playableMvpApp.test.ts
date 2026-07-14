@@ -38,6 +38,7 @@ import {
   overviewWatchedPlanetActionsFor,
   overviewWatchedPlanetMoonActionsFor,
   overviewBuildingReadyToFinishFlag,
+  revalidateAttackProtectionBeforeSubmit,
   overviewResearchCompletionUnavailableReasonFor,
   preserveActiveResearchQueue,
   preserveActiveResearchState,
@@ -1021,6 +1022,34 @@ describe("Playable MVP app display helpers", () => {
       blockedReason: "none",
       blockedReasonLabel: null,
     })).toBeUndefined();
+  });
+
+  test("revalidates canonical protection before any wallet submission can run", async () => {
+    let protectionReads = 0;
+    let walletSubmissions = 0;
+
+    await expect((async () => {
+      await revalidateAttackProtectionBeforeSubmit(async () => {
+        protectionReads += 1;
+        return {
+          allowed: false,
+          blockedReason: "score_protection" as const,
+          blockedReasonLabel: "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.",
+        };
+      });
+      walletSubmissions += 1;
+    })()).rejects.toThrow("Attack blocked: score protection");
+
+    expect(protectionReads).toBe(1);
+    expect(walletSubmissions).toBe(0);
+
+    await revalidateAttackProtectionBeforeSubmit(async () => ({
+      allowed: true,
+      blockedReason: "none" as const,
+      blockedReasonLabel: null,
+    }));
+    walletSubmissions += 1;
+    expect(walletSubmissions).toBe(1);
   });
 
   test("keeps pending infrastructure copy out of unavailable and button labels", () => {
