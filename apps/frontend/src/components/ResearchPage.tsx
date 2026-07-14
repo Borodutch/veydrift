@@ -864,12 +864,28 @@ function ResearchUnlockList({
     <div className="mt-2">
       {title ? <p className="text-xs font-semibold text-slate-400">{title}</p> : null}
       <ul className="mt-1 grid gap-1 text-xs text-slate-300">
-        {unlockRows.slice(0, 8).map((row) => (
+        {sortResearchUnlockRows(unlockRows).slice(0, 8).map((row) => (
           <li className="rounded border border-white/10 bg-white/[0.03] px-2 py-1" key={row}>{row}</li>
         ))}
       </ul>
     </div>
   );
+}
+
+export function sortResearchUnlockRows(unlockRows: readonly string[]): string[] {
+  return [...unlockRows].sort((left, right) => {
+    const levelDifference = researchUnlockLevel(left) - researchUnlockLevel(right);
+    if (levelDifference !== 0) return levelDifference;
+
+    const leftName = left.replace(/ at Level \d+$/, "");
+    const rightName = right.replace(/ at Level \d+$/, "");
+    return leftName < rightName ? -1 : leftName > rightName ? 1 : 0;
+  });
+}
+
+function researchUnlockLevel(row: string): number {
+  const level = row.match(/ at Level (\d+)$/)?.[1];
+  return level === undefined ? Number.MAX_SAFE_INTEGER : Number(level);
 }
 
 export function ActiveResearchQueueDetail({
