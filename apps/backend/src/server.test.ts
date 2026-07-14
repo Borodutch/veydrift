@@ -9373,9 +9373,6 @@ describe("Veydrift backend", () => {
     const handler = createRequestHandler({
       config: configuredTestConfig,
       chainReader: new MockChainReader(),
-      // Exercise the route-level limiter against a warm indexed response. A cold index emits
-      // diagnostics for every request and makes this pure limiter test needlessly runner-sensitive.
-      indexer: testIndexer(),
       enableResponseCache: false,
       prewarmResponseCache: false
     });
