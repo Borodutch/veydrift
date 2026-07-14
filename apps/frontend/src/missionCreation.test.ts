@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   AttackIntelPanel,
   AttackOutcomePanel,
+  buildMissionLaunchDraft,
   DestinationIntelPanel,
   forecastRaidLoot,
   initialMissionShips,
@@ -10,6 +11,7 @@ import {
   missionBodySelectionVisibility,
   missionConfirmButtonLabel,
   missionDraftBlocker,
+  missionSpecificLoadout,
   missionShipOptions,
   missionTimingSummary,
   NonAttackMissionIntelPanel,
@@ -781,6 +783,60 @@ describe("mission creation", () => {
     expect(missionCreationSource).not.toContain("Mission Summary");
     expect(missionCreationSource).not.toContain("MissionStatCard");
     expect(missionCreationSource).not.toContain("Projected arrival resources use");
+  });
+
+  test("uses mission-specific loadouts instead of generic Fleet and Resources sections for Transport and Deploy", () => {
+    expect(missionSpecificLoadout(transportAction)).toEqual({
+      title: "Transport manifest",
+      shipsTitle: "Ships to transport",
+      cargoTitle: "Cargo to transport",
+    });
+    expect(missionSpecificLoadout(deployAction)).toEqual({
+      title: "Deployment manifest",
+      shipsTitle: "Ships to deploy",
+      cargoTitle: "Supplies to deploy",
+    });
+    expect(missionSpecificLoadout(attackAction)).toBeNull();
+
+    expect(missionCreationSource).toContain("specificLoadout ? (");
+    expect(missionCreationSource).toContain("<MissionFormSection title={specificLoadout.title} eyebrow=\"Loadout\">");
+    expect(missionCreationSource).not.toContain("<MissionFormSection title=\"Cargo\" eyebrow=\"Resources\">");
+    expect(missionCreationSource).toContain("<MissionFormSection title=\"Fleet\" eyebrow=\"Ships\">");
+  });
+
+  test("keeps selected ships and cargo in Transport and Deploy confirmation payloads", () => {
+    const ships = {
+      ...transportAction.ships,
+      smallCargo: 4,
+      largeCargo: 2,
+    };
+    const cargo = { metal: "1200", crystal: "340", deuterium: "56" };
+    const base = {
+      cargo,
+      defenseHoldActive: false,
+      defenseHoldSeconds: 0,
+      effectiveOriginIsMoon: true,
+      effectiveTargetIsMoon: false,
+      lootRatio: { metal: 34, crystal: 33, deuterium: 33 },
+      lootRatioActive: false,
+      primaryTargetId: 0,
+      quantity: 1,
+      ships,
+      speedPercent: 70,
+    } as const;
+
+    const transportDraft = buildMissionLaunchDraft({ ...base, action: transportAction });
+    const deployDraft = buildMissionLaunchDraft({ ...base, action: deployAction });
+
+    for (const draft of [transportDraft, deployDraft]) {
+      expect(draft.ships).toEqual(ships);
+      expect(draft.cargo).toEqual(cargo);
+      expect(draft.speedPercent).toBe(70);
+      expect(draft.originIsMoon).toBe(true);
+      expect(draft.targetIsMoon).toBe(false);
+    }
+
+    expect(buildMissionLaunchDraft({ ...base, action: attackAction }).cargo).toBeUndefined();
   });
 
   test("uses the compact Attack-style intel shell for non-attack mission setup", () => {

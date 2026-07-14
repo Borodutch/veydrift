@@ -65,6 +65,12 @@ export type MissionLaunchDraft = {
   holdSeconds?: number | undefined;
 };
 
+export type MissionSpecificLoadout = {
+  title: string;
+  shipsTitle: string;
+  cargoTitle: string;
+};
+
 export const LOOT_RATIO_TOTAL_PERCENT = 100;
 const DEFAULT_LOOT_RATIO: MissionLootRatioDraft = { metal: 34, crystal: 33, deuterium: 33 };
 const GREEDY_LOOT_RATIO: MissionLootRatioDraft = { metal: 100, crystal: 0, deuterium: 0 };
@@ -187,6 +193,25 @@ export const missionShipOptions: ShipOption[] = [
 
 const cargoShipKeys = new Set<MissionShipKey>(["smallCargo", "largeCargo", "recycler", "colonyShip"]);
 
+export function missionSpecificLoadout(action: EnabledGalaxyAction): MissionSpecificLoadout | null {
+  if (action.mode !== "mission") return null;
+  if (action.kind === "transport") {
+    return {
+      title: "Transport manifest",
+      shipsTitle: "Ships to transport",
+      cargoTitle: "Cargo to transport",
+    };
+  }
+  if (action.kind === "deploy") {
+    return {
+      title: "Deployment manifest",
+      shipsTitle: "Ships to deploy",
+      cargoTitle: "Supplies to deploy",
+    };
+  }
+  return null;
+}
+
 export type AcsDefendComposeContext = {
   // Epoch ms when the hostile attack lands. The defending fleet's effective arrival is pinned to this
   // moment on-chain, so the gap between natural arrival and this time is the hold duration.
@@ -278,6 +303,7 @@ export function MissionCreationPage({
   );
 
   const cargoSupported = action.mode === "mission" && (action.kind === "transport" || action.kind === "deploy");
+  const specificLoadout = missionSpecificLoadout(action);
   const bodyMissionSupported = action.mode === "mission" && (action.kind === "attack" || cargoSupported);
   const bodySelectionVisibility = missionBodySelectionVisibility({
     bodyMissionSupported: bodyMissionSupported && Boolean(bodySelection),
@@ -526,44 +552,35 @@ export function MissionCreationPage({
                 />
               </div>
             </MissionFormSection>
+          ) : specificLoadout ? (
+            <MissionFormSection title={specificLoadout.title} eyebrow="Loadout">
+              <MissionLoadoutGroup title={specificLoadout.shipsTitle}>
+                <MissionShipPicker
+                  availableShips={availableShips}
+                  onShipQuantityChange={setShipQuantity}
+                  shipyardState={effectiveShipyardState}
+                  ships={ships}
+                />
+              </MissionLoadoutGroup>
+              <MissionLoadoutGroup title={specificLoadout.cargoTitle}>
+                <MissionCargoPicker
+                  cargo={cargo}
+                  cargoCapacity={cargoCapacity}
+                  maxCargoResources={maxCargoResources}
+                  onCargoChange={setCargo}
+                />
+              </MissionLoadoutGroup>
+            </MissionFormSection>
           ) : (
             <MissionFormSection title="Fleet" eyebrow="Ships">
-              {availableShips.length > 0 ? (
-                <div className="grid gap-2">
-                  {availableShips.map((ship) => {
-                    const owned = effectiveShipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0;
-                    return (
-                      <ShipQuantityRow
-                        key={ship.key}
-                        onChange={(value) => setShipQuantity(ship.key, value, owned)}
-                        owned={owned}
-                        ship={ship}
-                        value={ships[ship.key] ?? 0}
-                      />
-                    );
-                  })}
-                </div>
-              ) : (
-                <p className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
-                  No eligible ships are available on the active planet.
-                </p>
-              )}
+              <MissionShipPicker
+                availableShips={availableShips}
+                onShipQuantityChange={setShipQuantity}
+                shipyardState={effectiveShipyardState}
+                ships={ships}
+              />
             </MissionFormSection>
           )}
-
-          {cargoSupported ? (
-            <MissionFormSection title="Cargo" eyebrow="Resources">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs text-slate-400">Load resources after reserving mission fuel.</p>
-                <span className="text-xs text-slate-500">Capacity {cargoCapacity.toLocaleString()}</span>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-3">
-                <ResourceField label="Metal" max={maxCargoResources.metal} onChange={(metal) => setCargo((current) => ({ ...current, metal }))} value={cargo.metal ?? ""} />
-                <ResourceField label="Crystal" max={maxCargoResources.crystal} onChange={(crystal) => setCargo((current) => ({ ...current, crystal }))} value={cargo.crystal ?? ""} />
-                <ResourceField label="Deuterium" max={maxCargoResources.deuterium} onChange={(deuterium) => setCargo((current) => ({ ...current, deuterium }))} value={cargo.deuterium ?? ""} />
-              </div>
-            </MissionFormSection>
-          ) : null}
 
           {joinAttackMode ? null : (
             <MissionFormSection title="Speed" eyebrow="Flight plan">
@@ -685,17 +702,20 @@ export function MissionCreationPage({
           <button
             className="mt-1 min-h-10 rounded border border-signal/35 bg-signal/15 px-3 py-2 text-sm font-semibold leading-snug text-signal transition hover:bg-signal/25 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-slate-500"
             disabled={Boolean(blockedReason) || actionPending}
-            onClick={() => onConfirm({
-              speedPercent,
-              ships,
-              cargo: normalizedCargo,
-              lootRatio: lootRatioActive ? { ...lootRatio } : undefined,
+            onClick={() => onConfirm(buildMissionLaunchDraft({
+              action,
+              cargo,
+              defenseHoldSeconds,
+              defenseHoldActive,
+              effectiveOriginIsMoon,
+              effectiveTargetIsMoon,
+              lootRatio,
+              lootRatioActive,
               primaryTargetId,
               quantity,
-              originIsMoon: effectiveOriginIsMoon,
-              targetIsMoon: effectiveTargetIsMoon,
-              holdSeconds: defenseHoldActive ? defenseHoldSeconds : undefined,
-            })}
+              speedPercent,
+              ships,
+            }))}
             type="button"
           >
             {missionConfirmButtonLabel({
@@ -790,6 +810,119 @@ export function missionConfirmButtonLabel({
   if (acsDefendMode) return "Coordinate defense";
   if (defenseHoldMode) return "Station defense";
   return "Confirm Mission";
+}
+
+export function buildMissionLaunchDraft({
+  action,
+  cargo,
+  defenseHoldActive,
+  defenseHoldSeconds,
+  effectiveOriginIsMoon,
+  effectiveTargetIsMoon,
+  lootRatio,
+  lootRatioActive,
+  primaryTargetId,
+  quantity,
+  ships,
+  speedPercent,
+}: {
+  action: EnabledGalaxyAction;
+  cargo: MissionCargoDraft;
+  defenseHoldActive: boolean;
+  defenseHoldSeconds: number;
+  effectiveOriginIsMoon: boolean;
+  effectiveTargetIsMoon: boolean;
+  lootRatio: MissionLootRatioDraft;
+  lootRatioActive: boolean;
+  primaryTargetId: number;
+  quantity: number;
+  ships: MissionShips;
+  speedPercent: number;
+}): MissionLaunchDraft {
+  const cargoSupported = action.mode === "mission" && (action.kind === "transport" || action.kind === "deploy");
+  return {
+    speedPercent,
+    ships,
+    cargo: cargoSupported ? normalizeCargoDraft(cargo) : undefined,
+    lootRatio: lootRatioActive ? { ...lootRatio } : undefined,
+    primaryTargetId,
+    quantity,
+    originIsMoon: effectiveOriginIsMoon,
+    targetIsMoon: effectiveTargetIsMoon,
+    holdSeconds: defenseHoldActive ? defenseHoldSeconds : undefined,
+  };
+}
+
+function MissionLoadoutGroup({ children, title }: { children: ComponentChildren; title: string }) {
+  return (
+    <div className="grid gap-2 rounded border border-white/10 bg-black/15 p-3">
+      <h4 className="text-xs font-semibold uppercase text-slate-400">{title}</h4>
+      {children}
+    </div>
+  );
+}
+
+function MissionShipPicker({
+  availableShips,
+  onShipQuantityChange,
+  ships,
+  shipyardState,
+}: {
+  availableShips: ShipOption[];
+  onShipQuantityChange: (key: MissionShipKey, value: number, owned: number) => void;
+  ships: MissionShips;
+  shipyardState: ChainShipyardState | null;
+}) {
+  if (availableShips.length <= 0) {
+    return (
+      <p className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
+        No eligible ships are available on the active planet.
+      </p>
+    );
+  }
+
+  return (
+    <div className="grid gap-2">
+      {availableShips.map((ship) => {
+        const owned = shipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0;
+        return (
+          <ShipQuantityRow
+            key={ship.key}
+            onChange={(value) => onShipQuantityChange(ship.key, value, owned)}
+            owned={owned}
+            ship={ship}
+            value={ships[ship.key] ?? 0}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function MissionCargoPicker({
+  cargo,
+  cargoCapacity,
+  maxCargoResources,
+  onCargoChange,
+}: {
+  cargo: MissionCargoDraft;
+  cargoCapacity: number;
+  maxCargoResources: MissionResourceSnapshot;
+  onCargoChange: (updater: (current: MissionCargoDraft) => MissionCargoDraft) => void;
+}) {
+  return (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs text-slate-400">Load cargo after reserving mission fuel.</p>
+        <span className="text-xs text-slate-500">Capacity {cargoCapacity.toLocaleString()}</span>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <ResourceField label="Metal" max={maxCargoResources.metal} onChange={(metal) => onCargoChange((current) => ({ ...current, metal }))} value={cargo.metal ?? ""} />
+        <ResourceField label="Crystal" max={maxCargoResources.crystal} onChange={(crystal) => onCargoChange((current) => ({ ...current, crystal }))} value={cargo.crystal ?? ""} />
+        <ResourceField label="Deuterium" max={maxCargoResources.deuterium} onChange={(deuterium) => onCargoChange((current) => ({ ...current, deuterium }))} value={cargo.deuterium ?? ""} />
+      </div>
+    </>
+  );
 }
 
 function MissionFormSection({
