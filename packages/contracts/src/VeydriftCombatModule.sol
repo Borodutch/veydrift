@@ -32,7 +32,7 @@ interface IVeydriftCombatMoonSystem {
 
     function moonDefensePacked(uint256 planetId) external view returns (uint256);
 
-    function applyMoonCombatDefenseLosses(uint256 planetId, uint256 losses) external;
+    function applyMoonCombatDefenseChanges(uint256 planetId, uint256 changes, bool repair) external;
 }
 
 interface IVeydriftCombatRapidfire {
@@ -56,6 +56,18 @@ interface IVeydriftCombatRapidfire {
         uint8 side,
         uint8 firingUnit
     ) external pure returns (uint256);
+
+    function deterministicLossCount(
+        uint32 count,
+        uint256 shots,
+        uint256 attack,
+        uint256 shield,
+        uint256 hull,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint256 unit
+    ) external pure returns (uint32);
 }
 
 contract VeydriftCombatRapidfire is IVeydriftCombatRapidfire {
@@ -181,6 +193,38 @@ contract VeydriftCombatRapidfire is IVeydriftCombatRapidfire {
                 ++chain;
             }
         }
+    }
+
+    function deterministicLossCount(
+        uint32 count,
+        uint256 shots,
+        uint256 attack,
+        uint256 shield,
+        uint256 hull,
+        uint256 seed,
+        uint8 round,
+        uint8 side,
+        uint256 unit
+    ) external pure returns (uint32) {
+        if (count == 0 || shots == 0 || attack == 0 || hull == 0) return 0;
+
+        uint256 targeted = shots < count ? shots : count;
+        uint256 shotsPerTarget = (shots + targeted - 1) / targeted;
+        uint256 damage = attack * shotsPerTarget;
+        if (attack <= shield / 100 || damage <= shield) return 0;
+
+        uint256 hullDamage = damage - shield;
+        // targeted is capped by count, which is already uint32.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        if (hullDamage >= hull) return uint32(targeted);
+
+        uint256 damageBps = (hullDamage * BPS) / hull;
+        if (damageBps <= 3_000) return 0;
+
+        uint256 sampled = _sampleChance(targeted, damageBps, seed, round, side, unit, 0, shots);
+        // targeted is capped by count, which is already uint32.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return sampled > targeted ? uint32(targeted) : uint32(sampled);
     }
 
     function _shipRapidfireExtraShots(
@@ -1023,7 +1067,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         DefenderRoundLosses memory losses
     ) private returns (DefenderLosses memory applied) {
         _applyBodyShipLosses(mission.targetPlanetId, mission.targetIsMoon, losses.planetShips);
-        _applyDefenseLosses(mission.targetPlanetId, mission.targetIsMoon, losses.defenseDestroyed);
+        _applyDefenseChanges(
+            mission.targetPlanetId, mission.targetIsMoon, losses.defenseDestroyed, false
+        );
         applied.resources = losses.resources;
         for (uint256 i = 0; i < losses.counterplay.length;) {
             FleetMission storage counterplay = _fleetMissions[losses.counterplay[i].missionId];
@@ -1071,19 +1117,24 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         }
     }
 
-    function _applyDefenseLosses(uint256 planetId, bool isMoon, uint256 losses) private {
+    function _applyDefenseChanges(uint256 planetId, bool isMoon, uint256 changes, bool repair)
+        private
+    {
         if (isMoon) {
-            IVeydriftCombatMoonSystem(_moonSystem).applyMoonCombatDefenseLosses(planetId, losses);
+            IVeydriftCombatMoonSystem(_moonSystem)
+                .applyMoonCombatDefenseChanges(planetId, changes, repair);
             return;
         }
         for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
-            // losses stores eight uint32 lanes, one for each battlefield defense.
+            // changes stores eight uint32 lanes, one for each battlefield defense.
             // forge-lint: disable-next-line(unsafe-typecast)
-            uint32 lost = uint32(losses >> (uint256(i) * 32));
-            if (lost != 0) {
+            uint32 changed = uint32(changes >> (uint256(i) * 32));
+            if (changed != 0) {
                 Defense defense = Defense(i);
-                uint32 count = _defenseCounts[planetId][defense];
-                _setPlanetDefenseCount(planetId, defense, count > lost ? count - lost : 0);
+                uint32 current = _defenseCounts[planetId][defense];
+                uint32 total =
+                    repair ? current + changed : current > changed ? current - changed : 0;
+                _setPlanetDefenseCount(planetId, defense, total);
             }
             unchecked {
                 ++i;
@@ -1176,27 +1227,8 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint256 destroyedDefenses,
         uint256 seed
     ) private {
-        if (mission.targetIsMoon) return;
-        for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
-            // destroyedDefenses stores eight uint32 lanes, one for each battlefield defense.
-            // forge-lint: disable-next-line(unsafe-typecast)
-            uint32 destroyed = uint32(destroyedDefenses >> (uint256(i) * 32));
-            if (destroyed != 0) {
-                uint32 repaired =
-                    (i == 3 || i == 7) ? ((seed + i) % 10 < 7 ? 1 : 0) : (destroyed * 7) / 10;
-                if (repaired != 0) {
-                    Defense defense = Defense(i);
-                    _setPlanetDefenseCount(
-                        mission.targetPlanetId,
-                        defense,
-                        _defenseCounts[mission.targetPlanetId][defense] + repaired
-                    );
-                }
-            }
-            unchecked {
-                ++i;
-            }
-        }
+        uint256 repairedDefenses = VeydriftCatalog.repairedDefenseCounts(destroyedDefenses, seed);
+        _applyDefenseChanges(mission.targetPlanetId, mission.targetIsMoon, repairedDefenses, true);
     }
 
     function _distributedTargetShots(
@@ -1314,46 +1346,9 @@ contract VeydriftCombatModule is VeydriftResourceReserves {
         uint8 round,
         uint8 side,
         uint256 unit
-    ) private pure returns (uint32) {
-        if (count == 0 || shots == 0 || attack == 0 || hull == 0) return 0;
-
-        uint256 targeted = shots < count ? shots : count;
-        uint256 shotsPerTarget = (shots + targeted - 1) / targeted;
-        uint256 damage = attack * shotsPerTarget;
-        if (attack <= shield / 100 || damage <= shield) return 0;
-
-        uint256 hullDamage = damage - shield;
-        // targeted is capped by count, which is already uint32.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        if (hullDamage >= hull) return uint32(targeted);
-
-        uint256 damageBps = (hullDamage * BPS) / hull;
-        if (damageBps <= 3_000) return 0;
-
-        uint256 sampled = _sampleChance(targeted, damageBps, seed, round, side, unit, 0, shots);
-        // targeted is capped by count, which is already uint32.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        return sampled > targeted ? uint32(targeted) : uint32(sampled);
-    }
-
-    function _sampleChance(
-        uint256 trials,
-        uint256 chanceBps,
-        uint256 seed,
-        uint8 round,
-        uint8 side,
-        uint256 unit,
-        uint256 targetUnit,
-        uint256 lane
-    ) private pure returns (uint256 sampled) {
-        if (trials == 0 || chanceBps == 0) return 0;
-        if (chanceBps >= BPS) return trials;
-
-        uint256 scaled = trials * chanceBps;
-        sampled = scaled / BPS;
-        if (_combatStream(seed, round, side, unit, targetUnit, lane) % BPS < scaled % BPS) {
-            sampled += 1;
-        }
+    ) private view returns (uint32) {
+        return IVeydriftCombatRapidfire(_rapidfireModule)
+            .deterministicLossCount(count, shots, attack, shield, hull, seed, round, side, unit);
     }
 
     function _targetLane(uint256 base, uint256 group, uint8 unit) private pure returns (uint256) {
