@@ -17,6 +17,7 @@ import {
   researchRefreshErrorLabel,
   researchActionStatus,
   researchRefreshButtonState,
+  sortResearchUnlockRows,
   shouldHideResearchValues,
 } from "../src/components/ResearchPage";
 import { RequirementFlairs } from "../src/components/RequirementFlairs";
@@ -333,6 +334,34 @@ describe("Research page load-error display", () => {
     expect(text).toContain("Plasma Technology at Level 10");
     expect(text).toContain("Battlecruiser at Level 12");
     expect(text).not.toContain("Current Next");
+  });
+
+  test("orders also-unlocks entries by required level and then display name", () => {
+    const sourceRows = [
+      "Destroyer at Level 6",
+      "Cruiser at Level 5",
+      "Battlecruiser at Level 5",
+    ];
+
+    expect(sortResearchUnlockRows(sourceRows)).toEqual([
+      "Battlecruiser at Level 5",
+      "Cruiser at Level 5",
+      "Destroyer at Level 6",
+    ]);
+    expect(sourceRows).toEqual([
+      "Destroyer at Level 6",
+      "Cruiser at Level 5",
+      "Battlecruiser at Level 5",
+    ]);
+
+    const section = ResearchEffectsSection({
+      effectRows: [{ current: "+10%", next: "+20%", target: "Drive speed" }],
+      unlockRows: sourceRows,
+    });
+    const text = visibleText(section);
+
+    expect(text.indexOf("Battlecruiser at Level 5")).toBeLessThan(text.indexOf("Cruiser at Level 5"));
+    expect(text.indexOf("Cruiser at Level 5")).toBeLessThan(text.indexOf("Destroyer at Level 6"));
   });
 
   test("builds research level info rows with costs, requirements, and effects", () => {
