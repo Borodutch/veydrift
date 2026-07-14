@@ -13,6 +13,7 @@ import { PlanetMissionLines } from "./PlanetMissionLines";
 import { RankingsRowsSkeleton } from "./LoadingSkeletons";
 import { AfkFlair } from "./AfkFlair";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
+import { rankingsProtectionPresentation } from "../rankingsAttackProtection";
 
 type RankingsPageProps = {
   // Universe-wide active fleet missions (the unfiltered `/missions?status=active` feed). Shown as
@@ -506,12 +507,8 @@ function RankingRow({
         )
     )
   );
-  const isAttackProtected = Boolean(
-    entry.attackProtection
-      && !entry.attackProtection.allowed
-      && entry.attackProtection.blockedReason !== "none"
-      && entry.attackProtection.blockedReason !== "same_alliance"
-  );
+  const protectionPresentation = rankingsProtectionPresentation(entry.attackProtection);
+  const isAttackProtected = Boolean(protectionPresentation);
   const isAfk = entry.attackProtection?.defenderInactive === true;
   const rowTone = isCurrentPlayer
     ? "border-cyan-300/25 bg-cyan-300/[0.09] shadow-[inset_3px_0_0_rgba(103,232,249,0.7)]"
@@ -575,12 +572,12 @@ function RankingRow({
               </span>
             ) : null}
             {isAfk ? <AfkFlair /> : null}
-            {isAttackProtected ? (
+            {protectionPresentation ? (
               <span
                 className="shrink-0 rounded border border-red-200/30 bg-red-200/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-normal text-red-100"
-                title={entry.attackProtection?.blockedReasonLabel ?? "Attack blocked by protection rules"}
+                title={protectionPresentation.detailLabel}
               >
-                Protected
+                {protectionPresentation.badgeLabel}
               </span>
             ) : null}
             {isSameAlliance && alliance ? (
@@ -603,6 +600,11 @@ function RankingRow({
           <span className="mt-0.5 block font-mono text-xs font-semibold text-cyan-100 sm:hidden">
             Score {formatScore(rankingDisplayScore(entry, active))}
           </span>
+          {protectionPresentation ? (
+            <span className="mt-1 block max-w-2xl text-[11px] leading-4 text-red-100/80">
+              {protectionPresentation.detailLabel}
+            </span>
+          ) : null}
         </span>
       </span>
       <span className="hidden text-right font-mono sm:block">
@@ -679,6 +681,7 @@ function RankingRow({
                   {planetActions.length > 0 ? (
                     <RankingsActionButtons
                       actions={planetActions}
+                      blockedAttackLabel={protectionPresentation?.blockedAttackLabel}
                       className="col-start-2 justify-start sm:col-start-6 sm:justify-end"
                       onAction={(action) => onPlanetAction?.(action, planet, entry)}
                     />
@@ -691,6 +694,7 @@ function RankingRow({
                       action={moonActions.length > 0 ? (
                         <RankingsActionButtons
                           actions={moonActions}
+                          blockedAttackLabel={protectionPresentation?.blockedAttackLabel}
                           className="min-w-0"
                           onAction={(action) => onMoonAction?.(action, planet, entry)}
                         />
@@ -720,32 +724,39 @@ function RankingsMessage({ label }: { label: string }) {
   );
 }
 
-function RankingsActionButtons({
+export function RankingsActionButtons({
   actions,
+  blockedAttackLabel,
   className = "",
   onAction,
 }: {
   actions: GalaxyAction[];
+  blockedAttackLabel?: string | undefined;
   className?: string | undefined;
   onAction: (action: GalaxyAction) => void;
 }) {
-  const enabledActions = actions.filter((action) => action.enabled);
-  if (enabledActions.length === 0) return null;
+  const visibleActions = actions.filter((action) => action.enabled || (blockedAttackLabel && action.kind === "attack"));
+  if (visibleActions.length === 0) return null;
 
   return (
     <span className={`flex flex-wrap justify-end gap-1 ${className}`}>
-      {enabledActions.map((action) => (
+      {visibleActions.map((action) => (
         <button
-          className="rounded border border-signal/30 bg-signal/10 px-2 py-1 text-[10px] font-semibold text-signal transition hover:bg-signal/20"
+          className={`rounded border px-2 py-1 text-[10px] font-semibold transition ${
+            action.enabled
+              ? "border-signal/30 bg-signal/10 text-signal hover:bg-signal/20"
+              : "cursor-not-allowed border-red-200/20 bg-red-200/[0.08] text-red-100/70"
+          }`}
+          disabled={!action.enabled}
           key={action.kind}
           onClick={(event) => {
             event.stopPropagation();
             onAction(action);
           }}
-          title={action.label}
+          title={action.enabled ? action.label : action.reason}
           type="button"
         >
-          {action.label}
+          {action.enabled ? action.label : blockedAttackLabel}
         </button>
       ))}
     </span>

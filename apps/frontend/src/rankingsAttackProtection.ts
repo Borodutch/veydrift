@@ -3,6 +3,39 @@ import type { HighscoreEntry } from "./walletFlow";
 
 type RankingsProtectionEntry = Pick<HighscoreEntry, "alliance" | "attackProtection" | "wallet">;
 
+type RankingsAttackProtection = NonNullable<HighscoreEntry["attackProtection"]>;
+
+export type RankingsProtectionPresentation = {
+  badgeLabel: "Bashing limit" | "Score protected";
+  detailLabel: string;
+  blockedAttackLabel: "Bashing limit" | "Protected";
+};
+
+export function rankingsProtectionPresentation(
+  attackProtection: RankingsAttackProtection | null | undefined,
+): RankingsProtectionPresentation | undefined {
+  if (!attackProtection || attackProtection.allowed) return undefined;
+
+  if (attackProtection.blockedReason === "score_protection") {
+    return {
+      badgeLabel: "Score protected",
+      detailLabel: attackProtection.blockedReasonLabel
+        ?? "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.",
+      blockedAttackLabel: "Protected",
+    };
+  }
+
+  if (attackProtection.blockedReason === "bashing_limit") {
+    return {
+      badgeLabel: "Bashing limit",
+      detailLabel: attackProtection.blockedReasonLabel ?? "Attack blocked by bashing limit.",
+      blockedAttackLabel: "Bashing limit",
+    };
+  }
+
+  return undefined;
+}
+
 export function rankingsAttackProtectionForEntry({
   currentAllianceId,
   currentWallet,

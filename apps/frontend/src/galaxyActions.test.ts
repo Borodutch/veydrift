@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { galaxyActionsForSlot } from "./galaxyActions";
 import { planetDetailGalaxyActions } from "./components/PlanetDetail";
-import { rankingsAttackProtectionForEntry } from "./rankingsAttackProtection";
+import { rankingsAttackProtectionForEntry, rankingsProtectionPresentation } from "./rankingsAttackProtection";
 import type { Planet } from "./types";
 
 const account = "0x1111111111111111111111111111111111111111";
@@ -76,6 +76,109 @@ describe("galaxyActions", () => {
     expect(attack).toMatchObject({
       enabled: false,
       reason: "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.",
+    });
+  });
+
+  test.each([
+    ["sub-50k 1.5× band", "18001", "12000"],
+    ["50k–499,999 10× band", "500001", "50000"],
+  ])("shows and disables a Rankings attack for the %s from canonical status", (_label, attackerScore, defenderScore) => {
+    const canonicalStatus = {
+      allowed: false,
+      blockedReason: "score_protection" as const,
+      blockedReasonLabel: "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.",
+      scoreComparison: {
+        scoreType: "contract_total_user_score" as const,
+        attackerScore,
+        defenderScore,
+        attackerVisibleScore: attackerScore,
+        defenderVisibleScore: defenderScore,
+        protected: true,
+      },
+    };
+    const attackProtection = rankingsAttackProtectionForEntry({
+      currentWallet: account,
+      entry: {
+        alliance: null,
+        attackProtection: canonicalStatus,
+        wallet: "0x3333333333333333333333333333333333333333",
+      },
+    });
+    const attack = galaxyActionsForSlot({
+      account,
+      attackProtection,
+      homePlanetId: "7",
+      planet: planet(),
+      shipyardState: shipyardState([{ id: 1, count: 3 }]),
+    }).find((action) => action.kind === "attack");
+
+    expect(rankingsProtectionPresentation(canonicalStatus)).toEqual({
+      badgeLabel: "Score protected",
+      detailLabel: canonicalStatus.blockedReasonLabel,
+      blockedAttackLabel: "Protected",
+    });
+    expect(attack).toMatchObject({
+      enabled: false,
+      reason: canonicalStatus.blockedReasonLabel,
+    });
+  });
+
+  test("keeps a canonically allowed Rankings target attackable", () => {
+    const canonicalStatus = {
+      allowed: true,
+      blockedReason: "none" as const,
+      blockedReasonLabel: null,
+      scoreComparison: {
+        scoreType: "contract_total_user_score" as const,
+        attackerScore: "400000",
+        defenderScore: "50000",
+        attackerVisibleScore: "400000",
+        defenderVisibleScore: "50000",
+        protected: false,
+      },
+    };
+    const attackProtection = rankingsAttackProtectionForEntry({
+      currentWallet: account,
+      entry: {
+        alliance: null,
+        attackProtection: canonicalStatus,
+        wallet: "0x3333333333333333333333333333333333333333",
+      },
+    });
+    const attack = galaxyActionsForSlot({
+      account,
+      attackProtection,
+      homePlanetId: "7",
+      planet: planet(),
+      shipyardState: shipyardState([{ id: 1, count: 3 }]),
+    }).find((action) => action.kind === "attack");
+
+    expect(rankingsProtectionPresentation(canonicalStatus)).toBeUndefined();
+    expect(attack).toMatchObject({ enabled: true });
+  });
+
+  test("does not claim personalized Rankings protection for a disconnected viewer", () => {
+    const attackProtection = rankingsAttackProtectionForEntry({
+      currentWallet: undefined,
+      entry: {
+        alliance: null,
+        attackProtection: null,
+        wallet: "0x3333333333333333333333333333333333333333",
+      },
+    });
+    const attack = galaxyActionsForSlot({
+      account: undefined,
+      attackProtection,
+      homePlanetId: null,
+      planet: planet(),
+      shipyardState: null,
+    }).find((action) => action.kind === "attack");
+
+    expect(attackProtection).toBeUndefined();
+    expect(rankingsProtectionPresentation(null)).toBeUndefined();
+    expect(attack).toMatchObject({
+      enabled: false,
+      reason: "Connect a wallet to launch contract missions.",
     });
   });
 

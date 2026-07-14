@@ -481,29 +481,45 @@ describe("RankingsPage", () => {
   });
 
   test("tints score-protected ranking rows red without rendering numeric protection scores", () => {
+    const blockedReasonLabel = "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.";
     const protectedEntry = rankingEntry({
       attackProtection: {
         allowed: false,
         blockedReason: "score_protection",
-        blockedReasonLabel: "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.",
+        blockedReasonLabel,
         scoreComparison: {
           scoreType: "contract_total_user_score",
           attackerScore: "25437",
           defenderScore: "7340",
           attackerVisibleScore: "7539",
           defenderVisibleScore: "278",
-          protected: false,
+          protected: true,
         },
       },
     });
     const table = RankingsTable({
       entries: [protectedEntry],
       loading: false,
+      onPlanetAction: () => {
+        throw new Error("a disabled protected action must not fire");
+      },
+      planetActionsForPlanet: () => [{
+        enabled: false,
+        kind: "attack",
+        label: "Attack",
+        mission: "attack",
+        mode: "mission",
+        reason: blockedReasonLabel,
+      }],
     });
     const row = rowWithWallet(table, protectedEntry.wallet);
+    const protectedAction = buttonWithTitle(row, blockedReasonLabel);
 
     expect(row?.props?.className).toContain("bg-red-300");
-    expect(visibleText(row)).toContain("Protected");
+    expect(visibleText(row)).toContain("Score protected");
+    expect(visibleText(row)).toContain(blockedReasonLabel);
+    expect(protectedAction?.props?.disabled).toBe(true);
+    expect(visibleText(protectedAction)).toBe("Protected");
     expect(visibleText(row)).toContain("25,437");
     expect(visibleText(row)).not.toContain("Score 25,437 vs 7,340");
     expect(visibleText(row)).not.toContain("7,340");

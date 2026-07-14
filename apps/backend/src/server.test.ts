@@ -4514,6 +4514,91 @@ describe("Veydrift backend", () => {
     });
   });
 
+  test("indexed Rankings and submit protection block a target in the 50k–499,999 10x band (VEY-KANEO-704)", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const indexer = await twoPlanetIndexer(attacker);
+    // Defense id 0 contributes two score points per completed unit in this fixture. Keep the defender
+    // inside the 10× band while putting the attacker just beyond ten times the defender's canonical
+    // total user score.
+    indexer.applyLog(defenseCompletedLog({ planetId: 8n, defenseId: 0n, total: 350_000n, logIndex: 1 }));
+    indexer.applyLog(defenseCompletedLog({ planetId: 7n, defenseId: 0n, total: 30_000n, logIndex: 2 }));
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+    const attackerScore = indexer.highscoreForWallet(attacker);
+    const defenderScore = indexer.highscoreForWallet(player);
+
+    expect(BigInt(defenderScore.totalUserScore)).toBeGreaterThanOrEqual(50_000n);
+    expect(BigInt(defenderScore.totalUserScore)).toBeLessThan(500_000n);
+    expect(BigInt(attackerScore.totalUserScore)).toBeGreaterThan(BigInt(defenderScore.totalUserScore) * 10n);
+
+    const directResponse = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+    const directBody = await directResponse.json();
+    const rankingsResponse = await handler(new Request(`http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`));
+    const rankingsBody = await rankingsResponse.json();
+    const rankedDefender = rankingsBody.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player);
+
+    expect(directResponse.status).toBe(200);
+    expect(directBody).toMatchObject({
+      allowed: false,
+      blockedReason: "score_protection",
+      scoreComparison: {
+        attackerScore: attackerScore.totalUserScore,
+        defenderScore: defenderScore.totalUserScore,
+        protected: true
+      }
+    });
+    expect(rankingsResponse.status).toBe(200);
+    expect(rankedDefender?.attackProtection).toMatchObject({
+      allowed: false,
+      blockedReason: "score_protection",
+      scoreComparison: {
+        attackerScore: attackerScore.totalUserScore,
+        defenderScore: defenderScore.totalUserScore,
+        protected: true
+      }
+    });
+  });
+
+  test("indexed Rankings and submit protection allow a target within the 50k–499,999 10x band (VEY-KANEO-704)", async () => {
+    const attacker = "0x9999999999999999999999999999999999999999" as Address;
+    const indexer = await twoPlanetIndexer(attacker);
+    indexer.applyLog(defenseCompletedLog({ planetId: 8n, defenseId: 0n, total: 250_000n, logIndex: 1 }));
+    indexer.applyLog(defenseCompletedLog({ planetId: 7n, defenseId: 0n, total: 30_000n, logIndex: 2 }));
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader: new MockChainReader(), indexer });
+    const attackerScore = indexer.highscoreForWallet(attacker);
+    const defenderScore = indexer.highscoreForWallet(player);
+
+    expect(BigInt(defenderScore.totalUserScore)).toBeGreaterThanOrEqual(50_000n);
+    expect(BigInt(defenderScore.totalUserScore)).toBeLessThan(500_000n);
+    expect(BigInt(attackerScore.totalUserScore)).toBeLessThanOrEqual(BigInt(defenderScore.totalUserScore) * 10n);
+
+    const directResponse = await handler(new Request(`http://localhost/wallet/${attacker}/attack-protection?targetPlanetId=7`));
+    const directBody = await directResponse.json();
+    const rankingsResponse = await handler(new Request(`http://localhost/highscores?limit=10&currentWallet=${attacker}&includeAttackProtection=true`));
+    const rankingsBody = await rankingsResponse.json();
+    const rankedDefender = rankingsBody.rankings.total.find((entry: HighscoreEntry) => entry.wallet === player);
+
+    expect(directResponse.status).toBe(200);
+    expect(directBody).toMatchObject({
+      allowed: true,
+      blockedReason: "none",
+      scoreComparison: {
+        attackerScore: attackerScore.totalUserScore,
+        defenderScore: defenderScore.totalUserScore,
+        protected: false
+      }
+    });
+    expect(rankingsResponse.status).toBe(200);
+    expect(rankedDefender?.attackProtection).toMatchObject({
+      allowed: true,
+      blockedReason: "none",
+      scoreComparison: {
+        attackerScore: attackerScore.totalUserScore,
+        defenderScore: defenderScore.totalUserScore,
+        protected: false
+      }
+    });
+  });
+
   test("indexed attack protection reports bashing_limit after six attacks in the 24h window (VEY-KANEO-489)", async () => {
     const attacker = "0x9999999999999999999999999999999999999999" as Address;
     const indexer = await twoPlanetIndexer(attacker);
