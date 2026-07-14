@@ -1530,7 +1530,8 @@ contract VeydriftGameTest is Test {
     }
 
     function testDestroyedSolarSatellitesReducePlanetEnergy() public {
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedAttackPlanetsWithoutScoreProtection();
         _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setShipCount(targetPlanetId, Ship.SolarSatellite, 100);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
@@ -1564,7 +1565,8 @@ contract VeydriftGameTest is Test {
     }
 
     function testDestroyedSolarSatellitesContributeToCombatLossesAndDebris() public {
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedAttackPlanetsWithoutScoreProtection();
         _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setShipCount(targetPlanetId, Ship.SmallCargo, 13);
         _setShipCount(targetPlanetId, Ship.SolarSatellite, 60);
@@ -1655,7 +1657,8 @@ contract VeydriftGameTest is Test {
         // score protection while still letting the attacker chew through the defender's ship and
         // defense stacks, so both a ship-count and a defense-count loss are guaranteed to occur.
         vm.prevrandao(keccak256("combat losses entropy"));
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedAttackPlanetsWithoutScoreProtection();
         _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setShipCount(targetPlanetId, Ship.LightFighter, 100);
         _setDefenseCount(targetPlanetId, Defense.RocketLauncher, 100);
@@ -1725,7 +1728,7 @@ contract VeydriftGameTest is Test {
 
     function _launchOriginAttack() internal returns (uint256 originPlanetId, uint256 missionId) {
         uint256 targetPlanetId;
-        (originPlanetId, targetPlanetId,) = _seedAttackPlanets();
+        (originPlanetId, targetPlanetId,) = _seedAttackPlanetsWithoutScoreProtection();
         _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setResources(originPlanetId, 10_000, 10_000, 10_000);
 
@@ -1781,7 +1784,8 @@ contract VeydriftGameTest is Test {
     }
 
     function testDefenderCollectionDoesNotSettleAcrossUnresolvedArrival() public {
-        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
+            _seedAttackPlanetsWithoutScoreProtection();
         _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setResources(originPlanetId, 100_000, 100_000, 100_000);
 
@@ -1808,7 +1812,7 @@ contract VeydriftGameTest is Test {
     }
 
     function testCollectionClampsToEarliestOfMultiplePendingArrivals() public {
-        (uint256 originPlanetId, uint256 target1,) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 target1,) = _seedAttackPlanetsWithoutScoreProtection();
         // Computer level 1 gives a second fleet slot so both attacks can be in flight at once,
         // while keeping the attacker score close to the single-attack tests (no score protection).
         _setTechnologyLevel(player, Technology.Computer, 1);
@@ -1820,6 +1824,7 @@ contract VeydriftGameTest is Test {
         vm.deal(defender2, 1 ether);
         vm.prank(defender2);
         uint256 target2 = game.startPlanet{value: 0.05 ether}();
+        _padCombatFixtureScore(defender2);
         _setPlanetCoordinates(target2, 1, 100, 20);
 
         VeydriftGameStorage.MissionShips memory ships;
@@ -2326,7 +2331,8 @@ contract VeydriftGameTest is Test {
     }
 
     function testFleetLaunchSettlesReadyBuildingBeforeSpendingCargo() public {
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedAttackPlanetsWithoutScoreProtection();
         _setBuildingLevel(originPlanetId, Building.CrystalMine, 12);
         _setBuildingLevel(originPlanetId, Building.SolarPlant, 40);
         _setShipCount(originPlanetId, Ship.SmallCargo, 2);
@@ -2393,7 +2399,8 @@ contract VeydriftGameTest is Test {
     }
 
     function testAttackRaidPlundersAccruedTargetResourcesAtImpact() public {
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedAttackPlanetsWithoutScoreProtection();
         _setBuildingLevel(targetPlanetId, Building.MetalMine, 10);
         _setBuildingLevel(targetPlanetId, Building.SolarPlant, 20);
         _setShipCount(originPlanetId, Ship.SmallCargo, 1);
@@ -3060,7 +3067,8 @@ contract VeydriftGameTest is Test {
     }
 
     function testInterplanetaryMissileAttackRejectsCrossGalaxyTarget() public {
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedMissileAttackPlanetsWithoutScoreProtection();
         _setPlanetCoordinates(originPlanetId, 1, 100, 8);
         _setPlanetCoordinates(targetPlanetId, 2, 100, 8);
         _setTechnologyLevel(player, Technology.ImpulseDrive, 10);
@@ -3622,6 +3630,7 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _padCombatFixtureScores(player, defender);
         _setTechnologyLevel(player, Technology.Computer, 2);
         _setTechnologyLevel(player, Technology.ImpulseDrive, 5);
         _setShipCount(originPlanetId, Ship.SmallCargo, 2);
@@ -4101,6 +4110,7 @@ contract VeydriftGameTest is Test {
         uint256 attackerPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _padCombatFixtureScores(player, defender);
         _setTechnologyLevel(defender, Technology.Astrophysics, 1);
         _setShipCount(targetPlanetId, Ship.ColonyShip, 1);
 
@@ -4456,7 +4466,8 @@ contract VeydriftGameTest is Test {
 
     function testBashingLimitBlocksSeventhAttackUnlessDefenderIsInactive() public {
         vm.warp(8 days);
-        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
+            _seedAttackPlanetsWithoutScoreProtection();
         _setTechnologyLevel(player, Technology.Computer, 10);
         _setShipCount(originPlanetId, Ship.SmallCargo, 8);
         _setResources(originPlanetId, 1_000_000, 1_000_000, 1_000_000);
@@ -4839,7 +4850,8 @@ contract VeydriftGameTest is Test {
     // queue BEFORE reading `_defenseCounts`, so just-finished interplanetary missiles are available to
     // fire rather than the launch reverting InvalidQuantity on a stale (0) count.
     function testMissileAttackSettlesOriginReadyMissileQueueBeforeFiring() public {
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMissileAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedMissileAttackPlanetsWithoutScoreProtection();
         _seedDefensePrerequisites(originPlanetId);
         _setResources(originPlanetId, 10_000_000, 10_000_000, 10_000_000);
         _setDefenseCount(targetPlanetId, Defense.LightLaser, 10);
@@ -4983,7 +4995,8 @@ contract VeydriftGameTest is Test {
     }
 
     function testDueUnresolvedAttackBlocksOnlyInvolvedStateUntilPublicResolution() public {
-        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
+            _seedAttackPlanetsWithoutScoreProtection();
         address unrelated = address(0xCAFE);
         vm.deal(unrelated, 1 ether);
 
@@ -6549,11 +6562,13 @@ contract VeydriftGameTest is Test {
     }
 
     function testAcsAttackJoinedFleetContributesBattleStats() public {
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedAttackPlanetsWithoutScoreProtection();
         address ally = address(0xA77A);
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        _padCombatFixtureScore(ally);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
         _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
@@ -6642,11 +6657,13 @@ contract VeydriftGameTest is Test {
     }
 
     function testAttackBattleJoinedShipKilledInRoundStillFiresFromRoundStartSnapshot() public {
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedAttackPlanetsWithoutScoreProtection();
         address ally = address(0xACED);
         vm.deal(ally, 1 ether);
         vm.prank(ally);
         uint256 allyPlanetId = game.startPlanet{value: 0.05 ether}();
+        _padCombatFixtureScore(ally);
         _setPlanetCoordinates(originPlanetId, 9, 499, 15);
         _setPlanetCoordinates(targetPlanetId, 1, 1, 1);
         _setPlanetCoordinates(allyPlanetId, 1, 1, 2);
@@ -6760,7 +6777,8 @@ contract VeydriftGameTest is Test {
     }
 
     function testAttackBattleCrawlerOnlyDefenderDoesNotForceDraw() public {
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedAttackPlanetsWithoutScoreProtection();
         _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setShipCount(targetPlanetId, Ship.Crawler, 1);
         _setResources(originPlanetId, 10_000_000, 10_000_000, 10_000_000);
@@ -6795,7 +6813,8 @@ contract VeydriftGameTest is Test {
     }
 
     function testAttackBattleCrawlerDoesNotDrawAfterCombatDefendersCleared() public {
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId,) =
+            _seedAttackPlanetsWithoutScoreProtection();
         _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setShipCount(targetPlanetId, Ship.Crawler, 1);
         _setDefenseCount(targetPlanetId, Defense.RocketLauncher, 1);
@@ -7454,6 +7473,7 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _padCombatFixtureScores(player, defender);
         _setPlanetCoordinates(originPlanetId, 1, 100, 8);
         _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
         _setShipCount(originPlanetId, Ship.Battleship, 100);
@@ -7551,6 +7571,7 @@ contract VeydriftGameTest is Test {
         uint256 originPlanetId = game.startPlanet{value: 0.05 ether}();
         vm.prank(defender);
         uint256 targetPlanetId = game.startPlanet{value: 0.05 ether}();
+        _padCombatFixtureScores(player, defender);
         moons.createMoon(targetPlanetId);
         _setPlanetCoordinates(originPlanetId, 1, 100, 8);
         _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
@@ -8091,6 +8112,26 @@ contract VeydriftGameTest is Test {
         _setPlanetCoordinates(targetPlanetId, 1, 100, 9);
     }
 
+    function _seedAttackPlanetsWithoutScoreProtection()
+        internal
+        returns (uint256 originPlanetId, uint256 targetPlanetId, address defender)
+    {
+        (originPlanetId, targetPlanetId, defender) = _seedAttackPlanets();
+        _padCombatFixtureScores(player, defender);
+    }
+
+    function _padCombatFixtureScores(address attacker, address defender) internal {
+        _padCombatFixtureScore(attacker);
+        _padCombatFixtureScore(defender);
+    }
+
+    function _padCombatFixtureScore(address account) internal {
+        // These tests exercise combat, mission, and settlement behavior rather than score
+        // protection. A neutral, non-combat technology puts the fixture above the protection
+        // ceiling without changing fleet speed, fuel, weapons, shields, or armor.
+        _setTechnologyLevel(account, Technology.IntergalacticResearchNetwork, 3_000);
+    }
+
     function _resolveCruiserRocketFixture(
         address attacker,
         address defender,
@@ -8191,7 +8232,8 @@ contract VeydriftGameTest is Test {
         internal
         returns (bool)
     {
-        (uint256 originPlanetId, uint256 targetPlanetId, address defender) = _seedAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
+            _seedAttackPlanetsWithoutScoreProtection();
         _createAlliance(defender);
         _setShipCount(originPlanetId, Ship.Battlecruiser, 10);
         _setShipCount(targetPlanetId, Ship.HeavyFighter, 100);
@@ -8358,6 +8400,14 @@ contract VeydriftGameTest is Test {
         _setPlanetCoordinates(originPlanetId, 1, 100, 8);
         _setPlanetCoordinates(targetPlanetId, 1, 104, 8);
         _setTechnologyLevel(player, Technology.ImpulseDrive, 1);
+    }
+
+    function _seedMissileAttackPlanetsWithoutScoreProtection()
+        internal
+        returns (uint256 originPlanetId, uint256 targetPlanetId, address defender)
+    {
+        (originPlanetId, targetPlanetId, defender) = _seedMissileAttackPlanets();
+        _padCombatFixtureScores(player, defender);
     }
 
     function _createAlliance(address leader) internal returns (uint256 allianceId) {

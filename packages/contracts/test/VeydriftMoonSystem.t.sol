@@ -1046,7 +1046,11 @@ contract VeydriftMoonSystemTest is Test {
     }
 
     function testMoonAttackMutatesMoonDefensesNotPlanetDefenses() public {
-        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
+        (uint256 originPlanetId, uint256 targetPlanetId, address defender) =
+            _seedMoonAttackPlanets();
+        // This fixture validates moon/planet defense separation, not score protection.
+        _setTechnologyLevel(player, Technology.IntergalacticResearchNetwork, 3_000);
+        _setTechnologyLevel(defender, Technology.IntergalacticResearchNetwork, 3_000);
         _fundPlanet(originPlanetId, 100_000, 100_000, 100_000);
         _setShipCount(originPlanetId, Ship.Battleship, 100);
         _setMoonDefenseCount(targetPlanetId, Defense.RocketLauncher, 100);
