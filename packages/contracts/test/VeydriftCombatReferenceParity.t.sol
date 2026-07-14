@@ -331,6 +331,11 @@ contract VeydriftCombatReferenceParityTest is Test {
         }
         _setCombatTech(player, fixture.attackerTech);
         _setCombatTech(defender, fixture.defenderTech);
+        // Reference-parity fixtures exercise battle resolution, not score protection. Keep both
+        // sides above the score-protection ceiling with a non-combat technology so counterplay does
+        // not reactivate a defender and bounce the battle before its event can be asserted.
+        _setTechnologyLevel(player, Technology.IntergalacticResearchNetwork, 3_000);
+        _setTechnologyLevel(defender, Technology.IntergalacticResearchNetwork, 3_000);
         vm.warp(8 days);
         _setPlayerLastActiveAt(defender, 1);
         _setResources(launched.originPlanetId, 100_000_000, 100_000_000, 100_000_000);

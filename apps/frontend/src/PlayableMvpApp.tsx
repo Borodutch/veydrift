@@ -1128,7 +1128,7 @@ export function attackProtectionSubmitBlocker(status: Pick<AttackProtectionStatu
   if (!status || status.allowed || status.blockedReason === "none") return undefined;
   if (status.blockedReasonLabel) return status.blockedReasonLabel;
   if (status.blockedReason === "bashing_limit") return "Attack blocked by bashing limit.";
-  if (status.blockedReason === "score_protection") return "Attack blocked: target is protected by newbie or score-ratio protection.";
+  if (status.blockedReason === "score_protection") return "Attack blocked: score protection allows a 1.5× gap below 50,000 score and a 10× gap below 500,000.";
   if (status.blockedReason === "same_alliance") return "Attack blocked: target belongs to your alliance.";
   return "Attack blocked.";
 }
