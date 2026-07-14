@@ -69,18 +69,11 @@ function runLogged(label, command, args) {
   console.log(`$ ${[command, ...args].join(" ")}`);
   const result = spawnSync(command, args, {
     encoding: "utf8",
-    // Backend tests intentionally emit structured diagnostics. Keep enough output for the whole
-    // suite so a healthy run cannot fail with spawnSync's ENOBUFS before we can inspect it.
-    maxBuffer: 1024 * 1024 * 256,
+    maxBuffer: 1024 * 1024 * 64,
     stdio: ["ignore", "pipe", "pipe"],
   });
   const output = `${result.stdout || ""}${result.stderr || ""}`;
   process.stdout.write(output);
-
-  if (result.error) {
-    console.error(`::error::${label} failed to run: ${result.error.message}`);
-    process.exit(1);
-  }
 
   if (result.status !== 0) {
     process.exit(result.status || 1);
