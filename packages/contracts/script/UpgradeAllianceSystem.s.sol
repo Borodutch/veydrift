@@ -24,7 +24,10 @@ contract UpgradeAllianceSystem is Script {
         vm.startBroadcast(privateKey);
         VeydriftAllianceSystem implementation = new VeydriftAllianceSystem(game);
         newImplementation = address(implementation);
-        proxied.upgradeToAndCall(newImplementation, "");
+        proxied.upgradeToAndCall(
+            newImplementation,
+            abi.encodeCall(VeydriftAllianceSystem.initializeWarMinimumDuration, ())
+        );
         vm.stopBroadcast();
 
         emit AllianceSystemUpgraded(proxy, newImplementation);

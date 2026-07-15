@@ -21,6 +21,7 @@ import {
   shouldShowAllianceTransactionNotice,
   sortedAllianceDirectory,
   sortedRosterMembers,
+  warMinimumDurationCopy,
 } from "../src/components/AlliancePage";
 import type { ChainAllianceState } from "../src/walletFlow";
 
@@ -458,6 +459,9 @@ describe("AlliancePage loading display", () => {
     expect(alliancePageSource).toContain("Declare War");
     expect(alliancePageSource).not.toContain('<span className="text-xs uppercase tracking-[0.14em] text-slate-500">Declare War</span>');
     expect(alliancePageSource).not.toContain("<option value=\"\">Select alliance</option>");
+    expect(alliancePageSource).toContain('role="dialog"');
+    expect(alliancePageSource).toContain("Confirm War Declaration");
+    expect(warMinimumDurationCopy).toBe("Once declared, a war cannot be ended for 48 hours.");
   });
 
   test("only enables End War for wars started by the current alliance", () => {

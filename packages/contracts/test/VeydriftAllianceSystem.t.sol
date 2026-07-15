@@ -286,7 +286,7 @@ contract VeydriftAllianceSystemTest is Test {
             uint8(proxied.diplomacyStatus(7, 8)), uint8(VeydriftAllianceSystem.DiplomacyStatus.War)
         );
         assertEq(
-            uint8(proxied.diplomacyStatus(8, 7)), uint8(VeydriftAllianceSystem.DiplomacyStatus.War)
+            uint8(proxied.diplomacyStatus(8, 7)), uint8(VeydriftAllianceSystem.DiplomacyStatus.None)
         );
     }
 
@@ -624,6 +624,79 @@ contract VeydriftAllianceSystemTest is Test {
         assertTrue(scoreProtectionException);
     }
 
+    function testWarCannotEndUntilFortyEightHoursAfterDeclaration() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("ALLY", "Alliance", "");
+        _inviteAndAccept(allianceId, member);
+        vm.prank(enemy);
+        uint256 enemyAllianceId = alliances.createAlliance("WAR", "War Target", "");
+
+        vm.prank(leader);
+        alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+
+        uint64 declaredAt = uint64(block.timestamp);
+        vm.prank(leader);
+        alliances.setDiplomacy(
+            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
+        );
+        assertEq(alliances.warStartedAt(allianceId, enemyAllianceId), declaredAt);
+
+        uint64 minimumDuration = alliances.WAR_MINIMUM_DURATION();
+        vm.prank(member);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.WarEndLocked.selector, declaredAt + minimumDuration
+            )
+        );
+        alliances.setDiplomacy(
+            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.None
+        );
+
+        vm.warp(declaredAt + minimumDuration - 1);
+        vm.prank(member);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.WarEndLocked.selector, declaredAt + minimumDuration
+            )
+        );
+        alliances.setDiplomacy(
+            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.None
+        );
+
+        vm.warp(declaredAt + minimumDuration);
+        vm.prank(member);
+        alliances.setDiplomacy(
+            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.None
+        );
+        assertEq(
+            uint8(alliances.diplomacyStatus(allianceId, enemyAllianceId)),
+            uint8(VeydriftAllianceSystem.DiplomacyStatus.None)
+        );
+    }
+
+    function testOnlyDeclaringAllianceCanEndWar() public {
+        vm.prank(leader);
+        uint256 allianceId = alliances.createAlliance("ALLY", "Alliance", "");
+        vm.prank(enemy);
+        uint256 enemyAllianceId = alliances.createAlliance("WAR", "War Target", "");
+
+        vm.prank(leader);
+        alliances.setDiplomacy(
+            allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.War
+        );
+        vm.warp(block.timestamp + alliances.WAR_MINIMUM_DURATION());
+
+        vm.prank(enemy);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftAllianceSystem.NotAuthorized.selector, enemy, enemyAllianceId
+            )
+        );
+        alliances.setDiplomacy(
+            enemyAllianceId, allianceId, VeydriftAllianceSystem.DiplomacyStatus.None
+        );
+    }
+
     function testOnlyOwnerCanDeclareWarAndOfficerCanEndWar() public {
         vm.prank(leader);
         uint256 allianceId = alliances.createAlliance("ALLY", "Alliance", "");
@@ -669,7 +742,7 @@ contract VeydriftAllianceSystemTest is Test {
         );
         assertEq(
             uint8(alliances.diplomacyStatus(enemyAllianceId, allianceId)),
-            uint8(VeydriftAllianceSystem.DiplomacyStatus.War)
+            uint8(VeydriftAllianceSystem.DiplomacyStatus.None)
         );
 
         vm.prank(member);
@@ -680,6 +753,7 @@ contract VeydriftAllianceSystemTest is Test {
 
         vm.prank(leader);
         alliances.setMemberRole(allianceId, member, VeydriftAllianceSystem.AllianceRole.Officer);
+        vm.warp(block.timestamp + alliances.WAR_MINIMUM_DURATION());
         vm.expectEmit(true, true, false, true);
         emit VeydriftAllianceSystem.AllianceDiplomacyUpdated(
             allianceId, enemyAllianceId, VeydriftAllianceSystem.DiplomacyStatus.None
@@ -917,10 +991,14 @@ contract VeydriftAllianceSystemTest is Test {
         VeydriftAllianceSystemV2 newImplementation =
             new VeydriftAllianceSystemV2(IVeydriftAllianceGame(address(game)));
         vm.prank(admin);
-        proxied.upgradeToAndCall(address(newImplementation), "");
+        proxied.upgradeToAndCall(
+            address(newImplementation),
+            abi.encodeCall(VeydriftAllianceSystem.initializeWarMinimumDuration, ())
+        );
 
         assertEq(VeydriftAllianceSystemV2(address(proxied)).upgradeVersion(), "v2");
         assertEq(proxied.owner(), admin);
+        assertEq(proxied.warMinimumDurationActivatedAt(), uint64(block.timestamp));
         assertEq(proxied.allianceProfile(allianceId).owner, leader);
         assertEq(proxied.allianceProfile(allianceId).memberCount, 2);
         assertEq(

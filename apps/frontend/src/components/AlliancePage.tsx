@@ -13,6 +13,7 @@ import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailab
 
 export const allianceRosterPageSize = 10;
 export const allianceDirectoryPageSize = 10;
+export const warMinimumDurationCopy = "Once declared, a war cannot be ended for 48 hours.";
 
 export function allianceRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
   return refreshButtonState(loading);
@@ -733,6 +734,7 @@ function DirectorySection({
   const activeWarIds = new Set(activeWars.map((war) => war.otherAllianceId));
   const visibleAlliances = sortedAllianceDirectory(alliances);
   const [page, setPage] = useState(1);
+  const [warDeclarationTarget, setWarDeclarationTarget] = useState<DirectoryEntry | null>(null);
   const clampedPage = clampDirectoryPage(page, visibleAlliances.length);
   const pageCount = directoryPageCount(visibleAlliances.length);
   const pageRows = directoryPageRows(visibleAlliances, clampedPage);
@@ -810,7 +812,7 @@ function DirectorySection({
                     <button
                       className="rounded border border-rose-300/30 px-3 py-2 text-sm font-semibold text-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
                       disabled={disabled}
-                      onClick={() => onSetDiplomacy(alliance.allianceId, "war")}
+                      onClick={() => setWarDeclarationTarget(alliance)}
                       type="button"
                     >
                       Declare War
@@ -829,11 +831,57 @@ function DirectorySection({
               onPrevious={() => setPage((current) => Math.max(1, current - 1))}
             />
           ) : null}
+          {warDeclarationTarget ? (
+            <WarDeclarationDialog
+              alliance={warDeclarationTarget}
+              disabled={disabled}
+              onCancel={() => setWarDeclarationTarget(null)}
+              onConfirm={() => {
+                onSetDiplomacy(warDeclarationTarget.allianceId, "war");
+                setWarDeclarationTarget(null);
+              }}
+            />
+          ) : null}
         </div>
       ) : (
         <p className="text-sm text-slate-400">No public alliances found yet.</p>
       )}
     </Panel>
+  );
+}
+
+function WarDeclarationDialog({
+  alliance,
+  disabled,
+  onCancel,
+  onConfirm,
+}: {
+  alliance: Pick<DirectoryEntry, "name" | "tag">;
+  disabled: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div aria-modal="true" className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4" role="dialog">
+      <div className="w-full max-w-md rounded border border-rose-300/30 bg-slate-950 p-4 shadow-2xl">
+        <h3 className="text-lg font-semibold text-white">Declare war on {alliance.tag}</h3>
+        <p className="mt-2 text-sm text-slate-300">
+          This removes attack score protection and bashing limits between your alliances.
+        </p>
+        <p className="mt-2 rounded border border-rose-300/25 bg-rose-300/[0.08] p-2 text-sm font-semibold text-rose-100">
+          {warMinimumDurationCopy}
+        </p>
+        <p className="mt-2 text-xs text-slate-400">Confirm only if your alliance is ready to remain at war with {alliance.name}.</p>
+        <div className="mt-4 flex justify-end gap-2">
+          <button className="rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 hover:bg-white/10" disabled={disabled} onClick={onCancel} type="button">
+            Cancel
+          </button>
+          <button className="rounded border border-rose-300/40 bg-rose-300/10 px-3 py-2 text-sm font-semibold text-rose-100 hover:bg-rose-300/20 disabled:cursor-not-allowed disabled:opacity-50" disabled={disabled} onClick={onConfirm} type="button">
+            Confirm War Declaration
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -908,7 +956,7 @@ function WarSection({
                     </span>
                     <span className="truncate text-sm font-semibold text-white">{alliance?.name ?? `Alliance #${war.otherAllianceId}`}</span>
                   </div>
-                  <p className="mt-1 text-xs text-slate-400">Attack score protection and bashing limits are bypassed for this relationship.</p>
+                  <p className="mt-1 text-xs text-slate-400">Attack score protection and bashing limits are bypassed for this relationship. {warMinimumDurationCopy}</p>
                 </div>
                 {endAction.visible ? (
                   <div className="group relative justify-self-start sm:justify-self-end">
