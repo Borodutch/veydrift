@@ -1,5 +1,4 @@
-import { Hammer, Info, X } from "lucide-preact";
-import type { ComponentChildren } from "preact";
+import { Hammer } from "lucide-preact";
 import { useState } from "preact/hooks";
 import type { BuildingEffectMetrics, BuildingKey, BuildingRequirement, PlanetProductionProfile, PlayableState, Resources } from "../playableMvp";
 import {
@@ -40,6 +39,7 @@ import {
 } from "./InspectProgressLayout";
 import { RefreshButton, refreshButtonState } from "./PageHeader";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
+import { LevelInfoButton, LevelInfoModal, type LevelInfoColumn, type LevelInfoRow } from "./LevelInfoModal";
 
 const shortResourceLabels: Record<keyof Resources, string> = {
   metal: "Metal",
@@ -552,17 +552,7 @@ export function BuildingLevelInfoButton({
   buildingLabel: string;
   onClick: () => void;
 }) {
-  return (
-    <button
-      aria-label={`Open ${buildingLabel} level table`}
-      className="inline-flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-signal/40 hover:bg-signal/10 hover:text-signal"
-      onClick={onClick}
-      title="Level table"
-      type="button"
-    >
-      <Info aria-hidden="true" size={15} strokeWidth={2.2} />
-    </button>
-  );
+  return LevelInfoButton({ itemLabel: buildingLabel, onClick });
 }
 
 export function BuildingLevelInfoModal({
@@ -577,151 +567,45 @@ export function BuildingLevelInfoModal({
   rows: ReturnType<typeof buildingLevelInfoRows>;
 }) {
   const columns = buildingLevelInfoColumns(rows);
+  const modalColumns: LevelInfoColumn[] = [
+    { key: "cost", label: "Upgrade cost", headerClassName: "min-w-52" },
+    ...(columns.constructionTime ? [{ key: "constructionTime", label: "Build time", headerClassName: "min-w-32" }] : []),
+    ...(columns.storage ? [{ key: "storage", label: "Storage", headerClassName: "min-w-40" }] : []),
+    ...(columns.effect ? [{ key: "effect", label: "Effect", headerClassName: "min-w-44" }] : []),
+    ...(columns.production ? [{ key: "production", label: "Production output", headerClassName: "min-w-44" }] : []),
+    ...(columns.energyRequired ? [{ key: "energyRequired", label: "Energy use", headerClassName: "min-w-36" }] : []),
+    ...(columns.energyProduced ? [{ key: "energyProduced", label: "Energy output", headerClassName: "min-w-40" }] : []),
+    ...(columns.deuteriumConsumed ? [{ key: "deuteriumConsumed", label: "Deuterium use", headerClassName: "min-w-44" }] : []),
+  ];
+  const modalRows: LevelInfoRow[] = rows.map((row) => ({
+    cells: {
+      cost: formatCost(row.cost),
+      constructionTime: formatDuration(row.durationSeconds),
+      storage: row.storage
+        ? `${formatNumber(row.storage.capacity)} ${fullResourceLabels[row.storage.resource]}`
+        : "N/A",
+      effect: row.effect ?? "N/A",
+      production: row.production
+        ? `${formatNumber(row.production.value)} ${fullResourceLabels[row.production.resource]}/h${row.production.deltaFromPrevious !== 0 ? ` (${formatSigned(row.production.deltaFromPrevious)}/h)` : ""}`
+        : "N/A",
+      energyRequired: row.energyRequired === undefined ? "N/A" : `${formatNumber(row.energyRequired)} required`,
+      energyProduced: row.energyProduced === undefined ? "N/A" : `${formatNumber(row.energyProduced)} produced`,
+      deuteriumConsumed: row.deuteriumConsumed === undefined
+        ? "N/A"
+        : `${formatNumber(row.deuteriumConsumed)} Deuterium/h`,
+    },
+    key: row.level,
+    level: row.level,
+    status: row.current ? "current" : row.next ? "next" : "future",
+  }));
 
-  return (
-    <div
-      aria-labelledby="building-level-info-title"
-      aria-modal="true"
-      className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-3"
-      role="dialog"
-    >
-      <div className="max-h-[min(44rem,calc(100vh-1.5rem))] w-full max-w-4xl overflow-hidden rounded-lg border border-white/10 bg-[#0f1624] shadow-2xl shadow-black/40">
-        <div className="flex min-w-0 items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
-          <div className="min-w-0">
-            <h3 id="building-level-info-title" className="break-words text-base font-semibold text-white">
-              {buildingLabel} levels
-            </h3>
-            <p className="mt-1 text-xs text-slate-400">
-              Current Level {currentLevel}
-            </p>
-          </div>
-          <button
-            aria-label="Close level table"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
-            onClick={onClose}
-            type="button"
-          >
-            <X aria-hidden="true" size={16} strokeWidth={2.2} />
-          </button>
-        </div>
-
-        <div className="max-h-[calc(100vh-8rem)] overflow-auto">
-          <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
-            <thead className="sticky top-0 z-10 bg-[#111827] text-xs uppercase tracking-normal text-slate-400">
-              <tr>
-                <LevelInfoHeader className="min-w-24 whitespace-nowrap">Level</LevelInfoHeader>
-                <LevelInfoHeader className="min-w-24 whitespace-nowrap">Status</LevelInfoHeader>
-                <LevelInfoHeader className="min-w-52">Upgrade cost</LevelInfoHeader>
-                {columns.constructionTime && <LevelInfoHeader className="min-w-32">Build time</LevelInfoHeader>}
-                {columns.storage && <LevelInfoHeader className="min-w-40">Storage</LevelInfoHeader>}
-                {columns.effect && <LevelInfoHeader className="min-w-44">Effect</LevelInfoHeader>}
-                {columns.production && <LevelInfoHeader className="min-w-44">Production output</LevelInfoHeader>}
-                {columns.energyRequired && <LevelInfoHeader className="min-w-36">Energy use</LevelInfoHeader>}
-                {columns.energyProduced && <LevelInfoHeader className="min-w-40">Energy output</LevelInfoHeader>}
-                {columns.deuteriumConsumed && <LevelInfoHeader className="min-w-44">Deuterium use</LevelInfoHeader>}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr
-                  className={`border-t border-white/10 ${
-                    row.current
-                      ? "bg-emerald-300/10"
-                      : row.next
-                        ? "bg-signal/10"
-                        : "odd:bg-white/[0.015]"
-                  }`}
-                  key={row.level}
-                >
-                  <LevelInfoCell className="whitespace-nowrap">
-                    <span className="font-semibold text-white">Level {row.level}</span>
-                  </LevelInfoCell>
-                  <LevelInfoCell className="min-w-24">
-                    {row.current && <LevelPill tone="current">Current</LevelPill>}
-                    {row.next && <LevelPill tone="next">Next</LevelPill>}
-                  </LevelInfoCell>
-                  <LevelInfoCell>{formatCost(row.cost)}</LevelInfoCell>
-                  {columns.constructionTime && <LevelInfoCell>{formatDuration(row.durationSeconds)}</LevelInfoCell>}
-                  {columns.storage && (
-                    <LevelInfoCell>
-                      {row.storage
-                        ? `${formatNumber(row.storage.capacity)} ${fullResourceLabels[row.storage.resource]}`
-                        : "N/A"}
-                    </LevelInfoCell>
-                  )}
-                  {columns.effect && <LevelInfoCell>{row.effect ?? "N/A"}</LevelInfoCell>}
-                  {columns.production && (
-                    <LevelInfoCell>
-                      {row.production
-                        ? `${formatNumber(row.production.value)} ${fullResourceLabels[row.production.resource]}/h${row.production.deltaFromPrevious !== 0 ? ` (${formatSigned(row.production.deltaFromPrevious)}/h)` : ""}`
-                        : "N/A"}
-                    </LevelInfoCell>
-                  )}
-                  {columns.energyRequired && (
-                    <LevelInfoCell>
-                      {row.energyRequired === undefined ? "N/A" : `${formatNumber(row.energyRequired)} required`}
-                    </LevelInfoCell>
-                  )}
-                  {columns.energyProduced && (
-                    <LevelInfoCell>
-                      {row.energyProduced === undefined ? "N/A" : `${formatNumber(row.energyProduced)} produced`}
-                    </LevelInfoCell>
-                  )}
-                  {columns.deuteriumConsumed && (
-                    <LevelInfoCell>
-                      {row.deuteriumConsumed === undefined
-                        ? "N/A"
-                        : `${formatNumber(row.deuteriumConsumed)} Deuterium/h`}
-                    </LevelInfoCell>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function LevelInfoHeader({
-  children,
-  className = "",
-}: {
-  children: ComponentChildren;
-  className?: string | undefined;
-}) {
-  return (
-    <th className={`border-b border-white/10 px-3 py-2 font-semibold ${className}`}>
-      {children}
-    </th>
-  );
-}
-
-function LevelInfoCell({
-  children,
-  className = "",
-}: {
-  children: ComponentChildren;
-  className?: string | undefined;
-}) {
-  return (
-    <td className={`border-b border-white/10 px-3 py-2 align-top text-slate-200 ${className}`}>
-      {children}
-    </td>
-  );
-}
-
-function LevelPill({ children, tone }: { children: string; tone: "current" | "next" }) {
-  const className = tone === "current"
-    ? "border-emerald-300/30 bg-emerald-300/10 text-emerald-200"
-    : "border-signal/30 bg-signal/10 text-signal";
-
-  return (
-    <span className={`inline-flex whitespace-nowrap rounded border px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-normal ${className}`}>
-      {children}
-    </span>
-  );
+  return LevelInfoModal({
+    columns: modalColumns,
+    currentLevel,
+    itemLabel: buildingLabel,
+    onClose,
+    rows: modalRows,
+  });
 }
 
 function ComparisonMetric({
