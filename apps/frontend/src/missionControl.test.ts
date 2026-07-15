@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { MissionDetailPage } from "./components/MissionDetailPage";
-import { MissionControlPage, StationedDefenseSection, allActiveMissionRows, buildMissionControlViewQuery, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
+import { MissionControlPage, StationedDefenseSection, allActiveMissionRows, buildMissionControlViewQuery, missionIdMatchesMissionNumberSearch, missionPlanetCoordinateKey, missionReport, missionStatusPill, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, resolveMissionControlView, partitionActiveMissionRows, type ActiveMissionRow, type MissionControlView } from "./components/MissionControlPage";
 import { MissionRouteCell, missionEndpoint, type MissionPlanetIdentity } from "./components/missionRoute";
 import { planetImageForType, planetTypeFromCoordinates } from "./data/mockUniverse";
 import { buildInspectHash, buildInspectPath, parseInspectPath, parseInspectRoute } from "./inspectRoutes";
@@ -1284,6 +1284,98 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Current defenses");
     expect(text).not.toContain("Rocket Launcher ×4");
     expect(text).not.toContain("Current fleet / defenses");
+  });
+
+  test("VEY-KANEO-713: renders recalled stationed defenders, exact losses, survivors, and debris basis", () => {
+    const now = Date.parse("2026-07-15T22:10:00.000Z");
+    const report2840: BattleReport = {
+      ...battleReport("2840"),
+      targetPlanetId: "236",
+      defenderLosses: { metal: "45000", crystal: "27000", deuterium: "0" },
+      debris: { metal: "13500", crystal: "8100" },
+      defenderSnapshot: { fleet: [{ id: 5, count: 2 }], defenses: [] },
+      stationedDefenders: [
+        {
+          missionId: "2847",
+          defender: "0x4444444444444444444444444444444444444444",
+          defenderDisplayName: "Holder 2847",
+          ships: { lightFighter: "2", heavyFighter: "2" },
+          destroyedShips: { lightFighter: "2", heavyFighter: "2" },
+          survivingShips: {},
+          lifecycleOutcome: "Recalled",
+          holdUntil: "1752616800",
+          allianceDepotLevel: 0,
+        },
+        {
+          missionId: "2848",
+          defender: "0x5555555555555555555555555555555555555555",
+          defenderDisplayName: null,
+          ships: { lightFighter: "1", heavyFighter: "2" },
+          destroyedShips: { lightFighter: "1", heavyFighter: "2" },
+          survivingShips: {},
+          lifecycleOutcome: "Recalled",
+          holdUntil: "1752616801",
+          allianceDepotLevel: 0,
+        },
+      ],
+    };
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: mission("2840", "Attack", "Resolved", "0x1111111111111111111111111111111111111111", "7", "236", now - 120_000),
+      battleReport: report2840,
+      defenderPlanetState: { fleet: [], defenses: [], stationedDefenders: [] },
+    }))).join(" ");
+
+    expect(text).toContain("Mission # 2847");
+    expect(text).toContain("Holder 2847");
+    expect(text).toContain("Recalled");
+    expect(text).toContain("Mission # 2848");
+    expect(text).toContain("Original fleet");
+    expect(text).toContain("Destroyed");
+    expect(text).toContain("Survived");
+    expect(text).toContain("Light Fighter ×2");
+    expect(text).toContain("Heavy Fighter ×2");
+    expect(text).toContain("45,000 metal / 27,000 crystal fleet loss → 13,500 metal / 8,100 crystal debris (30%)");
+  });
+
+  test("VEY-KANEO-713: recalled DefenseHold detail distinguishes launch fleet from zero survivors", () => {
+    const now = Date.parse("2026-07-15T22:10:00.000Z");
+    const recalledHold = {
+      ...mission("2847", "DefenseHold", "Returned", "0x4444444444444444444444444444444444444444", "36", "236", now - 7_200_000),
+      defenseHoldOutcome: "Recalled" as const,
+      originalShips: { lightFighter: "2", heavyFighter: "2" },
+      destroyedShips: { lightFighter: "2", heavyFighter: "2" },
+      survivingShips: {},
+      ships: { lightFighter: "2", heavyFighter: "2" },
+    };
+    const text = collectText(MissionDetailPage(missionDetailProps(now, {
+      mission: recalledHold,
+      battleReport: null,
+    }))).join(" ");
+
+    expect(missionStatusPill(recalledHold, now).label).toBe("Recalled");
+    expect(text).toContain("Lifecycle Recalled");
+    expect(text).toContain("Original stationed fleet");
+    expect(text).toContain("Destroyed in combat");
+    expect(text).toContain("Surviving return fleet None");
+    expect(text).toContain("Light Fighter ×2");
+    expect(text).toContain("Heavy Fighter ×2");
+
+    const cardText = collectText(MissionControlPage({
+      ...missionControlProps(now, {}),
+      missionArchive: {
+        wallet: "0x1111111111111111111111111111111111111111",
+        homePlanetId: "7",
+        rows: [{
+          kind: "mission",
+          mission: { ...recalledHold, owner: "0x1111111111111111111111111111111111111111" },
+        }],
+        pagination: { page: 1, pageSize: 25, totalEntries: 1, totalPages: 1, hasPreviousPage: false, hasNextPage: false },
+      },
+    })).join(" ");
+    expect(cardText).toContain("Recalled");
+    expect(cardText).toMatch(/Original stationed fleet\s+Light Fighter x2, Heavy Fighter x2/);
+    expect(cardText).toMatch(/Destroyed in combat\s+Light Fighter x2, Heavy Fighter x2/);
+    expect(cardText).toMatch(/Surviving return fleet\s+None/);
   });
 
   test("VEY-KANEO-407: renders unit art in the standalone Fleet And Cargo panel for non-combat missions", () => {

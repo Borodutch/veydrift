@@ -51,6 +51,7 @@ const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d2
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 const fleetMissionBodiesTopic = "0xfa464e2180f08e3e4d8c4247566d0616a5e1ab845d1678c47fedae6d44e9c502";
 const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
+const defenseHoldEndedTopic = "0xf72983c656a87e172935581e9c19f22826c62a2c4d552c6dd217c498a9d88586";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
@@ -225,6 +226,38 @@ describe("SettlementIndexer", () => {
       hasFirstPlanet: true,
       homePlanetId: planet.planetId
     });
+  });
+
+  test("narrowly backfills historical DefenseHoldEnded logs even when broad startup backfill is disabled", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    const eventId = "legacy-defense-hold-ended";
+    const log = {
+      blockNumber: "0x70",
+      transactionHash: `0x${"71".repeat(32)}`,
+      logIndex: "0x2",
+      removed: false,
+      topics: [defenseHoldEndedTopic, topic(2847n), topic(236n)],
+      data: abiWords(5n)
+    };
+    database.query(`
+      INSERT INTO indexed_event_logs (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES (?, ?, ?, ?, 0, ?, ?)
+    `).run(eventId, log.transactionHash, log.logIndex, "112", JSON.stringify(log), new Date().toISOString());
+    database.query("DELETE FROM indexer_metadata WHERE key = 'defenseHoldEndedMissionEventsBackfilledV1'").run();
+
+    new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+
+    expect(database.query(`
+      SELECT event_kind, block_number
+      FROM indexed_mission_event_logs
+      WHERE event_id = ?
+    `).get(eventId)).toEqual({ event_kind: "fleet", block_number: "112" });
   });
 
   test("indexes canonical referral claim, payout, credit, and reward-claim events", () => {
