@@ -8995,22 +8995,24 @@ type PlanetSelectorProgressBar = {
   indeterminate: boolean;
   kind: "building" | "defense" | "research" | "ship";
   progress: number;
+  remaining: string;
   title: string;
 };
 
-function PlanetSelectorResearchProgress({
+export function PlanetSelectorResearchProgress({
   now,
   queue,
 }: {
   now: number;
   queue: QueueStateResponse | null | undefined;
 }) {
+  const preview = researchQueuePreview(queue);
   const bar = planetSelectorQueueProgressBar({
     color: "bg-violet-300",
     kind: "research",
     label: "Research",
     now,
-    preview: researchQueuePreview(queue),
+    preview,
     queue,
   });
   if (!bar.active) return null;
@@ -9024,9 +9026,19 @@ function PlanetSelectorResearchProgress({
       data-planet-selector-research-progress="true"
       title={bar.title}
     >
-      <div className="flex min-w-0 items-center justify-between gap-1 text-[0.6rem] leading-3 text-violet-100">
-        <span className="truncate font-semibold">Research</span>
-        <span className="truncate text-violet-200/80">{bar.title.replace(/^Research: /, "")}</span>
+      <div className="grid min-w-0 gap-0.5 text-[0.6rem] leading-3 text-violet-100">
+        <span
+          className="min-w-0 break-words font-semibold [overflow-wrap:anywhere]"
+          data-planet-selector-research-name="true"
+        >
+          {preview.label}
+        </span>
+        <span
+          className="min-w-0 text-right text-violet-200/80"
+          data-planet-selector-research-status="true"
+        >
+          {bar.remaining}
+        </span>
       </div>
       <span className="h-1.5 overflow-hidden rounded-full border border-white/5 bg-white/10">
         <span
@@ -9102,6 +9114,7 @@ function planetSelectorQueueProgressBar({
       indeterminate: false,
       kind,
       progress: 0,
+      remaining: "Idle",
       title: `${label}: idle`,
     };
   }
@@ -9121,6 +9134,7 @@ function planetSelectorQueueProgressBar({
     indeterminate: !complete && !hasTimeline,
     kind,
     progress: complete ? 1 : hasTimeline ? queueProgress({ readyAt, startedAt }, now) : 0,
+    remaining,
     title: `${label}: ${preview.label}, ${remaining}`,
   };
 }
