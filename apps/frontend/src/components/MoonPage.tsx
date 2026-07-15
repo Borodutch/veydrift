@@ -1,6 +1,5 @@
-import { ArrowLeftRight, Crosshair, ExternalLink, Eye, Flame, Info, Orbit, Rocket, Shield, X } from "lucide-preact";
+import { ArrowLeftRight, Crosshair, ExternalLink, Eye, Flame, Orbit, Rocket, Shield } from "lucide-preact";
 import type { LucideIcon } from "lucide-preact";
-import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 import type { Resources } from "../playableMvp";
 import type { MissionShips } from "../galaxyActions";
@@ -36,6 +35,7 @@ import {
   productionQueueViewModel,
 } from "./ProductionCatalog";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
+import { LevelInfoButton, LevelInfoModal, type LevelInfoColumn, type LevelInfoRow } from "./LevelInfoModal";
 
 const burningChickensOpenSeaCollectionUrl = "https://opensea.io/collection/chickens-by-eggs";
 
@@ -678,10 +678,12 @@ function MoonStructureDetailPanel({
             <h3 className="break-words text-lg font-semibold text-white">{building.label}</h3>
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-400">
               <span>{moonStructureLevelSummary(building, status.targetLevel)}</span>
-              <MoonStructureLevelInfoButton
-                buildingLabel={building.label}
-                onClick={() => setIsInfoOpen(true)}
-              />
+              {moonStructureHasLevelInfo(building.key) ? (
+                <MoonStructureLevelInfoButton
+                  buildingLabel={building.label}
+                  onClick={() => setIsInfoOpen(true)}
+                />
+              ) : null}
             </div>
           </div>
           {building.level > 0 ? (
@@ -731,6 +733,7 @@ function MoonStructureDetailPanel({
 
       {isInfoOpen ? (
         <MoonStructureLevelInfoModal
+          buildingKey={building.key}
           buildingLabel={building.label}
           currentLevel={building.level}
           onClose={() => setIsInfoOpen(false)}
@@ -769,20 +772,10 @@ function MoonStructureLevelInfoButton({
   buildingLabel: string;
   onClick: () => void;
 }) {
-  return (
-    <button
-      aria-label={`Open ${buildingLabel} level table`}
-      className="inline-flex h-7 w-7 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-signal/40 hover:bg-signal/10 hover:text-signal"
-      onClick={onClick}
-      title="Level table"
-      type="button"
-    >
-      <Info aria-hidden="true" size={15} strokeWidth={2.2} />
-    </button>
-  );
+  return LevelInfoButton({ itemLabel: buildingLabel, onClick });
 }
 
-type MoonStructureLevelInfoRow = {
+export type MoonStructureLevelInfoRow = {
   cost: Resources;
   durationSeconds: number;
   effect: string;
@@ -791,133 +784,54 @@ type MoonStructureLevelInfoRow = {
   status: "current" | "next" | "future";
 };
 
-function MoonStructureLevelInfoModal({
+export function MoonStructureLevelInfoModal({
+  buildingKey,
   buildingLabel,
   currentLevel,
   onClose,
   rows,
 }: {
+  buildingKey: MoonBuilding["key"];
   buildingLabel: string;
   currentLevel: number;
   onClose: () => void;
   rows: MoonStructureLevelInfoRow[];
 }) {
-  return (
-    <div
-      aria-labelledby="moon-building-level-info-title"
-      aria-modal="true"
-      className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-3"
-      role="dialog"
-    >
-      <div className="max-h-[min(44rem,calc(100vh-1.5rem))] w-full max-w-4xl overflow-hidden rounded-lg border border-white/10 bg-[#0f1624] shadow-2xl shadow-black/40">
-        <div className="flex min-w-0 items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
-          <div className="min-w-0">
-            <h3 id="moon-building-level-info-title" className="break-words text-base font-semibold text-white">
-              {buildingLabel} levels
-            </h3>
-            <p className="mt-1 text-xs text-slate-400">
-              Current Level {currentLevel}
-            </p>
-          </div>
-          <button
-            aria-label="Close level table"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded border border-white/10 bg-white/[0.04] text-slate-300 transition hover:border-white/20 hover:bg-white/10 hover:text-white"
-            onClick={onClose}
-            type="button"
-          >
-            <X aria-hidden="true" size={16} strokeWidth={2.2} />
-          </button>
-        </div>
+  const columns = moonStructureLevelInfoColumns(buildingKey);
+  const modalRows: LevelInfoRow[] = rows.map((row) => ({
+    cells: {
+      cost: formatCost(row.cost),
+      duration: formatDuration(row.durationSeconds),
+      effect: row.effect,
+      requirements: row.requirements ?? "None",
+    },
+    key: row.level,
+    level: row.level,
+    status: row.status,
+  }));
 
-        <div className="max-h-[calc(100vh-8rem)] overflow-auto">
-          <table className="min-w-full border-separate border-spacing-0 text-left text-sm">
-            <thead className="sticky top-0 z-10 bg-[#111827] text-xs uppercase tracking-normal text-slate-400">
-              <tr>
-                <MoonStructureLevelInfoHeader className="min-w-24 whitespace-nowrap">Level</MoonStructureLevelInfoHeader>
-                <MoonStructureLevelInfoHeader className="min-w-24 whitespace-nowrap">Status</MoonStructureLevelInfoHeader>
-                <MoonStructureLevelInfoHeader className="min-w-52">Upgrade cost</MoonStructureLevelInfoHeader>
-                <MoonStructureLevelInfoHeader className="min-w-32">Build time</MoonStructureLevelInfoHeader>
-                <MoonStructureLevelInfoHeader className="min-w-52">Requirements</MoonStructureLevelInfoHeader>
-                <MoonStructureLevelInfoHeader className="min-w-60">Effect</MoonStructureLevelInfoHeader>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr
-                  className={`border-t border-white/10 ${
-                    row.status === "current"
-                      ? "bg-emerald-300/10"
-                      : row.status === "next"
-                        ? "bg-signal/10"
-                        : "odd:bg-white/[0.015]"
-                  }`}
-                  key={row.level}
-                >
-                  <MoonStructureLevelInfoCell className="whitespace-nowrap">
-                    <span className="font-semibold text-white">Level {row.level}</span>
-                  </MoonStructureLevelInfoCell>
-                  <MoonStructureLevelInfoCell className="min-w-24">
-                    {row.status === "current" ? <MoonStructureLevelPill tone="current">Current</MoonStructureLevelPill> : null}
-                    {row.status === "next" ? <MoonStructureLevelPill tone="next">Next</MoonStructureLevelPill> : null}
-                  </MoonStructureLevelInfoCell>
-                  <MoonStructureLevelInfoCell>{formatCost(row.cost)}</MoonStructureLevelInfoCell>
-                  <MoonStructureLevelInfoCell>{formatDuration(row.durationSeconds)}</MoonStructureLevelInfoCell>
-                  <MoonStructureLevelInfoCell>{row.requirements ?? "None"}</MoonStructureLevelInfoCell>
-                  <MoonStructureLevelInfoCell>{row.effect}</MoonStructureLevelInfoCell>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
+  return LevelInfoModal({
+    columns,
+    currentLevel,
+    itemLabel: buildingLabel,
+    onClose,
+    rows: modalRows,
+  });
 }
 
-function MoonStructureLevelInfoHeader({
-  children,
-  className = "",
-}: {
-  children: ComponentChildren;
-  className?: string | undefined;
-}) {
-  return (
-    <th className={`border-b border-white/10 px-3 py-2 font-semibold ${className}`}>
-      {children}
-    </th>
-  );
+export function moonStructureHasLevelInfo(key: MoonBuilding["key"]): boolean {
+  return key !== "jumpGate";
 }
 
-function MoonStructureLevelInfoCell({
-  children,
-  className = "",
-}: {
-  children: ComponentChildren;
-  className?: string | undefined;
-}) {
-  return (
-    <td className={`border-b border-white/10 px-3 py-2 align-top text-slate-200 ${className}`}>
-      {children}
-    </td>
-  );
-}
-
-function MoonStructureLevelPill({
-  children,
-  tone,
-}: {
-  children: string;
-  tone: "current" | "next";
-}) {
-  const className = tone === "current"
-    ? "border-emerald-300/30 bg-emerald-300/10 text-emerald-200"
-    : "border-signal/30 bg-signal/10 text-signal";
-
-  return (
-    <span className={`inline-flex whitespace-nowrap rounded border px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase tracking-normal ${className}`}>
-      {children}
-    </span>
-  );
+export function moonStructureLevelInfoColumns(key: MoonBuilding["key"]): LevelInfoColumn[] {
+  return [
+    { key: "cost", label: "Upgrade cost", headerClassName: "min-w-52" },
+    { key: "duration", label: "Build time", headerClassName: "min-w-32" },
+    ...(key === "lunarBase"
+      ? []
+      : [{ key: "requirements", label: "Requirements", headerClassName: "min-w-52" }]),
+    { key: "effect", label: "Effect", headerClassName: "min-w-60" },
+  ];
 }
 
 function MoonShipyardSection({
@@ -1675,7 +1589,7 @@ function moonStructureBaseCost(key: MoonBuilding["key"]): Resources {
   return planetBuilding?.baseCost ?? { metal: 0, crystal: 0, deuterium: 0 };
 }
 
-function moonStructureLevelInfoRows(
+export function moonStructureLevelInfoRows(
   building: MoonBuilding,
   moon: NonNullable<ChainMoonState["moon"]>,
   moonState: ChainMoonState | null | undefined,
