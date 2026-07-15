@@ -273,6 +273,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       // VEY-KANEO-479: when the randomness engine is configured, gate an arrived Attack's readiness on
       // its battle randomness being fulfilled (derived from ingested RandomnessFulfilled logs).
       randomnessEngineConfigured: Boolean(loaded.config.randomnessEngineAddress),
+      ...(loaded.config.settlementStartPriceWei
+        ? { settlementStartPriceWei: loaded.config.settlementStartPriceWei }
+        : {}),
       // VEY-KANEO-485: bound the cold wipe->reindex chain reads so a stall surfaces a real error and the
       // boot-time recovery retries, instead of an indefinite silent reconciliation_in_progress.
       ...(loaded.config.rebuildDeadlineMs ? { rebuildDeadlineMs: loaded.config.rebuildDeadlineMs } : {}),
@@ -568,11 +571,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         if (!indexer) return indexedReadNotReadyResponse("referral dashboard", indexer, { wallet });
+        const startPriceWei = indexer.currentStartPriceWei();
         return Response.json(referralStore.dashboard(
           wallet,
           indexer,
-          loaded.config.settlementStartPriceWei ?? null,
-          referralConfigurationReady(loaded.config),
+          startPriceWei,
+          referralConfigurationReady(loaded.config, startPriceWei),
           false
         ), {
           headers: corsHeaders
@@ -595,11 +599,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           return invalidReferralSignatureResponse();
         }
         if (!indexer) return indexedReadNotReadyResponse("private referral dashboard", indexer, { wallet });
+        const startPriceWei = indexer.currentStartPriceWei();
         return Response.json(referralStore.dashboard(
           wallet,
           indexer,
-          loaded.config.settlementStartPriceWei ?? null,
-          referralConfigurationReady(loaded.config),
+          startPriceWei,
+          referralConfigurationReady(loaded.config, startPriceWei),
           true
         ), {
           headers: corsHeaders
@@ -671,11 +676,12 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const claimedAtSeconds = Number(claim.claimedAt);
         const claimedAt = Number.isFinite(claimedAtSeconds) ? new Date(claimedAtSeconds * 1_000) : new Date();
         referralStore.recordClaimTransaction(wallet, code, commitment, txHash, claimedAt);
+        const startPriceWei = indexer.currentStartPriceWei();
         return Response.json(referralStore.dashboard(
           wallet,
           indexer,
-          loaded.config.settlementStartPriceWei ?? null,
-          referralConfigurationReady(loaded.config),
+          startPriceWei,
+          referralConfigurationReady(loaded.config, startPriceWei),
           true,
           claimedAt
         ), {
@@ -695,7 +701,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           code: url.searchParams.get("code"),
           index: indexer,
           ...(invitee ? { invitee } : {}),
-          startPriceWei: loaded.config.settlementStartPriceWei ?? null,
+          startPriceWei: indexer.currentStartPriceWei(),
           store: referralStore
         }), {
           headers: corsHeaders
@@ -710,10 +716,11 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const body = await readJsonBody(request);
         const invitee = String(body?.invitee ?? "");
         assertAddress(invitee);
-        if (!referralConfigurationReady(loaded.config)) {
+        const startPriceWei = indexer?.currentStartPriceWei() ?? null;
+        if (!referralConfigurationReady(loaded.config, startPriceWei)) {
           return Response.json({
             error: "referral_configuration_incomplete",
-            message: "Referral signer, game, referral contract, and current settlement price must be configured together."
+            message: "Referral signer, game, referral contract, and indexed current settlement price must be available together."
           }, {
             headers: corsHeaders,
             status: 503
@@ -724,7 +731,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           code: body?.code,
           index: indexer,
           invitee,
-          startPriceWei: loaded.config.settlementStartPriceWei ?? null,
+          startPriceWei,
           store: referralStore
         });
         if (!resolution.valid || !resolution.commitment) {
@@ -2174,12 +2181,12 @@ function invalidReferralSignatureResponse(): Response {
   );
 }
 
-function referralConfigurationReady(config: BackendConfig): boolean {
+function referralConfigurationReady(config: BackendConfig, startPriceWei: string | null): boolean {
   return Boolean(
     config.referralSignerPrivateKey
       && config.referralSystemAddress
       && config.gameContractAddress
-      && config.settlementStartPriceWei
+      && startPriceWei
   );
 }
 
@@ -4586,10 +4593,9 @@ function indexedSettlementFundingResponse(
   config: BackendConfig,
   wallet?: `0x${string}`
 ): Response {
-  // VEY-KANEO-497: frontend API reads must not trigger backend RPC, including the
-  // first-planet funding helper. The wallet-specific native ETH balance is left
-  // to the wallet/chain at transaction submission time; the start price is served
-  // only when operators provide static metadata that matches the deployment.
+  // Frontend API reads never trigger backend RPC. The wallet-specific native ETH
+  // balance is checked by the wallet at submission time; the mutable start price
+  // comes from the persisted StartPriceUpdated/canonical-rebuild projection.
   const settlement = wallet && indexer ? indexer.walletSettlement(wallet) : null;
   const reservation = wallet ? migrationReservationPayloadForWallet(
     wallet,
@@ -4601,13 +4607,13 @@ function indexedSettlementFundingResponse(
       && config.resourceTokenAddresses.crystal
       && config.resourceTokenAddresses.deuterium
   );
-  const startPriceWei = config.settlementStartPriceWei ?? null;
   if (!hasWarmPlanetIndex(indexer) && !migrationClaim) {
     return indexedReadNotReadyResponse("settlement funding", indexer, { wallet });
   }
   if (!indexer) {
     return indexedReadNotReadyResponse("settlement funding", indexer, { wallet });
   }
+  const startPriceWei = indexer.currentStartPriceWei();
 
   return indexedJsonResponse({
     affordable: Boolean(startPriceWei) && resourceTokensConfigured,
@@ -4620,7 +4626,7 @@ function indexedSettlementFundingResponse(
       ? {}
       : { unavailableReason: "Resource token reserves are not configured for this game deployment yet." }),
     ...(resourceTokensConfigured && !startPriceWei
-      ? { unavailableReason: "Settlement start price is not configured for this game deployment yet." }
+      ? { unavailableReason: "Settlement start price is not available from indexed contract state yet." }
       : {})
   }, indexer.snapshot());
 }

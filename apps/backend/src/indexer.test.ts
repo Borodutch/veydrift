@@ -59,6 +59,7 @@ const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
 const interplanetaryMissileAttackTopic = "0x44a8c2b7632935050468ed4d9acfb1e99a09cec32fd65811964b95b3693f872c";
 const randomnessFulfilledTopic = "0x864b23caf5999ffe7e7b5bc685db237bcef9eb7bd6423c2fd395d9b4663372f5";
+const startPriceUpdatedTopic = "0xdbcd6a03cdadcd71beb97d41ac0c321148e2556e112a52663ba4c94ff84d6717";
 const referralCodeClaimedTopic = "0xa7124569721bd8a9fca99961778919ebde17b82e397d5dbeb14eb7b5e1e051fb";
 const referralInviteRedeemedTopic = "0xf0e76a5aa6e423f978c7616fd6933b5d376a32654fc67c6fad0afdbc744ccce1";
 const referralRewardClaimedTopic = "0x55b0859d9094fa40dfdcbcdd82c0d785132f6a627b6083e228d6bddb5e498558";
@@ -290,6 +291,83 @@ describe("SettlementIndexer", () => {
         claimedAt: "1783526600"
       })
     ]);
+  });
+
+  test("projects mutable start price from events, survives restart repair, and records bootstrap divergence", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    const bootstrapStartPriceWei = "50000000000000000";
+    const indexedStartPriceWei = "12000000000000000";
+    const indexer = new SettlementIndexer(reader, 100n, {
+      database,
+      settlementStartPriceWei: bootstrapStartPriceWei
+    });
+
+    expect(indexer.currentStartPriceWei()).toBe(bootstrapStartPriceWei);
+    expect(indexer.snapshot().startPriceSource).toBe("bootstrap");
+    indexer.applyLog({
+      blockNumber: "0x94",
+      transactionHash: `0x${"ef".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [startPriceUpdatedTopic],
+      data: abiWords(BigInt(bootstrapStartPriceWei), BigInt(indexedStartPriceWei))
+    });
+
+    expect(indexer.currentStartPriceWei()).toBe(indexedStartPriceWei);
+    expect(indexer.snapshot()).toMatchObject({
+      startPriceSource: "event",
+      startPriceWei: indexedStartPriceWei
+    });
+    expect(indexer.snapshot().startPriceBootstrapDivergence).toContain(bootstrapStartPriceWei);
+    indexer.applyLog({
+      blockNumber: "0x93",
+      transactionHash: `0x${"ee".repeat(32)}`,
+      logIndex: "0x1",
+      topics: [startPriceUpdatedTopic],
+      data: abiWords(60_000_000_000_000_000n, 70_000_000_000_000_000n)
+    });
+    expect(indexer.currentStartPriceWei()).toBe(indexedStartPriceWei);
+
+    // Model upgrading an existing DB that already has the raw event but not the new projection.
+    database.query("DELETE FROM indexer_metadata WHERE key LIKE '%StartPrice%' OR key LIKE 'startPrice%'").run();
+    const restarted = new SettlementIndexer(reader, 100n, {
+      database,
+      runStartupBackfill: false,
+      settlementStartPriceWei: bootstrapStartPriceWei
+    });
+    expect(restarted.currentStartPriceWei()).toBe(indexedStartPriceWei);
+    expect(restarted.snapshot().startPriceSource).toBe("event");
+  });
+
+  test("seeds current start price from the canonical chain read during an explicit rebuild", async () => {
+    const canonicalStartPriceWei = "18000000000000000";
+    const indexer = new SettlementIndexer({
+      async getBlockNumber() { return 200n; },
+      async getStartPrice() { return canonicalStartPriceWei; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, {
+      settlementStartPriceWei: "50000000000000000"
+    });
+
+    await indexer.rebuild();
+    expect(indexer.snapshot()).toMatchObject({
+      startPriceSource: "rebuild",
+      startPriceWei: canonicalStartPriceWei
+    });
+    indexer.applyLog({
+      blockNumber: "0xc7",
+      transactionHash: `0x${"ed".repeat(32)}`,
+      logIndex: "0x1",
+      topics: [startPriceUpdatedTopic],
+      data: abiWords(10_000_000_000_000_000n, 11_000_000_000_000_000n)
+    });
+    expect(indexer.currentStartPriceWei()).toBe(canonicalStartPriceWei);
   });
 
   test("surfaces a real error when the cold rebuild stalls past its deadline (VEY-KANEO-485)", async () => {

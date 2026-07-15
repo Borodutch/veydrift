@@ -136,18 +136,19 @@ For websocket chain sync it accepts `VEYDRIFT_WS_RPC_URL` or
 `wss://base-sepolia.g.alchemy.com/v2/<key>` when only
 `ALCHEMY_BASE_SEPOLIA_API_KEY` is set. HTTP RPC is for writer-side event replay,
 explicit operator sync, and mutating/on-chain workers; frontend/API read
-requests must be served from the SQLite index or configured static metadata.
+requests must be served from the SQLite index.
 `VEYDRIFT_GAME_CONTRACT_ADDRESS` or the legacy `VEYDRIFT_CONTRACT_ADDRESS` must
 point at the deployed `VeydriftGame` proxy for game-state APIs and runtime
 Shipyard transactions.
 `VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS` is the compact first-planet settlement
 contract used for settlement/universe context and must not be used as the game
 contract.
-`VEYDRIFT_SETTLEMENT_START_PRICE_WEI` is the deployed game's exact `startPrice`
-used by settlement funding and referral reward responses. Operators must update
-it atomically with any on-chain `startPrice` change; the post-deploy smoke check
-compares it with `VeydriftGame.startPrice()`. Read endpoints deliberately do not
-call RPC for each request.
+`VEYDRIFT_SETTLEMENT_START_PRICE_WEI` seeds the SQLite price projection at cold
+start and must match the deployed game's `startPrice`; the post-deploy smoke
+check enforces that bootstrap invariant. `StartPriceUpdated` events then become
+canonical for settlement funding and referral reward responses, and explicit
+rebuilds seed the current contract value. Divergence remains visible in indexer
+health metadata. Read endpoints deliberately do not call RPC for each request.
 `VEYDRIFT_METAL_TOKEN_ADDRESS`, `VEYDRIFT_CRYSTAL_TOKEN_ADDRESS`, and
 `VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS` expose the upgradeable ERC-20 resource token
 proxies deployed for the game.
@@ -237,8 +238,9 @@ ordered and atomic at the release boundary:
    game proxy still has the expected implementation/storage state and exact
    `startPrice()`.
 3. Configure the backend with the same referral address, signer private key, and
-   exact `VEYDRIFT_SETTLEMENT_START_PRICE_WEI`; rebuild its referral index from
-   the new referral deployment block before exposing referral traffic.
+   exact bootstrap `VEYDRIFT_SETTLEMENT_START_PRICE_WEI`; rebuild its referral
+   index from the new referral deployment block so current price and later
+   `StartPriceUpdated` events are canonical before exposing referral traffic.
 4. Deploy backend first, then frontend. Run `veydrift-postdeploy-smoke.mjs` with
    the RPC, expected signer address, and start price before live QA.
 

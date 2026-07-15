@@ -1046,6 +1046,14 @@ export type IndexedReferralClaimEvent = {
   claimedAt: string;
 };
 
+export type IndexedStartPriceUpdatedEvent = {
+  eventName: "StartPriceUpdated";
+  transactionHash: string;
+  blockNumber: string;
+  logIndex: string;
+  startPriceWei: string;
+};
+
 export type IndexedReferralRedemptionEvent = {
   eventName: "ReferralInviteRedeemed";
   transactionHash: string;
@@ -1116,6 +1124,7 @@ export type DebrisFieldEvent = {
 
 export interface ChainReader {
   getWalletSettlement(wallet: Address): Promise<WalletSettlement>;
+  getStartPrice(): Promise<string | null>;
   getSettlementFunding(wallet: Address): Promise<SettlementFundingState>;
   getWalletPlanets(wallet: Address): Promise<WalletPlanets>;
   getPlanet(planetId: bigint): Promise<PlanetState | null>;
@@ -1660,10 +1669,6 @@ export class VeydriftGameReader implements ChainReader {
   private readonly randomnessEngineAddress: Address | undefined;
   private readonly referralSystemAddress: Address | undefined;
   private readonly hydrateQueueStartedAt: boolean;
-  // The first-planet start price is an immutable game constant. Memoize the first chain
-  // read so serving settlement funding never reissues a per-request game-state eth_call
-  // (VEY-KANEO-478 / #606); only the wallet balance is read fresh on each request.
-  private startPriceRead: Promise<bigint | undefined> | undefined;
 
   constructor(
     config: BackendConfig,
@@ -1739,8 +1744,8 @@ export class VeydriftGameReader implements ChainReader {
 
   async getSettlementFunding(wallet: Address): Promise<SettlementFundingState> {
     assertAddress(wallet);
-    const startPrice = await this.readStartPrice();
-    if (startPrice === undefined) {
+    const startPriceValue = await this.getStartPrice();
+    if (startPriceValue === null) {
       return {
         affordable: true,
         balanceWei: null,
@@ -1748,6 +1753,7 @@ export class VeydriftGameReader implements ChainReader {
         startPriceWei: null
       };
     }
+    const startPrice = BigInt(startPriceValue);
 
     if (!this.resourceTokensConfigured()) {
       return {
@@ -1766,6 +1772,10 @@ export class VeydriftGameReader implements ChainReader {
       contractKind: "game",
       startPriceWei: startPrice.toString()
     };
+  }
+
+  async getStartPrice(): Promise<string | null> {
+    return (await this.fetchStartPrice())?.toString() ?? null;
   }
 
   async getPlanet(planetId: bigint): Promise<PlanetState | null> {
@@ -4221,20 +4231,6 @@ export class VeydriftGameReader implements ChainReader {
     return decodeUintWord(wordAt(splitWords(await this.call(selector, args)), 0));
   }
 
-  private async readStartPrice(): Promise<bigint | undefined> {
-    if (!this.startPriceRead) {
-      this.startPriceRead = this.fetchStartPrice();
-    }
-    try {
-      return await this.startPriceRead;
-    } catch (error) {
-      // A transient RPC failure must not poison the memo: drop it so the next funding
-      // request retries the read instead of permanently failing.
-      this.startPriceRead = undefined;
-      throw error;
-    }
-  }
-
   private async fetchStartPrice(): Promise<bigint | undefined> {
     try {
       return await this.readUintCall("0xf1a9af89", []);
@@ -5064,6 +5060,7 @@ const interplanetaryMissileAttackTopic = "0x44a8c2b7632935050468ed4d9acfb1e99a09
 // reveals the random word for a request — the moment a randomness-gated mission (an Attack battle)
 // actually becomes resolvable (consumeRandomness reverts with PendingRandomness until then).
 const randomnessFulfilledTopic = "0x864b23caf5999ffe7e7b5bc685db237bcef9eb7bd6423c2fd395d9b4663372f5";
+export const startPriceUpdatedEventTopic = "0xdbcd6a03cdadcd71beb97d41ac0c321148e2556e112a52663ba4c94ff84d6717";
 const referralCodeClaimedTopic = "0xa7124569721bd8a9fca99961778919ebde17b82e397d5dbeb14eb7b5e1e051fb";
 const referralInviteRedeemedTopic = "0xf0e76a5aa6e423f978c7616fd6933b5d376a32654fc67c6fad0afdbc744ccce1";
 const referralRewardClaimedTopic = "0x55b0859d9094fa40dfdcbcdd82c0d785132f6a627b6083e228d6bddb5e498558";
@@ -5135,6 +5132,7 @@ const eventNamesByTopic = new Map<string, string>([
   [combatDebrisSignaledTopic, "CombatDebrisSignaled"],
   [interplanetaryMissileAttackTopic, "InterplanetaryMissileAttack"],
   [randomnessFulfilledTopic, "RandomnessFulfilled"],
+  [startPriceUpdatedEventTopic, "StartPriceUpdated"],
   [referralCodeClaimedTopic, "ReferralCodeClaimed"],
   [referralInviteRedeemedTopic, "ReferralInviteRedeemed"],
   [referralRewardClaimedTopic, "ReferralRewardClaimed"],
@@ -5318,6 +5316,10 @@ export function isInterplanetaryMissileAttackLog(log: RpcLog): boolean {
 
 export function isReferralClaimLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === referralCodeClaimedTopic;
+}
+
+export function isStartPriceUpdatedLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === startPriceUpdatedEventTopic;
 }
 
 export function isReferralRedemptionLog(log: RpcLog): boolean {
@@ -5515,6 +5517,16 @@ export function decodeReferralClaimLog(log: RpcLog): IndexedReferralClaimEvent {
     inviter: decodeAddressWord(topicAt(log.topics, 1)),
     commitment: topicAt(log.topics, 2) as `0x${string}`,
     claimedAt: decodeUintWord(wordAt(words, 0)).toString()
+  };
+}
+
+export function decodeStartPriceUpdatedLog(log: RpcLog): IndexedStartPriceUpdatedEvent {
+  return {
+    eventName: "StartPriceUpdated",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    logIndex: (log as RpcLog & { logIndex?: string }).logIndex ?? "0x0",
+    startPriceWei: decodeUintWord(wordAt(splitWords(log.data), 1)).toString()
   };
 }
 

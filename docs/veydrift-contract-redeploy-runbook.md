@@ -136,7 +136,7 @@ Apply every generated backend variable to the `veydrift_backend-test` EasyPanel 
 - `VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS`
 - `VEYDRIFT_MOON_CONTRACT_ADDRESS`
 - `VEYDRIFT_REFERRAL_SYSTEM_ADDRESS`
-- `VEYDRIFT_SETTLEMENT_START_PRICE_WEI` (must equal the deployed game proxy's `startPrice()`)
+- `VEYDRIFT_SETTLEMENT_START_PRICE_WEI` (cold-start bootstrap; must equal the deployed game proxy's `startPrice()`, then indexed `StartPriceUpdated` events are authoritative)
 - `VEYDRIFT_METAL_TOKEN_ADDRESS`
 - `VEYDRIFT_CRYSTAL_TOKEN_ADDRESS`
 - `VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS`

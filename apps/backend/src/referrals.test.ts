@@ -56,7 +56,9 @@ function referralIndex() {
   const claims: IndexedReferralClaimEvent[] = [];
   const redemptions: IndexedReferralRedemptionEvent[] = [];
   const rewardClaims: IndexedReferralRewardClaimEvent[] = [];
+  let indexedStartPriceWei: string | null = startPriceWei;
   const indexer = {
+    currentStartPriceWei: () => indexedStartPriceWei,
     referralClaim: (owner: string, commitment: string, txHash: string) => claims.find((event) =>
       event.inviter.toLowerCase() === owner.toLowerCase()
       && event.commitment.toLowerCase() === commitment.toLowerCase()
@@ -72,7 +74,13 @@ function referralIndex() {
     referralRedemptionsForInviter: (owner: string) => redemptions.filter((event) => event.inviter.toLowerCase() === owner.toLowerCase()),
     referralRewardClaimsForInviter: (owner: string) => rewardClaims.filter((event) => event.inviter.toLowerCase() === owner.toLowerCase())
   } as unknown as SettlementIndexer;
-  return { claims, indexer, redemptions, rewardClaims };
+  return {
+    claims,
+    indexer,
+    redemptions,
+    rewardClaims,
+    setStartPriceWei(value: string | null) { indexedStartPriceWei = value; }
+  };
 }
 
 function claimEvent(commitment: `0x${string}`, txByte = "aa", claimedAt = Math.floor(Date.now() / 1_000)): IndexedReferralClaimEvent {
@@ -213,6 +221,26 @@ describe("referral invites", () => {
         startPriceWei,
         inviterRewardWei: "6000000000000000",
         commitment
+      });
+
+      // The handler was already created: changing the indexed projection must update all
+      // truthful copy without a backend restart or request-time RPC read.
+      chain.setStartPriceWei("18000000000000000");
+      const updatedResolve = await restartedHandler(new Request(
+        `http://localhost/referrals/resolve?code=${code}&invitee=${invitee}`
+      ));
+      expect(await updatedResolve.json()).toMatchObject({
+        valid: true,
+        startPriceWei: "18000000000000000",
+        inviterRewardWei: "9000000000000000"
+      });
+      const updatedPrivateDashboard = await restartedHandler(new Request(`http://localhost/wallet/${player}/referrals`, {
+        body: JSON.stringify({ signature: dashboardSignature }),
+        headers: { "content-type": "application/json" },
+        method: "POST"
+      }));
+      expect(await updatedPrivateDashboard.json()).toMatchObject({
+        rewardPerUseWei: "9000000000000000"
       });
 
       const redeemResponse = await restartedHandler(new Request("http://localhost/referrals/redeem", {

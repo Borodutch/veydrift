@@ -47,9 +47,9 @@ export type BackendConfig = {
   rpcUrl?: string;
   rpcFallbackUrls?: string[];
   rpcSource: "alchemy-key" | "alchemy-url" | "custom-url" | "missing";
-  // Optional static metadata for frontend settlement launch funding. HTTP request
-  // paths must not read this from RPC; operators should update this when the
-  // deployed contract's startPrice changes.
+  // Cold-start metadata for the indexed settlement-price projection. HTTP request
+  // paths never read RPC; StartPriceUpdated events and explicit rebuild reads become
+  // canonical and divergence from this bootstrap value is surfaced by the indexer.
   settlementStartPriceWei?: string;
   settlementContractAddress?: `0x${string}`;
   wsRpcUrl?: string;
@@ -278,7 +278,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     if (settlementStartPriceWei === undefined) {
       problems.push({
         field: "VEYDRIFT_SETTLEMENT_START_PRICE_WEI",
-        message: "Referral configuration requires the exact deployed game startPrice."
+        message: "Referral configuration requires a bootstrap game startPrice; indexed chain truth supersedes it."
       });
     }
   }
