@@ -161,7 +161,12 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             }
             targetPlanetId = hostile.targetPlanetId;
         }
-        if (!counterplayMission && originPlanetId == targetPlanetId) revert SamePlanet();
+        if (
+            !counterplayMission && originPlanetId == targetPlanetId
+                && missionType != FleetMissionType.Harvest
+        ) {
+            revert SamePlanet();
+        }
         if (_planets[targetPlanetId].owner == address(0)) revert NoPlanet();
         _settleDueCombatArrivals(msg.sender);
         _requireNoPendingMissionResolutionForPlanet(originPlanetId);
@@ -197,7 +202,10 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
             _requirePlanetOwner(targetPlanetId);
         }
 
-        uint256 travelDistance = _planetDistance(originPlanetId, targetPlanetId);
+        uint256 travelDistance = originPlanetId == targetPlanetId
+            && missionType == FleetMissionType.Harvest
+            ? LOCAL_HARVEST_DISTANCE
+            : _planetDistance(originPlanetId, targetPlanetId);
         uint128 fuelCost = _toUint128(
             _ogameMissionFuelCost(msg.sender, ships, travelDistance, speedPercent, slowestSpeed)
         );
@@ -824,19 +832,17 @@ contract VeydriftGameplayModule is VeydriftResourceReserves {
     {
         Planet storage origin = _planets[originPlanetId];
         Planet storage destination = _planets[destinationPlanetId];
-        uint256 galaxyDistance = origin.galaxy > destination.galaxy
-            ? uint256(origin.galaxy - destination.galaxy)
-            : uint256(destination.galaxy - origin.galaxy);
+        uint256 galaxyDistance = _absoluteDifference(origin.galaxy, destination.galaxy);
         if (galaxyDistance != 0) return galaxyDistance * 20_000;
-        uint256 systemDistance = origin.system > destination.system
-            ? uint256(origin.system - destination.system)
-            : uint256(destination.system - origin.system);
+        uint256 systemDistance = _absoluteDifference(origin.system, destination.system);
         if (systemDistance != 0) return 2_700 + systemDistance * 95;
-        uint256 positionDistance = origin.position > destination.position
-            ? uint256(origin.position - destination.position)
-            : uint256(destination.position - origin.position);
+        uint256 positionDistance = _absoluteDifference(origin.position, destination.position);
         if (positionDistance != 0) return 1_000 + positionDistance * 5;
         return 0;
+    }
+
+    function _absoluteDifference(uint256 left, uint256 right) private pure returns (uint256) {
+        return left > right ? left - right : right - left;
     }
 
     function _currentTimestamp() private view returns (uint64) {

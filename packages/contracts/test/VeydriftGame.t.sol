@@ -7533,6 +7533,101 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(originPlanetId, Ship.Recycler), 2);
     }
 
+    function testRecyclerHarvestAllowsSameOwnerCrossPlanetTarget() public {
+        (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
+        _setPlanetOwner(targetPlanetId, player);
+        _setShipCount(originPlanetId, Ship.Recycler, 1);
+        _setResources(originPlanetId, 100_000, 100_000, 100_000);
+        _setDebrisField(targetPlanetId, 20_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory harvestShips;
+        harvestShips.recycler = 1;
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            originPlanetId,
+            targetPlanetId,
+            VeydriftGameStorage.FleetMissionType.Harvest,
+            harvestShips,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        (
+            VeydriftGameStorage.FleetMissionStatus status,
+            VeydriftGameStorage.FleetMissionType missionType,
+            address owner,
+            uint256 reportedOriginPlanetId,
+            uint256 reportedTargetPlanetId,,,,,,
+        ) = game.fleetMission(missionId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
+        assertEq(uint8(missionType), uint8(VeydriftGameStorage.FleetMissionType.Harvest));
+        assertEq(owner, player);
+        assertEq(reportedOriginPlanetId, originPlanetId);
+        assertEq(reportedTargetPlanetId, targetPlanetId);
+    }
+
+    function testRecyclerHarvestAllowsSamePlanetWithPricedLocalTravel() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setShipCount(planetId, Ship.Recycler, 1);
+        _setResources(planetId, 100_000, 100_000, 100_000);
+        _setDebrisField(planetId, 20_000, 10_000);
+
+        VeydriftGameStorage.MissionShips memory harvestShips;
+        harvestShips.recycler = 1;
+        (,, uint256 recyclerSpeed) = VeydriftCatalog.shipMovementStats(Ship.Recycler, 0, 0, 0);
+        uint256 localDistance = 5;
+        uint256 expectedFuelCost =
+            _expectedOgameFuelCost(harvestShips, localDistance, 100, recyclerSpeed);
+        uint256 expectedTravelSeconds = VeydriftAntiRaidPrimitives.travelSeconds(
+            localDistance, recyclerSpeed, 100, TEST_FLEET_UNIVERSE_SPEED
+        );
+
+        vm.prank(player);
+        uint256 missionId = game.launchFleetMission(
+            planetId,
+            planetId,
+            VeydriftGameStorage.FleetMissionType.Harvest,
+            harvestShips,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            0
+        );
+
+        (,,,,, uint64 departureAt, uint64 arrivalAt, uint64 returnAt, uint128 fuelCost,,) =
+            game.fleetMission(missionId);
+        assertEq(localDistance, 5);
+        assertGt(fuelCost, 0);
+        assertEq(fuelCost, expectedFuelCost);
+        assertEq(arrivalAt - departureAt, expectedTravelSeconds);
+        assertEq(returnAt - arrivalAt, expectedTravelSeconds);
+    }
+
+    function testSamePlanetNonHarvestFleetMissionsRemainRejected() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        VeydriftGameStorage.MissionShips memory ships;
+        VeydriftGameStorage.Resources memory cargo;
+        VeydriftGameStorage.FleetMissionType[3] memory missionTypes = [
+            VeydriftGameStorage.FleetMissionType.Transport,
+            VeydriftGameStorage.FleetMissionType.Deploy,
+            VeydriftGameStorage.FleetMissionType.Attack
+        ];
+
+        for (uint256 i = 0; i < missionTypes.length; i++) {
+            vm.prank(player);
+            vm.expectRevert(VeydriftGameStorage.SamePlanet.selector);
+            game.launchFleetMission(planetId, planetId, missionTypes[i], ships, cargo, 0);
+        }
+
+        // Colonize has a type-specific dispatch path and may reject on account/coordinate limits
+        // before reaching the generic SamePlanet selector. It must remain rejected either way.
+        vm.prank(player);
+        vm.expectRevert();
+        game.launchFleetMission(
+            planetId, planetId, VeydriftGameStorage.FleetMissionType.Colonize, ships, cargo, 0
+        );
+    }
+
     function testRecyclerHarvestSplitsMetalAndCrystalEvenlyBeforeRemainder() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedAttackPlanets();
         _setShipCount(originPlanetId, Ship.Recycler, 1);
@@ -8627,6 +8722,16 @@ contract VeydriftGameTest is Test {
             | (uint256(planetRef.lastSettledAt) << 32);
         vm.store(address(game), bytes32(planetBase), bytes32(slot0));
         vm.store(address(game), bytes32(planetBase + 1), bytes32(slot1));
+    }
+
+    function _setPlanetOwner(uint256 planetId, address owner) internal {
+        VeydriftGameStorage.Planet memory planetRef = game.planet(planetId);
+        uint256 planetBase = uint256(keccak256(abi.encode(planetId, uint256(4))));
+        uint256 slot0 = uint256(uint160(owner)) | (uint256(planetRef.galaxy) << 160)
+            | (uint256(planetRef.system) << 176) | (uint256(planetRef.position) << 192)
+            | (uint256(planetRef.fields) << 200) | (uint256(uint16(planetRef.temperature)) << 216)
+            | (uint256(planetRef.metalMultiplierBps) << 232);
+        vm.store(address(game), bytes32(planetBase), bytes32(slot0));
     }
 
     function _setPlanetLastSettledAt(uint256 planetId, uint64 lastSettledAt) internal {
