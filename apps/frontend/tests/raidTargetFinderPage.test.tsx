@@ -119,6 +119,19 @@ describe("RaidTargetFinderPage", () => {
     enabledHarvest?.props?.onClick?.();
     expect(selected).toEqual(["10"]);
   });
+
+  test("debris row can hide Harvest when an own field is ineligible", () => {
+    const row = DebrisTargetRow({
+      action: null,
+      now: 1_770_000_000_000,
+      onHarvest: () => undefined,
+      onSelectPlanet: () => undefined,
+      target: debrisTarget(),
+    });
+
+    expect(buttonWithText(row, "Harvest")).toBeUndefined();
+    expect(buttonWithText(row, "Inspect")).toBeTruthy();
+  });
 });
 
 function raidTarget(overrides: Partial<RaidTarget> = {}): RaidTarget {
