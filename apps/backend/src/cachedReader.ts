@@ -53,6 +53,10 @@ export class CachedChainReader implements ChainReader {
     return this.cached(`settlement-funding:${wallet.toLowerCase()}`, () => this.inner.getSettlementFunding(wallet));
   }
 
+  getStartPrice(): Promise<string | null> {
+    return this.inner.getStartPrice();
+  }
+
   getWalletPlanets(wallet: Address): Promise<WalletPlanets> {
     return this.cached(`planets:${wallet.toLowerCase()}`, () => this.inner.getWalletPlanets(wallet));
   }

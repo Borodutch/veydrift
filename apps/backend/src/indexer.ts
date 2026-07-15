@@ -33,6 +33,8 @@ import {
   decodeRandomnessFulfilledRequestId,
   decodeReferralClaimLog,
   decodeReferralRedemptionLog,
+  decodeReferralRewardClaimLog,
+  decodeStartPriceUpdatedLog,
   decodeRiftResourceLog,
   decodeSettledPlanetLog,
   decodeShipCountChangedLog,
@@ -58,6 +60,8 @@ import {
   isPlanetRenamedLog,
   isReferralClaimLog,
   isReferralRedemptionLog,
+  isReferralRewardClaimLog,
+  isStartPriceUpdatedLog,
   isRiftResourceLog,
   isSettledPlanetLog,
   isShipCountChangedLog,
@@ -83,6 +87,8 @@ import {
   type IndexedQueueStartedEvent,
   type IndexedReferralClaimEvent,
   type IndexedReferralRedemptionEvent,
+  type IndexedReferralRewardClaimEvent,
+  type IndexedStartPriceUpdatedEvent,
   type IndexedAllianceEvent,
   type IndexedMoonCreatedEvent,
   type IndexedMoonDefenseCountChangedEvent,
@@ -110,7 +116,8 @@ import {
   type SettledPlanetEvent,
   type ShipyardState,
   type WalletPlanets,
-  diplomacyStatusName
+  diplomacyStatusName,
+  startPriceUpdatedEventTopic
 } from "./evm";
 import {
   calculateIndexedHighscore,
@@ -214,9 +221,18 @@ export type IndexerSnapshot = {
   safeToServeAllianceState: boolean;
   safeToServeIndexedState: boolean;
   staleReason: string | null;
+  startPriceBootstrapDivergence: string | null;
+  startPriceSource: string | null;
+  startPriceWei: string | null;
 };
 
 const writerChainSyncDiagnosticsMetadataKey = "writerChainSyncDiagnostics";
+const startPriceWeiMetadataKey = "canonicalStartPriceWei";
+const startPriceSourceMetadataKey = "canonicalStartPriceSource";
+const startPriceBootstrapWeiMetadataKey = "startPriceBootstrapWei";
+const startPriceBootstrapDivergenceMetadataKey = "startPriceBootstrapDivergence";
+const startPriceBlockMetadataKey = "canonicalStartPriceBlock";
+const startPriceLogIndexMetadataKey = "canonicalStartPriceLogIndex";
 
 export type WriterChainSyncDiagnostics = {
   chainSync: unknown | null;
@@ -233,6 +249,9 @@ export type SettlementIndexerOptions = {
   // Multi-process API workers share one SQLite DB. The writer is the only process that should run
   // startup materialized-state repair/backfill; readers only need the schema and current rows.
   runStartupBackfill?: boolean;
+  // Deployment metadata is a cold-start baseline only. StartPriceUpdated events and
+  // explicit canonical rebuild reads supersede it in the persisted read model.
+  settlementStartPriceWei?: string;
   // VEY-KANEO-471: when true, fleetMissionVisibility appends one synthetic incoming attack with a
   // populated `stationedDefenders` payload so QA can verify the Stationed defenses panel without a
   // real ≥2-wallet on-chain ACS Defend scenario. Sourced from config.qaSyntheticStationedDefenders,
@@ -360,6 +379,10 @@ type ReferralClaimRow = {
 };
 
 type ReferralRedemptionRow = {
+  event_json: string;
+};
+
+type ReferralRewardClaimRow = {
   event_json: string;
 };
 
@@ -623,6 +646,7 @@ export class SettlementIndexer {
     > & Pick<
       Partial<ChainReader>,
       "getDefenseState"
+        | "getStartPrice"
         | "getInfrastructureState"
         | "getMoonState"
         | "getPlayerQueues"
@@ -650,6 +674,7 @@ export class SettlementIndexer {
     this.rebuildDeadlineMs = options.rebuildDeadlineMs && options.rebuildDeadlineMs > 0 ? options.rebuildDeadlineMs : 0;
     if (!options.readOnly) {
       this.migrate(options.runStartupBackfill ?? true);
+      this.seedStartPriceBootstrap(options.settlementStartPriceWei ?? null);
     }
   }
 
@@ -733,7 +758,10 @@ export class SettlementIndexer {
       reorgDetectedAt: this.metadata("reorgDetectedAt"),
       safeToServeAllianceState: allianceStaleReason === null,
       safeToServeIndexedState,
-      staleReason
+      staleReason,
+      startPriceBootstrapDivergence: this.metadata(startPriceBootstrapDivergenceMetadataKey),
+      startPriceSource: this.metadata(startPriceSourceMetadataKey),
+      startPriceWei: this.currentStartPriceWei()
     };
     this.snapshotCache = {
       currentStateHealPromise: this.currentStateHealPromise,
@@ -1258,6 +1286,10 @@ export class SettlementIndexer {
     };
   }
 
+  currentStartPriceWei(): string | null {
+    return this.metadata(startPriceWeiMetadataKey);
+  }
+
   referralClaim(owner: `0x${string}`, commitment: `0x${string}`, txHash: `0x${string}`): IndexedReferralClaimEvent | null {
     const row = this.db.query(`
       SELECT event_json
@@ -1267,6 +1299,16 @@ export class SettlementIndexer {
     `).get(owner, commitment, txHash) as ReferralClaimRow | null;
 
     return row ? parseEvent<IndexedReferralClaimEvent>(row.event_json) : null;
+  }
+
+  referralClaims(owner: `0x${string}`): IndexedReferralClaimEvent[] {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_referral_claims
+      WHERE owner = lower(?)
+      ORDER BY CAST(block_number AS INTEGER), event_id
+    `).all(owner) as ReferralClaimRow[];
+    return rows.map((row) => parseEvent<IndexedReferralClaimEvent>(row.event_json));
   }
 
   referralRedemption(
@@ -1283,6 +1325,26 @@ export class SettlementIndexer {
     `).get(inviter, invitee, commitment, txHash) as ReferralRedemptionRow | null;
 
     return row ? parseEvent<IndexedReferralRedemptionEvent>(row.event_json) : null;
+  }
+
+  referralRedemptionsForInviter(inviter: `0x${string}`): IndexedReferralRedemptionEvent[] {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_referral_redemptions
+      WHERE inviter = lower(?)
+      ORDER BY CAST(block_number AS INTEGER), event_id
+    `).all(inviter) as ReferralRedemptionRow[];
+    return rows.map((row) => parseEvent<IndexedReferralRedemptionEvent>(row.event_json));
+  }
+
+  referralRewardClaimsForInviter(inviter: `0x${string}`): IndexedReferralRewardClaimEvent[] {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_referral_reward_claims
+      WHERE inviter = lower(?)
+      ORDER BY CAST(block_number AS INTEGER), event_id
+    `).all(inviter) as ReferralRewardClaimRow[];
+    return rows.map((row) => parseEvent<IndexedReferralRewardClaimEvent>(row.event_json));
   }
 
   walletPlanets(wallet: `0x${string}`): WalletPlanets {
@@ -2344,12 +2406,20 @@ export class SettlementIndexer {
       this.applyInterplanetaryMissileAttackCompatibilityEvent(decodeInterplanetaryMissileAttackLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
+    if (isStartPriceUpdatedLog(log)) {
+      this.applyStartPriceUpdatedEvent(eventId, decodeStartPriceUpdatedLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
     if (isReferralClaimLog(log)) {
       this.applyReferralClaimEvent(eventId, decodeReferralClaimLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isReferralRedemptionLog(log)) {
       this.applyReferralRedemptionEvent(eventId, decodeReferralRedemptionLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
+    if (isReferralRewardClaimLog(log)) {
+      this.applyReferralRewardClaimEvent(eventId, decodeReferralRewardClaimLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
     if (isIndexedQueueStartedLog(log)) {
@@ -2864,6 +2934,12 @@ export class SettlementIndexer {
       : settledPlanetEvents;
     const debrisEvents = await this.chainReader.listDebrisFieldEvents(this.fromBlock, "latest");
     const moonChanceEvents = await this.chainReader.listMoonChanceReportEvents(this.fromBlock, "latest");
+    const startPriceWei = this.chainReader.getStartPrice
+      ? await this.chainReader.getStartPrice()
+      : null;
+    const startPriceBlock = startPriceWei !== null && this.chainReader.getBlockNumber
+      ? (await this.chainReader.getBlockNumber()).toString()
+      : null;
     const canonicalState = await this.readCanonicalState(planetEvents);
     const allianceLogs = this.chainReader.listAllianceLogs
       ? await this.chainReader.listAllianceLogs(this.fromBlock, "latest")
@@ -2892,6 +2968,8 @@ export class SettlementIndexer {
       planetEvents,
       debrisEvents,
       moonChanceEvents,
+      startPriceWei,
+      startPriceBlock,
       canonicalState,
       allianceLogs,
       allianceDirectory,
@@ -2925,6 +3003,8 @@ export class SettlementIndexer {
       planetEvents,
       debrisEvents,
       moonChanceEvents,
+      startPriceWei,
+      startPriceBlock,
       canonicalState,
       allianceLogs,
       allianceDirectory,
@@ -2937,6 +3017,9 @@ export class SettlementIndexer {
       this.db.query("DELETE FROM indexed_debris_fields").run();
       this.db.query("DELETE FROM indexed_moon_chance_reports").run();
       this.clearCanonicalState();
+      if (startPriceWei !== null) {
+        this.applyCanonicalStartPrice(startPriceWei, "rebuild", undefined, undefined, startPriceBlock);
+      }
       for (const event of planetEvents) {
         this.upsertPlanet(event);
       }
@@ -3074,6 +3157,18 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS indexed_referral_redemptions_lookup_idx
         ON indexed_referral_redemptions (inviter, invitee, commitment, transaction_hash);
+      CREATE TABLE IF NOT EXISTS indexed_referral_reward_claims (
+        event_id TEXT PRIMARY KEY,
+        inviter TEXT NOT NULL,
+        invitee TEXT NOT NULL,
+        commitment TEXT NOT NULL,
+        recipient TEXT NOT NULL,
+        transaction_hash TEXT NOT NULL,
+        block_number TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS indexed_referral_reward_claims_inviter_idx
+        ON indexed_referral_reward_claims (inviter, transaction_hash);
       CREATE TABLE IF NOT EXISTS indexed_mission_event_logs (
         event_id TEXT PRIMARY KEY,
         event_kind TEXT NOT NULL,
@@ -3439,12 +3534,29 @@ export class SettlementIndexer {
     this.ensureColumn("contract_production_queues", "backlog_json", "TEXT");
     this.ensureColumn("contract_planet_resources", "log_index", "TEXT NOT NULL DEFAULT '0x0'");
     this.ensureColumn("contract_alliance_diplomacy", "initiated_by_alliance_id", "TEXT");
+    this.backfillStartPriceProjection();
     if (runStartupBackfill) {
       this.backfillMissionEventLogs();
       this.backfillUnitCountEventLogs();
       this.backfillCanonicalTables();
       this.replayFleetMissionRowsFromEventLogs();
     }
+  }
+
+  private backfillStartPriceProjection(): void {
+    const source = this.metadata(startPriceSourceMetadataKey);
+    if (source === "event" || source === "rebuild") return;
+    const row = this.db.query(`
+      SELECT event_json
+      FROM indexed_event_logs
+      WHERE lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+        AND removed = 0
+      ORDER BY CAST(block_number AS INTEGER) DESC, length(log_index) DESC, log_index DESC
+      LIMIT 1
+    `).get(startPriceUpdatedEventTopic) as EventRow | null;
+    if (!row) return;
+    const log = parseEvent<IndexedRpcLog>(row.event_json);
+    this.applyStartPriceUpdatedEvent(indexedLogKey(log), decodeStartPriceUpdatedLog(log));
   }
 
   private ensureColumn(table: string, column: string, definition: string): void {
@@ -6589,6 +6701,68 @@ export class SettlementIndexer {
     );
   }
 
+  private seedStartPriceBootstrap(startPriceWei: string | null): void {
+    if (!startPriceWei || !/^\d+$/.test(startPriceWei)) return;
+    this.setMetadata(startPriceBootstrapWeiMetadataKey, startPriceWei);
+    const current = this.currentStartPriceWei();
+    if (current === null) {
+      this.setMetadata(startPriceWeiMetadataKey, startPriceWei);
+      this.setMetadata(startPriceSourceMetadataKey, "bootstrap");
+      return;
+    }
+    this.updateStartPriceBootstrapDivergence(current);
+  }
+
+  private applyCanonicalStartPrice(
+    startPriceWei: string,
+    source: "event" | "rebuild",
+    event?: IndexedStartPriceUpdatedEvent,
+    eventId?: string,
+    canonicalBlock?: string | null
+  ): void {
+    if (!/^\d+$/.test(startPriceWei)) {
+      throw new Error(`Invalid canonical start price: ${startPriceWei}`);
+    }
+    this.setMetadata(startPriceWeiMetadataKey, startPriceWei);
+    this.setMetadata(startPriceSourceMetadataKey, source);
+    if (event) {
+      this.setMetadata("lastStartPriceUpdatedBlock", event.blockNumber);
+      this.setMetadata("lastStartPriceUpdatedTransactionHash", event.transactionHash);
+    }
+    if (eventId) this.setMetadata("lastStartPriceUpdatedEventId", eventId);
+    const blockNumber = event?.blockNumber ?? canonicalBlock;
+    if (blockNumber) this.setMetadata(startPriceBlockMetadataKey, blockNumber);
+    if (event) this.setMetadata(startPriceLogIndexMetadataKey, event.logIndex);
+    else if (canonicalBlock) this.setMetadata(startPriceLogIndexMetadataKey, "0xffffffffffffffff");
+    this.updateStartPriceBootstrapDivergence(startPriceWei);
+  }
+
+  private updateStartPriceBootstrapDivergence(currentStartPriceWei: string): void {
+    const bootstrap = this.metadata(startPriceBootstrapWeiMetadataKey);
+    if (!bootstrap || bootstrap === currentStartPriceWei) {
+      this.db.query("DELETE FROM indexer_metadata WHERE key = ?").run(startPriceBootstrapDivergenceMetadataKey);
+      this.snapshotCache = null;
+      return;
+    }
+    this.setMetadata(startPriceBootstrapDivergenceMetadataKey, JSON.stringify({
+      bootstrapStartPriceWei: bootstrap,
+      canonicalStartPriceWei: currentStartPriceWei
+    }));
+  }
+
+  private applyStartPriceUpdatedEvent(eventId: string, event: IndexedStartPriceUpdatedEvent): boolean {
+    const currentBlock = this.metadata(startPriceBlockMetadataKey);
+    const currentLogIndex = this.metadata(startPriceLogIndexMetadataKey) ?? "0x0";
+    if (
+      currentBlock !== null
+      && compareBlockAndLogPosition(event.blockNumber, event.logIndex, currentBlock, currentLogIndex) < 0
+    ) {
+      return false;
+    }
+    this.applyCanonicalStartPrice(event.startPriceWei, "event", event, eventId);
+    return true;
+  }
+
   private applyReferralRedemptionEvent(eventId: string, event: IndexedReferralRedemptionEvent): void {
     this.db.query(`
       INSERT OR REPLACE INTO indexed_referral_redemptions
@@ -6599,6 +6773,23 @@ export class SettlementIndexer {
       event.inviter,
       event.invitee,
       event.commitment,
+      event.transactionHash,
+      event.blockNumber,
+      JSON.stringify(event)
+    );
+  }
+
+  private applyReferralRewardClaimEvent(eventId: string, event: IndexedReferralRewardClaimEvent): void {
+    this.db.query(`
+      INSERT OR REPLACE INTO indexed_referral_reward_claims
+        (event_id, inviter, invitee, commitment, recipient, transaction_hash, block_number, event_json)
+      VALUES (?, lower(?), lower(?), lower(?), lower(?), lower(?), ?, ?)
+    `).run(
+      eventId,
+      event.inviter,
+      event.invitee,
+      event.commitment,
+      event.recipient,
       event.transactionHash,
       event.blockNumber,
       JSON.stringify(event)
@@ -6688,6 +6879,21 @@ export class SettlementIndexer {
         .get(eventId);
       if (!existingReferralRedemption) {
         this.applyReferralRedemptionEvent(eventId, decodeReferralRedemptionLog(log));
+        repairedRows += 1;
+      }
+    } else if (isReferralRewardClaimLog(log)) {
+      const existingReferralRewardClaim = this.db
+        .query("SELECT 1 FROM indexed_referral_reward_claims WHERE event_id = ?")
+        .get(eventId);
+      if (!existingReferralRewardClaim) {
+        this.applyReferralRewardClaimEvent(eventId, decodeReferralRewardClaimLog(log));
+        repairedRows += 1;
+      }
+    } else if (
+      isStartPriceUpdatedLog(log)
+      && this.metadata("lastStartPriceUpdatedEventId") !== eventId
+    ) {
+      if (this.applyStartPriceUpdatedEvent(eventId, decodeStartPriceUpdatedLog(log))) {
         repairedRows += 1;
       }
     }
@@ -8958,6 +9164,21 @@ function compareFleetMissionsNewestFirst(left: FleetMissionSummary, right: Fleet
   const rightMission = BigInt(right.missionId);
   if (leftMission === rightMission) return 0;
   return rightMission > leftMission ? 1 : -1;
+}
+
+function compareBlockAndLogPosition(
+  leftBlock: string,
+  leftLogIndex: string,
+  rightBlock: string,
+  rightLogIndex: string
+): number {
+  const leftBlockNumber = BigInt(leftBlock);
+  const rightBlockNumber = BigInt(rightBlock);
+  if (leftBlockNumber !== rightBlockNumber) return leftBlockNumber > rightBlockNumber ? 1 : -1;
+  const leftLogNumber = BigInt(leftLogIndex);
+  const rightLogNumber = BigInt(rightLogIndex);
+  if (leftLogNumber === rightLogNumber) return 0;
+  return leftLogNumber > rightLogNumber ? 1 : -1;
 }
 
 function compareBattleReportsNewestFirst(left: BattleReport, right: BattleReport): number {

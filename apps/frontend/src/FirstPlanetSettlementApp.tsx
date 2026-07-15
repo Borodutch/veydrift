@@ -5,6 +5,13 @@ import { RetroCdBoxHero } from "./components/RetroCdBoxHero";
 import { TelegramIcon } from "./components/TelegramIcon";
 import { PlayableMvpApp } from "./PlayableMvpApp";
 import { gameContractAddress, playableApiUrl, runtimeConfigUrl, type RuntimeConfig } from "./runtimeConfig";
+import {
+  readReferralStorage,
+  referralCodeForLanding,
+  REFERRAL_CLAIM_CODE_STORAGE_KEY,
+  REFERRAL_CODE_STORAGE_KEY,
+  writeReferralStorage
+} from "./referralStorage";
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
 import { TELEGRAM_SUPPORT_URL } from "./supportLinks";
 import {
@@ -27,6 +34,7 @@ import {
   defaultVeydriftChainForLocation,
   ensureVeydriftNetwork,
   fetchReferralDashboard,
+  fetchPrivateReferralDashboard,
   fetchSettlementFundingState,
   fetchWalletSettlement,
   farcasterChainFor,
@@ -38,12 +46,15 @@ import {
   isTransientWalletBootstrapError,
   isUserRejected,
   normalizeReferralClaimCode,
+  persistReferralClaimIntent,
   readMigrationReservation,
   miniAppUnsupportedChainMessage,
   WALLET_BOOTSTRAP_READ_TIMEOUT_MS,
   requestAccounts,
   getAvailableWalletProviderDetails,
   referralCommitment,
+  referralCodeHash,
+  requestReferralWalletSignature,
   recordReferralClaimTransaction,
   recordReferralRedemptionTransaction,
   redeemReferralCode,
@@ -51,6 +62,7 @@ import {
   sendSettlementTransaction,
   settlementContractConfigured,
   switchVeydriftNetwork,
+  validateReferralCode,
   waitForVeydriftNetwork,
   walletRequestErrorMessage,
   type Eip1193Provider,
@@ -58,6 +70,7 @@ import {
   type PlanetSummary,
   type ReferralDashboard,
   type ReferralRedemption,
+  type ReferralResolution,
   type SettlementTransactionOptions,
   type SettlementFundingState,
   type SettlementConfig,
@@ -68,8 +81,6 @@ import {
 const POST_SETTLEMENT_READ_ATTEMPTS = 8;
 const POST_SETTLEMENT_READ_INTERVAL_MS = 2_000;
 const RUNTIME_CONFIG_RETRY_MS = 5_000;
-const DEFAULT_SETTLEMENT_START_PRICE_WEI = 50_000_000_000_000_000n;
-const REFERRAL_ETH_USD_ESTIMATE = 3_000;
 export const POST_SETTLEMENT_INDEXING_LABEL = "Settlement confirmed. Indexing starting resources before opening planetary overview.";
 export const POST_SETTLEMENT_INDEXING_TIMEOUT_MESSAGE = "Settlement is confirmed, but the game API is still indexing starter resources. Retry once backend sync catches up.";
 const GAME_BACKEND_UNAVAILABLE_BODY =
@@ -260,6 +271,12 @@ type ReferralProgramState =
   | { status: "claiming"; dashboard: ReferralDashboard }
   | { status: "error"; message: string; dashboard?: ReferralDashboard };
 
+type ReferralValidationState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "resolved"; resolution: ReferralResolution }
+  | { status: "error"; message: string };
+
 type WalletProviderDetails = Awaited<ReturnType<typeof getAvailableWalletProviderDetails>>;
 type WalletProviderContext = {
   miniAppMode: boolean;
@@ -295,7 +312,10 @@ export function FirstPlanetSettlementApp() {
   const [settlementFunding, setSettlementFunding] = useState<SettlementFunding>({ status: "idle" });
   const [referralProgram, setReferralProgram] = useState<ReferralProgramState>({ status: "idle" });
   const [referralCodeInput, setReferralCodeInput] = useState(() => referralCodeFromCurrentUrl());
-  const [referralClaimCodeInput, setReferralClaimCodeInput] = useState(() => generateReferralClaimCode());
+  const [referralClaimCodeInput, setReferralClaimCodeInput] = useState(() => (
+    readReferralStorage(REFERRAL_CLAIM_CODE_STORAGE_KEY) || generateReferralClaimCode()
+  ));
+  const [referralValidation, setReferralValidation] = useState<ReferralValidationState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
   const farcasterAutoConnectAttempted = useRef(false);
   const farcasterNetworkSetupAttempted = useRef<string>();
@@ -307,6 +327,14 @@ export function FirstPlanetSettlementApp() {
   const hasOverview = planet.kind === "success" || planet.kind === "already-settled";
   const settlementConfig = settlementConfigState.config;
   const requiredChain = defaultVeydriftChainForLocation();
+
+  useEffect(() => {
+    writeReferralStorage(REFERRAL_CODE_STORAGE_KEY, referralCodeInput.trim());
+  }, [referralCodeInput]);
+
+  useEffect(() => {
+    writeReferralStorage(REFERRAL_CLAIM_CODE_STORAGE_KEY, referralClaimCodeInput.trim());
+  }, [referralClaimCodeInput]);
 
   useEffect(() => {
     const dashboard = referralProgram.status === "ready"
@@ -444,6 +472,31 @@ export function FirstPlanetSettlementApp() {
       disposed = true;
     };
   }, [account, hasOverview, settlementConfigState.apiUrl]);
+
+  useEffect(() => {
+    const code = referralCodeInput.trim();
+    const apiUrl = settlementConfigState.apiUrl;
+    if (!code || !apiUrl) {
+      setReferralValidation({ status: "idle" });
+      return;
+    }
+
+    let disposed = false;
+    setReferralValidation({ status: "loading" });
+    const timeout = setTimeout(() => {
+      void validateReferralCode(apiUrl, code, account)
+        .then((resolution) => {
+          if (!disposed) setReferralValidation({ status: "resolved", resolution });
+        })
+        .catch((error) => {
+          if (!disposed) setReferralValidation({ status: "error", message: walletRequestErrorMessage(error) });
+        });
+    }, 250);
+    return () => {
+      disposed = true;
+      clearTimeout(timeout);
+    };
+  }, [account, referralCodeInput, settlementConfigState.apiUrl]);
 
   useEffect(() => {
     let disposed = false;
@@ -1135,6 +1188,11 @@ export function FirstPlanetSettlementApp() {
     if (!settlementConfigState.apiUrl) {
       throw new Error("Referral codes are unavailable because the game API is not configured.");
     }
+    const resolution = await validateReferralCode(settlementConfigState.apiUrl, code, invitee);
+    setReferralValidation({ status: "resolved", resolution });
+    if (!resolution.valid) {
+      throw new Error(resolution.message);
+    }
     return redeemReferralCode(settlementConfigState.apiUrl, code, invitee);
   }
 
@@ -1169,20 +1227,52 @@ export function FirstPlanetSettlementApp() {
       }
 
       try {
+        const currentInvite = currentDashboard?.invite ?? currentDashboard?.invites[0];
+        if (currentInvite?.status === "active" && !currentInvite.code) {
+          const signature = await requestReferralWalletSignature(
+            provider,
+            wallet.account,
+            "dashboard"
+          );
+          setReferralProgram({
+            status: "ready",
+            dashboard: await fetchPrivateReferralDashboard(
+              settlementConfigState.apiUrl,
+              wallet.account,
+              signature
+            )
+          });
+          return;
+        }
         const inviteCode = normalizeReferralClaimCode(referralClaimCodeInput);
-        const commitment = referralCommitment(inviteCode);
+        const codeHash = referralCodeHash(inviteCode);
+        const commitment = referralCommitment(inviteCode, wallet.account);
+        const signature = await requestReferralWalletSignature(
+          provider,
+          wallet.account,
+          "claim-transaction",
+          commitment
+        );
+        await persistReferralClaimIntent(
+          settlementConfigState.apiUrl,
+          wallet.account,
+          inviteCode,
+          commitment,
+          signature
+        );
         const txHash = await sendReferralClaimTransaction(
           provider,
           wallet.account,
           settlementConfig,
-          commitment
+          codeHash
         );
         await recordReferralClaimTransactionAfterIndexing(
           settlementConfigState.apiUrl,
           wallet.account,
           inviteCode,
           commitment,
-          txHash
+          txHash,
+          signature
         );
         await refreshReferralProgram(wallet.account);
       } catch (error) {
@@ -1305,11 +1395,13 @@ export function FirstPlanetSettlementApp() {
       <ReferralCodeField
         disabled={planet.kind === "pending"}
         onChange={setReferralCodeInput}
+        validation={referralValidation}
         value={referralCodeInput}
       />
       <FlowBody
         mode={mode}
         referralCodeInput={referralCodeInput}
+        referralValidation={referralValidation}
         onConnect={connectWallet}
         onSettle={settlePlanet}
         onSwitchNetwork={switchNetwork}
@@ -1335,7 +1427,7 @@ function ReferralProgramPanel({
   claimCode: string;
   onClaim: () => void;
   onClaimCodeChange: (value: string) => void;
-  startPriceWei: bigint;
+  startPriceWei: bigint | null;
   state: ReferralProgramState;
 }) {
   const dashboard = state.status === "ready" || state.status === "claiming" || state.status === "error"
@@ -1344,10 +1436,16 @@ function ReferralProgramPanel({
   const invite = dashboard?.invite ?? dashboard?.invites[0];
   const claiming = state.status === "claiming";
   const inviteActive = invite?.status === "active";
+  const needsUnlock = Boolean(inviteActive && !invite?.code);
   const claimCodeValid = /^[A-Za-z0-9_-]{9}$/.test(claimCode.trim());
-  const canClaim = Boolean(dashboard?.configured && (!invite || invite.status === "pending_claim" || invite.status === "expired") && !claiming && claimCodeValid);
+  const canClaim = Boolean(dashboard?.configured && !claiming && (
+    needsUnlock
+      || ((!invite || invite.status === "pending_claim" || invite.status === "expired") && claimCodeValid)
+  ));
   const claimLabel = claiming
     ? "Claiming invites"
+    : needsUnlock
+      ? "Unlock invite"
     : invite?.status === "pending_claim"
       ? "Finish invite claim"
       : invite?.status === "expired"
@@ -1355,6 +1453,9 @@ function ReferralProgramPanel({
       : invite
         ? "Invites active"
         : "Claim invites";
+  const rewardLabel = dashboard?.rewardPerUseWei
+    ? `${formatEth(BigInt(dashboard.rewardPerUseWei))} ETH`
+    : referralInviterRewardLabel(startPriceWei);
 
   return (
     <section className="referral-program" aria-label="Referral invites">
@@ -1364,7 +1465,7 @@ function ReferralProgramPanel({
             <span className="referral-kicker">Referral invites</span>
             <h2>Invite commanders</h2>
             <span className="referral-benefit-copy">
-              Earn {referralInviterRewardLabel(startPriceWei)}. Invitees start with 1,000 M / 1,000 C / 0 D.
+              Earn {rewardLabel}. Invitees start with 1,000 M / 1,000 C / 0 D after validation.
             </span>
           </div>
           <button
@@ -1381,7 +1482,7 @@ function ReferralProgramPanel({
         <div className="referral-benefits" aria-label="Referral benefits">
           <div>
             <strong>Inviter</strong>
-            <span>50% starting fee: {referralInviterRewardLabel(startPriceWei)}</span>
+            <span>50% current starting fee: {rewardLabel}</span>
           </div>
           <div>
             <strong>Invitee</strong>
@@ -1419,10 +1520,16 @@ function ReferralProgramPanel({
           <p className="referral-muted">Next invite use opens {formatDateTime(dashboard.nextRedemptionAt)}.</p>
         ) : null}
 
+        {dashboard ? (
+          <p className="referral-muted">
+            Rewards: {formatEth(BigInt(dashboard.totalAccruedRewardsWei))} ETH accrued · {formatEth(BigInt(dashboard.totalPaidRewardsWei))} ETH paid · {formatEth(BigInt(dashboard.claimableRewardsWei))} ETH claimable.
+          </p>
+        ) : null}
+
         {invite ? (
           <div className="referral-link-row">
             <div>
-              <strong>{invite.link}</strong>
+              <strong>{invite.link ?? "Private invite hidden — unlock with this wallet"}</strong>
               <span>
                 {invite.status === "active"
                   ? `${invite.remainingRedemptions}/3 uses left today`
@@ -1436,8 +1543,8 @@ function ReferralProgramPanel({
             <div className="referral-copy-actions">
               <button
                 className="referral-copy-button"
-                disabled={invite.status !== "active"}
-                onClick={() => void navigator.clipboard?.writeText(invite.code)}
+                disabled={invite.status !== "active" || !invite.code}
+                onClick={() => void navigator.clipboard?.writeText(invite.code ?? "")}
                 type="button"
               >
                 <Copy aria-hidden="true" size={14} />
@@ -1445,8 +1552,8 @@ function ReferralProgramPanel({
               </button>
               <button
                 className="referral-copy-button"
-                disabled={invite.status !== "active"}
-                onClick={() => void navigator.clipboard?.writeText(invite.link)}
+                disabled={invite.status !== "active" || !invite.link}
+                onClick={() => void navigator.clipboard?.writeText(invite.link ?? "")}
                 type="button"
               >
                 <Link aria-hidden="true" size={14} />
@@ -1457,6 +1564,19 @@ function ReferralProgramPanel({
         ) : (
           state.status !== "loading" ? <p className="referral-muted">No invite link claimed yet.</p> : null
         )}
+
+        {dashboard?.redemptions.length ? (
+          <div className="referral-link-row" aria-label="Referral redemption history">
+            <div>
+              <strong>On-chain redemption history</strong>
+              {dashboard.redemptions.map((redemption) => (
+                <span key={`${redemption.txHash}:${redemption.invitee}`}>
+                  {redemption.invitee.slice(0, 6)}…{redemption.invitee.slice(-4)} · {redemption.rewardAmountWei === null ? "legacy reward amount unavailable" : `${formatEth(BigInt(redemption.rewardAmountWei))} ETH`} · {redemption.paymentStatus.replace("legacy_unknown", "legacy payment state unavailable")} · {formatDateTime(redemption.redeemedAt)}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -1465,10 +1585,12 @@ function ReferralProgramPanel({
 function ReferralCodeField({
   disabled,
   onChange,
+  validation,
   value,
 }: {
   disabled?: boolean;
   onChange: (value: string) => void;
+  validation: ReferralValidationState;
   value: string;
 }) {
   return (
@@ -1482,7 +1604,36 @@ function ReferralCodeField({
         placeholder="Paste invite code"
         value={value}
       />
+      {value.trim() ? <ReferralValidationMessage state={validation} /> : null}
     </label>
+  );
+}
+
+function ReferralValidationMessage({ state }: { state: ReferralValidationState }) {
+  if (state.status === "loading" || state.status === "idle") {
+    return <span className="referral-muted">Checking invite against on-chain referral state.</span>;
+  }
+  if (state.status === "error") {
+    return <span className="referral-error">{state.message}</span>;
+  }
+  const { resolution } = state;
+  const detail = resolution.status === "active"
+    ? `Active · ${resolution.remainingRedemptions}/3 inviter uses remain in the rolling window.`
+    : resolution.status === "expired"
+      ? "Expired · no referral benefit will be claimed."
+      : resolution.status === "exhausted"
+        ? `Exhausted · next use opens ${resolution.nextRedemptionAt ? formatDateTime(resolution.nextRedemptionAt) : "after the on-chain reset"}.`
+        : resolution.status === "self_invite"
+          ? "Self-invite blocked on-chain."
+          : resolution.status === "already_redeemed"
+            ? "This wallet already used a referral invite."
+            : resolution.status === "unclaimed"
+              ? "Invite is not confirmed on-chain yet."
+              : resolution.status === "unavailable"
+                ? "Current on-chain price is unavailable; referral settlement is paused."
+                : "Invalid invite code · no referral benefit will be claimed.";
+  return (
+    <span className={resolution.valid ? "referral-muted" : "referral-error"}>{detail}</span>
   );
 }
 
@@ -1504,28 +1655,26 @@ export function SettlementSupportLink() {
 
 function referralCodeFromCurrentUrl(): string {
   if (typeof window === "undefined") return "";
-  return new URLSearchParams(window.location.search).get("ref")?.trim() ?? "";
+  const persisted = readReferralStorage(REFERRAL_CODE_STORAGE_KEY);
+  const linked = referralCodeForLanding(window.location.search, persisted);
+  if (linked === persisted) return persisted;
+  if (linked) {
+    writeReferralStorage(REFERRAL_CODE_STORAGE_KEY, linked);
+    return linked;
+  }
+  return persisted;
 }
 
-function referralBenefitStartPriceWei(settlementFunding: SettlementFunding): bigint {
+function referralBenefitStartPriceWei(settlementFunding: SettlementFunding): bigint | null {
   return settlementFunding.status === "ready"
-    ? settlementFunding.funding.startPriceWei ?? DEFAULT_SETTLEMENT_START_PRICE_WEI
-    : DEFAULT_SETTLEMENT_START_PRICE_WEI;
+    ? settlementFunding.funding.startPriceWei
+    : null;
 }
 
-function referralInviterRewardLabel(startPriceWei: bigint): string {
+function referralInviterRewardLabel(startPriceWei: bigint | null): string {
+  if (startPriceWei === null) return "current on-chain reward unavailable";
   const rewardWei = startPriceWei / 2n;
-  const rewardEth = Number(rewardWei) / 1_000_000_000_000_000_000;
-  const usd = rewardEth * REFERRAL_ETH_USD_ESTIMATE;
-  return `${formatEth(rewardWei)} ETH (~${formatUsd(usd)} at $${REFERRAL_ETH_USD_ESTIMATE.toLocaleString("en-US")}/ETH)`;
-}
-
-function formatUsd(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    currency: "USD",
-    maximumFractionDigits: 0,
-    style: "currency"
-  }).format(value);
+  return `${formatEth(rewardWei)} ETH`;
 }
 
 function formatDateTime(value: string): string {
@@ -1544,6 +1693,7 @@ function FlowBody({
   onSwitchNetwork,
   planet,
   referralCodeInput,
+  referralValidation,
   settlementFunding,
   settlementReady,
   wallet,
@@ -1557,6 +1707,7 @@ function FlowBody({
   onSwitchNetwork: () => void;
   planet: PlanetState;
   referralCodeInput: string;
+  referralValidation: ReferralValidationState;
   settlementFunding: SettlementFunding;
   settlementReady: boolean;
   wallet: WalletState;
@@ -1663,7 +1814,8 @@ function FlowBody({
     );
   }
 
-  const actionBlocked = settlementLaunchBlocker(settlementReady, settlementFunding) !== undefined;
+  const actionBlocked = settlementLaunchBlocker(settlementReady, settlementFunding) !== undefined
+    || referralSettlementBlocker(referralCodeInput, referralValidation) !== undefined;
   const migrationReservation = activeMigrationReservation(settlementFunding);
   const actionLabel = settlementFunding.status === "idle" || settlementFunding.status === "loading"
     ? "Checking balance"
@@ -1685,7 +1837,7 @@ function FlowBody({
   return (
     <StateMessage
       title={title}
-      body={settlementBody(planet, settlementFunding, networkName, referralCodeInput)}
+      body={settlementBody(planet, settlementFunding, networkName, referralCodeInput, referralValidation)}
       action={<PrimaryButton disabled={actionBlocked} onClick={onSettle}>{actionLabel}</PrimaryButton>}
       tone={actionBlocked ? "warning" : "ready"}
     />
@@ -1717,6 +1869,18 @@ export function settlementLaunchBlocker(
   }
 
   return undefined;
+}
+
+export function referralSettlementBlocker(
+  code: string,
+  validation: ReferralValidationState
+): string | undefined {
+  if (!code.trim()) return undefined;
+  if (validation.status === "idle" || validation.status === "loading") {
+    return "Referral validation is still loading.";
+  }
+  if (validation.status === "error") return validation.message;
+  return validation.resolution.valid ? undefined : validation.resolution.message;
 }
 
 function settlementTransactionOptions(
@@ -1752,6 +1916,7 @@ function settlementBody(
   settlementFunding: SettlementFunding,
   networkName: string,
   referralCode = "",
+  referralValidation: ReferralValidationState = { status: "idle" },
 ): string {
   const migrationReservation = activeMigrationReservation(settlementFunding);
   const prefix = planet.kind === "legacy-settled"
@@ -1760,7 +1925,13 @@ function settlementBody(
       ? `Claim the reserved testnet planet at ${migrationReservation.galaxy}:${migrationReservation.system}:${migrationReservation.position}.`
       : "Launch settlement and mint this wallet's home planet.";
   const referralPreview = referralCode.trim() && !migrationReservation
-    ? " Invite code ready: a successful referral settlement starts this planet with 2x metal and crystal."
+    ? referralValidation.status === "resolved" && referralValidation.resolution.valid
+      ? " Invite code verified: referral settlement starts this planet with 1,000 metal / 1,000 crystal / 0 deuterium."
+      : referralValidation.status === "resolved"
+        ? ` Invite not usable: ${referralValidation.resolution.message}`
+        : referralValidation.status === "error"
+          ? ` Invite validation unavailable: ${referralValidation.message}`
+          : " Checking the invite on-chain before wallet submission."
     : "";
 
   if (settlementFunding.status === "idle" || settlementFunding.status === "loading") {
@@ -1970,12 +2141,13 @@ async function recordReferralClaimTransactionAfterIndexing(
   wallet: string,
   code: string,
   commitment: string,
-  txHash: string
+  txHash: string,
+  signature: string
 ): Promise<void> {
   const attempts = 12;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
-      await recordReferralClaimTransaction(apiUrl, wallet, code, commitment, txHash);
+      await recordReferralClaimTransaction(apiUrl, wallet, code, commitment, txHash, signature);
       return;
     } catch (error) {
       if (!isReferralClaimIndexingLag(error) || attempt === attempts - 1) {

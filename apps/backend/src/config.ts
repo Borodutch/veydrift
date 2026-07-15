@@ -47,9 +47,9 @@ export type BackendConfig = {
   rpcUrl?: string;
   rpcFallbackUrls?: string[];
   rpcSource: "alchemy-key" | "alchemy-url" | "custom-url" | "missing";
-  // Optional static metadata for frontend settlement launch funding. HTTP request
-  // paths must not read this from RPC; operators should update this when the
-  // deployed contract's startPrice changes.
+  // Cold-start metadata for the indexed settlement-price projection. HTTP request
+  // paths never read RPC; StartPriceUpdated events and explicit rebuild reads become
+  // canonical and divergence from this bootstrap value is surfaced by the indexer.
   settlementStartPriceWei?: string;
   settlementContractAddress?: `0x${string}`;
   wsRpcUrl?: string;
@@ -260,6 +260,27 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       field: "VEYDRIFT_GAME_CONTRACT_ADDRESS",
       message: "Set the deployed VeydriftGame proxy address."
     });
+  }
+
+  if (env.VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY || env.VEYDRIFT_REFERRAL_SYSTEM_ADDRESS) {
+    if (!referralSignerPrivateKey) {
+      problems.push({
+        field: "VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY",
+        message: "Referral configuration requires the backend redemption signer key."
+      });
+    }
+    if (!referralSystemAddress) {
+      problems.push({
+        field: "VEYDRIFT_REFERRAL_SYSTEM_ADDRESS",
+        message: "Referral configuration requires the deployed referral system address."
+      });
+    }
+    if (settlementStartPriceWei === undefined) {
+      problems.push({
+        field: "VEYDRIFT_SETTLEMENT_START_PRICE_WEI",
+        message: "Referral configuration requires a bootstrap game startPrice; indexed chain truth supersedes it."
+      });
+    }
   }
 
   return {

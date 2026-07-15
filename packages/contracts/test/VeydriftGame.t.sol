@@ -124,6 +124,29 @@ contract ShortTransferResourceToken is MockResourceToken {
     }
 }
 
+contract RejectingReferralInviter {
+    receive() external payable {
+        revert("reject referral reward");
+    }
+
+    function startPlanet(VeydriftGame game) external payable {
+        game.startPlanet{value: msg.value}();
+    }
+
+    function claimReferralCode(VeydriftReferralSystem referralSystem, bytes32 codeHash) external {
+        referralSystem.claimReferralCode(codeHash);
+    }
+
+    function withdrawReferralReward(
+        VeydriftReferralSystem referralSystem,
+        bytes32 commitment,
+        address invitee,
+        address payable recipient
+    ) external {
+        referralSystem.withdrawReferralReward(commitment, invitee, recipient);
+    }
+}
+
 contract VeydriftGameTest is Test {
     event PlanetShipCountChanged(uint256 indexed planetId, Ship indexed ship, uint32 total);
     event PlanetDefenseCountChanged(
@@ -672,13 +695,14 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralClaimRejectsDuplicateCommitmentUntilExpiry() public {
-        bytes32 commitment = keccak256("ref-1");
+        bytes32 codeHash = keccak256("ref-1");
+        bytes32 commitment = referralSystem.referralCommitment(player, codeHash);
 
         vm.prank(player);
         game.startPlanet{value: 0.05 ether}();
 
         vm.prank(player);
-        referralSystem.claimReferralCode(commitment);
+        referralSystem.claimReferralCode(codeHash);
         uint64 firstClaimedAt = referralSystem.referralClaimedAt(commitment);
 
         vm.warp(block.timestamp + 2 hours);
@@ -688,11 +712,11 @@ contract VeydriftGameTest is Test {
                 VeydriftReferralSystem.ReferralInviteAlreadyClaimed.selector, player, commitment
             )
         );
-        referralSystem.claimReferralCode(commitment);
+        referralSystem.claimReferralCode(codeHash);
 
         vm.warp(firstClaimedAt + 1 days);
         vm.prank(player);
-        referralSystem.claimReferralCode(commitment);
+        referralSystem.claimReferralCode(codeHash);
 
         assertEq(referralSystem.referralInvites(commitment), player);
         assertEq(referralSystem.referralCommitmentOf(player), commitment);
@@ -711,10 +735,12 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         game.startPlanet{value: 0.05 ether}();
 
-        bytes32 firstCommitment = keccak256("ref-active-1");
-        bytes32 secondCommitment = keccak256("ref-active-2");
+        bytes32 firstCodeHash = keccak256("ref-active-1");
+        bytes32 secondCodeHash = keccak256("ref-active-2");
+        bytes32 firstCommitment = referralSystem.referralCommitment(player, firstCodeHash);
+        bytes32 secondCommitment = referralSystem.referralCommitment(player, secondCodeHash);
         vm.startPrank(player);
-        referralSystem.claimReferralCode(firstCommitment);
+        referralSystem.claimReferralCode(firstCodeHash);
         vm.expectRevert(
             abi.encodeWithSelector(
                 VeydriftReferralSystem.ReferralInviteAlreadyClaimed.selector,
@@ -722,10 +748,10 @@ contract VeydriftGameTest is Test {
                 firstCommitment
             )
         );
-        referralSystem.claimReferralCode(secondCommitment);
+        referralSystem.claimReferralCode(secondCodeHash);
 
         vm.warp(block.timestamp + 1 days);
-        referralSystem.claimReferralCode(secondCommitment);
+        referralSystem.claimReferralCode(secondCodeHash);
         vm.stopPrank();
 
         assertEq(referralSystem.referralCommitmentOf(player), secondCommitment);
@@ -734,7 +760,7 @@ contract VeydriftGameTest is Test {
         assertEq(referralSystem.referralInvites(secondCommitment), player);
     }
 
-    function testReferralClaimKeepsExpiredCodeReservedToFirstOwner() public {
+    function testReferralClaimBindsTheSameCodeHashToEachOwner() public {
         address otherPlayer = address(0xBEEF);
         vm.deal(otherPlayer, 1 ether);
 
@@ -743,29 +769,51 @@ contract VeydriftGameTest is Test {
         vm.prank(otherPlayer);
         game.startPlanet{value: 0.05 ether}();
 
-        bytes32 commitment = keccak256("ref-owned");
+        bytes32 codeHash = keccak256("ref-owned");
+        bytes32 playerCommitment = referralSystem.referralCommitment(player, codeHash);
+        bytes32 otherCommitment = referralSystem.referralCommitment(otherPlayer, codeHash);
         vm.prank(player);
-        referralSystem.claimReferralCode(commitment);
+        referralSystem.claimReferralCode(codeHash);
 
         vm.warp(block.timestamp + 1 days);
         vm.prank(otherPlayer);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                VeydriftReferralSystem.ReferralCommitmentAlreadyClaimed.selector, commitment
-            )
-        );
-        referralSystem.claimReferralCode(commitment);
+        referralSystem.claimReferralCode(codeHash);
 
         vm.prank(player);
-        referralSystem.claimReferralCode(commitment);
+        referralSystem.claimReferralCode(codeHash);
 
-        assertEq(referralSystem.referralInvites(commitment), player);
-        assertEq(referralSystem.referralCommitmentOf(player), commitment);
+        assertEq(referralSystem.referralInvites(playerCommitment), player);
+        assertEq(referralSystem.referralInvites(otherCommitment), otherPlayer);
+        assertEq(referralSystem.referralCommitmentOf(player), playerCommitment);
+        assertEq(referralSystem.referralCommitmentOf(otherPlayer), otherCommitment);
+    }
+
+    function testReferralClaimCopiedCalldataCannotStealIntendedInviterCode() public {
+        address attacker = address(0xBAD);
+        vm.deal(attacker, 1 ether);
+
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+        vm.prank(attacker);
+        game.startPlanet{value: 0.05 ether}();
+
+        bytes32 copiedClaimCalldata = keccak256("owner-bound invite code");
+        vm.prank(attacker);
+        referralSystem.claimReferralCode(copiedClaimCalldata);
+
+        vm.prank(player);
+        referralSystem.claimReferralCode(copiedClaimCalldata);
+
+        bytes32 inviterCommitment = keccak256(abi.encode(player, copiedClaimCalldata));
+        bytes32 attackerCommitment = keccak256(abi.encode(attacker, copiedClaimCalldata));
+        assertEq(referralSystem.referralInvites(inviterCommitment), player);
+        assertEq(referralSystem.referralInvites(attackerCommitment), attacker);
     }
 
     function testReferralSettlementRejectsExpiredInvite() public {
         address invitee = address(0xCAFE);
-        bytes32 commitment = keccak256("expired high entropy invite code");
+        bytes32 codeHash = keccak256("expired high entropy invite code");
+        bytes32 commitment = referralSystem.referralCommitment(player, codeHash);
         vm.deal(invitee, 1 ether);
 
         vm.prank(admin);
@@ -774,7 +822,7 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         game.startPlanet{value: 0.05 ether}();
         vm.prank(player);
-        referralSystem.claimReferralCode(commitment);
+        referralSystem.claimReferralCode(codeHash);
 
         uint64 expiredAt = uint64(block.timestamp + 1 days);
         vm.warp(expiredAt);
@@ -791,7 +839,8 @@ contract VeydriftGameTest is Test {
 
     function testReferralSettlementDoublesStartingResourcesAndPaysInviter() public {
         address invitee = address(0xCAFE);
-        bytes32 commitment = keccak256("high entropy invite code");
+        bytes32 codeHash = keccak256("high entropy invite code");
+        bytes32 commitment = referralSystem.referralCommitment(player, codeHash);
         vm.deal(invitee, 1 ether);
 
         vm.prank(admin);
@@ -802,7 +851,7 @@ contract VeydriftGameTest is Test {
         uint256 inviterBalanceAfterStart = player.balance;
 
         vm.prank(player);
-        referralSystem.claimReferralCode(commitment);
+        referralSystem.claimReferralCode(codeHash);
 
         (uint8 v, bytes32 r, bytes32 s) = _referralSignature(invitee, commitment);
         vm.prank(invitee);
@@ -821,9 +870,51 @@ contract VeydriftGameTest is Test {
         assertEq(address(game).balance, 0.075 ether);
     }
 
+    function testReferralSettlementCreditsRejectingInviterWithoutBrickingInvitee() public {
+        RejectingReferralInviter rejectingInviter = new RejectingReferralInviter();
+        address invitee = address(0xCAFE5);
+        bytes32 codeHash = keccak256("rejecting inviter code");
+        bytes32 commitment = referralSystem.referralCommitment(address(rejectingInviter), codeHash);
+        vm.deal(address(rejectingInviter), 1 ether);
+        vm.deal(invitee, 1 ether);
+
+        vm.prank(admin);
+        referralSystem.setReferralSigner(vm.addr(referralSignerKey));
+
+        rejectingInviter.startPlanet{value: 0.05 ether}(game);
+        rejectingInviter.claimReferralCode(referralSystem, codeHash);
+
+        (uint8 v, bytes32 r, bytes32 s) = _referralSignature(invitee, commitment);
+        vm.prank(invitee);
+        uint256 planetId = game.startPlanetWithReferral{value: 0.05 ether}(commitment, v, r, s);
+
+        assertEq(game.planet(planetId).owner, invitee);
+        assertEq(referralSystem.claimableReferralRewards(address(rejectingInviter)), 0.025 ether);
+        assertEq(referralSystem.referralRewardCredits(commitment, invitee), 0.025 ether);
+        assertEq(referralSystem.totalReferralRewardsAccrued(address(rejectingInviter)), 0.025 ether);
+        assertEq(referralSystem.totalReferralRewardsPaid(address(rejectingInviter)), 0);
+
+        vm.expectRevert(VeydriftReferralSystem.ReferralRewardRecipientInvalid.selector);
+        rejectingInviter.withdrawReferralReward(
+            referralSystem, commitment, invitee, payable(address(0))
+        );
+        assertEq(referralSystem.referralRewardCredits(commitment, invitee), 0.025 ether);
+
+        uint256 recipientBalance = player.balance;
+        rejectingInviter.withdrawReferralReward(
+            referralSystem, commitment, invitee, payable(player)
+        );
+        assertEq(player.balance, recipientBalance + 0.025 ether);
+        assertEq(referralSystem.claimableReferralRewards(address(rejectingInviter)), 0);
+        assertEq(referralSystem.referralRewardCredits(commitment, invitee), 0);
+        assertEq(referralSystem.totalReferralRewardsPaid(address(rejectingInviter)), 0.025 ether);
+        assertEq(referralSystem.totalReferralRewardsClaimed(address(rejectingInviter)), 0.025 ether);
+    }
+
     function testReferralSettleFirstPlanetCompatibilityPathPaysInviter() public {
         address invitee = address(0xBEEF);
-        bytes32 commitment = keccak256("legacy high entropy invite code");
+        bytes32 codeHash = keccak256("legacy high entropy invite code");
+        bytes32 commitment = referralSystem.referralCommitment(player, codeHash);
         vm.deal(invitee, 1 ether);
 
         vm.prank(admin);
@@ -834,7 +925,7 @@ contract VeydriftGameTest is Test {
         uint256 inviterBalanceAfterStart = player.balance;
 
         vm.prank(player);
-        referralSystem.claimReferralCode(commitment);
+        referralSystem.claimReferralCode(codeHash);
 
         (uint8 v, bytes32 r, bytes32 s) = _referralSignature(invitee, commitment);
         vm.prank(invitee);
@@ -859,7 +950,8 @@ contract VeydriftGameTest is Test {
     {
         address invitee = address(0xCAFE);
         address otherInvitee = address(0xD00D);
-        bytes32 commitment = keccak256("another high entropy invite code");
+        bytes32 codeHash = keccak256("another high entropy invite code");
+        bytes32 commitment = referralSystem.referralCommitment(player, codeHash);
         vm.deal(invitee, 1 ether);
         vm.deal(otherInvitee, 1 ether);
 
@@ -869,7 +961,7 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         game.startPlanet{value: 0.05 ether}();
         vm.prank(player);
-        referralSystem.claimReferralCode(commitment);
+        referralSystem.claimReferralCode(codeHash);
 
         (uint8 inviteeV, bytes32 inviteeR, bytes32 inviteeS) =
             _referralSignature(invitee, commitment);
@@ -897,7 +989,8 @@ contract VeydriftGameTest is Test {
     }
 
     function testReferralSettlementAllowsThreeDistinctInviteesPerRollingDay() public {
-        bytes32 commitment = keccak256("rolling high entropy invite code");
+        bytes32 codeHash = keccak256("rolling high entropy invite code");
+        bytes32 commitment = referralSystem.referralCommitment(player, codeHash);
         address inviteeOne = address(0xCAFE1);
         address inviteeTwo = address(0xCAFE2);
         address inviteeThree = address(0xCAFE3);
@@ -913,7 +1006,7 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         game.startPlanet{value: 0.05 ether}();
         vm.prank(player);
-        referralSystem.claimReferralCode(commitment);
+        referralSystem.claimReferralCode(codeHash);
 
         uint64 firstRedemptionAt = uint64(block.timestamp);
         _startPlanetWithReferral(inviteeOne, commitment);
@@ -940,8 +1033,48 @@ contract VeydriftGameTest is Test {
 
         vm.warp(nextRedemptionAt);
         vm.prank(player);
-        referralSystem.claimReferralCode(commitment);
+        referralSystem.claimReferralCode(codeHash);
         _startPlanetWithReferral(inviteeFour, commitment);
+    }
+
+    function testReferralCodeRotationCannotResetInviterRollingRedemptionWindow() public {
+        bytes32 firstCodeHash = keccak256("rotation invite code one");
+        bytes32 secondCodeHash = keccak256("rotation invite code two");
+        bytes32 firstCommitment = referralSystem.referralCommitment(player, firstCodeHash);
+        bytes32 secondCommitment = referralSystem.referralCommitment(player, secondCodeHash);
+        address inviteeOne = address(0xCAFE6);
+        address inviteeTwo = address(0xCAFE7);
+        address inviteeThree = address(0xCAFE8);
+        address inviteeFour = address(0xCAFE9);
+        vm.deal(inviteeOne, 1 ether);
+        vm.deal(inviteeTwo, 1 ether);
+        vm.deal(inviteeThree, 1 ether);
+        vm.deal(inviteeFour, 1 ether);
+
+        vm.prank(admin);
+        referralSystem.setReferralSigner(vm.addr(referralSignerKey));
+
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+        vm.prank(player);
+        referralSystem.claimReferralCode(firstCodeHash);
+
+        uint64 firstClaimedAt = referralSystem.referralClaimedAt(firstCommitment);
+        vm.warp(firstClaimedAt + 23 hours);
+        _startPlanetWithReferral(inviteeOne, firstCommitment);
+        vm.warp(firstClaimedAt + 23 hours + 10 minutes);
+        _startPlanetWithReferral(inviteeTwo, firstCommitment);
+        vm.warp(firstClaimedAt + 23 hours + 20 minutes);
+        _startPlanetWithReferral(inviteeThree, firstCommitment);
+
+        vm.warp(firstClaimedAt + 1 days);
+        vm.prank(player);
+        referralSystem.claimReferralCode(secondCodeHash);
+
+        (uint8 v, bytes32 r, bytes32 s) = _referralSignature(inviteeFour, secondCommitment);
+        vm.prank(inviteeFour);
+        vm.expectRevert();
+        game.startPlanetWithReferral{value: 0.05 ether}(secondCommitment, v, r, s);
     }
 
     function testConfiguredResourceTokenAddressesAreReadable() public view {

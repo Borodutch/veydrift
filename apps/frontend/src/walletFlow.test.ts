@@ -84,7 +84,9 @@ import {
   sendDismissAllianceJoinRequestTransaction,
   sendRequestResourceWithdrawalTransaction,
   requestAccounts,
+  referralCodeHash,
   referralCommitment,
+  persistReferralClaimIntent,
   recordReferralClaimTransaction,
   requestWatchedPlanetSignature,
   readMigrationReservation,
@@ -2891,10 +2893,11 @@ describe("walletFlow", () => {
     }
   });
 
-  test("records frontend-generated referral claim transactions without extra wallet signatures", async () => {
+  test("persists owner-bound referral preimages before recording indexed claim transactions", async () => {
     const originalFetch = globalThis.fetch;
     const code = "borodutch";
-    const commitment = referralCommitment(code);
+    const commitment = referralCommitment(code, account);
+    const signature = "0xwalletsignature";
     const txHash = `0x${"bb".repeat(32)}`;
     const requests: Array<{ body: unknown; url: string }> = [];
 
@@ -2928,11 +2931,17 @@ describe("walletFlow", () => {
 
     try {
       expect(generateReferralClaimCode()).toMatch(/^[A-Za-z0-9]{9}$/);
-      expect(referralCommitment(` ${code} `)).toBe(commitment);
-      await recordReferralClaimTransaction("https://api.example.test///", account, code, commitment, txHash);
+      expect(referralCodeHash(code)).toMatch(/^0x[a-fA-F0-9]{64}$/);
+      expect(referralCommitment(` ${code} `, account)).toBe(commitment);
+      await persistReferralClaimIntent("https://api.example.test///", account, code, commitment, signature);
+      await recordReferralClaimTransaction("https://api.example.test///", account, code, commitment, txHash, signature);
       expect(requests).toEqual([
         {
-          body: { code, commitment, txHash },
+          body: { code, commitment, signature },
+          url: `https://api.example.test/wallet/${account}/referrals/claim-intent`
+        },
+        {
+          body: { code, commitment, signature, txHash },
           url: `https://api.example.test/wallet/${account}/referrals/claim-transaction`
         }
       ]);

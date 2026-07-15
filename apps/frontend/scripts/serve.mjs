@@ -224,11 +224,11 @@ async function buildRouteMeta(route) {
 function referralMeta() {
   return {
     kind: "referral",
-    title: "Join Veydrift with a boosted start",
+    title: "Join Veydrift",
     imageTitle: "Veydrift Invite",
-    description: "Use an invite link for 2x starting resources. Your inviter earns rewards when you settle.",
-    status: "INVITE BONUS",
-    subtitle: "2x starting resources",
+    description: "Open this Veydrift invite. Referral eligibility and exact benefits are verified in-game before settlement.",
+    status: "INVITE LINK",
+    subtitle: "Benefits verified in-game",
     accent: "#5eead4",
     footer: "veydrift.com/invite",
     commander: true,
@@ -660,7 +660,7 @@ async function ogSvg(meta) {
   <circle cx="722" cy="386" r="4" fill="${accent}"/>
   <circle cx="1088" cy="180" r="4" fill="${accent}"/>
   <rect x="790" y="434" width="214" height="44" rx="22" fill="#02050b" fill-opacity=".72" stroke="${accent}" stroke-opacity=".52"/>
-  <text x="897" y="463" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="22" font-weight="850" fill="${accent}">2x resources</text>`
+  <text x="897" y="463" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="22" font-weight="850" fill="${accent}">Invite link</text>`
     : meta.kind === "mission"
     ? `<image href="${planets[0] ?? ""}" x="624" y="266" width="320" height="320" preserveAspectRatio="xMidYMid meet" clip-path="url(#missionPlanetA)"/>
   <image href="${planets[1] ?? planets[0] ?? ""}" x="854" y="44" width="320" height="320" preserveAspectRatio="xMidYMid meet" clip-path="url(#missionPlanetB)"/>

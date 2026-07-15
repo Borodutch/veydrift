@@ -87,10 +87,10 @@ describe("frontend static server headers", () => {
 
     expect(meta).toMatchObject({
       kind: "referral",
-      title: "Join Veydrift with a boosted start",
-      description: "Use an invite link for 2x starting resources. Your inviter earns rewards when you settle.",
-      status: "INVITE BONUS",
-      subtitle: "2x starting resources",
+      title: "Join Veydrift",
+      description: "Open this Veydrift invite. Referral eligibility and exact benefits are verified in-game before settlement.",
+      status: "INVITE LINK",
+      subtitle: "Benefits verified in-game",
     });
     expect(JSON.stringify(meta)).not.toContain("SECRET-INVITE-CODE");
   });
@@ -119,10 +119,10 @@ describe("frontend static server headers", () => {
 
     const output = injectShareMeta(html, {
       canonicalUrl: "https://veydrift.com/?ref=SECRET-INVITE-CODE",
-      description: "Use an invite link for 2x starting resources. Your inviter earns rewards when you settle.",
+      description: "Open this Veydrift invite. Referral eligibility and exact benefits are verified in-game before settlement.",
       imageUrl: "https://veydrift.com/og/referral.png",
       launchUrl: "https://veydrift.com/?ref=SECRET-INVITE-CODE&miniApp=true",
-      title: "Join Veydrift with a boosted start",
+      title: "Join Veydrift",
     });
 
     expect(output).toContain('<meta property="og:image" content="https://veydrift.com/og/referral.png" />');
