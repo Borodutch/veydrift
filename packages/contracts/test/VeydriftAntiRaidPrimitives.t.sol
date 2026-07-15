@@ -186,24 +186,22 @@ contract VeydriftAntiRaidPrimitivesTest is Test {
         assertFalse(VeydriftAntiRaidPrimitives.isInactive(0, inactiveAt));
     }
 
-    function testFuzzCombatRecoveryEconomicsCannotMintFullDestroyedValue(
-        uint128 destroyedStructuralValue,
-        uint32 destroyedDefenses
-    ) public pure {
+    function testFuzzCombatRecoveryEconomicsCannotMintFullDestroyedValue(uint128 destroyedStructuralValue)
+        public
+        pure
+    {
         uint256 debris = (uint256(destroyedStructuralValue) * COMBAT_DEBRIS_BPS)
             / VeydriftAntiRaidPrimitives.BPS;
         uint256 wreckage = VeydriftAntiRaidPrimitives.wreckFieldRecovery(destroyedStructuralValue);
         assertLe(debris + wreckage, destroyedStructuralValue);
 
-        uint256 repaired = VeydriftAntiRaidPrimitives.repairedDefenseCount(destroyedDefenses);
-        assertLe(repaired, destroyedDefenses);
+        assertLe(VeydriftAntiRaidPrimitives.DEFENSE_REPAIR_BPS, VeydriftAntiRaidPrimitives.BPS);
     }
 
     function testDefenderRecoveryPrimitives() public pure {
         assertEq(VeydriftAntiRaidPrimitives.WRECK_FIELD_RECOVERY_BPS, 3_000);
         assertEq(VeydriftAntiRaidPrimitives.DEFENSE_REPAIR_BPS, 7_000);
         assertEq(VeydriftAntiRaidPrimitives.wreckFieldRecovery(10_000), 3_000);
-        assertEq(VeydriftAntiRaidPrimitives.repairedDefenseCount(10), 7);
     }
 
     function _min(uint256 left, uint256 right) private pure returns (uint256) {

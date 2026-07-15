@@ -242,10 +242,6 @@ library VeydriftAntiRaidPrimitives {
         return (destroyedStructuralValue * WRECK_FIELD_RECOVERY_BPS) / BPS;
     }
 
-    function repairedDefenseCount(uint256 destroyedDefenseCount) internal pure returns (uint256) {
-        return (destroyedDefenseCount * DEFENSE_REPAIR_BPS) / BPS;
-    }
-
     function _sqrt(uint256 value) private pure returns (uint256 result) {
         if (value == 0) return 0;
         uint256 x = value;
