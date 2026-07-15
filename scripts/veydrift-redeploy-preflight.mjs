@@ -79,7 +79,10 @@ for (const [resource, token] of Object.entries(resourceTokens)) {
 
 const stateEvidence = summarizeStateEvidence({ health: health.body, indexer: indexer.body });
 const hasKnownAlphaState = stateEvidence.signals.some((signal) => signal.value > 0);
-const stateEvidenceComplete = health.ok && indexer.ok && stateEvidence.signals.length > 0;
+const healthIndexerSnapshotAvailable = hasAuthoritativeWriterHealthSnapshot(health.body);
+const stateEvidenceComplete = health.ok
+  && (indexer.ok || healthIndexerSnapshotAvailable)
+  && stateEvidence.signals.length > 0;
 const nonzeroReserves = Object.values(reserveEvidence).some((entry) => BigInt(entry.balance ?? "0") > 0n);
 const backendSnapshots = {
   health: snapshotOf(health),
@@ -96,7 +99,7 @@ if (!health.ok) {
 if (!runtime.ok) {
   blockers.push("Backend /runtime-config is unavailable; cannot capture current deployed address evidence.");
 }
-if (!indexer.ok) {
+if (!indexer.ok && !healthIndexerSnapshotAvailable) {
   blockers.push("Backend /debug/indexer is unavailable; cannot prove indexer state/export position.");
 }
 if (proxyUpgradeable === false && !options["migration-plan-approved"] && !options["no-alpha-state"]) {
@@ -209,6 +212,29 @@ function summarizeStateEvidence(sources) {
     hasKnownAlphaState: signals.some((signal) => signal.value > 0),
     signals
   };
+}
+
+function hasAuthoritativeWriterHealthSnapshot(healthBody) {
+  const worker = healthBody?.backend?.worker;
+  const readiness = healthBody?.readiness;
+  const indexerSnapshot = healthBody?.indexer;
+  const available = worker?.role === "writer"
+    && readiness?.ready === true
+    && readiness?.safeToServeIndexedState === true
+    && indexerSnapshot?.indexedState === "healthy"
+    && indexerSnapshot?.safeToServeIndexedState === true
+    && typeof indexerSnapshot?.fromBlock === "string"
+    && typeof indexerSnapshot?.latestIndexedBlock === "string";
+  evidence.push({
+    name: "backend:writer-health-indexer-snapshot",
+    ok: available,
+    source: "backend:/health",
+    workerRole: worker?.role ?? null,
+    indexedState: indexerSnapshot?.indexedState ?? null,
+    fromBlock: indexerSnapshot?.fromBlock ?? null,
+    latestIndexedBlock: indexerSnapshot?.latestIndexedBlock ?? null
+  });
+  return available;
 }
 
 function collectSignals(prefix, value, signals, path = []) {
