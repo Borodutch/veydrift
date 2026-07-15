@@ -5,6 +5,9 @@ const options = parseArgs(process.argv.slice(2));
 const apiUrl = trimSlash(options["api-url"] ?? "https://api-test.veydrift.com");
 const wallet = options.wallet;
 const manifest = options.manifest ? readManifest(options.manifest) : null;
+const rpcUrl = options["rpc-url"];
+const referralSigner = options["referral-signer"];
+const referralStartPriceWei = options["referral-start-price-wei"];
 const runtimeStressRounds = positiveIntegerOption(options["runtime-stress-rounds"] ?? "12", "runtime-stress-rounds");
 const runtimeStressP95Ms = positiveIntegerOption(options["runtime-stress-p95-ms"] ?? "500", "runtime-stress-p95-ms");
 const runtimeStressTimeoutMs = positiveIntegerOption(options["runtime-stress-timeout-ms"] ?? "6000", "runtime-stress-timeout-ms");
@@ -12,6 +15,14 @@ const requestTimeoutMs = positiveIntegerOption(options["timeout-ms"] ?? String(r
 const failures = [];
 const evidence = [];
 let walletHomePlanetId = null;
+
+if (manifest?.contracts.referralSystem) {
+  if (!rpcUrl || !referralSigner || !referralStartPriceWei) {
+    usage("Referral manifests require --rpc-url, --referral-signer, and --referral-start-price-wei for config truth checks.");
+  }
+  if (!/^0x[a-fA-F0-9]{40}$/.test(referralSigner)) usage("--referral-signer must be an EVM address.");
+  if (!/^\d+$/.test(referralStartPriceWei)) usage("--referral-start-price-wei must be a non-negative integer string.");
+}
 
 await checkJson("health", "/health", (body) => {
   expect(body.ok === true, "health.ok must be true");
@@ -36,6 +47,8 @@ await checkJson("runtime-config", "/runtime-config", (body) => {
     expect(eqAddress(body.randomnessEngineAddress, manifest.contracts.randomnessEngine), "runtime randomness address must match manifest");
     if (manifest.contracts.referralSystem) {
       expect(eqAddress(body.referralSystemAddress, manifest.contracts.referralSystem), "runtime referral system address must match manifest");
+      expect(eqAddress(body.referralSignerAddress, referralSigner), "runtime referral signer must match expected signer");
+      expect(body.referralStartPriceWei === referralStartPriceWei, "runtime referral start price must match expected on-chain start price");
       expect(body.featureSupport?.referralsConfigured === true, "runtime featureSupport.referralsConfigured must be true when referral system is in manifest");
     }
     expect(eqAddress(body.resourceTokenAddresses?.metal, manifest.contracts.resourceTokens.metal), "runtime metal token must match manifest");
@@ -45,6 +58,10 @@ await checkJson("runtime-config", "/runtime-config", (body) => {
   expect(body.featureSupport?.researchEndpoint === true, "runtime featureSupport.researchEndpoint must be true");
   expect(body.featureSupport?.highscoresEndpoint === true, "runtime featureSupport.highscoresEndpoint must be true");
 });
+
+if (manifest?.contracts.referralSystem) {
+  await checkReferralOnChain();
+}
 
 await checkJson("galaxy", "/universe/galaxies/1/systems/1", (body) => {
   expect(Array.isArray(body.planets), "galaxy smoke must return planets");
@@ -115,6 +132,49 @@ async function checkWallet(name, endpoint, validate) {
     expect(!body.error, `${name} returned error: ${body.error ?? ""}`);
     validate(body);
   });
+}
+
+async function checkReferralOnChain() {
+  try {
+    const [configuredGameWord, configuredSignerWord, startPriceWord] = await Promise.all([
+      ethCall(manifest.contracts.referralSystem, "0xc3fe3e28"),
+      ethCall(manifest.contracts.referralSystem, "0xdad0eeb7"),
+      ethCall(manifest.contracts.game, "0xf1a9af89")
+    ]);
+    const configuredGame = decodeAddressWord(configuredGameWord);
+    const configuredSigner = decodeAddressWord(configuredSignerWord);
+    const onChainStartPriceWei = BigInt(startPriceWord).toString();
+    evidence.push({
+      name: "referral-on-chain-config",
+      referralSystem: manifest.contracts.referralSystem,
+      configuredGame,
+      configuredSigner,
+      startPriceWei: onChainStartPriceWei
+    });
+    expect(eqAddress(configuredGame, manifest.contracts.game), "referral system game() must match manifest game proxy");
+    expect(eqAddress(configuredSigner, referralSigner), "referral system referralSigner() must match expected signer");
+    expect(onChainStartPriceWei === referralStartPriceWei, "game startPrice() must match referral/backend start price");
+  } catch (error) {
+    fail(`referral on-chain config check failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function ethCall(to, data) {
+  const response = await fetch(rpcUrl, {
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to, data }, "latest"] }),
+    headers: { "content-type": "application/json" },
+    method: "POST"
+  });
+  const body = await response.json();
+  if (!response.ok || body.error || typeof body.result !== "string") {
+    throw new Error(body.error?.message ?? `RPC HTTP ${response.status}`);
+  }
+  return body.result;
+}
+
+function decodeAddressWord(value) {
+  if (!/^0x[a-fA-F0-9]{64}$/.test(value)) throw new Error(`invalid address word: ${value}`);
+  return `0x${value.slice(-40)}`;
 }
 
 async function checkJson(name, endpoint, validate) {
@@ -282,7 +342,8 @@ function usage(message) {
   console.error(
     `${message}\nUsage: node scripts/veydrift-postdeploy-smoke.mjs [--manifest <file>] ` +
       `[--api-url <url>] [--wallet <0x...>] [--timeout-ms 6000] [--runtime-stress-rounds 12] ` +
-      `[--runtime-stress-p95-ms 500] [--runtime-stress-timeout-ms 6000]`
+      `[--runtime-stress-p95-ms 500] [--runtime-stress-timeout-ms 6000] ` +
+      `[--rpc-url <url> --referral-signer <0x...> --referral-start-price-wei <wei>]`
   );
   process.exit(1);
 }

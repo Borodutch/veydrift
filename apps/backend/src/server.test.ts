@@ -65,6 +65,7 @@ const configuredTestConfig: BackendConfig = {
 
 const player = "0x2222222222222222222222222222222222222222" as Address;
 const planetStartedTopic = "0xef2d7a7105128f441ebc83d8e2e87960a9b0dfdfa02cc68769872b2c52a431f3";
+const startPriceUpdatedTopic = "0xdbcd6a03cdadcd71beb97d41ac0c321148e2556e112a52663ba4c94ff84d6717";
 const buildingStartedTopic = "0x48456f4ba6902f09ee7c2958aca9c9d1f8a5920c8affef08667504670f8bba1b";
 const buildingCompletedTopic = "0xa2543cf02e1a3601ccdc4fff81d99ff1225eaf4ad629fbd0f724d61db252c370";
 const defenseQueuedTopic = "0xc3dcdf6abcac9fc4831745727e78f808922f43da079b984420ef70c97cff0f5b";
@@ -202,6 +203,10 @@ describe("Rift requirement projection", () => {
 
 class MockChainReader implements ChainReader {
   rebuildCalls = 0;
+
+  async getStartPrice() {
+    return configuredTestConfig.settlementStartPriceWei ?? null;
+  }
 
   async getWalletSettlement(wallet: Address): Promise<WalletSettlement> {
     return {
@@ -1344,6 +1349,8 @@ describe("Veydrift backend", () => {
       moonContractAddress: null,
       network: "Base Sepolia",
       randomnessEngineAddress: null,
+      referralSignerAddress: null,
+      referralStartPriceWei: null,
       referralSystemAddress: null,
       resourceTokenAddresses: {
         crystal: null,
@@ -1800,6 +1807,8 @@ describe("Veydrift backend", () => {
             moonContractAddress: null,
             network: "Base Sepolia",
             randomnessEngineAddress: null,
+            referralSignerAddress: null,
+            referralStartPriceWei: null,
             referralSystemAddress: null,
             resourceTokenAddresses: {
               crystal: null,
@@ -1898,7 +1907,9 @@ describe("Veydrift backend", () => {
           throw new Error("migration settlement funding reads must not call chain reader");
         }
       }());
-      const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+      const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock, {
+        settlementStartPriceWei: configuredTestConfig.settlementStartPriceWei!
+      });
       const response = await createRequestHandler({
         config: configuredTestConfig,
         chainReader,
@@ -1975,18 +1986,27 @@ describe("Veydrift backend", () => {
     }
   });
 
-  test("serves settlement-funding from config when the indexer is warm without a request-time chain read", async () => {
+  test("serves settlement-funding from mutable indexed chain truth without a request-time chain read", async () => {
     const chainReader = new class extends MockChainReader {
       override getSettlementFunding(): ReturnType<MockChainReader["getSettlementFunding"]> {
         throw new Error("warm settlement funding reads must not call chain reader");
       }
     }();
-    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock, {
+      settlementStartPriceWei: configuredTestConfig.settlementStartPriceWei!
+    });
     indexer.applyEvent({
       ...planet,
       eventName: "PlanetStarted",
       transactionHash: "0xabc",
       blockNumber: "100"
+    });
+    indexer.applyLog({
+      blockNumber: "0x65",
+      transactionHash: `0x${"ef".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [startPriceUpdatedTopic],
+      data: abiWords(50_000_000_000_000_000n, 12_000_000_000_000_000n)
     });
 
     const response = await createRequestHandler({
@@ -2001,7 +2021,7 @@ describe("Veydrift backend", () => {
       affordable: true,
       balanceWei: null,
       contractKind: "game",
-      startPriceWei: "50000000000000000",
+      startPriceWei: "12000000000000000",
       source: "contract-state-indexer"
     });
     expect(body.startPriceWei).not.toBeNull();
@@ -2117,7 +2137,7 @@ describe("Veydrift backend", () => {
     }
   });
 
-  test("reports settlement-funding unavailable when no static start price is configured", async () => {
+  test("reports settlement-funding unavailable when indexed start price truth is absent", async () => {
     const chainReader = new class extends MockChainReader {
       override getSettlementFunding(): ReturnType<MockChainReader["getSettlementFunding"]> {
         throw new Error("unconfigured settlement funding must not call chain reader");
@@ -2145,7 +2165,7 @@ describe("Veydrift backend", () => {
       balanceWei: null,
       contractKind: "game",
       startPriceWei: null,
-      unavailableReason: "Settlement start price is not configured for this game deployment yet.",
+      unavailableReason: "Settlement start price is not available from indexed contract state yet.",
       source: "contract-state-indexer"
     });
   });

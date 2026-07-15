@@ -12,7 +12,7 @@ interface IVeydriftReferralSystem {
         uint8 v,
         bytes32 r,
         bytes32 s
-    ) external returns (address inviter);
+    ) external payable returns (address inviter);
 }
 
 /// @notice Delegatecall target for first-planet settlement and referral settlement.
@@ -32,8 +32,11 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         payable
         returns (uint256 planetId)
     {
+        uint256 inviterReward = (startPrice * REFERRAL_INVITER_FEE_BPS) / BPS;
         address inviter = IVeydriftReferralSystem(_referralSystem)
-            .redeemReferralInvite(msg.sender, commitment, v, r, s);
+        .redeemReferralInvite{value: inviterReward}(
+            msg.sender, commitment, v, r, s
+        );
         planetId = _startPlanet(msg.sender, msg.value, inviter);
     }
 
@@ -47,8 +50,11 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
         payable
         returns (FirstPlanet memory settledPlanet)
     {
+        uint256 inviterReward = (startPrice * REFERRAL_INVITER_FEE_BPS) / BPS;
         address inviter = IVeydriftReferralSystem(_referralSystem)
-            .redeemReferralInvite(msg.sender, commitment, v, r, s);
+        .redeemReferralInvite{value: inviterReward}(
+            msg.sender, commitment, v, r, s
+        );
         uint256 planetId = _startPlanet(msg.sender, msg.value, inviter);
         return _firstPlanetFrom(planetId);
     }
@@ -104,12 +110,6 @@ contract VeydriftFirstPlanetSettlementModule is VeydriftResourceReserves {
             planetSeed(galaxy, system, position)
         );
         _emitPlanetSettled(planetId);
-
-        if (inviter != address(0)) {
-            uint256 inviterReward = (startPrice * REFERRAL_INVITER_FEE_BPS) / BPS;
-            (bool ok,) = payable(inviter).call{value: inviterReward}("");
-            if (!ok) revert TransferFailed();
-        }
     }
 
     function _firstPlanetFrom(uint256 planetId) private view returns (FirstPlanet memory) {
