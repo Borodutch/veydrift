@@ -1054,7 +1054,23 @@ export type IndexedReferralRedemptionEvent = {
   inviter: Address;
   invitee: Address;
   commitment: `0x${string}`;
+  rewardAmount: string;
+  paid: boolean;
+  credited: boolean;
   redeemedAt: string;
+};
+
+export type IndexedReferralRewardClaimEvent = {
+  eventName: "ReferralRewardClaimed";
+  transactionHash: string;
+  blockNumber: string;
+  logIndex: string;
+  inviter: Address;
+  invitee: Address;
+  commitment: `0x${string}`;
+  recipient: Address;
+  amount: string;
+  claimedAt: string;
 };
 
 export type MoonChanceReportEvent = {
@@ -5049,7 +5065,8 @@ const interplanetaryMissileAttackTopic = "0x44a8c2b7632935050468ed4d9acfb1e99a09
 // actually becomes resolvable (consumeRandomness reverts with PendingRandomness until then).
 const randomnessFulfilledTopic = "0x864b23caf5999ffe7e7b5bc685db237bcef9eb7bd6423c2fd395d9b4663372f5";
 const referralCodeClaimedTopic = "0xa7124569721bd8a9fca99961778919ebde17b82e397d5dbeb14eb7b5e1e051fb";
-const referralInviteRedeemedTopic = "0x897cc27985afe9fc1880f96288d655b8348796f5ab4cda3eb835be64f8b97088";
+const referralInviteRedeemedTopic = "0xf0e76a5aa6e423f978c7616fd6933b5d376a32654fc67c6fad0afdbc744ccce1";
+const referralRewardClaimedTopic = "0x55b0859d9094fa40dfdcbcdd82c0d785132f6a627b6083e228d6bddb5e498558";
 const missionTypes = ["Transport", "Deploy", "Colonize", "Attack", "Harvest", "AcsDefend", "Intercept", "MissileAttack", "AcsAttack", "DefenseHold"] as const;
 const missionStatuses = ["None", "Outbound", "Returning", "Resolved", "Returned", "Recalled"] as const;
 const battleOutcomes = ["Draw", "AttackerWin", "DefenderWin"] as const;
@@ -5120,6 +5137,7 @@ const eventNamesByTopic = new Map<string, string>([
   [randomnessFulfilledTopic, "RandomnessFulfilled"],
   [referralCodeClaimedTopic, "ReferralCodeClaimed"],
   [referralInviteRedeemedTopic, "ReferralInviteRedeemed"],
+  [referralRewardClaimedTopic, "ReferralRewardClaimed"],
   [moonChanceRequestedTopic, "MoonChanceRequested"],
   [moonChanceFinalizedTopic, "MoonChanceFinalized"],
   [moonChanceSkippedExistingMoonTopic, "MoonChanceSkippedExistingMoon"],
@@ -5304,6 +5322,10 @@ export function isReferralClaimLog(log: RpcLog): boolean {
 
 export function isReferralRedemptionLog(log: RpcLog): boolean {
   return topicAt(log.topics, 0) === referralInviteRedeemedTopic;
+}
+
+export function isReferralRewardClaimLog(log: RpcLog): boolean {
+  return topicAt(log.topics, 0) === referralRewardClaimedTopic;
 }
 
 export function isIndexedQueueStartedLog(log: RpcLog): boolean {
@@ -5506,7 +5528,26 @@ export function decodeReferralRedemptionLog(log: RpcLog): IndexedReferralRedempt
     inviter: decodeAddressWord(topicAt(log.topics, 1)),
     invitee: decodeAddressWord(topicAt(log.topics, 2)),
     commitment: topicAt(log.topics, 3) as `0x${string}`,
-    redeemedAt: decodeUintWord(wordAt(words, 0)).toString()
+    rewardAmount: decodeUintWord(wordAt(words, 0)).toString(),
+    paid: decodeBoolWord(wordAt(words, 1)),
+    credited: decodeBoolWord(wordAt(words, 2)),
+    redeemedAt: decodeUintWord(wordAt(words, 3)).toString()
+  };
+}
+
+export function decodeReferralRewardClaimLog(log: RpcLog): IndexedReferralRewardClaimEvent {
+  const words = splitWords(log.data);
+  return {
+    eventName: "ReferralRewardClaimed",
+    transactionHash: log.transactionHash,
+    blockNumber: BigInt(log.blockNumber).toString(),
+    logIndex: (log as RpcLog & { logIndex?: string }).logIndex ?? "0x0",
+    inviter: decodeAddressWord(topicAt(log.topics, 1)),
+    invitee: decodeAddressWord(topicAt(log.topics, 2)),
+    commitment: topicAt(log.topics, 3) as `0x${string}`,
+    recipient: decodeAddressWord(wordAt(words, 0)),
+    amount: decodeUintWord(wordAt(words, 1)).toString(),
+    claimedAt: decodeUintWord(wordAt(words, 2)).toString()
   };
 }
 

@@ -60,7 +60,8 @@ const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f
 const interplanetaryMissileAttackTopic = "0x44a8c2b7632935050468ed4d9acfb1e99a09cec32fd65811964b95b3693f872c";
 const randomnessFulfilledTopic = "0x864b23caf5999ffe7e7b5bc685db237bcef9eb7bd6423c2fd395d9b4663372f5";
 const referralCodeClaimedTopic = "0xa7124569721bd8a9fca99961778919ebde17b82e397d5dbeb14eb7b5e1e051fb";
-const referralInviteRedeemedTopic = "0x897cc27985afe9fc1880f96288d655b8348796f5ab4cda3eb835be64f8b97088";
+const referralInviteRedeemedTopic = "0xf0e76a5aa6e423f978c7616fd6933b5d376a32654fc67c6fad0afdbc744ccce1";
+const referralRewardClaimedTopic = "0x55b0859d9094fa40dfdcbcdd82c0d785132f6a627b6083e228d6bddb5e498558";
 const planet: SettledPlanetEvent = {
   eventName: "PlanetStarted",
   transactionHash: "0xabc",
@@ -225,11 +226,12 @@ describe("SettlementIndexer", () => {
     });
   });
 
-  test("indexes referral claim and redemption events for exact transaction confirmation", () => {
+  test("indexes canonical referral claim, payout, credit, and reward-claim events", () => {
     const invitee = "0x3333333333333333333333333333333333333333" as Address;
     const commitment = `0x${"12".repeat(32)}` as `0x${string}`;
     const claimTxHash = `0x${"ab".repeat(32)}` as `0x${string}`;
     const redemptionTxHash = `0x${"cd".repeat(32)}` as `0x${string}`;
+    const rewardClaimTxHash = `0x${"de".repeat(32)}` as `0x${string}`;
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
       async listMoonChanceReportEvents() { return []; },
@@ -248,7 +250,14 @@ describe("SettlementIndexer", () => {
       transactionHash: redemptionTxHash,
       logIndex: "0x0",
       topics: [referralInviteRedeemedTopic, addressTopic(player), addressTopic(invitee), commitment],
-      data: abiWords(1783526500n)
+      data: abiWords(25_000_000_000_000_000n, 0n, 1n, 1783526500n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x93",
+      transactionHash: rewardClaimTxHash,
+      logIndex: "0x0",
+      topics: [referralRewardClaimedTopic, addressTopic(player), addressTopic(invitee), commitment],
+      data: abiWords(BigInt(player), 25_000_000_000_000_000n, 1783526600n)
     });
 
     expect(indexer.referralClaim(player, commitment, claimTxHash)).toMatchObject({
@@ -263,9 +272,24 @@ describe("SettlementIndexer", () => {
       invitee,
       commitment,
       transactionHash: redemptionTxHash,
+      rewardAmount: "25000000000000000",
+      paid: false,
+      credited: true,
       redeemedAt: "1783526500"
     });
     expect(indexer.referralRedemption(invitee, invitee, commitment, redemptionTxHash)).toBeNull();
+    expect(indexer.referralClaims(player)).toHaveLength(1);
+    expect(indexer.referralRedemptionsForInviter(player)).toHaveLength(1);
+    expect(indexer.referralRewardClaimsForInviter(player)).toEqual([
+      expect.objectContaining({
+        inviter: player,
+        invitee,
+        commitment,
+        recipient: player,
+        amount: "25000000000000000",
+        claimedAt: "1783526600"
+      })
+    ]);
   });
 
   test("surfaces a real error when the cold rebuild stalls past its deadline (VEY-KANEO-485)", async () => {

@@ -1,5 +1,5 @@
 import { sdk } from "@farcaster/miniapp-sdk";
-import { keccak256, toHex } from "viem";
+import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
 import { GAME_UNAVAILABLE_MESSAGE, serverUnavailableRetryMessage } from "./gameUnavailable";
 import type { ApiPlanet } from "./data/mockUniverse";
 import type { PlanetType } from "./types";
@@ -95,17 +95,28 @@ export type SettlementTransactionOptions = {
 
 export type ReferralInviteSummary = {
   claimedAt: string;
-  code: string;
+  code: string | null;
   commitment: string;
   expired?: boolean;
   expiresAt?: string;
-  link: string;
+  link: string | null;
   nextRedemptionAt: string | null;
   owner: string;
   redemptionCount: number;
   remainingRedemptions: number;
   status: "pending_claim" | "active" | "expired";
   txHash?: string | null;
+};
+
+export type ReferralRedemptionRecord = {
+  invitee: string;
+  commitment: string;
+  redeemedAt: string;
+  rewardAmountWei: string | null;
+  paid: boolean;
+  credited: boolean;
+  paymentStatus: "paid" | "credited" | "claimed" | "legacy_unknown";
+  txHash: string;
 };
 
 export type ReferralDashboard = {
@@ -116,6 +127,23 @@ export type ReferralDashboard = {
   nextRedemptionAt: string | null;
   remainingClaims: number;
   remainingRedemptions: number;
+  rewardPerUseWei: string | null;
+  totalAccruedRewardsWei: string;
+  totalPaidRewardsWei: string;
+  claimableRewardsWei: string;
+  redemptions: ReferralRedemptionRecord[];
+};
+
+export type ReferralResolution = {
+  valid: boolean;
+  status: "active" | "expired" | "exhausted" | "self_invite" | "already_redeemed" | "unclaimed" | "invalid" | "unavailable";
+  message: string;
+  commitment: string | null;
+  expiresAt: string | null;
+  nextRedemptionAt: string | null;
+  remainingRedemptions: number;
+  startPriceWei: string | null;
+  inviterRewardWei: string | null;
 };
 
 export type ReferralRedemption = {
@@ -2660,7 +2688,7 @@ export async function sendReferralClaimTransaction(
   provider: Eip1193Provider,
   account: string,
   config: SettlementConfig,
-  commitment: string
+  codeHash: string
 ): Promise<string> {
   if (!settlementContractConfigured(config)) {
     throw new Error("Settlement contract address is not configured.");
@@ -2671,7 +2699,7 @@ export async function sendReferralClaimTransaction(
   return sendWalletTransaction(provider, account, {
     from: account,
     to: config.referralSystemAddress,
-    data: `${CLAIM_REFERRAL_CODE_SELECTOR}${encodeHexWord(commitment, "Referral commitment")}`
+    data: `${CLAIM_REFERRAL_CODE_SELECTOR}${encodeHexWord(codeHash, "Referral code hash")}`
   });
 }
 
@@ -3553,17 +3581,44 @@ export async function fetchReferralDashboard(apiUrl: string, wallet: string): Pr
   );
 }
 
+export async function fetchPrivateReferralDashboard(
+  apiUrl: string,
+  wallet: string,
+  signature: string
+): Promise<ReferralDashboard> {
+  return fetchGameApiMutation<ReferralDashboard>(
+    `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals`,
+    "Private referral invites",
+    { signature }
+  );
+}
+
+export async function persistReferralClaimIntent(
+  apiUrl: string,
+  wallet: string,
+  code: string,
+  commitment: string,
+  signature: string
+): Promise<void> {
+  await fetchGameApiMutation(
+    `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals/claim-intent`,
+    "Referral claim recovery",
+    { code, commitment, signature }
+  );
+}
+
 export async function recordReferralClaimTransaction(
   apiUrl: string,
   wallet: string,
   code: string,
   commitment: string,
-  txHash: string
-): Promise<ReferralInviteSummary> {
-  return fetchGameApiMutation<ReferralInviteSummary>(
+  txHash: string,
+  signature: string
+): Promise<void> {
+  await fetchGameApiMutation(
     `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals/claim-transaction`,
     "Referral claim transaction",
-    { code, commitment, txHash }
+    { code, commitment, signature, txHash }
   );
 }
 
@@ -3581,8 +3636,31 @@ export function normalizeReferralClaimCode(code: string): string {
   return normalized;
 }
 
-export function referralCommitment(code: string): string {
+export function referralCodeHash(code: string): string {
   return keccak256(toHex(normalizeReferralClaimCode(code)));
+}
+
+export function referralCommitment(code: string, inviter: string): string {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(inviter)) {
+    throw new Error("Referral inviter must be a 0x-prefixed EVM address.");
+  }
+  return keccak256(encodeAbiParameters(
+    parseAbiParameters("address,bytes32"),
+    [inviter as `0x${string}`, referralCodeHash(code) as `0x${string}`]
+  ));
+}
+
+export async function validateReferralCode(
+  apiUrl: string,
+  code: string,
+  invitee?: string
+): Promise<ReferralResolution> {
+  const url = new URL(`${apiUrl.replace(/\/+$/, "")}/referrals/resolve`);
+  url.searchParams.set("code", code);
+  if (invitee) url.searchParams.set("invitee", invitee);
+  return fetchGameApiJson<ReferralResolution>(url.toString(), "Referral validation", {
+    cache: "no-store"
+  });
 }
 
 export async function redeemReferralCode(apiUrl: string, code: string, invitee: string): Promise<ReferralRedemption> {

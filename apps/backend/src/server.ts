@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 import { generateSystem } from "@veydrift/universe";
 import { createPublicClient, webSocket, type Log as ViemLog } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { CachedChainReader } from "./cachedReader";
 import { ChainSyncService } from "./chainSync";
 import type { ChainSyncSnapshot, LiveLogSubscriber } from "./chainSync";
@@ -62,12 +63,10 @@ import {
 import {
   buildReferralRedemption,
   createReferralStore,
-  ReferralInviteeAlreadyRedeemedError,
-  ReferralInviteExpiredError,
-  ReferralInviteUnclaimedError,
   ReferralInviteStore,
-  ReferralQuotaError,
-  ReferralSelfInviteError
+  resolveReferralCode,
+  verifyReferralWalletSignature,
+  type ReferralResolveResult
 } from "./referrals";
 import { deriveInfrastructureFields, isCombatShipId, zeroResources } from "./readModels";
 import { planetArchetypeForTemperature, planetMetadata, planetMultipliers, systemSnapshot, type PlanetMetadata, type SystemSnapshot } from "./universe";
@@ -161,6 +160,8 @@ type RuntimeConfig = {
   moonContractAddress: string | null;
   network: string;
   randomnessEngineAddress: string | null;
+  referralSignerAddress: string | null;
+  referralStartPriceWei: string | null;
   referralSystemAddress: string | null;
   resourceTokenAddresses: {
     crystal: string | null;
@@ -566,9 +567,66 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
       try {
         assertAddress(wallet);
+        if (!indexer) return indexedReadNotReadyResponse("referral dashboard", indexer, { wallet });
+        return Response.json(referralStore.dashboard(
+          wallet,
+          indexer,
+          loaded.config.settlementStartPriceWei ?? null,
+          referralConfigurationReady(loaded.config),
+          false
+        ), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname.match(/^\/wallet\/[^/]+\/referrals$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        const body = await readJsonBody(request);
+        if (!await verifyReferralWalletSignature({
+          action: "dashboard",
+          signature: body?.signature,
+          wallet
+        })) {
+          return invalidReferralSignatureResponse();
+        }
+        if (!indexer) return indexedReadNotReadyResponse("private referral dashboard", indexer, { wallet });
+        return Response.json(referralStore.dashboard(
+          wallet,
+          indexer,
+          loaded.config.settlementStartPriceWei ?? null,
+          referralConfigurationReady(loaded.config),
+          true
+        ), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "POST" && url.pathname.match(/^\/wallet\/[^/]+\/referrals\/claim-intent$/)) {
+      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
+      try {
+        assertAddress(wallet);
+        const body = await readJsonBody(request);
+        const commitment = String(body?.commitment ?? "");
+        if (!await verifyReferralWalletSignature({
+          action: "claim-transaction",
+          commitment,
+          signature: body?.signature,
+          wallet
+        })) {
+          return invalidReferralSignatureResponse();
+        }
+        const intent = referralStore.recordClaimIntent(wallet, body?.code, commitment);
         return Response.json({
-          ...referralStore.dashboard(wallet),
-          configured: Boolean(loaded.config.referralSignerPrivateKey)
+          commitment: intent.commitment,
+          persisted: true
         }, {
           headers: corsHeaders
         });
@@ -591,6 +649,14 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
           throw new Error("txHash must be a 0x-prefixed 32-byte transaction hash.");
         }
+        if (!await verifyReferralWalletSignature({
+          action: "claim-transaction",
+          commitment,
+          signature: body?.signature,
+          wallet
+        })) {
+          return invalidReferralSignatureResponse();
+        }
         if (!indexer) return indexedReadNotReadyResponse("referral claim", indexer, { wallet });
         const claim = indexer.referralClaim(wallet, commitment as `0x${string}`, txHash as `0x${string}`);
         if (!claim) {
@@ -604,7 +670,34 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         }
         const claimedAtSeconds = Number(claim.claimedAt);
         const claimedAt = Number.isFinite(claimedAtSeconds) ? new Date(claimedAtSeconds * 1_000) : new Date();
-        return Response.json(referralStore.recordClaimTransaction(wallet, code, commitment, txHash, claimedAt), {
+        referralStore.recordClaimTransaction(wallet, code, commitment, txHash, claimedAt);
+        return Response.json(referralStore.dashboard(
+          wallet,
+          indexer,
+          loaded.config.settlementStartPriceWei ?? null,
+          referralConfigurationReady(loaded.config),
+          true,
+          claimedAt
+        ), {
+          headers: corsHeaders
+        });
+      } catch (error) {
+        return errorResponse(error, 400);
+      }
+    }
+
+    if (request.method === "GET" && url.pathname === "/referrals/resolve") {
+      try {
+        if (!indexer) return indexedReadNotReadyResponse("referral validation", indexer, {});
+        const invitee = url.searchParams.get("invitee") ?? undefined;
+        if (invitee) assertAddress(invitee);
+        return Response.json(resolveReferralCode({
+          code: url.searchParams.get("code"),
+          index: indexer,
+          ...(invitee ? { invitee } : {}),
+          startPriceWei: loaded.config.settlementStartPriceWei ?? null,
+          store: referralStore
+        }), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -617,84 +710,32 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         const body = await readJsonBody(request);
         const invitee = String(body?.invitee ?? "");
         assertAddress(invitee);
-        if (!loaded.config.referralSignerPrivateKey) {
+        if (!referralConfigurationReady(loaded.config)) {
           return Response.json({
-            error: "referral_signer_unconfigured",
-            message: "Referral invites are not configured on this deployment."
+            error: "referral_configuration_incomplete",
+            message: "Referral signer, game, referral contract, and current settlement price must be configured together."
           }, {
             headers: corsHeaders,
             status: 503
           });
         }
-        if (!loaded.config.gameContractAddress) {
-          return Response.json({
-            error: "referral_contract_unconfigured",
-            message: "Referral settlement is not configured on this deployment."
-          }, {
-            headers: corsHeaders,
-            status: 503
-          });
+        if (!indexer) return indexedReadNotReadyResponse("referral redemption", indexer, { invitee });
+        const resolution = resolveReferralCode({
+          code: body?.code,
+          index: indexer,
+          invitee,
+          startPriceWei: loaded.config.settlementStartPriceWei ?? null,
+          store: referralStore
+        });
+        if (!resolution.valid || !resolution.commitment) {
+          return referralResolveErrorResponse(resolution);
         }
-        const invite = referralStore.pendingRedemption(body?.code, invitee);
-        if (!invite) {
-          return Response.json({
-            error: "referral_code_not_found",
-            message: "Referral code was not found."
-          }, {
-            headers: corsHeaders,
-            status: 404
-          });
-        }
+        const invite = referralStore.findByCommitment(resolution.commitment);
+        if (!invite) return referralResolveErrorResponse({ ...resolution, valid: false, status: "invalid" });
         return Response.json(await buildReferralRedemption(loaded.config, invite, invitee), {
           headers: corsHeaders
         });
       } catch (error) {
-        if (error instanceof ReferralInviteUnclaimedError) {
-          return Response.json({
-            error: "referral_invite_unclaimed",
-            message: error.message
-          }, {
-            headers: corsHeaders,
-            status: 409
-          });
-        }
-        if (error instanceof ReferralInviteExpiredError) {
-          return Response.json({
-            error: "referral_invite_expired",
-            message: error.message
-          }, {
-            headers: corsHeaders,
-            status: 410
-          });
-        }
-        if (error instanceof ReferralInviteeAlreadyRedeemedError) {
-          return Response.json({
-            error: "referral_invitee_already_redeemed",
-            message: error.message
-          }, {
-            headers: corsHeaders,
-            status: 409
-          });
-        }
-        if (error instanceof ReferralSelfInviteError) {
-          return Response.json({
-            error: "referral_self_invite",
-            message: error.message
-          }, {
-            headers: corsHeaders,
-            status: 409
-          });
-        }
-        if (error instanceof ReferralQuotaError) {
-          return Response.json({
-            error: "referral_redemption_quota_exceeded",
-            message: "Referral redemption quota exceeded.",
-            nextRedemptionAt: error.nextClaimAt
-          }, {
-            headers: corsHeaders,
-            status: 429
-          });
-        }
         return errorResponse(error, 400);
       }
     }
@@ -734,68 +775,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             status: 409
           });
         }
-        const invite = referralStore.recordRedemption(body?.code, invitee, txHash);
-        if (!invite) {
-          return Response.json({
-            error: "referral_code_not_found",
-            message: "Referral code was not found."
-          }, {
-            headers: corsHeaders,
-            status: 404
-          });
-        }
-        return Response.json({
-          invite: referralStore.dashboard(invite.owner).invite
-        }, {
+        return Response.json({ redemption }, {
           headers: corsHeaders
         });
       } catch (error) {
-        if (error instanceof ReferralInviteUnclaimedError) {
-          return Response.json({
-            error: "referral_invite_unclaimed",
-            message: error.message
-          }, {
-            headers: corsHeaders,
-            status: 409
-          });
-        }
-        if (error instanceof ReferralInviteExpiredError) {
-          return Response.json({
-            error: "referral_invite_expired",
-            message: error.message
-          }, {
-            headers: corsHeaders,
-            status: 410
-          });
-        }
-        if (error instanceof ReferralInviteeAlreadyRedeemedError) {
-          return Response.json({
-            error: "referral_invitee_already_redeemed",
-            message: error.message
-          }, {
-            headers: corsHeaders,
-            status: 409
-          });
-        }
-        if (error instanceof ReferralSelfInviteError) {
-          return Response.json({
-            error: "referral_self_invite",
-            message: error.message
-          }, {
-            headers: corsHeaders,
-            status: 409
-          });
-        }
-        if (error instanceof ReferralQuotaError) {
-          return Response.json({
-            error: "referral_redemption_quota_exceeded",
-            message: "Referral redemption quota exceeded.",
-            nextRedemptionAt: error.nextClaimAt
-          }, {
-            headers: corsHeaders,
-            status: 429
-          });
-        }
         return errorResponse(error, 400);
       }
     }
@@ -2189,6 +2172,34 @@ function invalidReferralSignatureResponse(): Response {
       status: 401
     }
   );
+}
+
+function referralConfigurationReady(config: BackendConfig): boolean {
+  return Boolean(
+    config.referralSignerPrivateKey
+      && config.referralSystemAddress
+      && config.gameContractAddress
+      && config.settlementStartPriceWei
+  );
+}
+
+function referralResolveErrorResponse(resolution: ReferralResolveResult): Response {
+  const status = resolution.status === "invalid"
+    ? 404
+    : resolution.status === "expired"
+      ? 410
+      : resolution.status === "exhausted"
+        ? 429
+        : resolution.status === "unavailable"
+          ? 503
+          : 409;
+  return Response.json({
+    error: `referral_${resolution.status}`,
+    ...resolution
+  }, {
+    headers: corsHeaders,
+    status
+  });
 }
 
 function withPlayerProfile<T extends { wallet: `0x${string}` }>(
@@ -3729,7 +3740,13 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
   const moonContractAddress = process.env.VEYDRIFT_MOON_CONTRACT_ADDRESS ?? null;
   const randomnessEngineAddress = process.env.VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS ?? null;
   const referralSystemAddress = process.env.VEYDRIFT_REFERRAL_SYSTEM_ADDRESS ?? null;
-  const referralSignerConfigured = Boolean(process.env.VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY);
+  const referralSignerPrivateKey = process.env.VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY;
+  const referralSignerAddress = referralSignerPrivateKey && /^0x[a-fA-F0-9]{64}$/.test(referralSignerPrivateKey)
+    ? privateKeyToAccount(referralSignerPrivateKey as `0x${string}`).address
+    : null;
+  const referralStartPriceWei = /^\d+$/.test(process.env.VEYDRIFT_SETTLEMENT_START_PRICE_WEI ?? "")
+    ? process.env.VEYDRIFT_SETTLEMENT_START_PRICE_WEI ?? null
+    : null;
   const allianceContractAddress = process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS ?? null;
   const burningChickenNftContractAddress = process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS ?? null;
   const burningChickenBurnContractAddress = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS ?? null;
@@ -3767,7 +3784,12 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
       migrationConfigured: Boolean(migrationContractAddress),
       moonConfigured: Boolean(moonContractAddress),
       randomnessConfigured: Boolean(randomnessEngineAddress),
-      referralsConfigured: referralSignerConfigured,
+      referralsConfigured: Boolean(
+        referralSignerAddress
+          && referralSystemAddress
+          && gameContractAddress
+          && referralStartPriceWei
+      ),
       researchEndpoint: true,
       resourceTokensConfigured: Boolean(
         resourceTokenAddresses.metal
@@ -3782,6 +3804,8 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
     moonContractAddress,
     network: process.env.VEYDRIFT_NETWORK_NAME ?? "Base Sepolia",
     randomnessEngineAddress,
+    referralSignerAddress,
+    referralStartPriceWei,
     referralSystemAddress,
     resourceTokenAddresses,
     rpcProvider: rpcUrl.includes("alchemy") ? "alchemy" : "unknown"

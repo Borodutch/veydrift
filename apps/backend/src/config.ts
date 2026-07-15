@@ -262,6 +262,27 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     });
   }
 
+  if (env.VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY || env.VEYDRIFT_REFERRAL_SYSTEM_ADDRESS) {
+    if (!referralSignerPrivateKey) {
+      problems.push({
+        field: "VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY",
+        message: "Referral configuration requires the backend redemption signer key."
+      });
+    }
+    if (!referralSystemAddress) {
+      problems.push({
+        field: "VEYDRIFT_REFERRAL_SYSTEM_ADDRESS",
+        message: "Referral configuration requires the deployed referral system address."
+      });
+    }
+    if (settlementStartPriceWei === undefined) {
+      problems.push({
+        field: "VEYDRIFT_SETTLEMENT_START_PRICE_WEI",
+        message: "Referral configuration requires the exact deployed game startPrice."
+      });
+    }
+  }
+
   return {
     config: {
       ...(allianceContractAddress ? { allianceContractAddress } : {}),

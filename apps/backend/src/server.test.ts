@@ -1344,6 +1344,8 @@ describe("Veydrift backend", () => {
       moonContractAddress: null,
       network: "Base Sepolia",
       randomnessEngineAddress: null,
+      referralSignerAddress: null,
+      referralStartPriceWei: null,
       referralSystemAddress: null,
       resourceTokenAddresses: {
         crystal: null,
@@ -1800,6 +1802,8 @@ describe("Veydrift backend", () => {
             moonContractAddress: null,
             network: "Base Sepolia",
             randomnessEngineAddress: null,
+            referralSignerAddress: null,
+            referralStartPriceWei: null,
             referralSystemAddress: null,
             resourceTokenAddresses: {
               crystal: null,

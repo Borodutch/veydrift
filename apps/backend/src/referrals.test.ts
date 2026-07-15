@@ -4,14 +4,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
 import type { BackendConfig } from "./config";
+import type {
+  IndexedReferralClaimEvent,
+  IndexedReferralRedemptionEvent,
+  IndexedReferralRewardClaimEvent
+} from "./evm";
 import type { SettlementIndexer } from "./indexer";
+import {
+  ReferralInviteStore,
+  referralCodeHash,
+  referralCommitment,
+  referralQuota,
+  referralWalletMessage,
+  resolveReferralCode
+} from "./referrals";
 import { createRequestHandler } from "./server";
-import { ReferralInviteStore, referralCommitment, referralQuota } from "./referrals";
 
 const playerAccount = privateKeyToAccount("0x2222222222222222222222222222222222222222222222222222222222222222");
 const player = playerAccount.address;
-const invitee = "0x3333333333333333333333333333333333333333";
+const invitee = "0x3333333333333333333333333333333333333333" as `0x${string}`;
 const signerKey = "0x1111111111111111111111111111111111111111111111111111111111111111";
+const startPriceWei = "12000000000000000";
 
 function testConfig(referralStorePath: string): BackendConfig {
   return {
@@ -25,6 +38,7 @@ function testConfig(referralStorePath: string): BackendConfig {
     randomnessCommitmentStorePath: ".data/test-randomness.json",
     referralSignerPrivateKey: signerKey,
     referralStorePath,
+    referralSystemAddress: "0x8888888888888888888888888888888888888888",
     resourceTokenAddresses: {
       crystal: "0x6666666666666666666666666666666666666666",
       deuterium: "0x7777777777777777777777777777777777777777",
@@ -33,16 +47,76 @@ function testConfig(referralStorePath: string): BackendConfig {
     rpcSource: "custom-url",
     rpcUrl: "https://example.invalid/rpc",
     settlementContractAddress: "0x4444444444444444444444444444444444444444",
-    settlementStartPriceWei: "50000000000000000",
+    settlementStartPriceWei: startPriceWei,
     wsRpcSource: "missing"
   };
 }
 
+function referralIndex() {
+  const claims: IndexedReferralClaimEvent[] = [];
+  const redemptions: IndexedReferralRedemptionEvent[] = [];
+  const rewardClaims: IndexedReferralRewardClaimEvent[] = [];
+  const indexer = {
+    referralClaim: (owner: string, commitment: string, txHash: string) => claims.find((event) =>
+      event.inviter.toLowerCase() === owner.toLowerCase()
+      && event.commitment.toLowerCase() === commitment.toLowerCase()
+      && event.transactionHash.toLowerCase() === txHash.toLowerCase()
+    ) ?? null,
+    referralClaims: (owner: string) => claims.filter((event) => event.inviter.toLowerCase() === owner.toLowerCase()),
+    referralRedemption: (owner: string, wallet: string, commitment: string, txHash: string) => redemptions.find((event) =>
+      event.inviter.toLowerCase() === owner.toLowerCase()
+      && event.invitee.toLowerCase() === wallet.toLowerCase()
+      && event.commitment.toLowerCase() === commitment.toLowerCase()
+      && event.transactionHash.toLowerCase() === txHash.toLowerCase()
+    ) ?? null,
+    referralRedemptionsForInviter: (owner: string) => redemptions.filter((event) => event.inviter.toLowerCase() === owner.toLowerCase()),
+    referralRewardClaimsForInviter: (owner: string) => rewardClaims.filter((event) => event.inviter.toLowerCase() === owner.toLowerCase())
+  } as unknown as SettlementIndexer;
+  return { claims, indexer, redemptions, rewardClaims };
+}
+
+function claimEvent(commitment: `0x${string}`, txByte = "aa", claimedAt = Math.floor(Date.now() / 1_000)): IndexedReferralClaimEvent {
+  return {
+    eventName: "ReferralCodeClaimed",
+    transactionHash: `0x${txByte.repeat(32)}`,
+    blockNumber: "100",
+    logIndex: "0x0",
+    inviter: player,
+    commitment,
+    claimedAt: claimedAt.toString()
+  };
+}
+
+function redemptionEvent(input: {
+  commitment: `0x${string}`;
+  invitee?: `0x${string}`;
+  paid?: boolean;
+  credited?: boolean;
+  redeemedAt?: number;
+  txByte?: string;
+}): IndexedReferralRedemptionEvent {
+  return {
+    eventName: "ReferralInviteRedeemed",
+    transactionHash: `0x${(input.txByte ?? "bb").repeat(32)}`,
+    blockNumber: "101",
+    logIndex: "0x0",
+    inviter: player,
+    invitee: input.invitee ?? invitee,
+    commitment: input.commitment,
+    rewardAmount: "6000000000000000",
+    paid: input.paid ?? true,
+    credited: input.credited ?? false,
+    redeemedAt: (input.redeemedAt ?? Math.floor(Date.now() / 1_000)).toString()
+  };
+}
+
 describe("referral invites", () => {
-  test("hashes editable invite codes and computes rolling redemption quota", () => {
+  test("binds commitments to the inviter and computes the exact rolling quota boundary", () => {
     const code = "borodutch";
-    expect(referralCommitment(code)).toMatch(/^0x[a-fA-F0-9]{64}$/);
-    expect(referralCommitment(code)).toBe(referralCommitment(` ${code} `));
+    const other = "0x9999999999999999999999999999999999999999";
+    expect(referralCodeHash(code)).toMatch(/^0x[a-fA-F0-9]{64}$/);
+    expect(referralCommitment(code, player)).toBe(referralCommitment(` ${code} `, player));
+    expect(referralCommitment(code, player)).not.toBe(referralCommitment(code, other));
 
     const now = new Date("2026-07-08T12:00:00.000Z");
     const quota = referralQuota([
@@ -50,190 +124,273 @@ describe("referral invites", () => {
       { redeemedAt: "2026-07-08T10:00:00.000Z" },
       { redeemedAt: "2026-07-08T09:00:00.000Z" }
     ], now);
-    expect(quota.remainingClaims).toBe(0);
-    expect(quota.nextClaimAt).toBe("2026-07-09T09:00:00.000Z");
+    expect(quota).toEqual({
+      remainingClaims: 0,
+      nextClaimAt: "2026-07-09T09:00:00.000Z"
+    });
+    expect(referralQuota([
+      { redeemedAt: "2026-07-07T12:00:00.000Z" },
+      { redeemedAt: "2026-07-08T10:00:00.000Z" },
+      { redeemedAt: "2026-07-08T09:00:00.000Z" }
+    ], now).remainingClaims).toBe(1);
   });
 
-  test("serves dashboard, claim transaction recording, and invitee-bound redemption", async () => {
+  test("protects private codes, persists preimages before submission, and reconciles chain events after callback loss", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-referrals-"));
     try {
       const storePath = join(dir, "referrals.json");
-      const config = testConfig(storePath);
       const store = new ReferralInviteStore(storePath);
-      let claimIndexed = false;
-      let redemptionIndexed = false;
-      const claimTxHash = `0x${"aa".repeat(32)}` as `0x${string}`;
-      const redemptionTxHash = `0x${"bb".repeat(32)}` as `0x${string}`;
+      const config = testConfig(storePath);
+      const chain = referralIndex();
       const code = "borodutch";
-      const claimedCommitment = referralCommitment(code);
-      const indexedClaimedAt = Math.floor(Date.now() / 1_000).toString();
-      const indexer = {
-        walletSettlement: (wallet: string) => ({
-          homePlanetId: wallet.toLowerCase() === player.toLowerCase() ? "1" : wallet.toLowerCase() === invitee.toLowerCase() ? "2" : null
-        }),
-        referralClaim: (owner: string, commitment: string, txHash: string) =>
-          claimIndexed
-          && owner.toLowerCase() === player.toLowerCase()
-          && commitment.toLowerCase() === claimedCommitment.toLowerCase()
-          && txHash.toLowerCase() === claimTxHash.toLowerCase()
-            ? { claimedAt: indexedClaimedAt, owner, commitment, txHash }
-            : null,
-        referralRedemption: (owner: string, wallet: string, commitment: string, txHash: string) =>
-          redemptionIndexed
-          && owner.toLowerCase() === player.toLowerCase()
-          && wallet.toLowerCase() === invitee.toLowerCase()
-          && commitment.toLowerCase() === claimedCommitment.toLowerCase()
-          && txHash.toLowerCase() === redemptionTxHash.toLowerCase()
-            ? { owner, wallet, commitment, txHash }
-            : null
-      } as unknown as SettlementIndexer;
-      const handler = createRequestHandler({
+      const commitment = referralCommitment(code, player);
+      const claimTxHash = `0x${"aa".repeat(32)}`;
+      const claimSignature = await playerAccount.signMessage({
+        message: referralWalletMessage(player, "claim-transaction", commitment)
+      });
+      const dashboardSignature = await playerAccount.signMessage({
+        message: referralWalletMessage(player, "dashboard")
+      });
+      const handler = createRequestHandler({ config, indexer: chain.indexer, referralStore: store, role: "reader" });
+
+      const intentResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals/claim-intent`, {
+        body: JSON.stringify({ code, commitment, signature: claimSignature }),
+        headers: { "content-type": "application/json" },
+        method: "POST"
+      }));
+      expect(intentResponse.status).toBe(200);
+
+      const publicPending = await (await handler(new Request(`http://localhost/wallet/${player}/referrals`))).json() as {
+        invite: { code: string | null; link: string | null; status: string } | null;
+      };
+      expect(publicPending.invite).toMatchObject({ code: null, link: null, status: "pending_claim" });
+
+      const unauthenticatedPrivate = await handler(new Request(`http://localhost/wallet/${player}/referrals`, {
+        body: JSON.stringify({}),
+        headers: { "content-type": "application/json" },
+        method: "POST"
+      }));
+      expect(unauthenticatedPrivate.status).toBe(401);
+
+      // Simulate successful on-chain claim followed by callback loss and backend restart.
+      chain.claims.push(claimEvent(commitment, "aa"));
+      const restartedStore = new ReferralInviteStore(storePath);
+      const restartedHandler = createRequestHandler({
         config,
-        indexer,
-        referralStore: store,
+        indexer: chain.indexer,
+        referralStore: restartedStore,
         role: "reader"
       });
-      const dashboardResponseWithoutSignature = await handler(new Request(`http://localhost/wallet/${player}/referrals`));
-      expect(dashboardResponseWithoutSignature.status).toBe(200);
-
-      const unindexedClaimResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals/claim-transaction`, {
-        body: JSON.stringify({ code, commitment: claimedCommitment, txHash: claimTxHash }),
+      const privateDashboardResponse = await restartedHandler(new Request(`http://localhost/wallet/${player}/referrals`, {
+        body: JSON.stringify({ signature: dashboardSignature }),
         headers: { "content-type": "application/json" },
         method: "POST"
       }));
-      expect(unindexedClaimResponse.status).toBe(409);
+      const privateDashboard = await privateDashboardResponse.json() as {
+        invite: { code: string | null; link: string | null; status: string; txHash: string | null } | null;
+        rewardPerUseWei: string | null;
+      };
+      expect(privateDashboardResponse.status).toBe(200);
+      expect(privateDashboard.invite).toMatchObject({
+        code,
+        link: `https://veydrift.com?ref=${code}`,
+        status: "active",
+        txHash: claimTxHash
+      });
+      expect(privateDashboard.rewardPerUseWei).toBe("6000000000000000");
 
-      const unclaimedRedeemResponse = await handler(new Request("http://localhost/referrals/redeem", {
+      const publicActive = await (await restartedHandler(new Request(`http://localhost/wallet/${player}/referrals`))).json() as {
+        invite: { code: string | null; link: string | null } | null;
+      };
+      expect(publicActive.invite).toMatchObject({ code: null, link: null });
+
+      const resolveResponse = await restartedHandler(new Request(
+        `http://localhost/referrals/resolve?code=${code}&invitee=${invitee}`
+      ));
+      expect(await resolveResponse.json()).toMatchObject({
+        valid: true,
+        status: "active",
+        startPriceWei,
+        inviterRewardWei: "6000000000000000",
+        commitment
+      });
+
+      const redeemResponse = await restartedHandler(new Request("http://localhost/referrals/redeem", {
         body: JSON.stringify({ code, invitee }),
-        method: "POST"
-      }));
-      expect(unclaimedRedeemResponse.status).toBe(404);
-
-      claimIndexed = true;
-      const txResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals/claim-transaction`, {
-        body: JSON.stringify({ code, commitment: claimedCommitment, txHash: claimTxHash }),
         headers: { "content-type": "application/json" },
         method: "POST"
       }));
-      expect(txResponse.status).toBe(200);
-      const claimed = await txResponse.json() as {
-        code: string;
-        commitment: string;
-        expiresAt: string;
-        link: string;
-      };
-      expect(claimed.code).toBe(code);
-      expect(claimed.commitment).toBe(claimedCommitment);
-      expect(claimed.expiresAt).toBe(new Date((Number(indexedClaimedAt) * 1_000) + 24 * 60 * 60 * 1_000).toISOString());
-      expect(claimed.expiresAt).toBeDefined();
-      expect(claimed.link).toBe(`https://veydrift.com?ref=${code}`);
-
-      const redeemResponse = await handler(new Request("http://localhost/referrals/redeem", {
-        body: JSON.stringify({ code, invitee }),
-        method: "POST"
-      }));
-      const redeem = await redeemResponse.json() as {
-        commitment: string;
-        r: string;
-        s: string;
-        signature: string;
-        v: number;
-      };
+      const redeem = await redeemResponse.json() as { commitment: string; signature: string };
       expect(redeemResponse.status).toBe(200);
-      expect(redeem.commitment).toBe(claimedCommitment);
-      expect(redeem.r).toMatch(/^0x[a-fA-F0-9]{64}$/);
-      expect(redeem.s).toMatch(/^0x[a-fA-F0-9]{64}$/);
-      expect([27, 28]).toContain(redeem.v);
+      expect(redeem.commitment).toBe(commitment);
       expect(redeem.signature).toMatch(/^0x[a-fA-F0-9]{130}$/);
-      expect(privateKeyToAccount(signerKey).address.toLowerCase()).toBe("0x19e7e376e7c213b7e7e7e46cc70a5dd086daff2a");
 
-      const duplicateRedeemResponse = await handler(new Request("http://localhost/referrals/redeem", {
-        body: JSON.stringify({ code, invitee }),
+      const callbackWithoutSignature = await restartedHandler(new Request(`http://localhost/wallet/${player}/referrals/claim-transaction`, {
+        body: JSON.stringify({ code, commitment, txHash: claimTxHash }),
+        headers: { "content-type": "application/json" },
         method: "POST"
       }));
-      expect(duplicateRedeemResponse.status).toBe(200);
-
-      const beforeConfirmationDashboardResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals`));
-      const beforeConfirmationDashboard = await beforeConfirmationDashboardResponse.json() as {
-        invite: { redemptionCount: number } | null;
-        remainingRedemptions: number;
-      };
-      expect(beforeConfirmationDashboard.remainingRedemptions).toBe(3);
-      expect(beforeConfirmationDashboard.invite?.redemptionCount).toBe(0);
-
-      const unconfirmedRedemptionResponse = await handler(new Request("http://localhost/referrals/redeem-transaction", {
-        body: JSON.stringify({ code, invitee, txHash: redemptionTxHash }),
-        method: "POST"
-      }));
-      expect(unconfirmedRedemptionResponse.status).toBe(409);
-
-      redemptionIndexed = true;
-      const unrelatedRedemptionResponse = await handler(new Request("http://localhost/referrals/redeem-transaction", {
-        body: JSON.stringify({ code, invitee, txHash: `0x${"cc".repeat(32)}` }),
-        method: "POST"
-      }));
-      expect(unrelatedRedemptionResponse.status).toBe(409);
-
-      const mismatchedInviteeResponse = await handler(new Request("http://localhost/referrals/redeem-transaction", {
-        body: JSON.stringify({ code, invitee: "0x4444444444444444444444444444444444444444", txHash: redemptionTxHash }),
-        method: "POST"
-      }));
-      expect(mismatchedInviteeResponse.status).toBe(409);
-
-      const confirmedRedemptionResponse = await handler(new Request("http://localhost/referrals/redeem-transaction", {
-        body: JSON.stringify({ code, invitee, txHash: redemptionTxHash }),
-        method: "POST"
-      }));
-      expect(confirmedRedemptionResponse.status).toBe(200);
-
-      const duplicateConfirmedRedeemResponse = await handler(new Request("http://localhost/referrals/redeem", {
-        body: JSON.stringify({ code, invitee }),
-        method: "POST"
-      }));
-      expect(duplicateConfirmedRedeemResponse.status).toBe(409);
-
-      const dashboardResponse = await handler(new Request(`http://localhost/wallet/${player}/referrals`));
-      const dashboard = await dashboardResponse.json() as {
-        invite: { status: string; txHash: string | null; redemptionCount: number } | null;
-        invites: Array<{ status: string; txHash: string | null; redemptionCount: number }>;
-        remainingClaims: number;
-        remainingRedemptions: number;
-      };
-      expect(dashboard.remainingClaims).toBe(2);
-      expect(dashboard.remainingRedemptions).toBe(2);
-      expect(dashboard.invite?.status).toBe("active");
-      expect(dashboard.invite?.redemptionCount).toBe(1);
-      expect(dashboard.invites).toHaveLength(1);
-      expect(dashboard.invites[0]?.status).toBe("active");
-      expect(dashboard.invites[0]?.txHash).toBe(claimTxHash);
+      expect(callbackWithoutSignature.status).toBe(401);
     } finally {
       rmSync(dir, { force: true, recursive: true });
     }
   });
 
-  test("expires claimed invite codes after 24 hours and reclaims the remembered preimage", async () => {
+  test("resolves invalid, unclaimed, self, already-used, exhausted, expired, and unavailable states", () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-referrals-"));
     try {
       const store = new ReferralInviteStore(join(dir, "referrals.json"));
-      const claimedAt = new Date(Date.now() - 1_000);
-      const expiresAt = new Date(claimedAt.getTime() + 24 * 60 * 60 * 1_000);
-      const afterExpiry = new Date(expiresAt.getTime() + 1_000);
-      const code = "borodutch";
-      const commitment = referralCommitment(code);
-      const active = store.recordClaimTransaction(player, code, commitment, `0x${"aa".repeat(32)}`, claimedAt);
-      expect(active.status).toBe("active");
-      expect(active.expiresAt).toBe(expiresAt.toISOString());
+      const chain = referralIndex();
+      const code = "statecode";
+      const commitment = referralCommitment(code, player);
+      const now = new Date("2026-07-15T12:00:00.000Z");
+      const nowSeconds = Math.floor(now.getTime() / 1_000);
 
-      const expiredDashboard = store.dashboard(player, expiresAt);
-      expect(expiredDashboard.invite?.status).toBe("expired");
-      expect(expiredDashboard.invite?.expired).toBe(true);
-      expect(expiredDashboard.invite?.code).toBe(code);
-      expect(() => store.pendingRedemption(code, invitee, expiresAt)).toThrow("expired");
+      expect(resolveReferralCode({ code: "not_found", index: chain.indexer, now, startPriceWei, store }).status).toBe("invalid");
+      store.recordClaimIntent(player, code, commitment, now);
+      expect(resolveReferralCode({ code, index: chain.indexer, now, startPriceWei, store }).status).toBe("unclaimed");
 
-      const next = store.recordClaimTransaction(player, code, commitment, `0x${"cc".repeat(32)}`, afterExpiry);
-      expect(next.code).toBe(code);
-      expect(next.commitment).toBe(commitment);
-      expect(next.status).toBe("active");
+      chain.claims.push(claimEvent(commitment, "c1", nowSeconds));
+      expect(resolveReferralCode({ code, index: chain.indexer, invitee: player, now, startPriceWei, store }).status).toBe("self_invite");
+      expect(resolveReferralCode({ code, index: chain.indexer, now, startPriceWei: null, store }).status).toBe("unavailable");
+
+      chain.redemptions.push(redemptionEvent({ commitment, invitee, redeemedAt: nowSeconds - 300, txByte: "d1" }));
+      expect(resolveReferralCode({ code, index: chain.indexer, invitee, now, startPriceWei, store }).status).toBe("already_redeemed");
+      chain.redemptions.push(
+        redemptionEvent({ commitment, invitee: "0x3000000000000000000000000000000000000002", redeemedAt: nowSeconds - 200, txByte: "d2" }),
+        redemptionEvent({ commitment, invitee: "0x3000000000000000000000000000000000000003", redeemedAt: nowSeconds - 100, txByte: "d3" })
+      );
+      expect(resolveReferralCode({
+        code,
+        index: chain.indexer,
+        invitee: "0x3000000000000000000000000000000000000004",
+        now,
+        startPriceWei,
+        store
+      }).status).toBe("exhausted");
+
+      const expiredCode = "old_code1";
+      const expiredCommitment = referralCommitment(expiredCode, player);
+      store.recordClaimIntent(player, expiredCode, expiredCommitment, new Date(now.getTime() - 86_401_000));
+      chain.claims.push(claimEvent(expiredCommitment, "c2", nowSeconds - 86_401));
+      expect(resolveReferralCode({ code: expiredCode, index: chain.indexer, now, startPriceWei, store }).status).toBe("expired");
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  test("derives rotation quota and paid, credited, and claimed reward history only from indexed events", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-referrals-"));
+    try {
+      const store = new ReferralInviteStore(join(dir, "referrals.json"));
+      const chain = referralIndex();
+      const firstCode = "firstcode";
+      const secondCode = "next_code";
+      const firstCommitment = referralCommitment(firstCode, player);
+      const secondCommitment = referralCommitment(secondCode, player);
+      const nowSeconds = Math.floor(Date.now() / 1_000);
+      store.recordClaimIntent(player, firstCode, firstCommitment, new Date((nowSeconds - 86_400) * 1_000));
+      store.recordClaimIntent(player, secondCode, secondCommitment);
+      chain.claims.push(
+        claimEvent(firstCommitment, "aa", nowSeconds - 86_400),
+        claimEvent(secondCommitment, "ab", nowSeconds)
+      );
+      chain.redemptions.push(
+        redemptionEvent({ commitment: firstCommitment, invitee: "0x3000000000000000000000000000000000000001", redeemedAt: nowSeconds - 3_000, txByte: "b1" }),
+        redemptionEvent({ commitment: firstCommitment, invitee: "0x3000000000000000000000000000000000000002", redeemedAt: nowSeconds - 2_000, txByte: "b2" }),
+        redemptionEvent({ commitment: secondCommitment, invitee, credited: true, paid: false, redeemedAt: nowSeconds - 1_000, txByte: "b3" })
+      );
+
+      const beforeClaim = store.dashboard(player, chain.indexer, startPriceWei, true, true);
+      expect(beforeClaim.remainingRedemptions).toBe(0);
+      expect(beforeClaim.nextRedemptionAt).not.toBeNull();
+      expect(beforeClaim.totalAccruedRewardsWei).toBe("18000000000000000");
+      expect(beforeClaim.totalPaidRewardsWei).toBe("12000000000000000");
+      expect(beforeClaim.claimableRewardsWei).toBe("6000000000000000");
+      expect(beforeClaim.redemptions.at(-1)?.paymentStatus).toBe("credited");
+
+      const resolution = resolveReferralCode({
+        code: secondCode,
+        index: chain.indexer,
+        invitee: "0x3000000000000000000000000000000000000004",
+        startPriceWei,
+        store
+      });
+      expect(resolution.status).toBe("exhausted");
+
+      chain.rewardClaims.push({
+        eventName: "ReferralRewardClaimed",
+        transactionHash: `0x${"cc".repeat(32)}`,
+        blockNumber: "102",
+        logIndex: "0x0",
+        inviter: player,
+        invitee,
+        commitment: secondCommitment,
+        recipient: player,
+        amount: "6000000000000000",
+        claimedAt: nowSeconds.toString()
+      });
+      const afterClaim = store.dashboard(player, chain.indexer, startPriceWei, true, true);
+      expect(afterClaim.totalPaidRewardsWei).toBe("18000000000000000");
+      expect(afterClaim.claimableRewardsWei).toBe("0");
+      expect(afterClaim.redemptions.at(-1)?.paymentStatus).toBe("claimed");
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  test("keeps legacy indexed redemptions in quota history without inventing reward truth", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-referrals-"));
+    try {
+      const store = new ReferralInviteStore(join(dir, "referrals.json"));
+      const chain = referralIndex();
+      const code = "old_event";
+      const commitment = referralCommitment(code, player);
+      store.recordClaimIntent(player, code, commitment);
+      chain.claims.push(claimEvent(commitment));
+      chain.redemptions.push({
+        eventName: "ReferralInviteRedeemed",
+        transactionHash: `0x${"dd".repeat(32)}`,
+        blockNumber: "99",
+        logIndex: "0x0",
+        inviter: player,
+        invitee,
+        commitment,
+        redeemedAt: Math.floor(Date.now() / 1_000).toString()
+      } as IndexedReferralRedemptionEvent);
+
+      const dashboard = store.dashboard(player, chain.indexer, startPriceWei, true, true);
+      expect(dashboard.remainingRedemptions).toBe(2);
+      expect(dashboard.totalAccruedRewardsWei).toBe("0");
+      expect(dashboard.totalPaidRewardsWei).toBe("0");
+      expect(dashboard.claimableRewardsWei).toBe("0");
+      expect(dashboard.redemptions).toEqual([
+        expect.objectContaining({ rewardAmountWei: null, paymentStatus: "legacy_unknown" })
+      ]);
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  test("collapses a same-code re-claim to the latest canonical claim event", () => {
+    const dir = mkdtempSync(join(tmpdir(), "veydrift-referrals-"));
+    try {
+      const store = new ReferralInviteStore(join(dir, "referrals.json"));
+      const chain = referralIndex();
+      const code = "reclaimed";
+      const commitment = referralCommitment(code, player);
+      const nowSeconds = Math.floor(Date.now() / 1_000);
+      store.recordClaimIntent(player, code, commitment);
+      chain.claims.push(
+        claimEvent(commitment, "a1", nowSeconds - 172_800),
+        claimEvent(commitment, "a2", nowSeconds)
+      );
+
+      const dashboard = store.dashboard(player, chain.indexer, startPriceWei, true, true);
+      expect(dashboard.invites).toHaveLength(1);
+      expect(dashboard.invite?.txHash).toBe(`0x${"a2".repeat(32)}`);
+      expect(dashboard.invite?.status).toBe("active");
+      expect(resolveReferralCode({ code, index: chain.indexer, startPriceWei, store }).status).toBe("active");
     } finally {
       rmSync(dir, { force: true, recursive: true });
     }

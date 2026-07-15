@@ -33,6 +33,7 @@ import {
   decodeRandomnessFulfilledRequestId,
   decodeReferralClaimLog,
   decodeReferralRedemptionLog,
+  decodeReferralRewardClaimLog,
   decodeRiftResourceLog,
   decodeSettledPlanetLog,
   decodeShipCountChangedLog,
@@ -58,6 +59,7 @@ import {
   isPlanetRenamedLog,
   isReferralClaimLog,
   isReferralRedemptionLog,
+  isReferralRewardClaimLog,
   isRiftResourceLog,
   isSettledPlanetLog,
   isShipCountChangedLog,
@@ -83,6 +85,7 @@ import {
   type IndexedQueueStartedEvent,
   type IndexedReferralClaimEvent,
   type IndexedReferralRedemptionEvent,
+  type IndexedReferralRewardClaimEvent,
   type IndexedAllianceEvent,
   type IndexedMoonCreatedEvent,
   type IndexedMoonDefenseCountChangedEvent,
@@ -360,6 +363,10 @@ type ReferralClaimRow = {
 };
 
 type ReferralRedemptionRow = {
+  event_json: string;
+};
+
+type ReferralRewardClaimRow = {
   event_json: string;
 };
 
@@ -1269,6 +1276,16 @@ export class SettlementIndexer {
     return row ? parseEvent<IndexedReferralClaimEvent>(row.event_json) : null;
   }
 
+  referralClaims(owner: `0x${string}`): IndexedReferralClaimEvent[] {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_referral_claims
+      WHERE owner = lower(?)
+      ORDER BY CAST(block_number AS INTEGER), event_id
+    `).all(owner) as ReferralClaimRow[];
+    return rows.map((row) => parseEvent<IndexedReferralClaimEvent>(row.event_json));
+  }
+
   referralRedemption(
     inviter: `0x${string}`,
     invitee: `0x${string}`,
@@ -1283,6 +1300,26 @@ export class SettlementIndexer {
     `).get(inviter, invitee, commitment, txHash) as ReferralRedemptionRow | null;
 
     return row ? parseEvent<IndexedReferralRedemptionEvent>(row.event_json) : null;
+  }
+
+  referralRedemptionsForInviter(inviter: `0x${string}`): IndexedReferralRedemptionEvent[] {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_referral_redemptions
+      WHERE inviter = lower(?)
+      ORDER BY CAST(block_number AS INTEGER), event_id
+    `).all(inviter) as ReferralRedemptionRow[];
+    return rows.map((row) => parseEvent<IndexedReferralRedemptionEvent>(row.event_json));
+  }
+
+  referralRewardClaimsForInviter(inviter: `0x${string}`): IndexedReferralRewardClaimEvent[] {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_referral_reward_claims
+      WHERE inviter = lower(?)
+      ORDER BY CAST(block_number AS INTEGER), event_id
+    `).all(inviter) as ReferralRewardClaimRow[];
+    return rows.map((row) => parseEvent<IndexedReferralRewardClaimEvent>(row.event_json));
   }
 
   walletPlanets(wallet: `0x${string}`): WalletPlanets {
@@ -2352,6 +2389,10 @@ export class SettlementIndexer {
       this.applyReferralRedemptionEvent(eventId, decodeReferralRedemptionLog(log));
       return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
     }
+    if (isReferralRewardClaimLog(log)) {
+      this.applyReferralRewardClaimEvent(eventId, decodeReferralRewardClaimLog(log));
+      return { applied: true, duplicate: false, ignored: false, removed: false, snapshot: this.snapshot() };
+    }
     if (isIndexedQueueStartedLog(log)) {
       this.applyQueueStartedEvent(decodeIndexedQueueStartedLog(log), {
         settledAt: blockTimestampSeconds(log) ?? Math.floor(Date.now() / 1_000).toString()
@@ -3074,6 +3115,18 @@ export class SettlementIndexer {
       );
       CREATE INDEX IF NOT EXISTS indexed_referral_redemptions_lookup_idx
         ON indexed_referral_redemptions (inviter, invitee, commitment, transaction_hash);
+      CREATE TABLE IF NOT EXISTS indexed_referral_reward_claims (
+        event_id TEXT PRIMARY KEY,
+        inviter TEXT NOT NULL,
+        invitee TEXT NOT NULL,
+        commitment TEXT NOT NULL,
+        recipient TEXT NOT NULL,
+        transaction_hash TEXT NOT NULL,
+        block_number TEXT NOT NULL,
+        event_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS indexed_referral_reward_claims_inviter_idx
+        ON indexed_referral_reward_claims (inviter, transaction_hash);
       CREATE TABLE IF NOT EXISTS indexed_mission_event_logs (
         event_id TEXT PRIMARY KEY,
         event_kind TEXT NOT NULL,
@@ -6605,6 +6658,23 @@ export class SettlementIndexer {
     );
   }
 
+  private applyReferralRewardClaimEvent(eventId: string, event: IndexedReferralRewardClaimEvent): void {
+    this.db.query(`
+      INSERT OR REPLACE INTO indexed_referral_reward_claims
+        (event_id, inviter, invitee, commitment, recipient, transaction_hash, block_number, event_json)
+      VALUES (?, lower(?), lower(?), lower(?), lower(?), lower(?), ?, ?)
+    `).run(
+      eventId,
+      event.inviter,
+      event.invitee,
+      event.commitment,
+      event.recipient,
+      event.transactionHash,
+      event.blockNumber,
+      JSON.stringify(event)
+    );
+  }
+
   private recordLog(eventId: string, log: IndexedRpcLog): boolean {
     const result = this.db.query(`
       INSERT INTO indexed_event_logs (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
@@ -6688,6 +6758,14 @@ export class SettlementIndexer {
         .get(eventId);
       if (!existingReferralRedemption) {
         this.applyReferralRedemptionEvent(eventId, decodeReferralRedemptionLog(log));
+        repairedRows += 1;
+      }
+    } else if (isReferralRewardClaimLog(log)) {
+      const existingReferralRewardClaim = this.db
+        .query("SELECT 1 FROM indexed_referral_reward_claims WHERE event_id = ?")
+        .get(eventId);
+      if (!existingReferralRewardClaim) {
+        this.applyReferralRewardClaimEvent(eventId, decodeReferralRewardClaimLog(log));
         repairedRows += 1;
       }
     }

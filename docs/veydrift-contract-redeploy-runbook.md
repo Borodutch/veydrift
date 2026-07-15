@@ -135,6 +135,8 @@ Apply every generated backend variable to the `veydrift_backend-test` EasyPanel 
 - `VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS`
 - `VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS`
 - `VEYDRIFT_MOON_CONTRACT_ADDRESS`
+- `VEYDRIFT_REFERRAL_SYSTEM_ADDRESS`
+- `VEYDRIFT_SETTLEMENT_START_PRICE_WEI` (must equal the deployed game proxy's `startPrice()`)
 - `VEYDRIFT_METAL_TOKEN_ADDRESS`
 - `VEYDRIFT_CRYSTAL_TOKEN_ADDRESS`
 - `VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS`
@@ -160,6 +162,9 @@ Run the API smoke check before manual QA:
 node scripts/veydrift-postdeploy-smoke.mjs \
   --manifest deploy/veydrift-base-sepolia-YYYYMMDDTHHMMSSZ.json \
   --api-url https://api-test.veydrift.com \
+  --rpc-url "$BASE_SEPOLIA_RPC_URL" \
+  --referral-signer "$REFERRAL_SIGNER_ADDRESS" \
+  --referral-start-price-wei "$VEYDRIFT_SETTLEMENT_START_PRICE_WEI" \
   --wallet 0x...
 ```
 
@@ -170,6 +175,8 @@ The smoke check verifies:
 
 - `/health` is configured and reports matching chain/index config.
 - `/runtime-config` reports the manifest addresses and feature flags.
+- when a referral address is present, runtime and on-chain referral addresses,
+  signer, authorized game proxy, and exact start price all agree.
 - overview/settlement and planet management endpoints load.
 - infrastructure, defenses, research, shipyard, galaxy, alliance, mission control, rankings, and
   moon endpoints do not return unsupported or stale-config errors.

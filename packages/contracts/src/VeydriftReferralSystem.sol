@@ -3,12 +3,14 @@ pragma solidity ^0.8.28;
 
 interface IVeydriftReferralGame {
     function homePlanetOf(address player) external view returns (uint256);
+    function startPrice() external view returns (uint256);
 }
 
 contract VeydriftReferralSystem {
     bytes32 public constant REFERRAL_REDEEM_DOMAIN = keccak256("veydrift.referral.redeem.v1");
     uint8 public constant REFERRAL_CLAIM_LIMIT = 3;
     uint64 public constant REFERRAL_CLAIM_WINDOW = 1 days;
+    uint256 public constant DIRECT_PAYOUT_GAS = 30_000;
 
     struct ReferralInvite {
         address inviter;
@@ -24,10 +26,17 @@ contract VeydriftReferralSystem {
     mapping(bytes32 commitment => ReferralInvite invite) public referralInvites;
     mapping(address inviter => bytes32 commitment) public referralCommitmentOf;
     mapping(bytes32 commitment => uint64 claimedAt) public referralClaimedAt;
-    mapping(bytes32 commitment => ReferralRedemptionWindow redemptionWindow) private
+    mapping(address inviter => ReferralRedemptionWindow redemptionWindow) private
         _referralRedemptionWindows;
     mapping(bytes32 commitment => mapping(address invitee => bool redeemed)) public
         referralRedemptions;
+    mapping(address inviter => uint256 amount) public claimableReferralRewards;
+    mapping(address inviter => uint256 amount) public totalReferralRewardsAccrued;
+    mapping(address inviter => uint256 amount) public totalReferralRewardsPaid;
+    mapping(address inviter => uint256 amount) public totalReferralRewardsClaimed;
+    mapping(bytes32 commitment => mapping(address invitee => uint256 amount)) public
+        referralRewardCredits;
+    bool private _withdrawingReferralReward;
 
     error Unauthorized(address account);
     error ReferralSignerUnset();
@@ -40,6 +49,11 @@ contract VeydriftReferralSystem {
     error ReferralSignatureInvalid();
     error ReferralSelfInvite();
     error ReferralRedemptionQuotaExceeded(bytes32 commitment, uint64 resetsAt);
+    error ReferralRewardInvalid(uint256 expected, uint256 received);
+    error ReferralRewardRecipientInvalid();
+    error ReferralRewardUnavailable();
+    error ReferralRewardWithdrawalFailed(address recipient, uint256 amount);
+    error ReferralRewardWithdrawalReentered();
 
     event ReferralGameUpdated(address indexed oldGame, address indexed newGame);
     event ReferralSignerUpdated(address indexed oldSigner, address indexed newSigner);
@@ -50,7 +64,18 @@ contract VeydriftReferralSystem {
         address indexed inviter,
         address indexed invitee,
         bytes32 indexed commitment,
+        uint256 rewardAmount,
+        bool paid,
+        bool credited,
         uint64 redeemedAt
+    );
+    event ReferralRewardClaimed(
+        address indexed inviter,
+        address indexed invitee,
+        bytes32 indexed commitment,
+        address recipient,
+        uint256 amount,
+        uint64 claimedAt
     );
 
     constructor(address initialOwner) {
@@ -80,8 +105,9 @@ contract VeydriftReferralSystem {
         emit ReferralSignerUpdated(oldSigner, nextSigner);
     }
 
-    function claimReferralCode(bytes32 commitment) external {
-        if (commitment == bytes32(0)) revert ReferralCommitmentInvalid();
+    function claimReferralCode(bytes32 codeHash) external {
+        if (codeHash == bytes32(0)) revert ReferralCommitmentInvalid();
+        bytes32 commitment = referralCommitment(msg.sender, codeHash);
         uint64 nowTimestamp = uint64(block.timestamp);
         address existingInviter = referralInvites[commitment].inviter;
         if (existingInviter != address(0) && existingInviter != msg.sender) {
@@ -107,7 +133,7 @@ contract VeydriftReferralSystem {
         uint8 v,
         bytes32 r,
         bytes32 s
-    ) external onlyGame returns (address inviter) {
+    ) external payable onlyGame returns (address inviter) {
         if (commitment == bytes32(0)) revert ReferralCommitmentInvalid();
         address signer = referralSigner;
         if (signer == address(0)) revert ReferralSignerUnset();
@@ -129,9 +155,57 @@ contract VeydriftReferralSystem {
             revert ReferralSignatureInvalid();
         }
 
-        _consumeRedemptionQuota(commitment);
+        uint256 expectedReward = IVeydriftReferralGame(game).startPrice() / 2;
+        if (msg.value != expectedReward) {
+            revert ReferralRewardInvalid(expectedReward, msg.value);
+        }
+
+        _consumeRedemptionQuota(inviter, commitment);
         referralRedemptions[commitment][invitee] = true;
-        emit ReferralInviteRedeemed(inviter, invitee, commitment, nowTimestamp);
+        totalReferralRewardsAccrued[inviter] += msg.value;
+
+        (bool paid,) = payable(inviter).call{value: msg.value, gas: DIRECT_PAYOUT_GAS}("");
+        bool credited = !paid;
+        if (paid) {
+            totalReferralRewardsPaid[inviter] += msg.value;
+        } else {
+            claimableReferralRewards[inviter] += msg.value;
+            referralRewardCredits[commitment][invitee] = msg.value;
+        }
+        emit ReferralInviteRedeemed(
+            inviter, invitee, commitment, msg.value, paid, credited, nowTimestamp
+        );
+    }
+
+    function withdrawReferralReward(bytes32 commitment, address invitee, address payable recipient)
+        external
+    {
+        if (_withdrawingReferralReward) revert ReferralRewardWithdrawalReentered();
+        if (referralInvites[commitment].inviter != msg.sender) revert Unauthorized(msg.sender);
+        if (recipient == address(0)) revert ReferralRewardRecipientInvalid();
+        uint256 amount = referralRewardCredits[commitment][invitee];
+        if (amount == 0) revert ReferralRewardUnavailable();
+
+        _withdrawingReferralReward = true;
+        referralRewardCredits[commitment][invitee] = 0;
+        claimableReferralRewards[msg.sender] -= amount;
+        (bool ok,) = recipient.call{value: amount}("");
+        if (!ok) {
+            referralRewardCredits[commitment][invitee] = amount;
+            claimableReferralRewards[msg.sender] += amount;
+            _withdrawingReferralReward = false;
+            revert ReferralRewardWithdrawalFailed(recipient, amount);
+        }
+        totalReferralRewardsPaid[msg.sender] += amount;
+        totalReferralRewardsClaimed[msg.sender] += amount;
+        _withdrawingReferralReward = false;
+        emit ReferralRewardClaimed(
+            msg.sender, invitee, commitment, recipient, amount, uint64(block.timestamp)
+        );
+    }
+
+    function referralCommitment(address inviter, bytes32 codeHash) public pure returns (bytes32) {
+        return keccak256(abi.encode(inviter, codeHash));
     }
 
     function _validReferralSignature(
@@ -152,8 +226,8 @@ contract VeydriftReferralSystem {
         return ecrecover(digest, v, r, s) == signer;
     }
 
-    function _consumeRedemptionQuota(bytes32 commitment) private {
-        ReferralRedemptionWindow storage window = _referralRedemptionWindows[commitment];
+    function _consumeRedemptionQuota(address inviter, bytes32 commitment) private {
+        ReferralRedemptionWindow storage window = _referralRedemptionWindows[inviter];
         uint64 nowTimestamp = uint64(block.timestamp);
         uint256 oldestIndex = 0;
         uint64 oldestActive = type(uint64).max;
@@ -188,7 +262,15 @@ contract VeydriftReferralSystem {
         view
         returns (uint8 remainingRedemptions, uint64 nextRedemptionAt)
     {
-        ReferralRedemptionWindow storage window = _referralRedemptionWindows[commitment];
+        return referralRedemptionQuotaOf(referralInvites[commitment].inviter);
+    }
+
+    function referralRedemptionQuotaOf(address inviter)
+        public
+        view
+        returns (uint8 remainingRedemptions, uint64 nextRedemptionAt)
+    {
+        ReferralRedemptionWindow storage window = _referralRedemptionWindows[inviter];
         uint64 nowTimestamp = uint64(block.timestamp);
         uint64 oldestActive = type(uint64).max;
         uint8 active;

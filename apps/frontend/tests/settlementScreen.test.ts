@@ -79,7 +79,7 @@ describe("settlement screen mode", () => {
   test("keeps no-wallet copy wallet-neutral outside Mini App mode", () => {
     expect(noWalletDetectedMessage(false)).toBe("Open the bridge with an injected EVM wallet or browser wallet.");
     expect(noWalletDetectedMessage(false)).not.toMatch(/metamask/i);
-    expect(noWalletDetectedMessage(true)).toContain("Farcaster/Base client");
+    expect(noWalletDetectedMessage(true)).toContain("does not expose a Base wallet");
   });
 
   test("preserves minimal network, transaction, and error states", () => {
@@ -550,7 +550,7 @@ describe("settlement screen mode", () => {
 
     expect(source).toContain("readIndexedSettlementState");
     expect(source).toContain("fetchSettlementFundingState");
-    expect(source).toContain("settlementTransactionOptions(funding)");
+    expect(source).toContain("settlementTransactionOptions(funding, referral)");
     expect(source).not.toContain("readSettlementStateWithMiniAppFallback");
     expect(source).not.toContain("readSettlementFundingWithMiniAppFallback");
     expect(source).not.toContain("isUnsupportedProviderMethodError(error)");
@@ -597,7 +597,7 @@ describe("settlement screen mode", () => {
         error: { code: 4902, message: "Unrecognized chain" },
       },
     )).toBe(
-      "Farcaster Mini App wallet setup failed (FARCASTER_BASE_SEPOLIA_SWITCH_FAILED). The host rejected wallet_switchEthereumChain. Details: chain=0x2105; requestedChain=0x14a34; source=farcaster; support=unknown/FARCASTER_CHAINS_UNAVAILABLE; capabilities=wallet.getEthereumProvider; chains=none; errorCode=4902; errorMessage=Unrecognized chain. Please send this exact message to Veydrift support.",
+      "Wallet setup failed (FARCASTER_BASE_SEPOLIA_SWITCH_FAILED). The host rejected wallet_switchEthereumChain. Details: chain=0x2105; requestedChain=0x14a34; source=farcaster; support=unknown/FARCASTER_CHAINS_UNAVAILABLE; capabilities=wallet.getEthereumProvider; chains=none; errorCode=4902; errorMessage=Unrecognized chain. Please send this exact message to Veydrift support.",
     );
 
     expect(farcasterMiniAppSupportErrorMessage({

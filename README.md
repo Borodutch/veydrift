@@ -143,9 +143,11 @@ Shipyard transactions.
 `VEYDRIFT_SETTLEMENT_CONTRACT_ADDRESS` is the compact first-planet settlement
 contract used for settlement/universe context and must not be used as the game
 contract.
-`VEYDRIFT_SETTLEMENT_START_PRICE_WEI` is the configured static start price used
-by `GET /wallet/:address/settlement-funding`; the endpoint deliberately does
-not call RPC to read `startPrice` or the wallet's native ETH balance.
+`VEYDRIFT_SETTLEMENT_START_PRICE_WEI` is the deployed game's exact `startPrice`
+used by settlement funding and referral reward responses. Operators must update
+it atomically with any on-chain `startPrice` change; the post-deploy smoke check
+compares it with `VeydriftGame.startPrice()`. Read endpoints deliberately do not
+call RPC for each request.
 `VEYDRIFT_METAL_TOKEN_ADDRESS`, `VEYDRIFT_CRYSTAL_TOKEN_ADDRESS`, and
 `VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS` expose the upgradeable ERC-20 resource token
 proxies deployed for the game.
@@ -227,8 +229,23 @@ PRIVATE_KEY=<referral-owner-key> \
 
 Use the emitted `VeydriftReferralSystem` address as
 `VEYDRIFT_REFERRAL_SYSTEM_ADDRESS` before running the game proxy upgrade script
-that wires `VeydriftFirstPlanetSettlementModule(referralSystem)`. Keep the
-referral owner key, backend signer key, and full RPC URL in secret storage.
+that wires `VeydriftFirstPlanetSettlementModule(referralSystem)`. Deployment is
+ordered and atomic at the release boundary:
+
+1. Deploy the new referral system and verify its `game()` and `referralSigner()`.
+2. Set `VEYDRIFT_REFERRAL_SYSTEM_ADDRESS`, run `UpgradeGame.s.sol`, and verify the
+   game proxy still has the expected implementation/storage state and exact
+   `startPrice()`.
+3. Configure the backend with the same referral address, signer private key, and
+   exact `VEYDRIFT_SETTLEMENT_START_PRICE_WEI`; rebuild its referral index from
+   the new referral deployment block before exposing referral traffic.
+4. Deploy backend first, then frontend. Run `veydrift-postdeploy-smoke.mjs` with
+   the RPC, expected signer address, and start price before live QA.
+
+Keep the referral owner key, backend signer key, and full RPC URL in secret
+storage. The raw invite code is private recovery data: public referral dashboard
+responses expose only indexed chain facts, while code/link recovery requires a
+wallet signature.
 
 ### Circuits
 
