@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
-import { fleetMissionDistance, fleetMissionFuelCost } from "./fleetMissionRules";
+import {
+  LOCAL_HARVEST_DISTANCE,
+  fleetMissionDistance,
+  fleetMissionDistanceForMission,
+  fleetMissionFuelCost,
+  fleetMissionTravelSeconds,
+} from "./fleetMissionRules";
 import type { MissionShips } from "./galaxyActions";
 
 const noShips = {
@@ -50,5 +56,15 @@ describe("fleetMissionDistance", () => {
   test("keeps same-body same-coordinate distance at zero for legacy callers", () => {
     expect(fleetMissionDistance(coords, coords)).toBe(0);
     expect(fleetMissionDistance(coords, coords, { originIsMoon: true, targetIsMoon: true })).toBe(0);
+  });
+
+  test("prices same-planet Harvest through the canonical non-zero local route", () => {
+    const ships = { ...noShips, recycler: 1 };
+    const distance = fleetMissionDistanceForMission(coords, coords, "harvest");
+
+    expect(distance).toBe(LOCAL_HARVEST_DISTANCE);
+    expect(fleetMissionFuelCost(ships, distance)).toBeGreaterThan(0);
+    expect(fleetMissionTravelSeconds(distance, ships)).toBeGreaterThan(10);
+    expect(fleetMissionDistanceForMission(coords, coords, "transport")).toBe(0);
   });
 });

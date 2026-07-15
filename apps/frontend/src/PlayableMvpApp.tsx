@@ -170,6 +170,7 @@ import {
   type FleetDriveLevels,
   fleetMissionAvailableCargoCapacity,
   fleetMissionDistance,
+  fleetMissionDistanceForMission,
   fleetMissionFuelCost,
   fleetMissionTravelSeconds,
 } from "./fleetMissionRules";
@@ -2798,10 +2799,17 @@ function pendingMissionLaunchForDraft(
   context: PendingMissionLaunchContext,
 ): FleetMissionSummary {
   const originCoords = managedPlanetCoordinates(context.originPlanet);
-  const distance = originCoords ? fleetMissionDistance(originCoords, context.targetCoords, {
-    originIsMoon: context.originIsMoon,
-    targetIsMoon: context.targetIsMoon,
-  }) : 0;
+  const distance = originCoords
+    ? context.missionType === "Harvest"
+      ? fleetMissionDistanceForMission(originCoords, context.targetCoords, "Harvest", {
+          originIsMoon: context.originIsMoon,
+          targetIsMoon: context.targetIsMoon,
+        })
+      : fleetMissionDistance(originCoords, context.targetCoords, {
+          originIsMoon: context.originIsMoon,
+          targetIsMoon: context.targetIsMoon,
+        })
+    : 0;
   const travelSeconds = fleetMissionTravelSeconds(distance, context.draft.ships, context.driveLevels, context.draft.speedPercent);
   const fuelCost = context.fuelCost
     ?? fleetMissionFuelCost(context.draft.ships, distance, context.driveLevels, context.draft.speedPercent);
@@ -7289,16 +7297,19 @@ export function PlayableMvpApp({
     handleGalaxyAction(raidFinderAttackAction(target), raidTargetPlanetForMission(target), target.coordinates);
   }, [handleGalaxyAction, raidFinderAttackAction]);
 
-  const raidFinderHarvestAction = useCallback((target: DebrisFinderTarget): GalaxyAction => {
+  const raidFinderHarvestAction = useCallback((target: DebrisFinderTarget): GalaxyAction | null => {
     const planet = debrisTargetPlanetForMission(target);
-    return galaxyActionsForSlot({
+    const action = galaxyActionsForSlot({
       account,
       defenseState,
       homePlanetId: onChainSettlement?.homePlanetId,
       isOrigin: activePlanetId === target.planetId,
       planet,
       shipyardState,
-    }).find((action) => action.kind === "harvest") ?? {
+    }).find((candidate) => candidate.kind === "harvest");
+    if (action) return action;
+    if (account && target.owner.toLowerCase() === account.toLowerCase()) return null;
+    return {
       enabled: false,
       kind: "harvest",
       label: "Harvest",
@@ -7308,16 +7319,18 @@ export function PlayableMvpApp({
     };
   }, [account, activePlanetId, defenseState, onChainSettlement?.homePlanetId, shipyardState]);
 
-  const raidFinderHarvestActionState = useCallback((target: DebrisFinderTarget): RaidTargetAttackAction => {
-    if (target.harvestDisabledReason) return { label: "Harvest", disabledReason: target.harvestDisabledReason };
+  const raidFinderHarvestActionState = useCallback((target: DebrisFinderTarget): RaidTargetAttackAction | null => {
     const action = raidFinderHarvestAction(target);
+    if (!action) return null;
+    if (target.harvestDisabledReason) return { label: "Harvest", disabledReason: target.harvestDisabledReason };
     return action.enabled
       ? { label: action.label }
       : { label: action.label, disabledReason: action.reason };
   }, [raidFinderHarvestAction]);
 
   const handleRaidFinderHarvest = useCallback((target: DebrisFinderTarget) => {
-    handleGalaxyAction(raidFinderHarvestAction(target), debrisTargetPlanetForMission(target), target.coordinates);
+    const action = raidFinderHarvestAction(target);
+    if (action) handleGalaxyAction(action, debrisTargetPlanetForMission(target), target.coordinates);
   }, [handleGalaxyAction, raidFinderHarvestAction]);
 
   const handleConfirmGalaxyMission = useCallback((draft: MissionLaunchDraft) => {

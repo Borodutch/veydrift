@@ -60,6 +60,51 @@ describe("galaxyActions", () => {
     });
   });
 
+  test("surfaces Harvest for eligible own debris, including the active origin planet", () => {
+    const ownDebris = planet({
+      ownerId: account,
+      occupiedBy: { owner: account, planetId: "7" },
+      debrisField: { metal: 40_000, crystal: 15_000 },
+    });
+    const readyShipyard = shipyardState([{ id: 2, count: 2 }]);
+
+    for (const isOrigin of [false, true]) {
+      expect(galaxyActionsForSlot({
+        account,
+        homePlanetId: "7",
+        isOrigin,
+        planet: ownDebris,
+        shipyardState: readyShipyard,
+      }).find((action) => action.kind === "harvest")).toMatchObject({
+        enabled: true,
+        mission: "harvest",
+        ships: { recycler: 1 },
+      });
+    }
+  });
+
+  test("does not expose own-planet Harvest without debris or an eligible recycler", () => {
+    const own = planet({
+      ownerId: account,
+      occupiedBy: { owner: account, planetId: "7" },
+    });
+    const noDebris = galaxyActionsForSlot({
+      account,
+      homePlanetId: "7",
+      planet: own,
+      shipyardState: shipyardState([{ id: 2, count: 1 }]),
+    });
+    const noRecycler = galaxyActionsForSlot({
+      account,
+      homePlanetId: "7",
+      planet: { ...own, debrisField: { metal: 1, crystal: 0 } },
+      shipyardState: shipyardState([]),
+    });
+
+    expect(noDebris.some((action) => action.kind === "harvest")).toBe(false);
+    expect(noRecycler.some((action) => action.kind === "harvest")).toBe(false);
+  });
+
   test("uses canonical attack protection to block attack actions", () => {
     const attack = galaxyActionsForSlot({
       account,

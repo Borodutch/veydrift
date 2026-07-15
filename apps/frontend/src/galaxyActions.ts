@@ -166,6 +166,8 @@ export function galaxyActionsForSlot({
   }
 
   if (isOwnTarget) {
+    const ownHarvest = harvestAction(commonBlocker, planet, shipyardState);
+    const eligibleOwnHarvest = ownHarvest.enabled ? [ownHarvest] : [];
     if (isOrigin) {
       // The home/launch planet is where every wallet starts and the slot players inspect first, so the
       // proactive Defend action is surfaced here (disabled) rather than hidden — otherwise a player with
@@ -173,6 +175,7 @@ export function galaxyActionsForSlot({
       // missing. launchDefenseHold reverts with SamePlanet when origin == target, so the reason explains
       // the prerequisite (a second colony or an alliance member's planet to station the fleet at).
       return [
+        ...eligibleOwnHarvest,
         defenseHoldAction(
           commonBlocker,
           shipyardState,
@@ -207,6 +210,7 @@ export function galaxyActionsForSlot({
           mission: "deploy",
         },
       }),
+      ...eligibleOwnHarvest,
       defenseHoldAction(commonBlocker, shipyardState),
     ];
   }
@@ -233,23 +237,7 @@ export function galaxyActionsForSlot({
         mission: "attack",
       },
     }),
-    enabledOrDisabled({
-      blocker: commonBlocker ?? debrisFieldBlocker(planet) ?? shipRequirementBlocker(shipyardState, "recycler", "Requires a recycler on your home planet."),
-      enabled: {
-        enabled: true,
-        kind: "harvest",
-        label: "Harvest",
-        mode: "mission",
-        mission: "harvest",
-        ships: singleShip("recycler"),
-      },
-      disabled: {
-        kind: "harvest",
-        label: "Harvest",
-        mode: "mission",
-        mission: "harvest",
-      },
-    }),
+    harvestAction(commonBlocker, planet, shipyardState),
     {
       ...enabledOrDisabled({
         blocker: missileBlocker,
@@ -269,6 +257,32 @@ export function galaxyActionsForSlot({
       }),
     },
   ];
+}
+
+function harvestAction(
+  commonBlocker: string | undefined,
+  planet: Planet,
+  shipyardState: ChainShipyardState | null,
+): GalaxyAction {
+  return enabledOrDisabled({
+    blocker: commonBlocker
+      ?? debrisFieldBlocker(planet)
+      ?? shipRequirementBlocker(shipyardState, "recycler", "Requires a recycler on your home planet."),
+    enabled: {
+      enabled: true,
+      kind: "harvest",
+      label: "Harvest",
+      mode: "mission",
+      mission: "harvest",
+      ships: singleShip("recycler"),
+    },
+    disabled: {
+      kind: "harvest",
+      label: "Harvest",
+      mode: "mission",
+      mission: "harvest",
+    },
+  });
 }
 
 function transportAction(ships: MissionShips): Extract<GalaxyAction, { enabled: true }> {
