@@ -455,7 +455,12 @@ export type StationedDefenderSummary = {
   missionId: string;
   defender: Address;
   defenderDisplayName: string | null;
+  // Immutable launch composition. Historical battle reports keep this even after the hold leaves
+  // the active stationed roster or the canonical mission's surviving ships change.
   ships: Record<string, string>;
+  destroyedShips?: Record<string, string> | null;
+  survivingShips?: Record<string, string> | null;
+  lifecycleOutcome?: "Active" | "Expired" | "Recalled";
   holdUntil: string;
   allianceDepotLevel: number;
 };
@@ -496,6 +501,11 @@ export type FleetMissionSummary = {
   // Null until the fleet's return leg is exposed (e.g. still outbound, or fully wiped at the target).
   returnCargo: Resources | null;
   ships: Record<string, string>;
+  // DefenseHold reports retain launch composition separately from the exact combat outcome. These
+  // fields are populated when a materialized attack report proves the hold participated.
+  originalShips?: Record<string, string>;
+  destroyedShips?: Record<string, string> | null;
+  survivingShips?: Record<string, string> | null;
   transactionHash: string;
   blockNumber: string;
   // Block of the FleetMissionLaunched event specifically, i.e. when the contract debited these ships
@@ -520,6 +530,10 @@ export type FleetMissionSummary = {
   // attacks whose arrival is inside [arrivalAt, defenseHoldUntil]; returnAt includes the flight home and
   // is therefore too broad for public attack-risk intel.
   defenseHoldUntil?: string;
+  // DefenseHoldEnded is the immutable lifecycle event that distinguishes an owner recall from the
+  // ordinary hold-window expiry. FleetMissionReturned later collapses both paths to Returned, so the
+  // report/card must retain this separately.
+  defenseHoldOutcome?: "Expired" | "Recalled";
   // Derived as-of-now state (VEY-KANEO-464): arrival/return ETA in seconds and
   // whether each leg is due, computed server-side at request time from
   // `arrivalAt` / `returnAt`. Optional so internally-constructed summaries stay
@@ -633,6 +647,9 @@ export type BattleReport = {
   blockNumber: string;
   logIndex: string;
   defenderSnapshot: BattleReportDefenderSnapshot | null;
+  // Battle-time DefenseHold participants reconstructed from immutable mission history. Optional for
+  // persisted reports created before VEY-KANEO-713; readers rebuild it from indexed logs as fallback.
+  stationedDefenders?: StationedDefenderSummary[];
   // ACS attack group: the main attack mission id for a grouped attack (null for a solo attack), and
   // every participant (main attacker + joiners) with their individual loot share. A solo attack still
   // populates `participants` with the single main attacker so the frontend can render uniformly.
@@ -4310,7 +4327,9 @@ export class VeydriftGameReader implements ChainReader {
         fleetMissionRecalledTopic,
         fleetMissionResolvedTopic,
         fleetMissionReturnExposedTopic,
+        fleetMissionReturnedTopic,
         defenseHoldStationedTopic,
+        defenseHoldEndedTopic,
         attackMissionJoinedTopic
       ]]
     });
@@ -4648,6 +4667,12 @@ export function decodeFleetMissionLogs(logs: RpcLog[]): Map<string, MutableFleet
       mission.arrivalAt = decodeUintWord(wordAt(words, 1)).toString();
       mission.defenseHoldUntil = decodeUintWord(wordAt(words, 2)).toString();
       mission.returnAt = decodeUintWord(wordAt(words, 3)).toString();
+    } else if (topic === defenseHoldEndedTopic) {
+      const status = missionStatusLabel(decodeUintWord(wordAt(splitWords(log.data), 0)));
+      mission.missionType = "DefenseHold";
+      mission.targetPlanetId = decodeUint(topicAt(log.topics, 2)).toString();
+      mission.defenseHoldOutcome = status === "Recalled" ? "Recalled" : "Expired";
+      if (mission.status !== "Returned") mission.status = status;
     } else if (topic === fleetMissionCargoTopic) {
       const words = splitWords(log.data);
       mission.cargo = decodeResources(words.slice(0, 3));
@@ -5071,6 +5096,7 @@ const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d1
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
+const defenseHoldEndedTopic = "0xf72983c656a87e172935581e9c19f22826c62a2c4d552c6dd217c498a9d88586";
 const attackMissionJoinedTopic = "0xc584e0cc52df45c2a92cc5556e493377d69bfe3e3658d1adb13f27cfcc89b146";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const combatRoundResolvedTopic = "0xad3481558e72184b0d73a624579c0f1fc7db867024ac190f038373dbde288ca9";
@@ -5147,6 +5173,7 @@ const eventNamesByTopic = new Map<string, string>([
   [fleetMissionReturnExposedTopic, "FleetMissionReturnExposed"],
   [fleetMissionReturnedTopic, "FleetMissionReturned"],
   [defenseHoldStationedTopic, "DefenseHoldStationed"],
+  [defenseHoldEndedTopic, "DefenseHoldEnded"],
   [attackMissionJoinedTopic, "AttackMissionJoined"],
   [attackBattleResolvedTopic, "AttackBattleResolved"],
   [combatRoundResolvedTopic, "CombatRoundResolved"],
@@ -5415,6 +5442,7 @@ export function isFleetMissionLog(log: RpcLog): boolean {
     || topic === fleetMissionReturnExposedTopic
     || topic === fleetMissionReturnedTopic
     || topic === defenseHoldStationedTopic
+    || topic === defenseHoldEndedTopic
     || topic === attackMissionJoinedTopic;
 }
 

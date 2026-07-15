@@ -468,7 +468,7 @@ function StationedDefenseCard({
       badgeLabel="Defending"
       badgeTone={missionTypeTone("AcsDefend")}
       direction={missionRouteLeg(mission.status)}
-      fleet={<MissionFleet cargo={mission.cargo} ships={mission.ships} />}
+      fleet={<MissionFleet cargo={mission.cargo} mission={mission} ships={mission.ships} />}
       headerTiming={{ label: "Holds", value: missionEndpointTiming(mission.arrivalAt, now) }}
       missionId={mission.missionId}
       origin={missionEndpoint(mission, "origin", planetLookup)}
@@ -980,7 +980,7 @@ function MissionRow({
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
       direction={missionRouteLeg(mission.status)}
-      fleet={<MissionFleet cargo={mission.cargo} harvested={harvested} loot={loot} losses={losses} missionType={mission.missionType} ships={mission.ships} />}
+      fleet={<MissionFleet cargo={mission.cargo} harvested={harvested} loot={loot} losses={losses} mission={mission} ships={mission.ships} />}
       groupId={mission.attackGroupId}
       headerTiming={activeMissionHeaderTiming(mission, now, noFleetReturned)}
       missionId={mission.missionId}
@@ -1018,14 +1018,14 @@ function MissionFleet({
   harvested,
   loot,
   losses,
-  missionType,
+  mission,
   ships,
 }: {
   cargo?: FleetMissionSummary["cargo"] | undefined;
   harvested?: FleetMissionSummary["returnCargo"] | undefined;
   loot?: BattleReport["loot"] | undefined;
   losses?: MissionLossSummary | undefined;
-  missionType?: string | undefined;
+  mission?: FleetMissionSummary | undefined;
   ships: Record<string, string>;
 }) {
   // VEY-KANEO-495: a resolved attack that lost ships must not read like a normal completed mission.
@@ -1034,11 +1034,26 @@ function MissionFleet({
   // outcome (coloured by result), non-zero per-side fleet losses (criterion 1's resource-value fallback
   // — per-ship loss counts are not in the served payload), and any debris created for follow-up harvest
   // (criterion 3). A winning no-loss raid shows the green outcome without a noisy empty Losses line.
-  const attackFailed = losses && missionType ? isFailedPlayerAttack(missionType, losses.outcome) : false;
+  const attackFailed = losses && mission ? isFailedPlayerAttack(mission.missionType, losses.outcome) : false;
   const hasLosses = losses ? hasAnyCombatLosses(losses.attacker, losses.defender) : false;
+  const historicalDefenseHold = mission?.missionType === "DefenseHold"
+    && (
+      mission.defenseHoldOutcome !== undefined
+      || mission.destroyedShips !== undefined
+      || mission.survivingShips !== undefined
+    )
+    ? mission
+    : null;
   return (
     <div className="space-y-1">
       <FleetIcons ships={ships} />
+      {historicalDefenseHold ? (
+        <>
+          <p className="text-[11px] text-slate-500">Original stationed fleet {formatShips(historicalDefenseHold.originalShips ?? historicalDefenseHold.ships)}</p>
+          <p className="text-[11px] text-slate-500">Destroyed in combat {historicalDefenseHold.destroyedShips === undefined || historicalDefenseHold.destroyedShips === null ? "Exact composition unavailable" : formatShips(historicalDefenseHold.destroyedShips)}</p>
+          <p className="text-[11px] text-slate-500">Surviving return fleet {historicalDefenseHold.survivingShips === undefined || historicalDefenseHold.survivingShips === null ? "Exact composition unavailable" : formatShips(historicalDefenseHold.survivingShips)}</p>
+        </>
+      ) : null}
       {cargo ? <p className="text-[11px] text-slate-500">Cargo {formatCargo(cargo)}</p> : null}
       {harvested ? <p className="text-[11px] text-slate-500">Debris collected {formatCargo(harvested)}</p> : null}
       {loot ? <p className="text-[11px] text-slate-500">Loot {formatCargo(loot)}</p> : null}
@@ -1110,6 +1125,9 @@ export function missionStatusPill(mission: FleetMissionSummary, now: number): Mi
   }
   if (mission.resolutionBlocker === "randomness_pending") {
     return { label: "Awaiting randomness", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
+  }
+  if (mission.missionType === "DefenseHold" && mission.defenseHoldOutcome === "Recalled") {
+    return { label: "Recalled", tone: "border-amber-300/25 bg-amber-300/10 text-amber-100" };
   }
   // VEY-KANEO-468: completions settle lazily on-chain (the next mutating call; combat via the battle
   // keeper). A leg whose clock has passed but whose backend status has not advanced is mid-settlement,
@@ -1844,7 +1862,7 @@ function PastMissionSummaryRow({
       badgeLabel={directionalMissionTypeLabel(mission.missionType, missionDirection)}
       badgeTone={missionTypeTone(mission.missionType)}
       direction={missionRouteLeg(mission.status)}
-      fleet={<MissionFleet cargo={mission.cargo} harvested={harvested} loot={loot} losses={losses} missionType={mission.missionType} ships={mission.ships} />}
+      fleet={<MissionFleet cargo={mission.cargo} harvested={harvested} loot={loot} losses={losses} mission={mission} ships={mission.ships} />}
       groupId={mission.attackGroupId}
       missionId={mission.missionId}
       origin={origin}

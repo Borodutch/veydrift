@@ -294,7 +294,26 @@ function MissionFacts({
           missions keep it as the only place this fleet/cargo detail is shown. */}
       {hideFleetAndCargo ? null : (
         <Panel title="Fleet And Cargo">
-          <Row label="Ships" value={<UnitIcons units={shipUnits(mission.ships)} />} />
+          {mission.missionType === "DefenseHold" ? (
+            <>
+              <Row label="Lifecycle" value={mission.defenseHoldOutcome ?? mission.status} />
+              <Row label="Original stationed fleet" value={<UnitIcons units={shipUnits(mission.originalShips ?? mission.ships)} />} />
+              <Row
+                label="Destroyed in combat"
+                value={mission.destroyedShips === undefined || mission.destroyedShips === null
+                  ? "Exact composition unavailable"
+                  : <UnitIcons units={shipUnits(mission.destroyedShips)} />}
+              />
+              <Row
+                label="Surviving return fleet"
+                value={mission.survivingShips === undefined || mission.survivingShips === null
+                  ? "Exact composition unavailable"
+                  : <UnitIcons units={shipUnits(mission.survivingShips)} />}
+              />
+            </>
+          ) : (
+            <Row label="Ships" value={<UnitIcons units={shipUnits(mission.ships)} />} />
+          )}
           <Row label="Cargo" value={formatResources(mission.cargo)} />
           {mission.missionType === "Harvest" ? (
             <Row label="Debris collected" value={mission.returnCargo ? formatResources(mission.returnCargo) : "Unavailable for legacy harvest reports."} />
@@ -463,7 +482,7 @@ function MissionBattleReport({
   const totalLoot = isGroupedAttack ? sumLoot(participants) : report.loot;
   const battleTimeFleetUnits = compositionUnits(report.defenderSnapshot?.fleet, shipCatalog, shipAssetByKey);
   const battleTimeDefenseUnits = compositionUnits(report.defenderSnapshot?.defenses, defenseCatalog, defenseAssetByKey);
-  const stationedDefenders = defenderState?.stationedDefenders ?? [];
+  const stationedDefenders = report.stationedDefenders ?? defenderState?.stationedDefenders ?? [];
   const battleTimeDefenderUnits = report.roundReports[0]?.defenderUnits ?? null;
 
   return (
@@ -516,11 +535,20 @@ function MissionBattleReport({
               value={
                 <div className="grid gap-2">
                   {stationedDefenders.map((defender) => (
-                    <div className="grid gap-1" key={defender.missionId}>
+                    <div className="grid gap-1.5 rounded border border-violet-300/15 bg-violet-300/5 p-2" key={defender.missionId}>
                       <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-violet-200">
-                        {defender.defenderDisplayName ?? shortAddress(defender.defender)}
+                        Mission #{defender.missionId} · {defender.defenderDisplayName ?? shortAddress(defender.defender)} · {defender.lifecycleOutcome ?? "Historical"}
                       </span>
+                      <span className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Original fleet</span>
                       <UnitIcons units={shipUnits(defender.ships)} />
+                      <span className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Destroyed</span>
+                      {defender.destroyedShips === undefined || defender.destroyedShips === null
+                        ? <span className="text-slate-500">Exact composition unavailable</span>
+                        : <UnitIcons units={shipUnits(defender.destroyedShips)} />}
+                      <span className="text-[10px] uppercase tracking-[0.12em] text-slate-500">Survived</span>
+                      {defender.survivingShips === undefined || defender.survivingShips === null
+                        ? <span className="text-slate-500">Exact composition unavailable</span>
+                        : <UnitIcons units={shipUnits(defender.survivingShips)} />}
                     </div>
                   ))}
                 </div>
@@ -541,6 +569,10 @@ function MissionBattleReport({
       <div className="mt-3">
         <Panel title="Debris Field">
           <Row label="Debris created" value={`${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal`} />
+          <Row
+            label="Defender loss basis"
+            value={`${formatResource(report.defenderLosses.metal)} metal / ${formatResource(report.defenderLosses.crystal)} crystal fleet loss → ${formatResource(report.debris.metal)} metal / ${formatResource(report.debris.crystal)} crystal debris (30%)`}
+          />
           <Row label="Recyclers needed" value={recyclersNeeded > 0 ? `~${formatResource(String(recyclersNeeded))} (20,000 cargo each)` : "None"} />
         </Panel>
       </div>
