@@ -163,7 +163,7 @@ export type TargetResourceIntel = {
 };
 
 export function shouldShowDestinationIntel(action: EnabledGalaxyAction): boolean {
-  return action.kind !== "colonize" && action.kind !== "deploy";
+  return action.kind !== "colonize" && action.kind !== "deploy" && action.kind !== "transport";
 }
 
 export function shouldShowReturnTiming(action: EnabledGalaxyAction, hasHoldingBreakdown: boolean): boolean {

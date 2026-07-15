@@ -877,6 +877,7 @@ describe("mission creation", () => {
       action: transportAction,
       cargoCapacity: 4_000,
       cargoSupported: true,
+      destinationIntelVisible: shouldShowDestinationIntel(transportAction),
     })).join(" ");
     const harvestText = collectText(NonAttackMissionIntelPanel({
       ...panelProps,
@@ -889,6 +890,7 @@ describe("mission creation", () => {
       action: defenseHoldAction,
       cargoCapacity: 0,
       cargoSupported: false,
+      destinationIntelVisible: shouldShowDestinationIntel(defenseHoldAction),
       holdDepotLevel: 3,
       holdingBreakdown: {
         depotSupport: 120,
@@ -902,14 +904,15 @@ describe("mission creation", () => {
       action: deployAction,
       cargoCapacity: 4_000,
       cargoSupported: true,
-      destinationIntelVisible: false,
+      destinationIntelVisible: shouldShowDestinationIntel(deployAction),
     })).join(" ");
 
     expect(transportText).toContain("Target");
     expect(transportText).toContain("Transport run");
     expect(transportText).toContain("Own planet");
     expect(transportText).toContain("Manual load / 4,000 capacity");
-    expect(transportText).toContain("Resources");
+    expect(transportText).not.toContain("Resources");
+    expect(transportText).not.toContain("Forces");
     expect(transportText).not.toContain("Max carry");
 
     expect(harvestText).toContain("Debris sweep");
@@ -925,6 +928,8 @@ describe("mission creation", () => {
     expect(defendText).toContain("Arrive, hold, return");
     expect(defendText).toContain("180 D net");
     expect(defendText).toContain("Level 3 support");
+    expect(defendText).toContain("Resources");
+    expect(defendText).toContain("Forces");
 
     expect(deployText).toContain("Deploy fleet");
     expect(deployText).toContain("Own planets only");
@@ -988,9 +993,10 @@ describe("mission creation", () => {
     expect(text).toContain("Resources now");
   });
 
-  test("hides destination intel for colonize and deploy mission screens", () => {
+  test("hides destination intel for colonize, transport, and deploy mission screens", () => {
     expect(shouldShowDestinationIntel(colonizeAction)).toBe(false);
     expect(shouldShowReturnTiming(colonizeAction, false)).toBe(false);
+    expect(shouldShowDestinationIntel(transportAction)).toBe(false);
     expect(shouldShowDestinationIntel(deployAction)).toBe(false);
     expect(shouldShowReturnTiming(deployAction, false)).toBe(true);
 
