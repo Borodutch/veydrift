@@ -123,6 +123,7 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).toContain('data-planet-selector-research-name="true"');
     expect(playableSource).toContain('className="min-w-0 break-words font-semibold [overflow-wrap:anywhere]"');
     expect(playableSource).not.toContain('<span className="truncate font-semibold">Research</span>');
+    expect(playableSource).not.toContain('data-planet-selector-research-status="true"');
     expect(playableSource).not.toContain("planet.queues.research");
   });
 

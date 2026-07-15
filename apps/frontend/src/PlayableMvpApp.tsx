@@ -9021,23 +9021,17 @@ export function PlanetSelectorResearchProgress({
   // the same queue onto every planet card.
   return (
     <div
-      aria-label={`Selector research progress. ${bar.title}`}
+      aria-label={`Selector research progress. ${preview.label}`}
       className="mb-2 grid min-w-0 gap-1 rounded border border-violet-200/15 bg-violet-200/[0.055] p-1.5 text-left"
       data-planet-selector-research-progress="true"
-      title={bar.title}
+      title={preview.label}
     >
-      <div className="grid min-w-0 gap-0.5 text-[0.6rem] leading-3 text-violet-100">
+      <div className="min-w-0 text-[0.6rem] leading-3 text-violet-100">
         <span
           className="min-w-0 break-words font-semibold [overflow-wrap:anywhere]"
           data-planet-selector-research-name="true"
         >
           {preview.label}
-        </span>
-        <span
-          className="min-w-0 text-right text-violet-200/80"
-          data-planet-selector-research-status="true"
-        >
-          {bar.remaining}
         </span>
       </div>
       <span className="h-1.5 overflow-hidden rounded-full border border-white/5 bg-white/10">
@@ -9056,8 +9050,7 @@ function researchQueuePreview(queue: QueueStateResponse | null | undefined): { l
   const research = queue?.itemId === undefined
     ? undefined
     : researchCatalog.find((item) => item.id === queue.itemId);
-  const targetLevel = queue?.targetLevel ? ` Level ${queue.targetLevel}` : "";
-  return { label: `${research?.label ?? "Research"}${targetLevel}` };
+  return { label: research?.label ?? "Research" };
 }
 
 function planetSelectorQueueProgressBars(
