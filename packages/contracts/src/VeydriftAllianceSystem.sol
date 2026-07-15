@@ -32,6 +32,7 @@ interface IVeydriftAllianceGame {
 /// @notice Canonical on-chain alliance roster and public profile authority.
 contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     uint128 private constant ALLIANCE_DEPOT_SUPPORT_DEUTERIUM_PER_LEVEL = 20_000;
+    uint64 public constant WAR_MINIMUM_DURATION = 48 hours;
 
     enum AllianceRole {
         None,
@@ -106,6 +107,12 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     mapping(uint256 allianceId => mapping(uint256 otherAllianceId => DiplomacyStatus status))
         internal _diplomacy;
     mapping(uint256 intentId => DefenseIntent intent) internal _defenseIntents;
+    // Appended storage: a war is directional, so its start is keyed by the declaring
+    // alliance and its target. Existing wars have no historical timestamp; the
+    // activation time below becomes their conservative lock start after upgrade.
+    mapping(uint256 allianceId => mapping(uint256 otherAllianceId => uint64 startedAt)) internal
+        _warStartedAts;
+    uint64 public warMinimumDurationActivatedAt;
 
     error AllianceInactive(uint256 allianceId);
     error AlreadyInAlliance(address player, uint256 allianceId);
@@ -123,6 +130,8 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     error NotPlanetOwner(uint256 planetId, address player);
     error SelfDiplomacy(uint256 allianceId);
     error SnapshotLengthMismatch();
+    error WarAlreadyActive(uint256 allianceId, uint256 otherAllianceId);
+    error WarEndLocked(uint64 unlocksAt);
     error ZeroAddress();
 
     event AllianceCreated(
@@ -177,6 +186,13 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         initializer
     {
         _initializeAllianceSystem(gameContract, initialOwner);
+    }
+
+    /// @notice Initializes the 48-hour war lock during the UUPS upgrade.
+    /// Existing wars have no on-chain declaration timestamp in the old layout,
+    /// so they are conservatively locked from this activation time.
+    function initializeWarMinimumDuration() external reinitializer(2) onlyOwner {
+        warMinimumDurationActivatedAt = _now();
     }
 
     modifier onlyOwner() {
@@ -253,8 +269,14 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         _requireAlliance(otherAllianceId);
         if (allianceId == otherAllianceId) revert SelfDiplomacy(allianceId);
 
-        _diplomacy[allianceId][otherAllianceId] = status;
-        _diplomacy[otherAllianceId][allianceId] = status;
+        _clearDiplomacyPair(allianceId, otherAllianceId);
+        if (status == DiplomacyStatus.War) {
+            _diplomacy[allianceId][otherAllianceId] = status;
+            _warStartedAts[allianceId][otherAllianceId] = _now();
+        } else {
+            _diplomacy[allianceId][otherAllianceId] = status;
+            _diplomacy[otherAllianceId][allianceId] = status;
+        }
         emit AllianceDiplomacyUpdated(allianceId, otherAllianceId, status);
     }
 
@@ -450,14 +472,48 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
     function setDiplomacy(uint256 allianceId, uint256 otherAllianceId, DiplomacyStatus status)
         external
     {
-        if (status == DiplomacyStatus.War) {
-            _requireOwner(allianceId, msg.sender);
-        } else {
-            _requireOfficer(allianceId, msg.sender);
-        }
+        _requireAlliance(allianceId);
         _requireAlliance(otherAllianceId);
         if (allianceId == otherAllianceId) revert SelfDiplomacy(allianceId);
 
+        DiplomacyStatus currentStatus = _diplomacy[allianceId][otherAllianceId];
+        DiplomacyStatus reciprocalStatus = _diplomacy[otherAllianceId][allianceId];
+        if (status == DiplomacyStatus.War) {
+            _requireOwner(allianceId, msg.sender);
+            if (currentStatus == DiplomacyStatus.War || reciprocalStatus == DiplomacyStatus.War) {
+                revert WarAlreadyActive(allianceId, otherAllianceId);
+            }
+            _clearDiplomacyPair(allianceId, otherAllianceId);
+            _diplomacy[allianceId][otherAllianceId] = DiplomacyStatus.War;
+            _warStartedAts[allianceId][otherAllianceId] = _now();
+            emit AllianceDiplomacyUpdated(allianceId, otherAllianceId, DiplomacyStatus.War);
+            return;
+        }
+
+        if (currentStatus == DiplomacyStatus.War || reciprocalStatus == DiplomacyStatus.War) {
+            // A directional war remains endable only by its declaring alliance.
+            // Both sides of a legacy mirrored war have a direct War row, so
+            // either side can safely terminate that legacy relationship.
+            if (currentStatus != DiplomacyStatus.War || status != DiplomacyStatus.None) {
+                revert NotAuthorized(msg.sender, allianceId);
+            }
+            _requireOfficer(allianceId, msg.sender);
+            uint64 startedAt = _warStartedAts[allianceId][otherAllianceId];
+            uint64 reciprocalStartedAt = _warStartedAts[otherAllianceId][allianceId];
+            if (reciprocalStatus == DiplomacyStatus.War && reciprocalStartedAt > startedAt) {
+                startedAt = reciprocalStartedAt;
+            }
+            if (startedAt == 0) startedAt = warMinimumDurationActivatedAt;
+            uint64 unlocksAt = startedAt + WAR_MINIMUM_DURATION;
+            // forge-lint: disable-next-line(block-timestamp)
+            if (block.timestamp < unlocksAt) revert WarEndLocked(unlocksAt);
+            _clearDiplomacyPair(allianceId, otherAllianceId);
+            emit AllianceDiplomacyUpdated(allianceId, otherAllianceId, DiplomacyStatus.None);
+            return;
+        }
+
+        _requireOfficer(allianceId, msg.sender);
+        _clearDiplomacyPair(allianceId, otherAllianceId);
         _diplomacy[allianceId][otherAllianceId] = status;
         _diplomacy[otherAllianceId][allianceId] = status;
         emit AllianceDiplomacyUpdated(allianceId, otherAllianceId, status);
@@ -564,6 +620,17 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         returns (DiplomacyStatus)
     {
         return _diplomacy[allianceId][otherAllianceId];
+    }
+
+    function warStartedAt(uint256 allianceId, uint256 otherAllianceId)
+        external
+        view
+        returns (uint64)
+    {
+        if (_diplomacy[allianceId][otherAllianceId] != DiplomacyStatus.War) return 0;
+        uint64 startedAt = _warStartedAts[allianceId][otherAllianceId];
+        if (startedAt != 0) return startedAt;
+        return warMinimumDurationActivatedAt;
     }
 
     function defenseIntent(uint256 intentId) external view returns (DefenseIntent memory) {
@@ -845,7 +912,18 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
         if (allianceId == 0 || otherAllianceId == 0 || allianceId == otherAllianceId) {
             return DiplomacyStatus.None;
         }
-        return _diplomacy[allianceId][otherAllianceId];
+        DiplomacyStatus directStatus = _diplomacy[allianceId][otherAllianceId];
+        if (directStatus == DiplomacyStatus.War) return DiplomacyStatus.War;
+        DiplomacyStatus reciprocalStatus = _diplomacy[otherAllianceId][allianceId];
+        if (reciprocalStatus == DiplomacyStatus.War) return DiplomacyStatus.War;
+        return directStatus;
+    }
+
+    function _clearDiplomacyPair(uint256 allianceId, uint256 otherAllianceId) private {
+        delete _diplomacy[allianceId][otherAllianceId];
+        delete _diplomacy[otherAllianceId][allianceId];
+        delete _warStartedAts[allianceId][otherAllianceId];
+        delete _warStartedAts[otherAllianceId][allianceId];
     }
 
     function _isHostileMission(VeydriftGameStorage.FleetMissionType missionType)
