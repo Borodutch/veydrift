@@ -400,6 +400,7 @@ export type IndexedAllianceEvent =
       eventName: "AllianceDiplomacyUpdated";
       transactionHash: string;
       blockNumber: string;
+      declaredAt: string;
       allianceId: string;
       otherAllianceId: string;
       statusId: number;
@@ -955,6 +956,7 @@ export type AllianceDiplomacyEntry = {
   statusId: number;
   updatedAt: string | null;
   initiatedByAllianceId: string | null;
+  declaredAt: string | null;
   alliance: AllianceState["directory"][number] | null;
 };
 
@@ -978,6 +980,8 @@ export type AllianceDiplomacySnapshot = {
   allianceId: string;
   otherAllianceId: string;
   statusId: number;
+  initiatedByAllianceId?: string | null;
+  declaredAt?: string | null;
 };
 
 export type AttackBlockReason = "none" | "bashing_limit" | "score_protection" | "same_alliance";
@@ -2724,9 +2728,8 @@ export class VeydriftGameReader implements ChainReader {
     });
   }
 
-  // Canonical-mirror seed: alliance diplomacy. diplomacyStatus(uint256,uint256) is read for every
-  // ordered allianceId pair (skipping self-pairs); each non-None status yields one directed row. War rows
-  // are directional on newer AllianceSystem deployments, so the row allianceId is the declaring alliance.
+  // Canonical-mirror seed: alliance diplomacy and reciprocal war metadata are read for every ordered
+  // alliance pair. The contract returns the same active war, declarer, and start time in both directions.
   async listAllianceDiplomacyState(): Promise<AllianceDiplomacySnapshot[]> {
     if (!this.allianceContractAddress) return [];
 
@@ -2744,13 +2747,32 @@ export class VeydriftGameReader implements ChainReader {
       this.allianceContractAddress,
       pairs.map((pair) => ({ selector: "0xbeddf2fb", args: [encodeUint(pair.allianceId), encodeUint(pair.otherAllianceId)] }))
     );
+    const warStartedAtResults = await this.batchCallContract(
+      this.allianceContractAddress,
+      pairs.map((pair) => ({ selector: "0x3e6a6710", args: [encodeUint(pair.allianceId), encodeUint(pair.otherAllianceId)] }))
+    );
+    let warDeclarerResults: string[];
+    try {
+      warDeclarerResults = await this.batchCallContract(
+        this.allianceContractAddress,
+        pairs.map((pair) => ({ selector: "0x901a1242", args: [encodeUint(pair.allianceId), encodeUint(pair.otherAllianceId)] }))
+      );
+    } catch {
+      // Rolling deploy compatibility: the backend can be built before the proxy exposes
+      // warDeclarer(uint256,uint256). Event metadata remains the fallback until upgrade.
+      warDeclarerResults = pairs.map(() => "0x");
+    }
     return pairs.flatMap((pair, index) => {
       const statusId = Number(decodeUintWord(wordAt(splitWords(statusResults[index] ?? "0x"), 0)));
       if (statusId === 0) return [];
+      const declaredAt = decodeUintWord(wordAt(splitWords(warStartedAtResults[index] ?? "0x"), 0));
+      const declarerAllianceId = decodeUintWord(wordAt(splitWords(warDeclarerResults[index] ?? "0x"), 0));
       return [{
         allianceId: pair.allianceId.toString(),
         otherAllianceId: pair.otherAllianceId.toString(),
-        statusId
+        statusId,
+        initiatedByAllianceId: declarerAllianceId === 0n ? null : declarerAllianceId.toString(),
+        declaredAt: declaredAt === 0n ? null : declaredAt.toString()
       }];
     });
   }
@@ -6035,6 +6057,7 @@ export function decodeAllianceLog(log: RpcLog): IndexedAllianceEvent {
     return {
       ...base,
       eventName: "AllianceDiplomacyUpdated",
+      declaredAt: blockTimestamp,
       allianceId: decodeUint(topicAt(log.topics, 1)).toString(),
       otherAllianceId: decodeUint(topicAt(log.topics, 2)).toString(),
       statusId: Number(decodeUintWord(wordAt(splitWords(log.data), 0)))

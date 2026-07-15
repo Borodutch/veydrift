@@ -316,6 +316,7 @@ type AllianceDiplomacyRow = {
   status_id: number;
   updated_at: string | null;
   initiated_by_alliance_id: string | null;
+  declared_at: string | null;
 };
 
 type LegacyUnitMutation = {
@@ -1099,12 +1100,15 @@ export class SettlementIndexer {
     if (!allianceId || !otherAllianceId || allianceId === "0" || otherAllianceId === "0" || allianceId === otherAllianceId) {
       return "none";
     }
-    const row = this.db.query(`
-      SELECT status_id
+    const rows = this.db.query(`
+      SELECT alliance_id, other_alliance_id, status_id
       FROM contract_alliance_diplomacy
-      WHERE alliance_id = ? AND other_alliance_id = ?
-    `).get(allianceId, otherAllianceId) as { status_id: number } | null;
-    return diplomacyStatusName(row?.status_id ?? 0);
+      WHERE (alliance_id = ? AND other_alliance_id = ?)
+         OR (alliance_id = ? AND other_alliance_id = ?)
+    `).all(allianceId, otherAllianceId, otherAllianceId, allianceId) as Array<Pick<AllianceDiplomacyRow, "alliance_id" | "other_alliance_id" | "status_id">>;
+    if (rows.some((row) => diplomacyStatusName(row.status_id) === "war")) return "war";
+    const direct = rows.find((row) => row.alliance_id === allianceId);
+    return diplomacyStatusName(direct?.status_id ?? 0);
   }
 
   upsertPlayerDisplayName(wallet: Address, displayName: string): PlayerProfile {
@@ -1249,20 +1253,30 @@ export class SettlementIndexer {
     directoryById: ReadonlyMap<string, AllianceState["directory"][number]>
   ): AllianceState["diplomacy"] {
     const rows = this.db.query(`
-      SELECT alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id
+      SELECT alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id, declared_at
       FROM contract_alliance_diplomacy
-      WHERE alliance_id = ? AND status_id != 0
-      ORDER BY status_id DESC, CAST(other_alliance_id AS INTEGER) ASC
-    `).all(allianceId) as AllianceDiplomacyRow[];
-    return rows.map((row) => ({
-      allianceId: row.alliance_id,
-      otherAllianceId: row.other_alliance_id,
-      status: diplomacyStatusName(row.status_id),
-      statusId: row.status_id,
-      updatedAt: row.updated_at,
-      initiatedByAllianceId: row.initiated_by_alliance_id,
-      alliance: directoryById.get(row.other_alliance_id) ?? null
-    }));
+      WHERE (alliance_id = ? OR other_alliance_id = ?) AND status_id != 0
+    `).all(allianceId, allianceId) as AllianceDiplomacyRow[];
+    const grouped = new Map<string, AllianceDiplomacyRow[]>();
+    for (const row of rows) {
+      const otherAllianceId = row.alliance_id === allianceId ? row.other_alliance_id : row.alliance_id;
+      grouped.set(otherAllianceId, [...(grouped.get(otherAllianceId) ?? []), row]);
+    }
+    return [...grouped.entries()].map(([otherAllianceId, pairRows]) => {
+      const direct = pairRows.find((row) => row.alliance_id === allianceId);
+      const war = pairRows.find((row) => diplomacyStatusName(row.status_id) === "war");
+      const selected = war ?? direct ?? pairRows[0]!;
+      return {
+        allianceId,
+        otherAllianceId,
+        status: diplomacyStatusName(selected.status_id),
+        statusId: selected.status_id,
+        updatedAt: selected.updated_at,
+        initiatedByAllianceId: pairRows.find((row) => row.initiated_by_alliance_id)?.initiated_by_alliance_id ?? null,
+        declaredAt: pairRows.find((row) => row.declared_at)?.declared_at ?? null,
+        alliance: directoryById.get(otherAllianceId) ?? null
+      };
+    }).sort((left, right) => right.statusId - left.statusId || Number(left.otherAllianceId) - Number(right.otherAllianceId));
   }
 
   private allianceTotalScore(wallets: readonly Address[]): string {
@@ -3587,6 +3601,7 @@ export class SettlementIndexer {
         status_id INTEGER NOT NULL,
         updated_at TEXT,
         initiated_by_alliance_id TEXT,
+        declared_at TEXT,
         PRIMARY KEY (alliance_id, other_alliance_id)
       );
       CREATE TABLE IF NOT EXISTS contract_highscore_inputs (
@@ -3604,6 +3619,7 @@ export class SettlementIndexer {
     this.ensureColumn("contract_production_queues", "backlog_json", "TEXT");
     this.ensureColumn("contract_planet_resources", "log_index", "TEXT NOT NULL DEFAULT '0x0'");
     this.ensureColumn("contract_alliance_diplomacy", "initiated_by_alliance_id", "TEXT");
+    this.ensureColumn("contract_alliance_diplomacy", "declared_at", "TEXT");
     this.backfillStartPriceProjection();
     this.backfillDefenseHoldEndedMissionEvents();
     if (runStartupBackfill) {
@@ -6533,20 +6549,18 @@ export class SettlementIndexer {
         WHERE alliance_id = ?
       `).run(event.newOwner, event.allianceId);
     } else if (event.eventName === "AllianceDiplomacyUpdated") {
-      this.db.query(`
-        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
-          status_id = excluded.status_id,
-          updated_at = excluded.updated_at,
-          initiated_by_alliance_id = excluded.initiated_by_alliance_id
-      `).run(
-        event.allianceId,
-        event.otherAllianceId,
-        event.statusId,
-        event.blockNumber,
-        diplomacyStatusName(event.statusId) === "war" ? event.allianceId : null
-      );
+      if (diplomacyStatusName(event.statusId) === "none") {
+        this.db.query(`
+          DELETE FROM contract_alliance_diplomacy
+          WHERE (alliance_id = ? AND other_alliance_id = ?)
+             OR (alliance_id = ? AND other_alliance_id = ?)
+        `).run(event.allianceId, event.otherAllianceId, event.otherAllianceId, event.allianceId);
+      } else {
+        const initiatedByAllianceId = diplomacyStatusName(event.statusId) === "war" ? event.allianceId : null;
+        const declaredAt = diplomacyStatusName(event.statusId) === "war" ? event.declaredAt : null;
+        this.upsertAllianceDiplomacyDirection(event.allianceId, event.otherAllianceId, event.statusId, event.blockNumber, initiatedByAllianceId, declaredAt);
+        this.upsertAllianceDiplomacyDirection(event.otherAllianceId, event.allianceId, event.statusId, event.blockNumber, initiatedByAllianceId, declaredAt);
+      }
     }
 
     this.touch();
@@ -6641,19 +6655,17 @@ export class SettlementIndexer {
     this.touch();
   }
 
-  // Canonical-mirror seed for contract_alliance_diplomacy. The reader returns one row per directed
-  // (alliance_id, other_alliance_id) pair, matching the AllianceDiplomacyUpdated handler that writes both
-  // directions; updated_at is left NULL on the chain seed (no event block backs it). See null vs.
-  // empty-array semantics on applyAllianceJoinRequestSnapshot.
+  // Canonical-mirror seed for contract_alliance_diplomacy. Reciprocal contract getters return one row
+  // per ordered pair with shared declarer/start metadata; updated_at remains NULL without an event block.
   private applyAllianceDiplomacySnapshot(snapshot: AllianceDiplomacySnapshot[] | null): void {
     if (snapshot === null) return;
     const existingInitiators = new Map(
       (this.db.query(`
-        SELECT alliance_id, other_alliance_id, initiated_by_alliance_id
+        SELECT alliance_id, other_alliance_id, initiated_by_alliance_id, declared_at
         FROM contract_alliance_diplomacy
         WHERE initiated_by_alliance_id IS NOT NULL
-      `).all() as Pick<AllianceDiplomacyRow, "alliance_id" | "other_alliance_id" | "initiated_by_alliance_id">[])
-        .map((row) => [`${row.alliance_id}:${row.other_alliance_id}`, row.initiated_by_alliance_id])
+      `).all() as Pick<AllianceDiplomacyRow, "alliance_id" | "other_alliance_id" | "initiated_by_alliance_id" | "declared_at">[])
+        .map((row) => [`${row.alliance_id}:${row.other_alliance_id}`, row])
     );
     const snapshotWarPairs = new Set(
       snapshot
@@ -6665,24 +6677,46 @@ export class SettlementIndexer {
       const relationKey = `${relation.allianceId}:${relation.otherAllianceId}`;
       const reverseKey = `${relation.otherAllianceId}:${relation.allianceId}`;
       const status = diplomacyStatusName(relation.statusId);
-      const existingInitiator = existingInitiators.get(relationKey) ?? existingInitiators.get(reverseKey);
+      const existingMetadata = existingInitiators.get(relationKey) ?? existingInitiators.get(reverseKey);
       const inferredInitiator = status === "war" && !snapshotWarPairs.has(reverseKey)
         ? relation.allianceId
         : null;
       this.db.query(`
-        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id)
-        VALUES (?, ?, ?, NULL, ?)
+        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id, declared_at)
+        VALUES (?, ?, ?, NULL, ?, ?)
         ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
           status_id = excluded.status_id,
-          initiated_by_alliance_id = excluded.initiated_by_alliance_id
+          initiated_by_alliance_id = excluded.initiated_by_alliance_id,
+          declared_at = excluded.declared_at
       `).run(
         relation.allianceId,
         relation.otherAllianceId,
         relation.statusId,
-        status === "war" ? (existingInitiator ?? inferredInitiator) : null
+        status === "war" ? (relation.initiatedByAllianceId ?? existingMetadata?.initiated_by_alliance_id ?? inferredInitiator) : null,
+        status === "war" ? (relation.declaredAt ?? existingMetadata?.declared_at ?? null) : null
       );
     }
     this.touch();
+  }
+
+  private upsertAllianceDiplomacyDirection(
+    allianceId: string,
+    otherAllianceId: string,
+    statusId: number,
+    updatedAt: string | null,
+    initiatedByAllianceId: string | null,
+    declaredAt: string | null
+  ): void {
+    this.db.query(`
+      INSERT INTO contract_alliance_diplomacy (
+        alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id, declared_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
+        status_id = excluded.status_id,
+        updated_at = excluded.updated_at,
+        initiated_by_alliance_id = excluded.initiated_by_alliance_id,
+        declared_at = excluded.declared_at
+    `).run(allianceId, otherAllianceId, statusId, updatedAt, initiatedByAllianceId, declaredAt);
   }
 
   private touch(): void {
