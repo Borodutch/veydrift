@@ -63,6 +63,10 @@ import {
 import {
   buildReferralRedemption,
   createReferralStore,
+  normalizeReferralCode,
+  referralCodeHash,
+  referralCommitment,
+  referralInviteRecord,
   ReferralInviteStore,
   resolveReferralCode,
   verifyReferralWalletSignature,
@@ -628,10 +632,26 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
         })) {
           return invalidReferralSignatureResponse();
         }
-        const intent = referralStore.recordClaimIntent(wallet, body?.code, commitment);
+        if (!indexer) return indexedReadNotReadyResponse("referral code availability", indexer, { wallet });
+        const code = normalizeReferralCode(body?.code);
+        const expectedCommitment = referralCommitment(code, wallet);
+        if (expectedCommitment.toLowerCase() !== commitment.toLowerCase()) {
+          throw new Error("Referral code does not match the inviter-bound commitment.");
+        }
+        const resolution = resolveReferralCode({
+          code,
+          index: indexer,
+          wallet,
+          startPriceWei: indexer.currentStartPriceWei()
+        });
+        if (resolution.ownership === "reserved") {
+          return referralResolveErrorResponse({ ...resolution, valid: false });
+        }
         return Response.json({
-          commitment: intent.commitment,
-          persisted: true
+          code,
+          commitment: expectedCommitment,
+          persisted: false,
+          source: "chain"
         }, {
           headers: corsHeaders
         });
@@ -645,7 +665,6 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         assertAddress(wallet);
         const body = await readJsonBody(request);
-        const code = body?.code;
         const commitment = String(body?.commitment ?? "");
         const txHash = String(body?.txHash ?? "");
         if (!/^0x[a-fA-F0-9]{64}$/.test(commitment)) {
@@ -673,17 +692,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
             status: 409
           });
         }
-        const claimedAtSeconds = Number(claim.claimedAt);
-        const claimedAt = Number.isFinite(claimedAtSeconds) ? new Date(claimedAtSeconds * 1_000) : new Date();
-        referralStore.recordClaimTransaction(wallet, code, commitment, txHash, claimedAt);
         const startPriceWei = indexer.currentStartPriceWei();
         return Response.json(referralStore.dashboard(
           wallet,
           indexer,
           startPriceWei,
           referralConfigurationReady(loaded.config, startPriceWei),
-          true,
-          claimedAt
+          true
         ), {
           headers: corsHeaders
         });
@@ -696,13 +711,15 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
       try {
         if (!indexer) return indexedReadNotReadyResponse("referral validation", indexer, {});
         const invitee = url.searchParams.get("invitee") ?? undefined;
+        const wallet = url.searchParams.get("wallet") ?? undefined;
         if (invitee) assertAddress(invitee);
+        if (wallet) assertAddress(wallet);
         return Response.json(resolveReferralCode({
           code: url.searchParams.get("code"),
           index: indexer,
           ...(invitee ? { invitee } : {}),
-          startPriceWei: indexer.currentStartPriceWei(),
-          store: referralStore
+          ...(wallet ? { wallet } : {}),
+          startPriceWei: indexer.currentStartPriceWei()
         }), {
           headers: corsHeaders
         });
@@ -731,15 +748,16 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           code: body?.code,
           index: indexer,
           invitee,
-          startPriceWei,
-          store: referralStore
+          startPriceWei
         });
-        if (!resolution.valid || !resolution.commitment) {
+        if (!resolution.valid || !resolution.commitment || !resolution.codeHash) {
           return referralResolveErrorResponse(resolution);
         }
-        const invite = referralStore.findByCommitment(resolution.commitment);
-        if (!invite) return referralResolveErrorResponse({ ...resolution, valid: false, status: "invalid" });
-        return Response.json(await buildReferralRedemption(loaded.config, invite, invitee), {
+        const claim = indexer.referralClaimsByCodeHash(resolution.codeHash)
+          .filter((candidate) => candidate.commitment.toLowerCase() === resolution.commitment?.toLowerCase())
+          .at(-1);
+        if (!claim) return referralResolveErrorResponse({ ...resolution, valid: false, status: "invalid" });
+        return Response.json(await buildReferralRedemption(loaded.config, referralInviteRecord(claim), invitee), {
           headers: corsHeaders
         });
       } catch (error) {
@@ -757,8 +775,10 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           throw new Error("txHash must be a 0x-prefixed 32-byte transaction hash.");
         }
         if (!indexer) return indexedReadNotReadyResponse("referral redemption", indexer, { invitee });
-        const storedInvite = referralStore.findByCode(body?.code);
-        if (!storedInvite) {
+        const code = normalizeReferralCode(body?.code);
+        const claims = indexer.referralClaimsByCodeHash(referralCodeHash(code));
+        const claim = claims.at(-1);
+        if (!claim) {
           return Response.json({
             error: "referral_code_not_found",
             message: "Referral code was not found."
@@ -768,9 +788,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           });
         }
         const redemption = indexer.referralRedemption(
-          storedInvite.owner as `0x${string}`,
+          claim.inviter,
           invitee,
-          storedInvite.commitment,
+          claim.commitment,
           txHash as `0x${string}`
         );
         if (!redemption) {
@@ -2193,7 +2213,7 @@ function referralConfigurationReady(config: BackendConfig, startPriceWei: string
 function referralResolveErrorResponse(resolution: ReferralResolveResult): Response {
   const status = resolution.status === "invalid"
     ? 404
-    : resolution.status === "expired"
+    : resolution.status === "inactive"
       ? 410
       : resolution.status === "exhausted"
         ? 429

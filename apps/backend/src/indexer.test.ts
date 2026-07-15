@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
 import { canonicalContractTables } from "./contractStateSchema";
 import type { Address, AllianceState, CanonicalFleetMissionSnapshot, CanonicalPlanetChainState, DebrisFieldEvent, DefenseState, InfrastructureState, MoonChanceReportEvent, PlayerQueues, ResearchState, ShipyardState, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
@@ -60,7 +61,7 @@ const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f
 const interplanetaryMissileAttackTopic = "0x44a8c2b7632935050468ed4d9acfb1e99a09cec32fd65811964b95b3693f872c";
 const randomnessFulfilledTopic = "0x864b23caf5999ffe7e7b5bc685db237bcef9eb7bd6423c2fd395d9b4663372f5";
 const startPriceUpdatedTopic = "0xdbcd6a03cdadcd71beb97d41ac0c321148e2556e112a52663ba4c94ff84d6717";
-const referralCodeClaimedTopic = "0xa7124569721bd8a9fca99961778919ebde17b82e397d5dbeb14eb7b5e1e051fb";
+const referralInviteWindowActivatedTopic = "0xd51c9643dafa95fcfa30d65f2b6576bc03873e2630d73fc523daf87a7158d589";
 const referralInviteRedeemedTopic = "0xf0e76a5aa6e423f978c7616fd6933b5d376a32654fc67c6fad0afdbc744ccce1";
 const referralRewardClaimedTopic = "0x55b0859d9094fa40dfdcbcdd82c0d785132f6a627b6083e228d6bddb5e498558";
 const planet: SettledPlanetEvent = {
@@ -229,6 +230,8 @@ describe("SettlementIndexer", () => {
 
   test("indexes canonical referral claim, payout, credit, and reward-claim events", () => {
     const invitee = "0x3333333333333333333333333333333333333333" as Address;
+    const code = "custom_code";
+    const codeHash = keccak256(toHex(code));
     const commitment = `0x${"12".repeat(32)}` as `0x${string}`;
     const claimTxHash = `0x${"ab".repeat(32)}` as `0x${string}`;
     const redemptionTxHash = `0x${"cd".repeat(32)}` as `0x${string}`;
@@ -243,8 +246,11 @@ describe("SettlementIndexer", () => {
       blockNumber: "0x91",
       transactionHash: claimTxHash,
       logIndex: "0x0",
-      topics: [referralCodeClaimedTopic, addressTopic(player), commitment],
-      data: abiWords(1783526400n)
+      topics: [referralInviteWindowActivatedTopic, addressTopic(player), codeHash, commitment],
+      data: encodeAbiParameters(
+        parseAbiParameters("string,uint64,uint64,bool"),
+        [code, 1783526400n, 1783612800n, false]
+      )
     });
     indexer.applyLog({
       blockNumber: "0x92",
@@ -263,9 +269,12 @@ describe("SettlementIndexer", () => {
 
     expect(indexer.referralClaim(player, commitment, claimTxHash)).toMatchObject({
       inviter: player,
+      code,
+      codeHash,
       commitment,
       transactionHash: claimTxHash,
-      claimedAt: "1783526400"
+      claimedAt: "1783526400",
+      activeUntil: "1783612800"
     });
     expect(indexer.referralClaim(player, commitment, redemptionTxHash)).toBeNull();
     expect(indexer.referralRedemption(player, invitee, commitment, redemptionTxHash)).toMatchObject({
@@ -280,7 +289,9 @@ describe("SettlementIndexer", () => {
     });
     expect(indexer.referralRedemption(invitee, invitee, commitment, redemptionTxHash)).toBeNull();
     expect(indexer.referralClaims(player)).toHaveLength(1);
+    expect(indexer.referralClaimsByCodeHash(codeHash)).toHaveLength(1);
     expect(indexer.referralRedemptionsForInviter(player)).toHaveLength(1);
+    expect(indexer.referralRedemptionsForInvitee(invitee)).toHaveLength(1);
     expect(indexer.referralRewardClaimsForInviter(player)).toEqual([
       expect.objectContaining({
         inviter: player,

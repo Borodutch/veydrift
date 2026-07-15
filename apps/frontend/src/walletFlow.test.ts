@@ -55,6 +55,7 @@ import {
   isVeydriftChain,
   miniAppUnsupportedChainMessage,
   mergePlayerProfile,
+  normalizeReferralClaimCode,
   parseRiftTokenAmount,
   sendApproveResourceTokenTransaction,
   sendDepositResourceTransaction,
@@ -83,6 +84,7 @@ import {
   sendBurningChickenMoonTransaction,
   sendDismissAllianceJoinRequestTransaction,
   sendRequestResourceWithdrawalTransaction,
+  sendReferralClaimTransaction,
   requestAccounts,
   referralCodeHash,
   referralCommitment,
@@ -1964,6 +1966,35 @@ describe("walletFlow", () => {
     ]);
   });
 
+  test("normalizes and ABI-encodes editable referral codes for the canonical string claim", async () => {
+    const referralSystem = "0x3333333333333333333333333333333333333333";
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return "0xclaim";
+    });
+
+    expect(normalizeReferralClaimCode(" My_Code-1 ")).toBe("my_code-1");
+    expect(() => normalizeReferralClaimCode("")).toThrow("1–24");
+    expect(() => normalizeReferralClaimCode("abcdefghijklmnopqrstuvwxy")).toThrow("1–24");
+    await expect(sendReferralClaimTransaction(provider, account, {
+      address: contract,
+      referralSystemAddress: referralSystem
+    }, "My_Code-1")).resolves.toBe("0xclaim");
+
+    expect(requests).toEqual([{
+      method: "eth_sendTransaction",
+      params: [{
+        from: account,
+        to: referralSystem,
+        data: "0x03b52c94"
+          + "20".padStart(64, "0")
+          + "9".padStart(64, "0")
+          + "6d795f636f64652d31".padEnd(64, "0")
+      }]
+    }]);
+  });
+
   test("rejects migration claims before the signed state snapshot is ready", async () => {
     const migrationContract = "0x3333333333333333333333333333333333333333";
     const provider = mockProvider(async () => {
@@ -2893,7 +2924,7 @@ describe("walletFlow", () => {
     }
   });
 
-  test("persists owner-bound referral preimages before recording indexed claim transactions", async () => {
+  test("validates normalized referral claims before recording indexed transactions", async () => {
     const originalFetch = globalThis.fetch;
     const code = "borodutch";
     const commitment = referralCommitment(code, account);
@@ -2921,7 +2952,7 @@ describe("walletFlow", () => {
         owner: account.toLowerCase(),
         redemptionCount: 0,
         remainingRedemptions: 3,
-        status: "pending_claim",
+        status: "active",
         txHash: null
       }), {
         headers: { "content-type": "application/json" },

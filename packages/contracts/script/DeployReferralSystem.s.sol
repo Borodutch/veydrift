@@ -7,6 +7,8 @@ import {VeydriftReferralSystem} from "../src/VeydriftReferralSystem.sol";
 /// @notice Deploys and wires the standalone referral system for an existing VeydriftGame proxy.
 /// @dev VeydriftReferralSystem has immutable owner setup through its constructor and no ownership
 ///      transfer function. The broadcaster therefore remains the referral owner/admin.
+///      Code claims stay disabled after deployment until the owner imports the audited legacy
+///      ownership manifest and calls finalizeReferralCodeMigration().
 ///
 ///      Required env:
 ///        PRIVATE_KEY              deployment/referral-owner EOA

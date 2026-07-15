@@ -34,7 +34,6 @@ import {
   defaultVeydriftChainForLocation,
   ensureVeydriftNetwork,
   fetchReferralDashboard,
-  fetchPrivateReferralDashboard,
   fetchSettlementFundingState,
   fetchWalletSettlement,
   farcasterChainFor,
@@ -45,6 +44,7 @@ import {
   isGameBackendUnavailableMessage,
   isTransientWalletBootstrapError,
   isUserRejected,
+  inspectReferralCode,
   normalizeReferralClaimCode,
   persistReferralClaimIntent,
   readMigrationReservation,
@@ -53,7 +53,6 @@ import {
   requestAccounts,
   getAvailableWalletProviderDetails,
   referralCommitment,
-  referralCodeHash,
   requestReferralWalletSignature,
   recordReferralClaimTransaction,
   recordReferralRedemptionTransaction,
@@ -315,6 +314,7 @@ export function FirstPlanetSettlementApp() {
   const [referralClaimCodeInput, setReferralClaimCodeInput] = useState(() => (
     readReferralStorage(REFERRAL_CLAIM_CODE_STORAGE_KEY) || generateReferralClaimCode()
   ));
+  const [referralClaimInspection, setReferralClaimInspection] = useState<ReferralValidationState>({ status: "idle" });
   const [referralValidation, setReferralValidation] = useState<ReferralValidationState>({ status: "idle" });
   const transactionActionGate = useRef(createTransactionActionGate()).current;
   const farcasterAutoConnectAttempted = useRef(false);
@@ -472,6 +472,31 @@ export function FirstPlanetSettlementApp() {
       disposed = true;
     };
   }, [account, hasOverview, settlementConfigState.apiUrl]);
+
+  useEffect(() => {
+    const code = referralClaimCodeInput.trim();
+    const apiUrl = settlementConfigState.apiUrl;
+    if (!hasOverview || !account || !apiUrl || !code) {
+      setReferralClaimInspection({ status: "idle" });
+      return;
+    }
+
+    let disposed = false;
+    setReferralClaimInspection({ status: "loading" });
+    const timeout = setTimeout(() => {
+      void inspectReferralCode(apiUrl, code, account)
+        .then((resolution) => {
+          if (!disposed) setReferralClaimInspection({ status: "resolved", resolution });
+        })
+        .catch((error) => {
+          if (!disposed) setReferralClaimInspection({ status: "error", message: walletRequestErrorMessage(error) });
+        });
+    }, 250);
+    return () => {
+      disposed = true;
+      clearTimeout(timeout);
+    };
+  }, [account, hasOverview, referralClaimCodeInput, settlementConfigState.apiUrl]);
 
   useEffect(() => {
     const code = referralCodeInput.trim();
@@ -1227,25 +1252,8 @@ export function FirstPlanetSettlementApp() {
       }
 
       try {
-        const currentInvite = currentDashboard?.invite ?? currentDashboard?.invites[0];
-        if (currentInvite?.status === "active" && !currentInvite.code) {
-          const signature = await requestReferralWalletSignature(
-            provider,
-            wallet.account,
-            "dashboard"
-          );
-          setReferralProgram({
-            status: "ready",
-            dashboard: await fetchPrivateReferralDashboard(
-              settlementConfigState.apiUrl,
-              wallet.account,
-              signature
-            )
-          });
-          return;
-        }
         const inviteCode = normalizeReferralClaimCode(referralClaimCodeInput);
-        const codeHash = referralCodeHash(inviteCode);
+        setReferralClaimCodeInput(inviteCode);
         const commitment = referralCommitment(inviteCode, wallet.account);
         const signature = await requestReferralWalletSignature(
           provider,
@@ -1264,7 +1272,7 @@ export function FirstPlanetSettlementApp() {
           provider,
           wallet.account,
           settlementConfig,
-          codeHash
+          inviteCode
         );
         await recordReferralClaimTransactionAfterIndexing(
           settlementConfigState.apiUrl,
@@ -1378,6 +1386,7 @@ export function FirstPlanetSettlementApp() {
         referralProgramPanel={(
           <ReferralProgramPanel
             claimCode={referralClaimCodeInput}
+            inspection={referralClaimInspection}
             onClaimCodeChange={setReferralClaimCodeInput}
             onClaim={claimReferralInvite}
             state={referralProgram}
@@ -1419,12 +1428,14 @@ export function FirstPlanetSettlementApp() {
 
 function ReferralProgramPanel({
   claimCode,
+  inspection,
   onClaim,
   onClaimCodeChange,
   startPriceWei,
   state,
 }: {
   claimCode: string;
+  inspection: ReferralValidationState;
   onClaim: () => void;
   onClaimCodeChange: (value: string) => void;
   startPriceWei: bigint | null;
@@ -1436,23 +1447,20 @@ function ReferralProgramPanel({
   const invite = dashboard?.invite ?? dashboard?.invites[0];
   const claiming = state.status === "claiming";
   const inviteActive = invite?.status === "active";
-  const needsUnlock = Boolean(inviteActive && !invite?.code);
-  const claimCodeValid = /^[A-Za-z0-9_-]{9}$/.test(claimCode.trim());
+  const claimCodeValid = /^[A-Za-z0-9_-]{1,24}$/.test(claimCode.trim());
+  const inspected = inspection.status === "resolved" ? inspection.resolution : undefined;
+  const selectedCodeClaimable = inspected?.ownership === "available"
+    || (inspected?.ownership === "owned_by_you" && inspected.renewable);
   const canClaim = Boolean(dashboard?.configured && !claiming && (
-    needsUnlock
-      || ((!invite || invite.status === "pending_claim" || invite.status === "expired") && claimCodeValid)
+    !inviteActive && claimCodeValid && selectedCodeClaimable
   ));
   const claimLabel = claiming
     ? "Claiming invites"
-    : needsUnlock
-      ? "Unlock invite"
-    : invite?.status === "pending_claim"
-      ? "Finish invite claim"
-      : invite?.status === "expired"
-        ? "Claim invites"
-      : invite
+    : inspected?.ownership === "owned_by_you" && inspected.renewable
+      ? "Renew invite"
+      : inviteActive
         ? "Invites active"
-        : "Claim invites";
+        : "Claim code";
   const rewardLabel = dashboard?.rewardPerUseWei
     ? `${formatEth(BigInt(dashboard.rewardPerUseWei))} ETH`
     : referralInviterRewardLabel(startPriceWei);
@@ -1496,15 +1504,17 @@ function ReferralProgramPanel({
             autoComplete="off"
             disabled={claiming || inviteActive}
             inputMode="text"
-            maxLength={9}
+            maxLength={24}
             onInput={(event) => onClaimCodeChange((event.currentTarget as HTMLInputElement).value)}
             placeholder="borodutch"
             value={claimCode}
           />
         </label>
         {!claimCodeValid && !inviteActive ? (
-          <p className="referral-muted">Use 9 letters, numbers, underscores, or hyphens.</p>
+          <p className="referral-muted">Use 1–24 letters, numbers, underscores, or hyphens.</p>
         ) : null}
+
+        {!inviteActive && claimCodeValid ? <ReferralClaimInspectionMessage state={inspection} /> : null}
 
         {state.status === "loading" ? (
           <p className="referral-muted">Loading invite code.</p>
@@ -1529,13 +1539,13 @@ function ReferralProgramPanel({
         {invite ? (
           <div className="referral-link-row">
             <div>
-              <strong>{invite.link ?? "Private invite hidden — unlock with this wallet"}</strong>
+              <strong>{invite.link}</strong>
               <span>
                 {invite.status === "active"
-                  ? `${invite.remainingRedemptions}/3 uses left today`
-                  : invite.status === "expired"
-                    ? "Expired"
-                    : "Awaiting wallet claim"}
+                  ? `Owned by you · active · ${invite.remainingRedemptions}/3 uses left today`
+                  : invite.status === "renewable"
+                    ? "Owned by you · renewable"
+                    : "Owned by you · another code is active"}
               </span>
               {invite.expiresAt ? <span>Expires {formatDateTime(invite.expiresAt)}</span> : null}
               <span>{invite.redemptionCount} total invite use{invite.redemptionCount === 1 ? "" : "s"}</span>
@@ -1543,8 +1553,8 @@ function ReferralProgramPanel({
             <div className="referral-copy-actions">
               <button
                 className="referral-copy-button"
-                disabled={invite.status !== "active" || !invite.code}
-                onClick={() => void navigator.clipboard?.writeText(invite.code ?? "")}
+                disabled={invite.status !== "active"}
+                onClick={() => void navigator.clipboard?.writeText(invite.code)}
                 type="button"
               >
                 <Copy aria-hidden="true" size={14} />
@@ -1552,8 +1562,8 @@ function ReferralProgramPanel({
               </button>
               <button
                 className="referral-copy-button"
-                disabled={invite.status !== "active" || !invite.link}
-                onClick={() => void navigator.clipboard?.writeText(invite.link ?? "")}
+                disabled={invite.status !== "active"}
+                onClick={() => void navigator.clipboard?.writeText(invite.link)}
                 type="button"
               >
                 <Link aria-hidden="true" size={14} />
@@ -1609,6 +1619,48 @@ function ReferralCodeField({
   );
 }
 
+function ReferralClaimInspectionMessage({ state }: { state: ReferralValidationState }) {
+  if (state.status === "loading" || state.status === "idle") {
+    return <p className="referral-muted">Checking permanent ownership on-chain.</p>;
+  }
+  if (state.status === "error") {
+    return <p className="referral-error">{state.message}</p>;
+  }
+  const { resolution } = state;
+  if (resolution.status === "invalid") {
+    return <p className="referral-error">Invalid · use 1–24 URL-safe characters.</p>;
+  }
+  if (resolution.ownership === "available") {
+    return (
+      <p className="referral-muted">
+        Available · this normalized code can be permanently claimed.
+        {resolution.remainingRedemptions === 0 && resolution.nextRedemptionAt
+          ? ` Invite quota exhausted until ${formatDateTime(resolution.nextRedemptionAt)}.`
+          : ""}
+      </p>
+    );
+  }
+  if (resolution.ownership === "owned_by_you") {
+    return (
+      <p className="referral-muted">
+        {resolution.renewable
+          ? "Owned by you · invite window is renewable."
+          : `Owned by you · active until ${resolution.expiresAt ? formatDateTime(resolution.expiresAt) : "the indexed expiry"}.`}
+        {resolution.remainingRedemptions === 0 && resolution.nextRedemptionAt
+          ? ` Quota exhausted until ${formatDateTime(resolution.nextRedemptionAt)}.`
+          : ` ${resolution.remainingRedemptions}/3 inviter uses remain.`}
+      </p>
+    );
+  }
+  return (
+    <p className="referral-error">
+      Reserved by another wallet · {resolution.status === "inactive"
+        ? "the owner may renew it."
+        : `active until ${resolution.expiresAt ? formatDateTime(resolution.expiresAt) : "the indexed expiry"}.`}
+    </p>
+  );
+}
+
 function ReferralValidationMessage({ state }: { state: ReferralValidationState }) {
   if (state.status === "loading" || state.status === "idle") {
     return <span className="referral-muted">Checking invite against on-chain referral state.</span>;
@@ -1619,16 +1671,16 @@ function ReferralValidationMessage({ state }: { state: ReferralValidationState }
   const { resolution } = state;
   const detail = resolution.status === "active"
     ? `Active · ${resolution.remainingRedemptions}/3 inviter uses remain in the rolling window.`
-    : resolution.status === "expired"
-      ? "Expired · no referral benefit will be claimed."
+    : resolution.status === "inactive"
+      ? "Inactive · this permanently owned code must be renewed by its owner."
       : resolution.status === "exhausted"
         ? `Exhausted · next use opens ${resolution.nextRedemptionAt ? formatDateTime(resolution.nextRedemptionAt) : "after the on-chain reset"}.`
         : resolution.status === "self_invite"
           ? "Self-invite blocked on-chain."
           : resolution.status === "already_redeemed"
             ? "This wallet already used a referral invite."
-            : resolution.status === "unclaimed"
-              ? "Invite is not confirmed on-chain yet."
+            : resolution.status === "available"
+              ? "Available but not active · no referral benefit will be claimed."
               : resolution.status === "unavailable"
                 ? "Current on-chain price is unavailable; referral settlement is paused."
                 : "Invalid invite code · no referral benefit will be claimed.";

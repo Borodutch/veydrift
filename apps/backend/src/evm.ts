@@ -1037,13 +1037,17 @@ export type PlanetRenamedEvent = {
 };
 
 export type IndexedReferralClaimEvent = {
-  eventName: "ReferralCodeClaimed";
+  eventName: "ReferralInviteWindowActivated";
   transactionHash: string;
   blockNumber: string;
   logIndex: string;
   inviter: Address;
+  code: string;
+  codeHash: `0x${string}`;
   commitment: `0x${string}`;
   claimedAt: string;
+  activeUntil: string;
+  migrated: boolean;
 };
 
 export type IndexedStartPriceUpdatedEvent = {
@@ -5061,7 +5065,7 @@ const interplanetaryMissileAttackTopic = "0x44a8c2b7632935050468ed4d9acfb1e99a09
 // actually becomes resolvable (consumeRandomness reverts with PendingRandomness until then).
 const randomnessFulfilledTopic = "0x864b23caf5999ffe7e7b5bc685db237bcef9eb7bd6423c2fd395d9b4663372f5";
 export const startPriceUpdatedEventTopic = "0xdbcd6a03cdadcd71beb97d41ac0c321148e2556e112a52663ba4c94ff84d6717";
-const referralCodeClaimedTopic = "0xa7124569721bd8a9fca99961778919ebde17b82e397d5dbeb14eb7b5e1e051fb";
+const referralInviteWindowActivatedTopic = "0xd51c9643dafa95fcfa30d65f2b6576bc03873e2630d73fc523daf87a7158d589";
 const referralInviteRedeemedTopic = "0xf0e76a5aa6e423f978c7616fd6933b5d376a32654fc67c6fad0afdbc744ccce1";
 const referralRewardClaimedTopic = "0x55b0859d9094fa40dfdcbcdd82c0d785132f6a627b6083e228d6bddb5e498558";
 const missionTypes = ["Transport", "Deploy", "Colonize", "Attack", "Harvest", "AcsDefend", "Intercept", "MissileAttack", "AcsAttack", "DefenseHold"] as const;
@@ -5133,7 +5137,7 @@ const eventNamesByTopic = new Map<string, string>([
   [interplanetaryMissileAttackTopic, "InterplanetaryMissileAttack"],
   [randomnessFulfilledTopic, "RandomnessFulfilled"],
   [startPriceUpdatedEventTopic, "StartPriceUpdated"],
-  [referralCodeClaimedTopic, "ReferralCodeClaimed"],
+  [referralInviteWindowActivatedTopic, "ReferralInviteWindowActivated"],
   [referralInviteRedeemedTopic, "ReferralInviteRedeemed"],
   [referralRewardClaimedTopic, "ReferralRewardClaimed"],
   [moonChanceRequestedTopic, "MoonChanceRequested"],
@@ -5315,7 +5319,7 @@ export function isInterplanetaryMissileAttackLog(log: RpcLog): boolean {
 }
 
 export function isReferralClaimLog(log: RpcLog): boolean {
-  return topicAt(log.topics, 0) === referralCodeClaimedTopic;
+  return topicAt(log.topics, 0) === referralInviteWindowActivatedTopic;
 }
 
 export function isStartPriceUpdatedLog(log: RpcLog): boolean {
@@ -5510,13 +5514,17 @@ export function decodePlanetSettledLog(log: RpcLog): PlanetSettledEvent {
 export function decodeReferralClaimLog(log: RpcLog): IndexedReferralClaimEvent {
   const words = splitWords(log.data);
   return {
-    eventName: "ReferralCodeClaimed",
+    eventName: "ReferralInviteWindowActivated",
     transactionHash: log.transactionHash,
     blockNumber: BigInt(log.blockNumber).toString(),
     logIndex: (log as RpcLog & { logIndex?: string }).logIndex ?? "0x0",
     inviter: decodeAddressWord(topicAt(log.topics, 1)),
-    commitment: topicAt(log.topics, 2) as `0x${string}`,
-    claimedAt: decodeUintWord(wordAt(words, 0)).toString()
+    codeHash: topicAt(log.topics, 2) as `0x${string}`,
+    commitment: topicAt(log.topics, 3) as `0x${string}`,
+    code: decodeString(words, 0),
+    claimedAt: decodeUintWord(wordAt(words, 1)).toString(),
+    activeUntil: decodeUintWord(wordAt(words, 2)).toString(),
+    migrated: decodeBoolWord(wordAt(words, 3))
   };
 }
 

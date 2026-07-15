@@ -136,23 +136,31 @@ async function checkWallet(name, endpoint, validate) {
 
 async function checkReferralOnChain() {
   try {
-    const [configuredGameWord, configuredSignerWord, startPriceWord] = await Promise.all([
+    const [configuredGameWord, configuredSignerWord, migrationFinalizedWord, maxCodeLengthWord, startPriceWord] = await Promise.all([
       ethCall(manifest.contracts.referralSystem, "0xc3fe3e28"),
       ethCall(manifest.contracts.referralSystem, "0xdad0eeb7"),
+      ethCall(manifest.contracts.referralSystem, "0x4c52a884"),
+      ethCall(manifest.contracts.referralSystem, "0x3a81d776"),
       ethCall(manifest.contracts.game, "0xf1a9af89")
     ]);
     const configuredGame = decodeAddressWord(configuredGameWord);
     const configuredSigner = decodeAddressWord(configuredSignerWord);
+    const migrationFinalized = BigInt(migrationFinalizedWord) === 1n;
+    const maxCodeLength = Number(BigInt(maxCodeLengthWord));
     const onChainStartPriceWei = BigInt(startPriceWord).toString();
     evidence.push({
       name: "referral-on-chain-config",
       referralSystem: manifest.contracts.referralSystem,
       configuredGame,
       configuredSigner,
+      migrationFinalized,
+      maxCodeLength,
       startPriceWei: onChainStartPriceWei
     });
     expect(eqAddress(configuredGame, manifest.contracts.game), "referral system game() must match manifest game proxy");
     expect(eqAddress(configuredSigner, referralSigner), "referral system referralSigner() must match expected signer");
+    expect(migrationFinalized, "referral code migration must be finalized before rollout");
+    expect(maxCodeLength === 24, "referral system must expose the canonical 24-character code limit");
     expect(onChainStartPriceWei === referralStartPriceWei, "game startPrice() must match referral/backend start price");
   } catch (error) {
     fail(`referral on-chain config check failed: ${error instanceof Error ? error.message : String(error)}`);
