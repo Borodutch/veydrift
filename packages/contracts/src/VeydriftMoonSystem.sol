@@ -330,16 +330,20 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         _setMoonDefenseCount(planetId, defense, total);
     }
 
-    function applyMoonCombatDefenseLosses(uint256 planetId, uint256 losses) external {
+    function applyMoonCombatDefenseChanges(uint256 planetId, uint256 changes, bool repair)
+        external
+    {
         if (msg.sender != address(game)) revert NotOwner(msg.sender);
         for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
             Defense defense = Defense(i);
             uint32 current = _moonDefenseCounts[planetId][defense];
             uint256 shift = uint256(i) * 32;
             // forge-lint: disable-next-line(unsafe-typecast)
-            uint32 lost = uint32(losses >> shift);
-            if (lost != 0) {
-                _setMoonDefenseCount(planetId, defense, current > lost ? current - lost : 0);
+            uint32 changed = uint32(changes >> shift);
+            if (changed != 0) {
+                uint32 total =
+                    repair ? current + changed : current > changed ? current - changed : 0;
+                _setMoonDefenseCount(planetId, defense, total);
             }
             unchecked {
                 ++i;

@@ -103,6 +103,26 @@ library VeydriftCatalog {
         return defense == Defense.SmallShieldDome || defense == Defense.LargeShieldDome;
     }
 
+    function repairedDefenseCounts(uint256 destroyedDefenses, uint256 seed)
+        public
+        pure
+        returns (uint256 repairedDefenses)
+    {
+        for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
+            // destroyedDefenses stores eight uint32 lanes, one for each battlefield defense.
+            // forge-lint: disable-next-line(unsafe-typecast)
+            uint32 destroyed = uint32(destroyedDefenses >> (uint256(i) * 32));
+            if (destroyed != 0) {
+                uint32 repaired =
+                    (i == 3 || i == 7) ? ((seed + i) % 10 < 7 ? 1 : 0) : (destroyed * 7) / 10;
+                repairedDefenses |= uint256(repaired) << (uint256(i) * 32);
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     function shipCost(Ship ship) public pure returns (uint128, uint128, uint128) {
         if (ship == Ship.SmallCargo) return (2_000, 2_000, 0);
         if (ship == Ship.LightFighter) return (3_000, 1_000, 0);

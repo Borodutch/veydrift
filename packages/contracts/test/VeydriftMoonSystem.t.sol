@@ -842,6 +842,35 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 12);
     }
 
+    function testMoonCombatDefenseRepairRestoresOrdinaryAndRollsDomesIndependently() public {
+        uint256 planetId = _startPlanet();
+        _createMoon(planetId);
+        _setMoonDefenseCount(planetId, Defense.RocketLauncher, 10);
+        _setMoonDefenseCount(planetId, Defense.SmallShieldDome, 1);
+        _setMoonDefenseCount(planetId, Defense.LargeShieldDome, 1);
+
+        uint256 destroyedDefenses = uint256(10)
+            | (uint256(1) << (uint256(uint8(Defense.SmallShieldDome)) * 32))
+            | (uint256(1) << (uint256(uint8(Defense.LargeShieldDome)) * 32));
+        vm.prank(address(game));
+        moons.applyMoonCombatDefenseChanges(planetId, destroyedDefenses, false);
+
+        uint256 repairedDefenses = VeydriftCatalog.repairedDefenseCounts(destroyedDefenses, 0);
+        vm.expectEmit(true, true, false, true, address(moons));
+        emit MoonDefenseCountChanged(planetId, Defense.RocketLauncher, 7);
+        vm.expectEmit(true, true, false, true, address(moons));
+        emit MoonDefenseCountChanged(planetId, Defense.SmallShieldDome, 1);
+        vm.prank(address(game));
+        moons.applyMoonCombatDefenseChanges(planetId, repairedDefenses, true);
+
+        assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 7);
+        assertEq(moons.moonDefenseCount(planetId, Defense.SmallShieldDome), 1);
+        assertEq(moons.moonDefenseCount(planetId, Defense.LargeShieldDome), 0);
+        assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 0);
+        assertEq(game.defenseCount(planetId, Defense.SmallShieldDome), 0);
+        assertEq(game.defenseCount(planetId, Defense.LargeShieldDome), 0);
+    }
+
     function testPlanetToMoonTransportMovesCargoAndReturnsShips() public {
         uint256 planetId = _startPlanet();
         _createMoon(planetId);
@@ -1075,7 +1104,7 @@ contract VeydriftMoonSystemTest is Test {
         _fulfillAttackBattleRandomness(missionId, 659);
         game.resolveFleetMission(missionId);
 
-        assertLt(moons.moonDefenseCount(targetPlanetId, Defense.RocketLauncher), 100);
+        assertEq(moons.moonDefenseCount(targetPlanetId, Defense.RocketLauncher), 70);
         assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 0);
     }
 
