@@ -316,6 +316,7 @@ type AllianceDiplomacyRow = {
   status_id: number;
   updated_at: string | null;
   initiated_by_alliance_id: string | null;
+  declared_at: string | null;
 };
 
 type LegacyUnitMutation = {
@@ -496,7 +497,11 @@ export type ApplyLogResult = {
 // (VEY-KANEO-461). 25 keeps the reconcile completing without making it serial-slow.
 const CANONICAL_READ_PLANET_CHUNK = 25;
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
-const legacyReturnCreditableMissionTypes = new Set(["Transport", "Deploy", "Colonize", "Harvest", "AcsDefend", "DefenseHold"]);
+const defenseHoldEndedTopic = "0xf72983c656a87e172935581e9c19f22826c62a2c4d552c6dd217c498a9d88586";
+// DefenseHold returns are intentionally excluded: the contract emits absolute PlanetShipCountChanged
+// credits for survivors. A zero-survivor hold emits no credit event, so replaying its launch vector as
+// a legacy return would resurrect ships destroyed while stationed.
+const legacyReturnCreditableMissionTypes = new Set(["Transport", "Deploy", "Colonize", "Harvest", "AcsDefend"]);
 
 function systemCacheKey(galaxy: number, system: number): string {
   return `${galaxy}:${system}`;
@@ -1095,12 +1100,15 @@ export class SettlementIndexer {
     if (!allianceId || !otherAllianceId || allianceId === "0" || otherAllianceId === "0" || allianceId === otherAllianceId) {
       return "none";
     }
-    const row = this.db.query(`
-      SELECT status_id
+    const rows = this.db.query(`
+      SELECT alliance_id, other_alliance_id, status_id
       FROM contract_alliance_diplomacy
-      WHERE alliance_id = ? AND other_alliance_id = ?
-    `).get(allianceId, otherAllianceId) as { status_id: number } | null;
-    return diplomacyStatusName(row?.status_id ?? 0);
+      WHERE (alliance_id = ? AND other_alliance_id = ?)
+         OR (alliance_id = ? AND other_alliance_id = ?)
+    `).all(allianceId, otherAllianceId, otherAllianceId, allianceId) as Array<Pick<AllianceDiplomacyRow, "alliance_id" | "other_alliance_id" | "status_id">>;
+    if (rows.some((row) => diplomacyStatusName(row.status_id) === "war")) return "war";
+    const direct = rows.find((row) => row.alliance_id === allianceId);
+    return diplomacyStatusName(direct?.status_id ?? 0);
   }
 
   upsertPlayerDisplayName(wallet: Address, displayName: string): PlayerProfile {
@@ -1245,20 +1253,30 @@ export class SettlementIndexer {
     directoryById: ReadonlyMap<string, AllianceState["directory"][number]>
   ): AllianceState["diplomacy"] {
     const rows = this.db.query(`
-      SELECT alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id
+      SELECT alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id, declared_at
       FROM contract_alliance_diplomacy
-      WHERE alliance_id = ? AND status_id != 0
-      ORDER BY status_id DESC, CAST(other_alliance_id AS INTEGER) ASC
-    `).all(allianceId) as AllianceDiplomacyRow[];
-    return rows.map((row) => ({
-      allianceId: row.alliance_id,
-      otherAllianceId: row.other_alliance_id,
-      status: diplomacyStatusName(row.status_id),
-      statusId: row.status_id,
-      updatedAt: row.updated_at,
-      initiatedByAllianceId: row.initiated_by_alliance_id,
-      alliance: directoryById.get(row.other_alliance_id) ?? null
-    }));
+      WHERE (alliance_id = ? OR other_alliance_id = ?) AND status_id != 0
+    `).all(allianceId, allianceId) as AllianceDiplomacyRow[];
+    const grouped = new Map<string, AllianceDiplomacyRow[]>();
+    for (const row of rows) {
+      const otherAllianceId = row.alliance_id === allianceId ? row.other_alliance_id : row.alliance_id;
+      grouped.set(otherAllianceId, [...(grouped.get(otherAllianceId) ?? []), row]);
+    }
+    return [...grouped.entries()].map(([otherAllianceId, pairRows]) => {
+      const direct = pairRows.find((row) => row.alliance_id === allianceId);
+      const war = pairRows.find((row) => diplomacyStatusName(row.status_id) === "war");
+      const selected = war ?? direct ?? pairRows[0]!;
+      return {
+        allianceId,
+        otherAllianceId,
+        status: diplomacyStatusName(selected.status_id),
+        statusId: selected.status_id,
+        updatedAt: selected.updated_at,
+        initiatedByAllianceId: pairRows.find((row) => row.initiated_by_alliance_id)?.initiated_by_alliance_id ?? null,
+        declaredAt: pairRows.find((row) => row.declared_at)?.declared_at ?? null,
+        alliance: directoryById.get(otherAllianceId) ?? null
+      };
+    }).sort((left, right) => right.statusId - left.statusId || Number(left.otherAllianceId) - Number(right.otherAllianceId));
   }
 
   private allianceTotalScore(wallets: readonly Address[]): string {
@@ -1512,7 +1530,63 @@ export class SettlementIndexer {
           ? this.eventDerivedFleetMissionForMissionId(missionId)
           : null
       );
-    return mission ? this.fleetMissionSummaryAsOfNow(mission) : null;
+    return mission ? this.withDefenseHoldCombatOutcome(this.fleetMissionSummaryAsOfNow(mission)) : null;
+  }
+
+  private withDefenseHoldCombatOutcome(mission: FleetMissionSummary): FleetMissionSummary {
+    if (mission.missionType !== "DefenseHold") return mission;
+    const eventMission = this.decodedMissionLogs().eventMissions.find((candidate) => candidate.missionId === mission.missionId);
+    const historicalMission = eventMission?.missionType === "DefenseHold"
+      ? {
+          ...mission,
+          ...(eventMission.defenseHoldOutcome ? { defenseHoldOutcome: eventMission.defenseHoldOutcome } : {})
+        }
+      : mission;
+    const directRows = this.db.query(`
+      SELECT reports.report_json
+      FROM indexed_battle_report_read_models reports
+      WHERE reports.status = 'ready'
+        AND reports.report_json IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM json_each(reports.report_json, '$.stationedDefenders') defenders
+          WHERE json_extract(defenders.value, '$.missionId') = ?
+      )
+      ORDER BY CAST(reports.block_number AS INTEGER) DESC
+      LIMIT 1
+    `).all(mission.missionId) as Array<Pick<BattleReportReadModelRow, "report_json">>;
+    const targetRows = directRows.length > 0 ? [] : this.db.query(`
+      SELECT report_json
+      FROM indexed_battle_report_read_models
+      WHERE status = 'ready'
+        AND report_json IS NOT NULL
+        AND json_extract(report_json, '$.targetPlanetId') = ?
+      ORDER BY CAST(block_number AS INTEGER) DESC
+      LIMIT 100
+    `).all(mission.targetPlanetId) as Array<Pick<BattleReportReadModelRow, "report_json">>;
+    for (const row of [...directRows, ...targetRows]) {
+      if (!row.report_json) continue;
+      try {
+        const report = parseEvent<BattleReport>(row.report_json);
+        const attack = this.fleetMissionSummariesFromCanonicalRowsByIds([report.missionId])[0]
+          ?? this.eventDerivedFleetMissionForMissionId(report.missionId);
+        const defenders = report.stationedDefenders ?? this.stationedDefendersForBattle(attack, report);
+        const defender = defenders.find((candidate) => candidate.missionId === mission.missionId);
+        if (!defender) continue;
+        return {
+          ...historicalMission,
+          originalShips: positiveShipCounts(defender.ships),
+          destroyedShips: defender.destroyedShips ?? null,
+          survivingShips: defender.survivingShips ?? null,
+          ...(defender.lifecycleOutcome === "Recalled" || defender.lifecycleOutcome === "Expired"
+            ? { defenseHoldOutcome: defender.lifecycleOutcome }
+            : {})
+        };
+      } catch {
+        continue;
+      }
+    }
+    return { ...historicalMission, originalShips: positiveShipCounts(mission.ships) };
   }
 
   stationedDefendersForPlanet(planetId: string, asOfSeconds = Math.floor(Date.now() / 1_000)): StationedDefenderSummary[] {
@@ -1530,25 +1604,35 @@ export class SettlementIndexer {
     const attackArrival = Number(attack?.arrivalAt);
     if (!Number.isFinite(attackArrival)) return [];
 
-    const defenders = new Map<string, StationedDefenderSummary>();
+    const defenders = new Map<string, FleetMissionSummary>();
 
     if (attack) {
       const counterplayDefenders = this.fleetMissionSummariesFromCanonicalRowsByIds(attack.counterplayDefenderMissionIds ?? []);
       for (const defender of counterplayDefenders) {
         if (!defender || !this.isBattleTimeCounterplay(defender, attack, attackArrival)) continue;
-        defenders.set(defender.missionId, this.stationedDefenderSummary(defender, this.counterplayHoldUntil(defender)));
+        defenders.set(defender.missionId, defender);
       }
     }
 
     const targetPlanetId = report?.targetPlanetId ?? attack?.targetPlanetId;
     if (targetPlanetId) {
-      for (const defender of this.activeFleetMissionsFromCanonicalRowsForTarget(targetPlanetId)) {
+      // Historical reports must not depend on the current active roster. Decode immutable launch,
+      // DefenseHoldStationed/Ended, recall, and return logs so a hold remains attributable after it
+      // is recalled, expires, lands, or is wiped out in combat.
+      for (const defender of this.decodedMissionLogs().eventMissions) {
         if (!this.isBattleTimeDefenseHoldForPlanet(defender, targetPlanetId, attackArrival)) continue;
-        defenders.set(defender.missionId, this.stationedDefenderSummary(defender, this.defenseHoldWindowEnd(defender)));
+        defenders.set(defender.missionId, defender);
       }
     }
 
-    return [...defenders.values()].sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
+    const compositions = this.stationedDefenderBattleCompositions([...defenders.values()], report);
+    return [...defenders.values()]
+      .map((defender) => this.stationedDefenderSummary(
+        defender,
+        defender.missionType === "DefenseHold" ? this.defenseHoldWindowEnd(defender) : this.counterplayHoldUntil(defender),
+        compositions.get(defender.missionId)
+      ))
+      .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
   }
 
   battleReport(missionId: string, options: { includeRawFallback?: boolean } = { includeRawFallback: false }): BattleReport | null {
@@ -3517,6 +3601,7 @@ export class SettlementIndexer {
         status_id INTEGER NOT NULL,
         updated_at TEXT,
         initiated_by_alliance_id TEXT,
+        declared_at TEXT,
         PRIMARY KEY (alliance_id, other_alliance_id)
       );
       CREATE TABLE IF NOT EXISTS contract_highscore_inputs (
@@ -3534,7 +3619,9 @@ export class SettlementIndexer {
     this.ensureColumn("contract_production_queues", "backlog_json", "TEXT");
     this.ensureColumn("contract_planet_resources", "log_index", "TEXT NOT NULL DEFAULT '0x0'");
     this.ensureColumn("contract_alliance_diplomacy", "initiated_by_alliance_id", "TEXT");
+    this.ensureColumn("contract_alliance_diplomacy", "declared_at", "TEXT");
     this.backfillStartPriceProjection();
+    this.backfillDefenseHoldEndedMissionEvents();
     if (runStartupBackfill) {
       this.backfillMissionEventLogs();
       this.backfillUnitCountEventLogs();
@@ -3666,6 +3753,25 @@ export class SettlementIndexer {
         if (!eventKind) continue;
         insert.run(row.event_id, eventKind, blockNumberToDecimal(log.blockNumber), row.event_json);
       }
+    })();
+  }
+
+  private backfillDefenseHoldEndedMissionEvents(): void {
+    const migrationKey = "defenseHoldEndedMissionEventsBackfilledV1";
+    if (this.metadata(migrationKey) !== null) return;
+    const rows = this.db.query(`
+      SELECT event_id, block_number, event_json
+      FROM indexed_event_logs
+      WHERE removed = 0
+        AND lower(json_extract(event_json, '$.topics[0]')) = lower(?)
+    `).all(defenseHoldEndedTopic) as Array<EventRow & { event_id: string; block_number: string }>;
+    const insert = this.db.query(`
+      INSERT OR IGNORE INTO indexed_mission_event_logs (event_id, event_kind, block_number, event_json)
+      VALUES (?, 'fleet', ?, ?)
+    `);
+    this.db.transaction(() => {
+      for (const row of rows) insert.run(row.event_id, row.block_number, row.event_json);
+      this.setMetadata(migrationKey, new Date().toISOString());
     })();
   }
 
@@ -5413,6 +5519,10 @@ export class SettlementIndexer {
     const launched = this.launchedShipMutations(mission);
     if (launched.length === 0) return [];
 
+    // DefenseHold combat mutates the stationed mission fleet before an owner can recall it. Survivor
+    // credits are authoritative PlanetShipCountChanged totals; replaying the launch vector from the
+    // recall marker would restore destroyed ships when a zero-survivor return emits no count event.
+    if (mission.missionType === "DefenseHold") return [];
     if (usefulString(mission.recallCost) || legacyReturnCreditableMissionTypes.has(mission.missionType)) return launched;
 
     if (mission.missionType !== "Attack" && mission.missionType !== "AcsAttack" && mission.missionType !== "Intercept") {
@@ -6439,20 +6549,18 @@ export class SettlementIndexer {
         WHERE alliance_id = ?
       `).run(event.newOwner, event.allianceId);
     } else if (event.eventName === "AllianceDiplomacyUpdated") {
-      this.db.query(`
-        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id)
-        VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
-          status_id = excluded.status_id,
-          updated_at = excluded.updated_at,
-          initiated_by_alliance_id = excluded.initiated_by_alliance_id
-      `).run(
-        event.allianceId,
-        event.otherAllianceId,
-        event.statusId,
-        event.blockNumber,
-        diplomacyStatusName(event.statusId) === "war" ? event.allianceId : null
-      );
+      if (diplomacyStatusName(event.statusId) === "none") {
+        this.db.query(`
+          DELETE FROM contract_alliance_diplomacy
+          WHERE (alliance_id = ? AND other_alliance_id = ?)
+             OR (alliance_id = ? AND other_alliance_id = ?)
+        `).run(event.allianceId, event.otherAllianceId, event.otherAllianceId, event.allianceId);
+      } else {
+        const initiatedByAllianceId = diplomacyStatusName(event.statusId) === "war" ? event.allianceId : null;
+        const declaredAt = diplomacyStatusName(event.statusId) === "war" ? event.declaredAt : null;
+        this.upsertAllianceDiplomacyDirection(event.allianceId, event.otherAllianceId, event.statusId, event.blockNumber, initiatedByAllianceId, declaredAt);
+        this.upsertAllianceDiplomacyDirection(event.otherAllianceId, event.allianceId, event.statusId, event.blockNumber, initiatedByAllianceId, declaredAt);
+      }
     }
 
     this.touch();
@@ -6547,19 +6655,17 @@ export class SettlementIndexer {
     this.touch();
   }
 
-  // Canonical-mirror seed for contract_alliance_diplomacy. The reader returns one row per directed
-  // (alliance_id, other_alliance_id) pair, matching the AllianceDiplomacyUpdated handler that writes both
-  // directions; updated_at is left NULL on the chain seed (no event block backs it). See null vs.
-  // empty-array semantics on applyAllianceJoinRequestSnapshot.
+  // Canonical-mirror seed for contract_alliance_diplomacy. Reciprocal contract getters return one row
+  // per ordered pair with shared declarer/start metadata; updated_at remains NULL without an event block.
   private applyAllianceDiplomacySnapshot(snapshot: AllianceDiplomacySnapshot[] | null): void {
     if (snapshot === null) return;
     const existingInitiators = new Map(
       (this.db.query(`
-        SELECT alliance_id, other_alliance_id, initiated_by_alliance_id
+        SELECT alliance_id, other_alliance_id, initiated_by_alliance_id, declared_at
         FROM contract_alliance_diplomacy
         WHERE initiated_by_alliance_id IS NOT NULL
-      `).all() as Pick<AllianceDiplomacyRow, "alliance_id" | "other_alliance_id" | "initiated_by_alliance_id">[])
-        .map((row) => [`${row.alliance_id}:${row.other_alliance_id}`, row.initiated_by_alliance_id])
+      `).all() as Pick<AllianceDiplomacyRow, "alliance_id" | "other_alliance_id" | "initiated_by_alliance_id" | "declared_at">[])
+        .map((row) => [`${row.alliance_id}:${row.other_alliance_id}`, row])
     );
     const snapshotWarPairs = new Set(
       snapshot
@@ -6571,24 +6677,46 @@ export class SettlementIndexer {
       const relationKey = `${relation.allianceId}:${relation.otherAllianceId}`;
       const reverseKey = `${relation.otherAllianceId}:${relation.allianceId}`;
       const status = diplomacyStatusName(relation.statusId);
-      const existingInitiator = existingInitiators.get(relationKey) ?? existingInitiators.get(reverseKey);
+      const existingMetadata = existingInitiators.get(relationKey) ?? existingInitiators.get(reverseKey);
       const inferredInitiator = status === "war" && !snapshotWarPairs.has(reverseKey)
         ? relation.allianceId
         : null;
       this.db.query(`
-        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id)
-        VALUES (?, ?, ?, NULL, ?)
+        INSERT INTO contract_alliance_diplomacy (alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id, declared_at)
+        VALUES (?, ?, ?, NULL, ?, ?)
         ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
           status_id = excluded.status_id,
-          initiated_by_alliance_id = excluded.initiated_by_alliance_id
+          initiated_by_alliance_id = excluded.initiated_by_alliance_id,
+          declared_at = excluded.declared_at
       `).run(
         relation.allianceId,
         relation.otherAllianceId,
         relation.statusId,
-        status === "war" ? (existingInitiator ?? inferredInitiator) : null
+        status === "war" ? (relation.initiatedByAllianceId ?? existingMetadata?.initiated_by_alliance_id ?? inferredInitiator) : null,
+        status === "war" ? (relation.declaredAt ?? existingMetadata?.declared_at ?? null) : null
       );
     }
     this.touch();
+  }
+
+  private upsertAllianceDiplomacyDirection(
+    allianceId: string,
+    otherAllianceId: string,
+    statusId: number,
+    updatedAt: string | null,
+    initiatedByAllianceId: string | null,
+    declaredAt: string | null
+  ): void {
+    this.db.query(`
+      INSERT INTO contract_alliance_diplomacy (
+        alliance_id, other_alliance_id, status_id, updated_at, initiated_by_alliance_id, declared_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(alliance_id, other_alliance_id) DO UPDATE SET
+        status_id = excluded.status_id,
+        updated_at = excluded.updated_at,
+        initiated_by_alliance_id = excluded.initiated_by_alliance_id,
+        declared_at = excluded.declared_at
+    `).run(allianceId, otherAllianceId, statusId, updatedAt, initiatedByAllianceId, declaredAt);
   }
 
   private touch(): void {
@@ -7377,6 +7505,7 @@ export class SettlementIndexer {
 
     const missions = rows
       .map((row) => this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion))
+      .map((mission) => this.withDefenseHoldCombatOutcome(mission))
       .sort(compareFleetMissionsNewestFirst);
     this.canonicalCompletedMissionCache = {
       missionGeneration: this.missionGeneration,
@@ -7418,6 +7547,7 @@ export class SettlementIndexer {
       )
         ? { ...mission, status: "Returned" }
         : mission)
+      .map((mission) => this.withDefenseHoldCombatOutcome(mission))
       .sort(compareFleetMissionsNewestFirst);
   }
 
@@ -7570,6 +7700,7 @@ export class SettlementIndexer {
         ...(canonicalEventMission.originIsMoon !== undefined ? { originIsMoon: canonicalEventMission.originIsMoon } : {}),
         ...(canonicalEventMission.targetIsMoon !== undefined ? { targetIsMoon: canonicalEventMission.targetIsMoon } : {}),
         ...(canonicalEventMission.defenseHoldUntil ? { defenseHoldUntil: canonicalEventMission.defenseHoldUntil } : {}),
+        ...(canonicalEventMission.defenseHoldOutcome ? { defenseHoldOutcome: canonicalEventMission.defenseHoldOutcome } : {}),
         ...(canonicalEventMission.randomnessRequestId ? { randomnessRequestId: canonicalEventMission.randomnessRequestId } : {})
       }
       : base;
@@ -7801,9 +7932,15 @@ export class SettlementIndexer {
     const summaries = this.fleetMissionSummariesFromCanonicalRowsByIds(reportMissionIds);
     const withParticipants = attachAttackGroupParticipants([report], summaries);
     const defenderSnapshots = this.battleTimeDefenderSnapshots(withParticipants);
-    return {
+    const materialized = {
       ...withParticipants[0]!,
       defenderSnapshot: defenderSnapshots.get(report.missionId) ?? null
+    };
+    const attack = summaries.find((summary) => summary.missionId === report.missionId)
+      ?? this.eventDerivedFleetMissionForMissionId(report.missionId);
+    return {
+      ...materialized,
+      stationedDefenders: this.stationedDefendersForBattle(attack, materialized)
     };
   }
 
@@ -8077,16 +8214,100 @@ export class SettlementIndexer {
       .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
   }
 
-  private stationedDefenderSummary(defender: FleetMissionSummary, holdUntil: string): StationedDefenderSummary {
+  private stationedDefenderSummary(
+    defender: FleetMissionSummary,
+    holdUntil: string,
+    composition?: { destroyedShips: Record<string, string> | null; survivingShips: Record<string, string> | null }
+  ): StationedDefenderSummary {
     const targetPlanet = defender.targetPlanet ?? this.fleetMissionPlanetReference(defender.targetPlanetId);
+    const lifecycleOutcome = defender.defenseHoldOutcome
+      ?? (defender.status === "Recalled" || (defender.status === "Returned" && defender.recallCost !== null) ? "Recalled" : undefined)
+      ?? (defender.status === "Outbound" ? "Active" : "Expired");
     return {
       missionId: defender.missionId,
       defender: defender.owner,
       defenderDisplayName: this.playerProfile(defender.owner).displayName,
       ships: defender.ships,
+      destroyedShips: composition?.destroyedShips ?? (lifecycleOutcome === "Active" ? {} : null),
+      survivingShips: composition?.survivingShips ?? (lifecycleOutcome === "Active" ? positiveShipCounts(defender.ships) : null),
+      lifecycleOutcome,
       holdUntil,
       allianceDepotLevel: targetPlanet?.allianceDepotLevel ?? 0
     };
+  }
+
+  private stationedDefenderBattleCompositions(
+    defenders: readonly FleetMissionSummary[],
+    report: BattleReport | null | undefined
+  ): Map<string, { destroyedShips: Record<string, string> | null; survivingShips: Record<string, string> | null }> {
+    const unknown = () => new Map(defenders.map((defender) => [
+      defender.missionId,
+      { destroyedShips: null, survivingShips: null }
+    ]));
+    if (!report?.defenderSnapshot) return unknown();
+
+    const candidates: BattleLossCandidate[] = [];
+    for (const unit of report.defenderSnapshot.fleet) {
+      const cost = shipCostForLegacyLoss(unit.id);
+      if (cost && unit.count > 0) candidates.push({ kind: "ship", planetId: "planet", itemId: unit.id, max: unit.count, cost });
+    }
+    for (const defender of defenders) {
+      for (const [key, value] of Object.entries(defender.ships)) {
+        const itemId = shipKeyToId(key);
+        const max = Number(value);
+        const cost = itemId === null ? null : shipCostForLegacyLoss(itemId);
+        if (itemId !== null && cost && Number.isSafeInteger(max) && max > 0) {
+          candidates.push({ kind: "ship", planetId: `mission:${defender.missionId}`, itemId, max, cost });
+        }
+      }
+    }
+
+    const totalLossValue = candidates.reduce((total, candidate) => ({
+      metal: total.metal + BigInt(candidate.cost.metal) * BigInt(candidate.max),
+      crystal: total.crystal + BigInt(candidate.cost.crystal) * BigInt(candidate.max),
+      deuterium: total.deuterium + BigInt(candidate.cost.deuterium) * BigInt(candidate.max)
+    }), { metal: 0n, crystal: 0n, deuterium: 0n });
+    const reportedLossValue = {
+      metal: BigInt(report.defenderLosses.metal),
+      crystal: BigInt(report.defenderLosses.crystal),
+      deuterium: BigInt(report.defenderLosses.deuterium)
+    };
+    let solution: BattleLossPick[] | null;
+    if (
+      reportedLossValue.metal === totalLossValue.metal
+      && reportedLossValue.crystal === totalLossValue.crystal
+      && reportedLossValue.deuterium === totalLossValue.deuterium
+    ) {
+      solution = candidates.map((candidate) => ({ candidate, destroyed: candidate.max }));
+    } else if (isZeroResources(report.defenderLosses)) {
+      solution = [];
+    } else {
+      // Exact per-fleet counts are not emitted. For bounded battles, expose a composition only when
+      // the aggregate on-chain loss value has one unique allocation; otherwise leave it unknown.
+      const candidateUnits = candidates.reduce((sum, candidate) => sum + candidate.max, 0);
+      solution = candidateUnits <= 500 ? uniqueLossSolution(candidates, report.defenderLosses) : null;
+    }
+    if (!solution) return unknown();
+
+    const destroyedByMission = new Map<string, Record<string, string>>();
+    for (const { candidate, destroyed } of solution) {
+      if (!candidate.planetId.startsWith("mission:")) continue;
+      const missionId = candidate.planetId.slice("mission:".length);
+      const key = shipIdToKey(candidate.itemId);
+      if (!key) continue;
+      const destroyedShips = destroyedByMission.get(missionId) ?? {};
+      destroyedShips[key] = destroyed.toString();
+      destroyedByMission.set(missionId, destroyedShips);
+    }
+    return new Map(defenders.map((defender) => {
+      const original = positiveShipCounts(defender.ships);
+      const destroyedShips = destroyedByMission.get(defender.missionId) ?? {};
+      const survivingShips = Object.fromEntries(Object.entries(original).flatMap(([key, value]) => {
+        const count = BigInt(value) - BigInt(destroyedShips[key] ?? "0");
+        return count > 0n ? [[key, count.toString()]] : [];
+      }));
+      return [defender.missionId, { destroyedShips, survivingShips }];
+    }));
   }
 
   private isActiveDefenseHoldForPlanet(
@@ -9333,6 +9554,7 @@ const shipKeyIds = new Map<string, number>([
   ["pathfinder", 14],
   ["crawler", 15]
 ]);
+const shipIdKeys = new Map([...shipKeyIds].map(([key, id]) => [id, key]));
 
 const legacyShipCosts: readonly Resources[] = [
   { metal: "2000", crystal: "2000", deuterium: "0" },
@@ -9368,6 +9590,20 @@ const legacyDefenseCosts: readonly Resources[] = [
 
 function shipKeyToId(key: string): number | null {
   return shipKeyIds.get(key) ?? null;
+}
+
+function shipIdToKey(id: number): string | null {
+  return shipIdKeys.get(id) ?? null;
+}
+
+function positiveShipCounts(ships: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(ships).filter(([, count]) => {
+    try {
+      return BigInt(count) > 0n;
+    } catch {
+      return false;
+    }
+  }));
 }
 
 function shipCostForLegacyLoss(shipId: number): Resources | null {

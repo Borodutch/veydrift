@@ -316,7 +316,7 @@ Intergalactic Research Network links the highest eligible lab levels for researc
 ### Flight Distance, Speed, And Time
 
 ```text
-same planet distance = 0
+same planet distance = 0 (except same-planet Harvest, which uses local distance 5)
 same system distance = 1000 + 5 * position difference
 same galaxy distance = 2700 + 95 * system difference
 different galaxy distance = 20000 * galaxy difference

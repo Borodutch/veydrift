@@ -39,6 +39,9 @@ abstract contract VeydriftGameStorage is Initializable {
     uint16 public constant FLEET_UNIVERSE_SPEED = 1;
     uint32 public constant MIN_QUEUE_SECONDS = 1;
     uint32 public constant MIN_FLEET_TRAVEL_SECONDS = 10;
+    /// @notice Canonical local route used only when recyclers harvest their origin planet's debris.
+    /// @dev A non-zero distance keeps same-planet Harvest subject to normal fuel and travel math.
+    uint32 internal constant LOCAL_HARVEST_DISTANCE = 5;
     uint32 public constant FLEET_RECALL_CUTOFF_SECONDS = 60;
     uint16 public constant FLEET_RECALL_COST_BPS = 2_500;
     uint64 public constant MARKET_WITHDRAWAL_DELAY = 30 days;

@@ -7,8 +7,10 @@ import {IVeydriftAllianceGame, VeydriftAllianceSystem} from "../src/VeydriftAlli
 /// @notice Storage-compatible corrective UUPS upgrade for the live
 /// `VeydriftAllianceSystem` proxy. The proxy must already have activated the
 /// minimum war duration; this upgrade preserves that timestamp and all existing
-/// alliance state. The broadcasting account must be the proxy `owner()` because
-/// `_authorizeUpgrade` is owner-gated.
+/// alliance state. After upgrading, use `MigrateAllianceWarMetadata.s.sol` only
+/// for mirrored legacy pairs whose declarer cannot be inferred from raw storage.
+/// The broadcasting account must be the proxy `owner()` because `_authorizeUpgrade`
+/// is owner-gated.
 contract UpgradeAllianceSystem is Script {
     event AllianceSystemUpgraded(address indexed proxy, address indexed implementation);
 

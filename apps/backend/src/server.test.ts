@@ -87,7 +87,9 @@ const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const combatLossesTopic = "0xe31518e93e94d23864fa76375f560d4ef2b4288dca5a5f1204f71d1d363d3704";
+const combatDebrisSignaledTopic = "0xd0fbe8b5c73fec6dcfc5fef85459b695d1c9fedb4f94f9748ecaeff785192f14";
 const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
+const defenseHoldEndedTopic = "0xf72983c656a87e172935581e9c19f22826c62a2c4d552c6dd217c498a9d88586";
 const marketResourceDepositedTopic = "0xb241f95d5e925b76c75fd1e811b497abfdc0984105f5b3feb7bee1a75f0a2643";
 const allianceCreatedTopic = "0x4a2634d9b86143d681c41580ee71aad7571fc28bc42c855fcd354bfee4485372";
 const allianceProfileUpdatedTopic = "0x6cd70a2e9b3cebb75f35ae8c618b15036c7b0c425e5b688ec918c2f58df7360e";
@@ -3633,6 +3635,196 @@ describe("Veydrift backend", () => {
     ]);
   });
 
+  test("preserves recalled DefenseHold participants and their losses in mission 2840 (VEY-KANEO-713)", async () => {
+    const attacker = "0x3333333333333333333333333333333333333333" as Address;
+    const defender2847 = "0x4444444444444444444444444444444444444444" as Address;
+    const defender2848 = "0x5555555555555555555555555555555555555555" as Address;
+    const indexer = new SettlementIndexer(new MockChainReader(), configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    indexer.applyEvent({
+      ...planet,
+      planetId: "236",
+      owner: defender2847,
+      eventName: "PlanetStarted",
+      transactionHash: "0xtargetplanet236",
+      blockNumber: "100"
+    });
+
+    for (const log of activeFleetMissionLogs({
+      arrivalAt: 1_700_000_100n,
+      missionId: 2840n,
+      missionTypeId: 3n,
+      owner: attacker,
+      originPlanetId: 7n,
+      targetPlanetId: 236n
+    })) indexer.applyLog(log);
+
+    const holds = [
+      { missionId: 2847n, owner: defender2847, originPlanetId: 36n, lightFighters: 2n, heavyFighters: 2n },
+      { missionId: 2848n, owner: defender2848, originPlanetId: 378n, lightFighters: 1n, heavyFighters: 2n }
+    ] as const;
+    for (const hold of holds) {
+      indexer.applyEvent({
+        ...planet,
+        planetId: hold.originPlanetId.toString(),
+        owner: hold.owner,
+        eventName: "PlanetStarted",
+        transactionHash: `0xoriginplanet${hold.originPlanetId}`,
+        blockNumber: "100"
+      });
+      indexer.applyLog(fleetMissionLog({
+        topics: [fleetMissionLaunchedTopic, topic(hold.missionId), addressTopic(hold.owner), topic(9n)],
+        data: abiWords(hold.originPlanetId, 236n, 1_700_000_000n, 1_700_003_000n, 0n),
+        logIndex: Number(hold.missionId * 10n)
+      }));
+      indexer.applyLog(fleetMissionLog({
+        topics: [fleetMissionCargoTopic, topic(hold.missionId)],
+        data: abiWords(0n, 0n, 0n, 1n),
+        logIndex: Number(hold.missionId * 10n + 1n)
+      }));
+      indexer.applyLog(fleetMissionLog({
+        topics: [fleetMissionShipsTopic, topic(hold.missionId)],
+        data: abiWords(0n, hold.lightFighters, 0n, 0n, 0n, hold.heavyFighters, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n),
+        logIndex: Number(hold.missionId * 10n + 2n)
+      }));
+      indexer.applyLog(fleetMissionLog({
+        topics: [defenseHoldStationedTopic, topic(hold.missionId), addressTopic(hold.owner), topic(236n)],
+        data: abiWords(hold.originPlanetId, 1_700_000_000n, 1_700_002_000n, 1_700_003_000n),
+        logIndex: Number(hold.missionId * 10n + 3n)
+      }));
+    }
+
+    indexer.applyLog({
+      blockNumber: "0x66",
+      transactionHash: "0xplanet-local-heavy-fighters",
+      logIndex: "0x0",
+      removed: false,
+      topics: [planetShipCountChangedTopic, topic(236n), topic(5n)],
+      data: abiWords(2n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xfad34fc2d54913a27c32e06fca51dca674a5a0a4ef07f51da14ca139d2d284a6",
+      logIndex: "0x0",
+      removed: false,
+      topics: [attackBattleResolvedTopic, topic(2840n), addressTopic(attacker), topic(236n)],
+      data: abiWords(2n, 1n, 12345n, 0n, 0n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xfad34fc2d54913a27c32e06fca51dca674a5a0a4ef07f51da14ca139d2d284a6",
+      logIndex: "0x1",
+      removed: false,
+      topics: [combatLossesTopic, topic(2840n)],
+      data: abiWords(0n, 0n, 0n, 45_000n, 27_000n, 0n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x70",
+      transactionHash: "0xfad34fc2d54913a27c32e06fca51dca674a5a0a4ef07f51da14ca139d2d284a6",
+      logIndex: "0x2",
+      removed: false,
+      topics: [combatDebrisSignaledTopic, topic(2840n), topic(236n)],
+      data: abiWords(13_500n, 8_100n)
+    });
+
+    for (const hold of holds) {
+      indexer.applyLog(fleetMissionLog({
+        topics: [fleetMissionRecalledTopic, topic(hold.missionId), addressTopic(hold.owner)],
+        data: abiWords(1_700_004_000n, 10n),
+        logIndex: Number(hold.missionId * 10n + 4n)
+      }));
+      indexer.applyLog(fleetMissionLog({
+        topics: [defenseHoldEndedTopic, topic(hold.missionId), topic(236n)],
+        data: abiWords(5n),
+        logIndex: Number(hold.missionId * 10n + 5n)
+      }));
+    }
+    const originCountsBeforeReturn = new Map(holds.map((hold) => [
+      hold.originPlanetId.toString(),
+      indexer.availableShipRows(hold.originPlanetId.toString()).map((ship) => ship.count)
+    ]));
+    for (const hold of holds) {
+      indexer.applyLog(fleetMissionLog({
+        topics: [fleetMissionReturnedTopic, topic(hold.missionId), addressTopic(hold.owner), topic(hold.originPlanetId)],
+        data: "0x",
+        logIndex: Number(hold.missionId * 10n + 6n)
+      }));
+      expect(indexer.availableShipRows(hold.originPlanetId.toString()).map((ship) => ship.count))
+        .toEqual(originCountsBeforeReturn.get(hold.originPlanetId.toString())!);
+    }
+    indexer.materializeBattleReportReadModelsForWorker(["2840"], "ingest");
+
+    const response = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    })(new Request("http://localhost/mission/2840"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.battleReport).toMatchObject({
+      defenderLosses: { metal: "45000", crystal: "27000", deuterium: "0" },
+      debris: { metal: "13500", crystal: "8100" }
+    });
+    const expectedStationedDefenders = [
+      expect.objectContaining({
+        missionId: "2847",
+        defender: defender2847,
+        ships: expect.objectContaining({ lightFighter: "2", heavyFighter: "2" }),
+        destroyedShips: { lightFighter: "2", heavyFighter: "2" },
+        survivingShips: {},
+        lifecycleOutcome: "Recalled"
+      }),
+      expect.objectContaining({
+        missionId: "2848",
+        defender: defender2848,
+        ships: expect.objectContaining({ lightFighter: "1", heavyFighter: "2" }),
+        destroyedShips: { lightFighter: "1", heavyFighter: "2" },
+        survivingShips: {},
+        lifecycleOutcome: "Recalled"
+      })
+    ];
+    expect(body.battleReport.stationedDefenders).toEqual(expectedStationedDefenders);
+    expect(body.defenderPlanetState.stationedDefenders).toEqual(expectedStationedDefenders);
+
+    const holdResponse = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    })(new Request("http://localhost/mission/2847"));
+    const holdBody = await holdResponse.json();
+    expect(holdResponse.status).toBe(200);
+    expect(holdBody.battleReport).toBeNull();
+    expect(holdBody.mission).toMatchObject({
+      missionId: "2847",
+      missionType: "DefenseHold",
+      status: "Returned",
+      defenseHoldOutcome: "Recalled",
+      originalShips: { lightFighter: "2", heavyFighter: "2" },
+      destroyedShips: { lightFighter: "2", heavyFighter: "2" },
+      survivingShips: {}
+    });
+
+    const archiveResponse = await createRequestHandler({
+      config: configuredTestConfig,
+      chainReader: new MockChainReader(),
+      indexer
+    })(new Request(`http://localhost/wallet/${defender2847}/missions?page=1&pageSize=25`));
+    const archiveBody = await archiveResponse.json();
+    const archivedHold = archiveBody.rows.find((row: { kind: string; mission?: { missionId?: string } }) =>
+      row.kind === "mission" && row.mission?.missionId === "2847"
+    );
+    expect(archiveResponse.status).toBe(200);
+    expect(archivedHold?.mission).toMatchObject({
+      missionId: "2847",
+      status: "Returned",
+      defenseHoldOutcome: "Recalled",
+      originalShips: { lightFighter: "2", heavyFighter: "2" },
+      destroyedShips: { lightFighter: "2", heavyFighter: "2" },
+      survivingShips: {}
+    });
+  });
+
   test("keeps galaxy planet rows indexed-only instead of resolving owner alliance through chain reader calls", async () => {
     const chainReader = new class extends MockChainReader {
       async getAllianceIntelForPlayers(wallets: readonly Address[]): Promise<Map<Address, AllianceIdentity>> {
@@ -4831,6 +5023,16 @@ describe("Veydrift backend", () => {
       atWar: true,
       blockedReason: "none",
       targetAlliance: { allianceId: "2", tag: "DEF", name: "Defenders" }
+    });
+
+    const reverseResponse = await handler(new Request(`http://localhost/wallet/${player}/attack-protection?targetPlanetId=8`));
+    const reverseBody = await reverseResponse.json();
+    expect(reverseResponse.status).toBe(200);
+    expect(reverseBody).toMatchObject({
+      allowed: true,
+      atWar: true,
+      blockedReason: "none",
+      targetAlliance: { allianceId: "1", tag: "ATK", name: "Attackers" }
     });
   });
 

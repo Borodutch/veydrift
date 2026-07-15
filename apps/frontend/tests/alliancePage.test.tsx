@@ -468,7 +468,9 @@ describe("AlliancePage loading display", () => {
     expect(allianceWarEndActionState({
       canEndWar: true,
       currentAllianceId: "7",
+      declaredAt: "1000",
       initiatedByAllianceId: "7",
+      nowSeconds: 1000 + 48 * 60 * 60,
     })).toEqual({
       visible: true,
       enabled: true,
@@ -477,7 +479,9 @@ describe("AlliancePage loading display", () => {
     expect(allianceWarEndActionState({
       canEndWar: true,
       currentAllianceId: "7",
+      declaredAt: "1000",
       initiatedByAllianceId: "8",
+      nowSeconds: 1000 + 48 * 60 * 60,
     })).toEqual({
       visible: true,
       enabled: false,
@@ -486,7 +490,9 @@ describe("AlliancePage loading display", () => {
     expect(allianceWarEndActionState({
       canEndWar: true,
       currentAllianceId: "7",
+      declaredAt: "1000",
       initiatedByAllianceId: null,
+      nowSeconds: 1000,
     })).toEqual({
       visible: true,
       enabled: false,
@@ -495,17 +501,42 @@ describe("AlliancePage loading display", () => {
     expect(allianceWarEndActionState({
       canEndWar: false,
       currentAllianceId: "7",
+      declaredAt: "1000",
       initiatedByAllianceId: "7",
+      nowSeconds: 1000,
     })).toEqual({
       visible: false,
       enabled: false,
       reason: null,
+    });
+    expect(allianceWarEndActionState({
+      canEndWar: true,
+      currentAllianceId: "7",
+      declaredAt: "1000",
+      initiatedByAllianceId: "7",
+      nowSeconds: 1000 + 60,
+    })).toEqual({
+      visible: true,
+      enabled: false,
+      reason: "War can be ended in 1d 23h.",
+    });
+    expect(allianceWarEndActionState({
+      canEndWar: true,
+      currentAllianceId: "7",
+      declaredAt: null,
+      initiatedByAllianceId: "7",
+      nowSeconds: 1000,
+    })).toEqual({
+      visible: true,
+      enabled: false,
+      reason: "War declaration time is unavailable; End War remains locked.",
     });
     expect(alliancePageSource).toContain("disabledReasonId");
     expect(alliancePageSource).toContain("aria-describedby={disabledReasonId}");
     expect(alliancePageSource).toContain('role="tooltip"');
     expect(alliancePageSource).toContain("group-hover:opacity-100 group-focus-within:opacity-100");
     expect(alliancePageSource).toContain("Only the alliance that declared this war can end it.");
+    expect(alliancePageSource).toContain("Reciprocal war: attack score protection and bashing limits are bypassed for both alliances.");
   });
 
   test("polishes alliance edit invite and delete controls with explicit labels", () => {

@@ -999,17 +999,19 @@ describe("moon chance report event decoding", () => {
           const selector = call.data.slice(0, 10);
           if (selector === "0xf0bab901") return uintArrayResult([1n, 2n]) as T;
           if (selector === "0xbeddf2fb") {
-            // Only the (1,2) and (2,1) directed pairs are at war (status 3).
+            // The reciprocal getter reports the same war for both ordered pairs.
             return dataWords([word(3n)]) as T;
           }
+          if (selector === "0x3e6a6710") return dataWords([word(1779816700n)]) as T;
+          if (selector === "0x901a1242") return dataWords([word(1n)]) as T;
           throw new Error(`Unexpected selector ${selector}`);
         }
       }
     );
 
     await expect(reader.listAllianceDiplomacyState()).resolves.toEqual([
-      { allianceId: "1", otherAllianceId: "2", statusId: 3 },
-      { allianceId: "2", otherAllianceId: "1", statusId: 3 }
+      { allianceId: "1", otherAllianceId: "2", statusId: 3, initiatedByAllianceId: "1", declaredAt: "1779816700" },
+      { allianceId: "2", otherAllianceId: "1", statusId: 3, initiatedByAllianceId: "1", declaredAt: "1779816700" }
     ]);
   });
 

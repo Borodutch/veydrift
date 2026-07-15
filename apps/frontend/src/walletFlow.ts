@@ -392,6 +392,9 @@ export type FleetMissionSummary = {
   cargo: OnChainResources;
   returnCargo?: OnChainResources | null;
   ships: Record<string, string>;
+  originalShips?: Record<string, string>;
+  destroyedShips?: Record<string, string> | null;
+  survivingShips?: Record<string, string> | null;
   transactionHash: string;
   blockNumber: string;
   // VEY-KANEO-479: true only once the backend confirms an arrived mission is actually resolvable. For
@@ -406,6 +409,7 @@ export type FleetMissionSummary = {
   // `needsResolution`, which the backend already gates on this request's fulfillment.
   randomnessRequestId?: string;
   defenseHoldUntil?: string;
+  defenseHoldOutcome?: "Expired" | "Recalled";
 };
 
 // VEY-KANEO-456: one allied fleet stationed (AcsDefend) to defend a planet under attack. `holdUntil` is
@@ -418,6 +422,9 @@ export type StationedDefenderSummary = {
   defender: string;
   defenderDisplayName?: string | null;
   ships: Record<string, string>;
+  destroyedShips?: Record<string, string> | null;
+  survivingShips?: Record<string, string> | null;
+  lifecycleOutcome?: "Active" | "Expired" | "Recalled";
   holdUntil: string;
   allianceDepotLevel: number;
 };
@@ -603,6 +610,7 @@ export type BattleReport = {
   blockNumber: string;
   logIndex?: string;
   defenderSnapshot?: BattleReportDefenderSnapshot | null;
+  stationedDefenders?: StationedDefenderSummary[];
   // ACS attack group: the main attack mission id for a grouped attack (null for a solo attack), and
   // every participant (main attacker + joiners) with their individual loot share. Older feeds that
   // predate VEY-KANEO-432 may omit these; consumers fall back to the single-attacker fields.
@@ -938,6 +946,7 @@ export type AllianceDiplomacyEntry = {
   statusId: number;
   updatedAt: string | null;
   initiatedByAllianceId: string | null;
+  declaredAt?: string | null;
   alliance: ChainAllianceState["directory"][number] | null;
 };
 
