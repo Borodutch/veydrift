@@ -552,6 +552,19 @@ describe("debris target finder", () => {
     expect(rows[0]!.fuelCost).toBeGreaterThan(0);
   });
 
+  test("uses non-zero local distance, ETA, and fuel for same-planet debris", () => {
+    const row = buildDebrisTargets({
+      targets: [debrisTarget({ coordinates: ORIGIN })],
+      origin: ORIGIN,
+      shipyardState: shipyard(),
+    })[0]!;
+
+    expect(row.distance).toBe(5);
+    expect(row.etaSeconds).toBeGreaterThan(10);
+    expect(row.fuelCost).toBeGreaterThan(0);
+    expect(row.harvestDisabledReason).toBeNull();
+  });
+
   test("surfaces recycler, fleet-slot, and fuel blockers for debris harvest rows", () => {
     expect(buildDebrisTargets({
       targets: [debrisTarget()],

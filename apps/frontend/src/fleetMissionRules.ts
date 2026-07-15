@@ -1,10 +1,13 @@
 import type { Coordinates } from "./types";
-import type { MissionShips } from "./galaxyActions";
+import type { GalaxyMissionKind, MissionShips } from "./galaxyActions";
 
 export const FLEET_RULE_BPS = 10_000;
 export const FULL_SPEED_PERCENT = 100;
 export const DEFAULT_FLEET_UNIVERSE_SPEED = 1;
 export const DEFAULT_MISSION_SPEED_PERCENT = 100;
+// Mirrors VeydriftGameStorage.LOCAL_HARVEST_DISTANCE. Same-planet recyclers still fly a priced,
+// non-zero local route instead of receiving a free zero-duration mission.
+export const LOCAL_HARVEST_DISTANCE = 5;
 export const MISSION_SPEED_OPTIONS = [100, 90, 80, 70, 60, 50, 40, 30, 20, 10] as const;
 
 // VEY-KANEO-440: an ACS Defend fleet "holds" at the defended planet from its natural arrival until
@@ -158,6 +161,18 @@ export function fleetMissionDistance(
   if (Boolean(body.originIsMoon) !== Boolean(body.targetIsMoon)) return 5;
 
   return 0;
+}
+
+export function fleetMissionDistanceForMission(
+  origin: Coordinates,
+  target: Coordinates,
+  mission: GalaxyMissionKind | "Harvest",
+  body: FleetMissionBodyDistanceOptions = {},
+): number {
+  const distance = fleetMissionDistance(origin, target, body);
+  return distance === 0 && (mission === "harvest" || mission === "Harvest")
+    ? LOCAL_HARVEST_DISTANCE
+    : distance;
 }
 
 export function fleetMissionTravelSeconds(

@@ -8,6 +8,7 @@ import {
   fleetMissionAvailableCargoCapacity,
   fleetMissionCargoCapacity,
   fleetMissionDistance,
+  fleetMissionDistanceForMission,
   fleetMissionFuelCost,
   fleetMissionShipCount,
   fleetMissionTravelSeconds,
@@ -312,10 +313,17 @@ export function MissionCreationPage({
   });
   const effectiveOriginIsMoon = Boolean(bodySelectionVisibility.originVisible && originIsMoon);
   const effectiveTargetIsMoon = Boolean(bodySelectionVisibility.targetVisible && targetIsMoon);
-  const distance = originCoords ? fleetMissionDistance(originCoords, coords, {
-    originIsMoon: effectiveOriginIsMoon,
-    targetIsMoon: effectiveTargetIsMoon,
-  }) : 0;
+  const distance = originCoords
+    ? action.mode === "mission"
+      ? fleetMissionDistanceForMission(originCoords, coords, action.mission, {
+          originIsMoon: effectiveOriginIsMoon,
+          targetIsMoon: effectiveTargetIsMoon,
+        })
+      : fleetMissionDistance(originCoords, coords, {
+          originIsMoon: effectiveOriginIsMoon,
+          targetIsMoon: effectiveTargetIsMoon,
+        })
+    : 0;
   const travelSeconds = action.mode === "missile" ? 0 : fleetMissionTravelSeconds(distance, ships, driveLevels, speedPercent);
   const fuelCost = action.mode === "missile" ? 0 : fleetMissionFuelCost(ships, distance, driveLevels, speedPercent);
   const totalCargoCapacity = action.mode === "missile" ? 0 : fleetMissionCargoCapacity(ships);

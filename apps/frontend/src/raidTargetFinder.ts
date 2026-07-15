@@ -14,6 +14,7 @@
 
 import {
   fleetMissionDistance,
+  fleetMissionDistanceForMission,
   fleetMissionFuelCost,
   fleetMissionTravelSeconds,
   type FleetDriveLevels,
@@ -565,7 +566,9 @@ export function buildDebrisTargets({
     const total = metal + crystal;
     if (total <= 0) return [];
 
-    const distance = origin ? fleetMissionDistance(origin, target.coordinates) : null;
+    const distance = origin
+      ? fleetMissionDistanceForMission(origin, target.coordinates, "harvest")
+      : null;
     const recyclersNeeded = Math.ceil(total / RECYCLER_CAPACITY);
     const recyclerQuantity = Math.max(1, Math.min(availableRecyclers, recyclersNeeded));
     const ships = { ...emptyMissionShips(), recycler: recyclerQuantity };

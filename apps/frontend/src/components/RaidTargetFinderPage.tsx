@@ -312,7 +312,9 @@ export function RaidTargetFinderPage({
         ) : (
           debrisTargets.map((target) => (
             <DebrisTargetRow
-              action={harvestActionForDebrisTarget?.(target) ?? { label: "Harvest", disabledReason: target.harvestDisabledReason ?? undefined }}
+              action={harvestActionForDebrisTarget
+                ? harvestActionForDebrisTarget(target)
+                : { label: "Harvest", disabledReason: target.harvestDisabledReason ?? undefined }}
               key={target.planetId}
               now={now}
               onHarvest={onHarvestDebrisTarget}
