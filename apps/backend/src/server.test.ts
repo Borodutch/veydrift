@@ -4832,6 +4832,16 @@ describe("Veydrift backend", () => {
       blockedReason: "none",
       targetAlliance: { allianceId: "2", tag: "DEF", name: "Defenders" }
     });
+
+    const reverseResponse = await handler(new Request(`http://localhost/wallet/${player}/attack-protection?targetPlanetId=8`));
+    const reverseBody = await reverseResponse.json();
+    expect(reverseResponse.status).toBe(200);
+    expect(reverseBody).toMatchObject({
+      allowed: true,
+      atWar: true,
+      blockedReason: "none",
+      targetAlliance: { allianceId: "1", tag: "ATK", name: "Attackers" }
+    });
   });
 
   test("indexed highscore rankings report bashing_limit per planet (VEY-KANEO-489)", async () => {

@@ -938,6 +938,7 @@ export type AllianceDiplomacyEntry = {
   statusId: number;
   updatedAt: string | null;
   initiatedByAllianceId: string | null;
+  declaredAt?: string | null;
   alliance: ChainAllianceState["directory"][number] | null;
 };
 
