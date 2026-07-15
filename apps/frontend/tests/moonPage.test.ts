@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { MoonPage, moonBuildingRequirementRows, moonFieldSummary, moonJumpGateAvailable, moonJumpGateDestinations, moonJumpGateStatus, moonStructureStatus, queueReady } from "../src/components/MoonPage";
+import { MoonPage, MoonStructureLevelInfoModal, moonBuildingRequirementRows, moonFieldSummary, moonJumpGateAvailable, moonJumpGateDestinations, moonJumpGateStatus, moonStructureHasLevelInfo, moonStructureLevelInfoColumns, moonStructureLevelInfoRows, moonStructureStatus, queueReady } from "../src/components/MoonPage";
 import type { ChainMoonState } from "../src/walletFlow";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../src/moonActions";
 
 const moonPageSource = await Bun.file(new URL("../src/components/MoonPage.tsx", import.meta.url)).text();
+const infrastructurePageSource = await Bun.file(new URL("../src/components/InfrastructurePage.tsx", import.meta.url)).text();
+const levelInfoModalSource = await Bun.file(new URL("../src/components/LevelInfoModal.tsx", import.meta.url)).text();
 
 describe("Moon page helpers", () => {
   test("accepts only positive integer moon ids", () => {
@@ -555,6 +557,109 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).not.toContain("\"Pending\" : formatDuration(row.durationSeconds)");
     expect(moonPageSource).not.toContain(": \"Met\"");
     expect(moonPageSource).not.toContain('<MoonMetric icon={Orbit} label="Jump Gate"');
+  });
+
+  test("reuses the Infrastructure level popup for Moon structures and omits Jump Gate info", () => {
+    expect(moonStructureHasLevelInfo("lunarBase")).toBe(true);
+    expect(moonStructureHasLevelInfo("roboticsFactory")).toBe(true);
+    expect(moonStructureHasLevelInfo("shipyard")).toBe(true);
+    expect(moonStructureHasLevelInfo("jumpGate")).toBe(false);
+    expect(moonPageSource).toContain('from "./LevelInfoModal"');
+    expect(infrastructurePageSource).toContain('from "./LevelInfoModal"');
+    expect(moonPageSource).toContain("moonStructureHasLevelInfo(building.key)");
+    expect(moonPageSource).toContain("isInfoOpen ?");
+    expect(moonPageSource).not.toContain('aria-labelledby="moon-building-level-info-title"');
+  });
+
+  test("adapts Moon Robotics Factory and Shipyard data into the shared level layout", () => {
+    const moonState = loadedMoonState({
+      moon: {
+        exists: true,
+        planetId: "7",
+        owner: "0x1111111111111111111111111111111111111111",
+        fields: 6,
+        diameterKm: 8774,
+        createdAt: "1770000000",
+        jumpGateReadyAt: "0",
+      },
+      buildings: [{
+        id: 0,
+        key: "lunarBase",
+        label: "Lunar Base",
+        level: 1,
+        cost: { metal: "40000", crystal: "80000", deuterium: "40000" },
+      }, {
+        id: 1,
+        key: "roboticsFactory",
+        label: "Robotics Factory",
+        level: 1,
+        cost: { metal: "800", crystal: "240", deuterium: "400" },
+        durationSeconds: 120,
+      }, {
+        id: 3,
+        key: "shipyard",
+        label: "Shipyard",
+        level: 0,
+        cost: { metal: "400", crystal: "200", deuterium: "100" },
+        durationSeconds: 180,
+      }],
+    });
+    const robotics = moonState.buildings[1]!;
+    const shipyard = moonState.buildings[2]!;
+    const roboticsRows = moonStructureLevelInfoRows(robotics, moonState.moon!, moonState);
+    const shipyardRows = moonStructureLevelInfoRows(shipyard, moonState.moon!, moonState);
+    const roboticsModal = MoonStructureLevelInfoModal({
+      buildingKey: robotics.key,
+      buildingLabel: robotics.label,
+      currentLevel: robotics.level,
+      onClose: () => undefined,
+      rows: roboticsRows,
+    });
+    const shipyardModal = MoonStructureLevelInfoModal({
+      buildingKey: shipyard.key,
+      buildingLabel: shipyard.label,
+      currentLevel: shipyard.level,
+      onClose: () => undefined,
+      rows: shipyardRows,
+    });
+
+    expect(visibleText(roboticsModal)).toContain("Robotics Factory levels");
+    expect(visibleText(roboticsModal)).toContain("Metal 800, Crystal 240, Deuterium 400");
+    expect(visibleText(roboticsModal)).toContain("Moon structure build divisor x2");
+    expect(visibleText(shipyardModal)).toContain("Shipyard levels");
+    expect(visibleText(shipyardModal)).toContain("Robotics Factory level 2");
+    expect(visibleText(shipyardModal)).toContain("Moon defense build divisor x2");
+  });
+
+  test("omits Lunar Base requirements and portals the shared popup above detail cards", () => {
+    const modal = MoonStructureLevelInfoModal({
+      buildingKey: "lunarBase",
+      buildingLabel: "Lunar Base",
+      currentLevel: 1,
+      onClose: () => undefined,
+      rows: [{
+        cost: { metal: 40_000, crystal: 80_000, deuterium: 40_000 },
+        durationSeconds: 120,
+        effect: "+3 gross fields, 1 field used",
+        level: 1,
+        requirements: "1 open field",
+        status: "current",
+      }],
+    }) as VNode;
+    const closeButton = componentNodes(modal).find((node) => node.type === "button" && node.props?.["aria-label"] === "Close level table");
+
+    expect(moonStructureLevelInfoColumns("lunarBase").map((column) => column.label)).toEqual([
+      "Upgrade cost",
+      "Build time",
+      "Effect",
+    ]);
+    expect(visibleText(modal)).not.toContain("Requirements");
+    expect(modal.props?.["data-level-info-layer"]).toBe("viewport");
+    expect(String(modal.props?.className)).toContain("z-[100]");
+    expect(closeButton).toBeDefined();
+    expect(levelInfoModalSource).toContain("createPortal(layer, document.body)");
+    expect(levelInfoModalSource).toContain("100dvh");
+    expect(levelInfoModalSource).toContain("overflow-auto overscroll-contain");
   });
 
   test("falls back to known moon structure catalog costs when indexed cost is zero", () => {
