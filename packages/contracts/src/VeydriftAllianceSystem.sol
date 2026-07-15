@@ -496,6 +496,7 @@ contract VeydriftAllianceSystem is Initializable, UUPSUpgradeable {
             uint64 startedAt = _warStartedAts[allianceId][otherAllianceId];
             if (startedAt == 0) startedAt = warMinimumDurationActivatedAt;
             uint64 unlocksAt = startedAt + WAR_MINIMUM_DURATION;
+            // forge-lint: disable-next-line(block-timestamp)
             if (block.timestamp < unlocksAt) revert WarEndLocked(unlocksAt);
             _diplomacy[allianceId][otherAllianceId] = DiplomacyStatus.None;
             emit AllianceDiplomacyUpdated(allianceId, otherAllianceId, DiplomacyStatus.None);
