@@ -3,7 +3,7 @@ import type { ComponentChildren, VNode } from "preact";
 import { PlanetSelectorResearchProgress } from "../src/PlayableMvpApp";
 
 describe("right-sidebar planet selector research progress", () => {
-  test("gives a long active technology name its own untruncated line", () => {
+  test("shows only the full active technology name above its progress bar", () => {
     const now = 1_700_000_000_000;
     const progress = PlanetSelectorResearchProgress({
       now,
@@ -21,13 +21,18 @@ describe("right-sidebar planet selector research progress", () => {
     const name = findByDataAttribute(progress, "data-planet-selector-research-name");
     const status = findByDataAttribute(progress, "data-planet-selector-research-status");
 
-    expect(visibleText(name)).toBe("Intergalactic Research Network Level 9");
+    expect(visibleText(name)).toBe("Intergalactic Research Network");
     expect(name?.props.className).toContain("break-words");
     expect(name?.props.className).toContain("[overflow-wrap:anywhere]");
     expect(name?.props.className).not.toContain("truncate");
-    expect(visibleText(status)).toBe("1m");
-    expect(status?.props.className).not.toContain("truncate");
-    expect(visibleText(progress)).not.toMatch(/^Research\b/);
+    expect(status).toBeUndefined();
+    expect(visibleText(progress)).toBe("Intergalactic Research Network");
+    expect(progress?.props.title).toBe("Intergalactic Research Network");
+    expect(progress?.props["aria-label"]).toBe(
+      "Selector research progress. Intergalactic Research Network",
+    );
+    expect(visibleText(progress)).not.toBe("Research");
+    expect(visibleText(progress)).not.toMatch(/\bLevel 9\b|\b1m\b/);
   });
 
   test("does not render a research row for an inactive queue", () => {
