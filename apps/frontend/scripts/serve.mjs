@@ -17,6 +17,18 @@ export const referralOgLayout = Object.freeze({
   titleY: 192,
   titleFontSize: 82,
   titleSafeRight: 672,
+  titleSafeBottom: 212,
+  codeTop: 258,
+  codeBaselineY: 286,
+  codeBottom: 296,
+  codeSafeRight: 672,
+  supportingX: 92,
+  supportingTop: 310,
+  supportingBaselineY: 336,
+  supportingBottom: 344,
+  supportingFontSize: 24,
+  supportingSafeRight: 672,
+  footerTop: 548,
   planetLeft: 704,
   planetTop: 18,
   planetSize: 488,
@@ -245,6 +257,7 @@ function referralMeta(code = "") {
       ? `Use invite code ${inviteCode}. Eligibility and exact benefits are verified in-game before settlement.`
       : "Open this Veydrift invite. Referral eligibility and exact benefits are verified in-game before settlement.",
     status: inviteCode ? `CODE ${inviteCode}` : "INVITE LINK",
+    supportingCopy: inviteCode ? "Use this code to start with 2× resources" : "",
     subtitle: inviteCode ? "" : "Benefits verified in-game",
     accent: "#5eead4",
     footer: "veydrift.com",
@@ -705,6 +718,7 @@ export async function ogSvg(meta, { omitReferralTitle = false, omitReferralVisua
     : await assetDataUri(fallbackBackgroundAsset, 1200);
   const title = fitText(meta.imageTitle ?? meta.title, 26);
   const subtitle = fitText(meta.subtitle ?? meta.description, 32);
+  const supportingCopy = fitText(meta.supportingCopy ?? "", 56);
   const status = fitText(meta.status, 24).toUpperCase();
   const footer = fitText(meta.footer ?? "test.veydrift.com", 34);
   const accent = meta.accent ?? "#7dd3fc";
@@ -720,8 +734,11 @@ export async function ogSvg(meta, { omitReferralTitle = false, omitReferralVisua
     : "";
   const ruleY = isReferral ? 82 : 132;
   const titleY = isReferral ? referralOgLayout.titleY : 238;
-  const statusBarY = isReferral ? 258 : 358;
-  const statusTextY = isReferral ? 286 : 386;
+  const statusBarY = isReferral ? referralOgLayout.codeTop : 358;
+  const statusTextY = isReferral ? referralOgLayout.codeBaselineY : 386;
+  const supportingVisual = isReferral && supportingCopy
+    ? `<text x="${referralOgLayout.supportingX}" y="${referralOgLayout.supportingBaselineY}" font-family="DejaVu Sans, Arial, sans-serif" font-size="${referralOgLayout.supportingFontSize}" font-weight="700" fill="#b8c5d6">${escapeXml(supportingCopy)}</text>`
+    : "";
 
   const visual = meta.kind === "referral"
     ? omitReferralVisual
@@ -747,7 +764,7 @@ export async function ogSvg(meta, { omitReferralTitle = false, omitReferralVisua
   <circle cx="1064" cy="226" r="4" fill="${accent}"/>`;
 
   const footerVisual = meta.kind === "referral"
-    ? `<rect x="60" y="548" width="42" height="3" fill="${accent}"/>
+    ? `<rect x="60" y="${referralOgLayout.footerTop}" width="42" height="3" fill="${accent}"/>
   <text x="60" y="592" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" font-weight="850" fill="#f8fbff">${escapeXml(footer)}</text>`
     : `<text x="64" y="596" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" font-weight="760" fill="#71839a">${escapeXml(footer)}</text>`;
 
@@ -791,6 +808,7 @@ export async function ogSvg(meta, { omitReferralTitle = false, omitReferralVisua
   ${subtitleVisual}
   <rect x="64" y="${statusBarY}" width="10" height="38" fill="${accent}"/>
   <text x="92" y="${statusTextY}" font-family="DejaVu Sans, Arial, sans-serif" font-size="27" font-weight="850" fill="${accent}">${escapeXml(status)}</text>
+  ${supportingVisual}
   ${footerVisual}
 </svg>`;
 }

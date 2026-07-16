@@ -97,6 +97,7 @@ describe("frontend static server headers", () => {
       title: "Join Veydrift with secret-invite-code",
       description: "Use invite code secret-invite-code. Eligibility and exact benefits are verified in-game before settlement.",
       status: "CODE secret-invite-code",
+      supportingCopy: "Use this code to start with 2× resources",
       subtitle: "",
       footer: "veydrift.com",
     });
@@ -109,6 +110,7 @@ describe("frontend static server headers", () => {
     expect(svg).not.toContain(">Veydrift</text>");
     expect(svg).not.toContain("Invite code:");
     expect(svg.match(/>CODE SECRET-INVITE-CODE<\/text>/g)).toHaveLength(1);
+    expect(svg.match(/>Use this code to start with 2× resources<\/text>/g)).toHaveLength(1);
     expect(svg).toContain(">veydrift.com</text>");
     expect(svg).not.toContain('clip-path="url(#singlePlanet)"');
     expect(svg.match(/<image /g)).toHaveLength(1);
@@ -116,6 +118,13 @@ describe("frontend static server headers", () => {
 
     expect(referralOgLayout.planetLeft - referralOgLayout.titleSafeRight)
       .toBeGreaterThanOrEqual(referralOgLayout.minimumTitlePlanetGap);
+    expect(referralOgLayout.planetLeft - referralOgLayout.codeSafeRight)
+      .toBeGreaterThanOrEqual(referralOgLayout.minimumTitlePlanetGap);
+    expect(referralOgLayout.planetLeft - referralOgLayout.supportingSafeRight)
+      .toBeGreaterThanOrEqual(referralOgLayout.minimumTitlePlanetGap);
+    expect(referralOgLayout.titleSafeBottom).toBeLessThan(referralOgLayout.codeTop);
+    expect(referralOgLayout.codeBottom).toBeLessThan(referralOgLayout.supportingTop);
+    expect(referralOgLayout.supportingBottom).toBeLessThan(referralOgLayout.footerTop);
 
     const png = await ogPng(meta);
     expect(png.subarray(1, 4).toString()).toBe("PNG");
@@ -135,6 +144,15 @@ describe("frontend static server headers", () => {
       maxY: titleOnly.maxY,
     });
     expect(Math.abs(composite.count - titleOnly.count)).toBeLessThanOrEqual(16);
+
+    const supportingCopy = await referralTextPixels(png, {
+      top: referralOgLayout.supportingTop,
+      bottom: referralOgLayout.supportingBottom,
+    });
+    expect(supportingCopy.count).toBeGreaterThan(1_000);
+    expect(supportingCopy.maxX).toBeLessThanOrEqual(referralOgLayout.supportingSafeRight);
+    expect(supportingCopy.minY).toBeGreaterThanOrEqual(referralOgLayout.supportingTop);
+    expect(supportingCopy.maxY).toBeLessThanOrEqual(referralOgLayout.supportingBottom);
 
     const wideTitle = await referralTitlePixels(await ogPng({
       ...meta,
@@ -212,6 +230,29 @@ async function referralTitlePixels(png: Buffer) {
     for (let x = 0; x < referralOgLayout.planetLeft; x += 1) {
       const offset = (y * info.width + x) * info.channels;
       if (data[offset]! <= 220 || data[offset + 1]! <= 220 || data[offset + 2]! <= 220) continue;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+      count += 1;
+    }
+  }
+
+  return { minX, maxX, minY, maxY, count };
+}
+
+async function referralTextPixels(png: Buffer, bounds: { top: number; bottom: number }) {
+  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  let minX = info.width;
+  let maxX = -1;
+  let minY = info.height;
+  let maxY = -1;
+  let count = 0;
+
+  for (let y = bounds.top; y <= bounds.bottom; y += 1) {
+    for (let x = 0; x < referralOgLayout.planetLeft; x += 1) {
+      const offset = (y * info.width + x) * info.channels;
+      if (data[offset]! < 130 || data[offset + 1]! < 140 || data[offset + 2]! < 150) continue;
       minX = Math.min(minX, x);
       maxX = Math.max(maxX, x);
       minY = Math.min(minY, y);
