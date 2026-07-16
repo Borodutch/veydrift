@@ -74,7 +74,7 @@ const pages: Array<{ key: Page; label: string; mobileLabel: string; icon: Lucide
   { key: "rankings", label: "Rankings", mobileLabel: "Ranks", icon: Trophy },
   { key: "galaxy", label: "Galaxy", mobileLabel: "Galaxy", icon: Orbit },
   { key: "raid-target-finder", label: "Raid Finder", mobileLabel: "Raids", icon: Crosshair },
-  { key: "alliance-invites", label: "Invite", mobileLabel: "Invite", icon: Mail },
+  { key: "alliance-invites", label: "Earn $10", mobileLabel: "Earn $10", icon: Mail },
 ];
 
 export function NavBar({
