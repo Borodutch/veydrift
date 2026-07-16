@@ -1932,6 +1932,38 @@ export class SettlementIndexer {
     );
   }
 
+  private launchableMoonShipRows(planetId: string, asOfSeconds = nowSeconds()): ShipyardState["ships"] {
+    const counts = this.indexedLevelsById("contract_moon_ship_counts", "ship_id", "count", planetId);
+    const pendingDeployCredits = new Map<number, number>();
+
+    // launchBodyFleetMission settles the owner's due Deploy arrivals before it checks fleet slots or
+    // the selected origin body's inventory. Until that transaction emits MoonShipCountChanged, the
+    // canonical moon table is intentionally behind the inventory the launch will read. Project only
+    // body-proven moon Deploys that are already deterministically settleable; planet Deploys and
+    // in-flight moon Deploys must never leak into this roster.
+    for (const mission of this.activeFleetMissionsFromCanonicalRowsForTarget(planetId, { includeOverduePendingRandomness: true })) {
+      if (
+        mission.status !== "Outbound"
+        || mission.missionType !== "Deploy"
+        || mission.targetIsMoon !== true
+        || Number(mission.arrivalAt) > asOfSeconds
+        || mission.needsResolution !== true
+      ) continue;
+
+      for (const [shipKey, rawQuantity] of Object.entries(mission.ships)) {
+        const shipId = shipKeyToId(shipKey);
+        const quantity = Number(rawQuantity);
+        if (shipId === null || !Number.isSafeInteger(quantity) || quantity <= 0) continue;
+        pendingDeployCredits.set(shipId, (pendingDeployCredits.get(shipId) ?? 0) + quantity);
+      }
+    }
+
+    return deriveShipRows(
+      (id) => (counts.get(id) ?? 0) + (pendingDeployCredits.get(id) ?? 0),
+      this.planet(planetId)?.temperature
+    );
+  }
+
   private moonDefenseRows(planetId: string): DefenseState["defenses"] {
     const counts = this.indexedLevelsById("contract_moon_defense_counts", "defense_id", "count", planetId);
     return deriveDefenseRows((id) => counts.get(id) ?? 0);
@@ -2322,6 +2354,7 @@ export class SettlementIndexer {
       resources,
       resourcesAsOfNow: resources,
       ships: planetId ? this.moonShipRows(planetId) : [],
+      launchableShips: planetId ? this.launchableMoonShipRows(planetId) : [],
       moon: moon
         ? {
             exists: true,

@@ -25,7 +25,7 @@ import {
   TargetIntelCard,
   targetResourceIntel,
 } from "./components/MissionCreationPage";
-import { transportCargoForOrigin } from "./PlayableMvpApp";
+import { missionMoonShipyardState, transportCargoForOrigin } from "./PlayableMvpApp";
 import type { GalaxyAction } from "./galaxyActions";
 import type { Planet } from "./types";
 
@@ -307,6 +307,49 @@ describe("mission creation", () => {
       crystal: "456",
       deuterium: "788",
     });
+  });
+
+  test("moon-origin composition uses launchable moon ships and refreshed global slots, never parent ships", () => {
+    const state = missionMoonShipyardState({
+      moonState: {
+        wallet: "0x2222222222222222222222222222222222222222",
+        homePlanetId: "7",
+        moon: {
+          exists: true,
+          planetId: "7",
+          owner: "0x2222222222222222222222222222222222222222",
+          fields: 12,
+          diameterKm: 8_777,
+          createdAt: "1",
+          jumpGateReadyAt: "0",
+        },
+        resources: { metal: "0", crystal: "0", deuterium: "100" },
+        buildings: [],
+        defenses: [],
+        queue: null,
+        launchableShips: [{ id: 0, count: 1, cost: { metal: "2000", crystal: "2000", deuterium: "0" } }],
+        ships: [{ id: 0, count: 0, cost: { metal: "2000", crystal: "2000", deuterium: "0" } }],
+        fleet: [{ id: 0, count: 0, cost: { metal: "2000", crystal: "2000", deuterium: "0" } }],
+      },
+      shipyardState: {
+        wallet: "0x2222222222222222222222222222222222222222",
+        homePlanetId: "7",
+        planetId: "7",
+        resources: { metal: "0", crystal: "0", deuterium: "0" },
+        fleetSlots: { active: 5, limit: 6 },
+        fleetLaunchAvailable: true,
+        shipyardLevel: 1,
+        naniteLevel: 0,
+        technologyLevels: { "4": 5 },
+        ships: [{ id: 0, count: 99, cost: { metal: "2000", crystal: "2000", deuterium: "0" } }],
+        queue: null,
+      },
+    });
+
+    expect(state?.fleetSlots).toEqual({ active: 5, limit: 6 });
+    expect(state?.ships.find((ship) => ship.id === 0)?.count).toBe(1);
+    expect(playableMvpAppSource).toContain("refreshShipyardState({ clearCachedState: true })");
+    expect(playableMvpAppSource).toContain("refreshInfrastructureState()");
   });
 
   test("shows body selectors only for route sides with moons", () => {
