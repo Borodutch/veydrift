@@ -634,9 +634,7 @@ async function ogImageResponse(route) {
   }
 
   const meta = await routeMeta(route);
-  const svg = await ogSvg(meta);
-  const sharp = await getSharp();
-  const body = await sharp(Buffer.from(svg)).png().toBuffer();
+  const body = await ogPng(meta);
   ogImageCache.set(cacheKey, { body, expiresAt: Date.now() + 300_000 });
   return new Response(body.slice(0), { headers: ogImageHeaders() });
 }
@@ -648,7 +646,34 @@ function ogImageHeaders() {
   };
 }
 
-export async function ogSvg(meta) {
+export async function ogPng(meta) {
+  const sharp = await getSharp();
+  const compositeReferralPlanet = meta.kind === "referral" && Boolean(meta.planetAssets?.[0]);
+  const svg = await ogSvg(meta, { omitReferralVisual: compositeReferralPlanet });
+  if (!compositeReferralPlanet) return sharp(Buffer.from(svg)).png().toBuffer();
+
+  const planetSource = await readFile(existingAssetUrl(meta.planetAssets[0]));
+  const planet = await sharp(planetSource)
+    .resize({ width: 488, height: 488, fit: "contain" })
+    .modulate({ brightness: 0.72, saturation: 0.9 })
+    .png()
+    .toBuffer();
+  const routeOverlay = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <path d="M744 410 C838 336 944 268 1090 178" fill="none" stroke="${meta.accent ?? "#7dd3fc"}" stroke-width="2" stroke-opacity=".38"/>
+  <circle cx="744" cy="410" r="4" fill="${meta.accent ?? "#7dd3fc"}"/>
+  <circle cx="1090" cy="178" r="4" fill="${meta.accent ?? "#7dd3fc"}"/>
+</svg>`);
+
+  return sharp(Buffer.from(svg))
+    .composite([
+      { input: planet, left: 704, top: 18, blend: "over" },
+      { input: routeOverlay, left: 0, top: 0, blend: "over" },
+    ])
+    .png()
+    .toBuffer();
+}
+
+export async function ogSvg(meta, { omitReferralVisual = false } = {}) {
   const isReferral = meta.kind === "referral";
   const background = meta.kind === "referral"
     ? null
@@ -674,7 +699,9 @@ export async function ogSvg(meta) {
   const statusTextY = isReferral ? 286 : 386;
 
   const visual = meta.kind === "referral"
-    ? `<image href="${planets[0] ?? ""}" x="704" y="18" width="488" height="488" preserveAspectRatio="xMidYMid meet"/>
+    ? omitReferralVisual
+      ? ""
+      : `<image href="${planets[0] ?? ""}" x="704" y="18" width="488" height="488" preserveAspectRatio="xMidYMid meet"/>
   <path d="M744 410 C838 336 944 268 1090 178" fill="none" stroke="${accent}" stroke-width="2" stroke-opacity=".38"/>
   <circle cx="744" cy="410" r="4" fill="${accent}"/>
   <circle cx="1090" cy="178" r="4" fill="${accent}"/>`
