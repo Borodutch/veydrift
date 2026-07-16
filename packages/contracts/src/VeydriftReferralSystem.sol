@@ -10,6 +10,9 @@ contract VeydriftReferralSystem {
     bytes32 public constant REFERRAL_REDEEM_DOMAIN = keccak256("veydrift.referral.redeem.v1");
     uint8 public constant REFERRAL_CLAIM_LIMIT = 3;
     uint8 public constant REFERRAL_CODE_MAX_LENGTH = 24;
+    uint8 public constant REFERRAL_LEGACY_CODE_LENGTH = 43;
+    uint8 public constant REFERRAL_MIGRATION_KIND_VALID = 1;
+    uint8 public constant REFERRAL_MIGRATION_KIND_HASH_ONLY = 2;
     uint64 public constant REFERRAL_CLAIM_WINDOW = 1 days;
     uint256 public constant DIRECT_PAYOUT_GAS = 30_000;
 
@@ -25,7 +28,17 @@ contract VeydriftReferralSystem {
     address public game;
     address public referralSigner;
     bool public referralMigrationFinalized;
+    bool public referralMigrationConfigured;
+    bytes32 public referralMigrationExpectedValidHash;
+    bytes32 public referralMigrationExpectedHashOnlyHash;
+    bytes32 public referralMigrationImportedValidHash;
+    bytes32 public referralMigrationImportedHashOnlyHash;
+    uint32 public referralMigrationExpectedValidCount;
+    uint32 public referralMigrationExpectedHashOnlyCount;
+    uint32 public referralMigrationImportedValidCount;
+    uint32 public referralMigrationImportedHashOnlyCount;
     mapping(bytes32 codeHash => address codeOwner) public referralCodeOwner;
+    mapping(bytes32 codeHash => uint8 migrationKind) public referralCodeMigrationKind;
     mapping(address codeOwner => mapping(bytes32 codeHash => bool owned)) public
         referralCodeOwnedBy;
     mapping(bytes32 commitment => bytes32 codeHash) public referralCodeHashOf;
@@ -63,6 +76,22 @@ contract VeydriftReferralSystem {
     error ReferralRewardWithdrawalFailed(address recipient, uint256 amount);
     error ReferralRewardWithdrawalReentered();
     error ReferralMigrationAlreadyFinalized();
+    error ReferralMigrationAlreadyConfigured();
+    error ReferralMigrationNotConfigured();
+    error ReferralMigrationManifestInvalid(bytes32 manifestHash, uint32 count);
+    error ReferralMigrationManifestMismatch(
+        bytes32 expectedValidHash,
+        bytes32 importedValidHash,
+        uint32 expectedValidCount,
+        uint32 importedValidCount,
+        bytes32 expectedHashOnlyHash,
+        bytes32 importedHashOnlyHash,
+        uint32 expectedHashOnlyCount,
+        uint32 importedHashOnlyCount
+    );
+    error ReferralMigrationCountExceeded(uint8 kind, uint32 expectedCount);
+    error ReferralMigrationCodeAlreadyImported(bytes32 codeHash, uint8 kind);
+    error ReferralMigrationCommitmentMismatch(bytes32 expected, bytes32 received);
     error ReferralMigrationPending();
     error ReferralMigrationLengthMismatch();
     error ReferralMigrationTimestampInvalid(uint64 activatedAt);
@@ -85,6 +114,18 @@ contract VeydriftReferralSystem {
         address indexed inviter, bytes32 indexed commitment, uint64 claimedAt
     );
     event ReferralCodeMigrationFinalized(uint64 finalizedAt);
+    event ReferralCodeMigrationConfigured(
+        bytes32 indexed expectedValidHash,
+        uint32 expectedValidCount,
+        bytes32 indexed expectedHashOnlyHash,
+        uint32 expectedHashOnlyCount
+    );
+    event ReferralLegacyCodeOwnershipImported(
+        address indexed owner,
+        bytes32 indexed codeHash,
+        bytes32 indexed legacyCommitment,
+        bytes32 manifestLeaf
+    );
     event ReferralRedemptionQuotaUpdated(
         address indexed inviter,
         uint8 remainingRedemptions,
@@ -136,15 +177,43 @@ contract VeydriftReferralSystem {
         emit ReferralSignerUpdated(oldSigner, nextSigner);
     }
 
-    function migrateReferralCodes(
-        address[] calldata inviters,
-        string[] calldata codes,
-        uint64[] calldata activatedAts
+    function configureReferralCodeMigration(
+        bytes32 expectedValidHash,
+        uint32 expectedValidCount,
+        bytes32 expectedHashOnlyHash,
+        uint32 expectedHashOnlyCount
     ) external onlyOwner {
         if (referralMigrationFinalized) {
             revert ReferralMigrationAlreadyFinalized();
         }
-        if (inviters.length != codes.length || codes.length != activatedAts.length) {
+        if (referralMigrationConfigured) revert ReferralMigrationAlreadyConfigured();
+        _validateMigrationManifest(expectedValidHash, expectedValidCount);
+        _validateMigrationManifest(expectedHashOnlyHash, expectedHashOnlyCount);
+
+        referralMigrationConfigured = true;
+        referralMigrationExpectedValidHash = expectedValidHash;
+        referralMigrationExpectedValidCount = expectedValidCount;
+        referralMigrationExpectedHashOnlyHash = expectedHashOnlyHash;
+        referralMigrationExpectedHashOnlyCount = expectedHashOnlyCount;
+        emit ReferralCodeMigrationConfigured(
+            expectedValidHash, expectedValidCount, expectedHashOnlyHash, expectedHashOnlyCount
+        );
+    }
+
+    function migrateReferralCodes(
+        address[] calldata inviters,
+        string[] calldata codes,
+        uint64[] calldata activatedAts,
+        bytes32[] calldata legacyCommitments
+    ) external onlyOwner {
+        if (referralMigrationFinalized) {
+            revert ReferralMigrationAlreadyFinalized();
+        }
+        if (!referralMigrationConfigured) revert ReferralMigrationNotConfigured();
+        if (
+            inviters.length != codes.length || codes.length != activatedAts.length
+                || activatedAts.length != legacyCommitments.length
+        ) {
             revert ReferralMigrationLengthMismatch();
         }
 
@@ -159,13 +228,74 @@ contract VeydriftReferralSystem {
                 revert ReferralMigrationTimestampInvalid(activatedAt);
             }
             (string memory normalizedCode, bytes32 codeHash) = _normalizedReferralCode(codes[index]);
+            bytes32 expectedCommitment = referralCommitment(inviter, keccak256(bytes(codes[index])));
+            bytes32 legacyCommitment = legacyCommitments[index];
+            if (legacyCommitment != expectedCommitment) {
+                revert ReferralMigrationCommitmentMismatch(expectedCommitment, legacyCommitment);
+            }
             _claimCodeOwnership(inviter, codeHash, normalizedCode, activatedAt, true);
+            _recordMigrationCode(codeHash, REFERRAL_MIGRATION_KIND_VALID);
             _recordActivation(inviter, codeHash, normalizedCode, activatedAt, true);
+            _recordMigrationLeaf(
+                referralMigrationLeafValid(inviter, codeHash, legacyCommitment, activatedAt),
+                REFERRAL_MIGRATION_KIND_VALID
+            );
+        }
+    }
+
+    function migrateLegacyReferralCodeOwnership(
+        address[] calldata inviters,
+        string[] calldata codes,
+        bytes32[] calldata legacyCommitments
+    ) external onlyOwner {
+        if (referralMigrationFinalized) {
+            revert ReferralMigrationAlreadyFinalized();
+        }
+        if (!referralMigrationConfigured) revert ReferralMigrationNotConfigured();
+        if (inviters.length != codes.length || codes.length != legacyCommitments.length) {
+            revert ReferralMigrationLengthMismatch();
+        }
+
+        for (uint256 index = 0; index < codes.length; index++) {
+            address inviter = inviters[index];
+            if (inviter == address(0)) revert Unauthorized(address(0));
+            (, bytes32 codeHash) = _normalizedLegacyReferralCode(codes[index]);
+            bytes32 expectedCommitment = referralCommitment(inviter, keccak256(bytes(codes[index])));
+            bytes32 legacyCommitment = legacyCommitments[index];
+            if (legacyCommitment != expectedCommitment) {
+                revert ReferralMigrationCommitmentMismatch(expectedCommitment, legacyCommitment);
+            }
+            _claimLegacyCodeOwnership(inviter, codeHash);
+            _recordMigrationCode(codeHash, REFERRAL_MIGRATION_KIND_HASH_ONLY);
+            bytes32 manifestLeaf =
+                referralMigrationLeafHashOnly(inviter, codeHash, legacyCommitment);
+            _recordMigrationLeaf(manifestLeaf, REFERRAL_MIGRATION_KIND_HASH_ONLY);
+            emit ReferralLegacyCodeOwnershipImported(
+                inviter, codeHash, legacyCommitment, manifestLeaf
+            );
         }
     }
 
     function finalizeReferralCodeMigration() external onlyOwner {
         if (referralMigrationFinalized) revert ReferralMigrationAlreadyFinalized();
+        if (!referralMigrationConfigured) revert ReferralMigrationNotConfigured();
+        if (
+            referralMigrationImportedValidHash != referralMigrationExpectedValidHash
+                || referralMigrationImportedValidCount != referralMigrationExpectedValidCount
+                || referralMigrationImportedHashOnlyHash != referralMigrationExpectedHashOnlyHash
+                || referralMigrationImportedHashOnlyCount != referralMigrationExpectedHashOnlyCount
+        ) {
+            revert ReferralMigrationManifestMismatch(
+                referralMigrationExpectedValidHash,
+                referralMigrationImportedValidHash,
+                referralMigrationExpectedValidCount,
+                referralMigrationImportedValidCount,
+                referralMigrationExpectedHashOnlyHash,
+                referralMigrationImportedHashOnlyHash,
+                referralMigrationExpectedHashOnlyCount,
+                referralMigrationImportedHashOnlyCount
+            );
+        }
         referralMigrationFinalized = true;
         emit ReferralCodeMigrationFinalized(uint64(block.timestamp));
     }
@@ -182,6 +312,9 @@ contract VeydriftReferralSystem {
         }
 
         (string memory normalizedCode, bytes32 codeHash) = _normalizedReferralCode(code);
+        if (referralCodeMigrationKind[codeHash] == REFERRAL_MIGRATION_KIND_HASH_ONLY) {
+            revert ReferralCodeInvalid();
+        }
         uint64 nowTimestamp = uint64(block.timestamp);
         _claimCodeOwnership(msg.sender, codeHash, normalizedCode, nowTimestamp, false);
         _recordActivation(msg.sender, codeHash, normalizedCode, nowTimestamp, false);
@@ -290,6 +423,29 @@ contract VeydriftReferralSystem {
         return keccak256(abi.encode(inviter, codeHash));
     }
 
+    function referralMigrationLeafValid(
+        address inviter,
+        bytes32 codeHash,
+        bytes32 legacyCommitment,
+        uint64 activatedAt
+    ) public pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                REFERRAL_MIGRATION_KIND_VALID, inviter, codeHash, legacyCommitment, activatedAt
+            )
+        );
+    }
+
+    function referralMigrationLeafHashOnly(
+        address inviter,
+        bytes32 codeHash,
+        bytes32 legacyCommitment
+    ) public pure returns (bytes32) {
+        return keccak256(
+            abi.encode(REFERRAL_MIGRATION_KIND_HASH_ONLY, inviter, codeHash, legacyCommitment)
+        );
+    }
+
     function referralCodeState(bytes32 codeHash)
         external
         view
@@ -376,6 +532,50 @@ contract VeydriftReferralSystem {
         }
     }
 
+    function _claimLegacyCodeOwnership(address inviter, bytes32 codeHash) private {
+        address existingOwner = referralCodeOwner[codeHash];
+        if (existingOwner != address(0) && existingOwner != inviter) {
+            revert ReferralCodeAlreadyOwned(codeHash, existingOwner);
+        }
+        if (existingOwner == address(0)) {
+            referralCodeOwner[codeHash] = inviter;
+            referralCodeOwnedBy[inviter][codeHash] = true;
+        }
+    }
+
+    function _validateMigrationManifest(bytes32 manifestHash, uint32 count) private pure {
+        if ((count == 0) != (manifestHash == bytes32(0))) {
+            revert ReferralMigrationManifestInvalid(manifestHash, count);
+        }
+    }
+
+    function _recordMigrationCode(bytes32 codeHash, uint8 kind) private {
+        uint8 existingKind = referralCodeMigrationKind[codeHash];
+        if (existingKind != 0) {
+            revert ReferralMigrationCodeAlreadyImported(codeHash, existingKind);
+        }
+        referralCodeMigrationKind[codeHash] = kind;
+    }
+
+    function _recordMigrationLeaf(bytes32 manifestLeaf, uint8 kind) private {
+        if (kind == REFERRAL_MIGRATION_KIND_VALID) {
+            uint32 nextCount = referralMigrationImportedValidCount + 1;
+            if (nextCount > referralMigrationExpectedValidCount) {
+                revert ReferralMigrationCountExceeded(kind, referralMigrationExpectedValidCount);
+            }
+            referralMigrationImportedValidCount = nextCount;
+            referralMigrationImportedValidHash = referralMigrationImportedValidHash ^ manifestLeaf;
+            return;
+        }
+
+        uint32 hashOnlyNextCount = referralMigrationImportedHashOnlyCount + 1;
+        if (hashOnlyNextCount > referralMigrationExpectedHashOnlyCount) {
+            revert ReferralMigrationCountExceeded(kind, referralMigrationExpectedHashOnlyCount);
+        }
+        referralMigrationImportedHashOnlyCount = hashOnlyNextCount;
+        referralMigrationImportedHashOnlyHash = referralMigrationImportedHashOnlyHash ^ manifestLeaf;
+    }
+
     function _recordActivation(
         address inviter,
         bytes32 codeHash,
@@ -417,6 +617,24 @@ contract VeydriftReferralSystem {
             revert ReferralCodeInvalid();
         }
 
+        return _normalizeReferralCode(source);
+    }
+
+    function _normalizedLegacyReferralCode(string memory code)
+        private
+        pure
+        returns (string memory normalizedCode, bytes32 codeHash)
+    {
+        bytes memory source = bytes(code);
+        if (source.length != REFERRAL_LEGACY_CODE_LENGTH) revert ReferralCodeInvalid();
+        return _normalizeReferralCode(source);
+    }
+
+    function _normalizeReferralCode(bytes memory source)
+        private
+        pure
+        returns (string memory normalizedCode, bytes32 codeHash)
+    {
         bytes memory normalized = new bytes(source.length);
         for (uint256 index = 0; index < source.length; index++) {
             uint8 character = uint8(source[index]);

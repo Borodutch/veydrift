@@ -8,7 +8,9 @@ import {VeydriftReferralSystem} from "../src/VeydriftReferralSystem.sol";
 /// @dev VeydriftReferralSystem has immutable owner setup through its constructor and no ownership
 ///      transfer function. The broadcaster therefore remains the referral owner/admin.
 ///      Code claims stay disabled after deployment until the owner imports the audited legacy
-///      ownership manifest and calls finalizeReferralCodeMigration().
+///      ownership manifest. The owner must first commit its reviewed 6-valid / 10-hash-only
+///      count/digest pairs through configureReferralCodeMigration(), import the bounded batches,
+///      and call finalizeReferralCodeMigration().
 ///
 ///      Required env:
 ///        PRIVATE_KEY              deployment/referral-owner EOA
