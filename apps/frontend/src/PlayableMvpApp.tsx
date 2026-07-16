@@ -48,6 +48,7 @@ import {
   type PlanetDetailBackRoute,
 } from "./inspectRoutes";
 import { resetDocumentTitle } from "./pageTitle";
+import { hasPlanetSelectorChoice } from "./planetSelectorChoice";
 import { ShareDialog } from "./components/ShareDialog";
 import { rankingsAttackProtectionForEntry } from "./rankingsAttackProtection";
 import {
@@ -8078,7 +8079,8 @@ export function PlayableMvpApp({
     />
   );
 
-  const mobilePlanetPicker = walletPlanets.length > 0 ? (
+  const showPlanetSelector = hasPlanetSelectorChoice(walletPlanets);
+  const mobilePlanetPicker = showPlanetSelector ? (
     <PlanetSelector
       fleetVisibility={displayFleetVisibility}
       layout="mobile"
@@ -8099,7 +8101,7 @@ export function PlayableMvpApp({
     </div>
   ) : null;
 
-  const planetSidebar = walletPlanets.length > 0 ? (
+  const planetSidebar = showPlanetSelector ? (
     <PlanetSelector
       fleetVisibility={displayFleetVisibility}
       layout="sidebar"
