@@ -1,4 +1,5 @@
 const REFERRAL_CODE_PATTERN = /^[A-Za-z0-9_-]{1,24}$/;
+export const REFERRAL_X_CARD_VERSION = "2";
 
 export type ReferralXShareResult = "opened" | "shared";
 
@@ -28,8 +29,15 @@ export function referralXPostText(code: string): string {
   return `Join me in Veydrift — invite code: ${normalizedReferralCode(code)}`;
 }
 
+export function referralXCardUrl(inviteLink: string): string {
+  const url = new URL(inviteLink);
+  url.searchParams.set("x_card", REFERRAL_X_CARD_VERSION);
+  return url.toString();
+}
+
 export function referralXIntentUrl(code: string, inviteLink: string): string {
-  return `https://twitter.com/intent/tweet?text=${encodeURIComponent(referralXPostText(code))}&url=${encodeURIComponent(inviteLink)}`;
+  const cardUrl = referralXCardUrl(inviteLink);
+  return `https://twitter.com/intent/tweet?text=${encodeURIComponent(referralXPostText(code))}&url=${encodeURIComponent(cardUrl)}`;
 }
 
 export async function fetchReferralShareImage(

@@ -11,6 +11,7 @@ const ogDataCache = new Map();
 const assetDataCache = new Map();
 let sharpModule;
 const defaultMetadataTimeoutMs = 1_500;
+export const referralXCardVersion = "2";
 
 export const referralOgLayout = Object.freeze({
   titleX: 58,
@@ -510,7 +511,10 @@ async function shareHtmlResponse(request, route) {
   const meta = await routeMeta(route);
   const canonicalPath = canonicalSharePathForRoute(route, url);
   const canonicalUrl = `${origin}${canonicalPath}`;
-  const imageUrl = `${origin}${imagePathForRoute(route)}`;
+  const imagePath = imagePathForRoute(route);
+  const imageUrl = route.kind === "referral" && url.searchParams.get("x_card") === referralXCardVersion
+    ? `${origin}${imagePath}?v=${encodeURIComponent(referralXCardVersion)}`
+    : `${origin}${imagePath}`;
   const launchUrl = route.kind === "referral" ? miniAppLaunchUrl(canonicalUrl) : null;
   const appHtml = await readFile(staticFileUrl("/index.html"), "utf8");
   const html = injectShareMeta(appHtml, {
@@ -529,11 +533,17 @@ async function shareHtmlResponse(request, route) {
   });
 }
 
-function canonicalSharePathForRoute(route, url) {
+export function canonicalSharePathForRoute(route, url) {
   if (route.kind !== "referral") return sharePathForRoute(route);
 
   const code = referralCodeForCanonical(url.searchParams.get("ref"));
-  return code ? `/?ref=${encodeURIComponent(code)}` : "/";
+  if (!code) return "/";
+
+  const params = new URLSearchParams({ ref: code });
+  if (url.searchParams.get("x_card") === referralXCardVersion) {
+    params.set("x_card", referralXCardVersion);
+  }
+  return `/?${params.toString()}`;
 }
 
 function referralCodeForCanonical(value) {
@@ -610,6 +620,11 @@ export function injectShareMeta(html, { canonicalUrl, description, imageUrl, lau
   );
   nextHtml = replaceHeadTag(
     nextHtml,
+    /<meta\s+property="og:image:alt"\s+content="[^"]*"\s*\/>/s,
+    `<meta property="og:image:alt" content="${escapeHtml(title)}" />`,
+  );
+  nextHtml = replaceHeadTag(
+    nextHtml,
     /<meta\s+name="twitter:title"\s+content="[^"]*"\s*\/>/s,
     `<meta name="twitter:title" content="${escapeHtml(title)}" />`,
   );
@@ -622,6 +637,11 @@ export function injectShareMeta(html, { canonicalUrl, description, imageUrl, lau
     nextHtml,
     /<meta\s+name="twitter:image"\s+content="[^"]*"\s*\/>/s,
     `<meta name="twitter:image" content="${escapeHtml(imageUrl)}" />`,
+  );
+  nextHtml = replaceHeadTag(
+    nextHtml,
+    /<meta\s+name="twitter:image:alt"\s+content="[^"]*"\s*\/>/s,
+    `<meta name="twitter:image:alt" content="${escapeHtml(title)}" />`,
   );
   if (launchUrl) {
     nextHtml = replaceHeadTag(
