@@ -217,20 +217,16 @@ describe("referral invites", () => {
     expect(resolveReferralCode({ code: "historical", index: chain.indexer, wallet: player, now, startPriceWei }))
       .toMatchObject({ status: "inactive", ownership: "owned_by_you", renewable: false });
 
-    const publicDashboard = new ReferralInviteStore().dashboard(player, chain.indexer, startPriceWei, true, false, now);
-    expect(publicDashboard.invite).toMatchObject({ code: null, link: null, status: "active" });
-    expect(publicDashboard.invites.map((item) => item.code)).toEqual([null, null]);
-
-    const privateDashboard = new ReferralInviteStore().dashboard(player, chain.indexer, startPriceWei, true, true, now);
-    expect(privateDashboard.invite).toMatchObject({
+    const dashboard = new ReferralInviteStore().dashboard(player, chain.indexer, startPriceWei, true, now);
+    expect(dashboard.invite).toMatchObject({
       code: "current",
       link: "https://veydrift.com?ref=current",
       status: "active"
     });
-    expect(privateDashboard.invites.map((item) => item.code)).toEqual(["historical", "current"]);
+    expect(dashboard.invites.map((item) => item.code)).toEqual(["historical", "current"]);
   });
 
-  test("reveals canonical active invite details only after dashboard authentication", async () => {
+  test("returns canonical active invite details directly without dashboard authentication", async () => {
     const chain = referralIndex();
     const nowSeconds = Math.floor(Date.now() / 1_000);
     chain.claims.push(claimEvent({ code: "borodutch", activatedAt: nowSeconds - 60 }));
@@ -242,27 +238,9 @@ describe("referral invites", () => {
     });
     const url = `http://localhost/wallet/${player}/referrals`;
 
-    const publicResponse = await handler(new Request(url));
-    expect(publicResponse.status).toBe(200);
-    expect(await publicResponse.json()).toMatchObject({
-      invite: {
-        code: null,
-        link: null,
-        remainingRedemptions: 3,
-        status: "active"
-      }
-    });
-
-    const signature = await playerAccount.signMessage({
-      message: referralWalletMessage(player, "dashboard")
-    });
-    const privateResponse = await handler(new Request(url, {
-      body: JSON.stringify({ signature }),
-      headers: { "content-type": "application/json" },
-      method: "POST"
-    }));
-    expect(privateResponse.status).toBe(200);
-    expect(await privateResponse.json()).toMatchObject({
+    const response = await handler(new Request(url));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
       invite: {
         code: "borodutch",
         link: "https://veydrift.com?ref=borodutch",
@@ -270,6 +248,13 @@ describe("referral invites", () => {
         status: "active"
       }
     });
+
+    const removedRevealResponse = await handler(new Request(url, {
+      body: JSON.stringify({ signature: "0xunused" }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    }));
+    expect(removedRevealResponse.status).toBe(404);
   });
 
   test("builds dashboards solely from indexed activation, redemption, and reward events", () => {
@@ -294,7 +279,7 @@ describe("referral invites", () => {
       claimedAt: String(nowSeconds)
     });
 
-    const dashboard = store.dashboard(player, chain.indexer, startPriceWei, true, true);
+    const dashboard = store.dashboard(player, chain.indexer, startPriceWei, true);
     expect(dashboard.invite).toMatchObject({ code: "second_code", status: "active" });
     expect(dashboard.invites.map((item) => item.code)).toEqual(["first", "second_code"]);
     expect(dashboard.totalAccruedRewardsWei).toBe("6000000000000000");

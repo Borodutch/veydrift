@@ -233,6 +233,14 @@ const startPriceBootstrapWeiMetadataKey = "startPriceBootstrapWei";
 const startPriceBootstrapDivergenceMetadataKey = "startPriceBootstrapDivergence";
 const startPriceBlockMetadataKey = "canonicalStartPriceBlock";
 const startPriceLogIndexMetadataKey = "canonicalStartPriceLogIndex";
+const referralHistoryBackfillMetadataKey = "referralHistoryBackfillV1";
+
+export type ReferralHistoryBackfillMarker = {
+  completedAt: string;
+  contractAddress: string;
+  fromBlock: string;
+  throughBlock: string;
+};
 
 export type WriterChainSyncDiagnostics = {
   chainSync: unknown | null;
@@ -777,6 +785,48 @@ export class SettlementIndexer {
       snapshot
     };
     return snapshot;
+  }
+
+  referralHistoryBackfillStatus(
+    contractAddress: `0x${string}`,
+    fromBlock: bigint
+  ): { marker: ReferralHistoryBackfillMarker | null; required: boolean } {
+    const raw = this.metadata(referralHistoryBackfillMetadataKey);
+    let marker: ReferralHistoryBackfillMarker | null = null;
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw) as Partial<ReferralHistoryBackfillMarker>;
+        if (
+          typeof parsed.completedAt === "string"
+          && typeof parsed.contractAddress === "string"
+          && typeof parsed.fromBlock === "string"
+          && typeof parsed.throughBlock === "string"
+        ) {
+          marker = parsed as ReferralHistoryBackfillMarker;
+        }
+      } catch {
+        // A malformed/partial marker is never trusted; the idempotent backfill repairs it.
+      }
+    }
+    const required = marker === null
+      || marker.contractAddress.toLowerCase() !== contractAddress.toLowerCase()
+      || marker.fromBlock !== fromBlock.toString();
+    return { marker, required };
+  }
+
+  recordReferralHistoryBackfill(
+    contractAddress: `0x${string}`,
+    fromBlock: bigint,
+    throughBlock: bigint
+  ): ReferralHistoryBackfillMarker {
+    const marker: ReferralHistoryBackfillMarker = {
+      completedAt: new Date().toISOString(),
+      contractAddress: contractAddress.toLowerCase(),
+      fromBlock: fromBlock.toString(),
+      throughBlock: throughBlock.toString()
+    };
+    this.setMetadata(referralHistoryBackfillMetadataKey, JSON.stringify(marker));
+    return marker;
   }
 
   recordWriterChainSyncDiagnostics(diagnostics: Pick<WriterChainSyncDiagnostics, "chainSync" | "chainSyncRpc">): void {

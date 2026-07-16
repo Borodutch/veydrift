@@ -44,7 +44,7 @@ export type ReferralRedemptionRecord = {
 };
 
 export type ReferralInviteSummary = {
-  code: string | null;
+  code: string;
   codeHash: Hex;
   commitment: Hex;
   owner: string;
@@ -52,7 +52,7 @@ export type ReferralInviteSummary = {
   txHash: string;
   expiresAt: string;
   expired: boolean;
-  link: string | null;
+  link: string;
   remainingRedemptions: number;
   nextRedemptionAt: string | null;
   redemptionCount: number;
@@ -114,7 +114,7 @@ export type ReferralResolveResult = {
   inviterRewardWei: string | null;
 };
 
-export type ReferralWalletAction = "dashboard" | "claim-transaction";
+export type ReferralWalletAction = "claim-transaction";
 
 export type ReferralChainIndex = {
   referralClaim(owner: `0x${string}`, commitment: `0x${string}`, txHash: `0x${string}`): IndexedReferralClaimEvent | null;
@@ -136,10 +136,9 @@ export class ReferralInviteStore {
     index: ReferralChainIndex,
     startPriceWei: string | null,
     configured: boolean,
-    includeSecrets = false,
     now = new Date()
   ): ReferralDashboard {
-    return canonicalReferralDashboard({ configured, includeSecrets, index, now, startPriceWei, wallet });
+    return canonicalReferralDashboard({ configured, index, now, startPriceWei, wallet });
   }
 }
 
@@ -457,7 +456,6 @@ export async function verifyReferralWalletSignature({
 
 function canonicalReferralDashboard(input: {
   configured: boolean;
-  includeSecrets: boolean;
   index: ReferralChainIndex;
   now: Date;
   startPriceWei: string | null;
@@ -478,7 +476,6 @@ function canonicalReferralDashboard(input: {
     claim,
     currentActive,
     currentCommitment: currentClaim?.commitment ?? null,
-    includeSecrets: input.includeSecrets,
     now: input.now,
     owner,
     quota,
@@ -513,7 +510,6 @@ function chainInviteSummary(input: {
   claim: IndexedReferralClaimEvent;
   currentActive: boolean;
   currentCommitment: string | null;
-  includeSecrets: boolean;
   now: Date;
   owner: string;
   quota: ReturnType<typeof referralQuota>;
@@ -529,7 +525,7 @@ function chainInviteSummary(input: {
       ? "renewable"
       : "owned";
   return {
-    code: input.includeSecrets ? input.claim.code : null,
+    code: input.claim.code,
     codeHash: input.claim.codeHash,
     commitment: input.claim.commitment,
     owner: input.owner,
@@ -537,9 +533,7 @@ function chainInviteSummary(input: {
     txHash: input.claim.transactionHash,
     expiresAt,
     expired,
-    link: input.includeSecrets
-      ? `${referralInviteUrlBase}?ref=${encodeURIComponent(input.claim.code)}`
-      : null,
+    link: `${referralInviteUrlBase}?ref=${encodeURIComponent(input.claim.code)}`,
     remainingRedemptions: input.quota.remainingClaims,
     nextRedemptionAt: input.quota.nextClaimAt,
     redemptionCount: input.redemptions.length,

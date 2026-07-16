@@ -3,6 +3,7 @@ import {
   buildReferralMiniAppEmbed,
   cacheControl,
   injectShareMeta,
+  imageRouteForPathname,
   inviteAppRouteForPathname,
   responseHeadersFor,
   routeMeta,
@@ -77,22 +78,24 @@ describe("frontend static server headers", () => {
     }
   });
 
-  test("detects referral invite links without validating or exposing invite state", async () => {
+  test("builds code-specific metadata and OG routes for referral links", async () => {
     const url = new URL("https://veydrift.com/?ref=SECRET-INVITE-CODE");
     const route = shareRouteForUrl(url);
 
-    expect(route).toEqual({ kind: "referral" });
+    expect(route).toEqual({ kind: "referral", code: "secret-invite-code" });
+    expect(imageRouteForPathname("/og/referral/secret-invite-code.png"))
+      .toEqual({ kind: "referral", code: "secret-invite-code" });
 
     const meta = await routeMeta(route!);
 
     expect(meta).toMatchObject({
       kind: "referral",
-      title: "Join Veydrift",
-      description: "Open this Veydrift invite. Referral eligibility and exact benefits are verified in-game before settlement.",
-      status: "INVITE LINK",
-      subtitle: "Benefits verified in-game",
+      title: "Join Veydrift with secret-invite-code",
+      description: "Use invite code secret-invite-code. Eligibility and exact benefits are verified in-game before settlement.",
+      status: "CODE secret-invite-code",
+      subtitle: "Invite code: secret-invite-code",
     });
-    expect(JSON.stringify(meta)).not.toContain("SECRET-INVITE-CODE");
+    expect(JSON.stringify(meta)).toContain("secret-invite-code");
   });
 
   test("injects referral OG, Twitter, and Farcaster metadata", () => {
@@ -120,14 +123,14 @@ describe("frontend static server headers", () => {
     const output = injectShareMeta(html, {
       canonicalUrl: "https://veydrift.com/?ref=SECRET-INVITE-CODE",
       description: "Open this Veydrift invite. Referral eligibility and exact benefits are verified in-game before settlement.",
-      imageUrl: "https://veydrift.com/og/referral.png",
+      imageUrl: "https://veydrift.com/og/referral/secret-invite-code.png",
       launchUrl: "https://veydrift.com/?ref=SECRET-INVITE-CODE&miniApp=true",
-      title: "Join Veydrift",
+      title: "Join Veydrift with secret-invite-code",
     });
 
-    expect(output).toContain('<meta property="og:image" content="https://veydrift.com/og/referral.png" />');
+    expect(output).toContain('<meta property="og:image" content="https://veydrift.com/og/referral/secret-invite-code.png" />');
     expect(output).toContain('<meta property="og:image:type" content="image/png" />');
-    expect(output).toContain('<meta name="twitter:image" content="https://veydrift.com/og/referral.png" />');
+    expect(output).toContain('<meta name="twitter:image" content="https://veydrift.com/og/referral/secret-invite-code.png" />');
     expect(output).toContain("Accept invite");
     expect(output).toContain("SECRET-INVITE-CODE&amp;miniApp=true");
     expect(output).not.toContain("valid invite");

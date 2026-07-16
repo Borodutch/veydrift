@@ -101,16 +101,12 @@ export function inviteAppRouteForPathname(pathname) {
 }
 
 export function shareRouteForUrl(url) {
-  if ((url.pathname === "/" || url.pathname === "/index.html") && hasReferralCode(url)) {
-    return { kind: "referral" };
+  const referralCode = referralCodeForCanonical(url.searchParams.get("ref"));
+  if ((url.pathname === "/" || url.pathname === "/index.html") && referralCode) {
+    return { kind: "referral", code: referralCode };
   }
 
   return shareRouteForPathname(url.pathname);
-}
-
-function hasReferralCode(url) {
-  const value = url.searchParams.get("ref");
-  return typeof value === "string" && value.trim() !== "";
 }
 
 function shareRouteForPathname(pathname) {
@@ -149,8 +145,11 @@ function shareRouteForPathname(pathname) {
   return null;
 }
 
-function imageRouteForPathname(pathname) {
+export function imageRouteForPathname(pathname) {
   if (pathname === "/og/referral.png") return { kind: "referral" };
+
+  const referral = pathname.match(/^\/og\/referral\/([A-Za-z0-9_-]{1,24})\.png$/);
+  if (referral) return { kind: "referral", code: referral[1].toLowerCase() };
 
   const mission = pathname.match(/^\/og\/mission\/([0-9]+)\.png$/);
   if (mission) return { kind: "mission", id: mission[1] };
@@ -194,7 +193,11 @@ function sharePathForRoute(route) {
 }
 
 function imagePathForRoute(route) {
-  if (route.kind === "referral") return "/og/referral.png";
+  if (route.kind === "referral") {
+    return route.code
+      ? `/og/referral/${encodeURIComponent(route.code)}.png`
+      : "/og/referral.png";
+  }
   if (route.kind === "mission") return `/og/mission/${encodeURIComponent(route.id)}.png`;
   if (route.kind === "planet") return `/og/planet/${route.galaxy}/${route.system}/${route.position}.png`;
   if (route.kind === "moon") return `/og/moon/${route.galaxy}/${route.system}/${route.position}.png`;
@@ -213,7 +216,7 @@ export async function routeMeta(route) {
 }
 
 async function buildRouteMeta(route) {
-  if (route.kind === "referral") return referralMeta();
+  if (route.kind === "referral") return referralMeta(route.code);
   if (route.kind === "mission") return missionMeta(route.id);
   if (route.kind === "planet") return planetMeta(route);
   if (route.kind === "moon") return moonMeta(route);
@@ -221,16 +224,19 @@ async function buildRouteMeta(route) {
   return allianceMeta(route.allianceId);
 }
 
-function referralMeta() {
+function referralMeta(code = "") {
+  const inviteCode = referralCodeForCanonical(code);
   return {
     kind: "referral",
-    title: "Join Veydrift",
+    title: inviteCode ? `Join Veydrift with ${inviteCode}` : "Join Veydrift",
     imageTitle: "Veydrift Invite",
-    description: "Open this Veydrift invite. Referral eligibility and exact benefits are verified in-game before settlement.",
-    status: "INVITE LINK",
-    subtitle: "Benefits verified in-game",
+    description: inviteCode
+      ? `Use invite code ${inviteCode}. Eligibility and exact benefits are verified in-game before settlement.`
+      : "Open this Veydrift invite. Referral eligibility and exact benefits are verified in-game before settlement.",
+    status: inviteCode ? `CODE ${inviteCode}` : "INVITE LINK",
+    subtitle: inviteCode ? `Invite code: ${inviteCode}` : "Benefits verified in-game",
     accent: "#5eead4",
-    footer: "veydrift.com/invite",
+    footer: inviteCode ? `veydrift.com/?ref=${inviteCode}` : "veydrift.com/invite",
     commander: true,
     planetAssets: [planetAssets["temperate-ocean"], planetAssets["crystal-violet"]],
   };
@@ -341,7 +347,7 @@ async function allianceMeta(allianceId) {
 }
 
 function fallbackMeta(route) {
-  if (route.kind === "referral") return referralMeta();
+  if (route.kind === "referral") return referralMeta(route.code);
 
   if (route.kind === "mission") {
     return {
@@ -507,9 +513,8 @@ function canonicalSharePathForRoute(route, url) {
 }
 
 function referralCodeForCanonical(value) {
-  const text = String(value ?? "").trim();
-  if (!text) return "";
-  return text.slice(0, 160);
+  const text = String(value ?? "").trim().toLowerCase();
+  return /^[a-z0-9_-]{1,24}$/.test(text) ? text : "";
 }
 
 function miniAppLaunchUrl(canonicalUrl) {
