@@ -12,6 +12,17 @@ const assetDataCache = new Map();
 let sharpModule;
 const defaultMetadataTimeoutMs = 1_500;
 
+export const referralOgLayout = Object.freeze({
+  titleX: 58,
+  titleY: 192,
+  titleFontSize: 82,
+  titleSafeRight: 672,
+  planetLeft: 704,
+  planetTop: 18,
+  planetSize: 488,
+  minimumTitlePlanetGap: 32,
+});
+
 const planetAssets = {
   "cold-tundra": "/assets/game/style-pass/generated/planets/cold-tundra.webp",
   "cool-misty-blue": "/assets/game/style-pass/generated/planets/cool-misty-blue.webp",
@@ -649,12 +660,19 @@ function ogImageHeaders() {
 export async function ogPng(meta) {
   const sharp = await getSharp();
   const compositeReferralPlanet = meta.kind === "referral" && Boolean(meta.planetAssets?.[0]);
-  const svg = await ogSvg(meta, { omitReferralVisual: compositeReferralPlanet });
+  const svg = await ogSvg(meta, {
+    omitReferralTitle: compositeReferralPlanet,
+    omitReferralVisual: compositeReferralPlanet,
+  });
   if (!compositeReferralPlanet) return sharp(Buffer.from(svg)).png().toBuffer();
 
   const planetSource = await readFile(existingAssetUrl(meta.planetAssets[0]));
   const planet = await sharp(planetSource)
-    .resize({ width: 488, height: 488, fit: "contain" })
+    .resize({
+      width: referralOgLayout.planetSize,
+      height: referralOgLayout.planetSize,
+      fit: "contain",
+    })
     .modulate({ brightness: 0.72, saturation: 0.9 })
     .png()
     .toBuffer();
@@ -663,17 +681,24 @@ export async function ogPng(meta) {
   <circle cx="744" cy="410" r="4" fill="${meta.accent ?? "#7dd3fc"}"/>
   <circle cx="1090" cy="178" r="4" fill="${meta.accent ?? "#7dd3fc"}"/>
 </svg>`);
+  const titleOverlay = await referralTitleComposite(sharp, meta.imageTitle ?? meta.title);
 
   return sharp(Buffer.from(svg))
     .composite([
-      { input: planet, left: 704, top: 18, blend: "over" },
+      {
+        input: planet,
+        left: referralOgLayout.planetLeft,
+        top: referralOgLayout.planetTop,
+        blend: "over",
+      },
       { input: routeOverlay, left: 0, top: 0, blend: "over" },
+      titleOverlay,
     ])
     .png()
     .toBuffer();
 }
 
-export async function ogSvg(meta, { omitReferralVisual = false } = {}) {
+export async function ogSvg(meta, { omitReferralTitle = false, omitReferralVisual = false } = {}) {
   const isReferral = meta.kind === "referral";
   const background = meta.kind === "referral"
     ? null
@@ -694,14 +719,14 @@ export async function ogSvg(meta, { omitReferralVisual = false } = {}) {
     ? `<text x="62" y="304" font-family="DejaVu Sans, Arial, sans-serif" font-size="40" font-weight="780" fill="#d8e2f1">${escapeXml(subtitle)}</text>`
     : "";
   const ruleY = isReferral ? 82 : 132;
-  const titleY = isReferral ? 192 : 238;
+  const titleY = isReferral ? referralOgLayout.titleY : 238;
   const statusBarY = isReferral ? 258 : 358;
   const statusTextY = isReferral ? 286 : 386;
 
   const visual = meta.kind === "referral"
     ? omitReferralVisual
       ? ""
-      : `<image href="${planets[0] ?? ""}" x="704" y="18" width="488" height="488" preserveAspectRatio="xMidYMid meet"/>
+      : `<image href="${planets[0] ?? ""}" x="${referralOgLayout.planetLeft}" y="${referralOgLayout.planetTop}" width="${referralOgLayout.planetSize}" height="${referralOgLayout.planetSize}" preserveAspectRatio="xMidYMid meet"/>
   <path d="M744 410 C838 336 944 268 1090 178" fill="none" stroke="${accent}" stroke-width="2" stroke-opacity=".38"/>
   <circle cx="744" cy="410" r="4" fill="${accent}"/>
   <circle cx="1090" cy="178" r="4" fill="${accent}"/>`
@@ -729,6 +754,9 @@ export async function ogSvg(meta, { omitReferralVisual = false } = {}) {
   const backgroundVisual = meta.kind === "referral"
     ? ""
     : `<image href="${background}" x="0" y="0" width="1200" height="630" preserveAspectRatio="xMidYMid slice" opacity=".18"/>`;
+  const titleVisual = isReferral
+    ? omitReferralTitle ? "" : referralTitleText(title)
+    : `<text x="58" y="${titleY}" font-family="DejaVu Sans, Arial, sans-serif" font-size="82" font-weight="900" fill="#f8fbff">${escapeXml(title)}</text>`;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <defs>
@@ -759,12 +787,41 @@ export async function ogSvg(meta, { omitReferralVisual = false } = {}) {
   <rect width="1200" height="630" fill="url(#shade)"/>
   ${brandVisual}
   <rect x="60" y="${ruleY}" width="520" height="2" fill="url(#rule)"/>
-  <text x="58" y="${titleY}" font-family="DejaVu Sans, Arial, sans-serif" font-size="82" font-weight="900" fill="#f8fbff">${escapeXml(title)}</text>
+  ${titleVisual}
   ${subtitleVisual}
   <rect x="64" y="${statusBarY}" width="10" height="38" fill="${accent}"/>
   <text x="92" y="${statusTextY}" font-family="DejaVu Sans, Arial, sans-serif" font-size="27" font-weight="850" fill="${accent}">${escapeXml(status)}</text>
   ${footerVisual}
 </svg>`;
+}
+
+function referralTitleSvg(value) {
+  const title = fitText(value, 26);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  ${referralTitleText(title)}
+</svg>`;
+}
+
+function referralTitleText(title) {
+  return `<text x="${referralOgLayout.titleX}" y="${referralOgLayout.titleY}" font-family="DejaVu Sans, Arial, sans-serif" font-size="${referralOgLayout.titleFontSize}" font-weight="900" fill="#f8fbff">${escapeXml(title)}</text>`;
+}
+
+async function referralTitleComposite(sharp, value) {
+  const { data, info } = await sharp(Buffer.from(referralTitleSvg(value)))
+    .trim({ background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png()
+    .toBuffer({ resolveWithObject: true });
+  const maximumWidth = referralOgLayout.titleSafeRight - referralOgLayout.titleX;
+  const input = info.width > maximumWidth
+    ? await sharp(data).resize({ width: maximumWidth, height: info.height, fit: "fill" }).png().toBuffer()
+    : data;
+
+  return {
+    input,
+    left: Math.max(0, -(info.trimOffsetLeft ?? -referralOgLayout.titleX)),
+    top: Math.max(0, -(info.trimOffsetTop ?? 0)),
+    blend: "over",
+  };
 }
 
 async function assetDataUri(pathname, maxWidth) {
