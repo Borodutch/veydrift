@@ -5,6 +5,7 @@ import {
   injectShareMeta,
   imageRouteForPathname,
   inviteAppRouteForPathname,
+  ogPng,
   ogSvg,
   responseHeadersFor,
   routeMeta,
@@ -109,6 +110,10 @@ describe("frontend static server headers", () => {
     expect(svg).toContain(">veydrift.com</text>");
     expect(svg).not.toContain('clip-path="url(#singlePlanet)"');
     expect(svg.match(/<image /g)).toHaveLength(1);
+
+    const png = await ogPng(meta);
+    expect(png.subarray(1, 4).toString()).toBe("PNG");
+    expect(png.length).toBeGreaterThan(100_000);
   });
 
   test("injects referral OG, Twitter, and Farcaster metadata", () => {
