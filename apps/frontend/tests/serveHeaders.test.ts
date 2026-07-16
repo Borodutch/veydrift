@@ -5,6 +5,7 @@ import {
   injectShareMeta,
   imageRouteForPathname,
   inviteAppRouteForPathname,
+  ogSvg,
   responseHeadersFor,
   routeMeta,
   shareRouteForUrl,
@@ -94,8 +95,14 @@ describe("frontend static server headers", () => {
       description: "Use invite code secret-invite-code. Eligibility and exact benefits are verified in-game before settlement.",
       status: "CODE secret-invite-code",
       subtitle: "Invite code: secret-invite-code",
+      footer: "veydrift.com",
     });
     expect(JSON.stringify(meta)).toContain("secret-invite-code");
+
+    const svg = await ogSvg(meta);
+    expect(svg).not.toContain(">Invite link</text>");
+    expect(svg).toContain(">veydrift.com</text>");
+    expect(svg.match(/<image /g)).toHaveLength(1);
   });
 
   test("injects referral OG, Twitter, and Farcaster metadata", () => {
