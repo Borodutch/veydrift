@@ -102,6 +102,7 @@ describe("frontend static server headers", () => {
     const svg = await ogSvg(meta);
     expect(svg).not.toContain(">Invite link</text>");
     expect(svg).toContain(">veydrift.com</text>");
+    expect(svg).not.toContain('clip-path="url(#singlePlanet)"');
     expect(svg.match(/<image /g)).toHaveLength(1);
   });
 
