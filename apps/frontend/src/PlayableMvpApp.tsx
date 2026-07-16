@@ -380,7 +380,7 @@ function missionMoonResources(moonState: ChainMoonState | null | undefined): Pla
   };
 }
 
-function missionMoonShipyardState({
+export function missionMoonShipyardState({
   moonState,
   shipyardState,
 }: {
@@ -403,7 +403,7 @@ function missionMoonShipyardState({
     shipyardLevel: 0,
     naniteLevel: 0,
     technologyLevels: shipyardState?.technologyLevels ?? {},
-    ships: moonState.fleet ?? [],
+    ships: moonState.launchableShips ?? moonState.ships ?? moonState.fleet ?? [],
     queue: null,
   };
 }
@@ -3492,6 +3492,7 @@ export function PlayableMvpApp({
   const [shipyardAction, setShipyardAction] = useState<ShipyardActionState>({ status: "idle" });
   const [galaxyAction, setGalaxyAction] = useState<GalaxyActionState>({ status: "idle" });
   const [pendingGalaxyMission, setPendingGalaxyMission] = useState<PendingGalaxyMission | null>(null);
+  const missionComposerRefreshKeyRef = useRef<string | null>(null);
   // VEY-KANEO-431: a join-attack awaiting fleet selection. When set, the same
   // fleet picker the Attack action uses is shown so the player chooses which
   // ships to commit, instead of immediately sending a default fleet.
@@ -7086,6 +7087,27 @@ export function PlayableMvpApp({
       },
     });
   }, [account, activePlanetId, gameContract, provider, refreshOnChainState, runCoordinatedWriteTransaction, selectedManagedPlanet]);
+
+  const missionComposerRefreshKey = pendingGalaxyMission
+    ? `${pendingGalaxyMission.originPlanet?.planetId ?? activePlanetId ?? "unknown"}:${pendingGalaxyMission.bodySelectionDefaults?.originIsMoon === true ? "moon" : "planet"}`
+    : null;
+  useEffect(() => {
+    if (!missionComposerRefreshKey) {
+      missionComposerRefreshKeyRef.current = null;
+      return;
+    }
+    if (missionComposerRefreshKeyRef.current === missionComposerRefreshKey) return;
+    missionComposerRefreshKeyRef.current = missionComposerRefreshKey;
+
+    // A fleet can cross arrivalAt while the app remains open. Refresh both independent launch gates
+    // when composition starts so a pre-arrival slot count and moon inventory cannot keep blocking the
+    // newly launchable fleet. The ref makes callback/state identity changes harmless and reopening the
+    // composer performs another fresh read.
+    void Promise.allSettled([
+      refreshShipyardState({ clearCachedState: true }),
+      refreshInfrastructureState(),
+    ]);
+  }, [missionComposerRefreshKey, refreshInfrastructureState, refreshShipyardState]);
 
   const handleGalaxyAction = useCallback((action: GalaxyAction, target: Planet | undefined, coords: Coordinates) => {
     if (!action.enabled) return;

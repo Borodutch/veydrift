@@ -1008,6 +1008,48 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(_moonShipCount(planetId, Ship.SmallCargo), 1);
     }
 
+    function testArrivedMoonDeploySettlesBeforeNextMoonOriginLaunchChecks() public {
+        uint256 planetId = _startPlanet();
+        _createMoon(planetId);
+        _fundPlanet(planetId, 20_000, 20_000, 20_000);
+        _setShipCount(planetId, Ship.SmallCargo, 1);
+
+        VeydriftGameStorage.MissionShips memory ships;
+        ships.smallCargo = 1;
+        vm.prank(player);
+        uint256 deployMissionId = game.launchBodyFleetMission(
+            planetId,
+            planetId,
+            VeydriftGameStorage.FleetMissionType.Deploy,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 100}),
+            100,
+            false,
+            true
+        );
+
+        (, uint64 arrivalAt,,) = _fleetMission(deployMissionId);
+        vm.warp(arrivalAt);
+
+        // No explicit resolve call: launchBodyFleetMission's prologue must settle the arrived Deploy,
+        // release its only fleet slot, credit the moon ship, and then consume that ship for this launch.
+        vm.prank(player);
+        uint256 moonOriginMissionId = game.launchBodyFleetMission(
+            planetId,
+            planetId,
+            VeydriftGameStorage.FleetMissionType.Transport,
+            ships,
+            VeydriftGameStorage.Resources({metal: 0, crystal: 0, deuterium: 0}),
+            100,
+            true,
+            false
+        );
+
+        assertGt(moonOriginMissionId, deployMissionId);
+        assertEq(game.activeFleetMissionCount(player), 1);
+        assertEq(_moonShipCount(planetId, Ship.SmallCargo), 0);
+    }
+
     function testMoonAttackLaunchStoresMoonBodyFlags() public {
         (uint256 originPlanetId, uint256 targetPlanetId,) = _seedMoonAttackPlanets();
         _fundMoon(originPlanetId, 20_000, 20_000, 20_000);

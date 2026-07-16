@@ -769,6 +769,10 @@ export type MoonState = {
   resources: Resources;
   resourcesAsOfNow?: Resources;
   ships: ShipyardState["ships"];
+  // Ships the next body-aware launch can use after the contract's deterministic lazy-arrival
+  // settlement prologue runs. This can be ahead of `ships` while an arrived Deploy is still stored
+  // as Outbound and has not emitted its MoonShipCountChanged credit yet.
+  launchableShips?: ShipyardState["ships"];
   defenses: DefenseState["defenses"];
   moon: {
     exists: boolean;
