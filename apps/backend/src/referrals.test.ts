@@ -200,6 +200,28 @@ describe("referral invites", () => {
     expect(resolveReferralCode({ code: "second", index: chain.indexer, invitee, startPriceWei }).status).toBe("already_redeemed");
   });
 
+  test("reconstructs the current commitment by activation time and keeps historical codes inactive", () => {
+    const chain = referralIndex();
+    const now = new Date("2026-07-08T12:00:00.000Z");
+    const nowSeconds = Math.floor(now.getTime() / 1_000);
+
+    // Migration batches need not be ordered by activation time. The contract keeps the
+    // greatest activatedAt value as the current commitment even when that event arrived first.
+    chain.claims.push(
+      claimEvent({ code: "current", activatedAt: nowSeconds - 30, blockNumber: 100, txByte: "c1" }),
+      claimEvent({ code: "historical", activatedAt: nowSeconds - 60, blockNumber: 101, txByte: "c2" })
+    );
+
+    expect(resolveReferralCode({ code: "current", index: chain.indexer, wallet: player, now, startPriceWei }))
+      .toMatchObject({ status: "active", ownership: "owned_by_you" });
+    expect(resolveReferralCode({ code: "historical", index: chain.indexer, wallet: player, now, startPriceWei }))
+      .toMatchObject({ status: "inactive", ownership: "owned_by_you", renewable: false });
+
+    const dashboard = new ReferralInviteStore().dashboard(player, chain.indexer, startPriceWei, true, false, now);
+    expect(dashboard.invite).toMatchObject({ code: "current", status: "active" });
+    expect(dashboard.invites.map((item) => item.code)).toEqual(["historical", "current"]);
+  });
+
   test("builds dashboards solely from indexed activation, redemption, and reward events", () => {
     const chain = referralIndex();
     const store = new ReferralInviteStore("/path/that/must/not/be/read.json");

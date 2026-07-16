@@ -1645,7 +1645,7 @@ function ReferralClaimInspectionMessage({ state }: { state: ReferralValidationSt
       <p className="referral-muted">
         {resolution.renewable
           ? "Owned by you · invite window is renewable."
-          : `Owned by you · active until ${resolution.expiresAt ? formatDateTime(resolution.expiresAt) : "the indexed expiry"}.`}
+          : "Owned by you · another invite code is currently active."}
         {resolution.remainingRedemptions === 0 && resolution.nextRedemptionAt
           ? ` Quota exhausted until ${formatDateTime(resolution.nextRedemptionAt)}.`
           : ` ${resolution.remainingRedemptions}/3 inviter uses remain.`}

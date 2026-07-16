@@ -152,6 +152,9 @@ contract VeydriftReferralSystem {
             address inviter = inviters[index];
             if (inviter == address(0)) revert Unauthorized(address(0));
             uint64 activatedAt = activatedAts[index];
+            // Referral windows are intentionally timestamp-based; small validator skew cannot
+            // transfer ownership or bypass the inviter-wide rolling quota.
+            // forge-lint: disable-next-line(block-timestamp)
             if (activatedAt > block.timestamp) {
                 revert ReferralMigrationTimestampInvalid(activatedAt);
             }
@@ -297,6 +300,7 @@ contract VeydriftReferralSystem {
         commitment = referralCommitment(codeOwner, codeHash);
         uint64 claimedAt = referralClaimedAt[commitment];
         if (claimedAt != 0) activeUntil = claimedAt + REFERRAL_CLAIM_WINDOW;
+        // forge-lint: disable-next-line(block-timestamp)
         active = referralCommitmentOf[codeOwner] == commitment && block.timestamp < activeUntil;
     }
 
@@ -316,6 +320,7 @@ contract VeydriftReferralSystem {
         codeHash = referralCodeHashOf[commitment];
         uint64 claimedAt = referralClaimedAt[commitment];
         if (claimedAt != 0) activeUntil = claimedAt + REFERRAL_CLAIM_WINDOW;
+        // forge-lint: disable-next-line(block-timestamp)
         active = commitment != bytes32(0) && block.timestamp < activeUntil;
         (remainingRedemptions, nextRedemptionAt) = referralRedemptionQuotaOf(inviter);
     }

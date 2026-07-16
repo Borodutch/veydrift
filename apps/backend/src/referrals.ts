@@ -211,21 +211,29 @@ export function resolveReferralCode(input: {
   const wallet = input.wallet ? normalizeAddress(input.wallet).toLowerCase() : null;
   const ownership: ReferralOwnershipState = wallet === owner ? "owned_by_you" : "reserved";
   const expiresAt = new Date(Number(claim.activeUntil) * 1_000).toISOString();
-  const active = now.getTime() < Number(claim.activeUntil) * 1_000;
+  const currentClaim = latestReferralClaims(input.index.referralClaims(owner)).at(-1);
+  const currentActive = Boolean(
+    currentClaim && now.getTime() < Number(currentClaim.activeUntil) * 1_000
+  );
+  const active = currentClaim?.commitment.toLowerCase() === claim.commitment.toLowerCase()
+    && now.getTime() < Number(claim.activeUntil) * 1_000;
   const redemptions = input.index.referralRedemptionsForInviter(owner);
   const quota = referralQuota(redemptions.map(chainRedemptionTime), now);
 
   if (!active) {
+    const renewable = ownership === "owned_by_you" && !currentActive;
     return resolveResult({
       status: "inactive",
-      message: ownership === "owned_by_you"
+      message: ownership === "owned_by_you" && renewable
         ? "Referral code is owned by this wallet and can be renewed."
+        : ownership === "owned_by_you"
+          ? "Referral code is owned by this wallet, but another invite code is active."
         : "Referral code is permanently reserved and its invite window is inactive.",
       normalizedCode: code,
       codeHash,
       owner,
       ownership,
-      renewable: ownership === "owned_by_you",
+      renewable,
       commitment: claim.commitment,
       expiresAt,
       nextRedemptionAt: quota.nextClaimAt,
@@ -576,12 +584,16 @@ function latestReferralClaims(claims: IndexedReferralClaimEvent[]): IndexedRefer
   for (const claim of claims) {
     const key = claim.commitment.toLowerCase();
     const current = latest.get(key);
-    if (!current || referralClaimOrder(claim) > referralClaimOrder(current)) latest.set(key, claim);
+    if (!current || compareReferralClaims(claim, current) > 0) latest.set(key, claim);
   }
-  return [...latest.values()].sort((left, right) => {
-    const order = referralClaimOrder(left) - referralClaimOrder(right);
-    return order === 0 ? left.commitment.localeCompare(right.commitment) : order;
-  });
+  return [...latest.values()].sort(compareReferralClaims);
+}
+
+function compareReferralClaims(left: IndexedReferralClaimEvent, right: IndexedReferralClaimEvent): number {
+  const activationOrder = Number(left.claimedAt) - Number(right.claimedAt);
+  if (activationOrder !== 0) return activationOrder;
+  const chainOrder = referralClaimOrder(left) - referralClaimOrder(right);
+  return chainOrder === 0 ? left.commitment.localeCompare(right.commitment) : chainOrder;
 }
 
 function referralClaimOrder(claim: IndexedReferralClaimEvent): number {
