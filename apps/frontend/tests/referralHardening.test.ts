@@ -164,8 +164,10 @@ describe("referral hardening", () => {
     expect(appSource).toContain("{inviteActive ? (");
     expect(appSource).toContain("Copy code");
     expect(appSource).toContain("Copy link");
-    expect(appSource).toContain("Share invite on X");
-    expect(appSource).toContain("Paste image in X");
+    expect(appSource).toContain("Share on X");
+    expect(appSource).not.toContain("Paste image in X");
+    expect(appSource).not.toContain("Attach image in X");
+    expect(appSource).not.toContain("disabled={!xShareImage");
     expect(appSource).not.toContain("Invite image downloaded. Attach it in the X composer that opened.");
   });
 

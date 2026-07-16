@@ -1,17 +1,14 @@
 const REFERRAL_CODE_PATTERN = /^[A-Za-z0-9_-]{1,24}$/;
 
-export type ReferralXShareResult = "copied" | "downloaded" | "shared";
+export type ReferralXShareResult = "opened" | "shared";
 
 type ReferralShareNavigator = {
   canShare?: (data?: ShareData) => boolean;
-  clipboard?: Pick<Clipboard, "write">;
   share?: (data?: ShareData) => Promise<void>;
 };
 
 type ReferralShareWindow = {
   open?: (url?: string | URL, target?: string, features?: string) => Window | null;
-  URL?: Pick<typeof URL, "createObjectURL" | "revokeObjectURL">;
-  document?: Pick<Document, "body" | "createElement">;
 };
 
 function normalizedReferralCode(code: string): string {
@@ -31,8 +28,8 @@ export function referralXPostText(code: string): string {
   return `Join me in Veydrift — invite code: ${normalizedReferralCode(code)}`;
 }
 
-export function referralXIntentUrl(code: string): string {
-  return `https://twitter.com/intent/tweet?text=${encodeURIComponent(referralXPostText(code))}`;
+export function referralXIntentUrl(code: string, inviteLink: string): string {
+  return `https://twitter.com/intent/tweet?text=${encodeURIComponent(referralXPostText(code))}&url=${encodeURIComponent(inviteLink)}`;
 }
 
 export async function fetchReferralShareImage(
@@ -56,66 +53,33 @@ export async function fetchReferralShareImage(
 
 export async function shareReferralOnX(
   code: string,
-  image: File,
+  inviteLink: string,
+  image?: File | null,
   navigatorRef: ReferralShareNavigator = globalThis.navigator,
   windowRef: ReferralShareWindow = globalThis.window,
-  clipboardItemRef: typeof ClipboardItem | undefined = typeof globalThis.ClipboardItem === "function"
-    ? globalThis.ClipboardItem
-    : undefined,
 ): Promise<ReferralXShareResult> {
-  const shareData: ShareData = {
-    files: [image],
-    text: referralXPostText(code),
-    title: "Veydrift invite",
-  };
+  if (image) {
+    const shareData: ShareData = {
+      files: [image],
+      text: referralXPostText(code),
+      title: "Veydrift invite",
+    };
 
-  if (
-    typeof navigatorRef.share === "function"
-    && typeof navigatorRef.canShare === "function"
-    && navigatorRef.canShare(shareData)
-  ) {
-    await navigatorRef.share(shareData);
-    return "shared";
-  }
-
-  let clipboardWrite: Promise<void> | undefined;
-  if (navigatorRef.clipboard?.write && clipboardItemRef) {
+    let canShareFile = false;
     try {
-      clipboardWrite = navigatorRef.clipboard.write([
-        new clipboardItemRef({ [image.type || "image/png"]: image }),
-      ]);
+      canShareFile = typeof navigatorRef.share === "function"
+        && typeof navigatorRef.canShare === "function"
+        && navigatorRef.canShare(shareData);
     } catch {
-      clipboardWrite = undefined;
+      // Browsers may throw while probing file-share support. The URL fallback remains usable.
+    }
+
+    if (canShareFile && navigatorRef.share) {
+      await navigatorRef.share(shareData);
+      return "shared";
     }
   }
 
-  windowRef.open?.(referralXIntentUrl(code), "_blank", "noopener,noreferrer");
-
-  if (clipboardWrite) {
-    try {
-      await clipboardWrite;
-      return "copied";
-    } catch {
-      // Clipboard image writes are not supported by every desktop browser.
-    }
-  }
-
-  downloadReferralShareImage(image, windowRef);
-  return "downloaded";
-}
-
-function downloadReferralShareImage(image: File, windowRef: ReferralShareWindow): void {
-  const urlApi = windowRef.URL;
-  const documentRef = windowRef.document;
-  if (!urlApi?.createObjectURL || !urlApi.revokeObjectURL || !documentRef) return;
-
-  const objectUrl = urlApi.createObjectURL(image);
-  const link = documentRef.createElement("a");
-  link.download = image.name;
-  link.href = objectUrl;
-  link.hidden = true;
-  documentRef.body.append(link);
-  link.click();
-  link.remove();
-  globalThis.setTimeout(() => urlApi.revokeObjectURL(objectUrl), 0);
+  windowRef.open?.(referralXIntentUrl(code, inviteLink), "_blank", "noopener,noreferrer");
+  return "opened";
 }
