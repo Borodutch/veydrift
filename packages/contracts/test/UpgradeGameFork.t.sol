@@ -69,7 +69,8 @@ contract UpgradeGameForkTest is Test {
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
-        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule();
+        VeydriftStateMigrationModule stateMigrationModule =
+            new VeydriftStateMigrationModule(address(0xBEEF));
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
             new VeydriftFirstPlanetSettlementModule(address(0xBEEF));
         VeydriftGame newImpl = new VeydriftGame(

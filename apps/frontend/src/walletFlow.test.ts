@@ -20,6 +20,7 @@ import {
   encodeLaunchDefenseHoldCall,
   encodeLaunchInterplanetaryMissileAttackCall,
   encodeLaunchFleetMissionCall,
+  encodeMigrationClaimWithReferralCall,
   encodeUintCall,
   ensureBaseSepoliaNetwork,
   ensureBaseMainnetNetwork,
@@ -1935,6 +1936,38 @@ describe("walletFlow", () => {
         ]
       }
     ]);
+  });
+
+  test("submits referral-aware migration claims for authorized first-planet starts", async () => {
+    const migrationContract = "0x3333333333333333333333333333333333333333";
+    const statePayload = "0x1234";
+    const signature = "0xabcd";
+    const requests: unknown[] = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return "0xabc";
+    });
+
+    await expect(
+      sendSettlementTransaction(provider, account, { address: contract }, {
+        migrationClaim: { statePayload, signature },
+        migrationContractAddress: migrationContract,
+        referral: referralRedemption,
+        startPriceWei: 50_000_000_000_000_000n,
+      })
+    ).resolves.toBe("0xabc");
+
+    expect(requests).toEqual([{
+      method: "eth_sendTransaction",
+      params: [{
+        from: account,
+        to: migrationContract,
+        data: encodeMigrationClaimWithReferralCall(statePayload, signature, referralRedemption),
+        value: "0xb1a2bc2ec50000"
+      }]
+    }]);
+    expect((requests[0] as { params: Array<{ data: string }> }).params[0]?.data.slice(0, 10))
+      .toBe("0x98bf164a");
   });
 
   test("submits a value-bearing VeydriftGame startPlanetWithReferral transaction", async () => {

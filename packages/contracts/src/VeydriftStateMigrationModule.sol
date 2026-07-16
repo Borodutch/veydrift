@@ -23,8 +23,23 @@ interface IVeydriftStateMigrationMoonSystem {
     ) external;
 }
 
+interface IVeydriftStateMigrationReferralSystem {
+    function redeemReferralInvite(
+        address invitee,
+        bytes32 commitment,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external payable returns (address inviter);
+}
+
 /// @notice Delegatecall target for signed testnet-to-mainnet state imports.
 contract VeydriftStateMigrationModule is VeydriftResourceReserves {
+    uint128 private constant REFERRAL_STARTING_METAL_BONUS = 500;
+    uint128 private constant REFERRAL_STARTING_CRYSTAL_BONUS = 500;
+
+    address private immutable _referralSystem;
+
     struct MigrationPlanetState {
         uint256 planetId;
         uint16 galaxy;
@@ -86,18 +101,55 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
 
     event MigrationStateImported(address indexed player, uint256 homePlanetId, uint256 planetCount);
 
-    constructor() VeydriftResourceReserves(address(0)) {}
+    constructor(address referralSystemAddress) VeydriftResourceReserves(address(0)) {
+        _referralSystem = referralSystemAddress;
+    }
 
     function importMigratedState(address player, bytes calldata payload) external payable {
+        MigrationPlayerState memory state = _validatedMigrationState(player, payload);
+        _importMigratedState(player, state, false);
+    }
+
+    function importMigratedStateWithReferral(
+        address player,
+        bytes calldata payload,
+        bytes32 commitment,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external payable {
+        MigrationPlayerState memory state = _validatedMigrationState(player, payload);
+        uint256 inviterReward = (startPrice * REFERRAL_INVITER_FEE_BPS) / BPS;
+        IVeydriftStateMigrationReferralSystem(_referralSystem)
+        .redeemReferralInvite{value: inviterReward}(
+            player, commitment, v, r, s
+        );
+        _importMigratedState(player, state, true);
+    }
+
+    function _validatedMigrationState(address player, bytes calldata payload)
+        private
+        view
+        returns (MigrationPlayerState memory state)
+    {
         if (msg.sender != _migrationSettlement) revert Unauthorized(msg.sender);
         if (msg.value != startPrice) revert BadStartPayment();
 
-        MigrationPlayerState memory state = abi.decode(payload, (MigrationPlayerState));
+        state = abi.decode(payload, (MigrationPlayerState));
         if (state.player != player || state.homePlanetId == 0 || state.planets.length == 0) {
             revert InvalidId();
         }
+    }
+
+    function _importMigratedState(address player, MigrationPlayerState memory state, bool referred)
+        private
+    {
         if (homePlanetOf[player] != 0) {
             _discardSingleStartedPlanetBeforeMigration(player);
+        }
+
+        if (referred) {
+            _applyReferralStartingBonus(state);
         }
 
         Resources memory totalResources;
@@ -145,6 +197,20 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
         }
 
         emit MigrationStateImported(player, state.homePlanetId, state.planets.length);
+    }
+
+    function _applyReferralStartingBonus(MigrationPlayerState memory state) private pure {
+        for (uint256 i = 0; i < state.planets.length;) {
+            if (state.planets[i].planetId == state.homePlanetId) {
+                state.planets[i].resources.metal += REFERRAL_STARTING_METAL_BONUS;
+                state.planets[i].resources.crystal += REFERRAL_STARTING_CRYSTAL_BONUS;
+                return;
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        revert InvalidId();
     }
 
     function _discardSingleStartedPlanetBeforeMigration(address player) private {
