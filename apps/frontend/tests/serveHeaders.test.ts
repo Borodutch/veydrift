@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import sharp from "sharp";
 import {
   buildReferralMiniAppEmbed,
   cacheControl,
@@ -7,6 +8,7 @@ import {
   inviteAppRouteForPathname,
   ogPng,
   ogSvg,
+  referralOgLayout,
   responseHeadersFor,
   routeMeta,
   shareRouteForUrl,
@@ -110,10 +112,35 @@ describe("frontend static server headers", () => {
     expect(svg).toContain(">veydrift.com</text>");
     expect(svg).not.toContain('clip-path="url(#singlePlanet)"');
     expect(svg.match(/<image /g)).toHaveLength(1);
+    expect(svg).toContain(`font-size="${referralOgLayout.titleFontSize}"`);
+
+    expect(referralOgLayout.planetLeft - referralOgLayout.titleSafeRight)
+      .toBeGreaterThanOrEqual(referralOgLayout.minimumTitlePlanetGap);
 
     const png = await ogPng(meta);
     expect(png.subarray(1, 4).toString()).toBe("PNG");
     expect(png.length).toBeGreaterThan(100_000);
+
+    const titleOnlyPng = await sharp(Buffer.from(await ogSvg(meta, { omitReferralVisual: true })))
+      .png()
+      .toBuffer();
+    const titleOnly = await referralTitlePixels(titleOnlyPng);
+    const composite = await referralTitlePixels(png);
+
+    expect(titleOnly.maxX).toBeLessThanOrEqual(referralOgLayout.titleSafeRight);
+    expect(composite).toMatchObject({
+      minX: titleOnly.minX,
+      maxX: titleOnly.maxX,
+      minY: titleOnly.minY,
+      maxY: titleOnly.maxY,
+    });
+    expect(Math.abs(composite.count - titleOnly.count)).toBeLessThanOrEqual(16);
+
+    const wideTitle = await referralTitlePixels(await ogPng({
+      ...meta,
+      imageTitle: "WWWWWWWWWWWWWWWWWWWWWWWWWW",
+    }));
+    expect(wideTitle.maxX).toBeLessThanOrEqual(referralOgLayout.titleSafeRight);
   });
 
   test("injects referral OG, Twitter, and Farcaster metadata", () => {
@@ -172,3 +199,26 @@ describe("frontend static server headers", () => {
     });
   });
 });
+
+async function referralTitlePixels(png: Buffer) {
+  const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  let minX = info.width;
+  let maxX = -1;
+  let minY = info.height;
+  let maxY = -1;
+  let count = 0;
+
+  for (let y = 100; y <= 220; y += 1) {
+    for (let x = 0; x < referralOgLayout.planetLeft; x += 1) {
+      const offset = (y * info.width + x) * info.channels;
+      if (data[offset]! <= 220 || data[offset + 1]! <= 220 || data[offset + 2]! <= 220) continue;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+      count += 1;
+    }
+  }
+
+  return { minX, maxX, minY, maxY, count };
+}
