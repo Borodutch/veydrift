@@ -40,6 +40,10 @@ export type BackendConfig = {
   randomnessEngineAddress?: `0x${string}`;
   randomnessFulfillerPrivateKey?: `0x${string}`;
   randomnessCommitmentStorePath: string;
+  // Referral contracts can be replaced after the database-wide index cursor has advanced. This
+  // independent boundary lets startup reconcile the configured referral contract's canonical event
+  // history without replaying or wiping unrelated game/alliance state.
+  referralIndexFromBlock?: bigint;
   referralSystemAddress?: `0x${string}`;
   referralSignerPrivateKey?: `0x${string}`;
   resourceTokenAddresses: ResourceTokenAddresses;
@@ -84,6 +88,7 @@ export type SafeConfigSummary = {
   randomnessEngineConfigured: boolean;
   randomnessCommitterConfigured: boolean;
   referralSignerConfigured: boolean;
+  referralIndexFromBlock: string;
   resourceTokensConfigured: {
     crystal: boolean;
     deuterium: boolean;
@@ -144,6 +149,11 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
     parseBooleanFlag(env.VEYDRIFT_QA_SYNTHETIC_STATIONED_DEFENDERS) && deploymentMode !== "production";
   const chainId = parsePositiveInteger(env.VEYDRIFT_CHAIN_ID, "VEYDRIFT_CHAIN_ID", problems) ?? defaultChainId;
   const indexFromBlock = parseBigInt(env.VEYDRIFT_INDEX_FROM_BLOCK, "VEYDRIFT_INDEX_FROM_BLOCK", problems) ?? 0n;
+  const referralIndexFromBlock = parseBigInt(
+    env.VEYDRIFT_REFERRAL_INDEX_FROM_BLOCK,
+    "VEYDRIFT_REFERRAL_INDEX_FROM_BLOCK",
+    problems
+  ) ?? indexFromBlock;
   const parsedLogChunkSpan = parseBigInt(env.VEYDRIFT_LOG_CHUNK_SPAN, "VEYDRIFT_LOG_CHUNK_SPAN", problems);
   const logChunkSpan = parsedLogChunkSpan && parsedLogChunkSpan > 0n ? parsedLogChunkSpan : defaultLogChunkSpan;
   const settlementStartPriceWei = parseBigInt(
@@ -303,6 +313,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       ...(randomnessEngineAddress ? { randomnessEngineAddress } : {}),
       ...(randomnessFulfillerPrivateKey ? { randomnessFulfillerPrivateKey } : {}),
       randomnessCommitmentStorePath,
+      referralIndexFromBlock,
       ...(referralSystemAddress ? { referralSystemAddress } : {}),
       ...(referralSignerPrivateKey ? { referralSignerPrivateKey } : {}),
       resourceTokenAddresses,
@@ -334,6 +345,7 @@ export function safeConfigSummary(config: BackendConfig): SafeConfigSummary {
       config.randomnessEngineAddress && config.randomnessFulfillerPrivateKey && config.rpcUrl
     ),
     referralSignerConfigured: Boolean(config.referralSignerPrivateKey),
+    referralIndexFromBlock: (config.referralIndexFromBlock ?? config.indexFromBlock).toString(),
     resourceTokensConfigured: {
       crystal: Boolean(config.resourceTokenAddresses.crystal),
       deuterium: Boolean(config.resourceTokenAddresses.deuterium),

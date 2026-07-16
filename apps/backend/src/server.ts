@@ -1561,6 +1561,7 @@ export function deriveLogBackfiller(
       failoverRpc?: (reason: string) => boolean;
       getHeadBlock: () => Promise<bigint>;
       listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
+      listReferralLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       rpcMetrics?: () => unknown;
     }
   | undefined {
@@ -1573,6 +1574,9 @@ export function deriveLogBackfiller(
       ...(typeof reader.failoverRpc === "function" ? { failoverRpc: reader.failoverRpc.bind(reader) } : {}),
       getHeadBlock: reader.getBlockNumber.bind(reader),
       listContractLogs: reader.listContractLogs.bind(reader),
+      ...(typeof reader.listReferralLogs === "function"
+        ? { listReferralLogs: reader.listReferralLogs.bind(reader) }
+        : {}),
       ...(typeof reader.rpcMetrics === "function" ? { rpcMetrics: reader.rpcMetrics.bind(reader) } : {})
     };
   }

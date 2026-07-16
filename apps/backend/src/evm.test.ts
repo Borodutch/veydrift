@@ -53,6 +53,9 @@ const allianceLeftTopic = "0x65b0be45688803f341e315da7be3de9dd83ebf51eb3cccb3788
 const allianceRoleUpdatedTopic = "0xe4ba1cf47cfd4ff05de8585bf5cb06e7b0856932c0d81ef64a3458e26877f30d";
 const allianceOwnershipTransferredTopic = "0x68f6446f7a86cbeefdd42de0fd5fe8291d2183c90343d9a43c0cdc976e5a1617";
 const allianceDiplomacyUpdatedTopic = "0x3df4b2aa5708b43ef1805908826beae5c9a30fb60b1952ad99ce3444b2eec6da";
+const referralInviteWindowActivatedTopic = "0xd51c9643dafa95fcfa30d65f2b6576bc03873e2630d73fc523daf87a7158d589";
+const referralInviteRedeemedTopic = "0xf0e76a5aa6e423f978c7616fd6933b5d376a32654fc67c6fad0afdbc744ccce1";
+const referralRewardClaimedTopic = "0x55b0859d9094fa40dfdcbcdd82c0d785132f6a627b6083e228d6bddb5e498558";
 
 describe("HTTP JSON-RPC transport", () => {
   test("coalesces concurrent identical cacheable RPC reads", async () => {
@@ -624,6 +627,31 @@ describe("moon chance report event decoding", () => {
     );
 
     await expect(reader.listAllianceLogs(100n, 200n)).resolves.toHaveLength(1);
+  });
+
+  test("lists only canonical referral history topics from the replacement contract", async () => {
+    const referralSystemAddress = "0x3333333333333333333333333333333333333333";
+    const reader = new VeydriftGameReader(
+      { ...readerConfig, referralSystemAddress },
+      {
+        async request<T>(method: string, params: unknown[]): Promise<T> {
+          expect(method).toBe("eth_getLogs");
+          expect(params).toEqual([{
+            address: referralSystemAddress,
+            fromBlock: "0x64",
+            toBlock: "0xc8",
+            topics: [[
+              referralInviteWindowActivatedTopic,
+              referralInviteRedeemedTopic,
+              referralRewardClaimedTopic
+            ]]
+          }]);
+          return [] as T;
+        }
+      }
+    );
+
+    await expect(reader.listReferralLogs(100n, 200n)).resolves.toEqual([]);
   });
 
   test("pages a 'latest' range in <=span windows without a doomed full-range call first", async () => {
