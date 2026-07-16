@@ -33,6 +33,7 @@ import {
 import {
   defaultVeydriftChainForLocation,
   ensureVeydriftNetwork,
+  fetchPrivateReferralDashboard,
   fetchReferralDashboard,
   fetchSettlementFundingState,
   fetchWalletSettlement,
@@ -68,6 +69,7 @@ import {
   type MigrationReservation,
   type PlanetSummary,
   type ReferralDashboard,
+  type ReferralInviteSummary,
   type ReferralRedemption,
   type ReferralResolution,
   type SettlementTransactionOptions,
@@ -267,8 +269,59 @@ type ReferralProgramState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "ready"; dashboard: ReferralDashboard }
+  | { status: "revealing"; dashboard: ReferralDashboard }
   | { status: "claiming"; dashboard: ReferralDashboard }
   | { status: "error"; message: string; dashboard?: ReferralDashboard };
+
+export const REFERRAL_REVEAL_REJECTION_MESSAGE = "Wallet signature rejected — no transaction was sent";
+
+export function referralRejectedRequestMessage(stage: "signature" | "claim-transaction"): string {
+  return stage === "signature"
+    ? REFERRAL_REVEAL_REJECTION_MESSAGE
+    : "Referral claim transaction was rejected.";
+}
+
+export function referralClaimCodeAfterDashboard(
+  currentCode: string,
+  dashboard: ReferralDashboard,
+): string {
+  const invite = dashboard.invite ?? dashboard.invites[0];
+  return invite?.status === "active" ? invite.code ?? "" : currentCode;
+}
+
+export function hasRevealedReferralInvite(
+  invite: ReferralInviteSummary | null | undefined,
+): invite is ReferralInviteSummary & { code: string; link: string } {
+  return Boolean(invite?.code && invite.link);
+}
+
+export function referralInviteActionAvailability(input: {
+  busy: boolean;
+  claimCode: string;
+  dashboard: ReferralDashboard | undefined;
+  selectedCodeClaimable: boolean;
+}): {
+  canClaim: boolean;
+  canReveal: boolean;
+  inviteActive: boolean;
+  inviteRevealed: boolean;
+} {
+  const invite = input.dashboard?.invite ?? input.dashboard?.invites[0];
+  const inviteActive = invite?.status === "active";
+  const inviteRevealed = hasRevealedReferralInvite(invite);
+  return {
+    canClaim: Boolean(
+      input.dashboard?.configured
+        && !input.busy
+        && !inviteActive
+        && /^[A-Za-z0-9_-]{1,24}$/.test(input.claimCode.trim())
+        && input.selectedCodeClaimable
+    ),
+    canReveal: Boolean(input.dashboard?.configured && !input.busy && inviteActive && !inviteRevealed),
+    inviteActive,
+    inviteRevealed
+  };
+}
 
 type ReferralValidationState =
   | { status: "idle" }
@@ -338,13 +391,15 @@ export function FirstPlanetSettlementApp() {
 
   useEffect(() => {
     const dashboard = referralProgram.status === "ready"
+        || referralProgram.status === "revealing"
         || referralProgram.status === "claiming"
         || referralProgram.status === "error"
       ? referralProgram.dashboard
       : undefined;
+    if (!dashboard) return;
     const invite = dashboard?.invite ?? dashboard?.invites[0];
-    if (invite?.code) {
-      setReferralClaimCodeInput(invite.code);
+    if (invite?.status === "active") {
+      setReferralClaimCodeInput((current) => referralClaimCodeAfterDashboard(current, dashboard));
     } else if (referralProgram.status === "ready") {
       setReferralClaimCodeInput((current) => current.trim() ? current : generateReferralClaimCode());
     }
@@ -1237,10 +1292,49 @@ export function FirstPlanetSettlementApp() {
     }
   }
 
+  async function revealReferralInvite() {
+    await transactionActionGate.run("referral:reveal", async () => {
+      if (!provider || wallet.kind !== "connected" || !settlementConfigState.apiUrl) return;
+      const currentDashboard = referralProgram.status === "ready"
+          || referralProgram.status === "revealing"
+          || referralProgram.status === "claiming"
+          || referralProgram.status === "error"
+        ? referralProgram.dashboard
+        : undefined;
+      if (!currentDashboard) return;
+
+      setReferralProgram({ status: "revealing", dashboard: currentDashboard });
+      try {
+        const signature = await requestReferralWalletSignature(
+          provider,
+          wallet.account,
+          "dashboard"
+        );
+        setReferralProgram({
+          status: "ready",
+          dashboard: await fetchPrivateReferralDashboard(
+            settlementConfigState.apiUrl,
+            wallet.account,
+            signature
+          )
+        });
+      } catch (error) {
+        setReferralProgram({
+          status: "error",
+          message: isUserRejected(error)
+            ? referralRejectedRequestMessage("signature")
+            : walletRequestErrorMessage(error),
+          dashboard: currentDashboard
+        });
+      }
+    });
+  }
+
   async function claimReferralInvite() {
     await transactionActionGate.run("referral:claim", async () => {
       if (!provider || wallet.kind !== "connected" || !settlementConfigState.apiUrl) return;
       const currentDashboard = referralProgram.status === "ready"
+          || referralProgram.status === "revealing"
           || referralProgram.status === "claiming"
           || referralProgram.status === "error"
         ? referralProgram.dashboard
@@ -1251,6 +1345,7 @@ export function FirstPlanetSettlementApp() {
         setReferralProgram({ status: "loading" });
       }
 
+      let waitingForSignature = true;
       try {
         const inviteCode = normalizeReferralClaimCode(referralClaimCodeInput);
         setReferralClaimCodeInput(inviteCode);
@@ -1261,6 +1356,7 @@ export function FirstPlanetSettlementApp() {
           "claim-transaction",
           commitment
         );
+        waitingForSignature = false;
         await persistReferralClaimIntent(
           settlementConfigState.apiUrl,
           wallet.account,
@@ -1286,7 +1382,9 @@ export function FirstPlanetSettlementApp() {
       } catch (error) {
         setReferralProgram({
           status: "error",
-          message: isUserRejected(error) ? "Referral claim transaction was rejected." : walletRequestErrorMessage(error),
+          message: isUserRejected(error)
+            ? referralRejectedRequestMessage(waitingForSignature ? "signature" : "claim-transaction")
+            : walletRequestErrorMessage(error),
           ...(currentDashboard ? { dashboard: currentDashboard } : {})
         });
       }
@@ -1389,6 +1487,7 @@ export function FirstPlanetSettlementApp() {
             inspection={referralClaimInspection}
             onClaimCodeChange={setReferralClaimCodeInput}
             onClaim={claimReferralInvite}
+            onReveal={revealReferralInvite}
             state={referralProgram}
             startPriceWei={referralBenefitStartPriceWei(settlementFunding)}
           />
@@ -1431,6 +1530,7 @@ function ReferralProgramPanel({
   inspection,
   onClaim,
   onClaimCodeChange,
+  onReveal,
   startPriceWei,
   state,
 }: {
@@ -1438,29 +1538,43 @@ function ReferralProgramPanel({
   inspection: ReferralValidationState;
   onClaim: () => void;
   onClaimCodeChange: (value: string) => void;
+  onReveal: () => void;
   startPriceWei: bigint | null;
   state: ReferralProgramState;
 }) {
-  const dashboard = state.status === "ready" || state.status === "claiming" || state.status === "error"
+  const dashboard = state.status === "ready"
+      || state.status === "revealing"
+      || state.status === "claiming"
+      || state.status === "error"
     ? state.dashboard
     : undefined;
   const invite = dashboard?.invite ?? dashboard?.invites[0];
   const claiming = state.status === "claiming";
-  const inviteActive = invite?.status === "active";
+  const revealing = state.status === "revealing";
+  const busy = claiming || revealing;
   const claimCodeValid = /^[A-Za-z0-9_-]{1,24}$/.test(claimCode.trim());
   const inspected = inspection.status === "resolved" ? inspection.resolution : undefined;
   const selectedCodeClaimable = inspected?.ownership === "available"
     || (inspected?.ownership === "owned_by_you" && inspected.renewable);
-  const canClaim = Boolean(dashboard?.configured && !claiming && (
-    !inviteActive && claimCodeValid && selectedCodeClaimable
-  ));
-  const claimLabel = claiming
-    ? "Claiming invites"
-    : inspected?.ownership === "owned_by_you" && inspected.renewable
-      ? "Renew invite"
-      : inviteActive
-        ? "Invites active"
-        : "Claim code";
+  const { canClaim, canReveal, inviteActive, inviteRevealed } = referralInviteActionAvailability({
+    busy,
+    claimCode,
+    dashboard,
+    selectedCodeClaimable: Boolean(selectedCodeClaimable)
+  });
+  const revealedInvite = hasRevealedReferralInvite(invite) ? invite : undefined;
+  const needsReveal = inviteActive && !inviteRevealed;
+  const actionLabel = revealing
+    ? "Revealing details"
+    : needsReveal
+      ? "Reveal invite details"
+      : claiming
+        ? "Claiming code"
+        : inspected?.ownership === "owned_by_you" && inspected.renewable
+          ? "Reactivate code"
+          : inviteActive
+            ? "Invite active"
+            : "Claim code";
   const rewardLabel = dashboard?.rewardPerUseWei
     ? `${formatEth(BigInt(dashboard.rewardPerUseWei))} ETH`
     : referralInviterRewardLabel(startPriceWei);
@@ -1478,12 +1592,12 @@ function ReferralProgramPanel({
           </div>
           <button
             className="referral-claim-button"
-            disabled={!canClaim}
-            onClick={onClaim}
+            disabled={needsReveal ? !canReveal : !canClaim}
+            onClick={needsReveal ? onReveal : onClaim}
             type="button"
           >
             <TicketCheck aria-hidden="true" size={15} />
-            {claimLabel}
+            {actionLabel}
           </button>
         </div>
 
@@ -1502,14 +1616,30 @@ function ReferralProgramPanel({
           <span>Invite code</span>
           <input
             autoComplete="off"
-            disabled={claiming || inviteActive}
+            disabled={busy || inviteActive}
             inputMode="text"
             maxLength={24}
             onInput={(event) => onClaimCodeChange((event.currentTarget as HTMLInputElement).value)}
-            placeholder="borodutch"
+            placeholder={needsReveal ? "Active code hidden until reveal" : "borodutch"}
             value={claimCode}
           />
         </label>
+        {inviteActive && invite ? (
+          <p className="referral-muted">
+            {revealedInvite
+              ? `Current code ${revealedInvite.code} is active until ${formatDateTime(revealedInvite.expiresAt)}.`
+              : `Your current invite code is active until ${formatDateTime(invite.expiresAt)}.`} A new available code or any permanently owned valid code can be selected after expiry.
+          </p>
+        ) : invite?.status === "renewable" ? (
+          <p className="referral-muted">
+            The previous invite window expired {formatDateTime(invite.expiresAt)}. Enter a new available code or a permanently owned valid code to activate the next window.
+          </p>
+        ) : null}
+        {needsReveal ? (
+          <p className="referral-muted">
+            Reveal invite details requests a wallet signature only. It sends no transaction.
+          </p>
+        ) : null}
         {!claimCodeValid && !inviteActive ? (
           <p className="referral-muted">Use 1–24 letters, numbers, underscores, or hyphens.</p>
         ) : null}
@@ -1539,7 +1669,7 @@ function ReferralProgramPanel({
         {invite ? (
           <div className="referral-link-row">
             <div>
-              <strong>{invite.link}</strong>
+              <strong>{revealedInvite ? revealedInvite.link : "Private invite details hidden"}</strong>
               <span>
                 {invite.status === "active"
                   ? `Owned by you · active · ${invite.remainingRedemptions}/3 uses left today`
@@ -1550,26 +1680,28 @@ function ReferralProgramPanel({
               {invite.expiresAt ? <span>Expires {formatDateTime(invite.expiresAt)}</span> : null}
               <span>{invite.redemptionCount} total invite use{invite.redemptionCount === 1 ? "" : "s"}</span>
             </div>
-            <div className="referral-copy-actions">
-              <button
-                className="referral-copy-button"
-                disabled={invite.status !== "active"}
-                onClick={() => void navigator.clipboard?.writeText(invite.code)}
-                type="button"
-              >
-                <Copy aria-hidden="true" size={14} />
-                Copy code
-              </button>
-              <button
-                className="referral-copy-button"
-                disabled={invite.status !== "active"}
-                onClick={() => void navigator.clipboard?.writeText(invite.link)}
-                type="button"
-              >
-                <Link aria-hidden="true" size={14} />
-                Copy link
-              </button>
-            </div>
+            {inviteActive && revealedInvite ? (
+              <div className="referral-copy-actions">
+                <button
+                  className="referral-copy-button"
+                  onClick={() => void navigator.clipboard?.writeText(revealedInvite.code)}
+                  type="button"
+                >
+                  <Copy aria-hidden="true" size={14} />
+                  Copy code
+                </button>
+                <button
+                  className="referral-copy-button"
+                  onClick={() => void navigator.clipboard?.writeText(revealedInvite.link)}
+                  type="button"
+                >
+                  <Link aria-hidden="true" size={14} />
+                  Copy link
+                </button>
+              </div>
+            ) : inviteActive ? (
+              <span className="referral-muted">Reveal the active invite to enable copy actions.</span>
+            ) : null}
           </div>
         ) : (
           state.status !== "loading" ? <p className="referral-muted">No invite link claimed yet.</p> : null

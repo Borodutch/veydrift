@@ -95,12 +95,12 @@ export type SettlementTransactionOptions = {
 
 export type ReferralInviteSummary = {
   claimedAt: string;
-  code: string;
+  code: string | null;
   codeHash: string;
   commitment: string;
-  expired?: boolean;
-  expiresAt?: string;
-  link: string;
+  expired: boolean;
+  expiresAt: string;
+  link: string | null;
   nextRedemptionAt: string | null;
   owner: string;
   redemptionCount: number;
