@@ -1770,12 +1770,19 @@ function ReferralValidationMessage({ state }: { state: ReferralValidationState }
     return <span className="referral-error">{state.message}</span>;
   }
   const { resolution } = state;
-  const detail = resolution.status === "active"
-    ? `Active · ${resolution.remainingRedemptions}/3 inviter uses remain in the rolling window.`
+  const detail = referralValidationMessage(resolution);
+  return (
+    <span className={resolution.valid ? "referral-muted" : "referral-error"}>{detail}</span>
+  );
+}
+
+export function referralValidationMessage(resolution: ReferralResolution): string {
+  return resolution.status === "active"
+    ? `${resolution.remainingRedemptions}/3 uses left`
     : resolution.status === "inactive"
       ? "Inactive · this permanently owned code must be renewed by its owner."
       : resolution.status === "exhausted"
-        ? `Exhausted · next use opens ${resolution.nextRedemptionAt ? formatDateTime(resolution.nextRedemptionAt) : "after the on-chain reset"}.`
+        ? "0/3 uses left"
         : resolution.status === "self_invite"
           ? "Self-invite blocked on-chain."
           : resolution.status === "already_redeemed"
@@ -1785,9 +1792,6 @@ function ReferralValidationMessage({ state }: { state: ReferralValidationState }
               : resolution.status === "unavailable"
                 ? "Current on-chain price is unavailable; referral settlement is paused."
                 : "Invalid invite code · no referral benefit will be claimed.";
-  return (
-    <span className={resolution.valid ? "referral-muted" : "referral-error"}>{detail}</span>
-  );
 }
 
 export function SettlementSupportLink() {

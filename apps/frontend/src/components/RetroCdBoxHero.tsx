@@ -49,21 +49,18 @@ export function RetroCdBoxHero({
 
           <section className="retro-cd-cover retro-cd-front">
             <div className="retro-cd-brand">
-              <span>PC CD-ROM</span>
               <strong>VEYDRIFT</strong>
             </div>
             <div className="retro-cd-front-orbit" aria-hidden="true" />
             <div className="retro-cd-copy-panel">
               {children}
             </div>
-            <div className="retro-cd-rating" aria-hidden="true">ALPHA</div>
+            <div className="retro-cd-rating" aria-hidden="true">BETA</div>
           </section>
 
           <aside className="retro-cd-cover retro-cd-back" aria-label="Veydrift screenshots">
             <div className="retro-cd-back-copy">
-              <span>Back cover</span>
               <strong>Build. Raid. Drift.</strong>
-              <p>Live Veydrift surfaces from the current alpha build.</p>
             </div>
             <div className="retro-cd-screens">
               {cdBackScreens.map((screen) => (

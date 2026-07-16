@@ -76,6 +76,28 @@ describe("settlement screen mode", () => {
     expect(stylesSource).toContain(".retro-cd-back");
   });
 
+  test("uses the beta cover badge without the retired CD cover labels", async () => {
+    const settlementSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
+    const heroSource = await Bun.file(new URL("../src/components/RetroCdBoxHero.tsx", import.meta.url)).text();
+
+    expect(heroSource).not.toContain("PC CD-ROM");
+    expect(heroSource).not.toContain(">ALPHA<");
+    expect(heroSource).toContain(">BETA<");
+    expect(heroSource).not.toContain("Back cover");
+    expect(heroSource).not.toContain("Live Veydrift surfaces from the current alpha build.");
+
+    expect(settlementSource).toContain("Link wallet");
+    expect(settlementSource).toContain("Paste invite code");
+    expect(heroSource).toContain("Build. Raid. Drift.");
+    expect(heroSource).toContain("/assets/landing/qa-screens/overview-desktop.jpg");
+    expect(heroSource).toContain("/assets/landing/qa-screens/shipyard-desktop.jpg");
+    expect(heroSource).toContain("/assets/landing/qa-screens/missions-desktop.jpg");
+    expect(heroSource).toContain("Onchain");
+    expect(heroSource).toContain("Alliances");
+    expect(heroSource).toContain("Fleet ops");
+    expect(heroSource).toContain("Rift economy");
+  });
+
   test("keeps no-wallet copy wallet-neutral outside Mini App mode", () => {
     expect(noWalletDetectedMessage(false)).toBe("Open the bridge with an injected EVM wallet or browser wallet.");
     expect(noWalletDetectedMessage(false)).not.toMatch(/metamask/i);
