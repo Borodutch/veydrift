@@ -3,6 +3,7 @@ import {
   hasUsefulPlanetDetailBackRoute,
   planetDetailBackRouteForCurrentScreen,
 } from "../src/inspectRoutes";
+import { hasPlanetSelectorChoice } from "../src/planetSelectorChoice";
 
 const playableSource = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
 const navSource = await Bun.file(new URL("../src/components/NavBar.tsx", import.meta.url)).text();
@@ -39,14 +40,22 @@ describe("navigation and planet selector UI source contracts", () => {
     expect(playableSource).not.toContain("flex min-w-max gap-2 pb-1");
   });
 
-  test("shows the planet picker for single-planet wallets across viewports", () => {
-    // The picker must render for any wallet with at least one planet
-    // (not gated behind walletPlanets.length > 1).
-    expect(playableSource).toContain("const mobilePlanetPicker = walletPlanets.length > 0");
+  test("hides every planet picker when a single planet is the only selectable body", () => {
+    expect(hasPlanetSelectorChoice([])).toBe(false);
+    expect(hasPlanetSelectorChoice([{ moon: null }])).toBe(false);
+    expect(hasPlanetSelectorChoice([{ moon: { exists: false } }])).toBe(false);
+
+    expect(playableSource).toContain("const showPlanetSelector = hasPlanetSelectorChoice(walletPlanets);");
+    expect(playableSource).toContain("const mobilePlanetPicker = showPlanetSelector ? (");
+    expect(playableSource).toContain("const planetSidebar = showPlanetSelector ? (");
     expect(playableSource).toContain("{compactPlanetSelector}");
-    expect(playableSource).not.toContain("walletPlanets.length > 1 ? mobilePlanetSelector : undefined");
-    // The mobile image row no longer hides itself for a single planet.
-    expect(playableSource).not.toContain("if (planets.length < 2) return null;");
+    expect(playableSource).not.toContain("const mobilePlanetPicker = walletPlanets.length > 0");
+    expect(playableSource).not.toContain("const planetSidebar = walletPlanets.length > 0");
+  });
+
+  test("keeps every planet picker when multiple selectable bodies exist", () => {
+    expect(hasPlanetSelectorChoice([{ moon: null }, { moon: null }])).toBe(true);
+    expect(hasPlanetSelectorChoice([{ moon: { exists: true } }])).toBe(true);
   });
 
   test("moves the mobile planet picker into the hamburger menu, not above content", () => {

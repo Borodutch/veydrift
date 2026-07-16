@@ -192,7 +192,7 @@ export function InfrastructurePage({
               key={building.key}
               label={building.label}
               labelTone={infrastructureCatalogTitleTone(upgradeStatus)}
-              statusText={starterPrerequisite ? `Requires ${starterPrerequisite}` : missingRequirement ? "Locked" : infrastructureCatalogStatusText(settledState, building.key, planetProductionProfile, productionRates)}
+              statusText={starterPrerequisite || missingRequirement ? "Locked" : infrastructureCatalogStatusText(settledState, building.key, planetProductionProfile, productionRates)}
               statusTone={starterPrerequisite || missingRequirement ? "warning" : "accent"}
               onClick={() => handleSelectBuilding(building.key)}
             />
