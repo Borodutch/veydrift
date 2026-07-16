@@ -1,9 +1,10 @@
 const REFERRAL_CODE_PATTERN = /^[A-Za-z0-9_-]{1,24}$/;
 
-export type ReferralXShareResult = "downloaded" | "shared";
+export type ReferralXShareResult = "copied" | "downloaded" | "shared";
 
 type ReferralShareNavigator = {
   canShare?: (data?: ShareData) => boolean;
+  clipboard?: Pick<Clipboard, "write">;
   share?: (data?: ShareData) => Promise<void>;
 };
 
@@ -58,6 +59,9 @@ export async function shareReferralOnX(
   image: File,
   navigatorRef: ReferralShareNavigator = globalThis.navigator,
   windowRef: ReferralShareWindow = globalThis.window,
+  clipboardItemRef: typeof ClipboardItem | undefined = typeof globalThis.ClipboardItem === "function"
+    ? globalThis.ClipboardItem
+    : undefined,
 ): Promise<ReferralXShareResult> {
   const shareData: ShareData = {
     files: [image],
@@ -74,8 +78,29 @@ export async function shareReferralOnX(
     return "shared";
   }
 
-  downloadReferralShareImage(image, windowRef);
+  let clipboardWrite: Promise<void> | undefined;
+  if (navigatorRef.clipboard?.write && clipboardItemRef) {
+    try {
+      clipboardWrite = navigatorRef.clipboard.write([
+        new clipboardItemRef({ [image.type || "image/png"]: image }),
+      ]);
+    } catch {
+      clipboardWrite = undefined;
+    }
+  }
+
   windowRef.open?.(referralXIntentUrl(code), "_blank", "noopener,noreferrer");
+
+  if (clipboardWrite) {
+    try {
+      await clipboardWrite;
+      return "copied";
+    } catch {
+      // Clipboard image writes are not supported by every desktop browser.
+    }
+  }
+
+  downloadReferralShareImage(image, windowRef);
   return "downloaded";
 }
 

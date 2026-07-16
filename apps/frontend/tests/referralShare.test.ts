@@ -8,6 +8,10 @@ import {
 } from "../src/referralShare";
 
 describe("referral X sharing", () => {
+  class TestClipboardItem {
+    constructor(readonly items: Record<string, Blob>) {}
+  }
+
   test("builds a code-specific OG image and a link-free X intent", () => {
     expect(referralOgImageUrl("https://veydrift.com/?ref=borodutch", "Borodutch"))
       .toBe("https://veydrift.com/og/referral/borodutch.png");
@@ -52,13 +56,40 @@ describe("referral X sharing", () => {
 
   test("opens a link-free X composer when file sharing is unavailable", async () => {
     const opened: string[] = [];
+    const written: ClipboardItem[][] = [];
+    const order: string[] = [];
+    const image = new File(["png"], "invite.png", { type: "image/png" });
+    const result = await shareReferralOnX("borodutch", image, {
+      clipboard: {
+        write: async (items) => {
+          order.push("clipboard");
+          written.push(items);
+        },
+      },
+    }, {
+      open: (url) => {
+        order.push("open");
+        opened.push(String(url));
+        return null;
+      },
+    }, TestClipboardItem as unknown as typeof ClipboardItem);
+
+    expect(result).toBe("copied");
+    expect(order).toEqual(["clipboard", "open"]);
+    expect(opened).toEqual([referralXIntentUrl("borodutch")]);
+    expect(written).toHaveLength(1);
+    expect((written[0]?.[0] as unknown as TestClipboardItem).items["image/png"]).toBe(image);
+  });
+
+  test("downloads only when native share and clipboard image writes are unavailable", async () => {
+    const opened: string[] = [];
     const image = new File(["png"], "invite.png", { type: "image/png" });
     const result = await shareReferralOnX("borodutch", image, {}, {
       open: (url) => {
         opened.push(String(url));
         return null;
       },
-    });
+    }, undefined);
 
     expect(result).toBe("downloaded");
     expect(opened).toEqual([referralXIntentUrl("borodutch")]);

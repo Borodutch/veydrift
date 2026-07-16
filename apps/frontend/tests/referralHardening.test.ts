@@ -165,6 +165,8 @@ describe("referral hardening", () => {
     expect(appSource).toContain("Copy code");
     expect(appSource).toContain("Copy link");
     expect(appSource).toContain("Share invite on X");
+    expect(appSource).toContain("Paste image in X");
+    expect(appSource).not.toContain("Invite image downloaded. Attach it in the X composer that opened.");
   });
 
   test("shows a specific code-race error when another wallet claims first", () => {
