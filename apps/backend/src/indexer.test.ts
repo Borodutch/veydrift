@@ -2238,6 +2238,76 @@ describe("SettlementIndexer", () => {
     expect(indexer.pendingFleetSlotSettlementMissionsForWallet(player)).toEqual([]);
   });
 
+  test("projects an arrived moon Deploy into launchable moon ships while freeing its fleet slot (VEY-KANEO-722)", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xmoon",
+      logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)],
+      data: abiWords(2n, 44n, 9n, 12n, 8777n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x88",
+      transactionHash: "0xcomputer",
+      logIndex: "0x0",
+      topics: [researchCompletedTopic, addressTopic(player), topic(4n)],
+      data: abiWords(5n)
+    });
+
+    // Five genuinely active missions plus one Deploy that has reached the moon reproduce the
+    // reported raw 6/6 mission roster. The next launch settles the due Deploy on-chain before the
+    // slot/inventory checks, so the launchable projection must expose 5/6 and one moon cargo ship.
+    for (let missionId = 1n; missionId <= 6n; missionId += 1n) {
+      const isArrivedMoonDeploy = missionId === 6n;
+      const arrivalAt = isArrivedMoonDeploy ? 1767225200n : 1767225900n + missionId;
+      const txHash = `0x${missionId.toString(16).padStart(64, "0")}`;
+      indexer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: txHash,
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(player), topic(isArrivedMoonDeploy ? 1n : 0n)],
+        data: abiWords(8n, 7n, arrivalAt, arrivalAt + 300n, 0n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: txHash,
+        logIndex: "0x1",
+        topics: [fleetMissionCargoTopic, topic(missionId)],
+        data: abiWords(0n, 0n, 0n, 1n)
+      });
+      indexer.applyLog({
+        blockNumber: "0x90",
+        transactionHash: txHash,
+        logIndex: "0x2",
+        topics: [fleetMissionShipsTopic, topic(missionId)],
+        data: abiWords(1n, ...Array.from({ length: 13 }, () => 0n))
+      });
+      if (isArrivedMoonDeploy) {
+        indexer.applyLog({
+          blockNumber: "0x90",
+          transactionHash: txHash,
+          logIndex: "0x3",
+          topics: [fleetMissionBodiesTopic, topic(missionId)],
+          data: abiWords(0n, 1n)
+        });
+      }
+    }
+
+    expect(indexer.allActiveFleetMissions()).toHaveLength(6);
+    expect(indexer.fleetSlots(player)).toEqual({ active: 5, limit: 6 });
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      ships: expect.arrayContaining([expect.objectContaining({ id: 0, count: 0 })]),
+      launchableShips: expect.arrayContaining([expect.objectContaining({ id: 0, count: 1 })])
+    });
+    expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 0)?.count).toBe(0);
+  });
+
   // Canonical-mirror rework: the combat-triggered bounded per-planet reconcile was removed; combat
   // survivor/loss credits now come purely from PlanetShipCountChanged events. This test asserts that
   // event-only correctness (the bounded-reconcile confirmation step is gone) (VEY-KANEO-461).

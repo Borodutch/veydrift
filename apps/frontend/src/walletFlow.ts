@@ -741,6 +741,7 @@ export type ChainMoonState = {
   resources?: OnChainResources | null;
   resourcesAsOfNow?: OnChainResources | null;
   ships?: ChainShipyardState["ships"];
+  launchableShips?: ChainShipyardState["ships"];
   moon: {
     exists: boolean;
     planetId: string;

@@ -1908,8 +1908,11 @@ function cacheableJsonRequestTtlMs(request: Request, url: URL): number {
   if (url.pathname.match(/^\/wallet\/[^/]+\/missions$/)) return 30_000;
   if (url.pathname === "/missions") return 300_000;
   if (url.pathname.match(/^\/mission\/[^/]+$/)) return 30_000;
+  // Moon payloads include an as-of-now launchable ship projection for arrived Deploy missions. Like
+  // fleet slots, that projection changes when time crosses arrivalAt even without a new indexed log,
+  // so a TTL cache can preserve the exact stale 6/6 + zero-moon-ships state the composer is fixing.
+  if (url.pathname.match(/^\/wallet\/[^/]+\/(?:moon|shipyard|defenses)$/)) return 0;
   if (cacheableWalletSnapshotPath(url.pathname)) return 15_000;
-  if (url.pathname.match(/^\/wallet\/[^/]+\/(?:shipyard|defenses)$/)) return 0;
   if (url.pathname.startsWith("/wallet/")) return 5_000;
   if (url.pathname.match(/^\/universe\/galaxies\/[0-9]+\/systems\/[0-9]+$/)) return 30_000;
   if (url.pathname === "/universe/systems") return 30_000;
