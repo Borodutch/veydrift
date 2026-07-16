@@ -100,10 +100,12 @@ describe("frontend static server headers", () => {
     expect(JSON.stringify(meta)).toContain("secret-invite-code");
 
     const svg = await ogSvg(meta);
+    expect(svg).toContain('width="1200" height="630"');
+    expect(svg).toContain(">Veydrift Invite</text>");
     expect(svg).not.toContain(">Invite link</text>");
     expect(svg).not.toContain(">Veydrift</text>");
-    expect(svg).not.toContain("Invite code: secret-invite-code");
-    expect(svg.match(/CODE SECRET-INVITE-CODE/g)).toHaveLength(1);
+    expect(svg).not.toContain("Invite code:");
+    expect(svg.match(/>CODE SECRET-INVITE-CODE<\/text>/g)).toHaveLength(1);
     expect(svg).toContain(">veydrift.com</text>");
     expect(svg).not.toContain('clip-path="url(#singlePlanet)"');
     expect(svg.match(/<image /g)).toHaveLength(1);
