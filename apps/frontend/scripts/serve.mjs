@@ -663,7 +663,7 @@ export async function ogSvg(meta) {
   const planets = await Promise.all((meta.planetAssets ?? []).map((asset) => assetDataUri(asset, 600)));
 
   const visual = meta.kind === "referral"
-    ? `<image href="${planets[0] ?? ""}" x="704" y="18" width="488" height="488" preserveAspectRatio="xMidYMid meet" clip-path="url(#singlePlanet)"/>
+    ? `<image href="${planets[0] ?? ""}" x="704" y="18" width="488" height="488" preserveAspectRatio="xMidYMid meet"/>
   <path d="M744 410 C838 336 944 268 1090 178" fill="none" stroke="${accent}" stroke-width="2" stroke-opacity=".38"/>
   <circle cx="744" cy="410" r="4" fill="${accent}"/>
   <circle cx="1090" cy="178" r="4" fill="${accent}"/>`
