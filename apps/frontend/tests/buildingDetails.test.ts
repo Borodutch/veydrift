@@ -14,7 +14,22 @@ import {
 import { getBuildingRequirementStates } from "../src/components/InfrastructurePage";
 import { buildingRequirementsFor, createInitialPlayableState, unmetBuildingRequirement } from "../src/playableMvp";
 
+const infrastructurePageSource = await Bun.file(new URL("../src/components/InfrastructurePage.tsx", import.meta.url)).text();
+
 describe("building detail helpers", () => {
+  test("keeps prerequisite copy in selected building details, not catalog tiles (VEY-KANEO-725)", () => {
+    const catalogSource = infrastructurePageSource.slice(
+      infrastructurePageSource.indexOf("catalog={buildingCatalog.map"),
+      infrastructurePageSource.indexOf("detail={("),
+    );
+
+    expect(catalogSource).not.toContain("Requires ${starterPrerequisite}");
+    expect(catalogSource).toContain('starterPrerequisite || missingRequirement ? "Locked"');
+    expect(infrastructurePageSource).toContain(
+      "<RequirementFlairs onOpenRequirement={onOpenRequirement} requirements={requirementStates} />",
+    );
+  });
+
   test("formats costs, durations, and numbers without raw decimals", () => {
     expect(formatNumber(1234.987)).toBe("1,234");
     expect(formatDuration(45)).toBe("45s");
