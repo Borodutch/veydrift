@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   fetchReferralShareImage,
   referralOgImageUrl,
+  referralXCardUrl,
   referralXIntentUrl,
   referralXPostText,
   shareReferralOnX,
@@ -14,13 +15,16 @@ describe("referral X sharing", () => {
     expect(referralOgImageUrl(inviteLink, "Borodutch"))
       .toBe("https://veydrift.com/og/referral/borodutch.png");
     expect(referralXPostText("Borodutch")).toBe("Join me in Veydrift — invite code: borodutch");
+    expect(referralXCardUrl(inviteLink))
+      .toBe("https://veydrift.com/?ref=borodutch&x_card=2");
 
     const intent = new URL(referralXIntentUrl("Borodutch", inviteLink));
     expect(intent.origin).toBe("https://twitter.com");
     expect(intent.pathname).toBe("/intent/tweet");
     expect(intent.searchParams.get("text")).toBe("Join me in Veydrift — invite code: borodutch");
-    expect(intent.searchParams.get("url")).toBe(inviteLink);
-    expect(referralXIntentUrl("Borodutch", inviteLink)).toContain(encodeURIComponent(inviteLink));
+    expect(intent.searchParams.get("url")).toBe(referralXCardUrl(inviteLink));
+    expect(referralXIntentUrl("Borodutch", inviteLink))
+      .toContain(encodeURIComponent(referralXCardUrl(inviteLink)));
   });
 
   test("downloads a validated PNG as the share attachment", async () => {

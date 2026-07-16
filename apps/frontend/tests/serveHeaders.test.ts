@@ -3,6 +3,7 @@ import sharp from "sharp";
 import {
   buildReferralMiniAppEmbed,
   cacheControl,
+  canonicalSharePathForRoute,
   injectShareMeta,
   imageRouteForPathname,
   inviteAppRouteForPathname,
@@ -35,6 +36,18 @@ describe("frontend static server headers", () => {
     expect(inviteAppRouteForPathname("/invite")).toBe(true);
     expect(inviteAppRouteForPathname("/alliance-invites")).toBe(true);
     expect(inviteAppRouteForPathname("/alliance")).toBe(false);
+  });
+
+  test("keeps only the supported X Card cache version in referral canonical URLs", () => {
+    const route = { kind: "referral", code: "borodutch" } as const;
+    expect(canonicalSharePathForRoute(
+      route,
+      new URL("https://veydrift.com/?ref=borodutch&x_card=2&utm_source=x"),
+    )).toBe("/?ref=borodutch&x_card=2");
+    expect(canonicalSharePathForRoute(
+      route,
+      new URL("https://veydrift.com/?ref=borodutch&x_card=stale"),
+    )).toBe("/?ref=borodutch");
   });
 
   test("falls back quickly when mission share metadata is slow", async () => {
@@ -174,9 +187,11 @@ describe("frontend static server headers", () => {
           <meta property="og:image" content="https://veydrift.com/assets/og-image.jpg" />
           <meta property="og:image:secure_url" content="https://veydrift.com/assets/og-image.jpg" />
           <meta property="og:image:type" content="image/jpeg" />
+          <meta property="og:image:alt" content="Veydrift" />
           <meta name="twitter:title" content="Veydrift" />
           <meta name="twitter:description" content="Default" />
           <meta name="twitter:image" content="https://veydrift.com/assets/og-image.jpg" />
+          <meta name="twitter:image:alt" content="Veydrift" />
           <meta name="fc:miniapp" content='{}' />
           <meta name="fc:frame" content='{}' />
         </head>
@@ -193,7 +208,9 @@ describe("frontend static server headers", () => {
 
     expect(output).toContain('<meta property="og:image" content="https://veydrift.com/og/referral/secret-invite-code.png" />');
     expect(output).toContain('<meta property="og:image:type" content="image/png" />');
+    expect(output).toContain('<meta property="og:image:alt" content="Join Veydrift with secret-invite-code" />');
     expect(output).toContain('<meta name="twitter:image" content="https://veydrift.com/og/referral/secret-invite-code.png" />');
+    expect(output).toContain('<meta name="twitter:image:alt" content="Join Veydrift with secret-invite-code" />');
     expect(output).toContain("Accept invite");
     expect(output).toContain("SECRET-INVITE-CODE&amp;miniApp=true");
     expect(output).not.toContain("valid invite");
