@@ -970,7 +970,7 @@ describe("tester universe display data", () => {
       planet: own,
       shipyardState,
     });
-    const emptyActions = galaxyActionsForSlot({
+    const missingPlanetActions = galaxyActionsForSlot({
       account: "0x1111111111111111111111111111111111111111",
       homePlanetId: "7",
       planet: undefined,
@@ -1036,14 +1036,15 @@ describe("tester universe display data", () => {
           "You can't station a defending fleet at the planet it launches from. Open another colony or an alliance member's planet to defend it.",
       },
     ]);
-    expect(emptyActions).toMatchObject([{ enabled: true, kind: "colonize", label: "Colonize" }]);
+    // A missing planet record is an empty Galaxy row, not a synthesized colonization target.
+    expect(missingPlanetActions).toEqual([]);
     expect(noCargoActions).toMatchObject([
       { enabled: false, kind: "transport", reason: "Requires a cargo-capable ship on your home planet." },
       { enabled: false, kind: "deploy", reason: "Requires a cargo-capable ship on your home planet." },
       // A lone Light Fighter cannot carry cargo but is movable, so proactive Defend stays available.
       { enabled: true, kind: "defenseHold", label: "Defend" },
     ]);
-    expect([...enemyActions, ...ownActions, ...emptyActions].map((action) => action.label).join(" ")).not.toMatch(/spy|espionage|probe/i);
+    expect([...enemyActions, ...ownActions, ...missingPlanetActions].map((action) => action.label).join(" ")).not.toMatch(/spy|espionage|probe/i);
     expect(PUBLIC_INTEL_SUMMARY_LABEL).toBe("Public intel");
     expect(Object.keys(enemyActions.find((action) => action.kind === "attack" && action.enabled)?.ships ?? {})).toEqual(
       Object.keys(emptyMissionShips())
