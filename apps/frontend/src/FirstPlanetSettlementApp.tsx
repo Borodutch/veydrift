@@ -1497,7 +1497,7 @@ function ReferralProgramPanel({
   const claiming = state.status === "claiming";
   const busy = claiming;
   const [xShareImage, setXShareImage] = useState<File | null>(null);
-  const [xShareState, setXShareState] = useState<"downloaded" | "error" | "idle" | "preparing" | "ready" | "shared" | "sharing">("idle");
+  const [xShareState, setXShareState] = useState<"copied" | "downloaded" | "error" | "idle" | "preparing" | "ready" | "shared" | "sharing">("idle");
   const claimCodeValid = /^[A-Za-z0-9_-]{1,24}$/.test(claimCode.trim());
   const inspected = inspection.status === "resolved" ? inspection.resolution : undefined;
   const selectedCodeClaimable = inspected?.ownership === "available"
@@ -1674,16 +1674,17 @@ function ReferralProgramPanel({
                     ? "Preparing X image"
                     : xShareState === "sharing"
                       ? "Opening share"
-                      : "Share invite on X"}
+                      : xShareState === "copied"
+                        ? "Paste image in X"
+                        : xShareState === "downloaded"
+                          ? "Attach image in X"
+                          : xShareState === "shared"
+                            ? "Shared"
+                            : xShareState === "error"
+                              ? "Retry share on X"
+                              : "Share invite on X"}
                 </button>
               </div>
-            ) : null}
-            {xShareState === "downloaded" ? (
-              <span>Invite image downloaded. Attach it in the X composer that opened.</span>
-            ) : xShareState === "shared" ? (
-              <span>Invite image handed to your share sheet with no referral URL in the post text.</span>
-            ) : xShareState === "error" ? (
-              <span>Could not prepare the X invite image. Retry in a moment.</span>
             ) : null}
           </div>
         ) : (
