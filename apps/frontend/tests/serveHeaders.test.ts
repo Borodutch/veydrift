@@ -38,12 +38,12 @@ describe("frontend static server headers", () => {
     expect(inviteAppRouteForPathname("/alliance")).toBe(false);
   });
 
-  test("keeps only the supported X Card cache version in referral canonical URLs", () => {
+  test("keeps referral canonical URLs clean while ignoring Card cache parameters", () => {
     const route = { kind: "referral", code: "borodutch" } as const;
     expect(canonicalSharePathForRoute(
       route,
       new URL("https://veydrift.com/?ref=borodutch&x_card=2&utm_source=x"),
-    )).toBe("/?ref=borodutch&x_card=2");
+    )).toBe("/?ref=borodutch");
     expect(canonicalSharePathForRoute(
       route,
       new URL("https://veydrift.com/?ref=borodutch&x_card=stale"),

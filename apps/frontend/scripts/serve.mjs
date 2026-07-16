@@ -11,7 +11,7 @@ const ogDataCache = new Map();
 const assetDataCache = new Map();
 let sharpModule;
 const defaultMetadataTimeoutMs = 1_500;
-export const referralXCardVersion = "2";
+export const referralXCardImageVersion = "2";
 
 export const referralOgLayout = Object.freeze({
   titleX: 58,
@@ -512,8 +512,8 @@ async function shareHtmlResponse(request, route) {
   const canonicalPath = canonicalSharePathForRoute(route, url);
   const canonicalUrl = `${origin}${canonicalPath}`;
   const imagePath = imagePathForRoute(route);
-  const imageUrl = route.kind === "referral" && url.searchParams.get("x_card") === referralXCardVersion
-    ? `${origin}${imagePath}?v=${encodeURIComponent(referralXCardVersion)}`
+  const imageUrl = route.kind === "referral" && route.code
+    ? `${origin}${imagePath}?v=${encodeURIComponent(referralXCardImageVersion)}`
     : `${origin}${imagePath}`;
   const launchUrl = route.kind === "referral" ? miniAppLaunchUrl(canonicalUrl) : null;
   const appHtml = await readFile(staticFileUrl("/index.html"), "utf8");
@@ -539,11 +539,7 @@ export function canonicalSharePathForRoute(route, url) {
   const code = referralCodeForCanonical(url.searchParams.get("ref"));
   if (!code) return "/";
 
-  const params = new URLSearchParams({ ref: code });
-  if (url.searchParams.get("x_card") === referralXCardVersion) {
-    params.set("x_card", referralXCardVersion);
-  }
-  return `/?${params.toString()}`;
+  return `/?ref=${encodeURIComponent(code)}`;
 }
 
 function referralCodeForCanonical(value) {
