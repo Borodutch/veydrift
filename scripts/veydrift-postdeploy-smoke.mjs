@@ -182,6 +182,7 @@ async function checkReferralOnChain() {
       migrationFinalized,
       maxCodeLength,
       migrationManifest: {
+        legacyCommitmentSemantics: "keccak256(original-case-sensitive-code-bytes)",
         expectedValidHash,
         importedValidHash,
         expectedHashOnlyHash,

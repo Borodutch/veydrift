@@ -15,8 +15,9 @@ the game/runtime pointer is switched.
    production inventory is **6** confirmed valid codes, **10** confirmed 43-character legacy
    codes, and **3** JSON-only rows with no transaction hash. The three JSON-only rows are not
    migration entries.
-3. Reconstruct the historical commitment from the original case-sensitive code bytes and require it
-   to match the decoded event. Separately normalize the code to lowercase and derive the canonical
+3. Reconstruct the historical commitment as `keccak256(originalCaseSensitiveCodeBytes)` and require
+   it to match the decoded event exactly. Legacy claim events did not bind the inviter into this
+   value. Separately normalize the code to lowercase and derive the canonical
    ownership hash. Values in `[A-Za-z0-9_-]` with 1–24 characters are valid-code entries. The ten
    successfully claimed 43-character values are hash-only entries; invalid characters, other
    overlength sizes, or any receipt/owner/code/commitment mismatch stop the rollout.
@@ -77,9 +78,14 @@ migrateReferralCodes(
 ```
 
 The contract lowercases and validates every valid code again, requires `legacyCommitment ==
-keccak256(abi.encode(inviter, keccak256(originalCaseSensitiveCodeBytes)))`, and reverts the entire batch with
+keccak256(originalCaseSensitiveCodeBytes)`, and reverts the entire batch with
 `ReferralCodeAlreadyOwned(codeHash, owner)` if a normalized code is assigned to another wallet.
-That makes an unresolved collision non-deployable.
+The committed manifest leaf binds that receipt-proven value to the reviewed owner, normalized code
+hash, and activation timestamp. Altering an owner or timestamp changes the imported digest and makes
+finalization revert. That makes an unresolved collision or altered receipt row non-deployable. The
+new active invite commitment is still derived separately as
+`keccak256(abi.encode(inviter, normalizedCodeHash))`; public claim and redemption binding never use
+the legacy raw-hash rule.
 
 Import only the ten confirmed overlength claims through the separate hash-only path:
 
@@ -92,11 +98,11 @@ migrateLegacyReferralCodeOwnership(
 ```
 
 This path accepts only the reviewed 43-character URL-safe shape, verifies the historical commitment
-against the original case-sensitive bytes, permanently sets ownership of the canonical lowercase
-hash, and emits `ReferralLegacyCodeOwnershipImported`. It does not create a new commitment, invite
-record, activation timestamp, active window, or redemption surface. The normal public validator
-remains 1–24 characters, and hash-only migration entries are also explicitly barred from public
-activation. Never pass an unconfirmed JSON-only row to either import function.
+as the raw `keccak256` of the original case-sensitive bytes, permanently sets ownership of the
+canonical lowercase hash, and emits `ReferralLegacyCodeOwnershipImported`. It does not create a new
+commitment, invite record, activation timestamp, active window, or redemption surface. The normal
+public validator remains 1–24 characters, and hash-only migration entries are also explicitly barred
+from public activation. Never pass an unconfirmed JSON-only row to either import function.
 
 For every manifest row, verify `referralCodeOwner(codeHash)` and
 `referralCodeMigrationKind(codeHash)`. For each valid-code row, verify the emitted

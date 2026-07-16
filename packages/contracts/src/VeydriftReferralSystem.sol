@@ -228,7 +228,7 @@ contract VeydriftReferralSystem {
                 revert ReferralMigrationTimestampInvalid(activatedAt);
             }
             (string memory normalizedCode, bytes32 codeHash) = _normalizedReferralCode(codes[index]);
-            bytes32 expectedCommitment = referralCommitment(inviter, keccak256(bytes(codes[index])));
+            bytes32 expectedCommitment = keccak256(bytes(codes[index]));
             bytes32 legacyCommitment = legacyCommitments[index];
             if (legacyCommitment != expectedCommitment) {
                 revert ReferralMigrationCommitmentMismatch(expectedCommitment, legacyCommitment);
@@ -260,7 +260,7 @@ contract VeydriftReferralSystem {
             address inviter = inviters[index];
             if (inviter == address(0)) revert Unauthorized(address(0));
             (, bytes32 codeHash) = _normalizedLegacyReferralCode(codes[index]);
-            bytes32 expectedCommitment = referralCommitment(inviter, keccak256(bytes(codes[index])));
+            bytes32 expectedCommitment = keccak256(bytes(codes[index]));
             bytes32 legacyCommitment = legacyCommitments[index];
             if (legacyCommitment != expectedCommitment) {
                 revert ReferralMigrationCommitmentMismatch(expectedCommitment, legacyCommitment);
