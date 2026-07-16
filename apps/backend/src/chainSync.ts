@@ -14,6 +14,7 @@ type LogBackfiller = {
   failoverRpc?(reason: string): boolean;
   getHeadBlock(): Promise<bigint>;
   listContractLogs(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   rpcMetrics?(): unknown;
 };
 
@@ -27,7 +28,23 @@ export type LiveLogSubscriber = {
   }): (() => void) | Promise<() => void>;
 };
 
-type ChainSyncIndexer = Partial<Pick<SettlementIndexer, "applyLog" | "clearPendingReconciliationReason" | "markStale" | "snapshot">>;
+type ChainSyncIndexer = Partial<Pick<SettlementIndexer,
+  | "applyLog"
+  | "clearPendingReconciliationReason"
+  | "markStale"
+  | "recordReferralHistoryBackfill"
+  | "referralHistoryBackfillStatus"
+  | "snapshot"
+>>;
+
+export type ReferralHistoryBackfillSnapshot = {
+  completedAt: string | null;
+  contractAddress: string | null;
+  fromBlock: string | null;
+  inProgress: boolean;
+  lastError: string | null;
+  throughBlock: string | null;
+};
 
 export type ChainSyncSnapshot = {
   connected: boolean;
@@ -77,6 +94,7 @@ export type ChainSyncSnapshot = {
   subscribedToHeads: boolean;
   subscribedToLogs: boolean;
   pollingEnabled: boolean;
+  referralHistoryBackfill: ReferralHistoryBackfillSnapshot;
 };
 
 export type ChainSyncEvent = {
@@ -119,6 +137,14 @@ export class ChainSyncService {
   private headStallPollCount = 0;
   private headStallReason: string | null = null;
   private activeSource: ChainSyncLiveSource | null = null;
+  private referralHistoryBackfill: ReferralHistoryBackfillSnapshot = {
+    completedAt: null,
+    contractAddress: null,
+    fromBlock: null,
+    inProgress: false,
+    lastError: null,
+    throughBlock: null
+  };
   private liveListenerConnected = false;
   private liveListenerErrorCount = 0;
   private liveListenerLastError: string | null = null;
@@ -186,7 +212,8 @@ export class ChainSyncService {
       subscribedAddresses: this.subscribedAddresses(),
       subscribedToHeads: this.connected,
       subscribedToLogs: this.liveListenerConnected || this.connected,
-      pollingEnabled: Boolean(this.options.logBackfiller) && Boolean(this.pollTimer)
+      pollingEnabled: Boolean(this.options.logBackfiller) && Boolean(this.pollTimer),
+      referralHistoryBackfill: { ...this.referralHistoryBackfill }
     };
   }
 
@@ -310,6 +337,8 @@ export class ChainSyncService {
       this.latestHeadBlock = head.toString();
       this.markConnected();
 
+      await this.ensureReferralHistoryBackfilled(head, backfiller, applyLog);
+
       if (this.cursor === null) {
         this.cursor = this.initialCursor();
       }
@@ -367,6 +396,55 @@ export class ChainSyncService {
       this.options.diagnosticsPublisher?.(this.snapshot());
     } catch (error) {
       console.warn("Veydrift chain-sync diagnostics publish failed", error);
+    }
+  }
+
+  private async ensureReferralHistoryBackfilled(
+    head: bigint,
+    backfiller: LogBackfiller,
+    applyLog: NonNullable<SettlementIndexer["applyLog"]>
+  ): Promise<void> {
+    const contractAddress = this.config.referralSystemAddress;
+    const listReferralLogs = backfiller.listReferralLogs;
+    const status = this.indexer?.referralHistoryBackfillStatus;
+    const record = this.indexer?.recordReferralHistoryBackfill;
+    if (!contractAddress || !listReferralLogs || !status || !record) return;
+
+    const fromBlock = this.config.referralIndexFromBlock ?? this.config.indexFromBlock;
+    const current = status.call(this.indexer, contractAddress, fromBlock);
+    this.referralHistoryBackfill = {
+      completedAt: current.marker?.completedAt ?? null,
+      contractAddress,
+      fromBlock: fromBlock.toString(),
+      inProgress: false,
+      lastError: null,
+      throughBlock: current.marker?.throughBlock ?? null
+    };
+    if (!current.required) return;
+
+    this.referralHistoryBackfill.inProgress = true;
+    try {
+      const logs = await listReferralLogs.call(backfiller, fromBlock, head);
+      await this.applyLogs(logs, applyLog);
+      const marker = record.call(this.indexer, contractAddress, fromBlock, head);
+      this.referralHistoryBackfill = {
+        completedAt: marker.completedAt,
+        contractAddress: marker.contractAddress,
+        fromBlock: marker.fromBlock,
+        inProgress: false,
+        lastError: null,
+        throughBlock: marker.throughBlock
+      };
+    } catch (error) {
+      this.referralHistoryBackfill.inProgress = false;
+      this.referralHistoryBackfill.lastError = error instanceof Error
+        ? error.message
+        : "Referral history backfill failed.";
+      // A configured referral contract whose history has not reconciled is not safe/ready: public and
+      // private dashboards could otherwise serve a false null invite until the generic five-poll RPC
+      // failure threshold trips.
+      this.connected = false;
+      throw error;
     }
   }
 

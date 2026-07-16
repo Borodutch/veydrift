@@ -1191,6 +1191,7 @@ export interface ChainReader {
   listDebrisFieldEvents(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<DebrisFieldEvent[]>;
   listAllianceLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   listContractLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
+  listReferralLogs?(fromBlock: bigint, toBlock?: bigint | "latest"): Promise<RpcLog[]>;
   failoverRpc?(reason: string): boolean;
   getBlockNumber?(): Promise<bigint>;
   rpcMetrics?(): RpcMetrics;
@@ -3369,6 +3370,26 @@ export class VeydriftGameReader implements ChainReader {
         topics: []
       }
     );
+  }
+
+  /**
+   * Canonical history for only the configured referral contract. This is intentionally separate from
+   * listContractLogs: a referral-address replacement may need an old range replay after the shared DB
+   * cursor has advanced, and replaying every game/alliance log in that range would be needlessly broad.
+   */
+  async listReferralLogs(fromBlock: bigint, toBlock: bigint | "latest" = "latest"): Promise<RpcLog[]> {
+    if (!this.referralSystemAddress) return [];
+
+    return this.getLogs({
+      address: this.referralSystemAddress,
+      fromBlock: toQuantity(fromBlock),
+      toBlock: toBlock === "latest" ? "latest" : toQuantity(toBlock),
+      topics: [[
+        referralInviteWindowActivatedTopic,
+        referralInviteRedeemedTopic,
+        referralRewardClaimedTopic
+      ]]
+    });
   }
 
   private indexedContractAddresses(): Address[] {

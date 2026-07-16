@@ -1,18 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import {
-  hasRevealedReferralInvite,
-  REFERRAL_REVEAL_REJECTION_MESSAGE,
+  REFERRAL_SIGNATURE_REJECTION_MESSAGE,
   referralClaimCodeAfterDashboard,
   referralInviteActionAvailability,
   referralRejectedRequestMessage,
   referralSettlementBlocker
 } from "../src/FirstPlanetSettlementApp";
 import { referralCodeForLanding } from "../src/referralStorage";
-import type { ReferralDashboard } from "../src/walletFlow";
+import {
+  REFERRAL_CODE_FRONT_RUN_MESSAGE,
+  referralClaimErrorMessage,
+  type ReferralDashboard,
+} from "../src/walletFlow";
 
 function referralDashboard(input: {
-  code: string | null;
-  link: string | null;
+  code: string;
+  link: string;
   status: "active" | "renewable" | "owned";
 }): ReferralDashboard {
   const invite = {
@@ -107,33 +110,24 @@ describe("referral hardening", () => {
     expect(referralCodeForLanding("", "fresh_usr")).toBe("fresh_usr");
   });
 
-  test("replaces stale claim drafts only with canonical revealed active invite details", () => {
-    const publicActive = referralDashboard({ code: null, link: null, status: "active" });
-    expect(referralClaimCodeAfterDashboard("Z9VVTDYWW", publicActive)).toBe("");
-    expect(hasRevealedReferralInvite(publicActive.invite)).toBe(false);
-
-    const privateActive = referralDashboard({
+  test("replaces stale claim drafts with canonical active invite details", () => {
+    const active = referralDashboard({
       code: "borodutch",
       link: "https://veydrift.com?ref=borodutch",
       status: "active"
     });
-    expect(referralClaimCodeAfterDashboard("Z9VVTDYWW", privateActive)).toBe("borodutch");
-    expect(hasRevealedReferralInvite(privateActive.invite)).toBe(true);
+    expect(referralClaimCodeAfterDashboard("Z9VVTDYWW", active)).toBe("borodutch");
 
-    const expired = referralDashboard({ code: null, link: null, status: "renewable" });
+    const expired = referralDashboard({
+      code: "borodutch",
+      link: "https://veydrift.com?ref=borodutch",
+      status: "renewable"
+    });
     expect(referralClaimCodeAfterDashboard("new_code", expired)).toBe("new_code");
   });
 
-  test("separates signature-only reveal from active-window and expired-window claim actions", () => {
-    const publicActive = referralDashboard({ code: null, link: null, status: "active" });
-    expect(referralInviteActionAvailability({
-      busy: false,
-      claimCode: "stale_draft",
-      dashboard: publicActive,
-      selectedCodeClaimable: true
-    })).toEqual({ canClaim: false, canReveal: true, inviteActive: true, inviteRevealed: false });
-
-    const privateActive = referralDashboard({
+  test("blocks active-window rotation and enables expired-window claims", () => {
+    const active = referralDashboard({
       code: "borodutch",
       link: "https://veydrift.com?ref=borodutch",
       status: "active"
@@ -141,27 +135,41 @@ describe("referral hardening", () => {
     expect(referralInviteActionAvailability({
       busy: false,
       claimCode: "borodutch",
-      dashboard: privateActive,
+      dashboard: active,
       selectedCodeClaimable: true
-    })).toEqual({ canClaim: false, canReveal: false, inviteActive: true, inviteRevealed: true });
+    })).toEqual({ canClaim: false, inviteActive: true });
 
-    const expired = referralDashboard({ code: null, link: null, status: "renewable" });
+    const expired = referralDashboard({
+      code: "borodutch",
+      link: "https://veydrift.com?ref=borodutch",
+      status: "renewable"
+    });
     expect(referralInviteActionAvailability({
       busy: false,
       claimCode: "new_code",
       dashboard: expired,
       selectedCodeClaimable: true
-    })).toEqual({ canClaim: true, canReveal: false, inviteActive: false, inviteRevealed: false });
+    })).toEqual({ canClaim: true, inviteActive: false });
   });
 
-  test("uses truthful reveal copy and keeps copy controls behind private details", async () => {
+  test("shows active invite details directly and removes the reveal gate", async () => {
     const appSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
-    expect(REFERRAL_REVEAL_REJECTION_MESSAGE).toBe("Wallet signature rejected — no transaction was sent");
-    expect(referralRejectedRequestMessage("signature")).toBe(REFERRAL_REVEAL_REJECTION_MESSAGE);
+    expect(REFERRAL_SIGNATURE_REJECTION_MESSAGE).toBe("Wallet signature rejected — no transaction was sent");
+    expect(referralRejectedRequestMessage("signature")).toBe(REFERRAL_SIGNATURE_REJECTION_MESSAGE);
     expect(referralRejectedRequestMessage("claim-transaction")).toBe("Referral claim transaction was rejected.");
-    expect(appSource).toContain("Reveal invite details requests a wallet signature only. It sends no transaction.");
-    expect(appSource).toContain("fetchPrivateReferralDashboard");
-    expect(appSource).toContain("inviteActive && revealedInvite");
+    expect(appSource).not.toContain("Reveal invite details");
+    expect(appSource).not.toContain("Unlock invite");
+    expect(appSource).not.toContain("fetchPrivateReferralDashboard");
+    expect(appSource).not.toContain("referral:reveal");
+    expect(appSource).toContain("{inviteActive ? (");
+    expect(appSource).toContain("Copy code");
+    expect(appSource).toContain("Copy link");
+    expect(appSource).toContain("Share invite on X");
+  });
+
+  test("shows a specific code-race error when another wallet claims first", () => {
+    expect(referralClaimErrorMessage({ data: `0xe1c8233f${"00".repeat(64)}` }))
+      .toBe(REFERRAL_CODE_FRONT_RUN_MESSAGE);
   });
 
   test("persists referral intent and avoids hard-coded fiat or multiplier promises", async () => {

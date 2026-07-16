@@ -1,4 +1,6 @@
 import { describe, expect, setSystemTime, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
 import { ChainSyncService } from "./chainSync";
 import type { LiveLogSubscriber } from "./chainSync";
 import type { BackendConfig } from "./config";
@@ -16,6 +18,10 @@ const planetDefenseCountChangedTopic = "0xe861e6f62777a3f6ea372d2892ead2d43e27d7
 const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
+const referralInviteWindowActivatedTopic = "0xd51c9643dafa95fcfa30d65f2b6576bc03873e2630d73fc523daf87a7158d589";
+const referralInviteRedeemedTopic = "0xf0e76a5aa6e423f978c7616fd6933b5d376a32654fc67c6fad0afdbc744ccce1";
+const referralRewardClaimedTopic = "0x55b0859d9094fa40dfdcbcdd82c0d785132f6a627b6083e228d6bddb5e498558";
+const referralAddress = "0x4444444444444444444444444444444444444444" as const;
 
 function topicWord(value: bigint): string {
   return `0x${value.toString(16).padStart(64, "0")}`;
@@ -77,8 +83,10 @@ class MockBackfiller {
   logsError: Error | null = null;
   failoverReasons: string[] = [];
   ranges: Array<{ from: bigint; to: bigint | "latest" }> = [];
+  referralRanges: Array<{ from: bigint; to: bigint | "latest" }> = [];
   headCalls = 0;
   logsFor: (from: bigint, to: bigint | "latest") => TestLog[];
+  referralLogsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => [];
 
   constructor(head: bigint, logsFor: (from: bigint, to: bigint | "latest") => TestLog[] = () => []) {
     this.head = head;
@@ -95,6 +103,12 @@ class MockBackfiller {
     this.ranges.push({ from, to });
     if (this.logsError) throw this.logsError;
     return this.logsFor(from, to);
+  }
+
+  async listReferralLogs(from: bigint, to: bigint | "latest" = "latest"): Promise<RpcLog[]> {
+    this.referralRanges.push({ from, to });
+    if (this.logsError) throw this.logsError;
+    return this.referralLogsFor(from, to);
   }
 
   failoverRpc(reason: string): boolean {
@@ -142,6 +156,41 @@ function planetStartedLog(block: string, planetId: bigint, tx: string): RpcLog {
     topics: [planetStartedTopic, ownerTopic(player), topicWord(planetId)],
     data: abiWords(2n, 44n, 9n, 211n, 1n)
   };
+}
+
+function referralMigrationLogs(): TestLog[] {
+  const invitee = "0x5555555555555555555555555555555555555555";
+  const codeHash = keccak256(toHex("borodutch"));
+  const commitment = `0x${"12".repeat(32)}`;
+  return [
+    {
+      address: referralAddress,
+      blockNumber: "0x78",
+      transactionHash: `0x${"21".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [referralInviteWindowActivatedTopic, ownerTopic(player), codeHash, commitment],
+      data: encodeAbiParameters(
+        parseAbiParameters("string,uint64,uint64,bool"),
+        ["borodutch", 1_783_526_400n, 1_783_612_800n, true]
+      )
+    },
+    {
+      address: referralAddress,
+      blockNumber: "0x79",
+      transactionHash: `0x${"22".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [referralInviteRedeemedTopic, ownerTopic(player), ownerTopic(invitee), commitment],
+      data: abiWords(25_000_000_000_000_000n, 0n, 1n, 1_783_526_500n)
+    },
+    {
+      address: referralAddress,
+      blockNumber: "0x7a",
+      transactionHash: `0x${"23".repeat(32)}`,
+      logIndex: "0x0",
+      topics: [referralRewardClaimedTopic, ownerTopic(player), ownerTopic(invitee), commitment],
+      data: abiWords(BigInt(player), 25_000_000_000_000_000n, 1_783_526_600n)
+    }
+  ];
 }
 
 describe("ChainSyncService (polling)", () => {
@@ -586,6 +635,152 @@ describe("ChainSyncService (polling)", () => {
 
     expect(backfiller.ranges).toEqual([{ from: 0x181n, to: 0x182n }]);
     expect(indexer.snapshot().indexedPlanets).toBe(2);
+    service.stop();
+  });
+
+  test("backfills a replacement referral contract before the shared cursor and persists an idempotent restart marker", async () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents(): Promise<SettledPlanetEvent[]> { return []; }
+    };
+    const indexer = new SettlementIndexer(reader, 100n, { database });
+    indexer.applyLog({
+      ...planetStartedLog("0xb4", 7n, `0x${"11".repeat(32)}`),
+      logIndex: "0x0"
+    });
+    database.query(`
+      INSERT INTO indexed_referral_claims
+        (event_id, owner, commitment, transaction_hash, block_number, event_json)
+      VALUES (?, lower(?), lower(?), lower(?), ?, ?)
+    `).run(
+      "legacy-code-claim",
+      player,
+      `0x${"99".repeat(32)}`,
+      `0x${"98".repeat(32)}`,
+      "110",
+      JSON.stringify({
+        eventName: "ReferralCodeClaimed",
+        inviter: player,
+        commitment: `0x${"99".repeat(32)}`,
+        transactionHash: `0x${"98".repeat(32)}`,
+        blockNumber: "110"
+      })
+    );
+
+    const referralConfig: BackendConfig = {
+      ...config,
+      referralIndexFromBlock: 112n,
+      referralSystemAddress: referralAddress
+    };
+    const backfiller = new MockBackfiller(182n);
+    backfiller.referralLogsFor = () => referralMigrationLogs();
+    const service = new ChainSyncService(referralConfig, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(backfiller.referralRanges).toEqual([{ from: 112n, to: 182n }]);
+    expect(backfiller.ranges).toEqual([{ from: 181n, to: 182n }]);
+    expect(indexer.referralClaims(player)).toHaveLength(1);
+    expect(indexer.referralClaims(player)[0]).toMatchObject({ code: "borodutch", migrated: true });
+    expect(indexer.referralRedemptionsForInviter(player)).toHaveLength(1);
+    expect(indexer.referralRewardClaimsForInviter(player)).toHaveLength(1);
+    expect(service.snapshot().referralHistoryBackfill).toMatchObject({
+      contractAddress: referralAddress,
+      fromBlock: "112",
+      inProgress: false,
+      lastError: null,
+      throughBlock: "182"
+    });
+    service.stop();
+
+    const restartedIndexer = new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    const restartBackfiller = new MockBackfiller(182n);
+    restartBackfiller.referralLogsFor = () => referralMigrationLogs();
+    const restarted = new ChainSyncService(referralConfig, restartedIndexer, { logBackfiller: restartBackfiller });
+    await restarted.poll();
+    expect(restartBackfiller.referralRanges).toEqual([]);
+    expect(restartedIndexer.referralClaims(player)).toHaveLength(1);
+    restarted.stop();
+
+    // Simulate an interrupted completion marker write: re-entry replays the same migration batch but
+    // txHash:logIndex idempotency keeps every canonical projection at exactly one row.
+    database.query("DELETE FROM indexer_metadata WHERE key = 'referralHistoryBackfillV1'").run();
+    const retryBackfiller = new MockBackfiller(182n);
+    retryBackfiller.referralLogsFor = () => referralMigrationLogs();
+    const retry = new ChainSyncService(referralConfig, restartedIndexer, { logBackfiller: retryBackfiller });
+    await retry.poll();
+    expect(retryBackfiller.referralRanges).toEqual([{ from: 112n, to: 182n }]);
+    expect(restartedIndexer.referralClaims(player)).toHaveLength(1);
+    expect(restartedIndexer.referralRedemptionsForInviter(player)).toHaveLength(1);
+    expect(restartedIndexer.referralRewardClaimsForInviter(player)).toHaveLength(1);
+    retry.stop();
+  });
+
+  test("re-runs the bounded referral history gate when the configured referral address changes", async () => {
+    const indexer = makeIndexer();
+    indexer.recordReferralHistoryBackfill(referralAddress, 112n, 150n);
+    const replacementAddress = "0x6666666666666666666666666666666666666666" as const;
+    const replacementConfig: BackendConfig = {
+      ...config,
+      referralIndexFromBlock: 140n,
+      referralSystemAddress: replacementAddress
+    };
+    const backfiller = new MockBackfiller(182n);
+    const logs = referralMigrationLogs().map((log) => ({ ...log, address: replacementAddress }));
+    backfiller.referralLogsFor = () => logs;
+    const service = new ChainSyncService(replacementConfig, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(backfiller.referralRanges).toEqual([{ from: 140n, to: 182n }]);
+    expect(indexer.referralClaims(player)).toHaveLength(1);
+    expect(indexer.referralHistoryBackfillStatus(replacementAddress, 140n)).toMatchObject({
+      required: false,
+      marker: { contractAddress: replacementAddress, fromBlock: "140", throughBlock: "182" }
+    });
+    service.stop();
+  });
+
+  test("keeps readiness disconnected and retries when referral history backfill fails", async () => {
+    const indexer = makeIndexer();
+    const referralConfig: BackendConfig = {
+      ...config,
+      referralIndexFromBlock: 112n,
+      referralSystemAddress: referralAddress
+    };
+    const backfiller = new MockBackfiller(182n);
+    backfiller.logsError = new Error("replacement referral history unavailable");
+    const service = new ChainSyncService(referralConfig, indexer, { logBackfiller: backfiller });
+
+    await service.poll();
+
+    expect(service.snapshot()).toMatchObject({
+      connected: false,
+      lastError: "replacement referral history unavailable",
+      referralHistoryBackfill: {
+        inProgress: false,
+        lastError: "replacement referral history unavailable",
+        throughBlock: null
+      }
+    });
+    expect(indexer.referralHistoryBackfillStatus(referralAddress, 112n).required).toBe(true);
+
+    backfiller.logsError = null;
+    backfiller.referralLogsFor = () => referralMigrationLogs();
+    await service.poll();
+
+    expect(service.snapshot()).toMatchObject({
+      connected: true,
+      lastError: null,
+      referralHistoryBackfill: { inProgress: false, lastError: null, throughBlock: "182" }
+    });
+    expect(backfiller.referralRanges).toEqual([
+      { from: 112n, to: 182n },
+      { from: 112n, to: 182n }
+    ]);
+    expect(indexer.referralClaims(player)).toHaveLength(1);
     service.stop();
   });
 

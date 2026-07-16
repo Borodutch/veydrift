@@ -95,12 +95,12 @@ export type SettlementTransactionOptions = {
 
 export type ReferralInviteSummary = {
   claimedAt: string;
-  code: string | null;
+  code: string;
   codeHash: string;
   commitment: string;
   expired: boolean;
   expiresAt: string;
-  link: string | null;
+  link: string;
   nextRedemptionAt: string | null;
   owner: string;
   redemptionCount: number;
@@ -162,7 +162,7 @@ export type ReferralRedemption = {
   v: number;
 };
 
-export type ReferralWalletAction = "dashboard" | "claim-transaction";
+export type ReferralWalletAction = "claim-transaction";
 
 type TransactionRequest = {
   from: string;
@@ -1371,6 +1371,9 @@ export const CONTRACT_REJECTED_NO_REASON_MESSAGE =
   "The game contract rejected this transaction, but the wallet did not provide a specific reason. Refresh game state and retry, or choose a different action if the state changed.";
 export const GAME_BACKEND_UNAVAILABLE_MESSAGE =
   GAME_UNAVAILABLE_MESSAGE;
+export const REFERRAL_CODE_ALREADY_OWNED_REVERT_SELECTOR = "0xe1c8233f";
+export const REFERRAL_CODE_FRONT_RUN_MESSAGE =
+  "Another player claimed this invite code before your transaction completed. Choose a different code and try again.";
 
 export function isGameBackendUnavailableMessage(message: string | undefined): boolean {
   return typeof message === "string" && (
@@ -1416,6 +1419,13 @@ export function walletRequestErrorMessage(error: unknown): string {
   }
 
   return message;
+}
+
+export function referralClaimErrorMessage(error: unknown): string {
+  if (revertSelector(error) === REFERRAL_CODE_ALREADY_OWNED_REVERT_SELECTOR) {
+    return REFERRAL_CODE_FRONT_RUN_MESSAGE;
+  }
+  return walletRequestErrorMessage(error);
 }
 
 export function walletRecoveryActionMessage(message: string | undefined): string | undefined {
@@ -3597,18 +3607,6 @@ export async function fetchReferralDashboard(apiUrl: string, wallet: string): Pr
     wallet,
     "referrals",
     "Referral invites"
-  );
-}
-
-export async function fetchPrivateReferralDashboard(
-  apiUrl: string,
-  wallet: string,
-  signature: string
-): Promise<ReferralDashboard> {
-  return fetchGameApiMutation<ReferralDashboard>(
-    `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals`,
-    "Private referral invites",
-    { signature }
   );
 }
 

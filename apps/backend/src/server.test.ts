@@ -786,6 +786,7 @@ describe("chain-sync log backfill wiring", () => {
     const backfiller = deriveLogBackfiller(reader);
     expect(backfiller).toBeDefined();
     expect(typeof backfiller?.listContractLogs).toBe("function");
+    expect(typeof backfiller?.listReferralLogs).toBe("function");
     expect(typeof backfiller?.failoverRpc).toBe("function");
     expect(typeof backfiller?.rpcMetrics).toBe("function");
   });
@@ -829,6 +830,7 @@ describe("Veydrift backend", () => {
         migrationContractConfigured: false,
         randomnessEngineConfigured: false,
         randomnessCommitterConfigured: false,
+        referralIndexFromBlock: "0",
         referralSignerConfigured: false,
         gameContractConfigured: false,
         qaSyntheticStationedDefenders: false

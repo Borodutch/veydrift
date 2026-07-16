@@ -580,36 +580,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           wallet,
           indexer,
           startPriceWei,
-          referralConfigurationReady(loaded.config, startPriceWei),
-          false
-        ), {
-          headers: corsHeaders
-        });
-      } catch (error) {
-        return errorResponse(error, 400);
-      }
-    }
-
-    if (request.method === "POST" && url.pathname.match(/^\/wallet\/[^/]+\/referrals$/)) {
-      const wallet = decodeURIComponent(url.pathname.split("/")[2] ?? "");
-      try {
-        assertAddress(wallet);
-        const body = await readJsonBody(request);
-        if (!await verifyReferralWalletSignature({
-          action: "dashboard",
-          signature: body?.signature,
-          wallet
-        })) {
-          return invalidReferralSignatureResponse();
-        }
-        if (!indexer) return indexedReadNotReadyResponse("private referral dashboard", indexer, { wallet });
-        const startPriceWei = indexer.currentStartPriceWei();
-        return Response.json(referralStore.dashboard(
-          wallet,
-          indexer,
-          startPriceWei,
-          referralConfigurationReady(loaded.config, startPriceWei),
-          true
+          referralConfigurationReady(loaded.config, startPriceWei)
         ), {
           headers: corsHeaders
         });
@@ -697,8 +668,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           wallet,
           indexer,
           startPriceWei,
-          referralConfigurationReady(loaded.config, startPriceWei),
-          true
+          referralConfigurationReady(loaded.config, startPriceWei)
         ), {
           headers: corsHeaders
         });
@@ -1561,6 +1531,7 @@ export function deriveLogBackfiller(
       failoverRpc?: (reason: string) => boolean;
       getHeadBlock: () => Promise<bigint>;
       listContractLogs: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
+      listReferralLogs?: (fromBlock: bigint, toBlock?: bigint | "latest") => Promise<RpcLog[]>;
       rpcMetrics?: () => unknown;
     }
   | undefined {
@@ -1573,6 +1544,9 @@ export function deriveLogBackfiller(
       ...(typeof reader.failoverRpc === "function" ? { failoverRpc: reader.failoverRpc.bind(reader) } : {}),
       getHeadBlock: reader.getBlockNumber.bind(reader),
       listContractLogs: reader.listContractLogs.bind(reader),
+      ...(typeof reader.listReferralLogs === "function"
+        ? { listReferralLogs: reader.listReferralLogs.bind(reader) }
+        : {}),
       ...(typeof reader.rpcMetrics === "function" ? { rpcMetrics: reader.rpcMetrics.bind(reader) } : {})
     };
   }

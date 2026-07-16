@@ -131,6 +131,17 @@ reviewed valid digest and hash-only count/digest is exactly 10/the reviewed hash
    indexed ownership/window/quota state against contract views.
 5. Deploy the frontend and run `scripts/veydrift-postdeploy-smoke.mjs` before bounded Mimo QA.
 
+For step 4, set `VEYDRIFT_REFERRAL_INDEX_FROM_BLOCK` on the Easypanel-managed backend service to the
+replacement referral deployment block (or another reviewed safe boundary at or before its first
+canonical event). For the reviewed Base-mainnet migration, block `48689448` is an inclusive safe
+boundary because it contains the canonical migration batch. On the writer's first successful poll,
+the backend scans only the configured referral address and only `ReferralInviteWindowActivated`,
+`ReferralInviteRedeemed`, and `ReferralRewardClaimed` topics through the current head. It persists an
+address/boundary completion marker after every log is applied; the marker makes restarts cheap, while
+an address or boundary change deliberately reruns the idempotent scan. Inspect
+`chainSync.referralHistoryBackfill` on `/health` for the completed range or a readiness-blocking error.
+Do not delete or rebuild the shared index database for this repair.
+
 If any pre-switch verification fails, keep the existing game module/referral address and discard the
 unreferenced replacement deployment. After the game pointer changes, rollback uses the previous
 first-planet settlement module/referral address through the normal `UpgradeGame.s.sol` owner path;

@@ -87,6 +87,27 @@ describe("backend config", () => {
     expect(result.config.indexDbPath).toBe("/tmp/veydrift-contract-state.sqlite");
   });
 
+  test("uses a referral-specific history boundary and defaults it to the shared index boundary", () => {
+    const defaults = loadBackendConfig({
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_INDEX_FROM_BLOCK: "100",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    });
+    expect(defaults.problems).toEqual([]);
+    expect(defaults.config.referralIndexFromBlock).toBe(100n);
+    expect(safeConfigSummary(defaults.config).referralIndexFromBlock).toBe("100");
+
+    const replacement = loadBackendConfig({
+      VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
+      VEYDRIFT_INDEX_FROM_BLOCK: "100",
+      VEYDRIFT_REFERRAL_INDEX_FROM_BLOCK: "48689000",
+      VEYDRIFT_RPC_URL: "https://example.invalid/rpc"
+    });
+    expect(replacement.problems).toEqual([]);
+    expect(replacement.config.referralIndexFromBlock).toBe(48_689_000n);
+    expect(safeConfigSummary(replacement.config).referralIndexFromBlock).toBe("48689000");
+  });
+
   test("accepts a static settlement start price for RPC-free funding reads", () => {
     const result = loadBackendConfig({
       VEYDRIFT_GAME_CONTRACT_ADDRESS: "0x3333333333333333333333333333333333333333",
