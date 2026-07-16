@@ -4,14 +4,38 @@ import {
   referralClaimCodeAfterDashboard,
   referralInviteActionAvailability,
   referralRejectedRequestMessage,
-  referralSettlementBlocker
+  referralSettlementBlocker,
+  referralValidationMessage,
 } from "../src/FirstPlanetSettlementApp";
 import { referralCodeForLanding } from "../src/referralStorage";
 import {
   REFERRAL_CODE_FRONT_RUN_MESSAGE,
   referralClaimErrorMessage,
   type ReferralDashboard,
+  type ReferralResolution,
 } from "../src/walletFlow";
+
+function referralResolution(
+  status: ReferralResolution["status"],
+  remainingRedemptions: number,
+): ReferralResolution {
+  return {
+    codeHash: `0x${"11".repeat(32)}`,
+    commitment: `0x${"22".repeat(32)}`,
+    expiresAt: "2026-07-16T19:01:33.000Z",
+    inviterRewardWei: "6000000000000000",
+    message: `Referral ${status}.`,
+    nextRedemptionAt: "2026-07-17T19:01:33.000Z",
+    normalizedCode: "borodutch",
+    owner: "0xbf74483db914192bb0a9577f3d8fb29a6d4c08ee",
+    ownership: "reserved",
+    remainingRedemptions,
+    renewable: false,
+    startPriceWei: "12000000000000000",
+    status,
+    valid: status === "active",
+  };
+}
 
 function referralDashboard(input: {
   code: string;
@@ -51,6 +75,26 @@ function referralDashboard(input: {
 }
 
 describe("referral hardening", () => {
+  test("shows only the remaining-use count for active and exhausted invite codes", () => {
+    expect(referralValidationMessage(referralResolution("active", 2))).toBe("2/3 uses left");
+    expect(referralValidationMessage(referralResolution("exhausted", 0))).toBe("0/3 uses left");
+  });
+
+  test("preserves distinct validation help for other invite-code states", () => {
+    expect(referralValidationMessage(referralResolution("inactive", 0)))
+      .toBe("Inactive · this permanently owned code must be renewed by its owner.");
+    expect(referralValidationMessage(referralResolution("self_invite", 0)))
+      .toBe("Self-invite blocked on-chain.");
+    expect(referralValidationMessage(referralResolution("already_redeemed", 0)))
+      .toBe("This wallet already used a referral invite.");
+    expect(referralValidationMessage(referralResolution("available", 3)))
+      .toBe("Available but not active · no referral benefit will be claimed.");
+    expect(referralValidationMessage(referralResolution("unavailable", 0)))
+      .toBe("Current on-chain price is unavailable; referral settlement is paused.");
+    expect(referralValidationMessage(referralResolution("invalid", 0)))
+      .toBe("Invalid invite code · no referral benefit will be claimed.");
+  });
+
   test("blocks settlement until the backend reports an active invite", () => {
     expect(referralSettlementBlocker("borodutch", { status: "idle" })).toContain("still loading");
     expect(referralSettlementBlocker("borodutch", { status: "loading" })).toContain("still loading");
