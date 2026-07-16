@@ -8,25 +8,25 @@ import {
 } from "../src/referralShare";
 
 describe("referral X sharing", () => {
-  class TestClipboardItem {
-    constructor(readonly items: Record<string, Blob>) {}
-  }
+  const inviteLink = "https://veydrift.com/?ref=borodutch";
 
-  test("builds a code-specific OG image and a link-free X intent", () => {
-    expect(referralOgImageUrl("https://veydrift.com/?ref=borodutch", "Borodutch"))
+  test("builds a code-specific OG image and an encoded URL-bearing X intent", () => {
+    expect(referralOgImageUrl(inviteLink, "Borodutch"))
       .toBe("https://veydrift.com/og/referral/borodutch.png");
     expect(referralXPostText("Borodutch")).toBe("Join me in Veydrift — invite code: borodutch");
 
-    const intent = referralXIntentUrl("Borodutch");
-    expect(intent).toContain("twitter.com/intent/tweet?text=");
-    expect(intent).not.toContain("url=");
-    expect(intent).not.toContain("veydrift.com");
+    const intent = new URL(referralXIntentUrl("Borodutch", inviteLink));
+    expect(intent.origin).toBe("https://twitter.com");
+    expect(intent.pathname).toBe("/intent/tweet");
+    expect(intent.searchParams.get("text")).toBe("Join me in Veydrift — invite code: borodutch");
+    expect(intent.searchParams.get("url")).toBe(inviteLink);
+    expect(referralXIntentUrl("Borodutch", inviteLink)).toContain(encodeURIComponent(inviteLink));
   });
 
   test("downloads a validated PNG as the share attachment", async () => {
     const requested: string[] = [];
     const image = await fetchReferralShareImage(
-      "https://veydrift.com/?ref=borodutch",
+      inviteLink,
       "borodutch",
       (async (input) => {
         requested.push(String(input));
@@ -39,10 +39,10 @@ describe("referral X sharing", () => {
     expect(image.type).toBe("image/png");
   });
 
-  test("hands the image and code to native share without a URL", async () => {
+  test("preserves native file sharing when the PNG is supported", async () => {
     const shared: ShareData[] = [];
     const image = new File(["png"], "invite.png", { type: "image/png" });
-    const result = await shareReferralOnX("borodutch", image, {
+    const result = await shareReferralOnX("borodutch", inviteLink, image, {
       canShare: (data) => Boolean(data?.files?.length),
       share: async (data) => { shared.push(data ?? {}); },
     }, {});
@@ -54,44 +54,34 @@ describe("referral X sharing", () => {
     expect(shared[0]).not.toHaveProperty("url");
   });
 
-  test("opens a link-free X composer when file sharing is unavailable", async () => {
+  test("opens an X composer with invite text and the exact referral URL when file sharing is unavailable", async () => {
     const opened: string[] = [];
-    const written: ClipboardItem[][] = [];
-    const order: string[] = [];
     const image = new File(["png"], "invite.png", { type: "image/png" });
-    const result = await shareReferralOnX("borodutch", image, {
-      clipboard: {
-        write: async (items) => {
-          order.push("clipboard");
-          written.push(items);
-        },
-      },
-    }, {
+    const result = await shareReferralOnX("borodutch", inviteLink, image, {}, {
       open: (url) => {
-        order.push("open");
         opened.push(String(url));
         return null;
       },
-    }, TestClipboardItem as unknown as typeof ClipboardItem);
+    });
 
-    expect(result).toBe("copied");
-    expect(order).toEqual(["clipboard", "open"]);
-    expect(opened).toEqual([referralXIntentUrl("borodutch")]);
-    expect(written).toHaveLength(1);
-    expect((written[0]?.[0] as unknown as TestClipboardItem).items["image/png"]).toBe(image);
+    expect(result).toBe("opened");
+    expect(opened).toEqual([referralXIntentUrl("borodutch", inviteLink)]);
   });
 
-  test("downloads only when native share and clipboard image writes are unavailable", async () => {
+  test("keeps the URL fallback usable when PNG prefetch fails", async () => {
     const opened: string[] = [];
-    const image = new File(["png"], "invite.png", { type: "image/png" });
-    const result = await shareReferralOnX("borodutch", image, {}, {
+    await expect(fetchReferralShareImage(inviteLink, "borodutch", (async () => (
+      new Response("unavailable", { status: 503 })
+    )) as typeof fetch)).rejects.toThrow("Invite image request failed (503).");
+
+    const result = await shareReferralOnX("borodutch", inviteLink, undefined, {}, {
       open: (url) => {
         opened.push(String(url));
         return null;
       },
-    }, undefined);
+    });
 
-    expect(result).toBe("downloaded");
-    expect(opened).toEqual([referralXIntentUrl("borodutch")]);
+    expect(result).toBe("opened");
+    expect(opened).toEqual([referralXIntentUrl("borodutch", inviteLink)]);
   });
 });

@@ -1497,7 +1497,7 @@ function ReferralProgramPanel({
   const claiming = state.status === "claiming";
   const busy = claiming;
   const [xShareImage, setXShareImage] = useState<File | null>(null);
-  const [xShareState, setXShareState] = useState<"copied" | "downloaded" | "error" | "idle" | "preparing" | "ready" | "shared" | "sharing">("idle");
+  const [xShareState, setXShareState] = useState<"idle" | "sharing">("idle");
   const claimCodeValid = /^[A-Za-z0-9_-]{1,24}$/.test(claimCode.trim());
   const inspected = inspection.status === "resolved" ? inspection.resolution : undefined;
   const selectedCodeClaimable = inspected?.ownership === "available"
@@ -1527,27 +1527,24 @@ function ReferralProgramPanel({
       return () => { cancelled = true; };
     }
 
-    setXShareState("preparing");
     void fetchReferralShareImage(invite.link, invite.code)
       .then((image) => {
         if (cancelled) return;
         setXShareImage(image);
-        setXShareState("ready");
       })
-      .catch(() => {
-        if (!cancelled) setXShareState("error");
-      });
+      .catch(() => undefined);
     return () => { cancelled = true; };
   }, [inviteActive, invite?.code, invite?.link]);
 
   async function shareInviteOnX() {
-    if (!invite || !xShareImage) return;
+    if (!invite) return;
     setXShareState("sharing");
     try {
-      const result = await shareReferralOnX(invite.code, xShareImage);
-      setXShareState(result);
-    } catch (error) {
-      setXShareState(isUserRejected(error) ? "ready" : "error");
+      await shareReferralOnX(invite.code, invite.link, xShareImage);
+    } catch {
+      // Closing or rejecting the native share sheet leaves the URL share action available.
+    } finally {
+      setXShareState("idle");
     }
   }
 
@@ -1665,24 +1662,12 @@ function ReferralProgramPanel({
                 </button>
                 <button
                   className="referral-copy-button"
-                  disabled={!xShareImage || xShareState === "sharing"}
+                  disabled={xShareState === "sharing"}
                   onClick={() => void shareInviteOnX()}
                   type="button"
                 >
                   <Share2 aria-hidden="true" size={14} />
-                  {xShareState === "preparing"
-                    ? "Preparing X image"
-                    : xShareState === "sharing"
-                      ? "Opening share"
-                      : xShareState === "copied"
-                        ? "Paste image in X"
-                        : xShareState === "downloaded"
-                          ? "Attach image in X"
-                          : xShareState === "shared"
-                            ? "Shared"
-                            : xShareState === "error"
-                              ? "Retry share on X"
-                              : "Share invite on X"}
+                  {xShareState === "sharing" ? "Opening X" : "Share on X"}
                 </button>
               </div>
             ) : null}
