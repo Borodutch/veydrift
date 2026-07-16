@@ -173,6 +173,8 @@ contract VeydriftCombatReferenceParityTest is Test {
         assertEq(uint8(expected.outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin));
         assertGt(expected.rounds, 0);
         assertEq(expected.defenderShips[uint8(Ship.Crawler)], 0);
+        // The defense was cleared during combat, so it cannot force a draw. Its singleton
+        // post-combat repair roll fails for this seed.
         assertEq(expected.defenderDefenses[uint8(Defense.RocketLauncher)], 0);
     }
 

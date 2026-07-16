@@ -3,6 +3,7 @@ import type { LucideIcon } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { descriptionLinkParts } from "../descriptionLinks";
+import { formatDurationUntil } from "../durationFormat";
 import { formatUserTimestamp } from "../timestampFormat";
 import type { AllianceDiplomacyStatus, AllianceRole, ChainAllianceState, HighscoreEntry, WalletPlanetsResponse } from "../walletFlow";
 import { fetchWalletPlanets, shortAddress } from "../walletFlow";
@@ -14,6 +15,7 @@ import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailab
 export const allianceRosterPageSize = 10;
 export const allianceDirectoryPageSize = 10;
 export const warMinimumDurationCopy = "Once declared, a war cannot be ended for 48 hours.";
+export const warMinimumDurationSeconds = 48 * 60 * 60;
 
 export function allianceRefreshButtonState(loading: boolean): { disabled: boolean; label: "Refresh" | "Refreshing" } {
   return refreshButtonState(loading);
@@ -930,6 +932,13 @@ function WarSection({
   disabled: boolean;
   onSetDiplomacy: (otherAllianceId: string, status: AllianceDiplomacyStatus) => void;
 }) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (activeWars.length === 0) return;
+    const interval = window.setInterval(() => setNowMs(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, [activeWars.length]);
+
   return (
     <div className="rounded border border-white/10 bg-black/20 p-3">
       <div className="flex items-center justify-between gap-2">
@@ -944,7 +953,9 @@ function WarSection({
             const endAction = allianceWarEndActionState({
               canEndWar,
               currentAllianceId,
+              declaredAt: war.declaredAt,
               initiatedByAllianceId: war.initiatedByAllianceId,
+              nowSeconds: Math.floor(nowMs / 1_000),
             });
             const disabledReasonId = endAction.reason ? `alliance-war-${war.otherAllianceId}-end-reason` : undefined;
             return (
@@ -956,7 +967,7 @@ function WarSection({
                     </span>
                     <span className="truncate text-sm font-semibold text-white">{alliance?.name ?? `Alliance #${war.otherAllianceId}`}</span>
                   </div>
-                  <p className="mt-1 text-xs text-slate-400">Attack score protection and bashing limits are bypassed for this relationship. {warMinimumDurationCopy}</p>
+                  <p className="mt-1 text-xs text-slate-400">Reciprocal war: attack score protection and bashing limits are bypassed for both alliances. {warMinimumDurationCopy}</p>
                 </div>
                 {endAction.visible ? (
                   <div className="group relative justify-self-start sm:justify-self-end">
@@ -966,7 +977,7 @@ function WarSection({
                       className={`rounded border border-white/10 px-3 py-2 text-sm font-semibold text-slate-100 ${
                         endAction.enabled ? "hover:bg-white/10" : "cursor-not-allowed opacity-50"
                       } disabled:cursor-not-allowed disabled:opacity-50`}
-                      disabled={disabled}
+                      disabled={disabled || !endAction.enabled}
                       onClick={() => {
                         if (!endAction.enabled) return;
                         onSetDiplomacy(war.otherAllianceId, "none");
@@ -1001,22 +1012,36 @@ function WarSection({
 export function allianceWarEndActionState({
   canEndWar,
   currentAllianceId,
+  declaredAt,
   initiatedByAllianceId,
+  nowSeconds = Math.floor(Date.now() / 1_000),
 }: {
   canEndWar: boolean;
   currentAllianceId: string | null;
+  declaredAt: string | null | undefined;
   initiatedByAllianceId: string | null | undefined;
+  nowSeconds?: number;
 }): { visible: boolean; enabled: boolean; reason: string | null } {
   if (!canEndWar) return { visible: false, enabled: false, reason: null };
   if (!currentAllianceId || !initiatedByAllianceId) {
     return { visible: true, enabled: false, reason: "Only the alliance that declared this war can end it." };
   }
-  const enabled = currentAllianceId === initiatedByAllianceId;
-  return {
-    visible: true,
-    enabled,
-    reason: enabled ? null : "Only the alliance that declared this war can end it.",
-  };
+  if (currentAllianceId !== initiatedByAllianceId) {
+    return { visible: true, enabled: false, reason: "Only the alliance that declared this war can end it." };
+  }
+  const declaredAtSeconds = Number(declaredAt);
+  if (!Number.isFinite(declaredAtSeconds) || declaredAtSeconds <= 0) {
+    return { visible: true, enabled: false, reason: "War declaration time is unavailable; End War remains locked." };
+  }
+  const unlocksAtSeconds = declaredAtSeconds + warMinimumDurationSeconds;
+  if (nowSeconds < unlocksAtSeconds) {
+    return {
+      visible: true,
+      enabled: false,
+      reason: `War can be ended in ${formatDurationUntil(unlocksAtSeconds * 1_000, nowSeconds * 1_000)}.`,
+    };
+  }
+  return { visible: true, enabled: true, reason: null };
 }
 
 export function AllianceSummary({

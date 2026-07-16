@@ -52,6 +52,7 @@ const fleetMissionCargoTopic = "0x3daa6311ecdadad6781f70e5d285e7150f9dc165db88d2
 const fleetMissionShipsTopic = "0xf581cbe97357884794500d80286cfbe823fed3b5d77446e477aa694ce89fc82d";
 const fleetMissionBodiesTopic = "0xfa464e2180f08e3e4d8c4247566d0616a5e1ab845d1678c47fedae6d44e9c502";
 const defenseHoldStationedTopic = "0x1183ab32cc2efce96b8c0956b35dd1b46c594234a5717fd810d8cc569a193a47";
+const defenseHoldEndedTopic = "0xf72983c656a87e172935581e9c19f22826c62a2c4d552c6dd217c498a9d88586";
 const fleetMissionReturnExposedTopic = "0x27a083519451f4434cd1f93497fb93689a906d3b982a3f127cb236aa24356afa";
 const fleetMissionReturnedTopic = "0xbb4a50257c10524783e403a4e0db9c4c3e9378c2e398ec5de34281be1aa97b06";
 const fleetMissionResolvedTopic = "0xcb928b431ffcdbe55fddc2bf06967951efb3dfe87d14bc436d546fdbbee9cb2d";
@@ -226,6 +227,38 @@ describe("SettlementIndexer", () => {
       hasFirstPlanet: true,
       homePlanetId: planet.planetId
     });
+  });
+
+  test("narrowly backfills historical DefenseHoldEnded logs even when broad startup backfill is disabled", () => {
+    const database = new Database(":memory:");
+    const reader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    };
+    new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+    const eventId = "legacy-defense-hold-ended";
+    const log = {
+      blockNumber: "0x70",
+      transactionHash: `0x${"71".repeat(32)}`,
+      logIndex: "0x2",
+      removed: false,
+      topics: [defenseHoldEndedTopic, topic(2847n), topic(236n)],
+      data: abiWords(5n)
+    };
+    database.query(`
+      INSERT INTO indexed_event_logs (event_id, transaction_hash, log_index, block_number, removed, event_json, received_at)
+      VALUES (?, ?, ?, ?, 0, ?, ?)
+    `).run(eventId, log.transactionHash, log.logIndex, "112", JSON.stringify(log), new Date().toISOString());
+    database.query("DELETE FROM indexer_metadata WHERE key = 'defenseHoldEndedMissionEventsBackfilledV1'").run();
+
+    new SettlementIndexer(reader, 100n, { database, runStartupBackfill: false });
+
+    expect(database.query(`
+      SELECT event_kind, block_number
+      FROM indexed_mission_event_logs
+      WHERE event_id = ?
+    `).get(eventId)).toEqual({ event_kind: "fleet", block_number: "112" });
   });
 
   test("indexes canonical referral claim, payout, credit, and reward-claim events", () => {
@@ -3962,7 +3995,7 @@ describe("SettlementIndexer", () => {
     ]));
   });
 
-  test("keeps alliance diplomacy event rows in their on-chain direction only", () => {
+  test("projects one war declaration reciprocally with shared declarer metadata", () => {
     const rival = "0x3333333333333333333333333333333333333333" as Address;
     const indexer = new SettlementIndexer({
       async listSettledPlanetEvents() { return []; },
@@ -4012,8 +4045,16 @@ describe("SettlementIndexer", () => {
       data: abiWords(3n)
     });
 
-    expect(indexer.allianceState(player).activeWars).toEqual([]);
-    expect(indexer.allianceRelationship("1", "2")).toBe("none");
+    expect(indexer.allianceState(player).activeWars).toMatchObject([
+      {
+        allianceId: "1",
+        otherAllianceId: "2",
+        status: "war",
+        initiatedByAllianceId: "2",
+        declaredAt: String(0x69801c84)
+      }
+    ]);
+    expect(indexer.allianceRelationship("1", "2")).toBe("war");
     expect(indexer.allianceState(rival).activeWars).toMatchObject([
       {
         allianceId: "2",
@@ -4023,6 +4064,19 @@ describe("SettlementIndexer", () => {
       }
     ]);
     expect(indexer.allianceRelationship("2", "1")).toBe("war");
+
+    indexer.applyLog({
+      blockNumber: "0x95",
+      blockTimestamp: "0x69801c85",
+      transactionHash: "0xalliance-war-ended",
+      logIndex: "0x0",
+      topics: [allianceDiplomacyUpdatedTopic, topic(2n), topic(1n)],
+      data: abiWords(0n)
+    });
+    expect(indexer.allianceState(player).activeWars).toEqual([]);
+    expect(indexer.allianceState(rival).activeWars).toEqual([]);
+    expect(indexer.allianceRelationship("1", "2")).toBe("none");
+    expect(indexer.allianceRelationship("2", "1")).toBe("none");
   });
 
   test("transfers alliance ownership to an officer from event logs", () => {
@@ -4487,7 +4541,7 @@ describe("SettlementIndexer", () => {
     expect(db.query("SELECT COUNT(*) AS n FROM contract_alliance_diplomacy").get()).toEqual({ n: 0 });
   });
 
-  test("alliance-only seed repairs stale member counts and directed diplomacy without planet reads", async () => {
+  test("alliance-only seed repairs stale member counts and reciprocal war protection without planet reads", async () => {
     const db = new Database(":memory:");
     const owner = "0x3333333333333333333333333333333333333333" as Address;
     const rival = "0x4444444444444444444444444444444444444444" as Address;
@@ -4553,7 +4607,7 @@ describe("SettlementIndexer", () => {
     expect(db.query("SELECT alliance_id, other_alliance_id, status_id FROM contract_alliance_diplomacy ORDER BY alliance_id, other_alliance_id").all()).toEqual([
       { alliance_id: "37", other_alliance_id: "3", status_id: 3 }
     ]);
-    expect(indexer.allianceRelationship("3", "37")).toBe("none");
+    expect(indexer.allianceRelationship("3", "37")).toBe("war");
     expect(indexer.allianceRelationship("37", "3")).toBe("war");
   });
 
@@ -7613,7 +7667,8 @@ describe("SettlementIndexer", () => {
           { requester: applicant, requested_at: "1770003000" }
         ]);
         expect(repairedDb.query("SELECT alliance_id, other_alliance_id, status_id FROM contract_alliance_diplomacy ORDER BY alliance_id, other_alliance_id").all()).toEqual([
-          { alliance_id: "1", other_alliance_id: "2", status_id: 3 }
+          { alliance_id: "1", other_alliance_id: "2", status_id: 3 },
+          { alliance_id: "2", other_alliance_id: "1", status_id: 3 }
         ]);
       } finally {
         repairedDb.close();

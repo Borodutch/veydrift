@@ -864,8 +864,7 @@ library VeydriftCombatReferenceSimulator {
         returns (uint32)
     {
         if (destroyed == 0) return 0;
-        if (!VeydriftCatalog.isShieldDome(defense)) return (destroyed * 7) / 10;
-
+        if (destroyed > 1) return (destroyed * 7) / 10;
         return ((seed + uint8(defense)) % 10 < 7) ? 1 : 0;
     }
 

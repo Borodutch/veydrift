@@ -3419,7 +3419,7 @@ function defenderPlanetStateForReport(
   return {
     fleet: indexer.shipRows(planet.planetId).map(({ id, count }) => ({ id, count })).filter((row) => row.count > 0),
     defenses: indexer.defenseRows(planet.planetId).map(({ id, count }) => ({ id, count })).filter((row) => row.count > 0),
-    stationedDefenders: indexer.stationedDefendersForBattle(mission, report)
+    stationedDefenders: report.stationedDefenders ?? indexer.stationedDefendersForBattle(mission, report)
   };
 }
 

@@ -7082,6 +7082,8 @@ contract VeydriftGameTest is Test {
         assertEq(uint8(outcome), uint8(VeydriftGameStorage.BattleOutcome.AttackerWin));
         assertGt(rounds, 0);
         assertEq(game.shipCount(targetPlanetId, Ship.Crawler), 0);
+        // The attacker win proves the launcher was cleared during combat; its singleton
+        // post-combat repair roll fails for this seed.
         assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 0);
     }
 
@@ -7201,9 +7203,13 @@ contract VeydriftGameTest is Test {
         (, uint64 arrivalAt,,) = _fleetMission(missionId);
         vm.warp(arrivalAt);
         _fulfillAttackBattleRandomness(missionId, 2);
+        vm.recordLogs();
         game.resolveFleetMission(missionId);
 
-        assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 199);
+        // Unit-weighted targeting destroys one launcher (rather than the lone laser); the launcher
+        // then wins its post-combat repair roll and returns to the final count of 200.
+        assertTrue(_recordedDefenseTotalWas(targetPlanetId, Defense.RocketLauncher, 199));
+        assertEq(game.defenseCount(targetPlanetId, Defense.RocketLauncher), 200);
         assertEq(game.defenseCount(targetPlanetId, Defense.LightLaser), 1);
     }
 
@@ -9087,6 +9093,25 @@ contract VeydriftGameTest is Test {
             }
         }
         revert("AttackBattleResolved not recorded");
+    }
+
+    function _recordedDefenseTotalWas(uint256 planetId, Defense defense, uint32 expectedTotal)
+        internal
+        view
+        returns (bool)
+    {
+        Vm.Log[] memory entries = vm.getRecordedLogs();
+        bytes32 defenseCountTopic = keccak256("PlanetDefenseCountChanged(uint256,uint8,uint32)");
+        for (uint256 i = 0; i < entries.length; ++i) {
+            Vm.Log memory entry = entries[i];
+            if (
+                entry.emitter == address(game) && entry.topics.length == 3
+                    && entry.topics[0] == defenseCountTopic && uint256(entry.topics[1]) == planetId
+                    && uint256(entry.topics[2]) == uint8(defense)
+                    && abi.decode(entry.data, (uint32)) == expectedTotal
+            ) return true;
+        }
+        return false;
     }
 
     function _fulfillAttackBattleRandomness(uint256 missionId, uint256 randomWord) internal {
