@@ -234,7 +234,7 @@ function referralMeta(code = "") {
       ? `Use invite code ${inviteCode}. Eligibility and exact benefits are verified in-game before settlement.`
       : "Open this Veydrift invite. Referral eligibility and exact benefits are verified in-game before settlement.",
     status: inviteCode ? `CODE ${inviteCode}` : "INVITE LINK",
-    subtitle: inviteCode ? `Invite code: ${inviteCode}` : "Benefits verified in-game",
+    subtitle: inviteCode ? "" : "Benefits verified in-game",
     accent: "#5eead4",
     footer: "veydrift.com",
     commander: true,
@@ -649,6 +649,7 @@ function ogImageHeaders() {
 }
 
 export async function ogSvg(meta) {
+  const isReferral = meta.kind === "referral";
   const background = meta.kind === "referral"
     ? null
     : await assetDataUri(fallbackBackgroundAsset, 1200);
@@ -661,6 +662,16 @@ export async function ogSvg(meta) {
     ? await assetDataUri(commanderAsset, 860)
     : null;
   const planets = await Promise.all((meta.planetAssets ?? []).map((asset) => assetDataUri(asset, 600)));
+  const brandVisual = isReferral
+    ? ""
+    : `<text x="58" y="82" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="850" fill="#f8fbff">Veydrift</text>`;
+  const subtitleVisual = subtitle
+    ? `<text x="62" y="304" font-family="DejaVu Sans, Arial, sans-serif" font-size="40" font-weight="780" fill="#d8e2f1">${escapeXml(subtitle)}</text>`
+    : "";
+  const ruleY = isReferral ? 82 : 132;
+  const titleY = isReferral ? 192 : 238;
+  const statusBarY = isReferral ? 258 : 358;
+  const statusTextY = isReferral ? 286 : 386;
 
   const visual = meta.kind === "referral"
     ? `<image href="${planets[0] ?? ""}" x="704" y="18" width="488" height="488" preserveAspectRatio="xMidYMid meet"/>
@@ -719,12 +730,12 @@ export async function ogSvg(meta) {
   <rect width="1200" height="630" fill="url(#glow)"/>
   ${visual}
   <rect width="1200" height="630" fill="url(#shade)"/>
-  <text x="58" y="82" font-family="DejaVu Sans, Arial, sans-serif" font-size="24" font-weight="850" fill="#f8fbff">Veydrift</text>
-  <rect x="60" y="132" width="520" height="2" fill="url(#rule)"/>
-  <text x="58" y="238" font-family="DejaVu Sans, Arial, sans-serif" font-size="82" font-weight="900" fill="#f8fbff">${escapeXml(title)}</text>
-  <text x="62" y="304" font-family="DejaVu Sans, Arial, sans-serif" font-size="40" font-weight="780" fill="#d8e2f1">${escapeXml(subtitle)}</text>
-  <rect x="64" y="358" width="10" height="38" fill="${accent}"/>
-  <text x="92" y="386" font-family="DejaVu Sans, Arial, sans-serif" font-size="27" font-weight="850" fill="${accent}">${escapeXml(status)}</text>
+  ${brandVisual}
+  <rect x="60" y="${ruleY}" width="520" height="2" fill="url(#rule)"/>
+  <text x="58" y="${titleY}" font-family="DejaVu Sans, Arial, sans-serif" font-size="82" font-weight="900" fill="#f8fbff">${escapeXml(title)}</text>
+  ${subtitleVisual}
+  <rect x="64" y="${statusBarY}" width="10" height="38" fill="${accent}"/>
+  <text x="92" y="${statusTextY}" font-family="DejaVu Sans, Arial, sans-serif" font-size="27" font-weight="850" fill="${accent}">${escapeXml(status)}</text>
   ${footerVisual}
 </svg>`;
 }
