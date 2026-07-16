@@ -236,7 +236,7 @@ function referralMeta(code = "") {
     status: inviteCode ? `CODE ${inviteCode}` : "INVITE LINK",
     subtitle: inviteCode ? `Invite code: ${inviteCode}` : "Benefits verified in-game",
     accent: "#5eead4",
-    footer: inviteCode ? `veydrift.com/?ref=${inviteCode}` : "veydrift.com/invite",
+    footer: "veydrift.com",
     commander: true,
     planetAssets: [planetAssets["temperate-ocean"], planetAssets["crystal-violet"]],
   };
@@ -648,24 +648,25 @@ function ogImageHeaders() {
   };
 }
 
-async function ogSvg(meta) {
-  const background = await assetDataUri(fallbackBackgroundAsset, 1200);
+export async function ogSvg(meta) {
+  const background = meta.kind === "referral"
+    ? null
+    : await assetDataUri(fallbackBackgroundAsset, 1200);
   const title = fitText(meta.imageTitle ?? meta.title, 26);
   const subtitle = fitText(meta.subtitle ?? meta.description, 32);
   const status = fitText(meta.status, 24).toUpperCase();
   const footer = fitText(meta.footer ?? "test.veydrift.com", 34);
   const accent = meta.accent ?? "#7dd3fc";
-  const commander = meta.commander ? await assetDataUri(commanderAsset, 860) : null;
+  const commander = meta.commander && meta.kind !== "referral"
+    ? await assetDataUri(commanderAsset, 860)
+    : null;
   const planets = await Promise.all((meta.planetAssets ?? []).map((asset) => assetDataUri(asset, 600)));
 
   const visual = meta.kind === "referral"
-    ? `<image href="${planets[0] ?? ""}" x="710" y="16" width="470" height="470" preserveAspectRatio="xMidYMid meet" clip-path="url(#singlePlanet)"/>
-  <image href="${commander ?? ""}" x="548" y="92" width="360" height="360" preserveAspectRatio="xMidYMid meet" opacity=".98"/>
-  <path d="M722 386 C814 320 924 272 1088 180" fill="none" stroke="${accent}" stroke-width="2" stroke-opacity=".46"/>
-  <circle cx="722" cy="386" r="4" fill="${accent}"/>
-  <circle cx="1088" cy="180" r="4" fill="${accent}"/>
-  <rect x="790" y="434" width="214" height="44" rx="22" fill="#02050b" fill-opacity=".72" stroke="${accent}" stroke-opacity=".52"/>
-  <text x="897" y="463" text-anchor="middle" font-family="DejaVu Sans, Arial, sans-serif" font-size="22" font-weight="850" fill="${accent}">Invite link</text>`
+    ? `<image href="${planets[0] ?? ""}" x="704" y="18" width="488" height="488" preserveAspectRatio="xMidYMid meet" clip-path="url(#singlePlanet)"/>
+  <path d="M744 410 C838 336 944 268 1090 178" fill="none" stroke="${accent}" stroke-width="2" stroke-opacity=".38"/>
+  <circle cx="744" cy="410" r="4" fill="${accent}"/>
+  <circle cx="1090" cy="178" r="4" fill="${accent}"/>`
     : meta.kind === "mission"
     ? `<image href="${planets[0] ?? ""}" x="624" y="266" width="320" height="320" preserveAspectRatio="xMidYMid meet" clip-path="url(#missionPlanetA)"/>
   <image href="${planets[1] ?? planets[0] ?? ""}" x="854" y="44" width="320" height="320" preserveAspectRatio="xMidYMid meet" clip-path="url(#missionPlanetB)"/>
@@ -681,6 +682,15 @@ async function ogSvg(meta) {
   <path d="M744 414 C820 354 918 302 1064 226" fill="none" stroke="${accent}" stroke-width="2" stroke-opacity=".38"/>
   <circle cx="744" cy="414" r="4" fill="${accent}"/>
   <circle cx="1064" cy="226" r="4" fill="${accent}"/>`;
+
+  const footerVisual = meta.kind === "referral"
+    ? `<rect x="60" y="548" width="42" height="3" fill="${accent}"/>
+  <text x="60" y="592" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" font-weight="850" fill="#f8fbff">${escapeXml(footer)}</text>`
+    : `<text x="64" y="596" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" font-weight="760" fill="#71839a">${escapeXml(footer)}</text>`;
+
+  const backgroundVisual = meta.kind === "referral"
+    ? ""
+    : `<image href="${background}" x="0" y="0" width="1200" height="630" preserveAspectRatio="xMidYMid slice" opacity=".18"/>`;
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
   <defs>
@@ -705,7 +715,7 @@ async function ogSvg(meta) {
     <clipPath id="singlePlanet"><circle cx="930" cy="278" r="260"/></clipPath>
   </defs>
   <rect width="1200" height="630" fill="#02050b"/>
-  <image href="${background}" x="0" y="0" width="1200" height="630" preserveAspectRatio="xMidYMid slice" opacity=".18"/>
+  ${backgroundVisual}
   <rect width="1200" height="630" fill="url(#glow)"/>
   ${visual}
   <rect width="1200" height="630" fill="url(#shade)"/>
@@ -715,7 +725,7 @@ async function ogSvg(meta) {
   <text x="62" y="304" font-family="DejaVu Sans, Arial, sans-serif" font-size="40" font-weight="780" fill="#d8e2f1">${escapeXml(subtitle)}</text>
   <rect x="64" y="358" width="10" height="38" fill="${accent}"/>
   <text x="92" y="386" font-family="DejaVu Sans, Arial, sans-serif" font-size="27" font-weight="850" fill="${accent}">${escapeXml(status)}</text>
-  <text x="64" y="596" font-family="DejaVu Sans, Arial, sans-serif" font-size="17" font-weight="760" fill="#71839a">${escapeXml(footer)}</text>
+  ${footerVisual}
 </svg>`;
 }
 
