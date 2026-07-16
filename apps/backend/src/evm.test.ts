@@ -2049,7 +2049,6 @@ const readerConfig: BackendConfig = {
   gameContractAddress: "0x1111111111111111111111111111111111111111",
   indexDbPath: ":memory:",
   randomnessCommitmentStorePath: ".data/test-randomness.json",
-  referralStorePath: ".data/test-referrals.json",
   indexFromBlock: 100n,
   missionResolutionEnabled: false,
   resourceTokenAddresses: {},

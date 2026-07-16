@@ -49,7 +49,6 @@ const config: BackendConfig = {
   gameContractAddress: "0x3333333333333333333333333333333333333333",
   indexDbPath: ":memory:",
   randomnessCommitmentStorePath: ".data/test-randomness.json",
-  referralStorePath: ".data/test-referrals.json",
   indexFromBlock: 100n,
   missionResolutionEnabled: false,
   resourceTokenAddresses: {},

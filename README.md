@@ -234,20 +234,23 @@ that wires `VeydriftFirstPlanetSettlementModule(referralSystem)`. Deployment is
 ordered and atomic at the release boundary:
 
 1. Deploy the new referral system and verify its `game()` and `referralSigner()`.
-2. Set `VEYDRIFT_REFERRAL_SYSTEM_ADDRESS`, run `UpgradeGame.s.sol`, and verify the
+2. Follow `docs/referral-code-migration-VEY-KANEO-714.md`: normalize and collision-audit
+   the legacy code export, import permanent ownership/last activation timestamps, verify
+   every imported row, then finalize migration. Public claims remain disabled until finalization.
+3. Set `VEYDRIFT_REFERRAL_SYSTEM_ADDRESS`, run `UpgradeGame.s.sol`, and verify the
    game proxy still has the expected implementation/storage state and exact
    `startPrice()`.
-3. Configure the backend with the same referral address, signer private key, and
+4. Configure the backend with the same referral address, signer private key, and
    exact bootstrap `VEYDRIFT_SETTLEMENT_START_PRICE_WEI`; rebuild its referral
    index from the new referral deployment block so current price and later
-   `StartPriceUpdated` events are canonical before exposing referral traffic.
-4. Deploy backend first, then frontend. Run `veydrift-postdeploy-smoke.mjs` with
+   `StartPriceUpdated`, permanent ownership, activation-window, and redemption events
+   are canonical before exposing referral traffic.
+5. Deploy backend first, then frontend. Run `veydrift-postdeploy-smoke.mjs` with
    the RPC, expected signer address, and start price before live QA.
 
 Keep the referral owner key, backend signer key, and full RPC URL in secret
-storage. The raw invite code is private recovery data: public referral dashboard
-responses expose only indexed chain facts, while code/link recovery requires a
-wallet signature.
+storage. Normalized invite codes and ownership are public chain events so the backend
+can derive availability, ownership, active-window, and quota truth without a JSON side file.
 
 ### Circuits
 
@@ -411,7 +414,6 @@ VEYDRIFT_MOON_CONTRACT_ADDRESS=<Base Sepolia VeydriftMoonSystem proxy address>
 VEYDRIFT_RANDOMNESS_ENGINE_ADDRESS=<Base Sepolia RandomnessEngine proxy address>
 VEYDRIFT_REFERRAL_SYSTEM_ADDRESS=<Base Sepolia VeydriftReferralSystem address, when referrals are deployed>
 VEYDRIFT_REFERRAL_SIGNER_PRIVATE_KEY=<backend referral payload signer key, from secret storage>
-VEYDRIFT_REFERRAL_STORE_PATH=/app/apps/backend/.data/referral-invites.json
 VEYDRIFT_METAL_TOKEN_ADDRESS=<Base Sepolia VeydriftMetal ERC-20 proxy address>
 VEYDRIFT_CRYSTAL_TOKEN_ADDRESS=<Base Sepolia VeydriftCrystal ERC-20 proxy address>
 VEYDRIFT_DEUTERIUM_TOKEN_ADDRESS=<Base Sepolia VeydriftDeuterium ERC-20 proxy address>

@@ -1316,7 +1316,9 @@ export class SettlementIndexer {
       LIMIT 1
     `).get(owner, commitment, txHash) as ReferralClaimRow | null;
 
-    return row ? parseEvent<IndexedReferralClaimEvent>(row.event_json) : null;
+    if (!row) return null;
+    const event = parseEvent<IndexedReferralClaimEvent>(row.event_json);
+    return isCanonicalReferralWindowEvent(event) ? event : null;
   }
 
   referralClaims(owner: `0x${string}`): IndexedReferralClaimEvent[] {
@@ -1326,7 +1328,22 @@ export class SettlementIndexer {
       WHERE owner = lower(?)
       ORDER BY CAST(block_number AS INTEGER), event_id
     `).all(owner) as ReferralClaimRow[];
-    return rows.map((row) => parseEvent<IndexedReferralClaimEvent>(row.event_json));
+    return rows
+      .map((row) => parseEvent<IndexedReferralClaimEvent>(row.event_json))
+      .filter(isCanonicalReferralWindowEvent);
+  }
+
+  referralClaimsByCodeHash(codeHash: `0x${string}`): IndexedReferralClaimEvent[] {
+    const normalized = codeHash.toLowerCase();
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_referral_claims
+      ORDER BY CAST(block_number AS INTEGER), event_id
+    `).all() as ReferralClaimRow[];
+    return rows
+      .map((row) => parseEvent<IndexedReferralClaimEvent>(row.event_json))
+      .filter(isCanonicalReferralWindowEvent)
+      .filter((event) => event.codeHash.toLowerCase() === normalized);
   }
 
   referralRedemption(
@@ -1352,6 +1369,16 @@ export class SettlementIndexer {
       WHERE inviter = lower(?)
       ORDER BY CAST(block_number AS INTEGER), event_id
     `).all(inviter) as ReferralRedemptionRow[];
+    return rows.map((row) => parseEvent<IndexedReferralRedemptionEvent>(row.event_json));
+  }
+
+  referralRedemptionsForInvitee(invitee: `0x${string}`): IndexedReferralRedemptionEvent[] {
+    const rows = this.db.query(`
+      SELECT event_json
+      FROM indexed_referral_redemptions
+      WHERE invitee = lower(?)
+      ORDER BY CAST(block_number AS INTEGER), event_id
+    `).all(invitee) as ReferralRedemptionRow[];
     return rows.map((row) => parseEvent<IndexedReferralRedemptionEvent>(row.event_json));
   }
 
@@ -9109,6 +9136,13 @@ function openIndexerDatabase(databasePath: string, readOnly = false): Database {
 
 function parseEvent<T>(value: string): T {
   return JSON.parse(value) as T;
+}
+
+function isCanonicalReferralWindowEvent(event: IndexedReferralClaimEvent): boolean {
+  return event.eventName === "ReferralInviteWindowActivated"
+    && typeof event.code === "string"
+    && /^0x[a-fA-F0-9]{64}$/.test(event.codeHash)
+    && /^\d+$/.test(event.activeUntil);
 }
 
 function sortedEventRows(rows: readonly EventRow[]): IndexedRpcLog[] {

@@ -43,7 +43,7 @@ export const WALLET_CONNECTION_REJECTED_MESSAGE = "Wallet connection was rejecte
 export const WALLET_ACCOUNT_MISMATCH_MESSAGE = "The selected wallet account changed. Reconnect the active wallet, then retry.";
 const REFERRAL_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
 export const REFERRAL_DEFAULT_CODE_LENGTH = 9;
-export const REFERRAL_CODE_PATTERN = /^[A-Za-z0-9_-]{9}$/;
+export const REFERRAL_CODE_PATTERN = /^[A-Za-z0-9_-]{1,24}$/;
 
 const GAME_API_RECENT_READ_TTL_MS = 750;
 const GAME_API_MAX_CONCURRENT_READS = 3;
@@ -95,16 +95,18 @@ export type SettlementTransactionOptions = {
 
 export type ReferralInviteSummary = {
   claimedAt: string;
-  code: string | null;
+  code: string;
+  codeHash: string;
   commitment: string;
   expired?: boolean;
   expiresAt?: string;
-  link: string | null;
+  link: string;
   nextRedemptionAt: string | null;
   owner: string;
   redemptionCount: number;
   remainingRedemptions: number;
-  status: "pending_claim" | "active" | "expired";
+  renewable: boolean;
+  status: "active" | "renewable" | "owned";
   txHash?: string | null;
 };
 
@@ -136,8 +138,13 @@ export type ReferralDashboard = {
 
 export type ReferralResolution = {
   valid: boolean;
-  status: "active" | "expired" | "exhausted" | "self_invite" | "already_redeemed" | "unclaimed" | "invalid" | "unavailable";
+  status: "active" | "inactive" | "exhausted" | "self_invite" | "already_redeemed" | "available" | "invalid" | "unavailable";
   message: string;
+  normalizedCode: string | null;
+  codeHash: string | null;
+  owner: string | null;
+  ownership: "available" | "owned_by_you" | "reserved";
+  renewable: boolean;
   commitment: string | null;
   expiresAt: string | null;
   nextRedemptionAt: string | null;
@@ -1165,7 +1172,7 @@ const SETTLE_FIRST_PLANET_WITH_REFERRAL_SELECTOR = "0x2f7a1ec2";
 const START_PLANET_SELECTOR = "0xf45f1f18";
 const MIGRATION_CLAIM_SELECTOR = "0xbe27b22c";
 const MIGRATION_RESERVATION_SELECTOR = "0xcd48c907";
-const CLAIM_REFERRAL_CODE_SELECTOR = "0x760c4e71";
+const CLAIM_REFERRAL_CODE_SELECTOR = "0x03b52c94";
 const START_PLANET_WITH_REFERRAL_SELECTOR = "0xdad57ff9";
 const GAME_SELECTORS = {
   abandonPlanet: "0xfa16dddc",
@@ -2697,7 +2704,7 @@ export async function sendReferralClaimTransaction(
   provider: Eip1193Provider,
   account: string,
   config: SettlementConfig,
-  codeHash: string
+  code: string
 ): Promise<string> {
   if (!settlementContractConfigured(config)) {
     throw new Error("Settlement contract address is not configured.");
@@ -2708,7 +2715,10 @@ export async function sendReferralClaimTransaction(
   return sendWalletTransaction(provider, account, {
     from: account,
     to: config.referralSystemAddress,
-    data: `${CLAIM_REFERRAL_CODE_SELECTOR}${encodeHexWord(codeHash, "Referral code hash")}`
+    data: `${CLAIM_REFERRAL_CODE_SELECTOR}${encodeAbiParameters(
+      parseAbiParameters("string"),
+      [normalizeReferralClaimCode(code)]
+    ).slice(2)}`
   });
 }
 
@@ -3565,7 +3575,7 @@ export function referralWalletMessage(wallet: string, action: ReferralWalletActi
   if (commitment !== undefined) {
     lines.push(`Commitment: ${commitment.toLowerCase()}`);
   }
-  lines.push("Only sign this message if you want to manage your private Veydrift referral invite.");
+  lines.push("Only sign this message if you want to manage your Veydrift referral invite.");
   return lines.join("\n");
 }
 
@@ -3640,9 +3650,9 @@ export function generateReferralClaimCode(length = REFERRAL_DEFAULT_CODE_LENGTH)
 export function normalizeReferralClaimCode(code: string): string {
   const normalized = code.trim();
   if (!REFERRAL_CODE_PATTERN.test(normalized)) {
-    throw new Error("Invite code must be 9 letters, numbers, underscores, or hyphens.");
+    throw new Error("Invite code must be 1–24 letters, numbers, underscores, or hyphens.");
   }
-  return normalized;
+  return normalized.toLowerCase();
 }
 
 export function referralCodeHash(code: string): string {
@@ -3668,6 +3678,15 @@ export async function validateReferralCode(
   url.searchParams.set("code", code);
   if (invitee) url.searchParams.set("invitee", invitee);
   return fetchGameApiJson<ReferralResolution>(url.toString(), "Referral validation", {
+    cache: "no-store"
+  });
+}
+
+export async function inspectReferralCode(apiUrl: string, code: string, wallet: string): Promise<ReferralResolution> {
+  const url = new URL(`${apiUrl.replace(/\/+$/, "")}/referrals/resolve`);
+  url.searchParams.set("code", code);
+  url.searchParams.set("wallet", wallet);
+  return fetchGameApiJson<ReferralResolution>(url.toString(), "Referral code availability", {
     cache: "no-store"
   });
 }

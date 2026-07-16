@@ -47,7 +47,6 @@ const configuredTestConfig: BackendConfig = {
   qaSyntheticStationedDefenders: false,
   indexDbPath: ":memory:",
   randomnessCommitmentStorePath: ".data/test-randomness.json",
-  referralStorePath: ".data/test-referrals.json",
   indexFromBlock: 100n,
   missionResolutionEnabled: false,
   resourceTokenAddresses: {

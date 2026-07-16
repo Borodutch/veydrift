@@ -1,5 +1,3 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
 import {
   encodeAbiParameters,
   getAddress,
@@ -22,16 +20,16 @@ export const referralRedeemDomain = keccak256(toHex("veydrift.referral.redeem.v1
 export const referralInviteUrlBase = "https://veydrift.com";
 export const referralClaimWindowMs = 24 * 60 * 60 * 1000;
 export const referralClaimsPerWindow = 3;
-export const referralCodePattern = /^[A-Za-z0-9_-]{9}$/;
+export const referralCodePattern = /^[A-Za-z0-9_-]{1,24}$/;
 
 export type ReferralInviteRecord = {
   code: string;
+  codeHash: Hex;
   commitment: Hex;
   owner: string;
   claimedAt: string;
-  txHash?: string | null;
-  // Legacy callback-owned data is tolerated on disk but never used as chain truth.
-  redemptions?: Array<{ invitee: string; redeemedAt: string; txHash?: string | null }>;
+  activeUntil: string;
+  txHash: string;
 };
 
 export type ReferralRedemptionRecord = {
@@ -46,23 +44,21 @@ export type ReferralRedemptionRecord = {
 };
 
 export type ReferralInviteSummary = {
-  code: string | null;
+  code: string;
+  codeHash: Hex;
   commitment: Hex;
   owner: string;
   claimedAt: string;
-  txHash: string | null;
+  txHash: string;
   expiresAt: string;
   expired: boolean;
-  link: string | null;
+  link: string;
   remainingRedemptions: number;
   nextRedemptionAt: string | null;
   redemptionCount: number;
   redemptions: ReferralRedemptionRecord[];
-  status: "pending_claim" | "active" | "expired";
-};
-
-type ReferralStoreJson = {
-  invites: ReferralInviteRecord[];
+  renewable: boolean;
+  status: "active" | "renewable" | "owned";
 };
 
 export type ReferralDashboard = {
@@ -91,18 +87,25 @@ export type ReferralRedemption = {
 
 export type ReferralResolveStatus =
   | "active"
-  | "expired"
+  | "inactive"
   | "exhausted"
   | "self_invite"
   | "already_redeemed"
-  | "unclaimed"
+  | "available"
   | "invalid"
   | "unavailable";
+
+export type ReferralOwnershipState = "available" | "owned_by_you" | "reserved";
 
 export type ReferralResolveResult = {
   valid: boolean;
   status: ReferralResolveStatus;
   message: string;
+  normalizedCode: string | null;
+  codeHash: Hex | null;
+  owner: string | null;
+  ownership: ReferralOwnershipState;
+  renewable: boolean;
   commitment: Hex | null;
   expiresAt: string | null;
   nextRedemptionAt: string | null;
@@ -114,196 +117,218 @@ export type ReferralResolveResult = {
 export type ReferralWalletAction = "dashboard" | "claim-transaction";
 
 export type ReferralChainIndex = {
+  referralClaim(owner: `0x${string}`, commitment: `0x${string}`, txHash: `0x${string}`): IndexedReferralClaimEvent | null;
   referralClaims(owner: `0x${string}`): IndexedReferralClaimEvent[];
+  referralClaimsByCodeHash(codeHash: `0x${string}`): IndexedReferralClaimEvent[];
   referralRedemptionsForInviter(inviter: `0x${string}`): IndexedReferralRedemptionEvent[];
+  referralRedemptionsForInvitee(invitee: `0x${string}`): IndexedReferralRedemptionEvent[];
   referralRewardClaimsForInviter(inviter: `0x${string}`): IndexedReferralRewardClaimEvent[];
 };
 
+// Kept as the server dependency boundary so existing construction/tests do not need a
+// separate service object. It is deliberately stateless: all referral truth comes from
+// indexed contract events, never from the former referral JSON side file.
 export class ReferralInviteStore {
-  constructor(private readonly path: string) {}
+  constructor(_unusedPath?: string) {}
 
   dashboard(
     wallet: string,
     index: ReferralChainIndex,
     startPriceWei: string | null,
     configured: boolean,
-    includeSecrets: boolean,
+    _includeSecrets = false,
     now = new Date()
   ): ReferralDashboard {
-    return canonicalReferralDashboard({
-      configured,
-      includeSecrets,
-      index,
-      now,
-      startPriceWei,
-      store: this,
-      wallet
-    });
-  }
-
-  recordClaimIntent(
-    wallet: string,
-    code: unknown,
-    commitment: string,
-    now = new Date()
-  ): ReferralInviteRecord {
-    const owner = normalizeAddress(wallet).toLowerCase();
-    const normalizedCode = normalizeReferralCode(code);
-    const normalizedCommitment = normalizeHex32(commitment, "commitment");
-    const expectedCommitment = referralCommitment(normalizedCode, owner);
-    if (expectedCommitment.toLowerCase() !== normalizedCommitment.toLowerCase()) {
-      throw new Error("Referral code does not match the inviter-bound commitment.");
-    }
-
-    const store = this.read();
-    const matchingInvite = store.invites.find((candidate) =>
-      candidate.code === normalizedCode
-      || candidate.commitment.toLowerCase() === normalizedCommitment.toLowerCase()
-    );
-    if (matchingInvite && matchingInvite.owner.toLowerCase() !== owner) {
-      throw new Error("Referral code is already reserved by another wallet.");
-    }
-    if (matchingInvite) {
-      matchingInvite.claimedAt = now.toISOString();
-      matchingInvite.txHash = null;
-      this.write(store);
-      return matchingInvite;
-    }
-
-    const record: ReferralInviteRecord = {
-      code: normalizedCode,
-      commitment: normalizedCommitment,
-      owner,
-      claimedAt: now.toISOString(),
-      txHash: null
-    };
-    store.invites.push(record);
-    this.write(store);
-    return record;
-  }
-
-  recordClaimTransaction(
-    wallet: string,
-    code: unknown,
-    commitment: string,
-    txHash: string,
-    now = new Date()
-  ): ReferralInviteRecord {
-    const normalizedTxHash = normalizeTxHash(txHash);
-    this.recordClaimIntent(wallet, code, commitment, now);
-    const store = this.read();
-    const record = store.invites.find((invite) =>
-      invite.commitment.toLowerCase() === commitment.toLowerCase()
-    );
-    if (!record) throw new Error("Referral claim preimage recovery record was not persisted.");
-    record.claimedAt = now.toISOString();
-    record.txHash = normalizedTxHash;
-    this.write(store);
-    return record;
-  }
-
-  findByCode(code: unknown): ReferralInviteRecord | undefined {
-    const normalized = normalizeReferralCode(code);
-    return this.read().invites.find((invite) => invite.code === normalized);
-  }
-
-  findByCommitment(commitment: string): ReferralInviteRecord | undefined {
-    const normalized = normalizeHex32(commitment, "commitment").toLowerCase();
-    return this.read().invites.find((invite) => invite.commitment.toLowerCase() === normalized);
-  }
-
-  invitesForOwner(owner: string): ReferralInviteRecord[] {
-    const normalized = normalizeAddress(owner).toLowerCase();
-    return this.read().invites
-      .filter((invite) => invite.owner.toLowerCase() === normalized)
-      .sort((a, b) => a.claimedAt.localeCompare(b.claimedAt));
-  }
-
-  private read(): ReferralStoreJson {
-    try {
-      const parsed = JSON.parse(readFileSync(this.path, "utf8")) as Partial<ReferralStoreJson>;
-      const invites = Array.isArray(parsed.invites) ? parsed.invites : [];
-      return { invites: invites.filter(isReferralInviteRecord) };
-    } catch (error) {
-      if ((error as { code?: unknown }).code === "ENOENT") return { invites: [] };
-      throw error;
-    }
-  }
-
-  private write(store: ReferralStoreJson): void {
-    mkdirSync(dirname(this.path), { recursive: true });
-    const tempPath = `${this.path}.${process.pid}.tmp`;
-    writeFileSync(tempPath, `${JSON.stringify(store, null, 2)}\n`);
-    renameSync(tempPath, this.path);
+    return canonicalReferralDashboard({ configured, index, now, startPriceWei, wallet });
   }
 }
 
-export function createReferralStore(config: BackendConfig): ReferralInviteStore {
-  return new ReferralInviteStore(config.referralStorePath);
+export function createReferralStore(_config: BackendConfig): ReferralInviteStore {
+  return new ReferralInviteStore();
 }
 
 export function resolveReferralCode(input: {
   code: unknown;
   index: ReferralChainIndex;
   invitee?: string;
+  wallet?: string;
   now?: Date;
   startPriceWei: string | null;
-  store: ReferralInviteStore;
 }): ReferralResolveResult {
   const now = input.now ?? new Date();
-  let invite: ReferralInviteRecord | undefined;
-  try {
-    invite = input.store.findByCode(input.code);
-  } catch {
-    invite = undefined;
-  }
   const price = parseWei(input.startPriceWei);
-  const reward = price === null ? null : price / 2n;
   const common = {
-    inviterRewardWei: reward?.toString() ?? null,
+    inviterRewardWei: price === null ? null : (price / 2n).toString(),
     startPriceWei: price?.toString() ?? null
   };
-  if (!invite) {
-    return resolveResult("invalid", "Referral code was not found.", null, null, null, referralClaimsPerWindow, common);
+
+  let code: string;
+  try {
+    code = normalizeReferralCode(input.code);
+  } catch (error) {
+    return resolveResult({
+      status: "invalid",
+      message: error instanceof Error ? error.message : "Referral code is invalid.",
+      normalizedCode: null,
+      codeHash: null,
+      owner: null,
+      ownership: "available",
+      renewable: false,
+      commitment: null,
+      expiresAt: null,
+      nextRedemptionAt: null,
+      remainingRedemptions: referralClaimsPerWindow,
+      ...common
+    });
   }
 
-  const owner = normalizeAddress(invite.owner).toLowerCase() as `0x${string}`;
-  const claim = latestReferralClaim(
-    input.index.referralClaims(owner),
-    invite.commitment
-  );
+  const codeHash = referralCodeHash(code);
+  const claim = latestReferralClaims(input.index.referralClaimsByCodeHash(codeHash)).at(-1);
   if (!claim) {
-    return resolveResult("unclaimed", "Referral code is not confirmed on-chain yet.", invite.commitment, null, null, referralClaimsPerWindow, common);
+    const availableOwner = input.wallet
+      ? normalizeAddress(input.wallet).toLowerCase() as `0x${string}`
+      : null;
+    const availableQuota = availableOwner
+      ? referralQuota(input.index.referralRedemptionsForInviter(availableOwner).map(chainRedemptionTime), now)
+      : { remainingClaims: referralClaimsPerWindow, nextClaimAt: null };
+    return resolveResult({
+      status: "available",
+      message: "Referral code is available to claim.",
+      normalizedCode: code,
+      codeHash,
+      owner: null,
+      ownership: "available",
+      renewable: false,
+      commitment: null,
+      expiresAt: null,
+      nextRedemptionAt: availableQuota.nextClaimAt,
+      remainingRedemptions: availableQuota.remainingClaims,
+      ...common
+    });
   }
 
-  const claimedAtMs = Number(claim.claimedAt) * 1_000;
-  const expiresAt = new Date(claimedAtMs + referralClaimWindowMs).toISOString();
+  const owner = normalizeAddress(claim.inviter).toLowerCase() as `0x${string}`;
+  const wallet = input.wallet ? normalizeAddress(input.wallet).toLowerCase() : null;
+  const ownership: ReferralOwnershipState = wallet === owner ? "owned_by_you" : "reserved";
+  const expiresAt = new Date(Number(claim.activeUntil) * 1_000).toISOString();
+  const currentClaim = latestReferralClaims(input.index.referralClaims(owner)).at(-1);
+  const currentActive = Boolean(
+    currentClaim && now.getTime() < Number(currentClaim.activeUntil) * 1_000
+  );
+  const active = currentClaim?.commitment.toLowerCase() === claim.commitment.toLowerCase()
+    && now.getTime() < Number(claim.activeUntil) * 1_000;
   const redemptions = input.index.referralRedemptionsForInviter(owner);
   const quota = referralQuota(redemptions.map(chainRedemptionTime), now);
-  if (now.getTime() >= claimedAtMs + referralClaimWindowMs) {
-    return resolveResult("expired", "Referral code has expired.", invite.commitment, expiresAt, quota.nextClaimAt, quota.remainingClaims, common);
+
+  if (!active) {
+    const renewable = ownership === "owned_by_you" && !currentActive;
+    return resolveResult({
+      status: "inactive",
+      message: ownership === "owned_by_you" && renewable
+        ? "Referral code is owned by this wallet and can be renewed."
+        : ownership === "owned_by_you"
+          ? "Referral code is owned by this wallet, but another invite code is active."
+        : "Referral code is permanently reserved and its invite window is inactive.",
+      normalizedCode: code,
+      codeHash,
+      owner,
+      ownership,
+      renewable,
+      commitment: claim.commitment,
+      expiresAt,
+      nextRedemptionAt: quota.nextClaimAt,
+      remainingRedemptions: quota.remainingClaims,
+      ...common
+    });
   }
+
   if (input.invitee) {
-    const invitee = normalizeAddress(input.invitee).toLowerCase();
+    const invitee = normalizeAddress(input.invitee).toLowerCase() as `0x${string}`;
     if (invitee === owner) {
-      return resolveResult("self_invite", "Referral invites cannot be redeemed by the inviter.", invite.commitment, expiresAt, quota.nextClaimAt, quota.remainingClaims, common);
+      return resolveResult({
+        status: "self_invite",
+        message: "Referral invites cannot be redeemed by the inviter.",
+        normalizedCode: code,
+        codeHash,
+        owner,
+        ownership,
+        renewable: false,
+        commitment: claim.commitment,
+        expiresAt,
+        nextRedemptionAt: quota.nextClaimAt,
+        remainingRedemptions: quota.remainingClaims,
+        ...common
+      });
     }
-    if (redemptions.some((event) => event.invitee.toLowerCase() === invitee)) {
-      return resolveResult("already_redeemed", "This wallet has already redeemed a referral invite.", invite.commitment, expiresAt, quota.nextClaimAt, quota.remainingClaims, common);
+    if (input.index.referralRedemptionsForInvitee(invitee).length > 0) {
+      return resolveResult({
+        status: "already_redeemed",
+        message: "This wallet has already redeemed a referral invite.",
+        normalizedCode: code,
+        codeHash,
+        owner,
+        ownership,
+        renewable: false,
+        commitment: claim.commitment,
+        expiresAt,
+        nextRedemptionAt: quota.nextClaimAt,
+        remainingRedemptions: quota.remainingClaims,
+        ...common
+      });
     }
   }
+
   if (quota.remainingClaims === 0) {
-    return resolveResult("exhausted", "Referral redemption quota is exhausted.", invite.commitment, expiresAt, quota.nextClaimAt, 0, common);
+    return resolveResult({
+      status: "exhausted",
+      message: "Referral redemption quota is exhausted.",
+      normalizedCode: code,
+      codeHash,
+      owner,
+      ownership,
+      renewable: false,
+      commitment: claim.commitment,
+      expiresAt,
+      nextRedemptionAt: quota.nextClaimAt,
+      remainingRedemptions: 0,
+      ...common
+    });
   }
   if (price === null) {
-    return resolveResult("unavailable", "The current on-chain settlement price is unavailable.", invite.commitment, expiresAt, quota.nextClaimAt, quota.remainingClaims, common);
+    return resolveResult({
+      status: "unavailable",
+      message: "The current on-chain settlement price is unavailable.",
+      normalizedCode: code,
+      codeHash,
+      owner,
+      ownership,
+      renewable: false,
+      commitment: claim.commitment,
+      expiresAt,
+      nextRedemptionAt: quota.nextClaimAt,
+      remainingRedemptions: quota.remainingClaims,
+      ...common
+    });
   }
-  return resolveResult("active", "Referral code is active.", invite.commitment, expiresAt, quota.nextClaimAt, quota.remainingClaims, common);
+  return resolveResult({
+    status: "active",
+    message: "Referral code is active.",
+    normalizedCode: code,
+    codeHash,
+    owner,
+    ownership,
+    renewable: false,
+    commitment: claim.commitment,
+    expiresAt,
+    nextRedemptionAt: quota.nextClaimAt,
+    remainingRedemptions: quota.remainingClaims,
+    ...common
+  });
 }
 
 export async function buildReferralRedemption(
   config: BackendConfig,
-  invite: ReferralInviteRecord,
+  invite: Pick<ReferralInviteRecord, "code" | "commitment">,
   invitee: string
 ): Promise<ReferralRedemption> {
   if (!config.referralSignerPrivateKey) throw new Error("Referral signer is not configured.");
@@ -334,6 +359,18 @@ export function referralCommitment(code: string, inviter: string): Hex {
       [normalizeAddress(inviter), referralCodeHash(code)]
     )
   );
+}
+
+export function referralInviteRecord(claim: IndexedReferralClaimEvent): ReferralInviteRecord {
+  return {
+    code: claim.code,
+    codeHash: claim.codeHash,
+    commitment: claim.commitment,
+    owner: claim.inviter.toLowerCase(),
+    claimedAt: new Date(Number(claim.claimedAt) * 1_000).toISOString(),
+    activeUntil: new Date(Number(claim.activeUntil) * 1_000).toISOString(),
+    txHash: claim.transactionHash
+  };
 }
 
 export function referralRedeemPayloadHash(input: {
@@ -377,9 +414,9 @@ export function normalizeReferralCode(value: unknown): string {
   if (typeof value !== "string") throw new Error("Referral code is required.");
   const code = value.trim();
   if (!referralCodePattern.test(code)) {
-    throw new Error("Referral code must be 9 letters, numbers, underscores, or hyphens.");
+    throw new Error("Referral code must be 1–24 letters, numbers, underscores, or hyphens.");
   }
-  return code;
+  return code.toLowerCase();
 }
 
 export function referralWalletMessage(wallet: string, action: ReferralWalletAction, commitment?: string): string {
@@ -391,7 +428,7 @@ export function referralWalletMessage(wallet: string, action: ReferralWalletActi
   if (commitment !== undefined) {
     lines.push(`Commitment: ${normalizeHex32(commitment, "commitment").toLowerCase()}`);
   }
-  lines.push("Only sign this message if you want to manage your private Veydrift referral invite.");
+  lines.push("Only sign this message if you want to manage your Veydrift referral invite.");
   return lines.join("\n");
 }
 
@@ -420,11 +457,9 @@ export async function verifyReferralWalletSignature({
 
 function canonicalReferralDashboard(input: {
   configured: boolean;
-  includeSecrets: boolean;
   index: ReferralChainIndex;
   now: Date;
   startPriceWei: string | null;
-  store: ReferralInviteStore;
   wallet: string;
 }): ReferralDashboard {
   const owner = normalizeAddress(input.wallet).toLowerCase() as `0x${string}`;
@@ -434,24 +469,19 @@ function canonicalReferralDashboard(input: {
   const claimedCredits = new Set(rewardClaims.map((claim) => rewardKey(claim.commitment, claim.invitee)));
   const redemptionRecords = redemptions.map((event) => chainRedemptionRecord(event, claimedCredits));
   const quota = referralQuota(redemptions.map(chainRedemptionTime), input.now);
-  const stored = input.store.invitesForOwner(owner);
-  const claimCommitments = new Set(claims.map((claim) => claim.commitment.toLowerCase()));
-  const summaries = claims.map((claim) => {
-    const record = stored.find((candidate) => candidate.commitment.toLowerCase() === claim.commitment.toLowerCase());
-    return chainInviteSummary({
-      claim,
-      includeSecrets: input.includeSecrets,
-      now: input.now,
-      owner,
-      quota,
-      ...(record ? { record } : {}),
-      redemptions: redemptionRecords.filter((item) => item.commitment.toLowerCase() === claim.commitment.toLowerCase())
-    });
-  });
-  for (const record of stored.filter((candidate) => !claimCommitments.has(candidate.commitment.toLowerCase()))) {
-    summaries.push(pendingInviteSummary(record, input.includeSecrets, quota));
-  }
-  summaries.sort((a, b) => a.claimedAt.localeCompare(b.claimedAt));
+  const currentClaim = claims.at(-1);
+  const currentActive = Boolean(
+    currentClaim && input.now.getTime() < Number(currentClaim.activeUntil) * 1_000
+  );
+  const summaries = claims.map((claim) => chainInviteSummary({
+    claim,
+    currentActive,
+    currentCommitment: currentClaim?.commitment ?? null,
+    now: input.now,
+    owner,
+    quota,
+    redemptions: redemptionRecords.filter((item) => item.commitment.toLowerCase() === claim.commitment.toLowerCase())
+  }));
   const invite = summaries.at(-1) ?? null;
 
   const accrued = redemptions.reduce((sum, event) => sum + indexedRewardAmount(event), 0n);
@@ -465,7 +495,7 @@ function canonicalReferralDashboard(input: {
     configured: input.configured,
     invite,
     invites: summaries,
-    nextClaimAt: invite?.status === "active" ? invite.expiresAt : null,
+    nextClaimAt: currentActive ? currentClaim ? new Date(Number(currentClaim.activeUntil) * 1_000).toISOString() : null : null,
     nextRedemptionAt: quota.nextClaimAt,
     remainingClaims: quota.remainingClaims,
     remainingRedemptions: quota.remainingClaims,
@@ -479,54 +509,38 @@ function canonicalReferralDashboard(input: {
 
 function chainInviteSummary(input: {
   claim: IndexedReferralClaimEvent;
-  includeSecrets: boolean;
+  currentActive: boolean;
+  currentCommitment: string | null;
   now: Date;
   owner: string;
   quota: ReturnType<typeof referralQuota>;
-  record?: ReferralInviteRecord;
   redemptions: ReferralRedemptionRecord[];
 }): ReferralInviteSummary {
   const claimedAt = new Date(Number(input.claim.claimedAt) * 1_000).toISOString();
-  const expiresAt = new Date(Number(input.claim.claimedAt) * 1_000 + referralClaimWindowMs).toISOString();
+  const expiresAt = new Date(Number(input.claim.activeUntil) * 1_000).toISOString();
   const expired = input.now.getTime() >= Date.parse(expiresAt);
-  const code = input.includeSecrets ? input.record?.code ?? null : null;
+  const isCurrent = input.currentCommitment?.toLowerCase() === input.claim.commitment.toLowerCase();
+  const status = isCurrent && !expired
+    ? "active"
+    : !input.currentActive
+      ? "renewable"
+      : "owned";
   return {
-    code,
+    code: input.claim.code,
+    codeHash: input.claim.codeHash,
     commitment: input.claim.commitment,
     owner: input.owner,
     claimedAt,
     txHash: input.claim.transactionHash,
     expiresAt,
     expired,
-    link: code ? `${referralInviteUrlBase}?ref=${encodeURIComponent(code)}` : null,
+    link: `${referralInviteUrlBase}?ref=${encodeURIComponent(input.claim.code)}`,
     remainingRedemptions: input.quota.remainingClaims,
     nextRedemptionAt: input.quota.nextClaimAt,
     redemptionCount: input.redemptions.length,
     redemptions: input.redemptions,
-    status: expired ? "expired" : "active"
-  };
-}
-
-function pendingInviteSummary(
-  record: ReferralInviteRecord,
-  includeSecrets: boolean,
-  quota: ReturnType<typeof referralQuota>
-): ReferralInviteSummary {
-  const code = includeSecrets ? record.code : null;
-  return {
-    code,
-    commitment: record.commitment,
-    owner: record.owner,
-    claimedAt: record.claimedAt,
-    txHash: null,
-    expiresAt: new Date(Date.parse(record.claimedAt) + referralClaimWindowMs).toISOString(),
-    expired: false,
-    link: code ? `${referralInviteUrlBase}?ref=${encodeURIComponent(code)}` : null,
-    remainingRedemptions: quota.remainingClaims,
-    nextRedemptionAt: quota.nextClaimAt,
-    redemptionCount: 0,
-    redemptions: [],
-    status: "pending_claim"
+    renewable: status === "renewable",
+    status
   };
 }
 
@@ -549,8 +563,7 @@ function chainRedemptionRecord(
 }
 
 function indexedRewardAmountString(event: IndexedReferralRedemptionEvent): string | null {
-  const value = (event as IndexedReferralRedemptionEvent & { rewardAmount?: unknown }).rewardAmount;
-  return typeof value === "string" && /^\d+$/.test(value) ? value : null;
+  return /^\d+$/.test(event.rewardAmount) ? event.rewardAmount : null;
 }
 
 function indexedRewardAmount(event: IndexedReferralRedemptionEvent): bigint {
@@ -571,46 +584,26 @@ function latestReferralClaims(claims: IndexedReferralClaimEvent[]): IndexedRefer
   for (const claim of claims) {
     const key = claim.commitment.toLowerCase();
     const current = latest.get(key);
-    if (!current || referralClaimOrder(claim) > referralClaimOrder(current)) latest.set(key, claim);
+    if (!current || compareReferralClaims(claim, current) > 0) latest.set(key, claim);
   }
-  return [...latest.values()].sort((left, right) => {
-    const order = referralClaimOrder(left) - referralClaimOrder(right);
-    return order === 0 ? left.commitment.localeCompare(right.commitment) : order;
-  });
+  return [...latest.values()].sort(compareReferralClaims);
 }
 
-function latestReferralClaim(
-  claims: IndexedReferralClaimEvent[],
-  commitment: string
-): IndexedReferralClaimEvent | undefined {
-  const normalized = commitment.toLowerCase();
-  return latestReferralClaims(claims.filter((claim) => claim.commitment.toLowerCase() === normalized)).at(-1);
+function compareReferralClaims(left: IndexedReferralClaimEvent, right: IndexedReferralClaimEvent): number {
+  const activationOrder = Number(left.claimedAt) - Number(right.claimedAt);
+  if (activationOrder !== 0) return activationOrder;
+  const chainOrder = referralClaimOrder(left) - referralClaimOrder(right);
+  return chainOrder === 0 ? left.commitment.localeCompare(right.commitment) : chainOrder;
 }
 
 function referralClaimOrder(claim: IndexedReferralClaimEvent): number {
-  const claimedAt = Number(claim.claimedAt);
-  return Number.isFinite(claimedAt) ? claimedAt : 0;
+  const block = Number(claim.blockNumber);
+  const log = Number.parseInt(claim.logIndex, 16);
+  return (Number.isFinite(block) ? block : 0) * 1_000_000 + (Number.isFinite(log) ? log : 0);
 }
 
-function resolveResult(
-  status: ReferralResolveStatus,
-  message: string,
-  commitment: Hex | null,
-  expiresAt: string | null,
-  nextRedemptionAt: string | null,
-  remainingRedemptions: number,
-  price: { startPriceWei: string | null; inviterRewardWei: string | null }
-): ReferralResolveResult {
-  return {
-    valid: status === "active",
-    status,
-    message,
-    commitment,
-    expiresAt,
-    nextRedemptionAt,
-    remainingRedemptions,
-    ...price
-  };
+function resolveResult(input: Omit<ReferralResolveResult, "valid"> & { status: ReferralResolveStatus }): ReferralResolveResult {
+  return { ...input, valid: input.status === "active" };
 }
 
 function parseWei(value: string | null): bigint | null {
@@ -623,10 +616,6 @@ function normalizeHex32(value: unknown, label: string): Hex {
     throw new Error(`${label} must be a 0x-prefixed 32-byte hex value.`);
   }
   return value as Hex;
-}
-
-function normalizeTxHash(value: unknown): Hex {
-  return normalizeHex32(value, "txHash");
 }
 
 function normalizeAddress(value: string): Address {
@@ -644,13 +633,4 @@ function splitSignature(signature: Hex): { r: Hex; s: Hex; v: number } {
     s: `0x${clean.slice(64, 128)}` as Hex,
     v: Number.parseInt(clean.slice(128, 130), 16)
   };
-}
-
-function isReferralInviteRecord(value: unknown): value is ReferralInviteRecord {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<ReferralInviteRecord>;
-  return typeof candidate.code === "string"
-    && /^0x[a-fA-F0-9]{64}$/.test(candidate.commitment ?? "")
-    && typeof candidate.owner === "string"
-    && typeof candidate.claimedAt === "string";
 }
