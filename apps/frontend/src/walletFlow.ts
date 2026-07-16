@@ -95,12 +95,12 @@ export type SettlementTransactionOptions = {
 
 export type ReferralInviteSummary = {
   claimedAt: string;
-  code: string | null;
+  code: string;
   codeHash: string;
   commitment: string;
   expired: boolean;
   expiresAt: string;
-  link: string | null;
+  link: string;
   nextRedemptionAt: string | null;
   owner: string;
   redemptionCount: number;
@@ -162,7 +162,7 @@ export type ReferralRedemption = {
   v: number;
 };
 
-export type ReferralWalletAction = "dashboard" | "claim-transaction";
+export type ReferralWalletAction = "claim-transaction";
 
 type TransactionRequest = {
   from: string;
@@ -3597,18 +3597,6 @@ export async function fetchReferralDashboard(apiUrl: string, wallet: string): Pr
     wallet,
     "referrals",
     "Referral invites"
-  );
-}
-
-export async function fetchPrivateReferralDashboard(
-  apiUrl: string,
-  wallet: string,
-  signature: string
-): Promise<ReferralDashboard> {
-  return fetchGameApiMutation<ReferralDashboard>(
-    `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals`,
-    "Private referral invites",
-    { signature }
   );
 }
 
