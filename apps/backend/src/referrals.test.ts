@@ -217,9 +217,59 @@ describe("referral invites", () => {
     expect(resolveReferralCode({ code: "historical", index: chain.indexer, wallet: player, now, startPriceWei }))
       .toMatchObject({ status: "inactive", ownership: "owned_by_you", renewable: false });
 
-    const dashboard = new ReferralInviteStore().dashboard(player, chain.indexer, startPriceWei, true, false, now);
-    expect(dashboard.invite).toMatchObject({ code: "current", status: "active" });
-    expect(dashboard.invites.map((item) => item.code)).toEqual(["historical", "current"]);
+    const publicDashboard = new ReferralInviteStore().dashboard(player, chain.indexer, startPriceWei, true, false, now);
+    expect(publicDashboard.invite).toMatchObject({ code: null, link: null, status: "active" });
+    expect(publicDashboard.invites.map((item) => item.code)).toEqual([null, null]);
+
+    const privateDashboard = new ReferralInviteStore().dashboard(player, chain.indexer, startPriceWei, true, true, now);
+    expect(privateDashboard.invite).toMatchObject({
+      code: "current",
+      link: "https://veydrift.com?ref=current",
+      status: "active"
+    });
+    expect(privateDashboard.invites.map((item) => item.code)).toEqual(["historical", "current"]);
+  });
+
+  test("reveals canonical active invite details only after dashboard authentication", async () => {
+    const chain = referralIndex();
+    const nowSeconds = Math.floor(Date.now() / 1_000);
+    chain.claims.push(claimEvent({ code: "borodutch", activatedAt: nowSeconds - 60 }));
+    const handler = createRequestHandler({
+      config: testConfig(),
+      indexer: chain.indexer,
+      referralStore: new ReferralInviteStore(),
+      role: "reader"
+    });
+    const url = `http://localhost/wallet/${player}/referrals`;
+
+    const publicResponse = await handler(new Request(url));
+    expect(publicResponse.status).toBe(200);
+    expect(await publicResponse.json()).toMatchObject({
+      invite: {
+        code: null,
+        link: null,
+        remainingRedemptions: 3,
+        status: "active"
+      }
+    });
+
+    const signature = await playerAccount.signMessage({
+      message: referralWalletMessage(player, "dashboard")
+    });
+    const privateResponse = await handler(new Request(url, {
+      body: JSON.stringify({ signature }),
+      headers: { "content-type": "application/json" },
+      method: "POST"
+    }));
+    expect(privateResponse.status).toBe(200);
+    expect(await privateResponse.json()).toMatchObject({
+      invite: {
+        code: "borodutch",
+        link: "https://veydrift.com?ref=borodutch",
+        remainingRedemptions: 3,
+        status: "active"
+      }
+    });
   });
 
   test("builds dashboards solely from indexed activation, redemption, and reward events", () => {
