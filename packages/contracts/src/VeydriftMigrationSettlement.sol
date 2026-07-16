@@ -17,6 +17,15 @@ interface IVeydriftMigrationGame {
     ) external;
 
     function importMigratedState(address player, bytes calldata payload) external payable;
+
+    function importMigratedStateWithReferral(
+        address player,
+        bytes calldata payload,
+        bytes32 commitment,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external payable;
 }
 
 contract VeydriftMigrationSettlement is Initializable, OwnableUpgradeable, UUPSUpgradeable {
@@ -136,6 +145,23 @@ contract VeydriftMigrationSettlement is Initializable, OwnableUpgradeable, UUPSU
         return _claimFor(player, statePayload, signature);
     }
 
+    function claimWithReferral(
+        bytes calldata statePayload,
+        bytes calldata signature,
+        bytes32 commitment,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external payable returns (bytes32 stateHash) {
+        Reservation storage reservation = reservations[msg.sender];
+        stateHash = _validateClaim(msg.sender, statePayload, signature, reservation);
+        reservation.claimed = true;
+        game.importMigratedStateWithReferral{value: msg.value}(
+            msg.sender, statePayload, commitment, v, r, s
+        );
+        emit FullStateMigrationClaimed(msg.sender, stateHash);
+    }
+
     function migrationStateHash(address player, bytes calldata statePayload)
         public
         view
@@ -176,16 +202,26 @@ contract VeydriftMigrationSettlement is Initializable, OwnableUpgradeable, UUPSU
         returns (bytes32 stateHash)
     {
         Reservation storage reservation = reservations[player];
-        if (!reservation.exists) revert MigrationReservationMissing(player);
+        stateHash = _validateClaim(player, statePayload, signature, reservation);
+        reservation.claimed = true;
+        game.importMigratedState{value: msg.value}(player, statePayload);
+        emit FullStateMigrationClaimed(player, stateHash);
+    }
+
+    function _validateClaim(
+        address player,
+        bytes calldata statePayload,
+        bytes calldata signature,
+        Reservation storage reservation
+    ) private view returns (bytes32 stateHash) {
+        if (!reservation.exists) {
+            revert MigrationReservationMissing(player);
+        }
         if (reservation.claimed) revert MigrationReservationClaimed(player);
 
         stateHash = migrationStateHash(player, statePayload);
         address recovered =
             ECDSA.recover(MessageHashUtils.toEthSignedMessageHash(stateHash), signature);
         if (recovered != stateSigner) revert BadMigrationSignature();
-
-        reservation.claimed = true;
-        game.importMigratedState{value: msg.value}(player, statePayload);
-        emit FullStateMigrationClaimed(player, stateHash);
     }
 }

@@ -1172,6 +1172,7 @@ const SETTLE_FIRST_PLANET_SELECTOR = "0x59268393";
 const SETTLE_FIRST_PLANET_WITH_REFERRAL_SELECTOR = "0x2f7a1ec2";
 const START_PLANET_SELECTOR = "0xf45f1f18";
 const MIGRATION_CLAIM_SELECTOR = "0xbe27b22c";
+const MIGRATION_CLAIM_WITH_REFERRAL_SELECTOR = "0x98bf164a";
 const MIGRATION_RESERVATION_SELECTOR = "0xcd48c907";
 const CLAIM_REFERRAL_CODE_SELECTOR = "0x03b52c94";
 const START_PLANET_WITH_REFERRAL_SELECTOR = "0xdad57ff9";
@@ -2070,6 +2071,24 @@ export function encodeMigrationClaimCall(statePayload: string, signature: string
   return `${MIGRATION_CLAIM_SELECTOR}${(64n).toString(16).padStart(64, "0")}${signatureOffset.toString(16).padStart(64, "0")}${encodedPayload}${encodedSignature}`;
 }
 
+export function encodeMigrationClaimWithReferralCall(
+  statePayload: string,
+  signature: string,
+  referral: ReferralRedemption,
+): string {
+  return `${MIGRATION_CLAIM_WITH_REFERRAL_SELECTOR}${encodeAbiParameters(
+    parseAbiParameters("bytes, bytes, bytes32, uint8, bytes32, bytes32"),
+    [
+      statePayload as `0x${string}`,
+      signature as `0x${string}`,
+      referral.commitment as `0x${string}`,
+      referral.v,
+      referral.r as `0x${string}`,
+      referral.s as `0x${string}`,
+    ],
+  ).slice(2)}`;
+}
+
 function encodeHexWord(value: string, label: string): string {
   if (!/^0x[a-fA-F0-9]{64}$/.test(value)) {
     throw new Error(`${label} must be a 0x-prefixed 32-byte hex value.`);
@@ -2687,7 +2706,13 @@ export async function sendSettlementTransaction(
       return sendWalletTransaction(provider, account, {
         from: account,
         to: options.migrationContractAddress,
-        data: encodeMigrationClaimCall(options.migrationClaim.statePayload, options.migrationClaim.signature),
+        data: options.referral
+          ? encodeMigrationClaimWithReferralCall(
+            options.migrationClaim.statePayload,
+            options.migrationClaim.signature,
+            options.referral,
+          )
+          : encodeMigrationClaimCall(options.migrationClaim.statePayload, options.migrationClaim.signature),
         value: encodeQuantity(options.startPriceWei)
       });
     }

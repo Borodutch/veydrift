@@ -80,8 +80,9 @@ contract Deploy is ResourceTokenDeployment {
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
-        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule();
         VeydriftReferralSystem referralSystem = new VeydriftReferralSystem(admin);
+        VeydriftStateMigrationModule stateMigrationModule =
+            new VeydriftStateMigrationModule(address(referralSystem));
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
             new VeydriftFirstPlanetSettlementModule(address(referralSystem));
         VeydriftGame game = new VeydriftGame(

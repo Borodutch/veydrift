@@ -225,6 +225,15 @@ contract VeydriftGameTest is Test {
         bytes32 coordinateKey,
         bytes32 planetSeed
     );
+    event ReferralInviteRedeemed(
+        address indexed inviter,
+        address indexed invitee,
+        bytes32 indexed commitment,
+        uint256 reward,
+        bool paid,
+        bool credited,
+        uint64 redeemedAt
+    );
     event PlanetSettled(
         uint256 indexed planetId,
         uint128 metal,
@@ -496,6 +505,73 @@ contract VeydriftGameTest is Test {
         assertEq(shipQueue.quantity, 7);
 
         (, bool claimed,,,,,) = migration.migrationReservation(player);
+        assertTrue(claimed);
+    }
+
+    function testMigrationClaimWithReferralRedeemsForPlayerAndGrantsDoubleStartingResources()
+        public
+    {
+        address invitee = address(0xCAFE728);
+        string memory code = "farcaster-start";
+        bytes32 commitment = referralSystem.referralCommitment(player, keccak256(bytes(code)));
+        VeydriftMigrationSettlement migration = _newMigrationSettlement(admin);
+        vm.prank(admin);
+        game.setMigrationSettlement(address(migration));
+        vm.deal(invitee, 1 ether);
+
+        uint256 migrationSignerKey = 0x5151;
+        vm.prank(admin);
+        migration.setStateSigner(vm.addr(migrationSignerKey));
+        vm.prank(admin);
+        referralSystem.setReferralSigner(vm.addr(referralSignerKey));
+
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+        vm.prank(player);
+        referralSystem.claimReferralCode(code);
+
+        address[] memory players = new address[](1);
+        uint16[] memory galaxies = new uint16[](1);
+        uint16[] memory systems = new uint16[](1);
+        uint8[] memory positions = new uint8[](1);
+        uint16[] memory fields = new uint16[](1);
+        int16[] memory temperatures = new int16[](1);
+        players[0] = invitee;
+        galaxies[0] = 2;
+        systems[0] = 99;
+        positions[0] = 7;
+        fields[0] = 211;
+        temperatures[0] = -14;
+        vm.prank(admin);
+        migration.importReservations(players, galaxies, systems, positions, fields, temperatures);
+
+        (bytes memory payload,) =
+            _signedMigrationPayload(migration, migrationSignerKey, invitee, 42);
+        VeydriftStateMigrationModule.MigrationPlayerState memory state =
+            abi.decode(payload, (VeydriftStateMigrationModule.MigrationPlayerState));
+        state.planets[0].resources =
+            VeydriftGameStorage.Resources({metal: 500, crystal: 500, deuterium: 0});
+        payload = abi.encode(state);
+        bytes memory migrationSignature =
+            _migrationSignature(migration, migrationSignerKey, invitee, payload);
+        (uint8 v, bytes32 r, bytes32 s) = _referralSignature(invitee, commitment);
+
+        vm.expectEmit(true, true, true, false, address(referralSystem));
+        emit ReferralInviteRedeemed(player, invitee, commitment, 0, false, false, 0);
+        vm.prank(invitee);
+        migration.claimWithReferral{value: 0.05 ether}(
+            payload, migrationSignature, commitment, v, r, s
+        );
+
+        uint256 planetId = game.homePlanetOf(invitee);
+        VeydriftGameStorage.Planet memory planet = game.planet(planetId);
+        assertEq(planet.owner, invitee);
+        assertEq(planet.resources.metal, 1_000);
+        assertEq(planet.resources.crystal, 1_000);
+        assertEq(planet.resources.deuterium, 0);
+        assertTrue(referralSystem.referralRedemptions(commitment, invitee));
+        assertEq(referralSystem.referralInviteeRedeemed(invitee), true);
+        (, bool claimed,,,,,) = migration.migrationReservation(invitee);
         assertTrue(claimed);
     }
 
@@ -9670,8 +9746,9 @@ contract VeydriftGameTest is Test {
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
-        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule();
         VeydriftReferralSystem deployedReferralSystem = new VeydriftReferralSystem(owner);
+        VeydriftStateMigrationModule stateMigrationModule =
+            new VeydriftStateMigrationModule(address(deployedReferralSystem));
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
             new VeydriftFirstPlanetSettlementModule(address(deployedReferralSystem));
         VeydriftGame deployedGame = new VeydriftGame(
@@ -9813,6 +9890,15 @@ contract VeydriftGameTest is Test {
                 planets: planets
             });
         payload = abi.encode(state);
+        signature = _migrationSignature(migration, signerKey, migratedPlayer, payload);
+    }
+
+    function _migrationSignature(
+        VeydriftMigrationSettlement migration,
+        uint256 signerKey,
+        address migratedPlayer,
+        bytes memory payload
+    ) internal view returns (bytes memory signature) {
         bytes32 digest = migration.migrationStateHash(migratedPlayer, payload);
         bytes32 signedDigest =
             keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest));

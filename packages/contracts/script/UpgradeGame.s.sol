@@ -63,8 +63,9 @@ contract UpgradeGame is Script {
         VeydriftAttackProtectionModule attackProtectionModule = new VeydriftAttackProtectionModule();
         VeydriftColonizationModule colonizationModule = new VeydriftColonizationModule();
         VeydriftDefenseHoldModule defenseHoldModule = new VeydriftDefenseHoldModule();
-        VeydriftStateMigrationModule stateMigrationModule = new VeydriftStateMigrationModule();
         address referralSystem = vm.envAddress("VEYDRIFT_REFERRAL_SYSTEM_ADDRESS");
+        VeydriftStateMigrationModule stateMigrationModule =
+            new VeydriftStateMigrationModule(referralSystem);
         VeydriftFirstPlanetSettlementModule firstPlanetSettlementModule =
             new VeydriftFirstPlanetSettlementModule(referralSystem);
 

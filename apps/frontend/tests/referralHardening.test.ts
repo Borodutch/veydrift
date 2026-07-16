@@ -129,6 +129,14 @@ describe("referral hardening", () => {
     expect(referralSettlementBlocker("", { status: "idle" })).toBeUndefined();
   });
 
+  test("keeps referral redemption enabled for migration-authorized first-planet starts", async () => {
+    const appSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
+    expect(appSource).toContain(
+      "const referral = await referralRedemptionForSettlement(wallet.account);"
+    );
+    expect(appSource).not.toContain("funding.migrationContractAddress\n          ? undefined");
+  });
+
   test("shows every rejected validation state before wallet submission", () => {
     for (const status of ["expired", "exhausted", "self_invite", "already_redeemed", "invalid"] as const) {
       expect(referralSettlementBlocker("borodutch", {

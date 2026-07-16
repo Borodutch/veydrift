@@ -264,6 +264,17 @@ contract VeydriftGame is VeydriftResourceReserves {
         _delegateToStateMigrationModule();
     }
 
+    function importMigratedStateWithReferral(
+        address,
+        bytes calldata,
+        bytes32,
+        uint8,
+        bytes32,
+        bytes32
+    ) external payable {
+        _delegateToStateMigrationModule();
+    }
+
     /// @dev UNUSED / DORMANT: SpaceDock is never set on the live deployment, so `_spaceDockSystem`
     ///      stays `address(0)` and combat wreckage recording no-ops. See VeydriftSpaceDockSystem and
     ///      closed issue #804 before wiring this up.

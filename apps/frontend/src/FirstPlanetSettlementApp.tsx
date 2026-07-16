@@ -1199,9 +1199,7 @@ export function FirstPlanetSettlementApp() {
       });
 
       try {
-        const referral = funding.migrationContractAddress
-          ? undefined
-          : await referralRedemptionForSettlement(wallet.account);
+        const referral = await referralRedemptionForSettlement(wallet.account);
         const txHash = await sendSettlementTransaction(
           provider,
           wallet.account,
