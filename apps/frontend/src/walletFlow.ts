@@ -3657,8 +3657,8 @@ export async function recordReferralClaimTransaction(
   commitment: string,
   txHash: string,
   signature: string
-): Promise<void> {
-  await fetchGameApiMutation(
+): Promise<ReferralDashboard> {
+  return fetchGameApiMutation<ReferralDashboard>(
     `${apiUrl.replace(/\/+$/, "")}/wallet/${encodeURIComponent(wallet)}/referrals/claim-transaction`,
     "Referral claim transaction",
     { code, commitment, signature, txHash }

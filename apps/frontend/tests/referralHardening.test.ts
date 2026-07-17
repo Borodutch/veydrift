@@ -178,6 +178,15 @@ describe("referral hardening", () => {
     expect(referralClaimCodeAfterDashboard("new_code", expired)).toBe("new_code");
   });
 
+  test("atomically installs the indexed renewal dashboard returned by claim recording", async () => {
+    const appSource = await Bun.file(new URL("../src/FirstPlanetSettlementApp.tsx", import.meta.url)).text();
+    expect(appSource).toContain("const dashboard = await recordReferralClaimTransactionAfterIndexing(");
+    expect(appSource).toContain('setReferralProgram({ status: "ready", dashboard });');
+    expect(appSource).toContain("uses left for this invite");
+    expect(appSource).not.toContain("uses left today");
+    expect(appSource).not.toContain("await refreshReferralProgram(wallet.account);");
+  });
+
   test("blocks active-window rotation and enables expired-window claims", () => {
     const active = referralDashboard({
       code: "borodutch",

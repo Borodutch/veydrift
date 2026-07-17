@@ -45,7 +45,7 @@ contract VeydriftReferralSystem {
     mapping(bytes32 commitment => ReferralInvite invite) public referralInvites;
     mapping(address inviter => bytes32 commitment) public referralCommitmentOf;
     mapping(bytes32 commitment => uint64 claimedAt) public referralClaimedAt;
-    mapping(address inviter => ReferralRedemptionWindow redemptionWindow) private
+    mapping(bytes32 commitment => ReferralRedemptionWindow redemptionWindow) private
         _referralRedemptionWindows;
     mapping(bytes32 commitment => mapping(address invitee => bool redeemed)) public
         referralRedemptions;
@@ -222,7 +222,7 @@ contract VeydriftReferralSystem {
             if (inviter == address(0)) revert Unauthorized(address(0));
             uint64 activatedAt = activatedAts[index];
             // Referral windows are intentionally timestamp-based; small validator skew cannot
-            // transfer ownership or bypass the inviter-wide rolling quota.
+            // transfer ownership or bypass the invite-window quota.
             // forge-lint: disable-next-line(block-timestamp)
             if (activatedAt > block.timestamp) {
                 revert ReferralMigrationTimestampInvalid(activatedAt);
@@ -358,7 +358,7 @@ contract VeydriftReferralSystem {
             revert ReferralRewardInvalid(expectedReward, msg.value);
         }
 
-        _consumeRedemptionQuota(inviter, commitment);
+        _consumeRedemptionQuota(commitment);
         referralRedemptions[commitment][invitee] = true;
         referralInviteeRedeemed[invitee] = true;
         totalReferralRewardsAccrued[inviter] += msg.value;
@@ -374,7 +374,7 @@ contract VeydriftReferralSystem {
         emit ReferralInviteRedeemed(
             inviter, invitee, commitment, msg.value, paid, credited, nowTimestamp
         );
-        (uint8 remainingRedemptions, uint64 nextRedemptionAt) = referralRedemptionQuotaOf(inviter);
+        (uint8 remainingRedemptions, uint64 nextRedemptionAt) = _referralRedemptionQuota(commitment);
         emit ReferralRedemptionQuotaUpdated(
             inviter, remainingRedemptions, nextRedemptionAt, nowTimestamp
         );
@@ -478,7 +478,7 @@ contract VeydriftReferralSystem {
         if (claimedAt != 0) activeUntil = claimedAt + REFERRAL_CLAIM_WINDOW;
         // forge-lint: disable-next-line(block-timestamp)
         active = commitment != bytes32(0) && block.timestamp < activeUntil;
-        (remainingRedemptions, nextRedemptionAt) = referralRedemptionQuotaOf(inviter);
+        (remainingRedemptions, nextRedemptionAt) = _referralRedemptionQuota(commitment);
     }
 
     function referralRedemptionQuota(bytes32 commitment)
@@ -486,7 +486,7 @@ contract VeydriftReferralSystem {
         view
         returns (uint8 remainingRedemptions, uint64 nextRedemptionAt)
     {
-        return referralRedemptionQuotaOf(referralInvites[commitment].inviter);
+        return _referralRedemptionQuota(commitment);
     }
 
     function referralRedemptionQuotaOf(address inviter)
@@ -494,7 +494,15 @@ contract VeydriftReferralSystem {
         view
         returns (uint8 remainingRedemptions, uint64 nextRedemptionAt)
     {
-        ReferralRedemptionWindow storage window = _referralRedemptionWindows[inviter];
+        return _referralRedemptionQuota(referralCommitmentOf[inviter]);
+    }
+
+    function _referralRedemptionQuota(bytes32 commitment)
+        private
+        view
+        returns (uint8 remainingRedemptions, uint64 nextRedemptionAt)
+    {
+        ReferralRedemptionWindow storage window = _referralRedemptionWindows[commitment];
         uint64 nowTimestamp = uint64(block.timestamp);
         uint64 oldestActive = type(uint64).max;
         uint8 active;
@@ -590,6 +598,7 @@ contract VeydriftReferralSystem {
         uint64 previousActivatedAt = referralClaimedAt[commitment];
         if (activatedAt >= previousActivatedAt) {
             referralClaimedAt[commitment] = activatedAt;
+            delete _referralRedemptionWindows[commitment];
         }
 
         bytes32 currentCommitment = referralCommitmentOf[inviter];
@@ -667,8 +676,8 @@ contract VeydriftReferralSystem {
         return ecrecover(digest, v, r, s) == signer;
     }
 
-    function _consumeRedemptionQuota(address inviter, bytes32 commitment) private {
-        ReferralRedemptionWindow storage window = _referralRedemptionWindows[inviter];
+    function _consumeRedemptionQuota(bytes32 commitment) private {
+        ReferralRedemptionWindow storage window = _referralRedemptionWindows[commitment];
         uint64 nowTimestamp = uint64(block.timestamp);
         uint256 oldestIndex = 0;
         uint64 oldestActive = type(uint64).max;

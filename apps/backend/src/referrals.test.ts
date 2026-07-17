@@ -141,7 +141,7 @@ describe("referral invites", () => {
     expect(() => normalizeReferralCode("abcdefghijklmnopqrstuvwxy")).toThrow("1–24");
   });
 
-  test("computes the exact inviter-wide rolling quota boundary", () => {
+  test("computes the exact three-use window boundary", () => {
     const now = new Date("2026-07-08T12:00:00.000Z");
     expect(referralQuota([
       { redeemedAt: "2026-07-08T11:00:00.000Z" },
@@ -179,9 +179,9 @@ describe("referral invites", () => {
     });
 
     chain.redemptions.push(
-      redemptionEvent({ code: "owned_code", redeemedAt: nowSeconds - 3_000, txByte: "b1" }),
-      redemptionEvent({ code: "owned_code", invitee: "0x4444444444444444444444444444444444444444", redeemedAt: nowSeconds - 2_000, txByte: "b2" }),
-      redemptionEvent({ code: "owned_code", invitee: "0x5555555555555555555555555555555555555555", redeemedAt: nowSeconds - 1_000, txByte: "b3" })
+      redemptionEvent({ code: "owned_code", redeemedAt: nowSeconds - 50, txByte: "b1" }),
+      redemptionEvent({ code: "owned_code", invitee: "0x4444444444444444444444444444444444444444", redeemedAt: nowSeconds - 40, txByte: "b2" }),
+      redemptionEvent({ code: "owned_code", invitee: "0x5555555555555555555555555555555555555555", redeemedAt: nowSeconds - 30, txByte: "b3" })
     );
     expect(resolveReferralCode({
       code: "owned_code",
@@ -224,6 +224,68 @@ describe("referral invites", () => {
       status: "active"
     });
     expect(dashboard.invites.map((item) => item.code)).toEqual(["historical", "current"]);
+  });
+
+  test("starts a renewed commitment with a fresh quota after two prior redemptions", async () => {
+    const chain = referralIndex();
+    const now = new Date("2026-07-09T12:00:00.000Z");
+    const nowSeconds = Math.floor(now.getTime() / 1_000);
+    chain.claims.push(
+      claimEvent({ code: "renewed-code", activatedAt: nowSeconds - 86_400, blockNumber: 100, txByte: "c1" }),
+      claimEvent({ code: "renewed-code", activatedAt: nowSeconds - 30, blockNumber: 103, txByte: "c2" })
+    );
+    chain.redemptions.push(
+      redemptionEvent({ code: "renewed-code", redeemedAt: nowSeconds - 3_600, txByte: "d1" }),
+      redemptionEvent({
+        code: "renewed-code",
+        invitee: "0x4444444444444444444444444444444444444444",
+        redeemedAt: nowSeconds - 1_800,
+        txByte: "d2"
+      })
+    );
+
+    expect(resolveReferralCode({ code: "renewed-code", index: chain.indexer, now, startPriceWei }))
+      .toMatchObject({ status: "active", remainingRedemptions: 3, nextRedemptionAt: null });
+    expect(new ReferralInviteStore().dashboard(player, chain.indexer, startPriceWei, true, now))
+      .toMatchObject({
+        invite: { code: "renewed-code", redemptionCount: 0, remainingRedemptions: 3 },
+        remainingClaims: 3,
+        remainingRedemptions: 3,
+        redemptions: [
+          { commitment: referralCommitment("renewed-code", player) },
+          { commitment: referralCommitment("renewed-code", player) }
+        ]
+      });
+
+    const renewedClaim = chain.claims[1]!;
+    const signature = await playerAccount.signMessage({
+      message: referralWalletMessage(player, "claim-transaction", renewedClaim.commitment)
+    });
+    const handler = createRequestHandler({
+      config: testConfig(),
+      indexer: chain.indexer,
+      referralStore: new ReferralInviteStore(),
+      role: "reader"
+    });
+    const response = await handler(new Request(
+      `http://localhost/wallet/${player}/referrals/claim-transaction`,
+      {
+        body: JSON.stringify({
+          code: "renewed-code",
+          commitment: renewedClaim.commitment,
+          signature,
+          txHash: renewedClaim.transactionHash
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST"
+      }
+    ));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      invite: { code: "renewed-code", redemptionCount: 0, remainingRedemptions: 3 },
+      remainingClaims: 3,
+      remainingRedemptions: 3
+    });
   });
 
   test("returns canonical active invite details directly without dashboard authentication", async () => {

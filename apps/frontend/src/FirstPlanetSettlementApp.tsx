@@ -1317,7 +1317,7 @@ export function FirstPlanetSettlementApp() {
           settlementConfig,
           inviteCode
         );
-        await recordReferralClaimTransactionAfterIndexing(
+        const dashboard = await recordReferralClaimTransactionAfterIndexing(
           settlementConfigState.apiUrl,
           wallet.account,
           inviteCode,
@@ -1325,7 +1325,7 @@ export function FirstPlanetSettlementApp() {
           txHash,
           signature
         );
-        await refreshReferralProgram(wallet.account);
+        setReferralProgram({ status: "ready", dashboard });
       } catch (error) {
         setReferralProgram({
           status: "error",
@@ -1632,7 +1632,7 @@ function ReferralProgramPanel({
               <strong>{invite.link}</strong>
               <span>
                 {invite.status === "active"
-                  ? `Owned by you · active · ${invite.remainingRedemptions}/3 uses left today`
+                  ? `Owned by you · active · ${invite.remainingRedemptions}/3 uses left for this invite`
                   : invite.status === "renewable"
                     ? "Owned by you · renewable"
                     : "Owned by you · another code is active"}
@@ -2298,12 +2298,18 @@ async function recordReferralClaimTransactionAfterIndexing(
   commitment: string,
   txHash: string,
   signature: string
-): Promise<void> {
+): Promise<ReferralDashboard> {
   const attempts = 12;
   for (let attempt = 0; attempt < attempts; attempt++) {
     try {
-      await recordReferralClaimTransaction(apiUrl, wallet, code, commitment, txHash, signature);
-      return;
+      return await recordReferralClaimTransaction(
+        apiUrl,
+        wallet,
+        code,
+        commitment,
+        txHash,
+        signature
+      );
     } catch (error) {
       if (!isReferralClaimIndexingLag(error) || attempt === attempts - 1) {
         throw error;
@@ -2323,6 +2329,7 @@ async function recordReferralClaimTransactionAfterIndexing(
       await delay(2_500);
     }
   }
+  throw new Error("Referral claim indexing did not return a dashboard.");
 }
 
 function isReferralClaimIndexingLag(error: unknown): boolean {
