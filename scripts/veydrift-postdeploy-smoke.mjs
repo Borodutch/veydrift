@@ -219,6 +219,7 @@ async function checkReferralOnChain() {
     expect(expectedValidCount > 0, "referral migration must commit at least one reviewed valid code");
     expect(importedValidCount === expectedValidCount, "referral valid-code migration count must match its reviewed manifest");
     expect(eqHex(importedValidHash, expectedValidHash), "referral valid-code migration hash must match its reviewed manifest");
+    expect(expectedHashOnlyCount === 10, "referral migration must preserve the 10 reviewed hash-only legacy codes");
     expect(importedHashOnlyCount === expectedHashOnlyCount, "referral hash-only migration count must match its reviewed manifest");
     expect(eqHex(importedHashOnlyHash, expectedHashOnlyHash), "referral hash-only migration hash must match its reviewed manifest");
     expect(redemptionMigrationConfigured, "referral redemption migration must be explicitly configured");
