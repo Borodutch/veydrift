@@ -1041,13 +1041,15 @@ const missionShipInventoryRows: Array<{ key: MissionShipKey; id: number; label: 
 ];
 
 export function missionShipInventoryBlocker({
+  originBody = "planet",
   shipyardState,
   ships,
 }: {
+  originBody?: "moon" | "planet" | undefined;
   shipyardState: Pick<ChainShipyardState, "fleetLaunchAvailable" | "fleetLaunchUnavailableReason" | "fleetSlots" | "ships" | "unavailableReason"> | null | undefined;
   ships: Partial<MissionShips>;
 }): string | undefined {
-  if (!shipyardState) return "Shipyard state is still loading.";
+  if (!shipyardState) return originBody === "moon" ? "Moon fleet state is still loading." : "Shipyard state is still loading.";
   if (shipyardState.fleetLaunchAvailable === false) {
     return shipyardState.fleetLaunchUnavailableReason ?? shipyardState.unavailableReason ?? "Fleet slot state is still syncing.";
   }
@@ -1070,7 +1072,7 @@ export function missionShipInventoryBlocker({
     .filter((row): row is string => Boolean(row));
 
   if (overSelected.length <= 0) return undefined;
-  return `${overSelected.join(", ")} on the origin planet; refresh fleet state or reduce selected ships before launching.`;
+  return `${overSelected.join(", ")} on the origin ${originBody}; refresh fleet state or reduce selected ships before launching.`;
 }
 
 function resourceSnapshotSettledAt(snapshot: ResourceSnapshotFreshness): bigint | undefined {
@@ -6133,7 +6135,7 @@ export function PlayableMvpApp({
       validateAttackProtection?: { targetPlanetId: string } | undefined;
       pendingMissionLaunch?: ((txHash: string) => FleetMissionSummary);
       syncMissionLaunch?: boolean;
-      validateShipInventory?: { originPlanetId: string; ships: MissionShips } | undefined;
+      validateShipInventory?: { originIsMoon?: boolean | undefined; originPlanetId: string; ships: MissionShips } | undefined;
     } = {},
   ): Promise<boolean> => {
     let completed = false;
@@ -6147,11 +6149,21 @@ export function PlayableMvpApp({
           if (!apiBaseUrl || !account) {
             throw new Error("Wallet or game API is unavailable while refreshing fleet inventory.");
           }
-          const freshShipyardState = await fetchShipyardState(apiBaseUrl, account, options.validateShipInventory.originPlanetId);
+          const [freshShipyardState, freshMoonState] = await Promise.all([
+            fetchShipyardState(apiBaseUrl, account, options.validateShipInventory.originPlanetId),
+            options.validateShipInventory.originIsMoon
+              ? fetchMoonState(apiBaseUrl, account, options.validateShipInventory.originPlanetId)
+              : Promise.resolve(null),
+          ]);
           if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return false;
           setShipyardState(freshShipyardState);
+          if (freshMoonState) setMoonState(freshMoonState);
+          const freshOriginInventoryState = options.validateShipInventory.originIsMoon
+            ? missionMoonShipyardState({ moonState: freshMoonState, shipyardState: freshShipyardState })
+            : freshShipyardState;
           const shipBlocker = missionShipInventoryBlocker({
-            shipyardState: freshShipyardState,
+            originBody: options.validateShipInventory.originIsMoon ? "moon" : "planet",
+            shipyardState: freshOriginInventoryState,
             ships: options.validateShipInventory.ships,
           });
           if (shipBlocker) {
@@ -6199,9 +6211,15 @@ export function PlayableMvpApp({
               setPendingMissionLaunches((current) => removePendingMissionLaunchForTransaction(current, confirmedTxHash));
               if (options.validateShipInventory && apiBaseUrl && account) {
                 try {
-                  const nextShipyardState = await fetchShipyardState(apiBaseUrl, account, options.validateShipInventory.originPlanetId);
+                  const [nextShipyardState, nextMoonState] = await Promise.all([
+                    fetchShipyardState(apiBaseUrl, account, options.validateShipInventory.originPlanetId),
+                    options.validateShipInventory.originIsMoon
+                      ? fetchMoonState(apiBaseUrl, account, options.validateShipInventory.originPlanetId)
+                      : Promise.resolve(null),
+                  ]);
                   if (!canApplyRefreshRequest(planetSwitchGate, planetSwitchRequestId)) return;
                   setShipyardState(nextShipyardState);
+                  if (nextMoonState) setMoonState(nextMoonState);
                 } catch (error) {
                   console.error(error);
                 }
@@ -6230,7 +6248,7 @@ export function PlayableMvpApp({
         });
     }
     return completed;
-  }, [account, apiBaseUrl, loadMissionLaunchSnapshot, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState, runCoordinatedWriteTransaction]);
+  }, [account, apiBaseUrl, loadMissionLaunchSnapshot, refreshDefenseState, refreshInfrastructureState, refreshOnChainState, refreshShipyardState, runCoordinatedWriteTransaction, setMoonState]);
 
   const runMoonTransaction = useCallback(async (label: string, send: () => Promise<string>) => {
     const planetSwitchRequestId = planetSwitchGate.current;
@@ -7386,7 +7404,7 @@ export function PlayableMvpApp({
       originIsMoon?: boolean | undefined;
       targetIsMoon?: boolean | undefined;
       validateAttackProtection?: { targetPlanetId: string } | undefined;
-      validateShipInventory?: { originPlanetId: string; ships: MissionShips } | undefined;
+      validateShipInventory?: { originIsMoon?: boolean | undefined; originPlanetId: string; ships: MissionShips } | undefined;
     }) => ({
       validateAttackProtection,
       pendingMissionLaunch: (txHash: string) => pendingMissionLaunchForDraft(txHash, {
@@ -7568,7 +7586,7 @@ export function PlayableMvpApp({
       originIsMoon,
       targetIsMoon,
       validateAttackProtection: action.kind === "attack" ? { targetPlanetId } : undefined,
-      validateShipInventory: originIsMoon ? undefined : { originPlanetId, ships: draft.ships },
+      validateShipInventory: { originIsMoon, originPlanetId, ships: draft.ships },
     }));
     closeMissionCreationWhenComplete(runMission());
   }, [

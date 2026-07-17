@@ -352,6 +352,39 @@ describe("mission creation", () => {
     expect(playableMvpAppSource).toContain("refreshInfrastructureState()");
   });
 
+  test("seeds Moon to Planet Deploy from the moon fleet instead of the parent planet", () => {
+    const moonOriginState = {
+      ships: [
+        { id: 2, count: 1 },
+        { id: 4, count: 2 },
+      ],
+    };
+    const initial = initialMissionShips(deployAction, moonOriginState);
+
+    expect(initial.smallCargo).toBe(0);
+    expect(initial.recycler).toBe(1);
+    expect(staleSelectedShipQuantityBlocker(deployAction, initial, moonOriginState)).toBeUndefined();
+    expect(missionDraftBlocker({
+      action: deployAction,
+      cargoCapacity: 20_000,
+      cargoSupported: true,
+      cargoTotal: 0,
+      fleetSlots: { active: 2, limit: 5 },
+      fuelCost: 1,
+      originCoords: { galaxy: 4, system: 291, position: 11 },
+      quantity: 1,
+      resources: { metal: 0, crystal: 0, deuterium: 100 },
+      selectedShipCount: 1,
+      totalCargoCapacity: 20_000,
+    })).toBeUndefined();
+    expect(playableMvpAppSource).toContain(
+      "validateShipInventory: { originIsMoon, originPlanetId, ships: draft.ships }",
+    );
+    expect(playableMvpAppSource).toContain(
+      "fetchMoonState(apiBaseUrl, account, options.validateShipInventory.originPlanetId)",
+    );
+  });
+
   test("shows body selectors only for route sides with moons", () => {
     const visibility = (originMoonAvailable: boolean, targetMoonAvailable: boolean) => missionBodySelectionVisibility({
       bodyMissionSupported: true,

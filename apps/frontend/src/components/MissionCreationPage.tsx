@@ -288,17 +288,20 @@ export function MissionCreationPage({
   submitBlocker?: string | undefined;
   target: Planet | undefined;
 }) {
+  const defaultOriginIsMoon = Boolean(bodySelection?.defaultOriginIsMoon)
+    || (action.mode === "mission" && action.defaultOriginIsMoon === true);
+  const initialOriginShipyardState = defaultOriginIsMoon && bodySelection?.originMoonAvailable
+    ? bodySelection.originMoonShipyardState ?? null
+    : undefined;
   const [speedPercent, setSpeedPercent] = useState(DEFAULT_MISSION_SPEED_PERCENT);
-  const [ships, setShips] = useState<MissionShips>(() => initialMissionShips(action));
+  const [ships, setShips] = useState<MissionShips>(() => initialMissionShips(action, initialOriginShipyardState));
   const [cargo, setCargo] = useState<MissionCargoDraft>({});
   const [greedyLootEnabled, setGreedyLootEnabled] = useState(false);
   const [lootRatio, setLootRatio] = useState<MissionLootRatioDraft>(DEFAULT_LOOT_RATIO);
   const [primaryTargetId, setPrimaryTargetId] = useState(action.mode === "missile" ? action.primaryTargetId : 0);
   const [quantity, setQuantity] = useState(action.mode === "missile" ? action.quantity : 1);
   const [holdHours, setHoldHours] = useState<number>(DEFAULT_DEFENSE_HOLD_HOURS);
-  const [originIsMoon, setOriginIsMoon] = useState(
-    () => Boolean(bodySelection?.defaultOriginIsMoon) || (action.mode === "mission" && action.defaultOriginIsMoon === true)
-  );
+  const [originIsMoon, setOriginIsMoon] = useState(() => defaultOriginIsMoon);
   const [targetIsMoon, setTargetIsMoon] = useState(
     () => Boolean(bodySelection?.defaultTargetIsMoon) || (action.mode === "mission" && action.defaultTargetIsMoon === true)
   );
@@ -1087,8 +1090,29 @@ export function missionTimingSummary(travelSeconds: number, nowMs: number = Date
   };
 }
 
-export function initialMissionShips(action: EnabledGalaxyAction): MissionShips {
+export function initialMissionShips(
+  action: EnabledGalaxyAction,
+  originShipyardState?: MissionShipInventorySnapshot | null,
+): MissionShips {
   if (action.mode === "missile" || action.kind === "attack") return emptyMissionShips();
+  if (originShipyardState !== undefined) {
+    const allowed = allowedShipKeysForAction(action);
+    const preferred = missionShipOptions.find((ship) => {
+      if (!allowed.has(ship.key)) return false;
+      const selected = Math.max(0, Math.trunc(action.ships[ship.key] ?? 0));
+      const available = originShipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0;
+      return selected > 0 && selected <= available;
+    });
+    const fallback = preferred ?? missionShipOptions.find((ship) =>
+      allowed.has(ship.key)
+      && (originShipyardState?.ships.find((item) => item.id === ship.id)?.count ?? 0) > 0
+    );
+    if (!fallback) return emptyMissionShips();
+    return {
+      ...emptyMissionShips(),
+      [fallback.key]: preferred ? Math.max(1, Math.trunc(action.ships[fallback.key] ?? 1)) : 1,
+    };
+  }
   return { ...emptyMissionShips(), ...action.ships };
 }
 
