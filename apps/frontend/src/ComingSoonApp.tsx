@@ -5,6 +5,7 @@ import {
   Coins,
   ExternalLink,
   Factory,
+  FileText,
   Orbit,
   Radio,
   Rocket,
@@ -17,6 +18,7 @@ import { playableApiUrl } from "./runtimeConfig";
 const alphaUrl = "https://test.veydrift.com";
 const playUrl = "/play";
 const faucetUrl = "https://docs.base.org/base-chain/network-information/network-faucets";
+export const whitepaperUrl = "/whitepaper.pdf";
 export const landingFeedRefreshMs = 60_000;
 export const landingAllianceRefreshMs = 300_000;
 
@@ -184,6 +186,15 @@ function HeroSection() {
           <a className="landing-cd-secondary" href={launch.secondaryHref}>
             {launch.secondaryLabel}
             <Orbit className="h-4 w-4" />
+          </a>
+          <a
+            className="landing-cd-secondary"
+            href={whitepaperUrl}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Whitepaper
+            <FileText className="h-4 w-4" />
           </a>
         </div>
         <p className="landing-cd-support">{launch.supportCopy}</p>
