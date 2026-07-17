@@ -1978,13 +1978,18 @@ h4 {
   align-items: stretch;
 }
 
-.settlement-support-link {
+.settlement-support-actions {
   position: fixed;
   top: 18px;
   right: 18px;
   z-index: 4;
-  display: inline-flex;
+  display: flex;
   max-width: calc(100vw - 36px);
+  gap: 8px;
+}
+
+.settlement-support-link {
+  display: inline-flex;
   min-height: 36px;
   align-items: center;
   justify-content: center;
@@ -2002,10 +2007,20 @@ h4 {
   transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
 
+.settlement-whitepaper-link {
+  border-color: rgba(253, 230, 138, 0.4);
+  color: #fde68a;
+}
+
 .settlement-support-link:hover {
   border-color: rgba(128, 241, 255, 0.62);
   background: rgba(128, 241, 255, 0.12);
   transform: translateY(-1px);
+}
+
+.settlement-whitepaper-link:hover {
+  border-color: rgba(253, 230, 138, 0.68);
+  background: rgba(253, 230, 138, 0.12);
 }
 
 .settlement-support-icon {
@@ -2507,7 +2522,7 @@ h4 {
     max-width: min(calc(100vw - 36px), 354px);
   }
 
-  .settlement-support-link {
+  .settlement-support-actions {
     right: auto;
     left: 12px;
   }
@@ -2544,10 +2559,12 @@ h4 {
     padding: 58px 12px 18px;
   }
 
-  .settlement-support-link {
+  .settlement-support-actions {
     top: 12px;
     right: 12px;
-    max-width: calc(100vw - 24px);
+    left: 12px;
+    max-width: none;
+    flex-wrap: wrap;
   }
 
   .settlement-shell {
