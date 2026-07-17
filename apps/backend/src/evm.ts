@@ -2,7 +2,7 @@ import { solarSatelliteEnergy } from "@veydrift/universe";
 import { encodeAbiParameters, keccak256 } from "viem";
 import type { BackendConfig } from "./config";
 import { calculateHighscore, type HighscoreEntry } from "./highscores";
-import { deriveDefenseRows, deriveShipRows, usedFieldsFromBuildingRows } from "./readModels";
+import { buildingDurationSeconds, deriveDefenseRows, deriveShipRows, usedFieldsFromBuildingRows } from "./readModels";
 import type { Coordinates, PlanetArchetype } from "./universe";
 import { planetMetadata, planetMultipliers } from "./universe";
 
@@ -792,12 +792,14 @@ export type MoonState = {
   }>;
   buildings: Array<{
     id: number;
-    key: string;
+    key: "lunarBase" | "roboticsFactory" | "jumpGate" | "shipyard";
     label: string;
     level: number;
     cost: Resources;
+    durationSeconds?: number;
   }>;
   queue: QueueState | null;
+  completionQueue?: QueueState | null;
   technologyLevels: Record<string, number>;
   defenseQueue: QueueState | null;
   jumpGateDestinations?: Array<{
@@ -3907,7 +3909,7 @@ export class VeydriftGameReader implements ChainReader {
   }
 
   private async readMoonBuildingRows(planetId: bigint): Promise<MoonState["buildings"]> {
-    return Promise.all(
+    const rows = await Promise.all(
       moonBuildingCatalog.map(async (building) => {
         const [level, cost] = await Promise.all([
           this.readMoonUintCall("0x4e6a984f", [encodeUint(planetId), encodeUint(BigInt(building.id))]),
@@ -3921,6 +3923,15 @@ export class VeydriftGameReader implements ChainReader {
         };
       })
     );
+    const roboticsLevel = rows.find((building) => building.id === 1)?.level ?? 0;
+    return rows.map((building) => ({
+      ...building,
+      durationSeconds: buildingDurationSeconds(roboticsLevel, 0, {
+        metal: Number(building.cost.metal),
+        crystal: Number(building.cost.crystal),
+        deuterium: Number(building.cost.deuterium)
+      })
+    }));
   }
 
   private async readMoonShipRows(planetId: bigint): Promise<MoonState["ships"]> {

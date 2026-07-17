@@ -767,6 +767,7 @@ export type ChainMoonState = {
     durationSeconds?: number;
   }>;
   queue: QueueStateResponse | null;
+  completionQueue?: QueueStateResponse | null;
   technologyLevels?: Record<string, number>;
   defenses: Array<{
     id: number;

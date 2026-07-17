@@ -27,19 +27,14 @@ import {
 import { buildingQueueLabel } from "../overviewData";
 import { actionNoticeForBuilding, type InfrastructureActionNotice } from "../buildingActionNotice";
 import {
-  InspectCatalogTile,
-  InspectDetailHero,
-  InspectDetailImage,
-  InspectDetailShell,
   InspectInfoBlock,
   InspectPageHeader,
-  InspectTwoColumnLayout,
   SingleItemQueueProgress,
-  useInspectDetailSelection,
 } from "./InspectProgressLayout";
 import { RefreshButton, refreshButtonState } from "./PageHeader";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
 import { LevelInfoButton, LevelInfoModal, type LevelInfoColumn, type LevelInfoRow } from "./LevelInfoModal";
+import { StructureCatalog, StructureDetail, type StructureLevelInfo } from "./StructureCatalog";
 
 const shortResourceLabels: Record<keyof Resources, string> = {
   metal: "Metal",
@@ -129,10 +124,10 @@ export function InfrastructurePage({
     loadError,
   });
   const initialLoadError = showInitialLoadError ? loadError : undefined;
-  const { detailPanelRef, selectInspectItem: handleSelectBuilding } = useInspectDetailSelection<BuildingKey>((key) => {
+  const handleSelectBuilding = (key: BuildingKey) => {
     setLocalSelectedKey(key);
     onSelectBuilding?.(key);
-  });
+  };
 
   if (initialLoadError) {
     return (
@@ -168,10 +163,9 @@ export function InfrastructurePage({
 
       {loadError ? <InfrastructureRefreshErrorPanel reason={loadError} /> : null}
 
-      <InspectTwoColumnLayout
-        catalog={buildingCatalog.map((building) => {
+      <StructureCatalog
+        items={buildingCatalog.map((building) => {
           const currentLevel = settledState.buildings[building.key];
-          const isSelected = building.key === selectedBuilding.key;
           const missingRequirement = unmetBuildingRequirement(settledState, building.key);
           const starterPrerequisite = missingFrontendOnlyBuildingRequirementFor(settledState, building.key, { starterPlanet });
           const upgradeStatus = buildingUpgradeStatus(settledState, building.key, {
@@ -183,21 +177,19 @@ export function InfrastructurePage({
             starterPlanet,
           });
 
-          return (
-            <InspectCatalogTile
-              asset={building.asset}
-              currentText={buildingStatusText(building.label, currentLevel)}
-              isDimmed={currentLevel === 0}
-              isSelected={isSelected}
-              key={building.key}
-              label={building.label}
-              labelTone={infrastructureCatalogTitleTone(upgradeStatus)}
-              statusText={starterPrerequisite || missingRequirement ? "Locked" : infrastructureCatalogStatusText(settledState, building.key, planetProductionProfile, productionRates)}
-              statusTone={starterPrerequisite || missingRequirement ? "warning" : "accent"}
-              onClick={() => handleSelectBuilding(building.key)}
-            />
-          );
+          return {
+            asset: building.asset,
+            currentText: buildingStatusText(building.label, currentLevel),
+            isDimmed: currentLevel === 0,
+            key: building.key,
+            label: building.label,
+            labelTone: infrastructureCatalogTitleTone(upgradeStatus),
+            statusText: starterPrerequisite || missingRequirement ? "Locked" : infrastructureCatalogStatusText(settledState, building.key, planetProductionProfile, productionRates),
+            statusTone: starterPrerequisite || missingRequirement ? "warning" as const : "accent" as const,
+          };
         })}
+        onSelect={handleSelectBuilding}
+        selectedKey={selectedBuilding.key}
         detail={(
           <BuildingDetailPanel
             actionNotice={actionNoticeForBuilding(actionNotice, selectedBuilding.key)}
@@ -216,7 +208,6 @@ export function InfrastructurePage({
             state={settledState}
           />
         )}
-        detailPanelRef={detailPanelRef}
       />
     </div>
   );
@@ -366,50 +357,20 @@ function BuildingDetailPanel({
   const visibleActionNotice = dedupedActionNotice?.tone === "error" ? dedupedActionNotice : undefined;
   const isSelectedBuildingQueued = activeBuildingQueue?.key === building.key;
   const requirementStates = getBuildingRequirementStates(state, building.key, { starterPlanet });
-  const [isInfoOpen, setIsInfoOpen] = useState(false);
-  const noticeClass = "border-rose-300/20 bg-rose-300/10 text-rose-200";
 
   return (
-    <InspectDetailShell>
-      <InspectDetailHero
-        image={(
-          <InspectDetailImage
-            asset={building.asset}
-            cacheKey={`building:${building.key}`}
-            isDimmed={currentLevel === 0}
-          />
-        )}
-      >
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div className="min-w-0">
-              <h3 className="break-words text-lg font-semibold text-white">{building.label}</h3>
-              <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-400">
-                <span>{binary ? (built ? "Built on this planet" : "Build on this planet") : currentLevel === 0 ? `Build Level ${status.targetLevel}` : `Level ${currentLevel} to ${status.targetLevel}`}</span>
-                {!binary && (
-                  <BuildingLevelInfoButton
-                    buildingLabel={building.label}
-                    onClick={() => setIsInfoOpen(true)}
-                  />
-                )}
-              </div>
-            </div>
-            {currentLevel === 0 ? (
-              <span className="rounded bg-white/5 px-2 py-1 text-xs font-semibold text-slate-400">
-                Not built
-              </span>
-            ) : (
-              <span className="rounded bg-emerald-300/10 px-2 py-1 text-xs font-semibold text-emerald-200">
-                Active
-              </span>
-            )}
-          </div>
-
-          <p className="mt-3 text-sm leading-6 text-slate-300">
-            {buildingDescriptions[building.key]}
-          </p>
-      </InspectDetailHero>
-
-      <dl className="mt-4 grid gap-2">
+    <StructureDetail
+      action={!isSelectedBuildingQueued && !(binary && built) ? {
+        ariaLabel: binary ? `${actionVerb} ${building.label}` : `${actionVerb} ${building.label} to Level ${status.targetLevel}`,
+        disabled: status.disabled,
+        label: actionLabel,
+        onClick: onUpgrade,
+      } : undefined}
+      active={built}
+      asset={building.asset}
+      cacheKey={`building:${building.key}`}
+      description={buildingDescriptions[building.key]}
+      effectContent={<dl className="mt-4 grid gap-2">
         {effectRows.map((row) => (
           <ComparisonMetric
             delta={row.delta}
@@ -420,9 +381,8 @@ function BuildingDetailPanel({
             value={row.value}
           />
         ))}
-      </dl>
-
-      <div className="mt-4 grid gap-2 border-t border-white/10 pt-4 text-sm sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+      </dl>}
+      infoContent={<>
         <InspectInfoBlock label="Requirements">
           <RequirementFlairs onOpenRequirement={onOpenRequirement} requirements={requirementStates} />
         </InspectInfoBlock>
@@ -436,49 +396,21 @@ function BuildingDetailPanel({
             ) : null}
           </>
         )}
-      </div>
-
-      <div className="mt-4 rounded border border-white/10 bg-white/[0.03] px-3 py-2">
-        <p className={`text-sm font-semibold ${status.disabled ? "text-slate-400" : "text-emerald-200"}`}>
-          {status.reason}
-        </p>
-      </div>
-
-      {activeBuildingQueue && (
-        <ActiveBuildingQueueDetail
-          isSelectedBuilding={Boolean(isSelectedBuildingQueued)}
-          now={now}
-          queue={activeBuildingQueue}
-        />
-      )}
-
-      {visibleActionNotice && (
-        <div className={`mt-2 rounded border px-3 py-2 text-sm font-semibold break-words ${noticeClass}`}>
-          {visibleActionNotice.label}
-        </div>
-      )}
-
-      {!isSelectedBuildingQueued && !(binary && built) && (
-        <button
-          aria-label={binary ? `${actionVerb} ${building.label}` : `${actionVerb} ${building.label} to Level ${status.targetLevel}`}
-          className="mt-3 h-10 w-full rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-          disabled={status.disabled}
-          onClick={onUpgrade}
-          type="button"
-        >
-          {actionLabel}
-        </button>
-      )}
-
-      {isInfoOpen && (
-        <BuildingLevelInfoModal
-          buildingLabel={building.label}
-          currentLevel={currentLevel}
-          rows={levelInfoRows}
-          onClose={() => setIsInfoOpen(false)}
-        />
-      )}
-    </InspectDetailShell>
+      </>}
+      isDimmed={!built}
+      label={building.label}
+      levelInfo={!binary ? buildingLevelInfoTable(currentLevel, levelInfoRows) : undefined}
+      notice={visibleActionNotice ? { label: visibleActionNotice.label, tone: "error" } : undefined}
+      queue={activeBuildingQueue ? {
+        isPrimaryItem: Boolean(isSelectedBuildingQueued),
+        label: `${buildingQueueLabel(activeBuildingQueue.label, activeBuildingQueue.targetLevel)} is upgrading.`,
+        now,
+        queue: activeBuildingQueue,
+        title: { active: "Construction in progress", context: "Active construction" },
+      } : undefined}
+      statusReason={{ disabled: status.disabled, label: status.reason }}
+      summary={binary ? (built ? "Built on this planet" : "Build on this planet") : currentLevel === 0 ? `Build Level ${status.targetLevel}` : `Level ${currentLevel} to ${status.targetLevel}`}
+    />
   );
 }
 
@@ -566,6 +498,18 @@ export function BuildingLevelInfoModal({
   onClose: () => void;
   rows: ReturnType<typeof buildingLevelInfoRows>;
 }) {
+  const table = buildingLevelInfoTable(currentLevel, rows);
+  return LevelInfoModal({
+    ...table,
+    itemLabel: buildingLabel,
+    onClose,
+  });
+}
+
+export function buildingLevelInfoTable(
+  currentLevel: number,
+  rows: ReturnType<typeof buildingLevelInfoRows>,
+): StructureLevelInfo {
   const columns = buildingLevelInfoColumns(rows);
   const modalColumns: LevelInfoColumn[] = [
     { key: "cost", label: "Upgrade cost", headerClassName: "min-w-52" },
@@ -599,13 +543,11 @@ export function BuildingLevelInfoModal({
     status: row.current ? "current" : row.next ? "next" : "future",
   }));
 
-  return LevelInfoModal({
+  return {
     columns: modalColumns,
     currentLevel,
-    itemLabel: buildingLabel,
-    onClose,
     rows: modalRows,
-  });
+  };
 }
 
 function ComparisonMetric({

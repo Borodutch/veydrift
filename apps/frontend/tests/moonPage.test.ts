@@ -1,12 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import type { ComponentChildren, VNode } from "preact";
-import { MoonPage, MoonStructureLevelInfoModal, moonBuildingRequirementRows, moonFieldSummary, moonJumpGateAvailable, moonJumpGateDestinations, moonJumpGateStatus, moonStructureHasLevelInfo, moonStructureLevelInfoColumns, moonStructureLevelInfoRows, moonStructureStatus, queueReady } from "../src/components/MoonPage";
+import { MoonPage, MoonStructureLevelInfoModal, moonBuildingRequirementRows, moonDefenseProductionItems, moonFieldSummary, moonJumpGateAvailable, moonJumpGateDestinations, moonJumpGateStatus, moonShipProductionItems, moonStructureHasLevelInfo, moonStructureLevelInfoColumns, moonStructureLevelInfoRows, moonStructureQueueProgress, moonStructureStatus, queueReady } from "../src/components/MoonPage";
+import { defenseProductionItems } from "../src/components/DefensePage";
+import { shipProductionItems } from "../src/components/ShipyardPage";
 import type { ChainMoonState } from "../src/walletFlow";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../src/moonActions";
 
 const moonPageSource = await Bun.file(new URL("../src/components/MoonPage.tsx", import.meta.url)).text();
 const infrastructurePageSource = await Bun.file(new URL("../src/components/InfrastructurePage.tsx", import.meta.url)).text();
 const levelInfoModalSource = await Bun.file(new URL("../src/components/LevelInfoModal.tsx", import.meta.url)).text();
+const structureCatalogSource = await Bun.file(new URL("../src/components/StructureCatalog.tsx", import.meta.url)).text();
+const shipyardPageSource = await Bun.file(new URL("../src/components/ShipyardPage.tsx", import.meta.url)).text();
+const defensePageSource = await Bun.file(new URL("../src/components/DefensePage.tsx", import.meta.url)).text();
 
 describe("Moon page helpers", () => {
   test("accepts only positive integer moon ids", () => {
@@ -158,8 +163,8 @@ describe("Moon page helpers", () => {
   test("uses the larger page title styling without redundant section helper copy", () => {
     expect(moonPageSource).toContain('titleSize="xl"');
     expect(moonPageSource).toContain('<h3 className="text-base font-semibold text-white">Moon Structures</h3>');
-    expect(moonPageSource).toContain('<h3 className="text-base font-semibold text-white">Moon Shipyard</h3>');
-    expect(moonPageSource).toContain('<h3 className="text-base font-semibold text-white">Moon Defenses</h3>');
+    expect(moonPageSource).toContain('title="Moon Shipyard"');
+    expect(moonPageSource).toContain('title="Moon Defenses"');
     expect(moonPageSource).not.toContain("Lunar Base expands fields. Jump Gate supports fleet movement between owned moons.");
     expect(moonPageSource).not.toContain("Enter a Chicken ID to burn it on Base mainnet");
     expect(moonPageSource).not.toContain("Burn a verified Chicken to grant a moon to this planet");
@@ -390,10 +395,19 @@ describe("Moon page helpers", () => {
   });
 
   test("uses shared planet production and inspect layout patterns for moon systems", () => {
-    expect(moonPageSource).toContain("InspectTwoColumnLayout");
-    expect(moonPageSource).toContain("InspectCatalogTile");
-    expect(moonPageSource).toContain("InspectDetailShell");
-    expect(moonPageSource).toContain("ProductionCatalog");
+    expect(moonPageSource).toContain("StructureCatalog");
+    expect(moonPageSource).toContain("StructureDetail");
+    expect(infrastructurePageSource).toContain("StructureCatalog");
+    expect(infrastructurePageSource).toContain("StructureDetail");
+    expect(structureCatalogSource).toContain("InspectTwoColumnLayout");
+    expect(structureCatalogSource).toContain("InspectCatalogTile");
+    expect(structureCatalogSource).toContain("InspectDetailShell");
+    expect(moonPageSource).toContain("ProductionSection");
+    expect(shipyardPageSource).toContain("ProductionSection");
+    expect(defensePageSource).toContain("ProductionSection");
+    expect(moonPageSource).toContain("adaptProductionItems");
+    expect(shipyardPageSource).toContain("adaptProductionItems");
+    expect(defensePageSource).toContain("adaptProductionItems");
     expect(moonPageSource).toContain("MoonStructuresSection");
     expect(moonPageSource).toContain("MoonShipyardSection");
     expect(moonPageSource).toContain("MoonDefenseSection");
@@ -539,8 +553,8 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).toContain('label: "Robotics Factory level 2"');
     expect(moonPageSource).toContain('? { kind: "moonStructure", key }');
     expect(moonPageSource).toContain("MoonStructureComparisonMetric");
-    expect(moonPageSource).toContain("MoonStructureLevelInfoButton");
     expect(moonPageSource).toContain("MoonStructureLevelInfoModal");
+    expect(moonPageSource).toContain("moonStructureLevelInfoTable");
     expect(moonPageSource).toContain("moonStructureCatalogStatusText(building)");
     expect(moonPageSource).toContain("moonStructureBuildDurationSeconds");
     expect(moonPageSource).toContain("isBinaryMoonStructure(building.key)");
@@ -567,7 +581,9 @@ describe("Moon page helpers", () => {
     expect(moonPageSource).toContain('from "./LevelInfoModal"');
     expect(infrastructurePageSource).toContain('from "./LevelInfoModal"');
     expect(moonPageSource).toContain("moonStructureHasLevelInfo(building.key)");
-    expect(moonPageSource).toContain("isInfoOpen ?");
+    expect(structureCatalogSource).toContain("isInfoOpen && levelInfo");
+    expect(structureCatalogSource).toContain("<LevelInfoButton");
+    expect(structureCatalogSource).toContain("<LevelInfoModal");
     expect(moonPageSource).not.toContain('aria-labelledby="moon-building-level-info-title"');
   });
 
@@ -627,7 +643,8 @@ describe("Moon page helpers", () => {
     expect(visibleText(roboticsModal)).toContain("Metal 800, Crystal 240, Deuterium 400");
     expect(visibleText(roboticsModal)).toContain("Moon structure build divisor x2");
     expect(visibleText(shipyardModal)).toContain("Shipyard levels");
-    expect(visibleText(shipyardModal)).toContain("Robotics Factory level 2");
+    expect(visibleText(shipyardModal)).not.toContain("Requirements");
+    expect(visibleText(shipyardModal)).not.toContain("Robotics Factory level 2");
     expect(visibleText(shipyardModal)).toContain("Moon defense build divisor x2");
   });
 
@@ -642,7 +659,6 @@ describe("Moon page helpers", () => {
         durationSeconds: 120,
         effect: "+3 gross fields, 1 field used",
         level: 1,
-        requirements: "1 open field",
         status: "current",
       }],
     }) as VNode;
@@ -687,6 +703,157 @@ describe("Moon page helpers", () => {
 
     expect(status.costAvailable).toBe(true);
     expect(status.cost).toEqual({ metal: 20000, crystal: 40000, deuterium: 20000 });
+  });
+
+  test("shows contract-backed next-build durations for every Moon structure", () => {
+    const moonState = loadedMoonState({
+      moon: {
+        exists: true,
+        planetId: "7",
+        owner: "0x1111111111111111111111111111111111111111",
+        fields: 8,
+        diameterKm: 8774,
+        createdAt: "1770000000",
+        jumpGateReadyAt: "0",
+      },
+      resourcesAsOfNow: { metal: "999999999", crystal: "999999999", deuterium: "999999999" },
+      buildings: [
+        { id: 0, key: "lunarBase", label: "Lunar Base", level: 1, cost: { metal: "40000", crystal: "80000", deuterium: "40000" }, durationSeconds: 101 },
+        { id: 1, key: "roboticsFactory", label: "Robotics Factory", level: 2, cost: { metal: "1600", crystal: "480", deuterium: "800" }, durationSeconds: 202 },
+        { id: 2, key: "jumpGate", label: "Jump Gate", level: 0, cost: { metal: "2000000", crystal: "4000000", deuterium: "2000000" }, durationSeconds: 303 },
+        { id: 3, key: "shipyard", label: "Shipyard", level: 1, cost: { metal: "800", crystal: "400", deuterium: "200" }, durationSeconds: 404 },
+      ],
+      technologyLevels: { "8": 7 },
+    });
+
+    expect(moonState.buildings.map((building) => (
+      moonStructureStatus(building, moonState.moon!, moonState, { canTransact: true }).durationSeconds
+    ))).toEqual([101, 202, 303, 404]);
+  });
+
+  test("keeps projected completion available as a fallback without blocking the next mutation", () => {
+    expect(moonPageSource).toContain("moonState?.queue ?? moonState?.completionQueue");
+    expect(moonPageSource).toContain('label: "Complete"');
+    expect(moonPageSource).toContain('"is ready to settle on-chain."');
+    expect(structureCatalogSource).toContain("StructureQueueProgress");
+
+    const moonState = loadedMoonState({
+      moon: {
+        exists: true,
+        planetId: "7",
+        owner: "0x1111111111111111111111111111111111111111",
+        fields: 4,
+        diameterKm: 8774,
+        createdAt: "1770000000",
+        jumpGateReadyAt: "0",
+      },
+      buildings: [{
+        id: 0,
+        key: "lunarBase",
+        label: "Lunar Base",
+        level: 1,
+        cost: { metal: "40000", crystal: "80000", deuterium: "40000" },
+        durationSeconds: 1440,
+      }],
+      resourcesAsOfNow: { metal: "999999", crystal: "999999", deuterium: "999999" },
+      completionQueue: {
+        active: true,
+        kind: "moon-building",
+        itemId: 0,
+        targetLevel: 1,
+        readyAt: "1770000300",
+        cost: { metal: "20000", crystal: "40000", deuterium: "20000" },
+        asOfNow: { secondsRemaining: 0, complete: true },
+      },
+    });
+    const status = moonStructureStatus(moonState.buildings[0], moonState.moon!, moonState, { canTransact: true });
+    expect(status.disabled).toBe(false);
+    expect(status.reason).toBe("Ready for Level 2");
+  });
+
+  test("uses the queued Moon construction's immutable timeline independent of selected detail", () => {
+    const queue = {
+      active: true,
+      kind: "moon-building" as const,
+      itemId: 0,
+      targetLevel: 2,
+      startedAt: "1770000000",
+      readyAt: "1770001200",
+      cost: { metal: "40000", crystal: "80000", deuterium: "40000" },
+    };
+
+    expect(moonStructureQueueProgress(queue)).toEqual({
+      startedAt: 1_770_000_000_000,
+      readyAt: 1_770_001_200_000,
+    });
+    expect(moonStructureQueueProgress({ ...queue, itemId: 3 })).toEqual(
+      moonStructureQueueProgress(queue),
+    );
+    expect(moonStructureQueueProgress({ ...queue, startedAt: undefined })).toBeUndefined();
+    expect(moonPageSource).not.toContain("building.durationSeconds ?? 0");
+  });
+
+  test("shares production quantity adaptation across planet and Moon Shipyard/Defense bodies", () => {
+    const moonState = loadedMoonState({
+      ships: [{ id: 0, count: 2, cost: { metal: "2000", crystal: "2000", deuterium: "0" }, durationSeconds: 10 }],
+      defenses: [{ id: 0, count: 3, cost: { metal: "2000", crystal: "0", deuterium: "0" }, durationSeconds: 20 }],
+    });
+    const moonShip = moonShipProductionItems({ moonState, quantities: { smallCargo: "3" } })[0]!;
+    const moonDefense = moonDefenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      moonState,
+      quantities: { rocketLauncher: "3" },
+    })[0]!;
+    const planetShip = shipProductionItems({
+      actionPending: false,
+      canTransact: true,
+      productionAvailable: true,
+      quantities: { smallCargo: "3" },
+      resources: { metal: 999999, crystal: 999999, deuterium: 999999 },
+      shipyardLevel: 20,
+      shipyardState: {
+        wallet: moonState.wallet,
+        homePlanetId: "7",
+        planetId: "7",
+        productionAvailable: true,
+        resources: moonState.resources ?? null,
+        fleetSlots: { active: 0, limit: 9 },
+        shipyardLevel: 20,
+        naniteLevel: 0,
+        technologyLevels: {},
+        ships: moonState.ships ?? [],
+        queue: null,
+      },
+    })[0]!;
+    const planetDefense = defenseProductionItems({
+      actionPending: false,
+      canTransact: true,
+      defenseState: {
+        wallet: moonState.wallet,
+        homePlanetId: "7",
+        productionAvailable: true,
+        resources: moonState.resources ?? null,
+        shipyardLevel: 20,
+        naniteLevel: 0,
+        missileSiloLevel: 20,
+        technologyLevels: {},
+        defenses: moonState.defenses,
+        queue: null,
+      },
+      productionAvailable: true,
+      quantities: { rocketLauncher: "3" },
+      resources: { metal: 999999, crystal: 999999, deuterium: 999999 },
+    })[0]!;
+
+    expect([moonShip, planetShip].map(({ quantity, quantityValid, durationSeconds }) => ({ quantity, quantityValid, durationSeconds }))).toEqual([
+      { quantity: 3, quantityValid: true, durationSeconds: 30 },
+      { quantity: 3, quantityValid: true, durationSeconds: 30 },
+    ]);
+    expect([moonDefense, planetDefense].map(({ quantity, quantityValid, durationSeconds }) => ({ quantity, quantityValid, durationSeconds }))).toEqual([
+      { quantity: 3, quantityValid: true, durationSeconds: 60 },
+      { quantity: 3, quantityValid: true, durationSeconds: 60 },
+    ]);
   });
 
   test("marks ready moon queues available for completion only after backend readiness", () => {

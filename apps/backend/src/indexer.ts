@@ -124,6 +124,7 @@ import {
   deriveInfrastructureFields,
   deriveBuildingRows,
   deriveDefenseRows,
+  deriveMoonBuildingRows,
   deriveShipRows,
   deriveTechnologyRows,
   usedFieldsFromBuildingRows,
@@ -416,6 +417,7 @@ type MoonBuildingQueueRow = {
   moon_building_id: number;
   planet_id: string;
   ready_at: string;
+  started_at: string | null;
   target_level: number;
 };
 
@@ -2071,8 +2073,19 @@ export class SettlementIndexer {
   }
 
   private moonBuildingLevelAsOfNow(planetId: string, buildingId: number): number {
-    // Moon buildings serve the contract-authoritative table directly, like planet buildings.
-    return this.indexedLevel("contract_moon_building_levels", "moon_building_id", planetId, buildingId);
+    const canonicalLevel = this.indexedLevel(
+      "contract_moon_building_levels",
+      "moon_building_id",
+      planetId,
+      buildingId
+    );
+    let projectedLevel = canonicalLevel;
+    for (const queue of this.queueSettlement(`moon-building:${planetId}`).completed) {
+      if (queue.itemId === buildingId && typeof queue.targetLevel === "number") {
+        projectedLevel = Math.max(projectedLevel, queue.targetLevel);
+      }
+    }
+    return projectedLevel;
   }
 
   private moonDefenseCountAsOfNow(planetId: string, defenseId: number): number {
@@ -2344,6 +2357,16 @@ export class SettlementIndexer {
     const moon = planetId ? this.moon(planetId) : null;
     const resources = this.moonResources(planetId);
     const jumpGateDestinations = this.moonJumpGateDestinations(wallet, planetId);
+    const buildings = planetId
+      ? deriveMoonBuildingRows((buildingId) => this.moonBuildingLevelAsOfNow(planetId, buildingId))
+      : deriveMoonBuildingRows(() => 0);
+    const canonicalLunarBaseLevel = planetId
+      ? this.indexedLevel("contract_moon_building_levels", "moon_building_id", planetId, 0)
+      : 0;
+    const projectedLunarBaseLevel = buildings.find((building) => building.id === 0)?.level ?? 0;
+    const moonQueueSettlement = planetId
+      ? this.queueSettlement(`moon-building:${planetId}`)
+      : { queue: null, completed: [] };
     return {
       wallet,
       bodyKind: "moon",
@@ -2360,19 +2383,18 @@ export class SettlementIndexer {
             exists: true,
             planetId: moon.planetId,
             owner: moon.owner,
-            fields: moon.fields,
+            fields: moon.fields + Math.max(0, projectedLunarBaseLevel - canonicalLunarBaseLevel) * 3,
             diameterKm: moon.diameterKm,
             createdAt: moon.createdAt,
             jumpGateReadyAt: moon.jumpGateReadyAt ?? "0"
           }
         : null,
-      buildings: moonBuildingRows.map((building) => ({
-        ...building,
-        level: planetId ? this.moonBuildingLevelAsOfNow(planetId, building.id) : 0,
-        cost: zeroResources()
-      })),
+      buildings,
       fleet: planetId ? this.moonShipRows(planetId) : [],
-      queue: planetId ? this.moonQueue(planetId) : null,
+      queue: moonQueueSettlement.queue,
+      ...(moonQueueSettlement.completed[0]
+        ? { completionQueue: moonQueueSettlement.completed[0] }
+        : {}),
       technologyLevels: this.technologyLevels(wallet),
       defenses: moonDefenseRows.map((defense) => ({
         ...defense,
@@ -3602,6 +3624,7 @@ export class SettlementIndexer {
         moon_building_id INTEGER NOT NULL,
         target_level INTEGER NOT NULL,
         ready_at TEXT NOT NULL,
+        started_at TEXT,
         metal_cost TEXT NOT NULL,
         crystal_cost TEXT NOT NULL,
         deuterium_cost TEXT NOT NULL,
@@ -3727,6 +3750,16 @@ export class SettlementIndexer {
     `);
     this.ensureColumn("player_profiles", "description", "TEXT");
     this.ensureColumn("contract_production_queues", "backlog_json", "TEXT");
+    this.ensureColumn("contract_moon_building_queues", "started_at", "TEXT");
+    this.db.query(`
+      UPDATE contract_moon_building_queues
+      SET started_at = (
+        SELECT started_at
+        FROM contract_production_queues
+        WHERE queue_key = 'moon-building:' || contract_moon_building_queues.planet_id
+      )
+      WHERE started_at IS NULL
+    `).run();
     this.ensureColumn("contract_planet_resources", "log_index", "TEXT NOT NULL DEFAULT '0x0'");
     this.ensureColumn("contract_alliance_diplomacy", "initiated_by_alliance_id", "TEXT");
     this.ensureColumn("contract_alliance_diplomacy", "declared_at", "TEXT");
@@ -3814,15 +3847,16 @@ export class SettlementIndexer {
       if (queue.kind === "moon-building" && queue.planet_id && queue.target_level !== null) {
         this.db.query(`
           INSERT OR IGNORE INTO contract_moon_building_queues (
-            planet_id, moon_building_id, target_level, ready_at,
+            planet_id, moon_building_id, target_level, ready_at, started_at,
             metal_cost, crystal_cost, deuterium_cost, event_json
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           queue.planet_id,
           queue.item_id,
           queue.target_level,
           queue.ready_at,
+          queue.started_at,
           cost.metal,
           cost.crystal,
           cost.deuterium,
@@ -4962,6 +4996,18 @@ export class SettlementIndexer {
 
   private upsertCanonicalMoonQueue(planetId: string, queue: QueueState): void {
     if (queue.itemId === undefined || queue.targetLevel === undefined) return;
+    const existing = this.db.query(`
+      SELECT item_id, target_level, ready_at, started_at
+      FROM contract_production_queues
+      WHERE queue_key = ?
+    `).get(`moon-building:${planetId}`) as Pick<QueueRow, "item_id" | "target_level" | "ready_at" | "started_at"> | null;
+    const preservedStartedAt = existing
+      && existing.item_id === queue.itemId
+      && existing.target_level === queue.targetLevel
+      && existing.ready_at === queue.readyAt
+      ? existing.started_at
+      : null;
+    const startedAt = queue.startedAt ?? preservedStartedAt ?? undefined;
     this.upsertQueue({
       eventName: "MoonBuildingStarted",
       transactionHash: "0x",
@@ -4971,7 +5017,7 @@ export class SettlementIndexer {
       itemId: queue.itemId,
       targetLevel: queue.targetLevel,
       readyAt: queue.readyAt ?? "0",
-      ...(queue.startedAt ? { startedAt: queue.startedAt } : {}),
+      ...(startedAt ? { startedAt } : {}),
       cost: queue.cost
     });
   }
@@ -5894,6 +5940,15 @@ export class SettlementIndexer {
       this.upsertIndexedLevelAtLeast("indexed_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
       this.upsertIndexedLevelAtLeast("contract_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
     } else if (event.queueKind === "moon-building" && event.planetId && event.level !== undefined) {
+      if (event.itemId === 0) {
+        const currentLevel = this.indexedLevel(
+          "contract_moon_building_levels",
+          "moon_building_id",
+          event.planetId,
+          event.itemId
+        );
+        this.incrementMoonFields(event.planetId, Math.max(0, event.level - currentLevel) * 3);
+      }
       this.db.query("DELETE FROM contract_moon_building_queues WHERE planet_id = ?").run(event.planetId);
       this.upsertIndexedLevelAtLeast("indexed_moon_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
       this.upsertIndexedLevelAtLeast("contract_moon_building_levels", "moon_building_id", "level", event.planetId, event.itemId, event.level);
@@ -6001,14 +6056,15 @@ export class SettlementIndexer {
     if (event.queueKind === "moon-building" && event.planetId && event.targetLevel !== undefined) {
       this.db.query(`
         INSERT INTO contract_moon_building_queues (
-          planet_id, moon_building_id, target_level, ready_at,
+          planet_id, moon_building_id, target_level, ready_at, started_at,
           metal_cost, crystal_cost, deuterium_cost, event_json
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(planet_id) DO UPDATE SET
           moon_building_id = excluded.moon_building_id,
           target_level = excluded.target_level,
           ready_at = excluded.ready_at,
+          started_at = excluded.started_at,
           metal_cost = excluded.metal_cost,
           crystal_cost = excluded.crystal_cost,
           deuterium_cost = excluded.deuterium_cost,
@@ -6018,6 +6074,7 @@ export class SettlementIndexer {
         event.itemId,
         event.targetLevel,
         event.readyAt,
+        event.startedAt ?? null,
         event.cost.metal,
         event.cost.crystal,
         event.cost.deuterium,
@@ -6170,7 +6227,7 @@ export class SettlementIndexer {
 
     if (queueKeyValue.startsWith("moon-building:")) {
       const row = this.db.query(`
-        SELECT planet_id, moon_building_id, target_level, ready_at, metal_cost, crystal_cost, deuterium_cost, event_json
+        SELECT planet_id, moon_building_id, target_level, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost, event_json
         FROM contract_moon_building_queues
         WHERE planet_id = ?
       `).get(queueKeyValue.slice("moon-building:".length)) as MoonBuildingQueueRow | null;
@@ -6181,6 +6238,7 @@ export class SettlementIndexer {
           itemId: row.moon_building_id,
           targetLevel: row.target_level,
           readyAt: row.ready_at,
+          startedAt: row.started_at,
           cost: {
             metal: row.metal_cost,
             crystal: row.crystal_cost,
@@ -6531,6 +6589,18 @@ export class SettlementIndexer {
       SET event_json = ?
       WHERE planet_id = ?
     `).run(JSON.stringify({ ...moon, jumpGateReadyAt }), planetId);
+  }
+
+  private incrementMoonFields(planetId: string, addedFields: number): void {
+    if (addedFields <= 0) return;
+    const moon = this.moon(planetId);
+    if (!moon) return;
+    const fields = moon.fields + addedFields;
+    this.db.query(`
+      UPDATE indexed_moons
+      SET fields = ?, event_json = ?
+      WHERE planet_id = ?
+    `).run(fields, JSON.stringify({ ...moon, fields }), planetId);
   }
 
   private applyRiftResourceEvent(event: IndexedRiftResourceEvent): void {
@@ -9556,12 +9626,6 @@ function compareFleetMissionsActiveSoonestFirst(left: FleetMissionSummary, right
   return leftMission > rightMission ? 1 : -1;
 }
 
-const moonBuildingRows = [
-  { id: 0, key: "lunarBase", label: "Lunar Base" },
-  { id: 1, key: "roboticsFactory", label: "Robotics Factory" },
-  { id: 2, key: "jumpGate", label: "Jump Gate" },
-  { id: 3, key: "shipyard", label: "Shipyard" }
-];
 const moonDefenseRows = Array.from({ length: 8 }, (_, id) => ({ id }));
 const riftResourceRows = [
   { key: "metal" as const, label: "Metal", resourceId: 0 },
