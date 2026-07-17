@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { useState } from "preact/hooks";
 import { formatCost } from "../buildingDetails";
 import { formatDuration } from "../durationFormat";
 import type { Resources } from "../playableMvp";
@@ -69,6 +70,48 @@ export type ProductionQueue = {
   backlog?: ProductionQueue[] | undefined;
 };
 
+type ProductionCatalogSource<Key extends string> = {
+  asset: string;
+  group: string;
+  id: number;
+  key: Key;
+  label: string;
+};
+
+type ProductionItemAdapterResult<Key extends string> = Omit<
+  ProductionCatalogItem<Key>,
+  "asset" | "group" | "id" | "key" | "label" | "quantity" | "quantityInput" | "quantityValid"
+>;
+
+export type ProductionItemAdapterContext = {
+  quantity: number;
+  quantityInput: ProductionQuantityInput;
+  quantityValid: boolean;
+};
+
+export function adaptProductionItems<Key extends string, Source extends ProductionCatalogSource<Key>>(
+  catalog: readonly Source[],
+  quantities: Record<string, ProductionQuantityInput>,
+  adapt: (source: Source, context: ProductionItemAdapterContext) => ProductionItemAdapterResult<Key>,
+): ProductionCatalogItem<Key>[] {
+  return catalog.map((source) => {
+    const quantityInput = quantities[source.key] ?? 1;
+    const parsedQuantity = parseProductionQuantity(quantityInput);
+    const quantity = parsedQuantity ?? 1;
+    return {
+      asset: source.asset,
+      group: source.group,
+      id: source.id,
+      key: source.key,
+      label: source.label,
+      quantity,
+      quantityInput,
+      quantityValid: parsedQuantity !== undefined,
+      ...adapt(source, { quantity, quantityInput, quantityValid: parsedQuantity !== undefined }),
+    };
+  });
+}
+
 export function selectedProductionItem<Key extends string>(
   items: readonly ProductionCatalogItem<Key>[],
   selectedKey: Key | undefined,
@@ -101,6 +144,45 @@ export function productionQueueViewModel(
   };
 }
 
+export type ProductionCatalogProps<Key extends string> = {
+  actionPending: boolean;
+  canTransact: boolean;
+  emptyLabel: string;
+  items: ProductionCatalogItem<Key>[];
+  now?: number | undefined;
+  onBuild: (item: ProductionCatalogItem<Key>) => void;
+  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
+  onQuantity: (key: Key, quantity: ProductionQuantityInput) => void;
+  onRefreshQueue?: (() => void) | undefined;
+  onSelect: (key: Key) => void;
+  queue?: ProductionQueue | undefined;
+  selectedKey: Key | undefined;
+};
+
+export function ProductionSection<Key extends string>({
+  children,
+  items,
+  title,
+  ...catalogProps
+}: Omit<ProductionCatalogProps<Key>, "items" | "onQuantity"> & {
+  children?: ComponentChildren;
+  items: (quantities: Record<string, ProductionQuantityInput>) => ProductionCatalogItem<Key>[];
+  title?: string | undefined;
+}) {
+  const [quantities, setQuantities] = useState<Record<string, ProductionQuantityInput>>({});
+  return (
+    <section className="grid gap-3">
+      {title ? <div className="min-w-0"><h3 className="text-base font-semibold text-white">{title}</h3></div> : null}
+      {children}
+      <ProductionCatalog
+        {...catalogProps}
+        items={items(quantities)}
+        onQuantity={(key, quantity) => setQuantities((previous) => ({ ...previous, [key]: quantity }))}
+      />
+    </section>
+  );
+}
+
 export function ProductionCatalog<Key extends string>({
   actionPending,
   canTransact,
@@ -114,20 +196,7 @@ export function ProductionCatalog<Key extends string>({
   onSelect,
   queue,
   selectedKey,
-}: {
-  actionPending: boolean;
-  canTransact: boolean;
-  emptyLabel: string;
-  items: ProductionCatalogItem<Key>[];
-  now?: number | undefined;
-  onBuild: (item: ProductionCatalogItem<Key>) => void;
-  onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
-  onQuantity: (key: Key, quantity: ProductionQuantityInput) => void;
-  onRefreshQueue?: (() => void) | undefined;
-  onSelect: (key: Key) => void;
-  queue?: ProductionQueue | undefined;
-  selectedKey: Key | undefined;
-}) {
+}: ProductionCatalogProps<Key>) {
   const selected = selectedProductionItem(items, selectedKey);
   const groups = Array.from(new Map(items.map((item) => [item.group, item.groupLabel])).entries());
 

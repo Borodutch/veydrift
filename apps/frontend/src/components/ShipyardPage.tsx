@@ -6,10 +6,10 @@ import { formatDuration } from "../durationFormat";
 import { activeProductionQueue } from "../productionQueueFallback";
 import { walletRecoveryActionMessage, type ChainShipyardState } from "../walletFlow";
 import {
+  adaptProductionItems,
   Notice,
-  parseProductionQuantity,
-  ProductionCatalog,
   formatProductionPrice,
+  ProductionSection,
   type ProductionCatalogItem,
   type ProductionDetailSection,
   type ProductionQuantityInput,
@@ -84,7 +84,6 @@ export function ShipyardPage({
   spendableResources,
   transactionUnavailableReason,
 }: ShipyardPageProps) {
-  const [quantities, setQuantities] = useState<Record<string, ProductionQuantityInput>>({});
   const [localSelectedKey, setLocalSelectedKey] = useState<ShipKey>("smallCargo");
   const selectedKey = selectedShipKey ?? localSelectedKey;
   const shipyardLevel = shipyardState?.shipyardLevel ?? 0;
@@ -113,11 +112,11 @@ export function ShipyardPage({
       {initialLoading ? (
         <CatalogSkeleton label="Loading shipyard" />
       ) : (
-        <ProductionCatalog
+        <ProductionSection
           actionPending={actionState.status === "pending"}
           canTransact={canTransact}
           emptyLabel="Select a ship to review costs, requirements, and production controls."
-          items={shipProductionItems({
+          items={(quantities) => shipProductionItems({
             actionPending: actionState.status === "pending",
             canTransact,
             productionAvailable,
@@ -132,7 +131,6 @@ export function ShipyardPage({
           now={now}
           onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
           onOpenRequirement={onOpenRequirement}
-          onQuantity={(key, quantity) => setQuantities((prev) => ({ ...prev, [key]: quantity }))}
           onRefreshQueue={onCollect}
           onSelect={(key) => {
             setLocalSelectedKey(key);
@@ -240,14 +238,11 @@ export function shipProductionItems({
   // Build only from the buildable subset so expedition-only ships (Pathfinder) are
   // hidden from the shipyard. `shipCatalog` is still used elsewhere for queue label
   // resolution so a pre-existing on-chain queue entry keeps its name.
-  return shipyardCatalog.map((ship) => {
+  return adaptProductionItems(shipyardCatalog, quantities, (ship, { quantity }) => {
     const chainShip = shipyardState?.ships.find((item) => item.id === ship.id);
     const shipUnavailable = Boolean(shipyardState) && productionAvailable && !chainShip;
     const owned = productionAvailable && chainShip ? chainShip.count : undefined;
     const baseCost = productionAvailable && chainShip ? toResources(chainShip.cost) : undefined;
-    const quantityInput = quantities[ship.key] ?? 1;
-    const parsedQuantity = parseProductionQuantity(quantityInput);
-    const quantity = parsedQuantity ?? 1;
     const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
     // Backend-sourced per-unit build time scaled by the selected quantity (VEY-KANEO-472).
     const durationSeconds = chainShip?.durationSeconds === undefined
@@ -278,7 +273,6 @@ export function shipProductionItems({
 
     return {
       actionLabel: "Build",
-      asset: ship.asset,
       blockedReason,
       cost: totalCost,
       ...(durationSeconds === undefined ? {} : { durationSeconds }),
@@ -293,17 +287,10 @@ export function shipProductionItems({
       }),
       detailNote: stats || "Production unit",
       disabled,
-      group: ship.group,
       groupLabel: groupLabels[ship.group],
-      id: ship.id,
-      key: ship.key,
       labelTone: blockedReason ? "muted" : "normal",
-      label: ship.label,
       missing,
       notes: shipNotes(ship),
-      quantity,
-      quantityInput,
-      quantityValid: parsedQuantity !== undefined,
       queued,
       requirements,
       status: queued > 0 ? "queued" : shipUnavailable ? "unavailable" : missing.length === 0 ? "ready" : "locked",

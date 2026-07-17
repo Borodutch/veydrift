@@ -5,7 +5,7 @@ import { afterAll, describe, expect, setSystemTime, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { encodeAbiParameters, keccak256, parseAbiParameters, toHex } from "viem";
 import { canonicalContractTables } from "./contractStateSchema";
-import type { Address, AllianceState, CanonicalFleetMissionSnapshot, CanonicalPlanetChainState, DebrisFieldEvent, DefenseState, InfrastructureState, MoonChanceReportEvent, PlayerQueues, ResearchState, ShipyardState, SettledPlanetEvent } from "./evm";
+import type { Address, AllianceState, CanonicalFleetMissionSnapshot, CanonicalPlanetChainState, DebrisFieldEvent, DefenseState, InfrastructureState, MoonChanceReportEvent, MoonState, PlayerQueues, ResearchState, ShipyardState, SettledPlanetEvent } from "./evm";
 import { SettlementIndexer } from "./indexer";
 import { deriveBuildingRows, deriveDefenseRows, deriveInfrastructureFields, deriveShipRows } from "./readModels";
 
@@ -3267,6 +3267,7 @@ describe("SettlementIndexer", () => {
     });
     indexer.applyLog({
       blockNumber: "0x88",
+      blockTimestamp: "0x69800e80",
       transactionHash: "0xmoonbuild",
       logIndex: "0x0",
       topics: [
@@ -3307,7 +3308,8 @@ describe("SettlementIndexer", () => {
         kind: "moon-building",
         itemId: 2,
         targetLevel: 1,
-        readyAt: "1770001200"
+        readyAt: "1770001200",
+        startedAt: "1770000000"
       }
     });
     expect(indexer.shipRows(planet.planetId).find((ship) => ship.id === 1)?.count).toBe(99);
@@ -3389,6 +3391,7 @@ describe("SettlementIndexer", () => {
     });
     indexer.applyLog({
       blockNumber: "0x88",
+      blockTimestamp: "0x6955b2c0",
       transactionHash: "0xmoon-overdue",
       logIndex: "0x0",
       topics: [moonBuildingStartedTopic, topic(7n), topic(0n)],
@@ -3401,6 +3404,7 @@ describe("SettlementIndexer", () => {
       completionQueue: {
         itemId: 0,
         targetLevel: 1,
+        startedAt: "1767224000",
         asOfNow: { complete: true, secondsRemaining: 0 }
       },
       buildings: expect.arrayContaining([
@@ -3438,6 +3442,7 @@ describe("SettlementIndexer", () => {
     });
     indexer.applyLog({
       blockNumber: "0x88",
+      blockTimestamp: "0x69800e80",
       transactionHash: "0xmoon-future-queue",
       logIndex: "0x0",
       topics: [moonBuildingStartedTopic, topic(7n), topic(1n)],
@@ -3446,8 +3451,86 @@ describe("SettlementIndexer", () => {
 
     expect(indexer.moonState(player, planet.planetId)).toMatchObject({
       moon: { fields: 12 },
-      queue: { itemId: 1, targetLevel: 1, readyAt: "1770001200" },
+      queue: { itemId: 1, targetLevel: 1, readyAt: "1770001200", startedAt: "1770000000" },
       buildings: expect.arrayContaining([expect.objectContaining({ id: 1, level: 0 })])
+    });
+  });
+
+  test("preserves indexed Moon queue startedAt across canonical reconciliation", async () => {
+    const canonicalMoon: MoonState = {
+      wallet: player,
+      bodyKind: "moon",
+      homePlanetId: planet.planetId,
+      parentPlanetId: planet.planetId,
+      moonAvailable: true,
+      resources: { metal: "1000", crystal: "1000", deuterium: "1000" },
+      resourcesAsOfNow: { metal: "1000", crystal: "1000", deuterium: "1000" },
+      ships: [],
+      launchableShips: [],
+      defenses: [],
+      moon: {
+        exists: true,
+        planetId: planet.planetId,
+        owner: player,
+        fields: 12,
+        diameterKm: 8777,
+        createdAt: "1770000000",
+        jumpGateReadyAt: "0",
+      },
+      fleet: [],
+      buildings: [{
+        id: 1,
+        key: "roboticsFactory",
+        label: "Robotics Factory",
+        level: 0,
+        cost: { metal: "400", crystal: "120", deuterium: "200" },
+      }],
+      queue: {
+        active: true,
+        kind: "moon-building",
+        itemId: 1,
+        targetLevel: 1,
+        readyAt: "1770001200",
+        cost: { metal: "400", crystal: "120", deuterium: "200" },
+      },
+      technologyLevels: {},
+      defenseQueue: null,
+    };
+    const canonicalPlanet: CanonicalPlanetChainState = {
+      planetId: planet.planetId,
+      resources: planet.resources,
+      buildings: deriveBuildingRows(() => 0),
+      defenses: deriveDefenseRows(() => 0),
+      ships: deriveShipRows(() => 0),
+      queues: { building: null, defense: null, ship: null },
+    };
+    const indexer = new SettlementIndexer({
+      async getBlockNumber() { return 0x88n; },
+      async getCanonicalPlanetState() { return canonicalPlanet; },
+      async getMoonState() { return canonicalMoon; },
+      async listContractLogs() { return []; },
+      async listCurrentPlanets() { return [planet]; },
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; },
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x88",
+      blockTimestamp: "0x69800e80",
+      transactionHash: "0xmoon-reconcile",
+      logIndex: "0x0",
+      topics: [moonBuildingStartedTopic, topic(7n), topic(1n)],
+      data: abiWords(1n, 1770001200n, 400n, 120n, 200n),
+    });
+
+    await indexer.seedCurrentCanonicalState({ planetConcurrency: 1 });
+
+    expect(indexer.moonState(player, planet.planetId).queue).toMatchObject({
+      itemId: 1,
+      readyAt: "1770001200",
+      startedAt: "1770000000",
+      targetLevel: 1,
     });
   });
 
@@ -3618,6 +3701,7 @@ describe("SettlementIndexer", () => {
       });
       indexer.applyLog({
         blockNumber: "0x94",
+        blockTimestamp: "0x69801650",
         transactionHash: "0xqueue-moon",
         logIndex: "0x0",
         topics: [moonBuildingStartedTopic, topic(7n), topic(2n)],
@@ -3696,13 +3780,14 @@ describe("SettlementIndexer", () => {
         }
       ]);
       expect(db.query(`
-        SELECT planet_id, moon_building_id, target_level, ready_at, metal_cost, crystal_cost, deuterium_cost
+        SELECT planet_id, moon_building_id, target_level, ready_at, started_at, metal_cost, crystal_cost, deuterium_cost
         FROM contract_moon_building_queues
       `).get()).toEqual({
         planet_id: "7",
         moon_building_id: 2,
         target_level: 1,
         ready_at: "1770002400",
+        started_at: "1770002000",
         metal_cost: "2000000",
         crystal_cost: "4000000",
         deuterium_cost: "2000000"
@@ -3716,7 +3801,8 @@ describe("SettlementIndexer", () => {
       expect(indexer.moonState(player, planet.planetId).queue).toMatchObject({
         kind: "moon-building",
         itemId: 2,
-        targetLevel: 1
+        targetLevel: 1,
+        startedAt: "1770002000"
       });
 
       indexer.applyLog({

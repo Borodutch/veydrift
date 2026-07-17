@@ -5,9 +5,9 @@ import { formatMissingResources } from "../buildingDetails";
 import { activeProductionQueue } from "../productionQueueFallback";
 import { walletRecoveryActionMessage, type ChainDefenseState } from "../walletFlow";
 import {
+  adaptProductionItems,
   Notice,
-  parseProductionQuantity,
-  ProductionCatalog,
+  ProductionSection,
   type ProductionCatalogItem,
   type ProductionQuantityInput,
   type ProductionRequirementState,
@@ -80,7 +80,6 @@ export function DefensePage({
   spendableResources,
   transactionUnavailableReason,
 }: DefensePageProps) {
-  const [quantities, setQuantities] = useState<Record<string, ProductionQuantityInput>>({});
   const [localSelectedKey, setLocalSelectedKey] = useState<DefenseKey>("rocketLauncher");
   const selectedKey = selectedDefenseKey ?? localSelectedKey;
   // VEY-KANEO-473: gate on the canonical settled-to-now balance (`resourcesAsOfNow`) the top bar
@@ -108,11 +107,11 @@ export function DefensePage({
       {initialLoading ? (
         <CatalogSkeleton label="Loading defenses" />
       ) : (
-        <ProductionCatalog
+        <ProductionSection
           actionPending={actionState.status === "pending"}
           canTransact={canTransact}
           emptyLabel="Select a defense to review costs, requirements, and production controls."
-          items={defenseProductionItems({
+          items={(quantities) => defenseProductionItems({
             actionPending: actionState.status === "pending",
             canTransact,
             defenseState,
@@ -126,7 +125,6 @@ export function DefensePage({
           now={now}
           onBuild={(item) => onBuild(item.id, item.key, item.quantity)}
           onOpenRequirement={onOpenRequirement}
-          onQuantity={(key, quantity) => setQuantities((prev) => ({ ...prev, [key]: quantity }))}
           onSelect={(key) => {
             setLocalSelectedKey(key);
             onSelectDefense?.(key);
@@ -216,13 +214,10 @@ export function defenseProductionItems({
   productionRates?: Resources | undefined;
   transactionUnavailableReason?: string | undefined;
 }): ProductionCatalogItem<DefenseKey>[] {
-  return defenseCatalog.map((defense) => {
+  return adaptProductionItems(defenseCatalog, quantities, (defense, { quantity }) => {
     const chainDefense = defenseState?.defenses.find((item) => item.id === defense.id);
     const deployed = productionAvailable ? chainDefense?.count : undefined;
     const baseCost = productionAvailable ? toResources(chainDefense?.cost) : undefined;
-    const quantityInput = quantities[defense.key] ?? 1;
-    const parsedQuantity = parseProductionQuantity(quantityInput);
-    const quantity = parsedQuantity ?? 1;
     const totalCost = baseCost ? multiply(baseCost, quantity) : undefined;
     // Backend-sourced per-unit build time scaled by the selected quantity (VEY-KANEO-472).
     const durationSeconds = chainDefense?.durationSeconds === undefined
@@ -251,7 +246,6 @@ export function defenseProductionItems({
 
     return {
       actionLabel: queued > 0 ? "Add" : "Build",
-      asset: defense.asset,
       blockedReason,
       cost: totalCost,
       ...(durationSeconds === undefined ? {} : { durationSeconds }),
@@ -259,16 +253,9 @@ export function defenseProductionItems({
       countValue: deployed,
       detailNote: stats || (defense.group === "missile" ? "Missile support system" : "Planetary defense"),
       disabled,
-      group: defense.group,
       groupLabel: groupLabels[defense.group],
-      id: defense.id,
-      key: defense.key,
       labelTone: blockedReason ? "muted" : "normal",
-      label: defense.label,
       missing,
-      quantity,
-      quantityInput,
-      quantityValid: parsedQuantity !== undefined,
       queued,
       requirements,
       status: queued > 0 ? "queued" : missing.length === 0 ? "ready" : "locked",

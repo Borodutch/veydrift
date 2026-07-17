@@ -20,8 +20,8 @@ import { MoonSkeleton } from "./LoadingSkeletons";
 import { GameUnavailableNotice, isGameUnavailableMessage } from "./GameUnavailableNotice";
 import { MoonImage } from "./PlanetMoonIndicator";
 import {
-  parseProductionQuantity,
-  ProductionCatalog,
+  adaptProductionItems,
+  ProductionSection,
   type ProductionCatalogItem,
   type ProductionDetailSection,
   type ProductionQuantityInput,
@@ -629,9 +629,7 @@ function MoonStructureDetailPanel({
   const nextEffect = moonStructureLevelEffect(building.key, building.level + 1);
   const levelInfoRows = moonStructureLevelInfoRows(building, moon, moonState);
   const visibleQueue = moonState?.queue ?? moonState?.completionQueue;
-  const queueReadyAt = timestampToMs(visibleQueue?.readyAt);
-  const queueStartedAt = timestampToMs(visibleQueue?.startedAt)
-    ?? (queueReadyAt === undefined ? undefined : Math.max(0, queueReadyAt - (building.durationSeconds ?? 0) * 1_000));
+  const queueProgress = moonStructureQueueProgress(visibleQueue);
   const levelInfo = moonStructureHasLevelInfo(building.key)
     ? moonStructureLevelInfoTable(building.key, building.level, levelInfoRows)
     : undefined;
@@ -668,7 +666,7 @@ function MoonStructureDetailPanel({
       label={building.label}
       levelInfo={levelInfo}
       notice={action?.status === "error" && action.label ? { label: action.label, tone: "error" } : undefined}
-      queue={visibleQueue?.active && queueReadyAt !== undefined && queueStartedAt !== undefined ? {
+      queue={visibleQueue?.active && queueProgress ? {
         completion: queueReady(visibleQueue) && onFinishBuilding ? {
           disabled: !canTransact || pending,
           label: "Complete",
@@ -678,7 +676,7 @@ function MoonStructureDetailPanel({
         isPrimaryItem: visibleQueue.itemId === building.id,
         label: `${moonBuildingLabel(visibleQueue.itemId)} ${visibleQueue.targetLevel ? `L${visibleQueue.targetLevel}` : ""} ${queueReady(visibleQueue) ? "is ready to settle on-chain." : "is upgrading."}`,
         now: Date.now(),
-        queue: { readyAt: queueReadyAt, startedAt: queueStartedAt },
+        queue: queueProgress,
         title: { active: queueReady(visibleQueue) ? "Construction complete" : "Construction in progress", context: "Active Moon construction" },
       } : undefined}
       summary={moonStructureLevelSummary(building, status.targetLevel)}
@@ -778,24 +776,17 @@ function MoonShipyardSection({
   onSelectShip: (key: ShipKey) => void;
   selectedShipKey: ShipKey;
 }) {
-  const [quantities, setQuantities] = useState<Record<string, ProductionQuantityInput>>({});
-
   return (
-    <section className="grid gap-3">
-      <div className="min-w-0">
-        <h3 className="text-base font-semibold text-white">Moon Shipyard</h3>
-      </div>
-      <ProductionCatalog
+      <ProductionSection
         actionPending={false}
         canTransact={false}
         emptyLabel="No moon ships are available yet."
-        items={moonShipProductionItems({ moonState, quantities })}
+        items={(quantities) => moonShipProductionItems({ moonState, quantities })}
         onBuild={() => undefined}
-        onQuantity={(key, quantity) => setQuantities((prev) => ({ ...prev, [key]: quantity }))}
         onSelect={onSelectShip}
         selectedKey={selectedShipKey}
+        title="Moon Shipyard"
       />
-    </section>
   );
 }
 
@@ -818,15 +809,26 @@ function MoonDefenseSection({
   selectedDefenseKey: DefenseKey;
   transactionUnavailableReason?: string | undefined;
 }) {
-  const [quantities, setQuantities] = useState<Record<string, ProductionQuantityInput>>({});
   const defenseQueueReady = queueReady(moonState?.defenseQueue);
 
   return (
-    <section className="grid gap-3">
-      <div className="min-w-0">
-        <h3 className="text-base font-semibold text-white">Moon Defenses</h3>
-      </div>
-
+    <ProductionSection
+      actionPending={actionPending}
+      canTransact={canTransact}
+      emptyLabel="No moon defenses are available yet."
+      items={(quantities) => moonDefenseProductionItems({
+        actionPending,
+        canTransact,
+        moonState,
+        quantities,
+        transactionUnavailableReason,
+      })}
+      onBuild={(item) => onStartDefense?.(item.id, item.label, item.quantity)}
+      onSelect={onSelectDefense}
+      queue={productionQueueViewModel(moonState?.defenseQueue, defenseCatalog)}
+      selectedKey={selectedDefenseKey}
+      title="Moon Defenses"
+    >
       {moonState?.defenseQueue?.active ? (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-200">
           <span>
@@ -846,25 +848,7 @@ function MoonDefenseSection({
           ) : null}
         </div>
       ) : null}
-
-      <ProductionCatalog
-        actionPending={actionPending}
-        canTransact={canTransact}
-        emptyLabel="No moon defenses are available yet."
-        items={moonDefenseProductionItems({
-          actionPending,
-          canTransact,
-          moonState,
-          quantities,
-          transactionUnavailableReason,
-        })}
-        onBuild={(item) => onStartDefense?.(item.id, item.label, item.quantity)}
-        onQuantity={(key, quantity) => setQuantities((prev) => ({ ...prev, [key]: quantity }))}
-        onSelect={onSelectDefense}
-        queue={productionQueueViewModel(moonState?.defenseQueue, defenseCatalog)}
-        selectedKey={selectedDefenseKey}
-      />
-    </section>
+    </ProductionSection>
   );
 }
 
@@ -877,7 +861,7 @@ function moonResourceRows(moonState?: ChainMoonState | null | undefined): Array<
   ];
 }
 
-function moonShipProductionItems({
+export function moonShipProductionItems({
   moonState,
   quantities,
 }: {
@@ -886,11 +870,8 @@ function moonShipProductionItems({
 }): ProductionCatalogItem<ShipKey>[] {
   const moonShips = moonState?.ships ?? moonState?.fleet ?? [];
 
-  return shipyardCatalog.map((ship) => {
+  return adaptProductionItems(shipyardCatalog, quantities, (ship, { quantity }) => {
     const chainShip = moonShips.find((item) => item.id === ship.id);
-    const quantityInput = quantities[ship.key] ?? 1;
-    const parsedQuantity = parseProductionQuantity(quantityInput);
-    const quantity = parsedQuantity ?? 1;
     const count = chainShip?.count ?? 0;
     const cost = toResources(chainShip?.cost);
     const durationSeconds = chainShip?.durationSeconds === undefined
@@ -899,7 +880,6 @@ function moonShipProductionItems({
 
     return {
       actionLabel: "Stationed",
-      asset: ship.asset,
       blockedReason: "Moon shipyard is a stationed fleet view. Build ships from a planet Shipyard.",
       cost: cost ? multiplyResources(cost, quantity) : undefined,
       ...(durationSeconds === undefined ? {} : { durationSeconds }),
@@ -908,16 +888,9 @@ function moonShipProductionItems({
       detailSections: moonShipDetailSections({ cost, count, durationSeconds, ship }),
       detailNote: ship.description,
       disabled: true,
-      group: ship.group,
       groupLabel: moonShipGroupLabel(ship.group),
-      id: ship.id,
-      key: ship.key,
       labelTone: count > 0 ? "normal" : "muted",
-      label: ship.label,
       missing: [],
-      quantity,
-      quantityInput,
-      quantityValid: parsedQuantity !== undefined,
       requirements: [],
       status: count > 0 ? "ready" : "unavailable",
       statusLabel: count > 0 ? "Stationed" : undefined,
@@ -925,7 +898,7 @@ function moonShipProductionItems({
   });
 }
 
-function moonDefenseProductionItems({
+export function moonDefenseProductionItems({
   actionPending,
   canTransact,
   moonState,
@@ -940,11 +913,8 @@ function moonDefenseProductionItems({
 }): ProductionCatalogItem<DefenseKey>[] {
   const queueBlocked = Boolean(moonState?.defenseQueue?.active && !queueReady(moonState.defenseQueue));
 
-  return defenseCatalog.map((defense) => {
+  return adaptProductionItems(defenseCatalog, quantities, (defense, { quantity }) => {
     const moonDefense = moonState?.defenses.find((item) => item.id === defense.id);
-    const quantityInput = quantities[defense.key] ?? 1;
-    const parsedQuantity = parseProductionQuantity(quantityInput);
-    const quantity = parsedQuantity ?? 1;
     const baseCost = toResources(moonDefense?.cost);
     const totalCost = baseCost ? multiplyResources(baseCost, quantity) : undefined;
     const durationSeconds = moonDefense?.durationSeconds === undefined
@@ -964,7 +934,6 @@ function moonDefenseProductionItems({
 
     return {
       actionLabel: queued > 0 ? "Add" : "Build",
-      asset: defense.asset,
       blockedReason,
       cost: totalCost,
       ...(durationSeconds === undefined ? {} : { durationSeconds }),
@@ -978,16 +947,9 @@ function moonDefenseProductionItems({
       }),
       detailNote: defense.group === "missile" ? "Moon missile support" : "Moon defensive emplacement",
       disabled: Boolean(blockedReason) || actionPending,
-      group: defense.group,
       groupLabel: moonDefenseGroupLabel(defense.group),
-      id: defense.id,
-      key: defense.key,
       labelTone: blockedReason ? "muted" : "normal",
-      label: defense.label,
       missing,
-      quantity,
-      quantityInput,
-      quantityValid: parsedQuantity !== undefined,
       queued,
       requirements,
       status: queued > 0 ? "queued" : missing.length === 0 && moonDefense ? "ready" : "locked",
@@ -1322,7 +1284,7 @@ export function moonStructureStatus(
     };
   }
 
-  const activeQueueReason = activeQueueTitle(moonState?.queue ?? moonState?.completionQueue);
+  const activeQueueReason = activeQueueTitle(moonState?.queue);
   if (activeQueueReason) {
     return {
       ...base,
@@ -1484,10 +1446,20 @@ export function queueReady(queue: ChainMoonState["queue"] | undefined): boolean 
   return Boolean(queue?.active && queue.asOfNow?.complete === true);
 }
 
+export function moonStructureQueueProgress(
+  queue: ChainMoonState["queue"] | undefined,
+): { readyAt: number; startedAt: number } | undefined {
+  if (!queue?.active) return undefined;
+  const readyAt = timestampToMs(queue.readyAt);
+  const startedAt = timestampToMs(queue.startedAt);
+  if (readyAt === undefined || startedAt === undefined) return undefined;
+  return { readyAt, startedAt };
+}
+
 function activeQueueTitle(queue: ChainMoonState["queue"] | undefined): string | undefined {
   if (!queue?.active) return undefined;
   return queueReady(queue)
-    ? "Complete the settled Moon construction on-chain before starting another."
+    ? undefined
     : "Moon queue is active.";
 }
 
