@@ -1,6 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
-import { Copy, Link, Share2, TicketCheck } from "lucide-preact";
+import { Copy, FileText, Link, Share2, TicketCheck } from "lucide-preact";
 import { RetroCdBoxHero } from "./components/RetroCdBoxHero";
 import { TelegramIcon } from "./components/TelegramIcon";
 import { PlayableMvpApp } from "./PlayableMvpApp";
@@ -13,7 +13,7 @@ import {
   writeReferralStorage
 } from "./referralStorage";
 import { preSettlementMode, type PlanetState, type WalletState } from "./settlementScreen";
-import { TELEGRAM_SUPPORT_URL } from "./supportLinks";
+import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "./supportLinks";
 import { fetchReferralShareImage, shareReferralOnX } from "./referralShare";
 import {
   detectFarcasterMiniApp,
@@ -1445,7 +1445,7 @@ export function FirstPlanetSettlementApp() {
   const mode = preSettlementMode(wallet, planet);
 
   return (
-    <RetroCdBoxHero ariaLabel="First planet settlement" support={<SettlementSupportLink />}>
+    <RetroCdBoxHero ariaLabel="First planet settlement" support={<SettlementSupportLinks />}>
       <ReferralCodeField
         disabled={planet.kind === "pending"}
         onChange={setReferralCodeInput}
@@ -1792,19 +1792,32 @@ export function referralValidationMessage(resolution: ReferralResolution): strin
                 : "Invalid invite code · no referral benefit will be claimed.";
 }
 
-export function SettlementSupportLink() {
+export function SettlementSupportLinks() {
   return (
-    <a
-      aria-label="Telegram support"
-      className="settlement-support-link"
-      href={TELEGRAM_SUPPORT_URL}
-      rel="noopener noreferrer"
-      target="_blank"
-      title="Telegram support"
-    >
-      <TelegramIcon className="settlement-support-icon" />
-      <span>Telegram</span>
-    </a>
+    <div className="settlement-support-actions">
+      <a
+        aria-label="Telegram support"
+        className="settlement-support-link"
+        href={TELEGRAM_SUPPORT_URL}
+        rel="noopener noreferrer"
+        target="_blank"
+        title="Telegram support"
+      >
+        <TelegramIcon className="settlement-support-icon" />
+        <span>Telegram</span>
+      </a>
+      <a
+        aria-label="Veydrift whitepaper"
+        className="settlement-support-link settlement-whitepaper-link"
+        href={WHITEPAPER_URL}
+        rel="noopener noreferrer"
+        target="_blank"
+        title="Veydrift whitepaper"
+      >
+        <FileText className="settlement-support-icon" />
+        <span>Whitepaper</span>
+      </a>
+    </div>
   );
 }
 

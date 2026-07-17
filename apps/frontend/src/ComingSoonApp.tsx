@@ -12,13 +12,12 @@ import {
   Users,
 } from "lucide-preact";
 import { RetroCdBoxHero } from "./components/RetroCdBoxHero";
-import { TELEGRAM_SUPPORT_URL } from "./supportLinks";
+import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "./supportLinks";
 import { playableApiUrl } from "./runtimeConfig";
 
 const alphaUrl = "https://test.veydrift.com";
 const playUrl = "/play";
 const faucetUrl = "https://docs.base.org/base-chain/network-information/network-faucets";
-export const whitepaperUrl = "/whitepaper.pdf";
 export const landingFeedRefreshMs = 60_000;
 export const landingAllianceRefreshMs = 300_000;
 
@@ -189,7 +188,7 @@ function HeroSection() {
           </a>
           <a
             className="landing-cd-secondary"
-            href={whitepaperUrl}
+            href={WHITEPAPER_URL}
             rel="noopener noreferrer"
             target="_blank"
           >

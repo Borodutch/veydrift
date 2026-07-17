@@ -2,8 +2,8 @@ import type { EnergyBalance, Resources, QueueItem } from "../playableMvp";
 import { shouldShowTopBarEnergy, type ChainLoadStatus } from "../overviewData";
 import { energyExplanationTitle } from "../topBarEnergyInfo";
 import { shortAddress } from "../walletFlow";
-import { CircleHelp, Info } from "lucide-preact";
-import { TELEGRAM_SUPPORT_URL } from "../supportLinks";
+import { CircleHelp, FileText, Info } from "lucide-preact";
+import { TELEGRAM_SUPPORT_URL, WHITEPAPER_URL } from "../supportLinks";
 import { TelegramIcon } from "./TelegramIcon";
 
 const formatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
@@ -53,7 +53,7 @@ export function TopBar({
   return (
     <div className="sticky top-0 z-30 border-b border-white/10 bg-[#0a0f1a]/95 backdrop-blur">
       <div className="mx-auto flex min-h-10 max-w-[96rem] flex-wrap items-center justify-center gap-x-3 gap-y-1 px-2 py-1 sm:min-h-11 sm:justify-between sm:px-4 sm:py-1.5 lg:px-6">
-        <div className="grid w-full min-w-0 grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_repeat(2,1.75rem)] items-center gap-0.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
+        <div className="grid w-full min-w-0 grid-cols-[repeat(3,minmax(0,1fr))_minmax(4.5rem,1.25fr)_repeat(3,1.75rem)] items-center gap-0.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-start sm:gap-x-2.5 sm:gap-y-1.5">
           {!isWalletConnected ? (
             <span className="text-xs text-slate-400">Connect wallet for resources</span>
           ) : resourceStatus === "loading" && !resources ? (
@@ -117,6 +117,16 @@ export function TopBar({
           >
             <CircleHelp className="h-3.5 w-3.5" size={14} strokeWidth={2} />
           </a>
+          <a
+            aria-label="Veydrift whitepaper"
+            className="grid h-7 w-7 shrink-0 place-items-center rounded border border-amber-200/35 bg-amber-200/10 text-amber-100 transition hover:bg-amber-200/20 sm:hidden"
+            href={WHITEPAPER_URL}
+            rel="noopener noreferrer"
+            target="_blank"
+            title="Veydrift whitepaper"
+          >
+            <FileText className="h-3.5 w-3.5" size={14} strokeWidth={2} />
+          </a>
           {queue && (
             <span className="inline-flex h-6 max-w-40 items-center truncate rounded bg-white/10 px-2 text-xs leading-none text-slate-300">
               {queue.label}
@@ -148,6 +158,17 @@ export function TopBar({
             title="Veydrift documentation"
           >
             <CircleHelp className="h-3.5 w-3.5" size={14} strokeWidth={2} />
+          </a>
+          <a
+            aria-label="Veydrift whitepaper"
+            className="hidden h-7 w-7 shrink-0 items-center justify-center rounded border border-amber-200/35 bg-amber-200/10 text-[11px] font-semibold leading-none text-amber-100 transition hover:bg-amber-200/20 sm:inline-flex lg:w-auto lg:gap-1.5 lg:px-2"
+            href={WHITEPAPER_URL}
+            rel="noopener noreferrer"
+            target="_blank"
+            title="Veydrift whitepaper"
+          >
+            <FileText className="h-3.5 w-3.5" size={14} strokeWidth={2} />
+            <span className="sr-only lg:not-sr-only">Whitepaper</span>
           </a>
           {isWalletConnected && account && (
             <span className="inline-flex h-6 max-w-[7.25rem] items-center truncate font-mono text-xs leading-none text-slate-400">
