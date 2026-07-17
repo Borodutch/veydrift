@@ -184,12 +184,6 @@ export function resolveReferralCode(input: {
   const codeHash = referralCodeHash(code);
   const claim = latestReferralClaims(input.index.referralClaimsByCodeHash(codeHash)).at(-1);
   if (!claim) {
-    const availableOwner = input.wallet
-      ? normalizeAddress(input.wallet).toLowerCase() as `0x${string}`
-      : null;
-    const availableQuota = availableOwner
-      ? referralQuota(input.index.referralRedemptionsForInviter(availableOwner).map(chainRedemptionTime), now)
-      : { remainingClaims: referralClaimsPerWindow, nextClaimAt: null };
     return resolveResult({
       status: "available",
       message: "Referral code is available to claim.",
@@ -200,8 +194,8 @@ export function resolveReferralCode(input: {
       renewable: false,
       commitment: null,
       expiresAt: null,
-      nextRedemptionAt: availableQuota.nextClaimAt,
-      remainingRedemptions: availableQuota.remainingClaims,
+      nextRedemptionAt: null,
+      remainingRedemptions: referralClaimsPerWindow,
       ...common
     });
   }
@@ -216,7 +210,10 @@ export function resolveReferralCode(input: {
   );
   const active = currentClaim?.commitment.toLowerCase() === claim.commitment.toLowerCase()
     && now.getTime() < Number(claim.activeUntil) * 1_000;
-  const redemptions = input.index.referralRedemptionsForInviter(owner);
+  const redemptions = referralRedemptionsForClaim(
+    input.index.referralRedemptionsForInviter(owner),
+    claim
+  );
   const quota = referralQuota(redemptions.map(chainRedemptionTime), now);
 
   if (!active) {
@@ -467,20 +464,26 @@ function canonicalReferralDashboard(input: {
   const rewardClaims = input.index.referralRewardClaimsForInviter(owner);
   const claimedCredits = new Set(rewardClaims.map((claim) => rewardKey(claim.commitment, claim.invitee)));
   const redemptionRecords = redemptions.map((event) => chainRedemptionRecord(event, claimedCredits));
-  const quota = referralQuota(redemptions.map(chainRedemptionTime), input.now);
   const currentClaim = claims.at(-1);
+  const currentRedemptions = currentClaim
+    ? referralRedemptionsForClaim(redemptions, currentClaim)
+    : [];
+  const quota = referralQuota(currentRedemptions.map(chainRedemptionTime), input.now);
   const currentActive = Boolean(
     currentClaim && input.now.getTime() < Number(currentClaim.activeUntil) * 1_000
   );
-  const summaries = claims.map((claim) => chainInviteSummary({
-    claim,
-    currentActive,
-    currentCommitment: currentClaim?.commitment ?? null,
-    now: input.now,
-    owner,
-    quota,
-    redemptions: redemptionRecords.filter((item) => item.commitment.toLowerCase() === claim.commitment.toLowerCase())
-  }));
+  const summaries = claims.map((claim) => {
+    const claimRedemptions = referralRedemptionsForClaim(redemptions, claim);
+    return chainInviteSummary({
+      claim,
+      currentActive,
+      currentCommitment: currentClaim?.commitment ?? null,
+      now: input.now,
+      owner,
+      quota: referralQuota(claimRedemptions.map(chainRedemptionTime), input.now),
+      redemptions: claimRedemptions.map((event) => chainRedemptionRecord(event, claimedCredits))
+    });
+  });
   const invite = summaries.at(-1) ?? null;
 
   const accrued = redemptions.reduce((sum, event) => sum + indexedRewardAmount(event), 0n);
@@ -572,6 +575,21 @@ function indexedRewardAmount(event: IndexedReferralRedemptionEvent): bigint {
 
 function chainRedemptionTime(event: IndexedReferralRedemptionEvent): { redeemedAt: string } {
   return { redeemedAt: new Date(Number(event.redeemedAt) * 1_000).toISOString() };
+}
+
+function referralRedemptionsForClaim(
+  redemptions: IndexedReferralRedemptionEvent[],
+  claim: IndexedReferralClaimEvent
+): IndexedReferralRedemptionEvent[] {
+  const commitment = claim.commitment.toLowerCase();
+  const activatedAt = Number(claim.claimedAt);
+  const activeUntil = Number(claim.activeUntil);
+  return redemptions.filter((event) => {
+    const redeemedAt = Number(event.redeemedAt);
+    return event.commitment.toLowerCase() === commitment
+      && redeemedAt >= activatedAt
+      && redeemedAt < activeUntil;
+  });
 }
 
 function rewardKey(commitment: string, invitee: string): string {

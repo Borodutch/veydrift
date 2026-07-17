@@ -2975,7 +2975,7 @@ describe("walletFlow", () => {
         accept: "application/json",
         "content-type": "application/json"
       });
-      return new Response(JSON.stringify({
+      const invite = {
         claimedAt: "2026-07-08T12:00:00.000Z",
         code,
         commitment,
@@ -2987,6 +2987,16 @@ describe("walletFlow", () => {
         remainingRedemptions: 3,
         status: "active",
         txHash: null
+      };
+      return new Response(JSON.stringify({
+        configured: true,
+        invite,
+        invites: [invite],
+        nextClaimAt: invite.expiresAt,
+        nextRedemptionAt: null,
+        redemptions: [],
+        remainingClaims: 3,
+        remainingRedemptions: 3
       }), {
         headers: { "content-type": "application/json" },
         status: 200,
@@ -2998,7 +3008,17 @@ describe("walletFlow", () => {
       expect(referralCodeHash(code)).toMatch(/^0x[a-fA-F0-9]{64}$/);
       expect(referralCommitment(` ${code} `, account)).toBe(commitment);
       await persistReferralClaimIntent("https://api.example.test///", account, code, commitment, signature);
-      await recordReferralClaimTransaction("https://api.example.test///", account, code, commitment, txHash, signature);
+      await expect(recordReferralClaimTransaction(
+        "https://api.example.test///",
+        account,
+        code,
+        commitment,
+        txHash,
+        signature
+      )).resolves.toMatchObject({
+        invite: { code, commitment, remainingRedemptions: 3, status: "active" },
+        remainingRedemptions: 3,
+      });
       expect(requests).toEqual([
         {
           body: { code, commitment, signature },
