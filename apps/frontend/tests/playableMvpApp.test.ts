@@ -925,6 +925,34 @@ describe("Playable MVP app display helpers", () => {
     );
   });
 
+  test("validates Moon-origin manifests against moon ships while retaining global fleet slots", () => {
+    const moonInventory = {
+      fleetSlots: { active: 2, limit: 5 },
+      ships: [
+        { id: 2, count: 1 },
+        { id: 4, count: 2 },
+      ],
+    };
+
+    expect(missionShipInventoryBlocker({
+      originBody: "moon",
+      shipyardState: moonInventory,
+      ships: { recycler: 1, largeCargo: 2 },
+    })).toBeUndefined();
+    expect(missionShipInventoryBlocker({
+      originBody: "moon",
+      shipyardState: moonInventory,
+      ships: { recycler: 1, largeCargo: 3 },
+    })).toBe(
+      "Need 3 Large Cargo, only 2 available on the origin moon; refresh fleet state or reduce selected ships before launching."
+    );
+    expect(missionShipInventoryBlocker({
+      originBody: "moon",
+      shipyardState: null,
+      ships: { recycler: 1 },
+    })).toBe("Moon fleet state is still loading.");
+  });
+
   test("labels mission launch wallet, server, and preflight failures distinctly", () => {
     expect(galaxyMissionActionErrorLabel("Attack mission", {
       code: -32603,
