@@ -6,6 +6,7 @@ import {
   deriveBuildingRows,
   deriveDefenseRows,
   deriveInfrastructureFields,
+  deriveMoonBuildingRows,
   deriveShipRows,
   deriveTechnologyRows,
   researchDurationSeconds,
@@ -52,6 +53,32 @@ describe("duration formulas (VEY-KANEO-472)", () => {
 });
 
 describe("derive*Rows expose predicted durations (VEY-KANEO-472)", () => {
+  test("moon rows expose contract-parity costs and durations for all four structures", () => {
+    const rows = deriveMoonBuildingRows((id) => (id === 1 ? 2 : 0));
+    expect(rows.map(({ id, cost, durationSeconds }) => ({ id, cost, durationSeconds }))).toEqual([
+      {
+        id: 0,
+        cost: { metal: "20000", crystal: "40000", deuterium: "20000" },
+        durationSeconds: buildingDurationSeconds(2, 0, { metal: 20_000, crystal: 40_000, deuterium: 20_000 })
+      },
+      {
+        id: 1,
+        cost: { metal: "1600", crystal: "480", deuterium: "800" },
+        durationSeconds: buildingDurationSeconds(2, 0, { metal: 1_600, crystal: 480, deuterium: 800 })
+      },
+      {
+        id: 2,
+        cost: { metal: "2000000", crystal: "4000000", deuterium: "2000000" },
+        durationSeconds: buildingDurationSeconds(2, 0, { metal: 2_000_000, crystal: 4_000_000, deuterium: 2_000_000 })
+      },
+      {
+        id: 3,
+        cost: { metal: "400", crystal: "200", deuterium: "100" },
+        durationSeconds: buildingDurationSeconds(2, 0, { metal: 400, crystal: 200, deuterium: 100 })
+      }
+    ]);
+  });
+
   test("building rows always carry a next-upgrade durationSeconds keyed off robotics/nanite", () => {
     // Robotics Factory is building id 4, Nanite Factory is id 11.
     const rows = deriveBuildingRows((id) => (id === 4 ? 3 : id === 11 ? 1 : 0));

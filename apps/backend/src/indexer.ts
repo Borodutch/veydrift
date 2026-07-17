@@ -124,6 +124,7 @@ import {
   deriveInfrastructureFields,
   deriveBuildingRows,
   deriveDefenseRows,
+  deriveMoonBuildingRows,
   deriveShipRows,
   deriveTechnologyRows,
   usedFieldsFromBuildingRows,
@@ -2071,8 +2072,19 @@ export class SettlementIndexer {
   }
 
   private moonBuildingLevelAsOfNow(planetId: string, buildingId: number): number {
-    // Moon buildings serve the contract-authoritative table directly, like planet buildings.
-    return this.indexedLevel("contract_moon_building_levels", "moon_building_id", planetId, buildingId);
+    const canonicalLevel = this.indexedLevel(
+      "contract_moon_building_levels",
+      "moon_building_id",
+      planetId,
+      buildingId
+    );
+    let projectedLevel = canonicalLevel;
+    for (const queue of this.queueSettlement(`moon-building:${planetId}`).completed) {
+      if (queue.itemId === buildingId && typeof queue.targetLevel === "number") {
+        projectedLevel = Math.max(projectedLevel, queue.targetLevel);
+      }
+    }
+    return projectedLevel;
   }
 
   private moonDefenseCountAsOfNow(planetId: string, defenseId: number): number {
@@ -2344,6 +2356,16 @@ export class SettlementIndexer {
     const moon = planetId ? this.moon(planetId) : null;
     const resources = this.moonResources(planetId);
     const jumpGateDestinations = this.moonJumpGateDestinations(wallet, planetId);
+    const buildings = planetId
+      ? deriveMoonBuildingRows((buildingId) => this.moonBuildingLevelAsOfNow(planetId, buildingId))
+      : deriveMoonBuildingRows(() => 0);
+    const canonicalLunarBaseLevel = planetId
+      ? this.indexedLevel("contract_moon_building_levels", "moon_building_id", planetId, 0)
+      : 0;
+    const projectedLunarBaseLevel = buildings.find((building) => building.id === 0)?.level ?? 0;
+    const moonQueueSettlement = planetId
+      ? this.queueSettlement(`moon-building:${planetId}`)
+      : { queue: null, completed: [] };
     return {
       wallet,
       bodyKind: "moon",
@@ -2360,19 +2382,18 @@ export class SettlementIndexer {
             exists: true,
             planetId: moon.planetId,
             owner: moon.owner,
-            fields: moon.fields,
+            fields: moon.fields + Math.max(0, projectedLunarBaseLevel - canonicalLunarBaseLevel) * 3,
             diameterKm: moon.diameterKm,
             createdAt: moon.createdAt,
             jumpGateReadyAt: moon.jumpGateReadyAt ?? "0"
           }
         : null,
-      buildings: moonBuildingRows.map((building) => ({
-        ...building,
-        level: planetId ? this.moonBuildingLevelAsOfNow(planetId, building.id) : 0,
-        cost: zeroResources()
-      })),
+      buildings,
       fleet: planetId ? this.moonShipRows(planetId) : [],
-      queue: planetId ? this.moonQueue(planetId) : null,
+      queue: moonQueueSettlement.queue,
+      ...(moonQueueSettlement.completed[0]
+        ? { completionQueue: moonQueueSettlement.completed[0] }
+        : {}),
       technologyLevels: this.technologyLevels(wallet),
       defenses: moonDefenseRows.map((defense) => ({
         ...defense,
@@ -5894,6 +5915,15 @@ export class SettlementIndexer {
       this.upsertIndexedLevelAtLeast("indexed_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
       this.upsertIndexedLevelAtLeast("contract_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
     } else if (event.queueKind === "moon-building" && event.planetId && event.level !== undefined) {
+      if (event.itemId === 0) {
+        const currentLevel = this.indexedLevel(
+          "contract_moon_building_levels",
+          "moon_building_id",
+          event.planetId,
+          event.itemId
+        );
+        this.incrementMoonFields(event.planetId, Math.max(0, event.level - currentLevel) * 3);
+      }
       this.db.query("DELETE FROM contract_moon_building_queues WHERE planet_id = ?").run(event.planetId);
       this.upsertIndexedLevelAtLeast("indexed_moon_building_levels", "building_id", "level", event.planetId, event.itemId, event.level);
       this.upsertIndexedLevelAtLeast("contract_moon_building_levels", "moon_building_id", "level", event.planetId, event.itemId, event.level);
@@ -6531,6 +6561,18 @@ export class SettlementIndexer {
       SET event_json = ?
       WHERE planet_id = ?
     `).run(JSON.stringify({ ...moon, jumpGateReadyAt }), planetId);
+  }
+
+  private incrementMoonFields(planetId: string, addedFields: number): void {
+    if (addedFields <= 0) return;
+    const moon = this.moon(planetId);
+    if (!moon) return;
+    const fields = moon.fields + addedFields;
+    this.db.query(`
+      UPDATE indexed_moons
+      SET fields = ?, event_json = ?
+      WHERE planet_id = ?
+    `).run(fields, JSON.stringify({ ...moon, fields }), planetId);
   }
 
   private applyRiftResourceEvent(event: IndexedRiftResourceEvent): void {
@@ -9556,12 +9598,6 @@ function compareFleetMissionsActiveSoonestFirst(left: FleetMissionSummary, right
   return leftMission > rightMission ? 1 : -1;
 }
 
-const moonBuildingRows = [
-  { id: 0, key: "lunarBase", label: "Lunar Base" },
-  { id: 1, key: "roboticsFactory", label: "Robotics Factory" },
-  { id: 2, key: "jumpGate", label: "Jump Gate" },
-  { id: 3, key: "shipyard", label: "Shipyard" }
-];
 const moonDefenseRows = Array.from({ length: 8 }, (_, id) => ({ id }));
 const riftResourceRows = [
   { key: "metal" as const, label: "Metal", resourceId: 0 },

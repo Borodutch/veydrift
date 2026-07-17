@@ -10,15 +10,9 @@ import { formatDuration } from "../durationFormat";
 import { buildingCatalog, buildingDurationEstimate, canAfford, defenseCatalog, shipCatalog, shipyardCatalog } from "../playableMvp";
 import type { DefenseKey, ShipKey } from "../playableMvp";
 import { isPositiveIntegerInput, parseMoonJumpShips } from "../moonActions";
-import { formatUserTimestamp } from "../timestampFormat";
+import { formatUserTimestamp, timestampToMs } from "../timestampFormat";
 import {
-  InspectCatalogTile,
-  InspectDetailHero,
-  InspectDetailImage,
-  InspectDetailShell,
   InspectInfoBlock,
-  InspectTwoColumnLayout,
-  useInspectDetailSelection,
 } from "./InspectProgressLayout";
 import { PageHeader, RefreshButton } from "./PageHeader";
 import { InlineSyncIndicator } from "./VeydriftLoader";
@@ -35,7 +29,8 @@ import {
   productionQueueViewModel,
 } from "./ProductionCatalog";
 import { RequirementFlairs, type RequirementFlair, type RequirementTarget } from "./RequirementFlairs";
-import { LevelInfoButton, LevelInfoModal, type LevelInfoColumn, type LevelInfoRow } from "./LevelInfoModal";
+import { LevelInfoModal, type LevelInfoColumn } from "./LevelInfoModal";
+import { StructureCatalog, StructureDetail, type StructureLevelInfo } from "./StructureCatalog";
 
 const burningChickensOpenSeaCollectionUrl = "https://opensea.io/collection/chickens-by-eggs";
 
@@ -537,16 +532,6 @@ function MoonStructuresSection({
   const buildings = moonState?.buildings ?? [];
   const selectedBuilding = buildings.find((building) => building.key === selectedBuildingKey)
     ?? buildings[0];
-  const buildingQueueReady = queueReady(moonState?.queue);
-  const { detailPanelRef, selectInspectItem } = useInspectDetailSelection<MoonBuilding["key"]>((key) => {
-    onSelectBuilding(key);
-  });
-  const openMoonStructureRequirement = (target: RequirementTarget) => {
-    if (target.kind === "moonStructure" && isMoonBuildingKey(target.key, buildings)) {
-      selectInspectItem(target.key);
-    }
-  };
-
   return (
     <section className="grid gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -562,68 +547,49 @@ function MoonStructuresSection({
       ) : null}
 
       {buildings.length > 0 ? (
-        <InspectTwoColumnLayout
-          catalog={buildings.map((building) => {
+        <StructureCatalog
+          items={buildings.map((building) => {
             const status = moonStructureStatus(building, moon, moonState, {
               canTransact,
               pending,
               transactionUnavailableReason,
             });
 
-            return (
-              <InspectCatalogTile
-                asset={moonBuildingAsset(building.key)}
-                currentText={moonStructureLevelText(building)}
-                isDimmed={building.level === 0}
-                isSelected={selectedBuilding?.key === building.key}
-                key={building.key}
-                label={building.label}
-                labelTone={moonStructureCatalogTitleTone(status)}
-                onClick={() => selectInspectItem(building.key)}
-                statusText={moonStructureCatalogStatusText(building)}
-                statusTone="accent"
-              />
-            );
+            return {
+              asset: moonBuildingAsset(building.key),
+              currentText: moonStructureLevelText(building),
+              isDimmed: building.level === 0,
+              key: building.key,
+              label: building.label,
+              labelTone: moonStructureCatalogTitleTone(status),
+              statusText: moonStructureCatalogStatusText(building),
+              statusTone: "accent" as const,
+            };
           })}
-          detail={selectedBuilding ? (
+          onSelect={onSelectBuilding}
+          selectedKey={selectedBuilding?.key}
+          detail={(selectBuilding) => selectedBuilding ? (
             <MoonStructureDetailPanel
               action={action}
               building={selectedBuilding}
               canTransact={canTransact}
               moon={moon}
               moonState={moonState}
-              onOpenRequirement={openMoonStructureRequirement}
+              onFinishBuilding={onFinishBuilding}
+              onOpenRequirement={(target) => {
+                if (target.kind === "moonStructure" && isMoonBuildingKey(target.key, buildings)) {
+                  selectBuilding(target.key);
+                }
+              }}
               onStartBuilding={onStartBuilding}
               pending={pending}
               transactionUnavailableReason={transactionUnavailableReason}
             />
           ) : null}
-          detailPanelRef={detailPanelRef}
         />
       ) : (
         <MoonStatusPanel title="Moon structures unavailable" body="No moon structure data is available yet." />
       )}
-
-      {moonState?.queue?.active ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-200">
-          <span>
-            Moon queue: {moonBuildingLabel(moonState.queue.itemId)}{" "}
-            {moonState.queue.targetLevel ? "L" + moonState.queue.targetLevel : ""} / ready{" "}
-            {formatMoonReadyAt(moonState.queue.readyAt)}
-          </span>
-          {buildingQueueReady && onFinishBuilding ? (
-            <button
-              className="h-8 rounded border border-amber-200/30 bg-amber-200/10 px-3 text-xs font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={!canTransact || pending}
-              onClick={() => onFinishBuilding(moonBuildingLabel(moonState.queue?.itemId))}
-              title={!canTransact ? transactionUnavailableReason : undefined}
-              type="button"
-            >
-              Complete
-            </button>
-          ) : null}
-        </div>
-      ) : null}
     </section>
   );
 }
@@ -634,6 +600,7 @@ function MoonStructureDetailPanel({
   canTransact,
   moon,
   moonState,
+  onFinishBuilding,
   onOpenRequirement,
   onStartBuilding,
   pending,
@@ -644,6 +611,7 @@ function MoonStructureDetailPanel({
   canTransact?: boolean | undefined;
   moon: NonNullable<ChainMoonState["moon"]>;
   moonState?: ChainMoonState | null | undefined;
+  onFinishBuilding?: MoonPageProps["onFinishBuilding"];
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onStartBuilding?: MoonPageProps["onStartBuilding"];
   pending: boolean;
@@ -660,50 +628,34 @@ function MoonStructureDetailPanel({
   const currentEffect = moonStructureLevelEffect(building.key, building.level);
   const nextEffect = moonStructureLevelEffect(building.key, building.level + 1);
   const levelInfoRows = moonStructureLevelInfoRows(building, moon, moonState);
-  const [isInfoOpen, setIsInfoOpen] = useState(false);
+  const visibleQueue = moonState?.queue ?? moonState?.completionQueue;
+  const queueReadyAt = timestampToMs(visibleQueue?.readyAt);
+  const queueStartedAt = timestampToMs(visibleQueue?.startedAt)
+    ?? (queueReadyAt === undefined ? undefined : Math.max(0, queueReadyAt - (building.durationSeconds ?? 0) * 1_000));
+  const levelInfo = moonStructureHasLevelInfo(building.key)
+    ? moonStructureLevelInfoTable(building.key, building.level, levelInfoRows)
+    : undefined;
 
   return (
-    <InspectDetailShell>
-      <InspectDetailHero
-        image={(
-          <InspectDetailImage
-            asset={moonBuildingAsset(building.key)}
-            cacheKey={`moon-building:${building.key}`}
-            isDimmed={building.level === 0}
-          />
-        )}
-      >
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div className="min-w-0">
-            <h3 className="break-words text-lg font-semibold text-white">{building.label}</h3>
-            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-400">
-              <span>{moonStructureLevelSummary(building, status.targetLevel)}</span>
-              {moonStructureHasLevelInfo(building.key) ? (
-                <MoonStructureLevelInfoButton
-                  buildingLabel={building.label}
-                  onClick={() => setIsInfoOpen(true)}
-                />
-              ) : null}
-            </div>
-          </div>
-          {building.level > 0 ? (
-            <span className="rounded bg-emerald-300/10 px-2 py-1 text-xs font-semibold text-emerald-200">Active</span>
-          ) : (
-            <span className="rounded bg-white/5 px-2 py-1 text-xs font-semibold text-slate-400">Not built</span>
-          )}
-        </div>
-        <p className="mt-3 text-sm leading-6 text-slate-300">{moonBuildingEffect(building.key)}</p>
-      </InspectDetailHero>
-
-      <dl className="mt-4 grid gap-2">
+    <StructureDetail
+      action={onStartBuilding && !(binary && built) ? {
+        ariaLabel: `${actionVerb} ${building.label} to Level ${status.targetLevel}`,
+        disabled: status.disabled,
+        label: building.level === 0 || binary ? `Build ${building.label}` : `Upgrade Level ${status.targetLevel}`,
+        onClick: () => onStartBuilding(building.id, building.label),
+      } : undefined}
+      active={built}
+      asset={moonBuildingAsset(building.key)}
+      cacheKey={`moon-building:${building.key}`}
+      description={moonBuildingEffect(building.key)}
+      effectContent={<dl className="mt-4 grid gap-2">
         <MoonStructureComparisonMetric
           label="Effect"
           next={nextEffect}
           value={currentEffect}
         />
-      </dl>
-
-      <div className="mt-4 grid gap-2 border-t border-white/10 pt-4 text-sm sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+      </dl>}
+      infoContent={<>
         <InspectInfoBlock label="Requirements">
           <RequirementFlairs onOpenRequirement={onOpenRequirement} requirements={moonRequirementFlairs(status.requirements)} />
         </InspectInfoBlock>
@@ -711,36 +663,26 @@ function MoonStructureDetailPanel({
         {status.durationSeconds === undefined ? null : (
           <InspectInfoBlock label={building.level === 0 ? "Build time" : "Upgrade time"} value={formatDuration(status.durationSeconds)} />
         )}
-      </div>
-
-      {action?.status === "error" && action.label ? (
-        <div className="mt-2 rounded border border-rose-300/20 bg-rose-300/10 px-3 py-2 text-sm font-semibold text-rose-200">
-          {action.label}
-        </div>
-      ) : null}
-
-      {onStartBuilding && !(binary && built) ? (
-        <button
-          className="mt-3 h-10 w-full rounded-md border border-signal/40 bg-signal/10 px-3 text-sm font-semibold text-signal transition hover:bg-signal/20 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-500"
-          aria-label={`${actionVerb} ${building.label} to Level ${status.targetLevel}`}
-          disabled={status.disabled}
-          onClick={() => onStartBuilding(building.id, building.label)}
-          type="button"
-        >
-          {building.level === 0 || binary ? `Build ${building.label}` : `Upgrade Level ${status.targetLevel}`}
-        </button>
-      ) : null}
-
-      {isInfoOpen ? (
-        <MoonStructureLevelInfoModal
-          buildingKey={building.key}
-          buildingLabel={building.label}
-          currentLevel={building.level}
-          onClose={() => setIsInfoOpen(false)}
-          rows={levelInfoRows}
-        />
-      ) : null}
-    </InspectDetailShell>
+      </>}
+      isDimmed={!built}
+      label={building.label}
+      levelInfo={levelInfo}
+      notice={action?.status === "error" && action.label ? { label: action.label, tone: "error" } : undefined}
+      queue={visibleQueue?.active && queueReadyAt !== undefined && queueStartedAt !== undefined ? {
+        completion: queueReady(visibleQueue) && onFinishBuilding ? {
+          disabled: !canTransact || pending,
+          label: "Complete",
+          onClick: () => onFinishBuilding(moonBuildingLabel(visibleQueue.itemId)),
+          title: !canTransact ? transactionUnavailableReason : undefined,
+        } : undefined,
+        isPrimaryItem: visibleQueue.itemId === building.id,
+        label: `${moonBuildingLabel(visibleQueue.itemId)} ${visibleQueue.targetLevel ? `L${visibleQueue.targetLevel}` : ""} ${queueReady(visibleQueue) ? "is ready to settle on-chain." : "is upgrading."}`,
+        now: Date.now(),
+        queue: { readyAt: queueReadyAt, startedAt: queueStartedAt },
+        title: { active: queueReady(visibleQueue) ? "Construction complete" : "Construction in progress", context: "Active Moon construction" },
+      } : undefined}
+      summary={moonStructureLevelSummary(building, status.targetLevel)}
+    />
   );
 }
 
@@ -765,22 +707,11 @@ function MoonStructureComparisonMetric({
   );
 }
 
-function MoonStructureLevelInfoButton({
-  buildingLabel,
-  onClick,
-}: {
-  buildingLabel: string;
-  onClick: () => void;
-}) {
-  return LevelInfoButton({ itemLabel: buildingLabel, onClick });
-}
-
 export type MoonStructureLevelInfoRow = {
   cost: Resources;
   durationSeconds: number;
   effect: string;
   level: number;
-  requirements?: string | undefined;
   status: "current" | "next" | "future";
 };
 
@@ -797,39 +728,43 @@ export function MoonStructureLevelInfoModal({
   onClose: () => void;
   rows: MoonStructureLevelInfoRow[];
 }) {
-  const columns = moonStructureLevelInfoColumns(buildingKey);
-  const modalRows: LevelInfoRow[] = rows.map((row) => ({
+  const table = moonStructureLevelInfoTable(buildingKey, currentLevel, rows);
+  return LevelInfoModal({
+    ...table,
+    itemLabel: buildingLabel,
+    onClose,
+  });
+}
+
+export function moonStructureLevelInfoTable(
+  buildingKey: MoonBuilding["key"],
+  currentLevel: number,
+  rows: MoonStructureLevelInfoRow[],
+): StructureLevelInfo {
+  return {
+    columns: moonStructureLevelInfoColumns(buildingKey),
+    currentLevel,
+    rows: rows.map((row) => ({
     cells: {
       cost: formatCost(row.cost),
       duration: formatDuration(row.durationSeconds),
       effect: row.effect,
-      requirements: row.requirements ?? "None",
     },
     key: row.level,
     level: row.level,
     status: row.status,
-  }));
-
-  return LevelInfoModal({
-    columns,
-    currentLevel,
-    itemLabel: buildingLabel,
-    onClose,
-    rows: modalRows,
-  });
+    })),
+  };
 }
 
 export function moonStructureHasLevelInfo(key: MoonBuilding["key"]): boolean {
   return key !== "jumpGate";
 }
 
-export function moonStructureLevelInfoColumns(key: MoonBuilding["key"]): LevelInfoColumn[] {
+export function moonStructureLevelInfoColumns(_key: MoonBuilding["key"]): LevelInfoColumn[] {
   return [
     { key: "cost", label: "Upgrade cost", headerClassName: "min-w-52" },
     { key: "duration", label: "Build time", headerClassName: "min-w-32" },
-    ...(key === "lunarBase"
-      ? []
-      : [{ key: "requirements", label: "Requirements", headerClassName: "min-w-52" }]),
     { key: "effect", label: "Effect", headerClassName: "min-w-60" },
   ];
 }
@@ -1366,7 +1301,7 @@ export function moonStructureStatus(
   const base = {
     cost,
     costAvailable,
-    durationSeconds: building.durationSeconds,
+    durationSeconds: moonStructureBuildDurationSeconds(building, targetLevel, moonState),
     requirements,
     targetLevel,
   };
@@ -1387,7 +1322,7 @@ export function moonStructureStatus(
     };
   }
 
-  const activeQueueReason = activeQueueTitle(moonState?.queue);
+  const activeQueueReason = activeQueueTitle(moonState?.queue ?? moonState?.completionQueue);
   if (activeQueueReason) {
     return {
       ...base,
@@ -1550,8 +1485,10 @@ export function queueReady(queue: ChainMoonState["queue"] | undefined): boolean 
 }
 
 function activeQueueTitle(queue: ChainMoonState["queue"] | undefined): string | undefined {
-  if (!queue?.active || queueReady(queue)) return undefined;
-  return "Moon queue is active.";
+  if (!queue?.active) return undefined;
+  return queueReady(queue)
+    ? "Complete the settled Moon construction on-chain before starting another."
+    : "Moon queue is active.";
 }
 
 function moonRequirementFlairs(rows: RequirementRow[]): RequirementFlair[] {
@@ -1598,7 +1535,6 @@ export function moonStructureLevelInfoRows(
   const highestLevel = isBinaryMoonStructure(building.key)
     ? 1
     : Math.max(currentLevel + 6, 10);
-  const requirements = moonStructureRequirementsSummary(moonBuildingRequirementRows(building, moon, moonState));
   return Array.from({ length: highestLevel }, (_, index) => {
     const level = index + 1;
     const status = level === currentLevel ? "current" : level === currentLevel + 1 ? "next" : "future";
@@ -1607,15 +1543,9 @@ export function moonStructureLevelInfoRows(
       durationSeconds: moonStructureBuildDurationSeconds(building, level, moonState),
       effect: moonStructureLevelEffect(building.key, level),
       level,
-      requirements,
       status,
     };
   });
-}
-
-function moonStructureRequirementsSummary(rows: RequirementRow[]): string | undefined {
-  const missing = rows.filter((row) => !row.met).map((row) => row.label);
-  return missing.length > 0 ? missing.join(", ") : undefined;
 }
 
 function moonStructureBuildDurationSeconds(

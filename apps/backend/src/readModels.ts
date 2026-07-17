@@ -3,6 +3,7 @@ import { calculateHighscore, type HighscoreEntry, type HighscoreInput } from "./
 import type {
   DefenseState,
   InfrastructureState,
+  MoonState,
   PlanetState,
   ResearchState,
   Resources,
@@ -187,6 +188,33 @@ export function deriveBuildingRows(levelFor: (id: number) => number): Infrastruc
       level: levelFor(id),
       cost: toResources(cost),
       durationSeconds: buildingDurationSeconds(roboticsLevel, naniteLevel, cost)
+    };
+  });
+}
+
+const moonBuildingCatalog = [
+  { id: 0, key: "lunarBase", label: "Lunar Base", baseCost: { metal: 20_000, crystal: 40_000, deuterium: 20_000 } },
+  { id: 1, key: "roboticsFactory", label: "Robotics Factory", baseCost: buildingBaseCosts[4]! },
+  { id: 2, key: "jumpGate", label: "Jump Gate", baseCost: { metal: 2_000_000, crystal: 4_000_000, deuterium: 2_000_000 } },
+  { id: 3, key: "shipyard", label: "Shipyard", baseCost: buildingBaseCosts[5]! }
+] as const;
+
+// Moon construction uses the same contract formula as planet infrastructure, with
+// the Moon Robotics Factory level and no Nanite Factory. Keeping the catalog and
+// duration derivation server-side makes every Moon consumer use the same values the
+// contract uses before a transaction is submitted.
+export function deriveMoonBuildingRows(levelFor: (id: number) => number): MoonState["buildings"] {
+  const roboticsLevel = levelFor(1);
+  return moonBuildingCatalog.map((building) => {
+    const multiplier = 2 ** Math.max(0, levelFor(building.id));
+    const cost = multiplyResources(building.baseCost, multiplier);
+    return {
+      id: building.id,
+      key: building.key,
+      label: building.label,
+      level: levelFor(building.id),
+      cost: toResources(cost),
+      durationSeconds: buildingDurationSeconds(roboticsLevel, 0, cost)
     };
   });
 }

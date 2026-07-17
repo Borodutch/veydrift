@@ -3373,6 +3373,84 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("projects only overdue Moon construction and stays idempotent after completion catches up", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xmoon-projection",
+      logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)],
+      data: abiWords(2n, 44n, 9n, 12n, 8777n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x88",
+      transactionHash: "0xmoon-overdue",
+      logIndex: "0x0",
+      topics: [moonBuildingStartedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n, 1767225500n, 20_000n, 40_000n, 20_000n)
+    });
+
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      moon: { fields: 15 },
+      queue: null,
+      completionQueue: {
+        itemId: 0,
+        targetLevel: 1,
+        asOfNow: { complete: true, secondsRemaining: 0 }
+      },
+      buildings: expect.arrayContaining([
+        expect.objectContaining({ id: 0, level: 1, durationSeconds: expect.any(Number) })
+      ])
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x89",
+      transactionHash: "0xmoon-overdue-completed",
+      logIndex: "0x0",
+      topics: [moonBuildingCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(1n)
+    });
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      moon: { fields: 15 },
+      queue: null,
+      buildings: expect.arrayContaining([expect.objectContaining({ id: 0, level: 1 })])
+    });
+  });
+
+  test("keeps a not-yet-due Moon queue active without projecting its target level", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xmoon-future",
+      logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)],
+      data: abiWords(2n, 44n, 9n, 12n, 8777n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x88",
+      transactionHash: "0xmoon-future-queue",
+      logIndex: "0x0",
+      topics: [moonBuildingStartedTopic, topic(7n), topic(1n)],
+      data: abiWords(1n, 1770001200n, 400n, 120n, 200n)
+    });
+
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      moon: { fields: 12 },
+      queue: { itemId: 1, targetLevel: 1, readyAt: "1770001200" },
+      buildings: expect.arrayContaining([expect.objectContaining({ id: 1, level: 0 })])
+    });
+  });
+
   test("indexes independent moon resources and moon fleet counts", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
