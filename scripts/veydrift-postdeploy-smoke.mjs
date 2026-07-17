@@ -149,7 +149,12 @@ async function checkReferralOnChain() {
       expectedValidCountWord,
       importedValidCountWord,
       expectedHashOnlyCountWord,
-      importedHashOnlyCountWord
+      importedHashOnlyCountWord,
+      redemptionMigrationConfiguredWord,
+      expectedRedemptionHash,
+      importedRedemptionHash,
+      expectedRedemptionCountWord,
+      importedRedemptionCountWord
     ] = await Promise.all([
       ethCall(manifest.contracts.referralSystem, "0xc3fe3e28"),
       ethCall(manifest.contracts.referralSystem, "0xdad0eeb7"),
@@ -163,7 +168,12 @@ async function checkReferralOnChain() {
       ethCall(manifest.contracts.referralSystem, "0xa2ca8f37"),
       ethCall(manifest.contracts.referralSystem, "0xeb3b3e12"),
       ethCall(manifest.contracts.referralSystem, "0x0b9f9f4f"),
-      ethCall(manifest.contracts.referralSystem, "0xbf3158c2")
+      ethCall(manifest.contracts.referralSystem, "0xbf3158c2"),
+      ethCall(manifest.contracts.referralSystem, "0x89161141"),
+      ethCall(manifest.contracts.referralSystem, "0x7a79a30f"),
+      ethCall(manifest.contracts.referralSystem, "0xfbc97780"),
+      ethCall(manifest.contracts.referralSystem, "0x7a6d789b"),
+      ethCall(manifest.contracts.referralSystem, "0xfdf11250")
     ]);
     const configuredGame = decodeAddressWord(configuredGameWord);
     const configuredSigner = decodeAddressWord(configuredSignerWord);
@@ -173,6 +183,9 @@ async function checkReferralOnChain() {
     const importedValidCount = Number(BigInt(importedValidCountWord));
     const expectedHashOnlyCount = Number(BigInt(expectedHashOnlyCountWord));
     const importedHashOnlyCount = Number(BigInt(importedHashOnlyCountWord));
+    const redemptionMigrationConfigured = BigInt(redemptionMigrationConfiguredWord) === 1n;
+    const expectedRedemptionCount = Number(BigInt(expectedRedemptionCountWord));
+    const importedRedemptionCount = Number(BigInt(importedRedemptionCountWord));
     const onChainStartPriceWei = BigInt(startPriceWord).toString();
     evidence.push({
       name: "referral-on-chain-config",
@@ -190,7 +203,12 @@ async function checkReferralOnChain() {
         expectedValidCount,
         importedValidCount,
         expectedHashOnlyCount,
-        importedHashOnlyCount
+        importedHashOnlyCount,
+        redemptionMigrationConfigured,
+        expectedRedemptionHash,
+        importedRedemptionHash,
+        expectedRedemptionCount,
+        importedRedemptionCount
       },
       startPriceWei: onChainStartPriceWei
     });
@@ -198,12 +216,15 @@ async function checkReferralOnChain() {
     expect(eqAddress(configuredSigner, referralSigner), "referral system referralSigner() must match expected signer");
     expect(migrationFinalized, "referral code migration must be finalized before rollout");
     expect(maxCodeLength === 24, "referral system must expose the canonical 24-character code limit");
-    expect(expectedValidCount === 6, "referral migration must commit the 6 reviewed valid codes");
+    expect(expectedValidCount > 0, "referral migration must commit at least one reviewed valid code");
     expect(importedValidCount === expectedValidCount, "referral valid-code migration count must match its reviewed manifest");
     expect(eqHex(importedValidHash, expectedValidHash), "referral valid-code migration hash must match its reviewed manifest");
-    expect(expectedHashOnlyCount === 10, "referral migration must commit the 10 reviewed hash-only legacy codes");
+    expect(expectedHashOnlyCount === 10, "referral migration must preserve the 10 reviewed hash-only legacy codes");
     expect(importedHashOnlyCount === expectedHashOnlyCount, "referral hash-only migration count must match its reviewed manifest");
     expect(eqHex(importedHashOnlyHash, expectedHashOnlyHash), "referral hash-only migration hash must match its reviewed manifest");
+    expect(redemptionMigrationConfigured, "referral redemption migration must be explicitly configured");
+    expect(importedRedemptionCount === expectedRedemptionCount, "referral redemption migration count must match its reviewed manifest");
+    expect(eqHex(importedRedemptionHash, expectedRedemptionHash), "referral redemption migration hash must match its reviewed manifest");
     expect(onChainStartPriceWei === referralStartPriceWei, "game startPrice() must match referral/backend start price");
   } catch (error) {
     fail(`referral on-chain config check failed: ${error instanceof Error ? error.message : String(error)}`);

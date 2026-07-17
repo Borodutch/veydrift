@@ -9,8 +9,10 @@ import {VeydriftReferralSystem} from "../src/VeydriftReferralSystem.sol";
 ///      transfer function. The broadcaster therefore remains the referral owner/admin.
 ///      Code claims stay disabled after deployment until the owner imports the audited legacy
 ///      ownership manifest. The owner must first commit its reviewed 6-valid / 10-hash-only
-///      count/digest pairs through configureReferralCodeMigration(), import the bounded batches,
-///      and call finalizeReferralCodeMigration().
+///      count/digest pairs through configureReferralCodeMigration(), separately commit the audited
+///      replay/window manifest through configureReferralRedemptionMigration(), import both bounded
+///      manifest classes, and call finalizeReferralCodeMigration(). Finalization fails closed until
+///      both configurations match their imported count/digest pairs.
 ///
 ///      Required env:
 ///        PRIVATE_KEY              deployment/referral-owner EOA

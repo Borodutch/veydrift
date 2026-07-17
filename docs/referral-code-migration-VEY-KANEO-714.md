@@ -64,6 +64,28 @@ Configuration rejects zero/non-zero digest/count mismatches and cannot be replac
 code hash, commitment, timestamp, missing row, duplicate row, or extra row leaves the imported
 count/digest pair unequal to the reviewed pair, so finalization fails closed.
 
+For every replacement after referrals have gone live, build a third receipt/event-backed manifest
+from every successful `ReferralInviteRedeemed` emitted by the current canonical referral contract.
+Do not use backend JSON alone. Require the exact emitting address, a status-1 receipt, and decoded
+`inviter`, `invitee`, `commitment`, and `redeemedAt` values. The redemption leaf is:
+
+```text
+keccak256(abi.encode(uint8(3), inviter, invitee, commitment, redeemedAt))
+```
+
+XOR all unique redemption leaves and explicitly commit the count/digest pair, including an explicit
+zero/zero configuration when the source contract has no redemptions:
+
+```text
+configureReferralRedemptionMigration(redemptionDigest, redemptionCount)
+```
+
+Before importing, audit every source redemption's `paid` / `credited` event values and the source
+contract's balance, `claimableReferralRewards`, and per-redemption credit state. The current replay
+migration preserves eligibility and quota state, not escrowed ETH or credit accounting. If any
+outstanding credit or unexplained contract balance exists, stop the rollout and add a separately
+audited credit migration; never strand funds by switching the game/runtime pointer.
+
 ## Import and verify
 
 Submit bounded valid-code batches, passing each decoded legacy commitment as the fourth array:
@@ -104,6 +126,26 @@ commitment, invite record, activation timestamp, active window, or redemption su
 public validator remains 1–24 characters, and hash-only migration entries are also explicitly barred
 from public activation. Never pass an unconfirmed JSON-only row to either import function.
 
+After all valid code activations have been imported, import the audited redemption rows in bounded
+batches:
+
+```text
+migrateReferralRedemptions(
+  address[] inviters,
+  address[] invitees,
+  bytes32[] commitments,
+  uint64[] redeemedAts
+)
+```
+
+Each row must reference an already imported canonical commitment and matching inviter, contain a
+nonzero invitee and nonfuture timestamp, and be unique globally and for that commitment. Import sets
+both `referralInviteeRedeemed(invitee)` and `referralRedemptions(commitment, invitee)` so a wallet
+cannot receive a second referral after replacement. A timestamp consumes quota only when it belongs
+to the commitment's latest imported activation interval and is still inside its rolling 24-hour
+window at import time. Older rows still preserve replay protection but do not consume a renewed
+activation's fresh quota. More than three live timestamps for one commitment fail closed.
+
 For every manifest row, verify `referralCodeOwner(codeHash)` and
 `referralCodeMigrationKind(codeHash)`. For each valid-code row, verify the emitted
 `ReferralCodeOwnershipClaimed` / `ReferralInviteWindowActivated` values and the wallet's latest
@@ -116,15 +158,23 @@ Compare all four expected/imported count/digest getters before calling:
 finalizeReferralCodeMigration()
 ```
 
-Finalization is one-way and contract-enforced: it reverts unless valid count/digest is exactly 6/the
-reviewed valid digest and hash-only count/digest is exactly 10/the reviewed hash-only digest. Confirm
-`referralMigrationFinalized() == true`; the post-deploy smoke script also enforces this gate and
-`REFERRAL_CODE_MAX_LENGTH() == 24`.
+Also compare `referralMigrationExpectedRedemptionHash/Count` with
+`referralMigrationImportedRedemptionHash/Count`, verify every imported invitee through both replay
+getters, and compare each active commitment's `referralRedemptionQuota` with the source contract.
+Finalization requires an explicit redemption migration configuration and exact redemption
+count/digest equality in addition to the valid and hash-only code manifests.
+
+Finalization is one-way and contract-enforced: it reverts unless all three configured count/digest
+pairs exactly match their imports. The original reviewed deployment used 6 valid and 10 hash-only
+rows; later replacements must use the complete current receipt-backed inventory, including new
+public claims and redemptions. Confirm `referralMigrationFinalized() == true`; the post-deploy smoke
+script also enforces this gate and `REFERRAL_CODE_MAX_LENGTH() == 24`.
 
 ## Rollout order and rollback
 
 1. Deploy and wire the new referral system, but do not point production traffic at it.
-2. Import, collision-audit, verify, and finalize the legacy ownership manifest.
+2. Import and collision-audit the ownership manifest; import every audited redemption replay row;
+   verify code, invitee, active-quota, and zero-outstanding-credit state; then finalize.
 3. Upgrade the game settlement module to the new referral address and verify proxy/module wiring,
    game owner, start price, and resource invariants.
 4. Point the backend at the new referral address, rebuild from its deployment block, and verify

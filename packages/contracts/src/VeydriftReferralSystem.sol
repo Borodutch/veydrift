@@ -13,6 +13,7 @@ contract VeydriftReferralSystem {
     uint8 public constant REFERRAL_LEGACY_CODE_LENGTH = 43;
     uint8 public constant REFERRAL_MIGRATION_KIND_VALID = 1;
     uint8 public constant REFERRAL_MIGRATION_KIND_HASH_ONLY = 2;
+    uint8 public constant REFERRAL_MIGRATION_KIND_REDEMPTION = 3;
     uint64 public constant REFERRAL_CLAIM_WINDOW = 1 days;
     uint256 public constant DIRECT_PAYOUT_GAS = 30_000;
 
@@ -29,6 +30,7 @@ contract VeydriftReferralSystem {
     address public referralSigner;
     bool public referralMigrationFinalized;
     bool public referralMigrationConfigured;
+    bool public referralRedemptionMigrationConfigured;
     bytes32 public referralMigrationExpectedValidHash;
     bytes32 public referralMigrationExpectedHashOnlyHash;
     bytes32 public referralMigrationImportedValidHash;
@@ -37,6 +39,10 @@ contract VeydriftReferralSystem {
     uint32 public referralMigrationExpectedHashOnlyCount;
     uint32 public referralMigrationImportedValidCount;
     uint32 public referralMigrationImportedHashOnlyCount;
+    bytes32 public referralMigrationExpectedRedemptionHash;
+    bytes32 public referralMigrationImportedRedemptionHash;
+    uint32 public referralMigrationExpectedRedemptionCount;
+    uint32 public referralMigrationImportedRedemptionCount;
     mapping(bytes32 codeHash => address codeOwner) public referralCodeOwner;
     mapping(bytes32 codeHash => uint8 migrationKind) public referralCodeMigrationKind;
     mapping(address codeOwner => mapping(bytes32 codeHash => bool owned)) public
@@ -95,6 +101,13 @@ contract VeydriftReferralSystem {
     error ReferralMigrationPending();
     error ReferralMigrationLengthMismatch();
     error ReferralMigrationTimestampInvalid(uint64 activatedAt);
+    error ReferralMigrationRedemptionInvalid(
+        address inviter, address invitee, bytes32 commitment, uint64 redeemedAt
+    );
+    error ReferralMigrationRedemptionWindowExceeded(bytes32 commitment);
+    error ReferralRedemptionMigrationManifestMismatch(
+        bytes32 expectedHash, bytes32 importedHash, uint32 expectedCount, uint32 importedCount
+    );
 
     event ReferralGameUpdated(address indexed oldGame, address indexed newGame);
     event ReferralSignerUpdated(address indexed oldSigner, address indexed newSigner);
@@ -119,6 +132,16 @@ contract VeydriftReferralSystem {
         uint32 expectedValidCount,
         bytes32 indexed expectedHashOnlyHash,
         uint32 expectedHashOnlyCount
+    );
+    event ReferralRedemptionMigrationConfigured(
+        bytes32 indexed expectedRedemptionHash, uint32 expectedRedemptionCount
+    );
+    event ReferralRedemptionImported(
+        address indexed inviter,
+        address indexed invitee,
+        bytes32 indexed commitment,
+        uint64 redeemedAt,
+        bytes32 manifestLeaf
     );
     event ReferralLegacyCodeOwnershipImported(
         address indexed owner,
@@ -200,6 +223,24 @@ contract VeydriftReferralSystem {
         );
     }
 
+    function configureReferralRedemptionMigration(
+        bytes32 expectedRedemptionHash,
+        uint32 expectedRedemptionCount
+    ) external onlyOwner {
+        if (referralMigrationFinalized) {
+            revert ReferralMigrationAlreadyFinalized();
+        }
+        if (referralRedemptionMigrationConfigured) {
+            revert ReferralMigrationAlreadyConfigured();
+        }
+        _validateMigrationManifest(expectedRedemptionHash, expectedRedemptionCount);
+
+        referralRedemptionMigrationConfigured = true;
+        referralMigrationExpectedRedemptionHash = expectedRedemptionHash;
+        referralMigrationExpectedRedemptionCount = expectedRedemptionCount;
+        emit ReferralRedemptionMigrationConfigured(expectedRedemptionHash, expectedRedemptionCount);
+    }
+
     function migrateReferralCodes(
         address[] calldata inviters,
         string[] calldata codes,
@@ -276,9 +317,56 @@ contract VeydriftReferralSystem {
         }
     }
 
+    function migrateReferralRedemptions(
+        address[] calldata inviters,
+        address[] calldata invitees,
+        bytes32[] calldata commitments,
+        uint64[] calldata redeemedAts
+    ) external onlyOwner {
+        if (referralMigrationFinalized) {
+            revert ReferralMigrationAlreadyFinalized();
+        }
+        if (!referralRedemptionMigrationConfigured) {
+            revert ReferralMigrationNotConfigured();
+        }
+        if (
+            inviters.length != invitees.length || invitees.length != commitments.length
+                || commitments.length != redeemedAts.length
+        ) {
+            revert ReferralMigrationLengthMismatch();
+        }
+        uint64 nowTimestamp = uint64(block.timestamp);
+
+        for (uint256 index = 0; index < commitments.length; index++) {
+            address inviter = inviters[index];
+            address invitee = invitees[index];
+            bytes32 commitment = commitments[index];
+            uint64 redeemedAt = redeemedAts[index];
+            if (
+                inviter == address(0) || invitee == address(0)
+                    || referralInvites[commitment].inviter != inviter || redeemedAt == 0
+                    || redeemedAt > nowTimestamp || referralInviteeRedeemed[invitee]
+                    || referralRedemptions[commitment][invitee]
+            ) {
+                revert ReferralMigrationRedemptionInvalid(inviter, invitee, commitment, redeemedAt);
+            }
+
+            referralInviteeRedeemed[invitee] = true;
+            referralRedemptions[commitment][invitee] = true;
+            _importRedemptionWindowTimestamp(commitment, redeemedAt);
+            bytes32 manifestLeaf =
+                referralMigrationLeafRedemption(inviter, invitee, commitment, redeemedAt);
+            _recordMigrationRedemptionLeaf(manifestLeaf);
+            emit ReferralRedemptionImported(inviter, invitee, commitment, redeemedAt, manifestLeaf);
+        }
+    }
+
     function finalizeReferralCodeMigration() external onlyOwner {
         if (referralMigrationFinalized) revert ReferralMigrationAlreadyFinalized();
         if (!referralMigrationConfigured) revert ReferralMigrationNotConfigured();
+        if (!referralRedemptionMigrationConfigured) {
+            revert ReferralMigrationNotConfigured();
+        }
         if (
             referralMigrationImportedValidHash != referralMigrationExpectedValidHash
                 || referralMigrationImportedValidCount != referralMigrationExpectedValidCount
@@ -294,6 +382,18 @@ contract VeydriftReferralSystem {
                 referralMigrationImportedHashOnlyHash,
                 referralMigrationExpectedHashOnlyCount,
                 referralMigrationImportedHashOnlyCount
+            );
+        }
+        if (
+            referralMigrationImportedRedemptionHash != referralMigrationExpectedRedemptionHash
+                || referralMigrationImportedRedemptionCount
+                    != referralMigrationExpectedRedemptionCount
+        ) {
+            revert ReferralRedemptionMigrationManifestMismatch(
+                referralMigrationExpectedRedemptionHash,
+                referralMigrationImportedRedemptionHash,
+                referralMigrationExpectedRedemptionCount,
+                referralMigrationImportedRedemptionCount
             );
         }
         referralMigrationFinalized = true;
@@ -446,6 +546,17 @@ contract VeydriftReferralSystem {
         );
     }
 
+    function referralMigrationLeafRedemption(
+        address inviter,
+        address invitee,
+        bytes32 commitment,
+        uint64 redeemedAt
+    ) public pure returns (bytes32) {
+        return keccak256(
+            abi.encode(REFERRAL_MIGRATION_KIND_REDEMPTION, inviter, invitee, commitment, redeemedAt)
+        );
+    }
+
     function referralCodeState(bytes32 codeHash)
         external
         view
@@ -582,6 +693,38 @@ contract VeydriftReferralSystem {
         }
         referralMigrationImportedHashOnlyCount = hashOnlyNextCount;
         referralMigrationImportedHashOnlyHash = referralMigrationImportedHashOnlyHash ^ manifestLeaf;
+    }
+
+    function _recordMigrationRedemptionLeaf(bytes32 manifestLeaf) private {
+        uint32 nextCount = referralMigrationImportedRedemptionCount + 1;
+        if (nextCount > referralMigrationExpectedRedemptionCount) {
+            revert ReferralMigrationCountExceeded(
+                REFERRAL_MIGRATION_KIND_REDEMPTION, referralMigrationExpectedRedemptionCount
+            );
+        }
+        referralMigrationImportedRedemptionCount = nextCount;
+        referralMigrationImportedRedemptionHash =
+            referralMigrationImportedRedemptionHash ^ manifestLeaf;
+    }
+
+    function _importRedemptionWindowTimestamp(bytes32 commitment, uint64 redeemedAt) private {
+        uint64 claimedAt = referralClaimedAt[commitment];
+        uint64 nowTimestamp = uint64(block.timestamp);
+        if (
+            redeemedAt < claimedAt || redeemedAt >= claimedAt + REFERRAL_CLAIM_WINDOW
+                || nowTimestamp >= redeemedAt + REFERRAL_CLAIM_WINDOW
+        ) {
+            return;
+        }
+
+        ReferralRedemptionWindow storage window = _referralRedemptionWindows[commitment];
+        for (uint256 index = 0; index < REFERRAL_CLAIM_LIMIT; index++) {
+            if (window.redeemedAt[index] == 0) {
+                window.redeemedAt[index] = redeemedAt;
+                return;
+            }
+        }
+        revert ReferralMigrationRedemptionWindowExceeded(commitment);
     }
 
     function _recordActivation(
