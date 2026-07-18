@@ -389,14 +389,17 @@ Build type: Nixpacks
 Nixpacks version: 1.34.1
 Nixpacks config path: apps/backend/nixpacks.test.toml
 Install command: bun install --frozen-lockfile && rm -rf /root/.cache/nix
-Build command: cd apps/backend && bun run build && rm -rf /root/.bun/install/cache /tmp/*
+Build command: sh apps/backend/scripts/write-build-sha.sh && cd apps/backend && \
+  bun run build && rm -rf /root/.bun/install/cache /tmp/*
 Start command: cd apps/backend && bun run start
 ```
 
 The committed `apps/backend/nixpacks.test.toml` build command also writes
-`.veydrift-backend-build-sha` at both the repository root and `apps/backend/`
-from `git rev-parse HEAD`. The backend reads that artifact for
-`backend.build.gitSha` so `/health` and `/runtime-config` identify the actual
+`.veydrift-backend-build-sha` at both the repository root and `apps/backend/`.
+It uses Easypanel's provider-injected, full-length `GIT_SHA` in the `.git`-free
+Nixpacks context, falls back to `git rev-parse HEAD` for local builds, and fails
+the build if neither source provides a valid commit SHA. The backend reads that
+artifact for `backend.build.gitSha` so `/health` and `/runtime-config` identify the actual
 source image even when contract deployment manifest variables such as
 `VEYDRIFT_DEPLOYMENT_COMMIT` point at an older contract redeploy commit.
 The image artifact is authoritative over provider and custom service environment

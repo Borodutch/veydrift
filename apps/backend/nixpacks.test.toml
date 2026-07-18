@@ -2,7 +2,7 @@
 cmds = ["bun install --frozen-lockfile && rm -rf /root/.cache/nix"]
 
 [phases.build]
-cmds = ["git rev-parse HEAD | tee .veydrift-backend-build-sha apps/backend/.veydrift-backend-build-sha >/dev/null && cd apps/backend && bun run build && rm -rf /root/.bun/install/cache /tmp/*"]
+cmds = ["sh apps/backend/scripts/write-build-sha.sh && cd apps/backend && bun run build && rm -rf /root/.bun/install/cache /tmp/*"]
 
 [start]
 cmd = "cd apps/backend && bun run start"
