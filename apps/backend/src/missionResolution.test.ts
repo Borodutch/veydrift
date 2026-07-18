@@ -259,6 +259,82 @@ describe("MissionResolutionService", () => {
       failuresByLeg: { arrival: 1, return: 0 }
     });
   });
+
+  test("degrades health while a stale due mission settlement is in flight", async () => {
+    let nowMs = 959_000;
+    let startedCount = 0;
+    let markBothStarted = () => {};
+    let releaseArrival = () => {};
+    let releaseReturn = () => {};
+    const bothStarted = new Promise<void>((resolve) => { markBothStarted = resolve; });
+    const arrivalGate = new Promise<void>((resolve) => { releaseArrival = resolve; });
+    const returnGate = new Promise<void>((resolve) => { releaseReturn = resolve; });
+    const service = new MissionResolutionService(config, {
+      candidateSource: {
+        missionResolutionCandidates: () => ({
+          arrivals: [arrival("1", "Deploy", "900")],
+          returns: [returnLeg("2", "Attack", "920")]
+        })
+      },
+      chainClient: {
+        async listResolvableFleetMissions() { return []; },
+        async listReturnableFleetMissions() { return []; },
+        async resolveFleetMission() {
+          startedCount += 1;
+          if (startedCount === 2) markBothStarted();
+          await arrivalGate;
+          return "0xarrival";
+        },
+        async completeFleetMissionReturn() {
+          startedCount += 1;
+          if (startedCount === 2) markBothStarted();
+          await returnGate;
+          return "0xreturn";
+        }
+      },
+      logger: silentLogger(),
+      maxConcurrency: 2,
+      now: () => nowMs,
+      promptnessTargetMs: 60_000
+    });
+
+    const tick = service.tick();
+    await bothStarted;
+
+    expect(service.snapshot()).toMatchObject({
+      inFlight: true,
+      healthStatus: "healthy",
+      dueArrivals: { count: 1, oldestAgeSeconds: 59 },
+      dueReturns: { count: 1, oldestAgeSeconds: 39 }
+    });
+
+    nowMs = 1_001_000;
+    expect(service.snapshot()).toMatchObject({
+      inFlight: true,
+      healthStatus: "degraded",
+      healthWarnings: ["stale_due_arrival_backlog", "stale_due_return_backlog"],
+      dueArrivals: { count: 1, oldestAgeSeconds: 101 },
+      dueReturns: { count: 1, oldestAgeSeconds: 81 }
+    });
+
+    releaseArrival();
+    await waitUntil(() => service.snapshot().dueArrivals.count === 0);
+    expect(service.snapshot()).toMatchObject({
+      inFlight: true,
+      healthWarnings: ["stale_due_return_backlog"],
+      dueArrivals: { count: 0 },
+      dueReturns: { count: 1, oldestAgeSeconds: 81 }
+    });
+
+    releaseReturn();
+    await tick;
+    expect(service.snapshot()).toMatchObject({
+      inFlight: false,
+      healthStatus: "healthy",
+      dueArrivals: { count: 0 },
+      dueReturns: { count: 0 }
+    });
+  });
 });
 
 describe("ViemMissionResolutionChainClient", () => {
@@ -373,4 +449,12 @@ function silentLogger(): MissionResolutionLogger {
     warn() {},
     error() {}
   };
+}
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  throw new Error("condition was not met before timeout");
 }

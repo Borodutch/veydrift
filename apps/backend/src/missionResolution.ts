@@ -55,6 +55,12 @@ export type MissionResolutionCandidateSource = {
 
 type MissionLeg = "arrival" | "return";
 
+type MissionSettlementCandidate = {
+  leg: MissionLeg;
+  mission: ResolvableFleetMission | ReturnableFleetMission;
+  dueAt: number;
+};
+
 type DueLegSnapshot = {
   count: number;
   oldestDueAt: string | null;
@@ -131,8 +137,10 @@ export class MissionResolutionService {
   private lastReturnedMissionId: string | null = null;
   private resolvedCount = 0;
   private returnedCount = 0;
-  private dueArrivals: DueLegSnapshot = emptyDueLegSnapshot();
-  private dueReturns: DueLegSnapshot = emptyDueLegSnapshot();
+  private readonly pendingDueAt: Record<MissionLeg, Map<string, number>> = {
+    arrival: new Map(),
+    return: new Map()
+  };
   private readonly failuresByLeg: Record<MissionLeg, number> = { arrival: 0, return: 0 };
   private readonly latencySamples: Record<MissionLeg, number[]> = { arrival: [], return: [] };
 
@@ -151,7 +159,10 @@ export class MissionResolutionService {
   }
 
   snapshot(): MissionResolutionSnapshot {
-    const healthWarnings = this.healthWarnings();
+    const nowMs = this.now();
+    const dueArrivals = dueLegSnapshot([...this.pendingDueAt.arrival.values()], nowMs);
+    const dueReturns = dueLegSnapshot([...this.pendingDueAt.return.values()], nowMs);
+    const healthWarnings = this.healthWarnings(dueArrivals, dueReturns);
     return {
       enabled: this.enabled,
       resolverConfigured: Boolean(this.config.missionResolverAddress || this.config.missionResolverPrivateKey),
@@ -172,8 +183,8 @@ export class MissionResolutionService {
       lastReturnedMissionId: this.lastReturnedMissionId,
       resolvedCount: this.resolvedCount,
       returnedCount: this.returnedCount,
-      dueArrivals: this.dueArrivals,
-      dueReturns: this.dueReturns,
+      dueArrivals,
+      dueReturns,
       failuresByLeg: { ...this.failuresByLeg },
       settlementLatency: {
         arrival: latencySnapshot(this.latencySamples.arrival),
@@ -209,7 +220,9 @@ export class MissionResolutionService {
       const scanStartedAtMs = this.now();
       const candidates = await this.listCandidates();
       this.lastScanDurationMs = Math.max(0, this.now() - scanStartedAtMs);
-      await this.settleCandidates(candidates);
+      const settlementCandidates = toSettlementCandidates(candidates);
+      this.publishDueCandidates(settlementCandidates);
+      await this.settleCandidates(settlementCandidates);
       this.lastError = null;
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
@@ -245,13 +258,16 @@ export class MissionResolutionService {
     return { arrivals, returns };
   }
 
-  private async settleCandidates(candidates: MissionResolutionCandidates): Promise<void> {
-    const all = [
-      ...candidates.arrivals.map((mission) => ({ leg: "arrival" as const, mission, dueAt: Number(mission.arrivalAt) })),
-      ...candidates.returns.map((mission) => ({ leg: "return" as const, mission, dueAt: Number(mission.returnAt) }))
-    ].sort(compareCandidates);
+  private publishDueCandidates(candidates: readonly MissionSettlementCandidate[]): void {
+    this.pendingDueAt.arrival.clear();
+    this.pendingDueAt.return.clear();
+    for (const candidate of candidates) {
+      this.pendingDueAt[candidate.leg].set(candidate.mission.missionId, candidate.dueAt);
+    }
+  }
+
+  private async settleCandidates(all: MissionSettlementCandidate[]): Promise<void> {
     const attemptable = all.slice(0, this.maxMissionsPerTick * 5);
-    const failed: typeof attemptable = [];
     let successful = 0;
     let cursor = 0;
     while (cursor < attemptable.length && successful < this.maxMissionsPerTick) {
@@ -260,21 +276,13 @@ export class MissionResolutionService {
       const batch = attemptable.slice(cursor, cursor + batchSize);
       cursor += batchSize;
       const results = await Promise.all(batch.map((candidate) => this.settleCandidate(candidate)));
-      results.forEach((didSettle, index) => {
+      results.forEach((didSettle) => {
         if (didSettle) successful += 1;
-        else failed.push(batch[index]!);
       });
     }
-    const remaining = [...failed, ...attemptable.slice(cursor), ...all.slice(attemptable.length)];
-    this.dueArrivals = dueLegSnapshot(remaining.filter((candidate) => candidate.leg === "arrival"), this.now());
-    this.dueReturns = dueLegSnapshot(remaining.filter((candidate) => candidate.leg === "return"), this.now());
   }
 
-  private async settleCandidate(candidate: {
-    leg: MissionLeg;
-    mission: ResolvableFleetMission | ReturnableFleetMission;
-    dueAt: number;
-  }): Promise<boolean> {
+  private async settleCandidate(candidate: MissionSettlementCandidate): Promise<boolean> {
     if (!this.chainClient) return false;
     try {
       if (candidate.leg === "arrival") {
@@ -287,6 +295,7 @@ export class MissionResolutionService {
         this.returnedCount += 1;
       }
       this.recordLatency(candidate.leg, candidate.dueAt);
+      this.pendingDueAt[candidate.leg].delete(candidate.mission.missionId);
       return true;
     } catch (error) {
       this.failuresByLeg[candidate.leg] += 1;
@@ -303,11 +312,11 @@ export class MissionResolutionService {
     if (samples.length > latencySampleLimit) samples.splice(0, samples.length - latencySampleLimit);
   }
 
-  private healthWarnings(): string[] {
+  private healthWarnings(dueArrivals: DueLegSnapshot, dueReturns: DueLegSnapshot): string[] {
     const warnings: string[] = [];
     const targetSeconds = this.promptnessTargetMs / 1_000;
-    if ((this.dueArrivals.oldestAgeSeconds ?? 0) > targetSeconds) warnings.push("stale_due_arrival_backlog");
-    if ((this.dueReturns.oldestAgeSeconds ?? 0) > targetSeconds) warnings.push("stale_due_return_backlog");
+    if ((dueArrivals.oldestAgeSeconds ?? 0) > targetSeconds) warnings.push("stale_due_arrival_backlog");
+    if ((dueReturns.oldestAgeSeconds ?? 0) > targetSeconds) warnings.push("stale_due_return_backlog");
     if (this.lastError) warnings.push("mission_resolution_tick_failed");
     return warnings;
   }
@@ -476,16 +485,31 @@ function emptyDueLegSnapshot(): DueLegSnapshot {
 }
 
 function dueLegSnapshot(
-  candidates: ReadonlyArray<{ dueAt: number }>,
+  dueAtSeconds: readonly number[],
   nowMs: number
 ): DueLegSnapshot {
-  if (candidates.length === 0) return emptyDueLegSnapshot();
-  const oldestDueAtSeconds = Math.min(...candidates.map((candidate) => candidate.dueAt));
+  if (dueAtSeconds.length === 0) return emptyDueLegSnapshot();
+  const oldestDueAtSeconds = Math.min(...dueAtSeconds);
   return {
-    count: candidates.length,
+    count: dueAtSeconds.length,
     oldestDueAt: new Date(oldestDueAtSeconds * 1_000).toISOString(),
     oldestAgeSeconds: Math.max(0, (nowMs - oldestDueAtSeconds * 1_000) / 1_000)
   };
+}
+
+function toSettlementCandidates(candidates: MissionResolutionCandidates): MissionSettlementCandidate[] {
+  return [
+    ...candidates.arrivals.map((mission) => ({
+      leg: "arrival" as const,
+      mission,
+      dueAt: Number(mission.arrivalAt)
+    })),
+    ...candidates.returns.map((mission) => ({
+      leg: "return" as const,
+      mission,
+      dueAt: Number(mission.returnAt)
+    }))
+  ].sort(compareCandidates);
 }
 
 function latencySnapshot(samples: readonly number[]): LatencySnapshot {
