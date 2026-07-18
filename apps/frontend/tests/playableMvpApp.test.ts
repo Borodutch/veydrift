@@ -59,6 +59,7 @@ import {
   researchStateWithPreservedActiveQueue,
   researchStartTransactionLabel,
   resolvedOrbitBodyKind,
+  highscorePlanetForMission,
   raidTargetPlanetForMission,
   missionOriginResources,
   missionShipInventoryBlocker,
@@ -83,12 +84,33 @@ import {
 import {
   infrastructureUpgradeButtonLabel,
 } from "../src/components/InfrastructurePage";
+import {
+  AttackIntelPanel,
+  missionTargetCompositionUnits,
+  publicTargetBattleForecast,
+  targetResourceIntel,
+} from "../src/components/MissionCreationPage";
+import { emptyMissionShips } from "../src/galaxyActions";
 import { createInitialPlayableState } from "../src/playableMvp";
 import type { RaidTarget } from "../src/raidTargetFinder";
 import type { Planet } from "../src/types";
-import type { ChainAllianceState, ChainDefenseState, ChainInfrastructureState, ChainResearchState, ChainShipyardState, FleetMissionSummary, PlayerQueuesResponse, QueueStateResponse, WalletPlanetsResponse, WalletSettlementResponse } from "../src/walletFlow";
+import type { ChainAllianceState, ChainDefenseState, ChainInfrastructureState, ChainResearchState, ChainShipyardState, FleetMissionSummary, HighscoreEntry, HighscorePlanet, PlayerQueuesResponse, QueueStateResponse, WalletPlanetsResponse, WalletSettlementResponse } from "../src/walletFlow";
 
 const playableMvpSource = await Bun.file(new URL("../src/PlayableMvpApp.tsx", import.meta.url)).text();
+
+function collectRenderedText(node: unknown): string[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (Array.isArray(node)) return node.flatMap(collectRenderedText);
+  if (typeof node === "string" || typeof node === "number" || typeof node === "bigint") return [String(node)];
+  if (typeof node !== "object") return [];
+
+  const vnode = node as { type?: unknown; props?: Record<string, unknown> & { children?: unknown } };
+  if (typeof vnode.type === "function") {
+    const render = vnode.type as (props: Record<string, unknown>) => unknown;
+    return collectRenderedText(render({ ...(vnode.props ?? {}) }));
+  }
+  return collectRenderedText(vnode.props?.children);
+}
 
 describe("Playable MVP app display helpers", () => {
   const buildingFinishStateReadFailureLabel =
@@ -1466,6 +1488,95 @@ describe("Playable MVP app display helpers", () => {
       { id: 6, level: 2 },
       { id: 7, level: 1 },
     ]);
+  });
+
+  test("carries Rankings target defenses, fleet, and combat techs into attack mission public state", () => {
+    const planet: HighscorePlanet = {
+      planetId: "24",
+      name: "Shalex",
+      coordinates: { galaxy: 5, system: 314, position: 5 },
+      archetype: "temperate-ocean",
+      hasMoon: true,
+      tactical: {
+        currentResources: { metal: "1000", crystal: "2000", deuterium: "3000" },
+        raidableResources: { metal: "500", crystal: "1000", deuterium: "1500" },
+        raidableResourceTotal: "3000",
+        ships: {
+          count: 57,
+          power: "1561000",
+          units: [{ id: 5, count: 57, power: "1561000" }],
+        },
+        defenses: {
+          count: 135,
+          power: "443000",
+          units: [
+            { id: 0, count: 10, power: "20000" },
+            { id: 1, count: 104, power: "208000" },
+            { id: 2, count: 11, power: "88000" },
+            { id: 4, count: 1, power: "35000" },
+            { id: 5, count: 1, power: "8000" },
+            { id: 6, count: 5, power: "75000" },
+            { id: 8, count: 3, power: "9000" },
+          ],
+        },
+        combatTechLevels: { weapons: 7, shielding: 6, armor: 6 },
+        combatPower: "2004000",
+      },
+    };
+    const entry: HighscoreEntry = {
+      rank: 1,
+      wallet: "0xdefender",
+      displayName: "Shalex Commander",
+      homePlanetId: "24",
+      homePlanet: planet,
+      planets: [planet],
+      planetCount: 1,
+      score: {
+        total: "1",
+        economy: "1",
+        research: "1",
+        researchLevels: "1",
+        fleet: "1",
+        fleetCount: "1",
+        defense: "1",
+      },
+    };
+
+    const target = highscorePlanetForMission(planet, entry);
+
+    expect(target.publicState?.fleet).toEqual([{ id: 5, count: 57 }]);
+    expect(target.publicState?.defenses?.reduce((sum, row) => sum + row.count, 0)).toBe(135);
+    expect(target.publicState?.research).toEqual([
+      { id: 5, level: 7 },
+      { id: 6, level: 6 },
+      { id: 7, level: 6 },
+    ]);
+
+    const composition = missionTargetCompositionUnits(target);
+    const forecast = publicTargetBattleForecast({ ...emptyMissionShips(), lightFighter: 1 }, target);
+    const intel = AttackIntelPanel({
+      battleForecast: forecast,
+      coords: planet.coordinates,
+      lootableAtArrival: { metal: 500, crystal: 1000, deuterium: 1500 },
+      maxLootForecast: { metal: 0, crystal: 0, deuterium: 0 },
+      target,
+      resourceIntel: targetResourceIntel(target, 0),
+      stationedDefenderUnits: [],
+      targetDefenseUnits: composition.defenses,
+      targetFleetUnits: composition.fleet,
+    });
+    const renderedText = collectRenderedText(intel).join(" ");
+
+    expect(composition.defenses.reduce((sum, unit) => sum + unit.count, 0)).toBe(135);
+    expect(composition.fleet).toEqual([expect.objectContaining({ label: "Heavy Fighter", count: 57 })]);
+    expect(forecast.defenderPower).toBeGreaterThan(0);
+    expect(forecast.defenderTechLevels).toEqual({ weapons: 7, shielding: 6, armor: 6 });
+    expect(renderedText).toContain("Heavy Fighter");
+    expect(renderedText).toContain("Rocket Launcher");
+    expect(renderedText).toContain("Plasma Turret");
+
+    expect(missionTargetCompositionUnits(target, true)).toEqual({ fleet: [], defenses: [] });
+    expect(publicTargetBattleForecast({ ...emptyMissionShips(), lightFighter: 1 }, target, undefined, true).defenderPower).toBeNull();
   });
 
   test("does not invent full attack target resources from Raid Finder loot", () => {
