@@ -322,7 +322,9 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
   const missionResolution =
     dependencies.missionResolution ??
     (isWriter && loaded.problems.length === 0 && loaded.config.missionResolutionEnabled
-      ? new MissionResolutionService(loaded.config)
+      ? new MissionResolutionService(loaded.config, {
+        ...(indexer ? { candidateSource: indexer } : {})
+      })
       : undefined);
 
   chainSync?.start();
@@ -395,7 +397,13 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
     if (request.method === "GET" && url.pathname === "/health") {
       const chainSyncSnapshot = chainSync?.snapshot() ?? null;
       const indexerSnapshot = isWriter ? (indexer?.snapshot() ?? null) : null;
-      const readiness = backendReadiness(loaded.problems, chainSyncSnapshot, indexerSnapshot);
+      const missionResolutionSnapshot = missionResolution?.snapshot() ?? null;
+      const readiness = backendReadiness(
+        loaded.problems,
+        chainSyncSnapshot,
+        indexerSnapshot,
+        missionResolutionSnapshot
+      );
       return Response.json(
         {
           ok: readiness.ready,
@@ -405,7 +413,7 @@ export function createRequestHandler(dependencies: ServerDependencies = {}): (re
           chain: safeConfigSummary(loaded.config),
           readiness,
           chainSync: chainSyncSnapshot,
-          missionResolution: missionResolution?.snapshot() ?? null,
+          missionResolution: missionResolutionSnapshot,
           randomnessCommitter: randomnessCommitter?.snapshot() ?? null,
           indexer: indexerSnapshot,
           rpc: chainReader?.rpcMetrics?.() ?? null,
@@ -3706,7 +3714,7 @@ export function runtimeConfigResponse(workerRole: WorkerRole = envWorkerRole()):
 
 export function readerBootstrapHealthResponse(workerRole: WorkerRole = envWorkerRole()): Response {
   const loaded = loadBackendConfig();
-  const readiness = backendReadiness(loaded.problems, null, null);
+  const readiness = backendReadiness(loaded.problems, null, null, null);
   return Response.json(
     {
       ok: readiness.ready,
@@ -4936,20 +4944,26 @@ function backendReadiness(
   problems: ConfigProblem[],
   chainSyncSnapshot: unknown,
   indexerSnapshot: unknown,
+  missionResolutionSnapshot: unknown,
 ): {
   ready: boolean;
+  degraded: boolean;
+  degradationReasons: string[];
   configurationReady: boolean;
   chainSyncConnected: boolean | null;
   subscribedToHeads: boolean | null;
   subscribedToLogs: boolean | null;
   indexedState: string | null;
   safeToServeIndexedState: boolean | null;
+  missionResolutionStatus: string | null;
 } {
   const chainSyncConnected = booleanSnapshotField(chainSyncSnapshot, "connected");
   const subscribedToHeads = booleanSnapshotField(chainSyncSnapshot, "subscribedToHeads");
   const subscribedToLogs = booleanSnapshotField(chainSyncSnapshot, "subscribedToLogs");
   const indexedState = stringSnapshotField(indexerSnapshot, "indexedState");
   const safeToServeIndexedState = booleanSnapshotField(indexerSnapshot, "safeToServeIndexedState");
+  const missionResolutionStatus = stringSnapshotField(missionResolutionSnapshot, "healthStatus");
+  const missionResolutionWarnings = stringArraySnapshotField(missionResolutionSnapshot, "healthWarnings");
   const configurationReady = problems.length === 0;
 
   return {
@@ -4958,12 +4972,15 @@ function backendReadiness(
       && subscribedToHeads !== false
       && subscribedToLogs !== false
       && safeToServeIndexedState !== false,
+    degraded: missionResolutionStatus === "degraded",
+    degradationReasons: missionResolutionWarnings,
     configurationReady,
     chainSyncConnected,
     subscribedToHeads,
     subscribedToLogs,
     indexedState,
     safeToServeIndexedState,
+    missionResolutionStatus,
   };
 }
 
@@ -4977,6 +4994,12 @@ function stringSnapshotField(snapshot: unknown, key: string): string | null {
   if (!snapshot || typeof snapshot !== "object") return null;
   const value = (snapshot as Record<string, unknown>)[key];
   return typeof value === "string" ? value : null;
+}
+
+function stringArraySnapshotField(snapshot: unknown, key: string): string[] {
+  if (!snapshot || typeof snapshot !== "object") return [];
+  const value = (snapshot as Record<string, unknown>)[key];
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
 function errorResponse(error: unknown, status: number): Response {

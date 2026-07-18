@@ -82,6 +82,8 @@ import {
   type FleetMissionPlanetReference,
   type FleetMissionVisibility,
   type FleetMissionSummary,
+  type ResolvableFleetMission,
+  type ReturnableFleetMission,
   type StationedDefenderSummary,
   type IndexedQueueCompletedEvent,
   type IndexedQueueStartedEvent,
@@ -1794,6 +1796,75 @@ export class SettlementIndexer {
   // Every active mission across the universe (all players), for the Mission Control "All" active tab.
   allActiveFleetMissions(): FleetMissionSummary[] {
     return this.activeFleetMissionsFromCanonicalRows();
+  }
+
+  // Bounded resolver-facing projection over the canonical active-mission table. Unlike the public
+  // Mission Control projection, this deliberately keeps overdue return rows in their on-chain
+  // Returning/Recalled status and never reconstructs mission history from logs.
+  missionResolutionCandidates(asOfSeconds = nowSeconds()): {
+    arrivals: ResolvableFleetMission[];
+    returns: ReturnableFleetMission[];
+  } {
+    this.currentMissionReadModelDbVersion();
+    const rows = this.db.query(`
+      SELECT *
+      FROM contract_fleet_missions
+      WHERE (
+          status_id = 1
+          AND CAST(arrival_at AS INTEGER) <= ?
+        ) OR (
+          status_id IN (2, 5)
+          AND CAST(return_at AS INTEGER) > 0
+          AND CAST(return_at AS INTEGER) <= ?
+        )
+      ORDER BY
+        CASE WHEN status_id = 1 THEN CAST(arrival_at AS INTEGER) ELSE CAST(return_at AS INTEGER) END ASC,
+        CAST(mission_id AS INTEGER) ASC
+    `).all(asOfSeconds, asOfSeconds) as ContractFleetMissionRow[];
+    const missions = rows.map((row) => this.canonicalFleetMissionSummary(row));
+    const arrivedAttacks = missions.filter(
+      (mission) => mission.status === "Outbound"
+        && mission.missionType === "Attack"
+        && missionBattleRandomnessRequestId(mission) !== null
+    );
+    const fulfilledRandomnessRequestIds = this.randomnessEngineConfigured && arrivedAttacks.length > 0
+      ? this.fulfilledRandomnessRequestIds()
+      : null;
+    const resolvableTypes = new Set([
+      "Attack",
+      "Harvest",
+      "Colonize",
+      "Transport",
+      "Deploy",
+      "DefenseHold"
+    ]);
+
+    const arrivals = missions
+      .filter((mission) =>
+        resolvableTypes.has(mission.missionType)
+          && fleetMissionNeedsResolution(mission, asOfSeconds, fulfilledRandomnessRequestIds)
+      )
+      .map(({ arrivalAt, missionId, missionType, originPlanetId, targetPlanetId }) => ({
+        arrivalAt,
+        missionId,
+        missionType,
+        originPlanetId,
+        targetPlanetId
+      }));
+    const returns = missions
+      .filter((mission) =>
+        (mission.status === "Returning" || mission.status === "Recalled")
+          && Number(mission.returnAt) > 0
+          && Number(mission.returnAt) <= asOfSeconds
+      )
+      .map(({ missionId, missionType, originPlanetId, returnAt, targetPlanetId }) => ({
+        missionId,
+        missionType,
+        originPlanetId,
+        returnAt,
+        targetPlanetId
+      }));
+    return { arrivals, returns };
   }
 
   // Every completed mission across the universe (all players), newest-first, for the past "All" tab.

@@ -133,6 +133,67 @@ const moonChance: MoonChanceReportEvent = {
 };
 
 describe("SettlementIndexer", () => {
+  test("projects all due resolver legs from canonical active rows without history reconstruction", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    const insert = database.query(`
+      INSERT INTO contract_fleet_missions (
+        mission_id, status_id, mission_type_id, owner, origin_planet_id, target_planet_id,
+        departure_at, arrival_at, return_at, fuel_cost,
+        metal_cargo, crystal_cargo, deuterium_cargo, ships_json, randomness_request_id, event_json
+      ) VALUES (?, ?, ?, ?, '85', '86', '800', ?, ?, '0', '0', '0', '0', '{}', ?, NULL)
+    `);
+    const arrivalTypes = [
+      ["1", 0, "Transport"],
+      ["2", 1, "Deploy"],
+      ["3", 2, "Colonize"],
+      ["4", 3, "Attack"],
+      ["5", 4, "Harvest"],
+      ["6", 9, "DefenseHold"]
+    ] as const;
+    for (const [missionId, missionTypeId] of arrivalTypes) {
+      insert.run(missionId, 1, missionTypeId, player, "900", "900", missionTypeId === 3 ? "44" : null);
+    }
+    insert.run("7", 2, 0, player, "800", "900", null);
+    insert.run("8", 5, 3, player, "800", "850", null);
+    insert.run("9", 1, 5, player, "900", "900", null); // AcsDefend is not permissionlessly resolved here.
+    insert.run("10", 1, 0, player, "1100", "1200", null); // Future arrival.
+
+    const candidates = indexer.missionResolutionCandidates(1_000);
+
+    expect(candidates.arrivals.map((mission) => mission.missionType)).toEqual(
+      arrivalTypes.map(([, , missionType]) => missionType)
+    );
+    expect(candidates.returns).toEqual([
+      expect.objectContaining({ missionId: "8", missionType: "Attack", returnAt: "850" }),
+      expect.objectContaining({ missionId: "7", missionType: "Transport", returnAt: "900" })
+    ]);
+    database.close();
+  });
+
+  test("excludes an arrived attack while its configured randomness is genuinely pending", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database, randomnessEngineConfigured: true });
+    database.query(`
+      INSERT INTO contract_fleet_missions (
+        mission_id, status_id, mission_type_id, owner, origin_planet_id, target_planet_id,
+        departure_at, arrival_at, return_at, fuel_cost,
+        metal_cargo, crystal_cargo, deuterium_cargo, ships_json, randomness_request_id, event_json
+      ) VALUES ('44', 1, 3, ?, '85', '86', '800', '900', '1200', '0', '0', '0', '0', '{}', '77', NULL)
+    `).run(player);
+
+    expect(indexer.missionResolutionCandidates(1_000)).toEqual({ arrivals: [], returns: [] });
+    database.close();
+  });
+
   test("persists indexed contract state for read-side reuse", async () => {
     const dir = mkdtempSync(join(tmpdir(), "veydrift-indexer-"));
     const databasePath = join(dir, "contract-state.sqlite");
