@@ -456,10 +456,6 @@ export type OnChainRefreshPlan = {
   applyResourceState: boolean;
 };
 
-function raidTargetFullResources(target: RaidTarget): { metal: string; crystal: string; deuterium: string } | null {
-  return target.currentResources;
-}
-
 function combatTechLevelForKey(
   key: "5" | "6" | "7",
   primaryLevels: Record<string, number> | undefined,
@@ -502,8 +498,9 @@ export function attackerCombatTechLevelsForMission({
   };
 }
 
-function raidTargetResearchRowsForMission(target: RaidTarget): Array<{ id: number; level: number }> | null {
-  const levels = target.combatTechLevels;
+function combatTechResearchRowsForMission(
+  levels: { weapons: number; shielding: number; armor: number } | null | undefined,
+): Array<{ id: number; level: number }> | null {
   if (!levels) return null;
   return [
     { id: 5, level: safeResourceNumber(levels.weapons) ?? 0 },
@@ -512,21 +509,39 @@ function raidTargetResearchRowsForMission(target: RaidTarget): Array<{ id: numbe
   ];
 }
 
-export function raidTargetPlanetForMission(target: RaidTarget): Planet {
-  const resources = raidTargetFullResources(target);
-  const research = raidTargetResearchRowsForMission(target);
+type TacticalMissionTarget = {
+  alliance: Planet["alliance"];
+  archetype: Planet["type"];
+  combatTechLevels?: { weapons: number; shielding: number; armor: number } | null | undefined;
+  coordinates: Coordinates;
+  defenseUnits: Array<{ id: number; count: number }>;
+  fleetUnits: Array<{ id: number; count: number }>;
+  hasAggregateIntel: boolean;
+  hasMoon: boolean;
+  id: string;
+  moonResources?: OnChainResources | null | undefined;
+  name: string | null;
+  owner: string;
+  ownerDisplayName: string | null;
+  productionPerHour?: OnChainResources | null | undefined;
+  resources?: OnChainResources | null | undefined;
+  storageCaps?: OnChainResources | null | undefined;
+};
+
+function tacticalPlanetForMission(target: TacticalMissionTarget): Planet {
+  const resources = target.resources ?? null;
+  const research = combatTechResearchRowsForMission(target.combatTechLevels);
   const hasPublicIntel = Boolean(
     resources
-      || target.shipUnits.length > 0
+      || target.fleetUnits.length > 0
       || target.defenseUnits.length > 0
-      || target.combatPower > 0
-      || target.loot > 0
+      || target.hasAggregateIntel
       || research
   );
 
   return {
-    id: target.planetId,
-    name: target.name?.trim() || `Planet ${target.planetId}`,
+    id: target.id,
+    name: target.name?.trim() || `Planet ${target.id}`,
     type: target.archetype,
     image: planetImageForType(target.archetype),
     position: target.coordinates.position,
@@ -536,7 +551,7 @@ export function raidTargetPlanetForMission(target: RaidTarget): Planet {
     ownerId: target.owner,
     alliance: target.alliance,
     occupiedBy: {
-      planetId: target.planetId,
+      planetId: target.id,
       owner: target.owner,
       ownerDisplayName: target.ownerDisplayName,
       alliance: target.alliance,
@@ -547,12 +562,12 @@ export function raidTargetPlanetForMission(target: RaidTarget): Planet {
       ? {
           resources,
           buildings: null,
-          fleet: target.shipUnits.map((unit) => ({ id: unit.id, count: unit.count })),
+          fleet: target.fleetUnits.map((unit) => ({ id: unit.id, count: unit.count })),
           defenses: target.defenseUnits.map((unit) => ({ id: unit.id, count: unit.count })),
           stationedDefenders: null,
           research,
-          productionPerHour: target.productionPerHour,
-          storageCaps: target.storageCaps,
+          productionPerHour: target.productionPerHour ?? null,
+          storageCaps: target.storageCaps ?? null,
           queues: null,
         }
       : null,
@@ -568,6 +583,7 @@ export function raidTargetPlanetForMission(target: RaidTarget): Planet {
     diameter: 0,
     fields: 0,
     hasMoon: target.hasMoon,
+    moonName: "Moon",
     publicMoonState: target.moonResources
       ? { resources: target.moonResources }
       : null,
@@ -575,6 +591,27 @@ export function raidTargetPlanetForMission(target: RaidTarget): Planet {
     crystalMultiplierBps: 10_000,
     deuteriumMultiplierBps: 10_000,
   };
+}
+
+export function raidTargetPlanetForMission(target: RaidTarget): Planet {
+  return tacticalPlanetForMission({
+    alliance: target.alliance,
+    archetype: target.archetype,
+    combatTechLevels: target.combatTechLevels,
+    coordinates: target.coordinates,
+    defenseUnits: target.defenseUnits,
+    fleetUnits: target.shipUnits,
+    hasAggregateIntel: target.combatPower > 0 || target.loot > 0,
+    hasMoon: target.hasMoon,
+    id: target.planetId,
+    moonResources: target.moonResources,
+    name: target.name,
+    owner: target.owner,
+    ownerDisplayName: target.ownerDisplayName,
+    productionPerHour: target.productionPerHour,
+    resources: target.currentResources,
+    storageCaps: target.storageCaps,
+  });
 }
 
 export function debrisTargetPlanetForMission(target: DebrisFinderTarget): Planet {
@@ -2321,42 +2358,26 @@ function disabledMoonTargetMissionAction(
   };
 }
 
-function highscorePlanetForMission(planet: HighscorePlanet, entry: HighscoreEntry): Planet {
-  return {
+export function highscorePlanetForMission(planet: HighscorePlanet, entry: HighscoreEntry): Planet {
+  const tactical = planet.tactical;
+  return tacticalPlanetForMission({
     alliance: entry.alliance ?? null,
-    debrisField: null,
-    diameter: 0,
-    fields: 0,
-    galaxy: planet.coordinates.galaxy,
+    archetype: planet.archetype,
+    combatTechLevels: tactical?.combatTechLevels,
+    coordinates: planet.coordinates,
+    defenseUnits: tactical?.defenses.units ?? [],
+    fleetUnits: tactical?.ships.units ?? [],
+    hasAggregateIntel: Boolean(tactical?.combatPower || tactical?.ships.power || tactical?.defenses.power),
     hasMoon: Boolean(planet.hasMoon || planet.moon?.exists),
     id: planet.planetId,
-    image: planetImageForType(planet.archetype),
-    metalMultiplierBps: 10000,
-    crystalMultiplierBps: 10000,
-    deuteriumMultiplierBps: 10000,
-    moonChance: null,
-    moonName: "Moon",
+    moonResources: planet.moon?.resourcesAsOfNow ?? planet.moon?.resources ?? null,
     name: planet.name?.trim() || `Planet ${planet.coordinates.galaxy}:${planet.coordinates.system}:${planet.coordinates.position}`,
-    occupiedBy: {
-      alliance: entry.alliance ?? null,
-      owner: entry.wallet,
-      ownerDisplayName: entry.displayName ?? null,
-      planetId: planet.planetId,
-    },
     owner: entry.wallet,
-    ownerId: entry.wallet,
-    position: planet.coordinates.position,
-    publicMoonState: planet.moon?.resources || planet.moon?.resourcesAsOfNow
-      ? { resources: planet.moon.resourcesAsOfNow ?? planet.moon.resources ?? null }
-      : null,
-    publicState: planet.tactical?.currentResources
-      ? { resources: planet.tactical.currentResources }
-      : null,
-    resources: { metal: 0, crystal: 0, deuterium: 0, energy: 0 },
-    system: planet.coordinates.system,
-    temperature: { min: 0, max: 0 },
-    type: planet.archetype,
-  };
+    ownerDisplayName: entry.displayName ?? null,
+    productionPerHour: tactical?.productionPerHour,
+    resources: tactical?.currentResources,
+    storageCaps: tactical?.storageCaps,
+  });
 }
 
 export function overviewWatchedPlanetMoonActionsFor({
