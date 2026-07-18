@@ -847,12 +847,15 @@ describe("Veydrift backend", () => {
       },
       readiness: {
         ready: false,
+        degraded: false,
+        degradationReasons: [],
         configurationReady: false,
         chainSyncConnected: null,
         subscribedToHeads: null,
         subscribedToLogs: null,
         indexedState: null,
-        safeToServeIndexedState: null
+        safeToServeIndexedState: null,
+        missionResolutionStatus: null
       },
       chainSync: null,
       indexer: null,
@@ -10071,6 +10074,76 @@ describe("worker role gating (VEY-KANEO-466)", () => {
       resolverAddress: "0x4444444444444444444444444444444444444444"
     });
     expect(response.status).toBe(503);
+  });
+
+  test("writer health reports stale mission-resolution backlog degradation", async () => {
+    const service = new MissionResolutionService(
+      {
+        ...configuredTestConfig,
+        missionResolutionEnabled: true,
+        missionResolverAddress: "0x4444444444444444444444444444444444444444"
+      },
+      {
+        candidateSource: {
+          missionResolutionCandidates() {
+            return {
+              arrivals: [{
+                arrivalAt: "900",
+                missionId: "44",
+                missionType: "Attack",
+                originPlanetId: "85",
+                targetPlanetId: "86"
+              }],
+              returns: []
+            };
+          }
+        },
+        chainClient: {
+          async listResolvableFleetMissions() { return []; },
+          async listReturnableFleetMissions() { return []; },
+          async resolveFleetMission() { throw new Error("random RPC failure"); },
+          async completeFleetMissionReturn() { return "0xreturn"; }
+        },
+        intervalMs: 60_000,
+        logger: { warn() {}, error() {} },
+        now: () => 1_000_000,
+        promptnessTargetMs: 60_000
+      }
+    );
+    await service.tick();
+    const indexer = {
+      snapshot() {
+        return {
+          indexedState: "healthy",
+          safeToServeIndexedState: true
+        };
+      }
+    } as unknown as SettlementIndexer;
+    const handler = createRequestHandler({
+      chainReader: new MockChainReader(),
+      config: {
+        ...configuredTestConfig,
+        missionResolutionEnabled: true,
+        missionResolverAddress: "0x4444444444444444444444444444444444444444"
+      },
+      indexer,
+      missionResolution: service
+    });
+
+    const response = await handler(new Request("http://localhost/health"));
+    const body = await response.json();
+
+    service.stop();
+    expect(body.missionResolution).toMatchObject({
+      healthStatus: "degraded",
+      healthWarnings: ["stale_due_arrival_backlog"],
+      dueArrivals: { count: 1, oldestAgeSeconds: 100 }
+    });
+    expect(body.readiness).toMatchObject({
+      degraded: true,
+      degradationReasons: ["stale_due_arrival_backlog"],
+      missionResolutionStatus: "degraded"
+    });
   });
 
   test("writer workers (the default) construct chain-sync and the committer", async () => {

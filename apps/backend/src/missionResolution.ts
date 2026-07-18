@@ -14,8 +14,11 @@ import type { BackendConfig } from "./config";
 import type { Address, ResolvableFleetMission, ReturnableFleetMission } from "./evm";
 import { VeydriftGameReader } from "./evm";
 
-const missionResolutionIntervalMs = 30_000;
-const maxMissionsPerTick = 12;
+const missionResolutionIntervalMs = 5_000;
+const maxMissionsPerTick = 100;
+const missionResolutionConcurrency = 4;
+const promptnessTargetMs = 60_000;
+const latencySampleLimit = 1_000;
 
 const veydriftGameResolutionAbi = [
   {
@@ -41,17 +44,54 @@ export type MissionResolutionChainClient = {
   completeFleetMissionReturn(missionId: string): Promise<string>;
 };
 
+export type MissionResolutionCandidates = {
+  arrivals: ResolvableFleetMission[];
+  returns: ReturnableFleetMission[];
+};
+
+export type MissionResolutionCandidateSource = {
+  missionResolutionCandidates(): MissionResolutionCandidates | Promise<MissionResolutionCandidates>;
+};
+
+type MissionLeg = "arrival" | "return";
+
+type DueLegSnapshot = {
+  count: number;
+  oldestDueAt: string | null;
+  oldestAgeSeconds: number | null;
+};
+
+type LatencySnapshot = {
+  count: number;
+  lastSeconds: number | null;
+  maxSeconds: number | null;
+  p95Seconds: number | null;
+};
+
 export type MissionResolutionSnapshot = {
   enabled: boolean;
   resolverConfigured: boolean;
   resolverAddress: Address | null;
   intervalMs: number;
+  maxConcurrency: number;
+  promptnessTargetSeconds: number;
+  healthStatus: "healthy" | "degraded";
+  healthWarnings: string[];
+  inFlight: boolean;
   lastRunAt: string | null;
+  lastCompletedRunAt: string | null;
+  lastTickDurationMs: number | null;
+  lastScanDurationMs: number | null;
+  skippedOverlappingRuns: number;
   lastError: string | null;
   lastResolvedMissionId: string | null;
   lastReturnedMissionId: string | null;
   resolvedCount: number;
   returnedCount: number;
+  dueArrivals: DueLegSnapshot;
+  dueReturns: DueLegSnapshot;
+  failuresByLeg: Record<MissionLeg, number>;
+  settlementLatency: Record<MissionLeg, LatencySnapshot>;
 };
 
 export type MissionResolutionLogger = {
@@ -61,47 +101,84 @@ export type MissionResolutionLogger = {
 
 export type MissionResolutionServiceOptions = {
   chainClient?: MissionResolutionChainClient;
+  candidateSource?: MissionResolutionCandidateSource;
   intervalMs?: number;
   logger?: MissionResolutionLogger;
   maxMissionsPerTick?: number;
+  maxConcurrency?: number;
+  now?: () => number;
+  promptnessTargetMs?: number;
 };
 
 export class MissionResolutionService {
   private readonly chainClient: MissionResolutionChainClient | undefined;
+  private readonly candidateSource: MissionResolutionCandidateSource | undefined;
   private readonly intervalMs: number;
   private readonly logger: MissionResolutionLogger;
   private readonly maxMissionsPerTick: number;
+  private readonly maxConcurrency: number;
+  private readonly now: () => number;
+  private readonly promptnessTargetMs: number;
   private timer: ReturnType<typeof setInterval> | undefined;
   private inFlight = false;
   private lastRunAt: string | null = null;
+  private lastCompletedRunAt: string | null = null;
+  private lastTickDurationMs: number | null = null;
+  private lastScanDurationMs: number | null = null;
+  private skippedOverlappingRuns = 0;
   private lastError: string | null = null;
   private lastResolvedMissionId: string | null = null;
   private lastReturnedMissionId: string | null = null;
   private resolvedCount = 0;
   private returnedCount = 0;
+  private dueArrivals: DueLegSnapshot = emptyDueLegSnapshot();
+  private dueReturns: DueLegSnapshot = emptyDueLegSnapshot();
+  private readonly failuresByLeg: Record<MissionLeg, number> = { arrival: 0, return: 0 };
+  private readonly latencySamples: Record<MissionLeg, number[]> = { arrival: [], return: [] };
 
   constructor(
     private readonly config: BackendConfig,
     options: MissionResolutionServiceOptions = {}
   ) {
     this.chainClient = options.chainClient ?? buildMissionResolutionChainClient(config);
+    this.candidateSource = options.candidateSource;
     this.intervalMs = options.intervalMs ?? missionResolutionIntervalMs;
     this.logger = options.logger ?? console;
     this.maxMissionsPerTick = Math.max(1, Math.floor(options.maxMissionsPerTick ?? maxMissionsPerTick));
+    this.maxConcurrency = Math.max(1, Math.floor(options.maxConcurrency ?? missionResolutionConcurrency));
+    this.now = options.now ?? Date.now;
+    this.promptnessTargetMs = Math.max(1_000, Math.floor(options.promptnessTargetMs ?? promptnessTargetMs));
   }
 
   snapshot(): MissionResolutionSnapshot {
+    const healthWarnings = this.healthWarnings();
     return {
       enabled: this.enabled,
       resolverConfigured: Boolean(this.config.missionResolverAddress || this.config.missionResolverPrivateKey),
       resolverAddress: this.resolverAddress(),
       intervalMs: this.intervalMs,
+      maxConcurrency: this.maxConcurrency,
+      promptnessTargetSeconds: Math.ceil(this.promptnessTargetMs / 1_000),
+      healthStatus: healthWarnings.length === 0 ? "healthy" : "degraded",
+      healthWarnings,
+      inFlight: this.inFlight,
       lastRunAt: this.lastRunAt,
+      lastCompletedRunAt: this.lastCompletedRunAt,
+      lastTickDurationMs: this.lastTickDurationMs,
+      lastScanDurationMs: this.lastScanDurationMs,
+      skippedOverlappingRuns: this.skippedOverlappingRuns,
       lastError: this.lastError,
       lastResolvedMissionId: this.lastResolvedMissionId,
       lastReturnedMissionId: this.lastReturnedMissionId,
       resolvedCount: this.resolvedCount,
-      returnedCount: this.returnedCount
+      returnedCount: this.returnedCount,
+      dueArrivals: this.dueArrivals,
+      dueReturns: this.dueReturns,
+      failuresByLeg: { ...this.failuresByLeg },
+      settlementLatency: {
+        arrival: latencySnapshot(this.latencySamples.arrival),
+        return: latencySnapshot(this.latencySamples.return)
+      }
     };
   }
 
@@ -120,17 +197,27 @@ export class MissionResolutionService {
   }
 
   async tick(): Promise<void> {
-    if (!this.enabled || this.inFlight || !this.chainClient) return;
+    if (!this.enabled || !this.chainClient) return;
+    if (this.inFlight) {
+      this.skippedOverlappingRuns += 1;
+      return;
+    }
     this.inFlight = true;
-    this.lastRunAt = new Date().toISOString();
+    const startedAtMs = this.now();
+    this.lastRunAt = new Date(startedAtMs).toISOString();
     try {
-      await this.resolveDueMissions();
-      await this.returnDueMissions();
+      const scanStartedAtMs = this.now();
+      const candidates = await this.listCandidates();
+      this.lastScanDurationMs = Math.max(0, this.now() - scanStartedAtMs);
+      await this.settleCandidates(candidates);
       this.lastError = null;
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);
       this.logger.error("[mission-resolution] tick failed", error);
     } finally {
+      const completedAtMs = this.now();
+      this.lastCompletedRunAt = new Date(completedAtMs).toISOString();
+      this.lastTickDurationMs = Math.max(0, completedAtMs - startedAtMs);
       this.inFlight = false;
     }
   }
@@ -146,42 +233,90 @@ export class MissionResolutionService {
     return this.config.missionResolverAddress?.toLowerCase() as Address | undefined ?? null;
   }
 
-  private async resolveDueMissions(): Promise<void> {
-    if (!this.chainClient) return;
-    const missions = await this.chainClient.listResolvableFleetMissions();
-    let resolvedThisTick = 0;
-    for (const mission of missions.slice(0, this.maxMissionsPerTick * 5)) {
-      if (resolvedThisTick >= this.maxMissionsPerTick) break;
-      try {
-        await this.chainClient.resolveFleetMission(mission.missionId);
-        this.lastResolvedMissionId = mission.missionId;
+  private async listCandidates(): Promise<MissionResolutionCandidates> {
+    if (this.candidateSource) {
+      return this.candidateSource.missionResolutionCandidates();
+    }
+    if (!this.chainClient) return { arrivals: [], returns: [] };
+    const [arrivals, returns] = await Promise.all([
+      this.chainClient.listResolvableFleetMissions(),
+      this.chainClient.listReturnableFleetMissions()
+    ]);
+    return { arrivals, returns };
+  }
+
+  private async settleCandidates(candidates: MissionResolutionCandidates): Promise<void> {
+    const all = [
+      ...candidates.arrivals.map((mission) => ({ leg: "arrival" as const, mission, dueAt: Number(mission.arrivalAt) })),
+      ...candidates.returns.map((mission) => ({ leg: "return" as const, mission, dueAt: Number(mission.returnAt) }))
+    ].sort(compareCandidates);
+    const attemptable = all.slice(0, this.maxMissionsPerTick * 5);
+    const failed: typeof attemptable = [];
+    let successful = 0;
+    let cursor = 0;
+    while (cursor < attemptable.length && successful < this.maxMissionsPerTick) {
+      const remainingSuccessSlots = this.maxMissionsPerTick - successful;
+      const batchSize = Math.min(this.maxConcurrency, remainingSuccessSlots, attemptable.length - cursor);
+      const batch = attemptable.slice(cursor, cursor + batchSize);
+      cursor += batchSize;
+      const results = await Promise.all(batch.map((candidate) => this.settleCandidate(candidate)));
+      results.forEach((didSettle, index) => {
+        if (didSettle) successful += 1;
+        else failed.push(batch[index]!);
+      });
+    }
+    const remaining = [...failed, ...attemptable.slice(cursor), ...all.slice(attemptable.length)];
+    this.dueArrivals = dueLegSnapshot(remaining.filter((candidate) => candidate.leg === "arrival"), this.now());
+    this.dueReturns = dueLegSnapshot(remaining.filter((candidate) => candidate.leg === "return"), this.now());
+  }
+
+  private async settleCandidate(candidate: {
+    leg: MissionLeg;
+    mission: ResolvableFleetMission | ReturnableFleetMission;
+    dueAt: number;
+  }): Promise<boolean> {
+    if (!this.chainClient) return false;
+    try {
+      if (candidate.leg === "arrival") {
+        await this.chainClient.resolveFleetMission(candidate.mission.missionId);
+        this.lastResolvedMissionId = candidate.mission.missionId;
         this.resolvedCount += 1;
-        resolvedThisTick += 1;
-      } catch (error) {
-        this.logger.warn(`[mission-resolution] resolveFleetMission(${mission.missionId}) failed: ${reasonText(error)}`);
+      } else {
+        await this.chainClient.completeFleetMissionReturn(candidate.mission.missionId);
+        this.lastReturnedMissionId = candidate.mission.missionId;
+        this.returnedCount += 1;
       }
+      this.recordLatency(candidate.leg, candidate.dueAt);
+      return true;
+    } catch (error) {
+      this.failuresByLeg[candidate.leg] += 1;
+      const method = candidate.leg === "arrival" ? "resolveFleetMission" : "completeFleetMissionReturn";
+      this.logger.warn(`[mission-resolution] ${method}(${candidate.mission.missionId}) failed: ${reasonText(error)}`);
+      return false;
     }
   }
 
-  private async returnDueMissions(): Promise<void> {
-    if (!this.chainClient) return;
-    const missions = await this.chainClient.listReturnableFleetMissions();
-    let returnedThisTick = 0;
-    for (const mission of missions.slice(0, this.maxMissionsPerTick * 5)) {
-      if (returnedThisTick >= this.maxMissionsPerTick) break;
-      try {
-        await this.chainClient.completeFleetMissionReturn(mission.missionId);
-        this.lastReturnedMissionId = mission.missionId;
-        this.returnedCount += 1;
-        returnedThisTick += 1;
-      } catch (error) {
-        this.logger.warn(`[mission-resolution] completeFleetMissionReturn(${mission.missionId}) failed: ${reasonText(error)}`);
-      }
-    }
+  private recordLatency(leg: MissionLeg, dueAtSeconds: number): void {
+    const seconds = Math.max(0, (this.now() - dueAtSeconds * 1_000) / 1_000);
+    const samples = this.latencySamples[leg];
+    samples.push(seconds);
+    if (samples.length > latencySampleLimit) samples.splice(0, samples.length - latencySampleLimit);
+  }
+
+  private healthWarnings(): string[] {
+    const warnings: string[] = [];
+    const targetSeconds = this.promptnessTargetMs / 1_000;
+    if ((this.dueArrivals.oldestAgeSeconds ?? 0) > targetSeconds) warnings.push("stale_due_arrival_backlog");
+    if ((this.dueReturns.oldestAgeSeconds ?? 0) > targetSeconds) warnings.push("stale_due_return_backlog");
+    if (this.lastError) warnings.push("mission_resolution_tick_failed");
+    return warnings;
   }
 }
 
 export class ViemMissionResolutionChainClient implements MissionResolutionChainClient {
+  private submissionTail: Promise<void> = Promise.resolve();
+  private nextNonce: number | undefined;
+
   constructor(
     private readonly reader: Pick<VeydriftGameReader, "listResolvableFleetMissions" | "listReturnableFleetMissions">,
     private readonly gameAddress: Address,
@@ -215,16 +350,34 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
       args: [BigInt(missionId)]
     });
     if (typeof this.sender !== "string") {
+      const account = this.sender;
       if (!this.walletClient || !this.publicClient || !this.chain) {
         throw new Error("private-key mission resolver is missing viem clients");
       }
-      const hash = await this.walletClient.writeContract({
-        abi: veydriftGameResolutionAbi,
-        account: this.sender,
-        address: this.gameAddress,
-        chain: this.chain,
-        functionName,
-        args: [BigInt(missionId)]
+      const hash = await this.enqueueSubmission(async () => {
+        const pendingNonce = await this.publicClient!.getTransactionCount({
+          address: account.address,
+          blockTag: "pending"
+        });
+        const nonce = Math.max(pendingNonce, this.nextNonce ?? pendingNonce);
+        try {
+          const submittedHash = await this.walletClient!.writeContract({
+            abi: veydriftGameResolutionAbi,
+            account,
+            address: this.gameAddress,
+            chain: this.chain!,
+            functionName,
+            args: [BigInt(missionId)],
+            nonce
+          });
+          this.nextNonce = nonce + 1;
+          return submittedHash;
+        } catch (error) {
+          // The transaction may not have reached the node. Re-read pending state before reserving
+          // the next nonce instead of leaving a local gap.
+          this.nextNonce = undefined;
+          throw error;
+        }
       });
       await this.confirm(hash);
       return hash;
@@ -232,7 +385,21 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
     if (!this.rpcUrl) {
       throw new Error("unlocked-account mission resolver is missing RPC URL");
     }
-    return this.sendUnlockedTransaction(this.sender, data);
+    return this.enqueueSubmission(() => this.sendUnlockedTransaction(this.sender as Address, data));
+  }
+
+  private async enqueueSubmission<T>(submit: () => Promise<T>): Promise<T> {
+    let release = () => {};
+    const previous = this.submissionTail;
+    this.submissionTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await submit();
+    } finally {
+      release();
+    }
   }
 
   private async confirm(hash: Hex): Promise<void> {
@@ -302,4 +469,44 @@ function buildMissionResolutionChainClient(config: BackendConfig): MissionResolu
 
 function reasonText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function emptyDueLegSnapshot(): DueLegSnapshot {
+  return { count: 0, oldestDueAt: null, oldestAgeSeconds: null };
+}
+
+function dueLegSnapshot(
+  candidates: ReadonlyArray<{ dueAt: number }>,
+  nowMs: number
+): DueLegSnapshot {
+  if (candidates.length === 0) return emptyDueLegSnapshot();
+  const oldestDueAtSeconds = Math.min(...candidates.map((candidate) => candidate.dueAt));
+  return {
+    count: candidates.length,
+    oldestDueAt: new Date(oldestDueAtSeconds * 1_000).toISOString(),
+    oldestAgeSeconds: Math.max(0, (nowMs - oldestDueAtSeconds * 1_000) / 1_000)
+  };
+}
+
+function latencySnapshot(samples: readonly number[]): LatencySnapshot {
+  if (samples.length === 0) return { count: 0, lastSeconds: null, maxSeconds: null, p95Seconds: null };
+  const sorted = [...samples].sort((left, right) => left - right);
+  const p95Index = Math.max(0, Math.ceil(sorted.length * 0.95) - 1);
+  return {
+    count: samples.length,
+    lastSeconds: samples.at(-1) ?? null,
+    maxSeconds: sorted.at(-1) ?? null,
+    p95Seconds: sorted[p95Index] ?? null
+  };
+}
+
+function compareCandidates(
+  left: { leg: MissionLeg; mission: { missionId: string }; dueAt: number },
+  right: { leg: MissionLeg; mission: { missionId: string }; dueAt: number }
+): number {
+  if (left.dueAt !== right.dueAt) return left.dueAt - right.dueAt;
+  if (left.leg !== right.leg) return left.leg === "arrival" ? -1 : 1;
+  const leftId = BigInt(left.mission.missionId);
+  const rightId = BigInt(right.mission.missionId);
+  return leftId < rightId ? -1 : leftId > rightId ? 1 : 0;
 }

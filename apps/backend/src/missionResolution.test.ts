@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { privateKeyToAccount } from "viem/accounts";
+import type { PublicClient, WalletClient } from "viem";
 import type { BackendConfig } from "./config";
 import {
   MissionResolutionService,
+  ViemMissionResolutionChainClient,
   type MissionResolutionChainClient,
   type MissionResolutionLogger
 } from "./missionResolution";
@@ -89,13 +92,222 @@ describe("MissionResolutionService", () => {
     ]);
     expect(service.snapshot()).toMatchObject({
       lastReturnedMissionId: "3",
-      returnedCount: 2
+      returnedCount: 2,
+      dueReturns: { count: 1 },
+      failuresByLeg: { return: 1 }
     });
+  });
+
+  test("uses one bounded indexed candidate scan instead of the history-listing methods", async () => {
+    const calls: string[] = [];
+    let sourceCalls = 0;
+    const client = fakeClient({ calls, resolvable: ["history-arrival"], returnable: ["history-return"] });
+    client.listResolvableFleetMissions = async () => {
+      throw new Error("history arrival scan must not run");
+    };
+    client.listReturnableFleetMissions = async () => {
+      throw new Error("history return scan must not run");
+    };
+    const service = new MissionResolutionService(config, {
+      candidateSource: {
+        missionResolutionCandidates() {
+          sourceCalls += 1;
+          return {
+            arrivals: [arrival("10", "Transport", "900")],
+            returns: [returnLeg("11", "Recalled", "950")]
+          };
+        }
+      },
+      chainClient: client,
+      logger: silentLogger(),
+      now: () => 1_000_000
+    });
+
+    await service.tick();
+
+    expect(sourceCalls).toBe(1);
+    expect(calls).toEqual(["resolve:10", "return:11"]);
+  });
+
+  test("drains a burst with bounded concurrency", async () => {
+    let active = 0;
+    let peak = 0;
+    const settled: string[] = [];
+    const arrivals = Array.from({ length: 24 }, (_, index) => arrival(String(index + 1), "Transport", "950"));
+    const service = new MissionResolutionService(config, {
+      candidateSource: {
+        missionResolutionCandidates: () => ({ arrivals, returns: [] })
+      },
+      chainClient: {
+        async listResolvableFleetMissions() { return []; },
+        async listReturnableFleetMissions() { return []; },
+        async resolveFleetMission(missionId) {
+          active += 1;
+          peak = Math.max(peak, active);
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          settled.push(missionId);
+          active -= 1;
+          return `0x${missionId}`;
+        },
+        async completeFleetMissionReturn() { return "0xreturn"; }
+      },
+      logger: silentLogger(),
+      maxConcurrency: 4,
+      now: () => 1_000_000
+    });
+
+    await service.tick();
+
+    expect(settled).toHaveLength(24);
+    expect(peak).toBe(4);
+    expect(service.snapshot()).toMatchObject({
+      dueArrivals: { count: 0 },
+      resolvedCount: 24,
+      settlementLatency: { arrival: { count: 24, p95Seconds: 50 } },
+      healthStatus: "healthy"
+    });
+  });
+
+  test("a failing arrival does not starve later ready arrivals or returns", async () => {
+    const calls: string[] = [];
+    const client = fakeClient({
+      calls,
+      failArrivals: ["1"],
+      resolvable: [],
+      returnable: []
+    });
+    const service = new MissionResolutionService(config, {
+      candidateSource: {
+        missionResolutionCandidates: () => ({
+          arrivals: [arrival("1", "Attack", "900"), arrival("2", "Harvest", "901")],
+          returns: [returnLeg("3", "Attack", "902")]
+        })
+      },
+      chainClient: client,
+      logger: silentLogger(),
+      maxConcurrency: 2,
+      now: () => 1_000_000
+    });
+
+    await service.tick();
+
+    expect(calls).toEqual(["resolve:1", "resolve:2", "return:3"]);
+    expect(service.snapshot()).toMatchObject({
+      resolvedCount: 1,
+      returnedCount: 1,
+      dueArrivals: { count: 1 },
+      dueReturns: { count: 0 },
+      failuresByLeg: { arrival: 1, return: 0 }
+    });
+  });
+
+  test("suppresses overlapping timer runs and reports the skip", async () => {
+    let release = () => {};
+    let scans = 0;
+    const service = new MissionResolutionService(config, {
+      candidateSource: {
+        async missionResolutionCandidates() {
+          scans += 1;
+          await new Promise<void>((resolve) => { release = resolve; });
+          return { arrivals: [], returns: [] };
+        }
+      },
+      chainClient: fakeClient({ calls: [], resolvable: [], returnable: [] }),
+      logger: silentLogger()
+    });
+
+    const first = service.tick();
+    await Promise.resolve();
+    await service.tick();
+    release();
+    await first;
+
+    expect(scans).toBe(1);
+    expect(service.snapshot()).toMatchObject({
+      inFlight: false,
+      skippedOverlappingRuns: 1
+    });
+  });
+
+  test("degrades health for a stale ready backlog and exposes run and leg metrics", async () => {
+    const service = new MissionResolutionService(config, {
+      candidateSource: {
+        missionResolutionCandidates: () => ({
+          arrivals: [arrival("1", "Attack", "900")],
+          returns: []
+        })
+      },
+      chainClient: fakeClient({ calls: [], failArrivals: ["1"], resolvable: [], returnable: [] }),
+      logger: silentLogger(),
+      now: () => 1_000_000,
+      promptnessTargetMs: 60_000
+    });
+
+    await service.tick();
+
+    expect(service.snapshot()).toMatchObject({
+      healthStatus: "degraded",
+      healthWarnings: ["stale_due_arrival_backlog"],
+      lastCompletedRunAt: "1970-01-01T00:16:40.000Z",
+      lastTickDurationMs: 0,
+      lastScanDurationMs: 0,
+      dueArrivals: {
+        count: 1,
+        oldestDueAt: "1970-01-01T00:15:00.000Z",
+        oldestAgeSeconds: 100
+      },
+      failuresByLeg: { arrival: 1, return: 0 }
+    });
+  });
+});
+
+describe("ViemMissionResolutionChainClient", () => {
+  test("serializes broadcasts while assigning pending nonces, then waits for receipts concurrently", async () => {
+    const account = privateKeyToAccount(`0x${"1".repeat(64)}`);
+    const nonces: number[] = [];
+    let activeBroadcasts = 0;
+    let peakBroadcasts = 0;
+    const publicClient = {
+      // Model a load-balanced RPC whose pending count has not observed the previous broadcast yet.
+      async getTransactionCount() { return 7; },
+      async waitForTransactionReceipt() { return { status: "success" }; }
+    } as unknown as PublicClient;
+    const walletClient = {
+      async writeContract(input: { nonce: number }) {
+        activeBroadcasts += 1;
+        peakBroadcasts = Math.max(peakBroadcasts, activeBroadcasts);
+        nonces.push(input.nonce);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        activeBroadcasts -= 1;
+        return `0x${input.nonce.toString(16).padStart(64, "0")}`;
+      }
+    } as unknown as WalletClient;
+    const client = new ViemMissionResolutionChainClient(
+      {
+        async listResolvableFleetMissions() { return []; },
+        async listReturnableFleetMissions() { return []; }
+      },
+      config.gameContractAddress!,
+      account,
+      publicClient,
+      walletClient,
+      {} as never,
+      config.rpcUrl
+    );
+
+    await Promise.all([
+      client.resolveFleetMission("1"),
+      client.completeFleetMissionReturn("2")
+    ]);
+
+    expect(nonces).toEqual([7, 8]);
+    expect(peakBroadcasts).toBe(1);
   });
 });
 
 function fakeClient(input: {
   calls: string[];
+  failArrivals?: string[];
   failReturns?: string[];
   resolvable: string[];
   returnable: string[];
@@ -121,6 +333,9 @@ function fakeClient(input: {
     },
     async resolveFleetMission(missionId: string) {
       input.calls.push(`resolve:${missionId}`);
+      if (input.failArrivals?.includes(missionId)) {
+        throw new Error(`arrival ${missionId} failed`);
+      }
       return `0xresolve${missionId}`;
     },
     async completeFleetMissionReturn(missionId: string) {
@@ -130,6 +345,26 @@ function fakeClient(input: {
       }
       return `0xreturn${missionId}`;
     }
+  };
+}
+
+function arrival(missionId: string, missionType: string, arrivalAt: string) {
+  return {
+    arrivalAt,
+    missionId,
+    missionType,
+    originPlanetId: "85",
+    targetPlanetId: "86"
+  };
+}
+
+function returnLeg(missionId: string, missionType: string, returnAt: string) {
+  return {
+    missionId,
+    missionType,
+    originPlanetId: "85",
+    returnAt,
+    targetPlanetId: "86"
   };
 }
 
