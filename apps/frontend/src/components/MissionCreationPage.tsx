@@ -348,14 +348,12 @@ export function MissionCreationPage({
     ? target?.publicState?.stationedDefenders ?? []
     : [];
   const stationedDefenderRows = stationedDefenderAttackWarningRows(stationedDefenders);
-  const targetFleetUnits = useMemo(
-    () => effectiveTargetIsMoon ? [] : compositionUnits(target?.publicState?.fleet, shipCatalog, shipAssetByKey),
-    [effectiveTargetIsMoon, target?.publicState?.fleet],
+  const targetComposition = useMemo(
+    () => missionTargetCompositionUnits(target, effectiveTargetIsMoon),
+    [effectiveTargetIsMoon, target?.publicState?.defenses, target?.publicState?.fleet],
   );
-  const targetDefenseUnits = useMemo(
-    () => effectiveTargetIsMoon ? [] : compositionUnits(target?.publicState?.defenses, defenseCatalog, defenseAssetByKey),
-    [effectiveTargetIsMoon, target?.publicState?.defenses],
-  );
+  const targetFleetUnits = targetComposition.fleet;
+  const targetDefenseUnits = targetComposition.defenses;
   const stationedDefenderUnits = useMemo(
     () => stationedDefenderCompositionUnits(stationedDefenders),
     [stationedDefenders],
@@ -2140,6 +2138,17 @@ function compositionUnits(
         asset: item ? assetByKey[item.key] : undefined,
       };
     });
+}
+
+export function missionTargetCompositionUnits(
+  target: Planet | undefined,
+  targetIsMoon = false,
+): { fleet: UnitItem[]; defenses: UnitItem[] } {
+  if (targetIsMoon) return { fleet: [], defenses: [] };
+  return {
+    fleet: compositionUnits(target?.publicState?.fleet, shipCatalog, shipAssetByKey),
+    defenses: compositionUnits(target?.publicState?.defenses, defenseCatalog, defenseAssetByKey),
+  };
 }
 
 export function stationedDefenderCompositionUnits(
