@@ -35,7 +35,7 @@ import { SettlementIndexer, type IndexedRpcLog } from "./indexer";
 import { MissionResolutionService } from "./missionResolution";
 import { watchedPlanetMessage } from "./playerProfiles";
 import { deriveInfrastructureFields } from "./readModels";
-import { createRequestHandler, deriveLogBackfiller, readerBootstrapHealthResponse, runtimeConfigResponse, shouldRecoverFailedReconciliation } from "./server";
+import { backendBuildMetadata, createRequestHandler, deriveLogBackfiller, readerBootstrapHealthResponse, runtimeConfigResponse, shouldRecoverFailedReconciliation } from "./server";
 import { DEFAULT_MAX_WORKER_COUNT } from "./workerPool";
 
 setSystemTime(new Date(1_770_007_680_000));
@@ -1425,6 +1425,27 @@ describe("Veydrift backend", () => {
         process.env.SOURCE_VERSION = previousSourceVersion;
       }
     }
+  });
+
+  test("prefers the Nixpacks source artifact over stale Easypanel custom metadata", () => {
+    const runningSourceSha = "7e006c1b8c152a9c94e391eb01a283371d925983";
+    const staleDeploymentSha = "2ee383b9bff11fe51d13f9344308aa1a1b4e11d0";
+
+    expect(backendBuildMetadata({
+      // Easypanel can leave duplicate provider/custom GIT_SHA entries in the service environment. Bun
+      // exposes only the effective value, so model the stale value that runtime code can observe.
+      GIT_SHA: staleDeploymentSha,
+      VEYDRIFT_BUILD_GIT_SHA: staleDeploymentSha,
+      VEYDRIFT_DEPLOYMENT_COMMIT: staleDeploymentSha,
+      VEYDRIFT_DEPLOYMENT_ABI_HASH: "deployment-abi-hash",
+      VEYDRIFT_DEPLOYMENT_TIMESTAMP: "2026-07-17T23:45:00Z"
+    }, runningSourceSha)).toEqual({
+      deploymentAbiHash: "deployment-abi-hash",
+      deploymentCommit: staleDeploymentSha,
+      deploymentTimestamp: "2026-07-17T23:45:00Z",
+      gitSha: runningSourceSha,
+      gitShaSource: "VEYDRIFT_BUILD_ARTIFACT"
+    });
   });
 
   test("does not use contract deployment manifest commit as the source build SHA", async () => {
