@@ -3842,16 +3842,21 @@ function backendDeploymentMetadata(role: WorkerRole): BackendDeploymentMetadata 
   };
 }
 
-function backendBuildMetadata(env: NodeJS.ProcessEnv): BackendDeploymentMetadata["build"] {
-  const buildArtifactSha = backendBuildArtifactSha();
+export function backendBuildMetadata(
+  env: NodeJS.ProcessEnv,
+  buildArtifactSha = backendBuildArtifactSha()
+): BackendDeploymentMetadata["build"] {
   for (const [source, value] of [
+    // The artifact is generated from the checked-out source during the image build. Keep it ahead of
+    // service-level environment variables, which Easypanel preserves across deploys and can therefore
+    // describe an older image even after the running source has changed.
+    ["VEYDRIFT_BUILD_ARTIFACT", buildArtifactSha],
     ["SOURCE_VERSION", env.SOURCE_VERSION],
     ["EASYPANEL_GIT_SHA", env.EASYPANEL_GIT_SHA],
     ["RAILWAY_GIT_COMMIT_SHA", env.RAILWAY_GIT_COMMIT_SHA],
     ["GITHUB_SHA", env.GITHUB_SHA],
     ["COMMIT_SHA", env.COMMIT_SHA],
-    ["VEYDRIFT_BUILD_GIT_SHA", env.VEYDRIFT_BUILD_GIT_SHA],
-    ["VEYDRIFT_BUILD_ARTIFACT", buildArtifactSha]
+    ["VEYDRIFT_BUILD_GIT_SHA", env.VEYDRIFT_BUILD_GIT_SHA]
   ] as const) {
     const trimmed = value?.trim();
     if (trimmed) {

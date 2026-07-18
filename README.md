@@ -396,9 +396,16 @@ Start command: cd apps/backend && bun run start
 The committed `apps/backend/nixpacks.test.toml` build command also writes
 `.veydrift-backend-build-sha` at both the repository root and `apps/backend/`
 from `git rev-parse HEAD`. The backend reads that artifact for
-`backend.build.gitSha` so `/runtime-config` identifies the actual source image
-even when contract deployment manifest variables such as
+`backend.build.gitSha` so `/health` and `/runtime-config` identify the actual
+source image even when contract deployment manifest variables such as
 `VEYDRIFT_DEPLOYMENT_COMMIT` point at an older contract redeploy commit.
+The image artifact is authoritative over provider and custom service environment
+SHA values because EasyPanel preserves custom environment entries across source
+deploys. Do not configure `GIT_SHA` or `VEYDRIFT_BUILD_GIT_SHA` as custom
+EasyPanel variables; remove stale copies from the service configuration. The
+`VEYDRIFT_DEPLOYMENT_COMMIT`, `VEYDRIFT_DEPLOYMENT_ABI_HASH`, and
+`VEYDRIFT_DEPLOYMENT_TIMESTAMP` variables belong to the contract deployment
+manifest and remain intentionally independent from the application source SHA.
 
 Configure it with:
 
