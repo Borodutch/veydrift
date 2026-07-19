@@ -312,6 +312,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     {
         _requireMoonExists(planetId);
         game.requireNoPendingMoonAttackResolution(planetId);
+        _settleMoonStateDue(planetId);
         game.grantMoonResources(planetId, amount);
         _emitMoonResourcesSettled(planetId);
     }
@@ -319,6 +320,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     function setMoonShipCount(uint256 planetId, Ship ship, uint32 total) external onlyOwner {
         _requireMoonExists(planetId);
         game.requireNoPendingMoonAttackResolution(planetId);
+        _settleMoonStateDue(planetId);
         game.setMoonShipCount(planetId, ship, total);
     }
 
@@ -327,6 +329,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         onlyOwner
     {
         _requireMoonExists(planetId);
+        _settleMoonStateDue(planetId);
         _setMoonDefenseCount(planetId, defense, total);
     }
 
@@ -334,6 +337,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         external
     {
         if (msg.sender != address(game)) revert NotOwner(msg.sender);
+        _settleMoonStateDue(planetId);
         for (uint8 i = 0; i <= uint8(Defense.LargeShieldDome);) {
             Defense defense = Defense(i);
             uint32 current = _moonDefenseCounts[planetId][defense];
@@ -727,9 +731,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     function startMoonBuildingUpgrade(uint256 planetId, MoonBuilding building) external {
         _requireMoonOwner(planetId);
         game.requireNoPendingMoonAttackResolution(planetId);
-        // Lazy on-chain reconciliation (VEY-KANEO-468): a due moon-building construction completes on
-        // the next moon interaction, so the owner can immediately queue the next without a finish tx.
-        _settleMoonBuildingDue(planetId);
+        _settleMoonStateDue(planetId);
         if (moonBuildingConstructions[planetId].active) revert ConstructionActive();
 
         uint16 currentLevel = _moonBuildingLevels[planetId][building];
@@ -754,17 +756,16 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         );
     }
 
-    /// @dev Back-compat explicit finish. No longer required for completion (a due construction settles
-    ///      lazily on the next moon interaction via `_settleMoonBuildingDue`); kept so old callers and
-    ///      tests that finish a ready construction still succeed. Reverts when nothing is due.
+    /// @notice Back-compat wrapper. Moon queues settle through regular interactions, so this simply
+    ///         runs the same idempotent reconcile and is a no-op before readiness or while idle.
     function finishMoonBuildingUpgrade(uint256 planetId) external {
         _requireMoonOwner(planetId);
-        MoonBuildingConstruction storage construction = moonBuildingConstructions[planetId];
-        if (!construction.active) revert ConstructionInactive();
-        if (_currentTimestamp() < construction.readyAt) {
-            revert ConstructionNotReady(construction.readyAt);
-        }
+        _settleMoonStateDue(planetId);
+    }
+
+    function _settleMoonStateDue(uint256 planetId) internal {
         _settleMoonBuildingDue(planetId);
+        _settleMoonDefenseDue(planetId);
     }
 
     /// @dev Lazy on-chain reconciliation (VEY-KANEO-468): apply a moon-building construction whose
@@ -789,7 +790,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
     {
         _requireMoonOwner(planetId);
         game.requireNoPendingMoonAttackResolution(planetId);
-        _settleMoonDefenseDue(planetId);
+        _settleMoonStateDue(planetId);
         if (quantity == 0) revert InvalidQuantity();
         if (moonDefenseQueues[planetId].active) revert ConstructionActive();
 
@@ -819,12 +820,7 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
 
     function finishMoonDefenseProduction(uint256 planetId) external {
         _requireMoonOwner(planetId);
-        MoonDefenseQueue memory queue = moonDefenseQueues[planetId];
-        if (!queue.active) revert ConstructionInactive();
-        if (_currentTimestamp() < queue.readyAt) {
-            revert ConstructionNotReady(queue.readyAt);
-        }
-        _settleMoonDefenseDue(planetId);
+        _settleMoonStateDue(planetId);
     }
 
     function _settleMoonDefenseDue(uint256 planetId) internal {
@@ -859,10 +855,8 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
         _requireMoonOwner(destinationMoonPlanetId);
         game.requireNoPendingMoonAttackResolution(originMoonPlanetId);
         game.requireNoPendingMoonAttackResolution(destinationMoonPlanetId);
-        // Lazy on-chain reconciliation (VEY-KANEO-468): settle any due moon-building constructions on
-        // both moons this call touches before resolving the jump.
-        _settleMoonBuildingDue(originMoonPlanetId);
-        _settleMoonBuildingDue(destinationMoonPlanetId);
+        _settleMoonStateDue(originMoonPlanetId);
+        _settleMoonStateDue(destinationMoonPlanetId);
         _requireJumpGate(originMoonPlanetId);
         _requireJumpGate(destinationMoonPlanetId);
 
@@ -1014,6 +1008,10 @@ contract VeydriftMoonSystem is Initializable, UUPSUpgradeable {
             unchecked {
                 ++i;
             }
+        }
+        MoonDefenseQueue storage queue = moonDefenseQueues[planetId];
+        if (queue.active && queue.readyAt <= _currentTimestamp()) {
+            packed += uint256(queue.quantity) << (uint256(uint8(queue.defense)) * 32);
         }
     }
 

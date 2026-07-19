@@ -731,10 +731,10 @@ describe("Moon page helpers", () => {
     ))).toEqual([101, 202, 303, 404]);
   });
 
-  test("keeps projected completion available as a fallback without blocking the next mutation", () => {
-    expect(moonPageSource).toContain("moonState?.queue ?? moonState?.completionQueue");
-    expect(moonPageSource).toContain('label: "Complete"');
-    expect(moonPageSource).toContain('"is ready to settle on-chain."');
+  test("treats projected completion as settled without a manual completion control", () => {
+    expect(moonPageSource).not.toContain("moonState?.queue ?? moonState?.completionQueue");
+    expect(moonPageSource).not.toContain('label: "Complete"');
+    expect(moonPageSource).not.toContain('"is ready to settle on-chain."');
     expect(structureCatalogSource).toContain("StructureQueueProgress");
 
     const moonState = loadedMoonState({

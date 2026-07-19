@@ -46,8 +46,6 @@ interface MoonPageProps {
   moonActions?: MoonOverviewAction[] | undefined;
   moonState?: ChainMoonState | null | undefined;
   onBurnChicken?: ((tokenId: string) => void) | undefined;
-  onFinishBuilding?: ((label: string) => void) | undefined;
-  onFinishDefense?: ((label: string) => void) | undefined;
   onJumpGate?: ((destinationPlanetId: string, ships?: Partial<MissionShips>) => void) | undefined;
   onRefresh?: (() => void) | undefined;
   onStartBuilding?: ((buildingId: number, label: string) => void) | undefined;
@@ -74,8 +72,6 @@ export function MoonPage({
   moonActions,
   moonState,
   onBurnChicken,
-  onFinishBuilding,
-  onFinishDefense,
   onJumpGate,
   onRefresh,
   onStartBuilding,
@@ -122,8 +118,6 @@ export function MoonPage({
             moon={moon}
             moonActions={moonActions}
             moonState={moonState}
-            onFinishBuilding={onFinishBuilding}
-            onFinishDefense={onFinishDefense}
             onJumpGate={onJumpGate}
             onStartBuilding={onStartBuilding}
             onStartDefense={onStartDefense}
@@ -331,8 +325,6 @@ function MoonSystemsPanel({
   moonActions,
   moonState,
   onJumpGate,
-  onFinishBuilding,
-  onFinishDefense,
   onStartBuilding,
   onStartDefense,
   parentPlanetLabel,
@@ -345,8 +337,6 @@ function MoonSystemsPanel({
   moonActions?: MoonOverviewAction[] | undefined;
   moonState?: ChainMoonState | null | undefined;
   onJumpGate?: MoonPageProps["onJumpGate"];
-  onFinishBuilding?: MoonPageProps["onFinishBuilding"];
-  onFinishDefense?: MoonPageProps["onFinishDefense"];
   onStartBuilding?: MoonPageProps["onStartBuilding"];
   onStartDefense?: MoonPageProps["onStartDefense"];
   parentPlanetLabel?: string | undefined;
@@ -411,7 +401,6 @@ function MoonSystemsPanel({
         canTransact={canTransact}
         moon={moon}
         moonState={moonState}
-        onFinishBuilding={onFinishBuilding}
         onSelectBuilding={setSelectedBuildingKey}
         onStartBuilding={onStartBuilding}
         pending={pending}
@@ -429,7 +418,6 @@ function MoonSystemsPanel({
         actionPending={pending}
         canTransact={Boolean(canTransact)}
         moonState={moonState}
-        onFinishDefense={onFinishDefense}
         onSelectDefense={setSelectedDefenseKey}
         onStartDefense={onStartDefense}
         selectedDefenseKey={selectedDefenseKey}
@@ -511,7 +499,6 @@ function MoonStructuresSection({
   canTransact,
   moon,
   moonState,
-  onFinishBuilding,
   onSelectBuilding,
   onStartBuilding,
   pending,
@@ -522,7 +509,6 @@ function MoonStructuresSection({
   canTransact?: boolean | undefined;
   moon: NonNullable<ChainMoonState["moon"]>;
   moonState?: ChainMoonState | null | undefined;
-  onFinishBuilding?: MoonPageProps["onFinishBuilding"];
   onSelectBuilding: (key: MoonBuilding["key"]) => void;
   onStartBuilding?: MoonPageProps["onStartBuilding"];
   pending: boolean;
@@ -575,7 +561,6 @@ function MoonStructuresSection({
               canTransact={canTransact}
               moon={moon}
               moonState={moonState}
-              onFinishBuilding={onFinishBuilding}
               onOpenRequirement={(target) => {
                 if (target.kind === "moonStructure" && isMoonBuildingKey(target.key, buildings)) {
                   selectBuilding(target.key);
@@ -600,7 +585,6 @@ function MoonStructureDetailPanel({
   canTransact,
   moon,
   moonState,
-  onFinishBuilding,
   onOpenRequirement,
   onStartBuilding,
   pending,
@@ -611,7 +595,6 @@ function MoonStructureDetailPanel({
   canTransact?: boolean | undefined;
   moon: NonNullable<ChainMoonState["moon"]>;
   moonState?: ChainMoonState | null | undefined;
-  onFinishBuilding?: MoonPageProps["onFinishBuilding"];
   onOpenRequirement?: ((target: RequirementTarget) => void) | undefined;
   onStartBuilding?: MoonPageProps["onStartBuilding"];
   pending: boolean;
@@ -628,7 +611,7 @@ function MoonStructureDetailPanel({
   const currentEffect = moonStructureLevelEffect(building.key, building.level);
   const nextEffect = moonStructureLevelEffect(building.key, building.level + 1);
   const levelInfoRows = moonStructureLevelInfoRows(building, moon, moonState);
-  const visibleQueue = moonState?.queue ?? moonState?.completionQueue;
+  const visibleQueue = moonState?.queue;
   const queueProgress = moonStructureQueueProgress(visibleQueue);
   const levelInfo = moonStructureHasLevelInfo(building.key)
     ? moonStructureLevelInfoTable(building.key, building.level, levelInfoRows)
@@ -667,17 +650,11 @@ function MoonStructureDetailPanel({
       levelInfo={levelInfo}
       notice={action?.status === "error" && action.label ? { label: action.label, tone: "error" } : undefined}
       queue={visibleQueue?.active && queueProgress ? {
-        completion: queueReady(visibleQueue) && onFinishBuilding ? {
-          disabled: !canTransact || pending,
-          label: "Complete",
-          onClick: () => onFinishBuilding(moonBuildingLabel(visibleQueue.itemId)),
-          title: !canTransact ? transactionUnavailableReason : undefined,
-        } : undefined,
         isPrimaryItem: visibleQueue.itemId === building.id,
-        label: `${moonBuildingLabel(visibleQueue.itemId)} ${visibleQueue.targetLevel ? `L${visibleQueue.targetLevel}` : ""} ${queueReady(visibleQueue) ? "is ready to settle on-chain." : "is upgrading."}`,
+        label: `${moonBuildingLabel(visibleQueue.itemId)} ${visibleQueue.targetLevel ? `L${visibleQueue.targetLevel}` : ""} is upgrading.`,
         now: Date.now(),
         queue: queueProgress,
-        title: { active: queueReady(visibleQueue) ? "Construction complete" : "Construction in progress", context: "Active Moon construction" },
+        title: { active: "Construction in progress", context: "Active Moon construction" },
       } : undefined}
       summary={moonStructureLevelSummary(building, status.targetLevel)}
     />
@@ -794,7 +771,6 @@ function MoonDefenseSection({
   actionPending,
   canTransact,
   moonState,
-  onFinishDefense,
   onSelectDefense,
   onStartDefense,
   selectedDefenseKey,
@@ -803,14 +779,11 @@ function MoonDefenseSection({
   actionPending: boolean;
   canTransact: boolean;
   moonState?: ChainMoonState | null | undefined;
-  onFinishDefense?: MoonPageProps["onFinishDefense"];
   onSelectDefense: (key: DefenseKey) => void;
   onStartDefense?: MoonPageProps["onStartDefense"];
   selectedDefenseKey: DefenseKey;
   transactionUnavailableReason?: string | undefined;
 }) {
-  const defenseQueueReady = queueReady(moonState?.defenseQueue);
-
   return (
     <ProductionSection
       actionPending={actionPending}
@@ -830,22 +803,11 @@ function MoonDefenseSection({
       title="Moon Defenses"
     >
       {moonState?.defenseQueue?.active ? (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-200">
+        <div className="rounded border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-200">
           <span>
             Defense queue: {moonDefenseLabel(moonState.defenseQueue.itemId)} x{moonState.defenseQueue.quantity ?? 0} / ready{" "}
             {formatMoonReadyAt(moonState.defenseQueue.readyAt)}
           </span>
-          {defenseQueueReady && onFinishDefense ? (
-            <button
-              className="h-8 rounded border border-amber-200/30 bg-amber-200/10 px-3 text-xs font-semibold text-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={!canTransact || actionPending}
-              onClick={() => onFinishDefense(moonDefenseLabel(moonState.defenseQueue?.itemId))}
-              title={!canTransact ? transactionUnavailableReason : undefined}
-              type="button"
-            >
-              Complete
-            </button>
-          ) : null}
         </div>
       ) : null}
     </ProductionSection>

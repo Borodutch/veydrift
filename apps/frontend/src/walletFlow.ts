@@ -1211,8 +1211,6 @@ const COLONIZE_MISSION_TYPE = 2;
 // this type, so the UI keys stationed-defense rendering on it.
 export const DEFENSE_HOLD_MISSION_TYPE = 9;
 const MOON_SELECTORS = {
-  finishMoonBuildingUpgrade: "0x713b9e66",
-  finishMoonDefenseProduction: "0x1e3c6f05",
   jumpGateJump: "0x36aaf8f8",
   jumpGateJumpShips: "0x3095d992",
   startMoonBuildingUpgrade: "0x715e1b1a",
@@ -3145,19 +3143,6 @@ export async function sendStartMoonBuildingUpgradeTransaction(
   });
 }
 
-export async function sendFinishMoonBuildingUpgradeTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string,
-): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeGameCall(MOON_SELECTORS.finishMoonBuildingUpgrade, [planetId])
-  });
-}
-
 export async function sendStartMoonDefenseProductionTransaction(
   provider: Eip1193Provider,
   account: string,
@@ -3170,19 +3155,6 @@ export async function sendStartMoonDefenseProductionTransaction(
     from: account,
     to: contractAddress,
     data: encodeGameCall(MOON_SELECTORS.startMoonDefenseProduction, [planetId, defenseId, quantity])
-  });
-}
-
-export async function sendFinishMoonDefenseProductionTransaction(
-  provider: Eip1193Provider,
-  account: string,
-  contractAddress: string,
-  planetId: string,
-): Promise<string> {
-  return sendWalletTransaction(provider, account, {
-    from: account,
-    to: contractAddress,
-    data: encodeGameCall(MOON_SELECTORS.finishMoonDefenseProduction, [planetId])
   });
 }
 
