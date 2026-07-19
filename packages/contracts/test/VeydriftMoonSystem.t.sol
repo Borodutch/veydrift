@@ -721,6 +721,99 @@ contract VeydriftMoonSystemTest is Test {
         assertEq(game.defenseCount(planetId, Defense.RocketLauncher), 0);
     }
 
+    function testMoonDefenseIsEffectiveWhenDueAndReconcilesOnNextMutationOnce() public {
+        uint256 planetId = _startPlanet();
+
+        _createMoon(planetId);
+        _fundPlanet(planetId, 10_000_000, 10_000_000, 10_000_000);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.Shipyard);
+
+        vm.prank(player);
+        moons.startMoonDefenseProduction(planetId, Defense.RocketLauncher, 3);
+        VeydriftMoonSystem.MoonDefenseQueue memory queue = moons.activeMoonDefenseQueue(planetId);
+        vm.warp(queue.readyAt);
+
+        // Combat snapshots include the elapsed queue even before the next Moon mutation materializes
+        // the completion event and canonical storage change. The raw count remains canonical, matching
+        // raw planet building/queue getters; backend/UI project the same effective state for reads.
+        assertTrue(moons.activeMoonDefenseQueue(planetId).active);
+        assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 0);
+        assertEq(uint32(moons.moonDefensePacked(planetId)), 3);
+
+        moons.setMoonShipCount(planetId, Ship.SmallCargo, 1);
+        assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 3);
+        assertFalse(moons.activeMoonDefenseQueue(planetId).active);
+
+        // Reconciliation is idempotent and cannot double-credit an already completed queue.
+        moons.setMoonShipCount(planetId, Ship.SmallCargo, 2);
+        assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 3);
+    }
+
+    function testLegacyFinishWrappersAreIdempotentAndSharedMutationSettlesBothQueues() public {
+        uint256 planetId = _startPlanet();
+
+        _createMoon(planetId);
+        _fundPlanet(planetId, 10_000_000, 10_000_000, 10_000_000);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.Shipyard);
+
+        vm.startPrank(player);
+        moons.finishMoonBuildingUpgrade(planetId);
+        moons.finishMoonDefenseProduction(planetId);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.RoboticsFactory);
+        moons.startMoonDefenseProduction(planetId, Defense.RocketLauncher, 2);
+        moons.finishMoonBuildingUpgrade(planetId);
+        moons.finishMoonDefenseProduction(planetId);
+        vm.stopPrank();
+
+        VeydriftMoonSystem.MoonBuildingConstruction memory construction =
+            moons.activeMoonBuildingConstruction(planetId);
+        VeydriftMoonSystem.MoonDefenseQueue memory queue = moons.activeMoonDefenseQueue(planetId);
+        assertTrue(construction.active);
+        assertTrue(queue.active);
+        assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.RoboticsFactory), 2);
+        assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 0);
+
+        vm.warp(construction.readyAt > queue.readyAt ? construction.readyAt : queue.readyAt);
+        moons.setMoonShipCount(planetId, Ship.SmallCargo, 1);
+
+        assertFalse(moons.activeMoonBuildingConstruction(planetId).active);
+        assertFalse(moons.activeMoonDefenseQueue(planetId).active);
+        assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.RoboticsFactory), 3);
+        assertEq(moons.moonDefenseCount(planetId, Defense.RocketLauncher), 2);
+    }
+
+    function testStartingMoonDefenseReconcilesDueShipyardFirst() public {
+        uint256 planetId = _startPlanet();
+
+        _createMoon(planetId);
+        _fundPlanet(planetId, 10_000_000, 10_000_000, 10_000_000);
+        _buildMoon(planetId, MoonBuilding.LunarBase);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+        _buildMoon(planetId, MoonBuilding.RoboticsFactory);
+
+        vm.prank(player);
+        moons.startMoonBuildingUpgrade(planetId, MoonBuilding.Shipyard);
+        VeydriftMoonSystem.MoonBuildingConstruction memory shipyardQueue =
+            moons.activeMoonBuildingConstruction(planetId);
+        vm.warp(shipyardQueue.readyAt);
+
+        assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.Shipyard), 0);
+        assertTrue(moons.activeMoonBuildingConstruction(planetId).active);
+
+        vm.prank(player);
+        moons.startMoonDefenseProduction(planetId, Defense.RocketLauncher, 1);
+
+        assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.Shipyard), 1);
+        assertTrue(moons.activeMoonDefenseQueue(planetId).active);
+    }
+
     function testMoonDefenseRequiresMoonShipyard() public {
         uint256 planetId = _startPlanet();
 
@@ -1205,7 +1298,9 @@ contract VeydriftMoonSystemTest is Test {
             moons.activeMoonBuildingConstruction(planetId);
         assertEq(due.targetLevel, 2);
         vm.warp(due.readyAt);
-        assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.LunarBase), 1); // unsettled pre-touch
+        assertEq(moons.moonBuildingLevel(planetId, MoonBuilding.LunarBase), 1);
+        assertEq(moons.moon(planetId).fields, 4);
+        assertTrue(moons.activeMoonBuildingConstruction(planetId).active);
 
         // A subsequent mutating interaction must settle the due construction (no finish tx) and then
         // start the next one.

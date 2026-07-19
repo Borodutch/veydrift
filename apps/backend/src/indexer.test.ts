@@ -3487,6 +3487,66 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("projects overdue Moon defense production and stays idempotent after completion catches up", () => {
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyLog({
+      blockNumber: "0x87",
+      transactionHash: "0xmoon-defense-projection",
+      logIndex: "0x0",
+      topics: [moonCreatedTopic, addressTopic(player), topic(7n)],
+      data: abiWords(2n, 44n, 9n, 12n, 8777n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x88",
+      transactionHash: "0xmoon-defense-baseline",
+      logIndex: "0x0",
+      topics: [moonDefenseCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(7n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x89",
+      blockTimestamp: "0x6955b2c0",
+      transactionHash: "0xmoon-defense-overdue",
+      logIndex: "0x0",
+      topics: [moonDefenseQueuedTopic, topic(7n), topic(0n)],
+      data: abiWords(3n, 1767225500n, 6_000n, 0n, 0n)
+    });
+
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      defenseQueue: null,
+      defenses: expect.arrayContaining([
+        expect.objectContaining({ id: 0, count: 10 })
+      ])
+    });
+
+    indexer.applyLog({
+      blockNumber: "0x8a",
+      transactionHash: "0xmoon-defense-overdue-count",
+      logIndex: "0x0",
+      topics: [moonDefenseCountChangedTopic, topic(7n), topic(0n)],
+      data: abiWords(10n)
+    });
+    indexer.applyLog({
+      blockNumber: "0x8a",
+      transactionHash: "0xmoon-defense-overdue-count",
+      logIndex: "0x1",
+      topics: [moonDefenseCompletedTopic, topic(7n), topic(0n)],
+      data: abiWords(3n, 10n)
+    });
+
+    expect(indexer.moonState(player, planet.planetId)).toMatchObject({
+      defenseQueue: null,
+      defenses: expect.arrayContaining([
+        expect.objectContaining({ id: 0, count: 10 })
+      ])
+    });
+  });
+
   test("keeps a not-yet-due Moon queue active without projecting its target level", () => {
     const indexer = new SettlementIndexer({
       async listDebrisFieldEvents() { return []; },
@@ -3720,6 +3780,49 @@ describe("SettlementIndexer", () => {
         }
       ]
     });
+  });
+
+  test("includes an owned destination whose Jump Gate queue is overdue", () => {
+    const destinationPlanet: SettledPlanetEvent = {
+      ...planet,
+      transactionHash: "0xabc-overdue-destination",
+      planetId: "9",
+      position: 11
+    };
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n);
+    indexer.applyEvent(planet);
+    indexer.applyEvent(destinationPlanet);
+
+    for (const planetRef of [planet, destinationPlanet]) {
+      indexer.applyLog({
+        blockNumber: "0x87",
+        transactionHash: `0xmoon-overdue-gate-${planetRef.planetId}`,
+        logIndex: "0x0",
+        topics: [moonCreatedTopic, addressTopic(player), topic(BigInt(planetRef.planetId))],
+        data: abiWords(BigInt(planetRef.galaxy), BigInt(planetRef.system), BigInt(planetRef.position), 12n, 8777n)
+      });
+    }
+    indexer.applyLog({
+      blockNumber: "0x88",
+      blockTimestamp: "0x6955b2c0",
+      transactionHash: "0xoverdue-jump-gate",
+      logIndex: "0x0",
+      topics: [moonBuildingStartedTopic, topic(9n), topic(2n)],
+      data: abiWords(1n, 1767225500n, 2_000_000n, 4_000_000n, 2_000_000n)
+    });
+
+    expect(indexer.moonState(player, planet.planetId).jumpGateDestinations).toEqual([
+      {
+        planetId: destinationPlanet.planetId,
+        label: "Moon 2:44:11",
+        coordinates: "2:44:11",
+        jumpGateReadyAt: "0"
+      }
+    ]);
   });
 
   test("persists every production queue kind from indexed contract events", () => {

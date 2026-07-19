@@ -2160,7 +2160,14 @@ export class SettlementIndexer {
   }
 
   private moonDefenseCountAsOfNow(planetId: string, defenseId: number): number {
-    return this.indexedLevel("contract_moon_defense_counts", "defense_id", planetId, defenseId);
+    const canonicalCount = this.indexedLevel(
+      "contract_moon_defense_counts",
+      "defense_id",
+      planetId,
+      defenseId
+    );
+    const completedQueueQuantities = this.completedQueueQuantities(`moon-defense:${planetId}`);
+    return canonicalCount + (completedQueueQuantities.get(defenseId) ?? 0);
   }
 
   highscoreForWallet(wallet: `0x${string}`, planetIds?: string[]): HighscoreEntry {
@@ -2485,24 +2492,21 @@ export class SettlementIndexer {
     const rows = this.db.query(`
       SELECT m.event_json
       FROM indexed_moons m
-      JOIN contract_moon_building_levels b
-        ON b.planet_id = m.planet_id
-        AND b.moon_building_id = 2
-        AND b.level > 0
       WHERE m.owner = lower(?)
         AND m.planet_id != ?
       ORDER BY CAST(m.planet_id AS INTEGER) ASC
     `).all(wallet, currentPlanetId) as MoonRow[];
 
-    return rows.map((row) => {
+    return rows.flatMap((row) => {
       const moon = parseEvent<IndexedMoonCreatedEvent>(row.event_json);
+      if (this.moonBuildingLevelAsOfNow(moon.planetId, 2) === 0) return [];
       const coordinates = `${moon.galaxy}:${moon.system}:${moon.position}`;
-      return {
+      return [{
         planetId: moon.planetId,
         label: `Moon ${coordinates}`,
         coordinates,
         jumpGateReadyAt: moon.jumpGateReadyAt ?? "0"
-      };
+      }];
     });
   }
 
