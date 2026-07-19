@@ -29,16 +29,20 @@ By default the listener decodes:
 event ChickenBurned(
   address indexed burner,
   uint256 indexed tokenId,
-  uint256 planetId
+  uint256 planetId,
+  uint16 galaxy,
+  uint16 system,
+  uint8 position
 );
 ```
 
 Set `CHICKEN_BURN_EVENT_SIGNATURE` if the deployed contract uses another event name/signature. The
-event must expose the burner, token id, and planet id by name. The Veydrift moon system resolves
-the planet coordinates from `planetId` before granting the moon.
+event must expose the burner, token id, and planet id by name. Coordinate fields are retained as
+source evidence, while the Veydrift moon system still resolves canonical coordinates from
+`planetId` before granting the moon and does not trust the event coordinates for authorization.
 
 `ENABLE_TRANSFER_BURN_FALLBACK=true` also supports ERC-721 `Transfer(from, address(0), tokenId)`
-burns when the burn transaction calldata is one of the documented
-`burn*ForMoon(tokenId, planetId)` shapes. Keep this off for the upgraded Chicken contract, because
+burns when the burn transaction calldata is one of the documented `burn*ForMoon` shapes. Keep this
+off for the upgraded Chicken contract, because
 `burnForMoon` emits both the Veydrift burn event and the normal ERC-721 burn Transfer in the same
 transaction.

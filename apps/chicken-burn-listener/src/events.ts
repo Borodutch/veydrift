@@ -26,6 +26,11 @@ export type ChickenBurnEvent = {
   burner: `0x${string}`;
   tokenId: string;
   planetId: string;
+  coordinates?: {
+    galaxy: number;
+    system: number;
+    position: number;
+  };
   sourceTxHash: `0x${string}`;
   sourceLogIndex: number;
   sourceBlockNumber: bigint;
@@ -36,6 +41,19 @@ const transferEvent = parseAbiItem(
 ) as AbiEvent;
 
 const burnWithMoonFunctions = [
+  {
+    type: "function",
+    name: "burnForMoon",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "tokenId", type: "uint256" },
+      { name: "planetId", type: "uint256" },
+      { name: "galaxy", type: "uint16" },
+      { name: "system", type: "uint16" },
+      { name: "position", type: "uint8" }
+    ],
+    outputs: []
+  },
   {
     type: "function",
     name: "burnForMoon",
@@ -114,7 +132,17 @@ function decodeConfiguredBurnLog(log: RawLog, burnEvent: AbiEvent): ChickenBurnE
     if (!burner || tokenId === null || planetId === null) {
       return null;
     }
-    return buildBurnEvent(log, burner, tokenId, planetId);
+    const galaxy = asBigInt(args.galaxy);
+    const system = asBigInt(args.system);
+    const position = asBigInt(args.position);
+    const coordinates = galaxy !== null && system !== null && position !== null
+      ? {
+          galaxy: Number(galaxy),
+          system: Number(system),
+          position: Number(position)
+        }
+      : undefined;
+    return buildBurnEvent(log, burner, tokenId, planetId, coordinates);
   } catch {
     return null;
   }
@@ -144,7 +172,8 @@ function decodeTransferBurnLog(
       log,
       args.from,
       args.tokenId,
-      moonTarget.planetId
+      moonTarget.planetId,
+      moonTarget.coordinates
     );
   } catch {
     return null;
@@ -155,15 +184,25 @@ export function decodeMoonTargetFromBurnInput(data: `0x${string}`):
   | {
       tokenId: bigint;
       planetId: bigint;
+      coordinates?: ChickenBurnEvent["coordinates"];
     }
   | null {
   try {
     const decoded = decodeFunctionData({ abi: burnWithMoonFunctions, data });
-    const args = decoded.args as readonly [bigint, bigint];
-    if (!args || args.length !== 2) return null;
+    const args = decoded.args as readonly bigint[];
+    if (!args || args.length < 2) return null;
     return {
       tokenId: args[0],
-      planetId: args[1]
+      planetId: args[1],
+      ...(args.length === 5
+        ? {
+            coordinates: {
+              galaxy: Number(args[2]),
+              system: Number(args[3]),
+              position: Number(args[4])
+            }
+          }
+        : {})
     };
   } catch {
     return null;
@@ -174,7 +213,8 @@ function buildBurnEvent(
   log: RawLog,
   burner: `0x${string}`,
   tokenId: bigint,
-  planetId: bigint
+  planetId: bigint,
+  coordinates?: ChickenBurnEvent["coordinates"]
 ): ChickenBurnEvent {
   const sourceLogIndex = toNumber(log.logIndex);
   return {
@@ -182,6 +222,7 @@ function buildBurnEvent(
     burner,
     tokenId: tokenId.toString(),
     planetId: planetId.toString(),
+    ...(coordinates ? { coordinates } : {}),
     sourceTxHash: log.transactionHash,
     sourceLogIndex,
     sourceBlockNumber: toBigInt(log.blockNumber)

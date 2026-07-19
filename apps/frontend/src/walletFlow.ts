@@ -1248,6 +1248,12 @@ export type BurningChickenConfig = {
   rpcUrl?: string | null | undefined;
 };
 
+export type BurningChickenMoonCoordinates = {
+  galaxy: number;
+  system: number;
+  position: number;
+};
+
 export type BurningChickenNft = {
   tokenId: string;
 };
@@ -2111,10 +2117,28 @@ export function encodeBurningChickenMoonCall(
   selector: string,
   tokenId: bigint | number | string,
   planetId: bigint | number | string,
+  coordinates: BurningChickenMoonCoordinates,
 ): string {
+  const { galaxy, system, position } = coordinates;
+  if (
+    !Number.isInteger(galaxy)
+    || galaxy < 1
+    || galaxy > 9
+    || !Number.isInteger(system)
+    || system < 1
+    || system > 499
+    || !Number.isInteger(position)
+    || position < 1
+    || position > 15
+  ) {
+    throw new Error("Burning Chicken moon coordinates are invalid.");
+  }
   return encodeGameCall(selector, [
     tokenId,
     planetId,
+    galaxy,
+    system,
+    position,
   ]);
 }
 
@@ -3224,12 +3248,13 @@ export async function sendBurningChickenMoonTransaction(
   config: BurningChickenConfig,
   tokenId: string,
   planetId: string,
+  coordinates: BurningChickenMoonCoordinates,
 ): Promise<string> {
   await ensureBaseMainnetNetwork(provider);
   return sendWalletTransaction(provider, account, {
     from: account,
     to: config.burnContractAddress,
-    data: encodeBurningChickenMoonCall(config.burnSelector, tokenId, planetId),
+    data: encodeBurningChickenMoonCall(config.burnSelector, tokenId, planetId, coordinates),
   });
 }
 

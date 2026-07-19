@@ -19,6 +19,9 @@ describe("loadConfig", () => {
     expect(config?.backfillBlocks).toBe(2_000n);
     expect(config?.confirmationBlocks).toBe(20n);
     expect(config?.enableTransferBurnFallback).toBe(false);
+    expect(config?.chickenBurnEventSignature).toBe(
+      "event ChickenBurned(address indexed burner,uint256 indexed tokenId,uint256 planetId,uint16 galaxy,uint16 system,uint8 position)"
+    );
 
     const summary = safeConfigSummary(config!);
     expect(summary.veydriftGrantPrivateKey).toBe("[redacted]");

@@ -66,6 +66,7 @@ export class ChickenBurnProcessor {
         sourceTxHash: event.sourceTxHash,
         tokenId: event.tokenId,
         planetId: event.planetId,
+        ...(event.coordinates ? { coordinates: event.coordinates } : {}),
         grantTxHash: txHash
       });
     } catch (error) {
