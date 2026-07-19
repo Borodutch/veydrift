@@ -121,7 +121,7 @@ const acceptedCacheQueryParams = new Map<string, ReadonlySet<string>>([
 ]);
 
 const indexedSource = "contract-state-indexer" as const;
-const burningChickenPlanetBurnSelector = "0xe1775196";
+const burningChickenCoordinateBurnSelector = "0x6364233d";
 
 type GraphQLPayload = {
   query?: string;
@@ -3762,9 +3762,9 @@ function getRuntimeConfig(workerRole: WorkerRole = envWorkerRole()): RuntimeConf
   const allianceContractAddress = process.env.VEYDRIFT_ALLIANCE_CONTRACT_ADDRESS ?? null;
   const burningChickenNftContractAddress = process.env.VEYDRIFT_BURNING_CHICKEN_NFT_CONTRACT_ADDRESS ?? null;
   const burningChickenBurnContractAddress = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_CONTRACT_ADDRESS ?? null;
-  const burningChickenBurnSelector = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR ?? burningChickenPlanetBurnSelector;
+  const burningChickenBurnSelector = process.env.VEYDRIFT_BURNING_CHICKEN_BURN_SELECTOR ?? burningChickenCoordinateBurnSelector;
   const configuredChickenBurnSelector =
-    burningChickenBurnSelector.toLowerCase() === burningChickenPlanetBurnSelector;
+    burningChickenBurnSelector.toLowerCase() === burningChickenCoordinateBurnSelector;
   const burningChickenRpcUrl = process.env.VEYDRIFT_BASE_MAINNET_RPC_URL ?? "https://mainnet.base.org";
   const resourceTokenAddresses = {
     crystal: process.env.VEYDRIFT_CRYSTAL_TOKEN_ADDRESS ?? null,

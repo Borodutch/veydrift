@@ -21,7 +21,7 @@ const txHash = `0x${"1".repeat(64)}` as const;
 const chickenAddress = "0xf12f31734868F1089d9d6514D7F19a31Ec5e00e2" as const;
 
 describe("decodeChickenBurnLog", () => {
-  test("decodes configured ChickenBurned event with a planet id", () => {
+  test("decodes configured ChickenBurned event with a planet id and coordinates", () => {
     const topics = encodeEventTopics({
       abi: [burnEvent],
       eventName: "ChickenBurned",
@@ -30,7 +30,15 @@ describe("decodeChickenBurnLog", () => {
         tokenId: 42n
       }
     }) as `0x${string}`[];
-    const data = encodeAbiParameters([{ name: "planetId", type: "uint256" }], [7n]);
+    const data = encodeAbiParameters(
+      [
+        { name: "planetId", type: "uint256" },
+        { name: "galaxy", type: "uint16" },
+        { name: "system", type: "uint16" },
+        { name: "position", type: "uint8" }
+      ],
+      [7n, 2, 419, 6]
+    );
     const log: RawLog = {
       address: chickenAddress,
       blockNumber: "0x64",
@@ -46,6 +54,7 @@ describe("decodeChickenBurnLog", () => {
       burner: "0x2222222222222222222222222222222222222222",
       tokenId: "42",
       planetId: "7",
+      coordinates: { galaxy: 2, system: 419, position: 6 },
       sourceBlockNumber: 100n,
       sourceLogIndex: 2
     });
@@ -72,13 +81,16 @@ describe("decodeChickenBurnLog", () => {
           stateMutability: "nonpayable",
           inputs: [
             { name: "tokenId", type: "uint256" },
-            { name: "planetId", type: "uint256" }
+            { name: "planetId", type: "uint256" },
+            { name: "galaxy", type: "uint16" },
+            { name: "system", type: "uint16" },
+            { name: "position", type: "uint8" }
           ],
           outputs: []
         }
       ],
       functionName: "burnForMoon",
-      args: [101n, 8n]
+      args: [101n, 8n, 2, 419, 6]
     });
     const log: RawLog = {
       address: chickenAddress,
@@ -91,12 +103,14 @@ describe("decodeChickenBurnLog", () => {
 
     expect(decodeMoonTargetFromBurnInput(data)).toMatchObject({
       tokenId: 101n,
-      planetId: 8n
+      planetId: 8n,
+      coordinates: { galaxy: 2, system: 419, position: 6 }
     });
     expect(decodeChickenBurnLog(log, burnEvent, data)).toMatchObject({
       burner: "0x3333333333333333333333333333333333333333",
       tokenId: "101",
-      planetId: "8"
+      planetId: "8",
+      coordinates: { galaxy: 2, system: 419, position: 6 }
     });
   });
 });

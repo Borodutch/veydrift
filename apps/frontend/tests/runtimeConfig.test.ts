@@ -80,12 +80,12 @@ describe("runtime config URL", () => {
     expect(gameContractAddress(config)).toBe("0x1111111111111111111111111111111111111111");
   });
 
-  test("only accepts the planet-id Burning Chicken burn selector", () => {
+  test("only accepts the coordinate Burning Chicken burn selector", () => {
     const baseConfig: RuntimeConfig = {
       apiUrl: "https://api-test.veydrift.com",
       burningChicken: {
         burnContractAddress: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        burnSelector: "0xe1775196",
+        burnSelector: "0x6364233d",
         nftContractAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         rpcUrl: "https://mainnet.base.org",
       },
@@ -102,13 +102,13 @@ describe("runtime config URL", () => {
       rpcProvider: "alchemy",
     };
 
-    expect(burningChickenConfig(baseConfig)?.burnSelector).toBe("0xe1775196");
+    expect(burningChickenConfig(baseConfig)?.burnSelector).toBe("0x6364233d");
     expect(
       burningChickenConfig({
         ...baseConfig,
         burningChicken: {
           ...baseConfig.burningChicken!,
-          burnSelector: "0x6364233d",
+          burnSelector: "0xe1775196",
         },
       }),
     ).toBeUndefined();

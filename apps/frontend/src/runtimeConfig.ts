@@ -44,7 +44,7 @@ export type RuntimeConfigState =
 export const productionPlayableApiUrl = "https://api.veydrift.com";
 export const testPlayableApiUrl = "https://api-test.veydrift.com";
 export const defaultPlayableApiUrl = testPlayableApiUrl;
-export const burningChickenPlanetBurnSelector = "0xe1775196";
+export const burningChickenCoordinateBurnSelector = "0x6364233d";
 
 export function defaultPlayableApiUrlForLocation(location: Pick<Location, "hostname"> | undefined = typeof window === "undefined" ? undefined : window.location): string {
   return location?.hostname === "veydrift.com" || location?.hostname === "www.veydrift.com"
@@ -87,7 +87,7 @@ export function burningChickenConfig(config: RuntimeConfig): ConfiguredBurningCh
   if (!chicken?.nftContractAddress || !chicken.burnContractAddress || !chicken.burnSelector) {
     return undefined;
   }
-  if (chicken.burnSelector.toLowerCase() !== burningChickenPlanetBurnSelector) {
+  if (chicken.burnSelector.toLowerCase() !== burningChickenCoordinateBurnSelector) {
     return undefined;
   }
   return {

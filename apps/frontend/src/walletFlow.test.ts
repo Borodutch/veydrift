@@ -173,12 +173,27 @@ describe("walletFlow", () => {
     expect(isVeydriftChain(BASE_SEPOLIA.chainIdHex, BASE_MAINNET)).toBe(false);
   });
 
-  test("encodes Burning Chicken moon burns with token id and planet id", () => {
-    expect(encodeBurningChickenMoonCall("0xe1775196", "42", "7")).toBe(
-      "0xe1775196"
+  test("encodes Burning Chicken moon burns with token id, planet id, and coordinates", () => {
+    expect(encodeBurningChickenMoonCall("0x6364233d", "42", "7", {
+      galaxy: 2,
+      system: 419,
+      position: 6,
+    })).toBe(
+      "0x6364233d"
         + "2a".padStart(64, "0")
         + "7".padStart(64, "0")
+        + "2".padStart(64, "0")
+        + "1a3".padStart(64, "0")
+        + "6".padStart(64, "0")
     );
+  });
+
+  test("rejects invalid Burning Chicken moon coordinates before opening the wallet", () => {
+    expect(() => encodeBurningChickenMoonCall("0x6364233d", "42", "7", {
+      galaxy: 2,
+      system: 500,
+      position: 6,
+    })).toThrow("Burning Chicken moon coordinates are invalid.");
   });
 
   test("encodes ERC-165 bytes4 interface checks", () => {
@@ -215,7 +230,7 @@ describe("walletFlow", () => {
     try {
       await expect(fetchBurningChickenForOwner(account, "91528", {
         burnContractAddress: contract,
-        burnSelector: "0xe1775196",
+        burnSelector: "0x6364233d",
         nftContractAddress: contract,
         rpcUrl: "https://base.example.test",
       })).resolves.toEqual({ tokenId: "91528" });
@@ -249,7 +264,7 @@ describe("walletFlow", () => {
     try {
       await expect(fetchBurningChickenForOwner(account, "91528", {
         burnContractAddress: contract,
-        burnSelector: "0xe1775196",
+        burnSelector: "0x6364233d",
         nftContractAddress: contract,
         rpcUrl: "https://base.example.test",
       })).rejects.toThrow("Chicken #91528 is not owned by the connected wallet.");
@@ -269,9 +284,9 @@ describe("walletFlow", () => {
 
     await expect(sendBurningChickenMoonTransaction(provider, account, {
       burnContractAddress: "0x3333333333333333333333333333333333333333",
-      burnSelector: "0xe1775196",
+      burnSelector: "0x6364233d",
       nftContractAddress: "0x4444444444444444444444444444444444444444",
-    }, "42", "7")).resolves.toBe("0xchicken");
+    }, "42", "7", { galaxy: 2, system: 419, position: 6 })).resolves.toBe("0xchicken");
 
     expect(requests).toEqual([
       { method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] },
@@ -280,7 +295,11 @@ describe("walletFlow", () => {
         params: [{
           from: account,
           to: "0x3333333333333333333333333333333333333333",
-          data: encodeBurningChickenMoonCall("0xe1775196", "42", "7"),
+          data: encodeBurningChickenMoonCall("0x6364233d", "42", "7", {
+            galaxy: 2,
+            system: 419,
+            position: 6,
+          }),
         }],
       },
     ]);

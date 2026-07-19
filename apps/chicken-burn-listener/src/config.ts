@@ -31,7 +31,7 @@ const addressPattern = /^0x[0-9a-fA-F]{40}$/;
 const privateKeyPattern = /^0x[0-9a-fA-F]{64}$/;
 
 export const defaultChickenBurnEventSignature =
-  "event ChickenBurned(address indexed burner,uint256 indexed tokenId,uint256 planetId)";
+  "event ChickenBurned(address indexed burner,uint256 indexed tokenId,uint256 planetId,uint16 galaxy,uint16 system,uint8 position)";
 
 const defaultVeydriftChainId = 84532;
 const defaultBackfillIntervalMs = 15_000;
