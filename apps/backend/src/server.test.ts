@@ -2619,6 +2619,83 @@ describe("Veydrift backend", () => {
     expect(body.rows[0]).toMatchObject({ kind: "mission", mission: { status: "Returned" } });
   });
 
+  test("paginates a production-sized global completed mission archive before hydrating rows", async () => {
+    const database = new Database(":memory:");
+    const chainReader = new MockChainReader();
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock, { database });
+    const insert = database.query(`
+      INSERT INTO contract_fleet_missions (
+        mission_id, status_id, mission_type_id, owner, origin_planet_id, target_planet_id,
+        departure_at, arrival_at, return_at, fuel_cost,
+        metal_cargo, crystal_cargo, deuterium_cargo, ships_json, randomness_request_id, event_json
+      ) VALUES (?, 3, 0, ?, ?, ?, ?, ?, ?, '0', '0', '0', '0', '{}', NULL, NULL)
+    `);
+    database.transaction(() => {
+      for (let missionId = 1; missionId <= 10_000; missionId += 1) {
+        const timestamp = String(1_770_000_000 + missionId);
+        insert.run(String(missionId), player, planet.planetId, planet.planetId, timestamp, timestamp, timestamp);
+      }
+    })();
+    indexer.completedFleetMissionsFromCanonicalRows = (() => {
+      throw new Error("global archive must not hydrate every completed mission before pagination");
+    }) as SettlementIndexer["completedFleetMissionsFromCanonicalRows"];
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
+    const durations: number[] = [];
+
+    for (let page = 1; page <= 20; page += 1) {
+      const startedAt = performance.now();
+      const response = await handler(
+        new Request(`http://localhost/missions?status=completed&page=${page}&pageSize=25`)
+      );
+      durations.push(performance.now() - startedAt);
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.pagination).toMatchObject({ page, pageSize: 25, totalEntries: 10_000, totalPages: 400 });
+      expect(body.rows).toHaveLength(25);
+      expect(body.rows[0]?.mission?.missionId).toBe(String(10_001 - ((page - 1) * 25) - 1));
+    }
+
+    const sortedDurations = [...durations].sort((left, right) => left - right);
+    const p95 = sortedDurations[Math.ceil(sortedDurations.length * 0.95) - 1] ?? Number.POSITIVE_INFINITY;
+    const p99 = sortedDurations[Math.ceil(sortedDurations.length * 0.99) - 1] ?? Number.POSITIVE_INFINITY;
+    const max = sortedDurations.at(-1) ?? Number.POSITIVE_INFINITY;
+    expect(p95).toBeLessThan(300);
+    expect(p99).toBeLessThan(300);
+    expect(max).toBeLessThan(300);
+
+    const matchingIds = Array.from({ length: 10_000 }, (_, index) => String(index + 1))
+      .filter((missionId) => missionId.includes("99"))
+      .reverse();
+    const searchResponse = await handler(
+      new Request("http://localhost/missions?status=completed&missionNumber=%2399&page=1&pageSize=25")
+    );
+    const searchBody = await searchResponse.json();
+    expect(searchResponse.status).toBe(200);
+    expect(searchBody.pagination.totalEntries).toBe(matchingIds.length);
+    expect(searchBody.rows.map((row: { mission: FleetMissionSummary }) => row.mission.missionId))
+      .toEqual(matchingIds.slice(0, 25));
+
+    const queryPlan = database.query(`
+      EXPLAIN QUERY PLAN
+      SELECT *
+      FROM contract_fleet_missions INDEXED BY contract_fleet_missions_completed_archive_idx
+      WHERE status_id IN (3, 4)
+      ORDER BY
+        CAST(CASE WHEN status_id = 4 THEN return_at ELSE arrival_at END AS INTEGER) DESC,
+        CAST(COALESCE(
+          json_extract(event_json, '$.blockNumber'),
+          json_extract(event_json, '$.mission.blockNumber'),
+          '0'
+        ) AS INTEGER) DESC,
+        CAST(mission_id AS INTEGER) DESC
+      LIMIT ? OFFSET ?
+    `).all(25, 0) as Array<{ detail: string }>;
+    const queryPlanDetail = queryPlan.map((row) => row.detail).join(" ");
+    expect(queryPlanDetail).toContain("USING INDEX contract_fleet_missions_completed_archive_idx");
+    expect(queryPlanDetail).not.toContain("USE TEMP B-TREE");
+    database.close();
+  });
+
   test("mission detail exposes the defender planet's indexed fleet/defenses composition (VEY-401)", async () => {
     const attacker = "0x3333333333333333333333333333333333333333" as Address;
     const attackBattleResolvedTopic = "0xc0d98d89682d12d3fe90cd0786b9320015ab3950de5f4ae3f54ca0fe9b660d1b";

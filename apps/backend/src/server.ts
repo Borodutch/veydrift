@@ -2036,7 +2036,6 @@ function prewarmHotResponseCache(
       let paths: string[] = [];
       try {
         indexer.allActiveFleetMissions();
-        globalMissionArchiveRows(indexer);
         paths = hotResponseCachePaths(indexer);
       } catch {
         // Best-effort only. A cold/stale index should not make worker startup fail.
@@ -2769,61 +2768,22 @@ function indexedMissionArchive(
   };
 }
 
-function filterMissionArchiveRows(
-  rows: FleetMissionArchiveEntry[],
-  filter: string | null,
-  missionNumber: string | null,
-  wallet: `0x${string}`,
-  ownedPlanetIds: ReadonlySet<string>
-): FleetMissionArchiveEntry[] {
-  const scopedRows = filter === "incomingAttacks"
-    ? filterIncomingAttackMissionArchiveRows(rows, wallet, ownedPlanetIds)
-    : rows;
-  return filterMissionArchiveRowsByNumber(scopedRows, missionNumber);
-}
-
-function filterIncomingAttackMissionArchiveRows(
-  rows: FleetMissionArchiveEntry[],
-  wallet: `0x${string}`,
-  ownedPlanetIds: ReadonlySet<string>
-): FleetMissionArchiveEntry[] {
-  const walletLower = wallet.toLowerCase();
-  return rows.filter((row) => {
-    if (row.kind === "battleReport") return ownedPlanetIds.has(row.report.targetPlanetId);
-    return row.mission.missionType === "Attack"
-      && row.mission.owner.toLowerCase() !== walletLower
-      && ownedPlanetIds.has(row.mission.targetPlanetId);
-  });
-}
-
-function missionArchiveRowMissionId(row: FleetMissionArchiveEntry): string {
-  return row.kind === "battleReport" ? row.report.missionId : row.mission.missionId;
-}
-
-function normalizedMissionNumberSearch(value: string): string {
-  return value.replace(/\D+/g, "");
-}
-
-function filterMissionArchiveRowsByNumber(
-  rows: FleetMissionArchiveEntry[],
-  missionNumber: string | null
-): FleetMissionArchiveEntry[] {
-  const missionNumberQuery = normalizedMissionNumberSearch(missionNumber ?? "");
-  if (!missionNumberQuery) return rows;
-  return rows.filter((row) => missionArchiveRowMissionId(row).includes(missionNumberQuery));
-}
-
 function globalMissionArchive(url: URL, indexer: SettlementIndexer): GlobalMissionArchiveResponse {
-  const rows = filterMissionArchiveRowsByNumber(globalMissionArchiveRows(indexer), url.searchParams.get("missionNumber"));
   const requested = missionArchivePagination(url);
-  const totalEntries = rows.length;
+  // Keep the universe-wide archive bounded just like the wallet archive: count/filter/page in
+  // SQLite, then hydrate only the visible missions and their materialized report summaries.
+  const archive = indexer.globalFleetMissionArchivePage({
+    missionNumber: url.searchParams.get("missionNumber"),
+    page: requested.page,
+    pageSize: requested.pageSize
+  });
+  const rows = chronologicalMissionArchiveRows(archive.completedMissions, []);
+  const totalEntries = archive.totalEntries;
   const totalPages = Math.max(1, Math.ceil(totalEntries / requested.pageSize));
-  const page = Math.min(requested.page, totalPages);
-  const offset = (page - 1) * requested.pageSize;
-  const pageRows = rows.slice(offset, offset + requested.pageSize);
+  const page = archive.page;
 
   return {
-    rows: attachMissionArchiveReports(pageRows, indexer.battleReportsForMissions(missionsFromArchiveRows(pageRows))),
+    rows: attachMissionArchiveReports(rows, indexer.battleReportsForMissions(missionsFromArchiveRows(rows))),
     pagination: {
       page,
       pageSize: requested.pageSize,
@@ -2834,8 +2794,6 @@ function globalMissionArchive(url: URL, indexer: SettlementIndexer): GlobalMissi
     }
   };
 }
-
-const globalMissionArchiveRowsCache = new WeakMap<SettlementIndexer, { expiresAt: number; stateVersion: string; rows: FleetMissionArchiveEntry[] }>();
 
 function attachMissionArchiveReports(
   rows: FleetMissionArchiveEntry[],
@@ -2854,25 +2812,6 @@ function attachMissionArchiveReports(
 
 function missionsFromArchiveRows(rows: readonly FleetMissionArchiveEntry[]): FleetMissionSummary[] {
   return rows.flatMap((row) => row.kind === "mission" ? [row.mission] : []);
-}
-
-function globalMissionArchiveRows(indexer: SettlementIndexer): FleetMissionArchiveEntry[] {
-  const stateVersion = indexer.responseCacheVersion();
-  const cached = globalMissionArchiveRowsCache.get(indexer);
-  if (cached && cached.stateVersion === stateVersion && cached.expiresAt > Date.now()) return cached.rows;
-
-  const completedMissions = indexer.completedFleetMissionsFromCanonicalRows();
-  const rows = (completedMissions.length > 0 ? completedMissions : indexer.allCompletedFleetMissions())
-    .map((mission): FleetMissionArchiveEntry => ({
-      kind: "mission",
-      mission
-    }));
-  globalMissionArchiveRowsCache.set(indexer, {
-    expiresAt: Date.now() + 60_000,
-    stateVersion,
-    rows
-  });
-  return rows;
 }
 
 function missionArchivePagination(url: URL): { page: number; pageSize: number } {

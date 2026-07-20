@@ -1711,6 +1711,50 @@ export class SettlementIndexer {
     };
   }
 
+  globalFleetMissionArchivePage(
+    options: { missionNumber?: string | null; page: number; pageSize: number }
+  ): {
+    completedMissions: FleetMissionSummary[];
+    page: number;
+    totalEntries: number;
+  } {
+    this.currentMissionReadModelDbVersion();
+    const missionNumber = (options.missionNumber ?? "").replace(/\D+/g, "");
+    const missionNumberSql = missionNumber ? "AND mission_id LIKE ?" : "";
+    const params: SQLQueryBindings[] = missionNumber ? [`%${missionNumber}%`] : [];
+    const countRow = this.db.query(`
+      SELECT COUNT(*) AS count
+      FROM contract_fleet_missions
+      WHERE status_id IN (3, 4)
+        ${missionNumberSql}
+    `).get(...params) as CountRow | null;
+    const totalEntries = Number(countRow?.count ?? 0);
+    const pageSize = Math.max(1, Math.min(100, Math.trunc(options.pageSize) || 25));
+    const totalPages = Math.max(1, Math.ceil(totalEntries / pageSize));
+    const page = Math.min(Math.max(1, Math.trunc(options.page) || 1), totalPages);
+    const rows = this.db.query(`
+      SELECT *
+      FROM contract_fleet_missions INDEXED BY contract_fleet_missions_completed_archive_idx
+      WHERE status_id IN (3, 4)
+        ${missionNumberSql}
+      ORDER BY
+        CAST(CASE WHEN status_id = 4 THEN return_at ELSE arrival_at END AS INTEGER) DESC,
+        CAST(COALESCE(
+          json_extract(event_json, '$.blockNumber'),
+          json_extract(event_json, '$.mission.blockNumber'),
+          '0'
+        ) AS INTEGER) DESC,
+        CAST(mission_id AS INTEGER) DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, pageSize, (page - 1) * pageSize) as ContractFleetMissionRow[];
+    const stateVersion = this.indexedStateCacheVersion();
+    const completedMissions = rows
+      .map((row) => this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion))
+      .map((mission) => this.withDefenseHoldCombatOutcome(mission));
+
+    return { completedMissions, page, totalEntries };
+  }
+
   fleetMission(missionId: string): FleetMissionSummary | null {
     const mission = this.fleetMissionSummariesFromCanonicalRowsByIds([missionId])[0]
       ?? (
@@ -3863,6 +3907,17 @@ export class SettlementIndexer {
         ON contract_fleet_missions (origin_planet_id, status_id);
       CREATE INDEX IF NOT EXISTS contract_fleet_missions_status_type_idx
         ON contract_fleet_missions (status_id, mission_type_id);
+      CREATE INDEX IF NOT EXISTS contract_fleet_missions_completed_archive_idx
+        ON contract_fleet_missions (
+          CAST(CASE WHEN status_id = 4 THEN return_at ELSE arrival_at END AS INTEGER) DESC,
+          CAST(COALESCE(
+            json_extract(event_json, '$.blockNumber'),
+            json_extract(event_json, '$.mission.blockNumber'),
+            '0'
+          ) AS INTEGER) DESC,
+          CAST(mission_id AS INTEGER) DESC
+        )
+        WHERE status_id IN (3, 4);
       CREATE TABLE IF NOT EXISTS contract_rift_withdrawals (
         owner TEXT NOT NULL,
         resource_id INTEGER NOT NULL,

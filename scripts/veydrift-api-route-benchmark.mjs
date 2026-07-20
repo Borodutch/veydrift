@@ -19,8 +19,18 @@ export function topTenRoutePaths({ wallet, missionId, targetPlanetId }) {
   ];
 }
 
+export function performanceRoutePaths(options) {
+  return [
+    ...topTenRoutePaths(options),
+    // The original top-10 baseline grouped wallet mission reads, but deployed QA found the same
+    // five-second hydration stall on the universe-wide completed archive. Keep it as an explicit
+    // tail guard so a healthy aggregate p95 cannot hide a single blocking archive request.
+    "/missions?status=completed&page=1&pageSize=25"
+  ];
+}
+
 export async function benchmarkRoutes(options) {
-  const routes = options.routes ?? topTenRoutePaths(options);
+  const routes = options.routes ?? performanceRoutePaths(options);
   const results = [];
   for (const route of routes) {
     for (let index = 0; index < options.warmup; index += 1) await timedFetch(options.baseUrl, route, options.timeoutMs);
@@ -44,6 +54,16 @@ export async function benchmarkRoutes(options) {
   return results;
 }
 
+export function failedBenchmarkRoutes(results, thresholdMs) {
+  return results.filter((result) => (
+    result.p95Ms >= thresholdMs
+    || (
+      result.route === "GET /missions"
+      && (result.p99Ms >= thresholdMs || result.maxMs >= thresholdMs)
+    )
+  ));
+}
+
 async function timedFetch(baseUrl, route, timeoutMs) {
   const started = performance.now();
   const response = await fetch(`${baseUrl}${route}`, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: "application/json" } });
@@ -59,7 +79,7 @@ function nearestRank(sorted, quantile) {
 async function main(argv) {
   const options = parseArgs(argv);
   const results = await benchmarkRoutes(options);
-  const failed = results.filter((result) => result.p95Ms >= options.thresholdMs);
+  const failed = failedBenchmarkRoutes(results, options.thresholdMs);
   console.log(JSON.stringify({ generatedAt: new Date().toISOString(), ...options, routes: results, passed: failed.length === 0 }, null, 2));
   if (failed.length > 0) process.exitCode = 1;
 }
