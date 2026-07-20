@@ -6224,6 +6224,143 @@ describe("SettlementIndexer", () => {
     });
   });
 
+  test("materializes single and batched reports below 300ms without replaying 33k fleet logs", async () => {
+    const database = new Database(":memory:");
+    const chainReader = {
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    };
+    const indexer = new SettlementIndexer(chainReader, 100n, { database });
+    await indexer.rebuild();
+    const defender = "0x4444444444444444444444444444444444444444" as Address;
+
+    const applyFleetLog = (args: {
+      blockNumber: string;
+      transactionHash: string;
+      logIndex: string;
+      topics: string[];
+      data: string;
+    }) => indexer.applyLog({ ...args, removed: false });
+
+    applyFleetLog({
+      blockNumber: "0x60",
+      transactionHash: "0xhold5500",
+      logIndex: "0x0",
+      topics: [fleetMissionLaunchedTopic, topic(5500n), addressTopic(defender), topic(9n)],
+      data: abiWords(12n, 83n, 1_770_001_000n, 1_770_003_000n, 0n)
+    });
+    applyFleetLog({
+      blockNumber: "0x60",
+      transactionHash: "0xhold5500",
+      logIndex: "0x1",
+      topics: [fleetMissionCargoTopic, topic(5500n)],
+      data: abiWords(0n, 0n, 0n, 1n)
+    });
+    applyFleetLog({
+      blockNumber: "0x60",
+      transactionHash: "0xhold5500",
+      logIndex: "0x2",
+      topics: [fleetMissionShipsTopic, topic(5500n)],
+      data: abiWords(0n, 15n, ...Array.from({ length: 12 }, () => 0n))
+    });
+    applyFleetLog({
+      blockNumber: "0x60",
+      transactionHash: "0xhold5500",
+      logIndex: "0x3",
+      topics: [defenseHoldStationedTopic, topic(5500n), addressTopic(defender), topic(83n)],
+      data: abiWords(12n, 1_770_001_000n, 1_770_002_000n, 1_770_003_000n)
+    });
+
+    const attackMissionIds = [5399n, 5400n, 5401n, 5402n, 5403n];
+    for (const [index, missionId] of attackMissionIds.entries()) {
+      const arrivalAt = 1_770_001_200n + BigInt(index);
+      applyFleetLog({
+        blockNumber: `0x${(0x70 + index).toString(16)}`,
+        transactionHash: `0xattack${missionId}`,
+        logIndex: "0x0",
+        topics: [fleetMissionLaunchedTopic, topic(missionId), addressTopic(player), topic(3n)],
+        data: abiWords(7n, 83n, arrivalAt, arrivalAt + 300n, 0n)
+      });
+      applyFleetLog({
+        blockNumber: `0x${(0x70 + index).toString(16)}`,
+        transactionHash: `0xattack${missionId}`,
+        logIndex: "0x1",
+        topics: [fleetMissionCargoTopic, topic(missionId)],
+        data: abiWords(0n, 0n, 0n, 1n)
+      });
+      applyFleetLog({
+        blockNumber: `0x${(0x70 + index).toString(16)}`,
+        transactionHash: `0xattack${missionId}`,
+        logIndex: "0x2",
+        topics: [fleetMissionShipsTopic, topic(missionId)],
+        data: abiWords(1n, ...Array.from({ length: 13 }, () => 0n))
+      });
+      applyFleetLog({
+        blockNumber: `0x${(0x80 + index).toString(16)}`,
+        transactionHash: `0xresolved${missionId}`,
+        logIndex: "0x0",
+        topics: [attackBattleResolvedTopic, topic(missionId), addressTopic(player), topic(83n)],
+        data: abiWords(1n, 1n, 12345n, 0n, 0n, 0n)
+      });
+    }
+
+    const insertFleetLog = database.query(`
+      INSERT INTO indexed_mission_event_logs (event_id, event_kind, block_number, event_json)
+      VALUES (?, 'fleet', ?, ?)
+    `);
+    const unrelatedLog = JSON.stringify({
+      blockNumber: "0x1",
+      transactionHash: "0xunrelated",
+      logIndex: "0x0",
+      removed: false,
+      topics: [fleetMissionLaunchedTopic, topic(999_999n), addressTopic(player), topic(0n)],
+      data: abiWords(7n, 999n, 1_700_000_000n, 1_700_000_300n, 0n)
+    });
+    database.transaction(() => {
+      for (let index = 0; index < 33_000; index += 1) {
+        insertFleetLog.run(`production-fleet-log-${index}`, String(index + 1), unrelatedLog);
+      }
+    })();
+
+    (indexer as unknown as { decodedMissionLogs: () => never }).decodedMissionLogs = () => {
+      throw new Error("battle report materialization must not replay the global fleet-log history");
+    };
+
+    const singleStartedAt = performance.now();
+    expect(indexer.materializeBattleReportReadModelsForWorker(["5399"], "ingest")).toBe(1);
+    const singleDuration = performance.now() - singleStartedAt;
+    expect(singleDuration).toBeLessThan(300);
+
+    const batchStartedAt = performance.now();
+    expect(indexer.materializeBattleReportReadModelsForWorker(["5400", "5401", "5402", "5403"], "ingest")).toBe(4);
+    const batchDuration = performance.now() - batchStartedAt;
+    expect(batchDuration).toBeLessThan(300);
+
+    for (const missionId of attackMissionIds) {
+      expect(indexer.battleReport(missionId.toString())?.stationedDefenders).toEqual([
+        expect.objectContaining({
+          missionId: "5500",
+          defender,
+          ships: expect.objectContaining({ lightFighter: "15" }),
+          holdUntil: "1770002000"
+        })
+      ]);
+    }
+    const queryPlan = database.query(`
+      EXPLAIN QUERY PLAN
+      SELECT *
+      FROM contract_fleet_missions
+      WHERE target_planet_id = ?
+        AND mission_type_id = 9
+        AND CAST(arrival_at AS INTEGER) <= CAST(? AS INTEGER)
+        AND CAST(return_at AS INTEGER) >= CAST(? AS INTEGER)
+    `).all("83", 1_770_001_200, 1_770_001_200) as Array<{ detail: string }>;
+    expect(queryPlan.map((row) => row.detail).join(" "))
+      .toContain("contract_fleet_missions_target_type_window_idx");
+    database.close();
+  });
+
   test("incomplete battle report logs fail materialization instead of starving newer pending reports", async () => {
     const chainReader = {
       async listDebrisFieldEvents() { return []; },

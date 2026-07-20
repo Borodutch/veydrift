@@ -1,10 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { filesRequireBackendChecks } from "./ci-scope.mjs";
 import {
   failedBenchmarkRoutes,
   performanceRoutePaths,
   topTenRoutePaths
 } from "./veydrift-api-route-benchmark.mjs";
+
+test("routes API performance tooling changes through blocking backend CI", () => {
+  assert.equal(filesRequireBackendChecks(["scripts/veydrift-api-latency-report.mjs"]), true);
+  assert.equal(filesRequireBackendChecks(["scripts/veydrift-api-route-benchmark.test.mjs"]), true);
+  assert.equal(filesRequireBackendChecks(["docs/api-performance.md"]), false);
+});
 
 test("benchmarks the production top ten without long-lived streams", () => {
   const routes = topTenRoutePaths({

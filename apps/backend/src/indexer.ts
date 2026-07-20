@@ -1848,10 +1848,10 @@ export class SettlementIndexer {
 
     const targetPlanetId = report?.targetPlanetId ?? attack?.targetPlanetId;
     if (targetPlanetId) {
-      // Historical reports must not depend on the current active roster. Decode immutable launch,
-      // DefenseHoldStationed/Ended, recall, and return logs so a hold remains attributable after it
-      // is recalled, expires, lands, or is wiped out in combat.
-      for (const defender of this.decodedMissionLogs().eventMissions) {
+      // Historical reports must not depend on the current active roster. Canonical mission rows
+      // bound the target/time window; targeted event-log reads preserve DefenseHoldStationed/Ended,
+      // recall, and return fields without replaying the fleet-log history in every materializer.
+      for (const defender of this.historicalDefenseHoldsForBattle(targetPlanetId, attackArrival)) {
         if (!this.isBattleTimeDefenseHoldForPlanet(defender, targetPlanetId, attackArrival)) continue;
         defenders.set(defender.missionId, defender);
       }
@@ -1865,6 +1865,33 @@ export class SettlementIndexer {
         compositions.get(defender.missionId)
       ))
       .sort((left, right) => Number(left.holdUntil) - Number(right.holdUntil));
+  }
+
+  private historicalDefenseHoldsForBattle(
+    targetPlanetId: string,
+    attackArrival: number
+  ): FleetMissionSummary[] {
+    this.currentMissionReadModelDbVersion();
+    const defenseHoldTypeId = fleetMissionTypeId("DefenseHold");
+    if (defenseHoldTypeId === null) return [];
+    const rows = this.db.query(`
+      SELECT *
+      FROM contract_fleet_missions INDEXED BY contract_fleet_missions_target_type_window_idx
+      WHERE target_planet_id = ?
+        AND mission_type_id = ?
+        AND CAST(arrival_at AS INTEGER) <= CAST(? AS INTEGER)
+        AND CAST(return_at AS INTEGER) >= CAST(? AS INTEGER)
+      ORDER BY CAST(arrival_at AS INTEGER) ASC, CAST(mission_id AS INTEGER) ASC
+    `).all(targetPlanetId, defenseHoldTypeId, attackArrival, attackArrival) as ContractFleetMissionRow[];
+    const eventMissions = decodeFleetMissionLogs(
+      this.fleetMissionEventLogsForMissionIds(rows.map((row) => row.mission_id))
+    );
+    return rows.map((row) => {
+      const eventMission = eventMissions.get(row.mission_id);
+      return isStoredFleetMissionSummary(eventMission)
+        ? this.canonicalFleetMissionSummary(row, eventMission)
+        : this.canonicalFleetMissionSummary(row);
+    });
   }
 
   battleReport(missionId: string, options: { includeRawFallback?: boolean } = { includeRawFallback: false }): BattleReport | null {
@@ -3903,6 +3930,13 @@ export class SettlementIndexer {
         ON contract_fleet_missions (owner, status_id);
       CREATE INDEX IF NOT EXISTS contract_fleet_missions_target_idx
         ON contract_fleet_missions (target_planet_id, status_id);
+      CREATE INDEX IF NOT EXISTS contract_fleet_missions_target_type_window_idx
+        ON contract_fleet_missions (
+          target_planet_id,
+          mission_type_id,
+          CAST(arrival_at AS INTEGER),
+          CAST(return_at AS INTEGER)
+        );
       CREATE INDEX IF NOT EXISTS contract_fleet_missions_origin_idx
         ON contract_fleet_missions (origin_planet_id, status_id);
       CREATE INDEX IF NOT EXISTS contract_fleet_missions_status_type_idx
