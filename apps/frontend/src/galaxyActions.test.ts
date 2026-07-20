@@ -269,6 +269,44 @@ describe("galaxyActions", () => {
     ]);
   });
 
+  test("enables Deploy with a combat-only origin while Transport keeps its cargo requirement", () => {
+    const ownColony = planet({
+      ownerId: account,
+      occupiedBy: {
+        owner: account,
+        planetId: "9",
+      },
+    });
+    const actions = galaxyActionsForSlot({
+      account,
+      homePlanetId: "7",
+      isOrigin: false,
+      planet: ownColony,
+      shipyardState: shipyardState([{ id: 1, count: 3 }]),
+    });
+
+    expect(actions.find((action) => action.kind === "transport")).toMatchObject({
+      enabled: false,
+      reason: "Requires a cargo-capable ship on your home planet.",
+    });
+    expect(actions.find((action) => action.kind === "deploy")).toMatchObject({
+      enabled: true,
+      ships: { lightFighter: 1 },
+    });
+
+    const emptyOriginActions = galaxyActionsForSlot({
+      account,
+      homePlanetId: "7",
+      isOrigin: false,
+      planet: ownColony,
+      shipyardState: shipyardState([]),
+    });
+    expect(emptyOriginActions.find((action) => action.kind === "deploy")).toMatchObject({
+      enabled: false,
+      reason: "Requires at least one movable ship on the active origin.",
+    });
+  });
+
   test("blocks colonization of quantum-unstable migration reservations", () => {
     const actions = galaxyActionsForSlot({
       account,

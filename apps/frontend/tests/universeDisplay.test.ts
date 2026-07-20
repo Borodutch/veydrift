@@ -1040,8 +1040,9 @@ describe("tester universe display data", () => {
     expect(missingPlanetActions).toEqual([]);
     expect(noCargoActions).toMatchObject([
       { enabled: false, kind: "transport", reason: "Requires a cargo-capable ship on your home planet." },
-      { enabled: false, kind: "deploy", reason: "Requires a cargo-capable ship on your home planet." },
-      // A lone Light Fighter cannot carry cargo but is movable, so proactive Defend stays available.
+      // Deploy and proactive Defend both accept a lone movable Light Fighter; Transport keeps its
+      // cargo-capable ship requirement.
+      { enabled: true, kind: "deploy", ships: { lightFighter: 1 } },
       { enabled: true, kind: "defenseHold", label: "Defend" },
     ]);
     expect([...enemyActions, ...ownActions, ...missingPlanetActions].map((action) => action.label).join(" ")).not.toMatch(/spy|espionage|probe/i);
