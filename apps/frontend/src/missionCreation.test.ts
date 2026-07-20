@@ -25,7 +25,7 @@ import {
   TargetIntelCard,
   targetResourceIntel,
 } from "./components/MissionCreationPage";
-import { missionMoonShipyardState, transportCargoForOrigin } from "./PlayableMvpApp";
+import { cargoForCargoMissionLaunch, missionMoonShipyardState, transportCargoForOrigin } from "./PlayableMvpApp";
 import type { GalaxyAction } from "./galaxyActions";
 import type { Planet } from "./types";
 
@@ -205,6 +205,38 @@ describe("mission creation", () => {
     expect(Object.values(initial).every((count) => count === 0)).toBe(true);
   });
 
+  test("allows a non-cargo-only Deploy from the selected origin inventory", () => {
+    const lightFighterDeploy = {
+      ...deployAction,
+      ships: {
+        ...deployAction.ships,
+        smallCargo: 0,
+        lightFighter: 3,
+      },
+    };
+
+    expect(initialMissionShips(lightFighterDeploy, {
+      ships: [{ id: 1, count: 3 }],
+    })).toEqual({
+      ...deployAction.ships,
+      smallCargo: 0,
+      lightFighter: 3,
+    });
+
+    expect(staleSelectedShipQuantityBlocker(
+      deployAction,
+      { ...deployAction.ships, smallCargo: 0, lightFighter: 4 },
+      { ships: [{ id: 1, count: 3 }] },
+    )).toContain("Light Fighter 4 selected / 3 available");
+
+    expect(initialMissionShips(transportAction, {
+      ships: [{ id: 1, count: 3 }],
+    })).toEqual({
+      ...transportAction.ships,
+      smallCargo: 0,
+    });
+  });
+
   test("renders attack target intel with planet image, coordinates, commander, and alliance", () => {
     const node = TargetIntelCard({
       coords: { galaxy: 7, system: 41, position: 6 },
@@ -355,18 +387,20 @@ describe("mission creation", () => {
   test("seeds Moon to Planet Deploy from the moon fleet instead of the parent planet", () => {
     const moonOriginState = {
       ships: [
-        { id: 2, count: 1 },
+        { id: 1, count: 2 },
         { id: 4, count: 2 },
       ],
     };
     const initial = initialMissionShips(deployAction, moonOriginState);
 
     expect(initial.smallCargo).toBe(0);
-    expect(initial.recycler).toBe(1);
+    expect(initial.lightFighter).toBe(1);
     expect(staleSelectedShipQuantityBlocker(deployAction, initial, moonOriginState)).toBeUndefined();
+    expect(playableMvpAppSource).toContain("const moonOriginShipyardState = missionMoonShipyardState({ moonState, shipyardState });");
+    expect(playableMvpAppSource).toContain("shipyardState: moonOriginShipyardState,");
     expect(missionDraftBlocker({
       action: deployAction,
-      cargoCapacity: 20_000,
+      cargoCapacity: 49,
       cargoSupported: true,
       cargoTotal: 0,
       fleetSlots: { active: 2, limit: 5 },
@@ -375,7 +409,7 @@ describe("mission creation", () => {
       quantity: 1,
       resources: { metal: 0, crystal: 0, deuterium: 100 },
       selectedShipCount: 1,
-      totalCargoCapacity: 20_000,
+      totalCargoCapacity: 50,
     })).toBeUndefined();
     expect(playableMvpAppSource).toContain(
       "validateShipInventory: { originIsMoon, originPlanetId, ships: draft.ships }",
@@ -880,11 +914,17 @@ describe("mission creation", () => {
     expect(missionCreationSource).toContain("<MissionFormSection title=\"Fleet\" eyebrow=\"Ships\">");
   });
 
-  test("keeps selected ships and cargo in Transport and Deploy confirmation payloads", () => {
-    const ships = {
+  test("keeps Transport cargo and mixed Deploy fleets in confirmation payloads", () => {
+    const cargoShips = {
       ...transportAction.ships,
       smallCargo: 4,
       largeCargo: 2,
+    };
+    const mixedDeployShips = {
+      ...cargoShips,
+      lightFighter: 7,
+      recycler: 3,
+      cruiser: 5,
     };
     const cargo = { metal: "1200", crystal: "340", deuterium: "56" };
     const base = {
@@ -897,15 +937,16 @@ describe("mission creation", () => {
       lootRatioActive: false,
       primaryTargetId: 0,
       quantity: 1,
-      ships,
+      ships: cargoShips,
       speedPercent: 70,
     } as const;
 
     const transportDraft = buildMissionLaunchDraft({ ...base, action: transportAction });
-    const deployDraft = buildMissionLaunchDraft({ ...base, action: deployAction });
+    const deployDraft = buildMissionLaunchDraft({ ...base, action: deployAction, ships: mixedDeployShips });
 
+    expect(transportDraft.ships).toEqual(cargoShips);
+    expect(deployDraft.ships).toEqual(mixedDeployShips);
     for (const draft of [transportDraft, deployDraft]) {
-      expect(draft.ships).toEqual(ships);
       expect(draft.cargo).toEqual(cargo);
       expect(draft.speedPercent).toBe(70);
       expect(draft.originIsMoon).toBe(true);
@@ -913,6 +954,63 @@ describe("mission creation", () => {
     }
 
     expect(buildMissionLaunchDraft({ ...base, action: attackAction }).cargo).toBeUndefined();
+  });
+
+  test("submits a non-cargo-only Deploy with zero resources and preserves body flags", () => {
+    const ships = {
+      ...deployAction.ships,
+      smallCargo: 0,
+      lightFighter: 3,
+    };
+    const draft = buildMissionLaunchDraft({
+      action: deployAction,
+      cargo: {},
+      defenseHoldActive: false,
+      defenseHoldSeconds: 0,
+      effectiveOriginIsMoon: true,
+      effectiveTargetIsMoon: false,
+      lootRatio: { metal: 34, crystal: 33, deuterium: 33 },
+      lootRatioActive: false,
+      primaryTargetId: 0,
+      quantity: 1,
+      ships,
+      speedPercent: 100,
+    });
+
+    expect(draft).toMatchObject({
+      ships,
+      cargo: undefined,
+      originIsMoon: true,
+      targetIsMoon: false,
+    });
+    expect(cargoForCargoMissionLaunch({
+      actionKind: "deploy",
+      autoFilledCargo: { metal: "50", crystal: "25", deuterium: "10" },
+      cargo: draft.cargo,
+    })).toBeUndefined();
+    expect(cargoForCargoMissionLaunch({
+      actionKind: "transport",
+      autoFilledCargo: { metal: "50", crystal: "25", deuterium: "10" },
+      cargo: draft.cargo,
+    })).toEqual({ metal: "50", crystal: "25", deuterium: "10" });
+    expect(cargoForCargoMissionLaunch({
+      actionKind: "deploy",
+      autoFilledCargo: { metal: "50", crystal: "25", deuterium: "10" },
+      cargo: { metal: "12", crystal: "3", deuterium: "0" },
+    })).toEqual({ metal: "12", crystal: "3", deuterium: "0" });
+    expect(missionDraftBlocker({
+      action: deployAction,
+      cargoCapacity: 0,
+      cargoSupported: true,
+      cargoTotal: 0,
+      fleetSlots: { active: 0, limit: 1 },
+      fuelCost: 0,
+      originCoords: { galaxy: 2, system: 44, position: 7 },
+      quantity: 1,
+      resources: { metal: 0, crystal: 0, deuterium: 0 },
+      selectedShipCount: 3,
+      totalCargoCapacity: 0,
+    })).toBeUndefined();
   });
 
   test("uses the compact Attack-style intel shell for non-attack mission setup", () => {

@@ -2547,6 +2547,20 @@ function transportCargoForSelectedOrigin({
   );
 }
 
+export function cargoForCargoMissionLaunch({
+  actionKind,
+  autoFilledCargo,
+  cargo,
+}: {
+  actionKind: "transport" | "deploy";
+  autoFilledCargo: Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined;
+  cargo: MissionCargoDraft | undefined;
+}): Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined {
+  const selectedCargo = missionCargoFromDraft(cargo);
+  if (selectedCargo || actionKind === "deploy") return selectedCargo;
+  return autoFilledCargo;
+}
+
 function missionCargoFromDraft(cargo: MissionCargoDraft | undefined): Partial<Pick<OnChainResources, "metal" | "crystal" | "deuterium">> | undefined {
   if (!cargo) return undefined;
   const normalized = {
@@ -7568,15 +7582,19 @@ export function PlayableMvpApp({
       return;
     }
     const cargo = supportsCargoMission
-      ? missionCargoFromDraft(draft.cargo) ?? transportCargoForSelectedOrigin({
-          originPlanet: missionOriginPlanet,
-          originResources: originCargoResources,
-          originIsMoon,
-          ships: draft.ships,
-          target: coords,
-          targetIsMoon,
-          driveLevels,
-          speedPercent: draft.speedPercent,
+      ? cargoForCargoMissionLaunch({
+          actionKind: action.kind === "deploy" ? "deploy" : "transport",
+          autoFilledCargo: transportCargoForSelectedOrigin({
+            originPlanet: missionOriginPlanet,
+            originResources: originCargoResources,
+            originIsMoon,
+            ships: draft.ships,
+            target: coords,
+            targetIsMoon,
+            driveLevels,
+            speedPercent: draft.speedPercent,
+          }),
+          cargo: draft.cargo,
         })
       : undefined;
     const launchParams = {
@@ -7948,13 +7966,14 @@ export function PlayableMvpApp({
   const moonOverviewActions = useMemo(() => {
     if (!selectedManagedPlanet?.moon?.exists) return [];
     const targetPlanet = planetFromSettlementPlanet(selectedManagedPlanet);
+    const moonOriginShipyardState = missionMoonShipyardState({ moonState, shipyardState });
     const targetActions = galaxyActionsForSlot({
       account,
       defenseState,
       homePlanetId: onChainSettlement?.homePlanetId,
       isOrigin: false,
       planet: targetPlanet,
-      shipyardState,
+      shipyardState: moonOriginShipyardState,
     });
     const actionsByKind = new Map(targetActions.map((action) => [action.kind, action]));
     const transportAction = moonOverviewMissionAction(actionsByKind.get("transport"), "transport", "Transport");
@@ -7994,6 +8013,7 @@ export function PlayableMvpApp({
     handleMoonMissionAction,
     handleSelectMoon,
     onChainSettlement?.homePlanetId,
+    moonState,
     selectedManagedPlanet,
     shipyardState,
   ]);

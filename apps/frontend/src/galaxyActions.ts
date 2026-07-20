@@ -186,6 +186,8 @@ export function galaxyActionsForSlot({
 
     const cargoBlocker = commonBlocker ?? firstAvailableCargoShipBlocker(shipyardState);
     const cargoShips = firstAvailableCargoShips(shipyardState);
+    const deployBlocker = commonBlocker ?? firstAvailableDeployShipBlocker(shipyardState);
+    const deployShips = firstAvailableDeployShips(shipyardState);
 
     return [
       enabledOrDisabled({
@@ -194,14 +196,14 @@ export function galaxyActionsForSlot({
         disabled: transportDisabledAction(),
       }),
       enabledOrDisabled({
-        blocker: cargoBlocker,
+        blocker: deployBlocker,
         enabled: {
           enabled: true,
           kind: "deploy",
           label: "Deploy",
           mode: "mission",
           mission: "deploy",
-          ships: cargoShips,
+          ships: deployShips,
         },
         disabled: {
           kind: "deploy",
@@ -406,6 +408,10 @@ function firstAvailableFleetShipBlocker(shipyardState: ChainShipyardState | null
   return firstAvailableFleetShip(shipyardState) ? undefined : "Requires at least one movable ship on your home planet.";
 }
 
+function firstAvailableDeployShipBlocker(shipyardState: ChainShipyardState | null): string | undefined {
+  return firstAvailableDeployShip(shipyardState) ? undefined : "Requires at least one movable ship on the active origin.";
+}
+
 function firstAvailableCargoShips(shipyardState: ChainShipyardState | null): MissionShips {
   const ship = firstAvailableCargoShip(shipyardState);
   return ship ? singleShip(ship) : emptyMissionShips();
@@ -413,6 +419,11 @@ function firstAvailableCargoShips(shipyardState: ChainShipyardState | null): Mis
 
 function firstAvailableFleetShips(shipyardState: ChainShipyardState | null): MissionShips {
   const ship = firstAvailableFleetShip(shipyardState);
+  return ship ? singleShip(ship) : emptyMissionShips();
+}
+
+function firstAvailableDeployShips(shipyardState: ChainShipyardState | null): MissionShips {
+  const ship = firstAvailableDeployShip(shipyardState);
   return ship ? singleShip(ship) : emptyMissionShips();
 }
 
@@ -465,6 +476,10 @@ function firstAvailableFleetShip(shipyardState: ChainShipyardState | null): Miss
     "recycler",
   ];
   return candidates.find((ship) => shipCount(shipyardState, ship) > 0);
+}
+
+function firstAvailableDeployShip(shipyardState: ChainShipyardState | null): MissionShipKey | undefined {
+  return firstAvailableFleetShip(shipyardState) ?? firstAvailableCargoShip(shipyardState);
 }
 
 function singleShip(ship: MissionShipKey): MissionShips {

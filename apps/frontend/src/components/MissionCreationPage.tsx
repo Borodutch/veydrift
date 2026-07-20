@@ -193,6 +193,7 @@ export const missionShipOptions: ShipOption[] = [
 ];
 
 const cargoShipKeys = new Set<MissionShipKey>(["smallCargo", "largeCargo", "recycler", "colonyShip"]);
+const deployShipKeys = new Set<MissionShipKey>(missionShipOptions.map((ship) => ship.key));
 
 export function missionSpecificLoadout(action: EnabledGalaxyAction): MissionSpecificLoadout | null {
   if (action.mode !== "mission") return null;
@@ -1142,7 +1143,8 @@ function stationedDefenderShipCount(ships: Record<string, string>): number {
 function allowedShipKeysForAction(action: EnabledGalaxyAction): Set<MissionShipKey> {
   if (action.kind === "colonize") return new Set(["colonyShip"]);
   if (action.kind === "harvest") return new Set(["recycler"]);
-  if (action.kind === "transport" || action.kind === "deploy") return cargoShipKeys;
+  if (action.kind === "transport") return cargoShipKeys;
+  if (action.kind === "deploy") return deployShipKeys;
   return new Set(missionShipOptions.map((ship) => ship.key).filter((key) => key !== "colonyShip"));
 }
 
