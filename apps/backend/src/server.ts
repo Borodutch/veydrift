@@ -2738,25 +2738,26 @@ function indexedMissionArchive(
   url: URL,
   indexer: SettlementIndexer
 ): FleetMissionArchiveResponse {
-  const archive = indexer.fleetMissionArchive(wallet);
-  const rows = filterMissionArchiveRows(
-    chronologicalMissionArchiveRows(archive.completedMissions, archive.battleReports),
-    url.searchParams.get("filter"),
-    url.searchParams.get("missionNumber"),
-    wallet,
-    archive.ownedPlanetIds
-  );
   const requested = missionArchivePagination(url);
-  const totalEntries = rows.length;
+  // Pagination and filtering happen in SQLite before mission summaries and reports are hydrated.
+  // The previous implementation decoded/enriched the wallet's entire completed history and sliced
+  // only at the end; production archives with thousands of missions blocked the reader event loop
+  // for ~5 seconds and stalled unrelated mission-detail requests on the same worker (VEY-KANEO-737).
+  const archive = indexer.fleetMissionArchivePage(wallet, {
+    filter: url.searchParams.get("filter"),
+    missionNumber: url.searchParams.get("missionNumber"),
+    page: requested.page,
+    pageSize: requested.pageSize
+  });
+  const rows = chronologicalMissionArchiveRows(archive.completedMissions, []);
+  const totalEntries = archive.totalEntries;
   const totalPages = Math.max(1, Math.ceil(totalEntries / requested.pageSize));
-  const page = Math.min(requested.page, totalPages);
-  const offset = (page - 1) * requested.pageSize;
-  const pageRows = rows.slice(offset, offset + requested.pageSize);
+  const page = archive.page;
 
   return {
     wallet,
     homePlanetId: archive.homePlanetId,
-    rows: attachMissionArchiveReports(pageRows, indexer.battleReportsForMissions(missionsFromArchiveRows(pageRows))),
+    rows: attachMissionArchiveReports(rows, indexer.battleReportsForMissions(missionsFromArchiveRows(rows))),
     pagination: {
       page,
       pageSize: requested.pageSize,
@@ -4436,7 +4437,12 @@ function rankedHighscorePlanets(
       ? indexedCurrentPlanetState(indexer, planet, { allowPendingResources: true }) ?? planet
       : planet;
     const tactical = indexedPlanetTacticalSummary(accrued, buildings, ships, defenses, technologyLevels);
-    const moonState = indexer?.moonState(planet.owner, planet.planetId);
+    // Most ranked planets do not have moons. moonState() hydrates resources, buildings, defenses,
+    // fleets, and queues, so calling it unconditionally turned one rankings page into hundreds of
+    // unnecessary SQLite queries. The indexed primary-key existence lookup lets the common no-moon
+    // path stay O(1) per planet (VEY-KANEO-737).
+    const hasMoon = indexer?.hasMoon(planet.planetId) ?? false;
+    const moonState = hasMoon ? indexer?.moonState(planet.owner, planet.planetId) : undefined;
     const moon = moonState?.moon
       ? {
           exists: true,
@@ -4454,7 +4460,7 @@ function rankedHighscorePlanets(
         position: planet.position
       },
       archetype: planetArchetypeForTemperature(planet.temperature),
-      hasMoon: Boolean(moon) || (indexer?.hasMoon(planet.planetId) ?? false),
+      hasMoon,
       moon,
       tactical
     };

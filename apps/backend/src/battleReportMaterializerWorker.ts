@@ -26,6 +26,9 @@ try {
 
   const indexer = new SettlementIndexer(noopChainReader, fromBlock, {
     databasePath,
+    // The long-lived backend writer owns schema migration. Re-acquiring schema locks in every
+    // short-lived report worker can block otherwise read-only mission routes.
+    assumeSchemaReady: true,
     runStartupBackfill: false
   });
   const materialized = indexer.materializeBattleReportReadModelsForWorker(missionIds, reason);

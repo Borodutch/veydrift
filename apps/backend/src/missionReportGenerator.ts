@@ -138,6 +138,7 @@ if (!loaded.config.indexDbPath) {
 const service = new MissionReportGeneratorService(
   new SettlementIndexer(noopChainReader, loaded.config.indexFromBlock, {
     databasePath: loaded.config.indexDbPath,
+    readOnly: true,
     runStartupBackfill: false
   }),
   {
@@ -145,7 +146,10 @@ const service = new MissionReportGeneratorService(
     fromBlock: loaded.config.indexFromBlock,
     intervalMs: positiveInt(process.env.VEYDRIFT_MISSION_REPORT_GENERATOR_INTERVAL_MS, 3_000),
     batchSize: positiveInt(process.env.VEYDRIFT_MISSION_REPORT_GENERATOR_BATCH_SIZE, 50),
-    concurrency: positiveInt(process.env.VEYDRIFT_MISSION_REPORT_GENERATOR_CONCURRENCY, 4)
+    // SQLite has one writer. Four concurrent materializer processes only compete for the same write
+    // lock and schema, and production saw their contention surface as ~5 second API stalls. A single
+    // batched worker keeps report generation asynchronous without starving API readers.
+    concurrency: positiveInt(process.env.VEYDRIFT_MISSION_REPORT_GENERATOR_CONCURRENCY, 1)
   }
 );
 service.start();

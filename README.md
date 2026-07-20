@@ -608,7 +608,36 @@ VEYDRIFT_WRITER_INTERNAL_PORT=<P> # override the writer's private loopback write
                                   # PORT+1); only relevant when the pool has more than one worker.
                                   # VEYDRIFT_WORKER_ROLE / VEYDRIFT_WORKER_INDEX are managed internally
                                   # by the supervisor and should not be set by hand.
+VEYDRIFT_MISSION_REPORT_GENERATOR_CONCURRENCY=<N>
+                                  # report-materializer process count (default 1). SQLite permits one
+                                  # writer, so raising this requires measured evidence and can increase
+                                  # lock contention rather than throughput.
 ```
+
+#### API latency reporting and benchmark
+
+Backend request logs contain structured `api_request` events with normalized route families. Generate
+the slow-route report from one or more captured log files (or stdin) with:
+
+```sh
+bun run report:api-latency -- --json backend.log
+```
+
+The report excludes streaming `GET /chain/events`, ranks route families by p95, and includes p50,
+p95, p99, max, and counts over 300 ms. After deployment, exercise the same ten normal route families
+against a representative wallet, completed mission, and target planet with:
+
+```sh
+bun run performance:api -- \
+  --base-url https://api-test.veydrift.com \
+  --wallet 0x0000000000000000000000000000000000000000 \
+  --mission-id 1 \
+  --target-planet-id 1
+```
+
+The benchmark consumes every response body, runs concurrent samples, and exits non-zero if any route
+family has p95 greater than or equal to 300 ms. Use real indexed identifiers for deployment evidence;
+the placeholder values above document argument shape only.
 
 ## Operating Rules
 
