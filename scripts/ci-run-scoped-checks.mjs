@@ -97,6 +97,7 @@ function main() {
   if (scope.backend) {
     runLogged("backend-check", "bun", ["run", "check:backend"]);
     runLogged("backend-test", "bun", ["run", "test:backend"]);
+    runLogged("backend-performance-tool-test", "bun", ["run", "test:api-latency-report"]);
   }
 
   if (scope.frontend) {

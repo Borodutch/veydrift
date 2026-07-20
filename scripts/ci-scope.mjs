@@ -80,6 +80,14 @@ function anyMatch(files, pattern) {
   return files.some((file) => pattern.test(file));
 }
 
+export function filesRequireBackendChecks(files) {
+  return anyMatch(files, /^(apps\/backend|packages\/universe)\//)
+    || anyMatch(
+      files,
+      /^scripts\/(ci-(run-scoped-checks|scope)|veydrift-api-(latency-report|route-benchmark))(\.test)?\.mjs$/,
+    );
+}
+
 export function computeScope(options = {}) {
   const eventName = options.eventName || process.env.EVENT_NAME || process.env.GITHUB_EVENT_NAME || "local";
   const base =
@@ -121,7 +129,7 @@ export function computeScope(options = {}) {
     scope.circuits = true;
   } else {
     scope.frontend = anyMatch(files, /^(apps\/frontend|packages\/universe)\//);
-    scope.backend = anyMatch(files, /^(apps\/backend|packages\/universe)\//);
+    scope.backend = filesRequireBackendChecks(files);
     scope.universe = anyMatch(files, /^packages\/universe\//);
     scope.contracts = anyMatch(files, /^packages\/contracts\//);
     scope.circuits = anyMatch(files, /^packages\/circuits\//);
