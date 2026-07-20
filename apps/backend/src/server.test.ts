@@ -9112,6 +9112,9 @@ describe("Veydrift backend", () => {
       detailOwners.add(wallet.toLowerCase());
       return technologyLevels(wallet);
     }) as SettlementIndexer["technologyLevels"];
+    indexer.moonState = (() => {
+      throw new Error("no-moon rankings must not hydrate the full moon read model");
+    }) as SettlementIndexer["moonState"];
 
     const handler = createRequestHandler({
       config: configuredTestConfig,
@@ -9136,6 +9139,39 @@ describe("Veydrift backend", () => {
     expect(body.currentPlayer.rankings.economy).toBeNull();
     expect(detailPlanetIds).toEqual(new Set(["11"]));
     expect(detailOwners).toEqual(new Set([owners[1]!]));
+  });
+
+  test("keeps production-shaped highscore reads below 300ms at p95", async () => {
+    const owners = Array.from({ length: 250 }, (_, index) => (
+      `0x${(index + 1).toString(16).padStart(40, "0")}` as Address
+    ));
+    const chainReader = new MockChainReader();
+    chainReader.listSettledPlanetEvents = async () => owners.map((owner, index) => ({
+      ...planet,
+      eventName: "PlanetStarted",
+      owner,
+      planetId: String(index + 1),
+      transactionHash: `0xperf${index}`,
+      blockNumber: String(1_000 + index)
+    }));
+    const indexer = new SettlementIndexer(chainReader, configuredTestConfig.indexFromBlock);
+    await indexer.rebuild();
+    const handler = createRequestHandler({ config: configuredTestConfig, chainReader, indexer });
+    const durations: number[] = [];
+
+    for (let sample = 0; sample < 20; sample += 1) {
+      const startedAt = performance.now();
+      const response = await handler(new Request(
+        `http://localhost/highscores?category=total&page=1&pageSize=50&currentWallet=${owners[sample]}&includeAttackProtection=true`
+      ));
+      await response.arrayBuffer();
+      expect(response.status).toBe(200);
+      durations.push(performance.now() - startedAt);
+    }
+
+    durations.sort((left, right) => left - right);
+    const p95 = durations[Math.ceil(durations.length * 0.95) - 1]!;
+    expect(p95).toBeLessThan(300);
   });
 
   test("includes all indexed planets for each ranked commander", async () => {

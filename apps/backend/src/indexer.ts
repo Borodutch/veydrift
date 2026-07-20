@@ -256,6 +256,10 @@ const indexedStateVersionMetadataKey = "indexedStateVersion";
 export type SettlementIndexerOptions = {
   database?: Database;
   databasePath?: string;
+  // Dedicated background workers open an already-migrated shared database. Re-running the full
+  // schema migration in every short-lived worker takes SQLite schema locks and can stall unrelated
+  // API readers. This is only safe when the long-lived writer has already created the schema.
+  assumeSchemaReady?: boolean;
   readOnly?: boolean;
   // Multi-process API workers share one SQLite DB. The writer is the only process that should run
   // startup materialized-state repair/backfill; readers only need the schema and current rows.
@@ -685,11 +689,15 @@ export class SettlementIndexer {
     options: SettlementIndexerOptions = {}
   ) {
     const databasePath = options.databasePath ?? ":memory:";
-    this.db = options.database ?? openIndexerDatabase(databasePath, options.readOnly ?? false);
+    this.db = options.database ?? openIndexerDatabase(
+      databasePath,
+      options.readOnly ?? false,
+      options.assumeSchemaReady ?? false
+    );
     this.qaSyntheticStationedDefenders = options.qaSyntheticStationedDefenders ?? false;
     this.randomnessEngineConfigured = options.randomnessEngineConfigured ?? false;
     this.rebuildDeadlineMs = options.rebuildDeadlineMs && options.rebuildDeadlineMs > 0 ? options.rebuildDeadlineMs : 0;
-    if (!options.readOnly) {
+    if (!options.readOnly && !options.assumeSchemaReady) {
       this.migrate(options.runStartupBackfill ?? true);
       this.seedStartPriceBootstrap(options.settlementStartPriceWei ?? null);
     }
@@ -1001,7 +1009,26 @@ export class SettlementIndexer {
 
   playerProfiles(wallets: Iterable<string>): Map<string, PlayerProfile> {
     const uniqueWallets = [...new Set([...wallets].map((wallet) => wallet.toLowerCase()))];
-    return new Map(uniqueWallets.map((wallet) => [wallet, this.playerProfile(wallet)]));
+    const rowsByWallet = new Map<string, PlayerProfileRow>();
+    for (const walletChunk of chunks(uniqueWallets, 500)) {
+      if (walletChunk.length === 0) continue;
+      const rows = this.db.query(`
+        SELECT wallet, display_name, description, updated_at
+        FROM player_profiles
+        WHERE wallet IN (${walletChunk.map(() => "?").join(",")})
+      `).all(...walletChunk) as PlayerProfileRow[];
+      for (const row of rows) rowsByWallet.set(row.wallet.toLowerCase(), row);
+    }
+    return new Map(uniqueWallets.map((wallet) => {
+      const row = rowsByWallet.get(wallet);
+      return [wallet, {
+        wallet: wallet as Address,
+        displayName: row?.display_name ?? null,
+        description: row?.description ?? null,
+        fallbackName: playerFallbackName(wallet as Address),
+        updatedAt: row?.updated_at ?? null
+      }];
+    }));
   }
 
   watchedPlanetIds(wallet: string): string[] {
@@ -1601,6 +1628,86 @@ export class SettlementIndexer {
       ownedPlanetIds,
       completedMissions,
       battleReports: []
+    };
+  }
+
+  fleetMissionArchivePage(
+    wallet: `0x${string}`,
+    options: { filter?: string | null; missionNumber?: string | null; page: number; pageSize: number }
+  ): Pick<FleetMissionVisibility, "homePlanetId" | "wallet"> & {
+    completedMissions: FleetMissionSummary[];
+    ownedPlanetIds: Set<string>;
+    page: number;
+    totalEntries: number;
+  } {
+    this.currentMissionReadModelDbVersion();
+    const settlement = this.walletSettlement(wallet);
+    const walletLower = wallet.toLowerCase();
+    const ownedPlanetIds = new Set(
+      this.settledPlanetsForOwner(wallet).map((planet) => planet.planetId)
+    );
+    const targetIds = [...ownedPlanetIds].filter((planetId) => planetId.length > 0);
+    const asOfSeconds = nowSeconds();
+    const statusSql = `(
+      status_id IN (3, 4)
+      OR (status_id IN (2, 5) AND CAST(return_at AS INTEGER) <= CAST(? AS INTEGER))
+    )`;
+    const params: SQLQueryBindings[] = [asOfSeconds.toString()];
+    let visibilitySql: string;
+    if (options.filter === "incomingAttacks") {
+      visibilitySql = targetIds.length > 0
+        ? `mission_type_id = 3 AND owner != ? AND target_planet_id IN (${targetIds.map(() => "?").join(",")})`
+        : "0 = 1";
+      if (targetIds.length > 0) params.push(walletLower, ...targetIds);
+    } else {
+      visibilitySql = targetIds.length > 0
+        ? `(owner = ? OR target_planet_id IN (${targetIds.map(() => "?").join(",")}))`
+        : "owner = ?";
+      params.push(walletLower, ...targetIds);
+    }
+    const missionNumber = (options.missionNumber ?? "").replace(/\D+/g, "");
+    const missionNumberSql = missionNumber ? "AND mission_id LIKE ?" : "";
+    if (missionNumber) params.push(`%${missionNumber}%`);
+
+    const countRow = this.db.query(`
+      SELECT COUNT(*) AS count
+      FROM contract_fleet_missions
+      WHERE ${statusSql}
+        AND (${visibilitySql})
+        ${missionNumberSql}
+    `).get(...params) as CountRow | null;
+    const totalEntries = Number(countRow?.count ?? 0);
+    const pageSize = Math.max(1, Math.min(100, Math.trunc(options.pageSize) || 25));
+    const totalPages = Math.max(1, Math.ceil(totalEntries / pageSize));
+    const page = Math.min(Math.max(1, Math.trunc(options.page) || 1), totalPages);
+    const rows = this.db.query(`
+      SELECT *
+      FROM contract_fleet_missions
+      WHERE ${statusSql}
+        AND (${visibilitySql})
+        ${missionNumberSql}
+      ORDER BY
+        CAST(CASE WHEN status_id IN (2, 4, 5) THEN return_at ELSE arrival_at END AS INTEGER) DESC,
+        CAST(mission_id AS INTEGER) DESC
+      LIMIT ? OFFSET ?
+    `).all(...params, pageSize, (page - 1) * pageSize) as ContractFleetMissionRow[];
+    const stateVersion = this.indexedStateCacheVersion();
+    const completedMissions = rows.map((row) => {
+      const mission = this.withFleetMissionPlanetReferences(this.canonicalFleetMissionSummary(row), stateVersion);
+      const returned = (
+        (mission.status === "Returning" || mission.status === "Recalled")
+        && Number(mission.returnAt) <= asOfSeconds
+      ) ? { ...mission, status: "Returned" as const } : mission;
+      return this.withDefenseHoldCombatOutcome(returned);
+    });
+
+    return {
+      wallet,
+      homePlanetId: settlement.homePlanetId,
+      ownedPlanetIds,
+      completedMissions,
+      page,
+      totalEntries
     };
   }
 
@@ -9336,7 +9443,7 @@ function isStoredFleetMissionSummary(value: unknown): value is FleetMissionSumma
     && mission.needsResolution !== undefined;
 }
 
-function openIndexerDatabase(databasePath: string, readOnly = false): Database {
+function openIndexerDatabase(databasePath: string, readOnly = false, assumeSchemaReady = false): Database {
   if (databasePath !== ":memory:") {
     mkdirSync(dirname(databasePath), { recursive: true });
   }
@@ -9344,6 +9451,11 @@ function openIndexerDatabase(databasePath: string, readOnly = false): Database {
   database.exec(`PRAGMA busy_timeout = ${readOnly ? 25 : 10000};`);
   if (readOnly) {
     database.exec("PRAGMA query_only = ON;");
+    return database;
+  }
+  if (assumeSchemaReady) {
+    // Short-lived report workers inherit the writer's WAL/schema setup. Reissuing journal_mode on
+    // every spawn may take a schema lock, which is exactly what this mode exists to avoid.
     return database;
   }
   if (databasePath !== ":memory:") {

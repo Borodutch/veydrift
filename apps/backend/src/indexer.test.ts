@@ -8749,6 +8749,69 @@ describe("SettlementIndexer", () => {
     expect(third).not.toBe(first);
     expect(third.get("99")).toEqual([100, 200]);
   });
+  test("batches player profile hydration without per-wallet lookups", () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return []; }
+    }, 100n, { database });
+    const wallets = Array.from({ length: 40 }, (_, index) => `0x${(index + 1).toString(16).padStart(40, "0")}` as Address);
+    const insert = database.query("INSERT INTO player_profiles (wallet, display_name, description, updated_at) VALUES (?, ?, NULL, ?)");
+    wallets.forEach((wallet, index) => insert.run(wallet, `Commander ${index}`, "2026-07-20T00:00:00.000Z"));
+    indexer.playerProfile = (() => {
+      throw new Error("batched profile hydration must not call playerProfile");
+    }) as SettlementIndexer["playerProfile"];
+
+    const profiles = indexer.playerProfiles(wallets);
+
+    expect(profiles.size).toBe(wallets.length);
+    expect(profiles.get(wallets[17]!)?.displayName).toBe("Commander 17");
+    database.close();
+  });
+
+  test("paginates a production-sized completed mission archive before hydrating rows", async () => {
+    const database = new Database(":memory:");
+    const indexer = new SettlementIndexer({
+      async listDebrisFieldEvents() { return []; },
+      async listMoonChanceReportEvents() { return []; },
+      async listSettledPlanetEvents() { return [planet]; }
+    }, 100n, { database });
+    await indexer.rebuild();
+    const insert = database.query(`
+      INSERT INTO contract_fleet_missions (
+        mission_id, status_id, mission_type_id, owner, origin_planet_id, target_planet_id,
+        departure_at, arrival_at, return_at, fuel_cost,
+        metal_cargo, crystal_cargo, deuterium_cargo, ships_json, randomness_request_id, event_json
+      ) VALUES (?, 3, 0, ?, ?, ?, ?, ?, ?, '0', '0', '0', '0', '{}', NULL, NULL)
+    `);
+    database.transaction(() => {
+      for (let missionId = 1; missionId <= 10_000; missionId += 1) {
+        const timestamp = String(1_770_000_000 + missionId);
+        insert.run(String(missionId), player, planet.planetId, planet.planetId, timestamp, timestamp, timestamp);
+      }
+    })();
+
+    const startedAt = performance.now();
+    const archive = indexer.fleetMissionArchivePage(player, { page: 1, pageSize: 25 });
+    const durationMs = performance.now() - startedAt;
+
+    expect(archive.totalEntries).toBe(10_000);
+    expect(archive.completedMissions).toHaveLength(25);
+    expect(archive.completedMissions[0]?.missionId).toBe("10000");
+    expect(archive.completedMissions.at(-1)?.missionId).toBe("9976");
+    expect(durationMs).toBeLessThan(300);
+    const queryPlan = database.query(`
+      EXPLAIN QUERY PLAN
+      SELECT COUNT(*)
+      FROM contract_fleet_missions
+      WHERE status_id IN (3, 4) AND (owner = ? OR target_planet_id = ?)
+    `).all(player, planet.planetId) as Array<{ detail: string }>;
+    const queryPlanDetail = queryPlan.map((row) => row.detail).join(" ");
+    expect(queryPlanDetail).toContain("USING INDEX contract_fleet_missions_");
+    expect(queryPlanDetail).not.toContain("SCAN contract_fleet_missions");
+    database.close();
+  });
 });
 
 describe("attack needsResolution is gated on battle randomness (VEY-KANEO-479)", () => {
