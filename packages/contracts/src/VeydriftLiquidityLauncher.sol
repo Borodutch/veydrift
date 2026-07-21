@@ -47,12 +47,16 @@ contract VeydriftLPLock {
 
     constructor(address beneficiary_, uint64 unlockAt_) {
         if (beneficiary_ == address(0)) revert InvalidBeneficiary();
+        // The approved second-level timestamp is the intended immutable timelock boundary.
+        // forge-lint: disable-next-line(block-timestamp)
         if (unlockAt_ <= block.timestamp) revert InvalidUnlockTime();
         beneficiary = beneficiary_;
         unlockAt = unlockAt_;
     }
 
     function release(address lpToken) external {
+        // Base block time is the canonical clock for releasing the locked onchain LP position.
+        // forge-lint: disable-next-line(block-timestamp)
         if (block.timestamp < unlockAt) revert LPLockActive(unlockAt);
         uint256 amount = IERC20(lpToken).balanceOf(address(this));
         IERC20(lpToken).safeTransfer(beneficiary, amount);

@@ -18,6 +18,8 @@ contract DeployVeydriftClassicLaunch is Script {
         require(unlockAt <= type(uint64).max, "LP_UNLOCK_OVERFLOW");
 
         vm.startBroadcast(privateKey);
+        // The preceding bound check makes this timestamp cast lossless.
+        // forge-lint: disable-next-line(unsafe-typecast)
         VeydriftLPLock deployedLock = new VeydriftLPLock(lpBeneficiary, uint64(unlockAt));
         VeydriftLiquidityLauncher deployedLauncher = new VeydriftLiquidityLauncher(
             launchAuthority, BASE_AERODROME_ROUTER, address(deployedLock)

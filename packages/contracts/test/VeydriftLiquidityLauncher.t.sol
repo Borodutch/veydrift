@@ -83,6 +83,8 @@ contract MockAerodromeRouter is IAerodromeRouter {
         address to,
         uint256 deadline
     ) external returns (uint256 amountA, uint256 amountB, uint256 liquidity) {
+        // Tests deliberately model the router's deadline against the chain clock.
+        // forge-lint: disable-next-line(block-timestamp)
         require(block.timestamp <= deadline, "EXPIRED");
         require(!stable, "STABLE_DISABLED");
         require(amountADesired >= amountAMin && amountBDesired >= amountBMin, "BAD_MINIMUM");
@@ -90,8 +92,8 @@ contract MockAerodromeRouter is IAerodromeRouter {
         MockAerodromeFactory factory = MockAerodromeFactory(defaultFactory);
         address pool = factory.getPool(tokenA, tokenB, false);
         if (pool == address(0)) pool = factory.createPool(tokenA, tokenB, false);
-        IERC20(tokenA).transferFrom(msg.sender, pool, amountADesired);
-        IERC20(tokenB).transferFrom(msg.sender, pool, amountBDesired);
+        require(IERC20(tokenA).transferFrom(msg.sender, pool, amountADesired), "TRANSFER_A_FAILED");
+        require(IERC20(tokenB).transferFrom(msg.sender, pool, amountBDesired), "TRANSFER_B_FAILED");
         liquidity = amountADesired < amountBDesired ? amountADesired : amountBDesired;
         MockAerodromePool(pool).mint(to, liquidity);
         return (amountADesired, amountBDesired, liquidity);
@@ -133,10 +135,10 @@ contract MockAerodromeRouter is IAerodromeRouter {
             metal = new MockLaunchToken("Veydrift Metal", "vMETAL", 6, RESOURCE_SUPPLY);
             crystal = new MockLaunchToken("Veydrift Crystal", "vCRYSTAL", 6, RESOURCE_SUPPLY);
             deuterium = new MockLaunchToken("Veydrift Deuterium", "vDEUT", 6, RESOURCE_SUPPLY);
-            weth.transfer(authority, 2 ether);
-            metal.transfer(authority, 333_333_000);
-            crystal.transfer(authority, 222_222_000);
-            deuterium.transfer(authority, 133_333_000);
+            assertTrue(weth.transfer(authority, 2 ether));
+            assertTrue(metal.transfer(authority, 333_333_000));
+            assertTrue(crystal.transfer(authority, 222_222_000));
+            assertTrue(deuterium.transfer(authority, 133_333_000));
 
             factory = new MockAerodromeFactory();
             router = new MockAerodromeRouter(address(factory), address(weth));

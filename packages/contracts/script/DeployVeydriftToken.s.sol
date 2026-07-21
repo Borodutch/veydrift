@@ -29,14 +29,17 @@ contract DeployVeydriftToken is Script {
         address ecosystemBeneficiary = vm.envAddress("VEYDRIFT_ECOSYSTEM_BENEFICIARY");
         uint256 start = vm.envUint("VEYDRIFT_VESTING_START_TIMESTAMP");
         require(start <= type(uint64).max, "VESTING_START_OVERFLOW");
+        // The preceding bound check makes this timestamp cast lossless.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        uint64 startTimestamp = uint64(start);
 
         vm.startBroadcast(privateKey);
         VeydriftDevelopmentVestingWallet development =
-            new VeydriftDevelopmentVestingWallet(developmentBeneficiary, uint64(start));
+            new VeydriftDevelopmentVestingWallet(developmentBeneficiary, startTimestamp);
         VeydriftContributorVestingWallet contributor =
-            new VeydriftContributorVestingWallet(contributorBeneficiary, uint64(start));
+            new VeydriftContributorVestingWallet(contributorBeneficiary, startTimestamp);
         VeydriftEcosystemVestingWallet ecosystem =
-            new VeydriftEcosystemVestingWallet(ecosystemBeneficiary, uint64(start));
+            new VeydriftEcosystemVestingWallet(ecosystemBeneficiary, startTimestamp);
         VeydriftToken deployedToken = new VeydriftToken(
             ethLiquidityTreasury,
             resourceLiquidityTreasury,
