@@ -1,7 +1,12 @@
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { encodeAbiParameters, keccak256 } from "viem";
 
 const path = process.argv[2] ?? "manifests/vey-741-base-fork-dry-run.json";
 const manifest = JSON.parse(readFileSync(path, "utf8"));
+const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fail = (message) => {
   throw new Error(`Invalid VEYDRIFT Uniswap launch manifest: ${message}`);
 };
@@ -50,6 +55,30 @@ const observedInflow = (prefix) => {
   return inflow;
 };
 const sorted = (left, right) => left < right ? [left, right] : [right, left];
+const poolId = (prefix) => keccak256(encodeAbiParameters(
+  [
+    { type: "address" },
+    { type: "address" },
+    { type: "uint24" },
+    { type: "int24" },
+    { type: "address" },
+  ],
+  [
+    address(`${prefix}Currency0`),
+    address(`${prefix}Currency1`),
+    BigInt(number(`${prefix}Fee`)),
+    BigInt(number(`${prefix}TickSpacing`)),
+    address(`${prefix}Hook`),
+  ],
+));
+const fullRange = (prefix) => {
+  const tickSpacing = number(`${prefix}TickSpacing`);
+  if (tickSpacing <= 0) fail(`${prefix}TickSpacing must be positive`);
+  const expectedLower = Math.trunc(-887_272 / tickSpacing) * tickSpacing;
+  const expectedUpper = Math.trunc(887_272 / tickSpacing) * tickSpacing;
+  eq(number(`${prefix}TickLower`), expectedLower, `${prefix}TickLower`);
+  eq(number(`${prefix}TickUpper`), expectedUpper, `${prefix}TickUpper`);
+};
 const zero = "0x0000000000000000000000000000000000000000";
 const zeroHash = `0x${"0".repeat(64)}`;
 
@@ -59,7 +88,14 @@ eq(manifest.environment, "base-mainnet-fork", "environment");
 eq(manifest.broadcast, false, "broadcast");
 eq(manifest.statusPassed, true, "statusPassed");
 if (!/^[0-9a-f]{40}$/.test(required("sourceCommit"))) fail("sourceCommit must be a full lowercase commit SHA");
-if (process.env.VEYDRIFT_SOURCE_COMMIT) eq(manifest.sourceCommit, process.env.VEYDRIFT_SOURCE_COMMIT, "sourceCommit");
+const sourceCommit = execFileSync(
+  "git",
+  ["log", "-1", "--format=%H", "--", ".", ":(exclude)manifests/vey-741-base-fork-dry-run.json"],
+  { cwd: packageRoot, encoding: "utf8" },
+).trim();
+if (!/^[0-9a-f]{40}$/.test(sourceCommit)) fail("could not derive the current non-manifest source commit");
+eq(manifest.sourceCommit, sourceCommit, "sourceCommit");
+if (process.env.VEYDRIFT_SOURCE_COMMIT) eq(process.env.VEYDRIFT_SOURCE_COMMIT, sourceCommit, "VEYDRIFT_SOURCE_COMMIT");
 eq(manifest.compilerVersion, "0.8.28", "compilerVersion");
 eq(hash("compilerSettingsHash"), "0x3b1b21744b923b65a0a22a2373d2aecd494b9ff8824328b868465c4097885145", "compilerSettingsHash");
 eq(number("chainId"), 8453, "chainId");
@@ -133,7 +169,8 @@ eq(number("mainFee"), 3000, "mainFee");
 eq(number("mainTickSpacing"), 60, "mainTickSpacing");
 const mainHook = address("mainHook");
 if (![zero, deployments.officialLbpStrategy[0]].includes(mainHook)) fail("mainHook is not an approved topology");
-hash("mainPoolId");
+eq(hash("mainPoolId"), poolId("main"), "mainPoolId");
+fullRange("main");
 if (uint("mainSqrtPriceX96") === 0n) fail("main pool is uninitialized");
 eq(address("mainPositionOwner"), lock, "mainPositionOwner");
 if (uint("mainPositionTokenId") === 0n || uint("mainPositionLiquidity") === 0n) fail("main canonical position is empty");
@@ -175,7 +212,8 @@ for (let i = 0; i < 3; i += 1) {
   eq(number(`${prefix}Fee`), 3000, `${prefix}Fee`);
   eq(number(`${prefix}TickSpacing`), 60, `${prefix}TickSpacing`);
   eq(address(`${prefix}Hook`), zero, `${prefix}Hook`);
-  hash(`${prefix}PoolId`);
+  eq(hash(`${prefix}PoolId`), poolId(prefix), `${prefix}PoolId`);
+  fullRange(prefix);
   if (uint(`${prefix}ConfiguredSqrtPriceX96`) === 0n || uint(`${prefix}SqrtPriceX96`) === 0n) fail(`${prefix} price is zero`);
   eq(address(`${prefix}PositionOwner`), lock, `${prefix}PositionOwner`);
   if (uint(`${prefix}PositionLiquidity`) === 0n) fail(`${prefix} liquidity is zero`);

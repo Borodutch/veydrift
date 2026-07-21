@@ -143,9 +143,13 @@ from `packages/contracts`:
 
 ```sh
 BASE_MAINNET_RPC_URL=<public-or-redacted-rpc> bun run manifest:generate
-VEYDRIFT_SOURCE_COMMIT=$(jq -r .sourceCommit manifests/vey-741-base-fork-dry-run.json) \
-  node scripts/validate-veydrift-uniswap-launch-manifest.mjs
+bun run manifest:check
 ```
+
+`manifest:check` derives the latest non-manifest contracts commit itself, matches `sourceCommit`,
+recomputes every v4 pool ID from its serialized key with Ethereum Keccak-256, and enforces the exact
+usable full-range ticks. Its negative regression suite rejects corrupted pool IDs, ranges, and source
+binding; callers cannot make source binding optional by omitting an environment variable.
 
 At the pinned block, the fork test uses the compiled non-upgradeable `VeydriftToken`, upgrades the live
 resource/game proxies only inside the fork, proves the numeric reserve-release inequalities, and uses
@@ -184,16 +188,20 @@ deployment owner after the merged contract-upgrade handoff; Symphony must not pe
    Aerodrome pairs are absent.
 3. Prove resource reserve backing and simulate any resource/game upgrade and exact reserve release
    first. The irreversible no-mint resource upgrade still follows the VEY-KANEO-740 safeguards.
-4. Simulate `DeployVeydriftUniswapLaunch.s.sol`. Verify immutable authority, recovery recipient,
+4. Simulate `DeployVeydriftToken.s.sol` with `VEYDRIFT_LAUNCH_AUTHORITY` set to the approved launch
+   EOA. The script has no legacy ETH-liquidity-treasury input: it rejects any other bootstrap
+   recipient, proves the 250M CCA + 250M v4 split, and asserts exact genesis balances for the launch
+   authority, resource treasury, and all three vesting wallets.
+5. Simulate `DeployVeydriftUniswapLaunch.s.sol`. Verify immutable authority, recovery recipient,
    beneficiary, unlock timestamp, and executor bytecode before considering deployment.
-5. Resolve the conditional target to Base blocks. Simulate the exact CCA config with
+6. Resolve the conditional target to Base blocks. Simulate the exact CCA config with
    `LaunchVeydriftUniswapCCA.s.sol`; compare predicted auction, configuration hash, pool ID, token
    deltas, and events with the signed manifest. Before execution, the launch EOA must grant the CCA
    launcher an exact 500M VEYDRIFT allowance; a larger or smaller allowance reverts.
-6. Fund only the approved WETH bidder/capital path. CCA bidders use Permit2 and must receive normal
+7. Fund only the approved WETH bidder/capital path. CCA bidders use Permit2 and must receive normal
    user slippage/max-price disclosure. Monitor bids, checkpoints, demand, graduation, exits/refunds,
    and finalization readiness throughout the 1,800-block window.
-7. After the end checkpoint and approved migration block, inspect the official strategy registration
+8. After the end checkpoint and approved migration block, inspect the official strategy registration
    and PositionManager events, then simulate `FinalizeVeydriftUniswapCCA.s.sol`. Use the default wrapper
    only while the registration is live. If another address already called the official strategy, set
    `VEYDRIFT_RECONCILE_MIGRATION=true` and set `VEYDRIFT_UNISWAP_MAIN_POSITION_TOKEN_ID` to the exact NFT
@@ -204,7 +212,7 @@ deployment owner after the merged contract-upgrade handoff; Symphony must not pe
    for recording a proven terminal recovery branch with no initialized approved main pool; unrelated
    NFTs already held by the lock are ignored. A `false` result is terminal and is never permission to
    retry.
-8. Derive resource initial prices from the approved post-discovery valuation policy—not an AMM spot
+9. Derive resource initial prices from the approved post-discovery valuation policy—not an AMM spot
    read—then simulate all three configs atomically with `LaunchVeydriftUniswapResources.s.sol`. Recheck
    all three hookless pool IDs immediately before submission and use an owner-approved private
    transaction path where available. Any third-party initialization is an abort: do not add liquidity
@@ -212,7 +220,7 @@ deployment owner after the merged contract-upgrade handoff; Symphony must not pe
    security review, simulation, and explicit owner approval. Before execution, grant the resource
    launcher exact allowances for 150M VEYDRIFT and the three fixed raw resource amounts; every
    allowance must be consumed to zero.
-9. Run `VerifyVeydriftUniswapLaunch.s.sol` read-only. It verifies the four stored canonical position
+10. Run `VerifyVeydriftUniswapLaunch.s.sol` read-only. It verifies the four stored canonical position
    IDs independently (owner, exact pool key, full-range ticks, nonzero liquidity, and distinctness);
    unrelated permissionlessly transferred PositionManager NFTs in the immutable lock are ignored.
    Publish receipts/events, auction and pool IDs,

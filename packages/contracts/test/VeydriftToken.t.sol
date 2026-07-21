@@ -10,7 +10,7 @@ import {
 } from "../src/VeydriftToken.sol";
 
 contract VeydriftTokenTest is Test {
-    address internal ethLiquidity = address(0x1001);
+    address internal launchBootstrap = address(0x1001);
     address internal resourceLiquidity = address(0x1002);
     address internal developmentBeneficiary = address(0x1003);
     address internal contributorBeneficiary = address(0x1004);
@@ -27,7 +27,7 @@ contract VeydriftTokenTest is Test {
         contributor = new VeydriftContributorVestingWallet(contributorBeneficiary, start);
         ecosystem = new VeydriftEcosystemVestingWallet(ecosystemBeneficiary, start);
         token = new VeydriftToken(
-            ethLiquidity,
+            launchBootstrap,
             resourceLiquidity,
             address(development),
             address(contributor),
@@ -47,7 +47,7 @@ contract VeydriftTokenTest is Test {
             token.CCA_ALLOCATION() + token.V4_MAIN_LIQUIDITY_ALLOCATION(),
             token.LAUNCH_BOOTSTRAP_ALLOCATION()
         );
-        assertEq(token.balanceOf(ethLiquidity), 500_000_000 ether);
+        assertEq(token.balanceOf(launchBootstrap), 500_000_000 ether);
         assertEq(token.balanceOf(resourceLiquidity), 150_000_000 ether);
         assertEq(token.balanceOf(address(development)), 150_000_000 ether);
         assertEq(token.balanceOf(address(contributor)), 100_000_000 ether);
