@@ -13,6 +13,7 @@ import {
     IVeydriftMainLaunch,
     VeydriftUniswapResourcePools
 } from "../src/VeydriftUniswapResourcePools.sol";
+import {VeydriftToken} from "../src/VeydriftToken.sol";
 
 contract ResourcePoolsMockToken is ERC20 {
     uint8 internal immutable tokenDecimals;
@@ -137,6 +138,16 @@ contract ResourcePoolsMockPositionManager {
         ) = abi.decode(
             params[0], (VeydriftV4PoolKey, int24, int24, uint256, uint128, uint128, address, bytes)
         );
+        (address settleCurrency0, uint256 settleAmount0, bool payerIsUser0) =
+            abi.decode(params[1], (address, uint256, bool));
+        (address settleCurrency1, uint256 settleAmount1, bool payerIsUser1) =
+            abi.decode(params[2], (address, uint256, bool));
+        require(
+            settleCurrency0 == key.currency0 && settleCurrency1 == key.currency1
+                && settleAmount0 == amount0Max && settleAmount1 == amount1Max && !payerIsUser0
+                && !payerIsUser1,
+            "SETTLE_EXACT_MAX"
+        );
         require(
             tickLower < 0 && tickUpper > 0 && liquidity != 0 && liquidity <= type(uint128).max
                 && hookData.length == 0,
@@ -229,7 +240,7 @@ contract VeydriftUniswapResourcePoolsTest is Test {
     address internal recovery = makeAddr("resource-recovery");
     address internal beneficiary = makeAddr("position-beneficiary");
 
-    ResourcePoolsMockToken internal veydrift;
+    VeydriftToken internal veydrift;
     ResourcePoolsMockToken internal metal;
     ResourcePoolsMockToken internal crystal;
     ResourcePoolsMockToken internal deuterium;
@@ -246,8 +257,7 @@ contract VeydriftUniswapResourcePoolsTest is Test {
         vm.etch(STATE_VIEW, type(ResourcePoolsMockStateView).runtimeCode);
         ResourcePoolsMockPositionManager(POSITION_MANAGER).initialize();
 
-        veydrift =
-            new ResourcePoolsMockToken("Veydrift", "VEYDRIFT", 18, 1_000_000_000 ether, authority);
+        veydrift = new VeydriftToken(authority, authority, authority, authority, authority);
         metal = new ResourcePoolsMockToken(
             "Veydrift Metal", "vMETAL", 6, 10_000_000_000 * 1e6, authority
         );
@@ -294,6 +304,8 @@ contract VeydriftUniswapResourcePoolsTest is Test {
                 address(lock)
             );
             assertEq(launcher.poolIds(i), poolIds[i]);
+            assertEq(launcher.amount0Used(i), configs[i].amount0Max);
+            assertEq(launcher.amount1Used(i), configs[i].amount1Max);
         }
         assertEq(veydrift.balanceOf(POOL_MANAGER), 150_000_000 ether);
         assertEq(metal.balanceOf(POOL_MANAGER), 333_333_000);
@@ -313,6 +325,34 @@ contract VeydriftUniswapResourcePoolsTest is Test {
         launcher.preflight(_configs());
     }
 
+    function testPreexistingPositionManagerBalancesNeitherFundNorBlockLaunch() public {
+        VeydriftUniswapResourcePools.ResourcePoolConfig[3] memory configs = _configs();
+        uint256 donatedVeydrift = 7 ether;
+        uint256 donatedMetal = 11;
+        uint256 donatedCrystal = 13;
+        uint256 donatedDeuterium = 17;
+        vm.startPrank(authority);
+        assertTrue(veydrift.transfer(POSITION_MANAGER, donatedVeydrift));
+        assertTrue(metal.transfer(POSITION_MANAGER, donatedMetal));
+        assertTrue(crystal.transfer(POSITION_MANAGER, donatedCrystal));
+        assertTrue(deuterium.transfer(POSITION_MANAGER, donatedDeuterium));
+        veydrift.approve(address(launcher), 150_000_000 ether);
+        metal.approve(address(launcher), 333_333_000);
+        crystal.approve(address(launcher), 222_222_000);
+        deuterium.approve(address(launcher), 133_333_000);
+        launcher.launchResourcePools(configs, block.timestamp + 1);
+        vm.stopPrank();
+
+        assertEq(veydrift.balanceOf(POSITION_MANAGER), donatedVeydrift);
+        assertEq(metal.balanceOf(POSITION_MANAGER), donatedMetal);
+        assertEq(crystal.balanceOf(POSITION_MANAGER), donatedCrystal);
+        assertEq(deuterium.balanceOf(POSITION_MANAGER), donatedDeuterium);
+        assertEq(veydrift.balanceOf(POOL_MANAGER), 150_000_000 ether);
+        assertEq(metal.balanceOf(POOL_MANAGER), 333_333_000);
+        assertEq(crystal.balanceOf(POOL_MANAGER), 222_222_000);
+        assertEq(deuterium.balanceOf(POOL_MANAGER), 133_333_000);
+    }
+
     function testRejectsWrongResourceTopology() public {
         VeydriftUniswapResourcePools.ResourcePoolConfig[3] memory configs = _configs();
         configs[0].resourceToken = address(crystal);
@@ -322,6 +362,30 @@ contract VeydriftUniswapResourcePoolsTest is Test {
             )
         );
         launcher.preflight(configs);
+    }
+
+    function testRejectsWrongVeydriftRuntimeEvenWithOneBillionSupply() public {
+        ResourcePoolsMockToken wrongVeydrift =
+            new ResourcePoolsMockToken("Veydrift", "VEYDRIFT", 18, 1_000_000_000 ether, authority);
+        ResourcePoolsMockMainLaunch wrongMainLaunch =
+            new ResourcePoolsMockMainLaunch(address(wrongVeydrift), address(lock));
+        wrongMainLaunch.setMigrationSucceeded(true);
+        VeydriftUniswapResourcePoolsHarness wrongLauncher = new VeydriftUniswapResourcePoolsHarness(
+            authority,
+            recovery,
+            wrongMainLaunch,
+            address(metal),
+            address(crystal),
+            address(deuterium),
+            lock
+        );
+        VeydriftUniswapResourcePools.ResourcePoolConfig[3] memory configs = _configs();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftUniswapResourcePools.InvalidToken.selector, address(wrongVeydrift)
+            )
+        );
+        wrongLauncher.preflight(configs);
     }
 
     function testFullRangeTicksAreUsableForSpacing() public view {

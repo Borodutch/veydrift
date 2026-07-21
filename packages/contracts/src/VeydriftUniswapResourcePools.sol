@@ -49,9 +49,6 @@ contract VeydriftUniswapResourcePools {
     uint8 private constant ACTION_MINT_POSITION = 0x02;
     uint8 private constant ACTION_SETTLE = 0x0b;
     uint8 private constant ACTION_TAKE_PAIR = 0x11;
-    // Official v4-periphery ActionConstants.CONTRACT_BALANCE sentinel.
-    uint256 private constant CONTRACT_BALANCE = 1 << 255;
-
     address public immutable launchAuthority;
     address public immutable recoveryRecipient;
     IVeydriftMainLaunch public immutable mainLaunch;
@@ -64,6 +61,8 @@ contract VeydriftUniswapResourcePools {
     bytes32 public configurationHash;
     bytes32[3] public poolIds;
     uint256[3] public positionTokenIds;
+    uint256[3] public amount0Used;
+    uint256[3] public amount1Used;
 
     struct ResourcePoolConfig {
         address resourceToken;
@@ -142,7 +141,8 @@ contract VeydriftUniswapResourcePools {
         if (!mainLaunch.migrationSucceeded()) revert MainMigrationIncomplete();
         address veydrift = mainLaunch.launchToken();
         if (
-            veydrift.code.length == 0 || IERC20Metadata(veydrift).decimals() != 18
+            veydrift.codehash != VeydriftUniswapDeployments.VEYDRIFT_TOKEN_CODEHASH
+                || IERC20Metadata(veydrift).decimals() != 18
                 || IERC20(veydrift).totalSupply() != VEYDRIFT_TOTAL_SUPPLY
         ) revert InvalidToken(veydrift);
         if (
@@ -209,7 +209,8 @@ contract VeydriftUniswapResourcePools {
         _pullExact(deuterium, DEUTERIUM_AMOUNT);
 
         for (uint256 i = 0; i < 3; i++) {
-            tokenIds[i] = _initializeAndMint(veydrift, configs[i], deadline);
+            (tokenIds[i], amount0Used[i], amount1Used[i]) =
+                _initializeAndMint(veydrift, configs[i], deadline);
             poolIds[i] = ids[i];
             positionTokenIds[i] = tokenIds[i];
         }
@@ -249,14 +250,15 @@ contract VeydriftUniswapResourcePools {
         address veydrift,
         ResourcePoolConfig calldata config,
         uint256 deadline
-    ) private returns (uint256 tokenId) {
+    ) private returns (uint256 tokenId, uint256 used0, uint256 used1) {
         VeydriftV4PoolKey memory key = _poolKey(veydrift, config);
         IUniswapV4PoolManager(_poolManager()).initialize(key, config.sqrtPriceX96);
 
         uint256 currency0Before = IERC20(key.currency0).balanceOf(address(this));
         uint256 currency1Before = IERC20(key.currency1).balanceOf(address(this));
-        // Match audited LBPStrategy v3.1.0: pre-fund PositionManager, settle from its
-        // contract balance, then return any unconsumed pair dust to this launcher.
+        // Pre-fund only the approved maxima, settle those exact amounts, then return any unused
+        // pair delta to this launcher. Never use ActionConstants.CONTRACT_BALANCE: unrelated token
+        // donations to the public PositionManager must neither subsidize nor block this launch.
         IERC20(key.currency0).safeTransfer(_positionManager(), config.amount0Max);
         IERC20(key.currency1).safeTransfer(_positionManager(), config.amount1Max);
         tokenId = IUniswapV4PositionManager(_positionManager()).nextTokenId();
@@ -274,14 +276,14 @@ contract VeydriftUniswapResourcePools {
             address(positionLock),
             bytes("")
         );
-        params[1] = abi.encode(key.currency0, CONTRACT_BALANCE, false);
-        params[2] = abi.encode(key.currency1, CONTRACT_BALANCE, false);
+        params[1] = abi.encode(key.currency0, config.amount0Max, false);
+        params[2] = abi.encode(key.currency1, config.amount1Max, false);
         params[3] = abi.encode(key.currency0, key.currency1, address(this));
         IUniswapV4PositionManager(_positionManager())
             .modifyLiquidities(abi.encode(actions, params), deadline);
-        uint256 amount0Used = currency0Before - IERC20(key.currency0).balanceOf(address(this));
-        uint256 amount1Used = currency1Before - IERC20(key.currency1).balanceOf(address(this));
-        if (amount0Used < config.amount0Min || amount1Used < config.amount1Min) {
+        used0 = currency0Before - IERC20(key.currency0).balanceOf(address(this));
+        used1 = currency1Before - IERC20(key.currency1).balanceOf(address(this));
+        if (used0 < config.amount0Min || used1 < config.amount1Min) {
             revert InvalidPoolConfiguration(type(uint256).max);
         }
         IUniswapV4PositionManager manager = IUniswapV4PositionManager(_positionManager());

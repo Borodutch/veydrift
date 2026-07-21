@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {VeydriftToken} from "./VeydriftToken.sol";
 
 /// @notice Official Base mainnet deployments pinned for the VEYDRIFT CCA/v4 launch path.
 /// @dev Sources: Uniswap CCA v2.1.0 (commit 7d7602d...), Liquidity Launcher/LBPStrategy
@@ -33,6 +34,8 @@ library VeydriftUniswapDeployments {
         0xbbd5859677ef5491143133e8ed2b8faa0272f6fc2cbae94c53e79cc8c0538545;
     bytes32 internal constant PERMIT2_CODEHASH =
         0xa67739abc3ede9dbdc0491636c67d6a14ac07fab9030c3f509b1eb7b11dff8ed;
+    bytes32 internal constant VEYDRIFT_TOKEN_CODEHASH =
+        0xdf4fbbefacd0d5d02161449b51d2eff6596d6a352da37c2ab11d16937fec337c;
 }
 
 struct VeydriftV4PoolKey {
@@ -303,7 +306,8 @@ contract VeydriftUniswapCCALauncher {
             revert WrongChain(block.chainid, _expectedChainId());
         }
         if (
-            token.code.length == 0 || IERC20Metadata(token).decimals() != 18
+            token.codehash != VeydriftUniswapDeployments.VEYDRIFT_TOKEN_CODEHASH
+                || IERC20Metadata(token).decimals() != 18
                 || IERC20(token).totalSupply() != VEYDRIFT_TOTAL_SUPPLY
         ) revert InvalidToken(token);
         if (
@@ -673,6 +677,12 @@ contract VeydriftUniswapCCALauncher {
     }
 
     function _assertOfficialDeployments() internal view virtual {
+        // This assertion makes a reviewed token source/runtime change fail at build-time tests even
+        // if someone updates the pinned hash without reviewing the non-upgradeable token artifact.
+        assert(
+            keccak256(type(VeydriftToken).runtimeCode)
+                == VeydriftUniswapDeployments.VEYDRIFT_TOKEN_CODEHASH
+        );
         _requireCodehash(_weth(), VeydriftUniswapDeployments.WETH_CODEHASH);
         _requireCodehash(_ccaFactory(), VeydriftUniswapDeployments.CCA_FACTORY_CODEHASH);
         _requireCodehash(_lbpStrategy(), VeydriftUniswapDeployments.LBP_STRATEGY_CODEHASH);

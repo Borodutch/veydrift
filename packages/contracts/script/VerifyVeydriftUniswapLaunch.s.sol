@@ -51,6 +51,7 @@ contract VerifyVeydriftUniswapLaunch is Script {
         );
         address token = vm.envAddress("VEYDRIFT_TOKEN_ADDRESS");
         address lock = address(main.positionLock());
+        _requireCodehash(token, VeydriftUniswapDeployments.VEYDRIFT_TOKEN_CODEHASH);
         require(IERC20(token).totalSupply() == 1_000_000_000 ether, "VEY_SUPPLY");
         require(
             main.launched() && main.migrationAttempted() && main.migrationSucceeded(), "MAIN_STATE"

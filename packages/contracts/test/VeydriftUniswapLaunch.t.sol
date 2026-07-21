@@ -12,10 +12,21 @@ import {
     VeydriftUniswapCCALauncher,
     VeydriftV4PositionLock
 } from "../src/VeydriftUniswapLaunch.sol";
+import {VeydriftToken} from "../src/VeydriftToken.sol";
 
 contract UniswapLaunchMockToken is ERC20 {
     constructor(address recipient) ERC20("Veydrift", "VEYDRIFT") {
         _mint(recipient, 1_000_000_000 ether);
+    }
+}
+
+contract UniswapLaunchMintableToken is ERC20 {
+    constructor(address recipient) ERC20("Veydrift", "VEYDRIFT") {
+        _mint(recipient, 1_000_000_000 ether);
+    }
+
+    function mint(address recipient, uint256 amount) external {
+        _mint(recipient, amount);
     }
 }
 
@@ -307,7 +318,7 @@ contract VeydriftUniswapLaunchTest is Test {
     address internal recovery = makeAddr("recovery");
     address internal lockBeneficiary = makeAddr("lock-beneficiary");
 
-    UniswapLaunchMockToken internal token;
+    VeydriftToken internal token;
     VeydriftV4PositionLock internal lock;
     VeydriftUniswapCCALauncherHarness internal launcher;
 
@@ -328,7 +339,7 @@ contract VeydriftUniswapLaunchTest is Test {
         UniswapLaunchMockPositionManager(POSITION_MANAGER).initialize();
         UniswapLaunchMockStrategy(STRATEGY)
             .initialize(FACTORY, POOL_MANAGER, POSITION_MANAGER, STATE_VIEW, AUCTION);
-        token = new UniswapLaunchMockToken(authority);
+        token = new VeydriftToken(authority, authority, authority, authority, authority);
         lock = new VeydriftV4PositionLock(
             POSITION_MANAGER, lockBeneficiary, uint64(block.timestamp + 365 days)
         );
@@ -522,6 +533,24 @@ contract VeydriftUniswapLaunchTest is Test {
         config.endBlock++;
         vm.expectRevert(VeydriftUniswapCCALauncher.InvalidAuctionTiming.selector);
         launcher.preflight(address(token), config, bytes32(0));
+    }
+
+    function testRejectsWrongAndMintableOneBillionSupplyTokens() public {
+        UniswapLaunchMockToken wrongToken = new UniswapLaunchMockToken(authority);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftUniswapCCALauncher.InvalidToken.selector, address(wrongToken)
+            )
+        );
+        launcher.preflight(address(wrongToken), _config(), bytes32(0));
+
+        UniswapLaunchMintableToken mintableToken = new UniswapLaunchMintableToken(authority);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftUniswapCCALauncher.InvalidToken.selector, address(mintableToken)
+            )
+        );
+        launcher.preflight(address(mintableToken), _config(), bytes32(0));
     }
 
     function testLockCannotReleaseBeforeTimestamp() public {
