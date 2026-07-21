@@ -7,6 +7,8 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
     VeydriftAuctionParameters,
     VeydriftMigratorParameters,
+    VeydriftV4PoolKey,
+    VeydriftV4PoolParameters,
     VeydriftUniswapCCALauncher,
     VeydriftV4PositionLock
 } from "../src/VeydriftUniswapLaunch.sol";
@@ -80,15 +82,43 @@ contract UniswapLaunchMockPositionManager {
     mapping(uint256 => address) public ownerOf;
     mapping(address => mapping(address => bool)) public isApprovedForAll;
     uint256 public nextTokenId = 1;
+    mapping(uint256 => VeydriftV4PoolKey) internal poolKeys;
+    mapping(uint256 => uint256) internal positionInfos;
+    mapping(uint256 => uint128) internal liquidities;
 
     function initialize() external {
         nextTokenId = 1;
     }
 
-    function mint(address recipient) external returns (uint256 tokenId) {
+    function mint(
+        address recipient,
+        VeydriftV4PoolKey calldata key,
+        int24 tickLower,
+        int24 tickUpper,
+        uint128 liquidity
+    ) external returns (uint256 tokenId) {
         tokenId = nextTokenId++;
         ownerOf[tokenId] = recipient;
         balanceOf[recipient]++;
+        poolKeys[tokenId] = key;
+        uint256 packedInfo;
+        assembly ("memory-safe") {
+            packedInfo := or(shl(8, and(tickLower, 0xffffff)), shl(32, and(tickUpper, 0xffffff)))
+        }
+        positionInfos[tokenId] = packedInfo;
+        liquidities[tokenId] = liquidity;
+    }
+
+    function getPositionLiquidity(uint256 tokenId) external view returns (uint128) {
+        return liquidities[tokenId];
+    }
+
+    function getPoolAndPositionInfo(uint256 tokenId)
+        external
+        view
+        returns (VeydriftV4PoolKey memory, uint256)
+    {
+        return (poolKeys[tokenId], positionInfos[tokenId]);
     }
 
     function setApprovalForAll(address operator, bool approved) external {
@@ -101,8 +131,14 @@ contract UniswapLaunchMockPositionManager {
 }
 
 contract UniswapLaunchMockStateView {
-    function getSlot0(bytes32) external pure returns (uint160, int24, uint24, uint24) {
-        return (0, 0, 0, 0);
+    mapping(bytes32 => uint160) public sqrtPrices;
+
+    function setPool(bytes32 poolId, uint160 sqrtPriceX96) external {
+        sqrtPrices[poolId] = sqrtPriceX96;
+    }
+
+    function getSlot0(bytes32 poolId) external view returns (uint160, int24, uint24, uint24) {
+        return (sqrtPrices[poolId], 0, 0, 0);
     }
 }
 
@@ -110,21 +146,41 @@ contract UniswapLaunchMockStrategy {
     address public initializerFactory;
     address public poolManager;
     address public positionManager;
+    address public stateView;
     address public auction;
     address public positionRecipient;
     uint128 public reservedForLP;
     uint256 public initializedSupply;
+    bool public migrated;
+    bool public migrationFails;
+    bytes32 public registeredPoolId;
+    address public registeredInitializer;
+    VeydriftMigratorParameters internal migrationParameters;
 
     function initialize(
         address factory_,
         address poolManager_,
         address positionManager_,
+        address stateView_,
         address auction_
     ) external {
         initializerFactory = factory_;
         poolManager = poolManager_;
         positionManager = positionManager_;
+        stateView = stateView_;
         auction = auction_;
+    }
+
+    function setMigrationFails(bool value) external {
+        migrationFails = value;
+    }
+
+    function registeredPoolIds(bytes32 poolId) external view returns (address) {
+        return poolId == registeredPoolId ? registeredInitializer : address(0);
+    }
+
+    function initializers(address) external view returns (VeydriftMigratorParameters memory) {
+        return migrationParameters;
     }
 
     function initializeDistribution(
@@ -141,6 +197,21 @@ contract UniswapLaunchMockStrategy {
         initializedSupply = totalSupply;
         reservedForLP = migrator.reservedTokenAmountForLP;
         positionRecipient = migrator.positionRecipient;
+        migrationParameters = migrator;
+        (address currency0, address currency1) =
+            migrator.currency < token ? (migrator.currency, token) : (token, migrator.currency);
+        registeredPoolId = keccak256(
+            abi.encode(
+                VeydriftV4PoolKey({
+                    currency0: currency0,
+                    currency1: currency1,
+                    fee: migrator.poolParameters.fee,
+                    tickSpacing: migrator.poolParameters.tickSpacing,
+                    hooks: migrator.poolParameters.hook
+                })
+            )
+        );
+        registeredInitializer = auction;
         uint256 rawAuctionSupply = totalSupply - migrator.reservedTokenAmountForLP;
         require(IERC20(token).transfer(auction, rawAuctionSupply));
         require(rawAuctionSupply <= type(uint128).max);
@@ -152,7 +223,30 @@ contract UniswapLaunchMockStrategy {
 
     function migrate(address initializer) external {
         require(initializer == auction, "WRONG_AUCTION");
-        UniswapLaunchMockPositionManager(positionManager).mint(positionRecipient);
+        require(!migrated, "INITIALIZER_NOT_REGISTERED");
+        migrated = true;
+        registeredInitializer = address(0);
+        if (migrationFails) return;
+        VeydriftV4PoolParameters memory params = migrationParameters.poolParameters;
+        (address currency0, address currency1) = migrationParameters.currency
+            < migrationParameters.token
+            ? (migrationParameters.currency, migrationParameters.token)
+            : (migrationParameters.token, migrationParameters.currency);
+        VeydriftV4PoolKey memory key = VeydriftV4PoolKey({
+            currency0: currency0,
+            currency1: currency1,
+            fee: params.fee,
+            tickSpacing: params.tickSpacing,
+            hooks: params.hook
+        });
+        UniswapLaunchMockStateView(stateView).setPool(keccak256(abi.encode(key)), 1 << 96);
+        // Mirrors the official Uniswap v4 TickMath usable-boundary formula.
+        // forge-lint: disable-next-line(divide-before-multiply)
+        int24 tickLower = (-887_272 / params.tickSpacing) * params.tickSpacing;
+        // forge-lint: disable-next-line(divide-before-multiply)
+        int24 tickUpper = (887_272 / params.tickSpacing) * params.tickSpacing;
+        UniswapLaunchMockPositionManager(positionManager)
+            .mint(positionRecipient, key, tickLower, tickUpper, 1 ether);
     }
 }
 
@@ -233,7 +327,7 @@ contract VeydriftUniswapLaunchTest is Test {
         UniswapLaunchMockFactory(FACTORY).initialize(AUCTION);
         UniswapLaunchMockPositionManager(POSITION_MANAGER).initialize();
         UniswapLaunchMockStrategy(STRATEGY)
-            .initialize(FACTORY, POOL_MANAGER, POSITION_MANAGER, AUCTION);
+            .initialize(FACTORY, POOL_MANAGER, POSITION_MANAGER, STATE_VIEW, AUCTION);
         token = new UniswapLaunchMockToken(authority);
         lock = new VeydriftV4PositionLock(
             POSITION_MANAGER, lockBeneficiary, uint64(block.timestamp + 365 days)
@@ -265,6 +359,126 @@ contract VeydriftUniswapLaunchTest is Test {
         assertTrue(launcher.migrationSucceeded());
         assertEq(UniswapLaunchMockPositionManager(POSITION_MANAGER).balanceOf(address(lock)), 1);
         assertEq(UniswapLaunchMockPositionManager(POSITION_MANAGER).ownerOf(1), address(lock));
+    }
+
+    function testReconcilesPermissionlessMigrationAndIsOneShot() public {
+        VeydriftUniswapCCALauncher.LaunchConfig memory config = _config();
+        vm.startPrank(authority);
+        token.approve(address(launcher), 500_000_000 ether);
+        launcher.launch(address(token), config, keccak256("VEY-741-race"));
+        vm.stopPrank();
+
+        vm.roll(config.migrationBlock);
+        vm.prank(makeAddr("permissionless-migrator"));
+        UniswapLaunchMockStrategy(STRATEGY).migrate(AUCTION);
+
+        assertTrue(launcher.reconcileMigration(1));
+        assertTrue(launcher.migrationAttempted());
+        assertTrue(launcher.migrationSucceeded());
+        assertEq(launcher.mainPositionTokenId(), 1);
+        assertEq(UniswapLaunchMockPositionManager(POSITION_MANAGER).balanceOf(address(lock)), 1);
+
+        vm.expectRevert(VeydriftUniswapCCALauncher.AlreadyFinalized.selector);
+        launcher.reconcileMigration(1);
+    }
+
+    function testReconciliationRejectsUnrelatedLockedNft() public {
+        VeydriftUniswapCCALauncher.LaunchConfig memory config = _config();
+        vm.startPrank(authority);
+        token.approve(address(launcher), 500_000_000 ether);
+        launcher.launch(address(token), config, keccak256("VEY-741-unrelated"));
+        vm.stopPrank();
+
+        VeydriftV4PoolKey memory unrelated = VeydriftV4PoolKey({
+            currency0: WETH < address(token) ? WETH : address(token),
+            currency1: WETH < address(token) ? address(token) : WETH,
+            fee: 500,
+            tickSpacing: 10,
+            hooks: address(0)
+        });
+        UniswapLaunchMockPositionManager(POSITION_MANAGER)
+            .mint(address(lock), unrelated, -887_270, 887_270, 1);
+
+        vm.roll(config.migrationBlock);
+        UniswapLaunchMockStrategy(STRATEGY).migrate(AUCTION);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftUniswapCCALauncher.InvalidMainPosition.selector, 1)
+        );
+        launcher.reconcileMigration(1);
+        assertFalse(launcher.migrationAttempted());
+        assertTrue(launcher.reconcileMigration(2));
+        assertEq(launcher.mainPositionTokenId(), 2);
+    }
+
+    function testReconciliationRejectsCandidatePoolWithoutConsumedInitializer() public {
+        VeydriftUniswapCCALauncher.LaunchConfig memory config = _config();
+        vm.startPrank(authority);
+        token.approve(address(launcher), 500_000_000 ether);
+        launcher.launch(address(token), config, keccak256("VEY-741-candidate-only"));
+        vm.stopPrank();
+        vm.roll(config.migrationBlock);
+
+        (bytes32 hooklessPoolId,) = launcher.mainPoolIds();
+        UniswapLaunchMockStateView(STATE_VIEW).setPool(hooklessPoolId, 1 << 96);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftUniswapCCALauncher.InvalidMigrationLifecycle.selector,
+                AUCTION,
+                launcher.migrationParametersHash()
+            )
+        );
+        launcher.reconcileMigration(1);
+    }
+
+    function testReconciliationRejectsMixedMainPoolTopology() public {
+        VeydriftUniswapCCALauncher.LaunchConfig memory config = _config();
+        vm.startPrank(authority);
+        token.approve(address(launcher), 500_000_000 ether);
+        launcher.launch(address(token), config, keccak256("VEY-741-mixed"));
+        vm.stopPrank();
+        vm.roll(config.migrationBlock);
+        UniswapLaunchMockStrategy(STRATEGY).migrate(AUCTION);
+
+        (, bytes32 strategyHookPoolId) = launcher.mainPoolIds();
+        UniswapLaunchMockStateView(STATE_VIEW).setPool(strategyHookPoolId, 1 << 96);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftUniswapCCALauncher.InvalidMainPoolTopology.selector, true, true
+            )
+        );
+        launcher.reconcileMigration(1);
+    }
+
+    function testDirectWrapperRecordsTerminalMigrationFailure() public {
+        VeydriftUniswapCCALauncher.LaunchConfig memory config = _config();
+        vm.startPrank(authority);
+        token.approve(address(launcher), 500_000_000 ether);
+        launcher.launch(address(token), config, keccak256("VEY-741-direct-failure"));
+        vm.stopPrank();
+        UniswapLaunchMockStrategy(STRATEGY).setMigrationFails(true);
+        vm.roll(config.migrationBlock);
+
+        assertFalse(launcher.finalizeAndMigrate());
+        assertTrue(launcher.migrationAttempted());
+        assertFalse(launcher.migrationSucceeded());
+        vm.expectRevert(VeydriftUniswapCCALauncher.AlreadyFinalized.selector);
+        launcher.finalizeAndMigrate();
+    }
+
+    function testReconcilesTerminalPermissionlessMigrationFailure() public {
+        VeydriftUniswapCCALauncher.LaunchConfig memory config = _config();
+        vm.startPrank(authority);
+        token.approve(address(launcher), 500_000_000 ether);
+        launcher.launch(address(token), config, keccak256("VEY-741-raced-failure"));
+        vm.stopPrank();
+        UniswapLaunchMockStrategy(STRATEGY).setMigrationFails(true);
+        vm.roll(config.migrationBlock);
+        UniswapLaunchMockStrategy(STRATEGY).migrate(AUCTION);
+
+        assertFalse(launcher.reconcileMigration(0));
+        assertTrue(launcher.migrationAttempted());
+        assertFalse(launcher.migrationSucceeded());
     }
 
     function testAbortIsTerminalAndPreventsLaunch() public {

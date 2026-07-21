@@ -70,7 +70,17 @@ The launch EOA is immutable and must be
    spacing, and floor price, and commits all inputs including the required WETH threshold into
    `configurationHash`;
 5. exposes a terminal pre-launch `abort(reasonHash)`; and
-6. exposes permissionless, one-shot `finalizeAndMigrate()` after the approved migration block.
+6. exposes permissionless, one-shot `finalizeAndMigrate()` after the approved migration block; and
+7. reconciles a direct call to the official strategy with `reconcileMigration(positionTokenId)`.
+
+The official `LBPStrategy.migrate(initializer)` entrypoint is itself permissionless. A third party may
+therefore consume its one-shot registration before the launcher wrapper runs. The launcher commits the
+exact official migrator-parameter hash at registration. Reconciliation accepts success only after the
+official hookless-pool registration is consumed, the stored initializer parameters still match that
+commitment, exactly one approved hookless-or-strategy-hook pool is initialized, and the supplied NFT is
+owned by the immutable lock, belongs to that exact VEYDRIFT/WETH pool, has the configured fee/tick
+spacing, spans the full usable range, and has nonzero liquidity. An unrelated locked NFT, an initialized
+candidate pool with a still-live registration, and mixed hookless/fallback state all fail closed.
 
 CCA v2.1.0 stores the required-currency threshold immutably but does not expose a
 `requiredCurrencyRaised()` getter. The CREATE2 prediction, emitted factory configuration, launcher
@@ -168,9 +178,13 @@ deployment owner after the merged contract-upgrade handoff; Symphony must not pe
 6. Fund only the approved WETH bidder/capital path. CCA bidders use Permit2 and must receive normal
    user slippage/max-price disclosure. Monitor bids, checkpoints, demand, graduation, exits/refunds,
    and finalization readiness throughout the 1,800-block window.
-7. After the end checkpoint and approved migration block, simulate then call
-   `FinalizeVeydriftUniswapCCA.s.sol`. A `false` result is the official terminal recovery branch, not
-   permission to retry.
+7. After the end checkpoint and approved migration block, inspect the official strategy registration
+   and PositionManager events, then simulate `FinalizeVeydriftUniswapCCA.s.sol`. Use the default wrapper
+   only while the registration is live. If another address already called the official strategy, set
+   `VEYDRIFT_RECONCILE_MIGRATION=true` and set `VEYDRIFT_UNISWAP_MAIN_POSITION_TOKEN_ID` to the exact NFT
+   minted by that migration receipt; simulate the reconciliation before broadcast. Token id `0` is only
+   for recording a proven terminal recovery branch with an empty lock and no initialized main pool. A
+   `false` result is terminal and is never permission to retry.
 8. Derive resource initial prices from the approved post-discovery valuation policy—not an AMM spot
    read—then simulate all three configs atomically with `LaunchVeydriftUniswapResources.s.sol`. Before
    execution, grant the resource launcher exact allowances for 150M VEYDRIFT and the three fixed raw
@@ -207,7 +221,8 @@ for checking the referenced evidence.
 | Bidder/refund edge cases | Official audited CCA v2.1.0; Permit2 flow covered on Base fork; monitor checkpoints; disclose max-price/slippage; test exits, partial exits, claims, unsold sweep, and under-graduation before approval |
 | MEV and price manipulation | Continuous auction instead of first-block AMM price; no promise of fill price; public bid/backrun risk disclosed; resource prices come from approved valuation policy; protocol accounting never reads AMM spot |
 | Finalization failure | Permissionless one-shot wrapper after migration block; official strategy catches failure and returns WETH/reserve tokens to recovery; false migration result is terminal and blocks resource pools |
-| Migration/front-run | Preflight rejects an existing hookless pool; official audited strategy-hook fallback handles a pool created between registration and migration; postflight requires exactly one canonical main pool |
+| Permissionless migration race | Reconciliation verifies the committed official initializer parameters, consumed pool registration, exclusive pool topology, exact locked full-range NFT metadata, and nonzero liquidity before setting success; direct failure reconciliation requires an empty lock and no initialized main pool |
+| Migration/front-run | Preflight rejects an existing hookless pool; the official audited strategy has a strategy-hook fallback, but launcher reconciliation and postflight require exactly one canonical main pool and reject mixed hookless/fallback state |
 | Position custody | Four NFTs mint directly to one immutable, no-rescue time lock; beneficiary and timestamp fixed; Base fork verifies ownership |
 | Decimal/ratio error | 18-decimal 1B VEYDRIFT and 6-decimal 10B resources asserted; exact raw inputs; currency sorting; minimum 99% use; fork uses real PositionManager actions |
 | Mint/upgrade authority | VEYDRIFT has no owner/minter/proxy; resource no-mint final implementation and reserve release remain governed by VEY-KANEO-740 proof; no launch contract can mint or upgrade |
@@ -226,6 +241,9 @@ for checking the referenced evidence.
 - If the CCA does not graduate or migration fails, official LBPStrategy sweeps available WETH and the
   250M reserve to the immutable recovery recipient and emits recovery/failure events. The launcher
   records migration failure and resource creation remains permanently blocked. Never auto-retry.
+- If the official strategy registration is already zero, do not call the wrapper again. Resolve the
+  direct migration receipt and NFT id, then use the explicit reconciliation mode. Unrelated NFTs,
+  candidate-only initialization, or both main-pool variants are blockers, not evidence to override.
 - Successful v4 pool creation is irreversible market state. The immutable lock cannot release early.
 - Resource dust within the approved maximum/minimum envelope returns to recovery. A minimum-use breach
   reverts all three pools. Recompute configs and obtain a new approval rather than weakening limits.

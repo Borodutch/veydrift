@@ -93,6 +93,11 @@ interface IUniswapLBPStrategy {
     function initializerFactory() external view returns (address);
     function poolManager() external view returns (address);
     function positionManager() external view returns (address);
+    function registeredPoolIds(bytes32 poolId) external view returns (address initializer);
+    function initializers(address initializer)
+        external
+        view
+        returns (VeydriftMigratorParameters memory parameters);
     function initializeDistribution(
         address token,
         uint256 totalSupply,
@@ -134,6 +139,11 @@ interface IUniswapV4PositionManager {
     function ownerOf(uint256 tokenId) external view returns (address);
     function setApprovalForAll(address operator, bool approved) external;
     function nextTokenId() external view returns (uint256);
+    function getPositionLiquidity(uint256 tokenId) external view returns (uint128 liquidity);
+    function getPoolAndPositionInfo(uint256 tokenId)
+        external
+        view
+        returns (VeydriftV4PoolKey memory poolKey, uint256 positionInfo);
     function modifyLiquidities(bytes calldata unlockData, uint256 deadline) external payable;
 }
 
@@ -213,6 +223,8 @@ contract VeydriftUniswapCCALauncher {
     uint24 public mainPoolFee;
     int24 public mainPoolTickSpacing;
     bytes32 public configurationHash;
+    bytes32 public migrationParametersHash;
+    uint256 public mainPositionTokenId;
 
     struct LaunchConfig {
         address tokensRecipient;
@@ -249,6 +261,9 @@ contract VeydriftUniswapCCALauncher {
     error LaunchAborted();
     error MigrationNotReady(uint64 requiredBlock, uint256 actualBlock);
     error AuctionMismatch(address auction);
+    error InvalidMigrationLifecycle(address registeredInitializer, bytes32 actualParametersHash);
+    error InvalidMainPoolTopology(bool hooklessInitialized, bool strategyHookInitialized);
+    error InvalidMainPosition(uint256 tokenId);
 
     event LaunchRegistered(
         address indexed token,
@@ -261,6 +276,12 @@ contract VeydriftUniswapCCALauncher {
     event LaunchAbortedByAuthority(bytes32 indexed reasonHash);
     event MigrationAttempted(
         address indexed auction, bool positionMinted, uint256 lockedPositionCount
+    );
+    event MigrationReconciled(
+        address indexed auction,
+        bool positionMinted,
+        uint256 indexed positionTokenId,
+        uint256 lockedPositionCount
     );
 
     constructor(address launchAuthority_, VeydriftV4PositionLock positionLock_) {
@@ -345,6 +366,7 @@ contract VeydriftUniswapCCALauncher {
         migrationBlock = config.migrationBlock;
         mainPoolFee = config.v4Fee;
         mainPoolTickSpacing = config.v4TickSpacing;
+        migrationParametersHash = keccak256(abi.encode(_migratorParameters(token, config)));
 
         uint256 allowance = IERC20(token).allowance(msg.sender, address(this));
         if (allowance != LAUNCH_BOOTSTRAP_ALLOCATION) {
@@ -394,15 +416,48 @@ contract VeydriftUniswapCCALauncher {
     function finalizeAndMigrate() external returns (bool positionMinted) {
         if (!launched || migrationAttempted) revert AlreadyFinalized();
         if (block.number < migrationBlock) revert MigrationNotReady(migrationBlock, block.number);
-        migrationAttempted = true;
-        uint256 positionsBefore =
-            IUniswapV4PositionManager(_positionManager()).balanceOf(address(positionLock));
+        uint256 expectedPositionTokenId =
+            IUniswapV4PositionManager(_positionManager()).nextTokenId();
         IUniswapLBPStrategy(_lbpStrategy()).migrate(auction);
-        uint256 positionsAfter =
+        uint256 nextPositionTokenId = IUniswapV4PositionManager(_positionManager()).nextTokenId();
+        if (nextPositionTokenId == expectedPositionTokenId) {
+            _assertConsumedMigrationLifecycle();
+            migrationAttempted = true;
+            emit MigrationAttempted(
+                auction,
+                false,
+                IUniswapV4PositionManager(_positionManager()).balanceOf(address(positionLock))
+            );
+            return false;
+        }
+        if (nextPositionTokenId != expectedPositionTokenId + 1) {
+            revert InvalidMainPosition(expectedPositionTokenId);
+        }
+        positionMinted = _recordSuccessfulMigration(expectedPositionTokenId, false);
+    }
+
+    /// @notice Reconciles an official one-shot migration completed directly by any third party.
+    /// @dev The official strategy entrypoint is permissionless. Reconciliation is fail-closed and accepts
+    ///      success only when the registered initializer was consumed, exactly one approved pool exists,
+    ///      and the supplied locked NFT is the full-range position for that exact pool. Passing tokenId zero
+    ///      records the terminal official recovery branch only when the lock contains no position at all.
+    function reconcileMigration(uint256 positionTokenId) external returns (bool positionMinted) {
+        if (!launched || migrationAttempted) revert AlreadyFinalized();
+        if (block.number < migrationBlock) revert MigrationNotReady(migrationBlock, block.number);
+        _assertConsumedMigrationLifecycle();
+        uint256 lockedPositionCount =
             IUniswapV4PositionManager(_positionManager()).balanceOf(address(positionLock));
-        positionMinted = positionsAfter > positionsBefore;
-        migrationSucceeded = positionMinted;
-        emit MigrationAttempted(auction, positionMinted, positionsAfter);
+        if (positionTokenId == 0) {
+            if (lockedPositionCount != 0) revert InvalidMainPosition(positionTokenId);
+            (bool hooklessInitialized, bool strategyHookInitialized,) = _mainPoolTopology();
+            if (hooklessInitialized || strategyHookInitialized) {
+                revert InvalidMainPoolTopology(hooklessInitialized, strategyHookInitialized);
+            }
+            migrationAttempted = true;
+            emit MigrationReconciled(auction, false, 0, 0);
+            return false;
+        }
+        positionMinted = _recordSuccessfulMigration(positionTokenId, true);
     }
 
     function mainPoolIds()
@@ -454,6 +509,92 @@ contract VeydriftUniswapCCALauncher {
             positionDefinitions: abi.encode(positions),
             lpAllocationSchedule: abi.encode(brackets)
         });
+    }
+
+    function _recordSuccessfulMigration(uint256 positionTokenId, bool reconciled)
+        private
+        returns (bool)
+    {
+        _assertConsumedMigrationLifecycle();
+        (bool hooklessInitialized, bool strategyHookInitialized, bytes32 initializedPoolId) =
+            _mainPoolTopology();
+        if (hooklessInitialized == strategyHookInitialized) {
+            revert InvalidMainPoolTopology(hooklessInitialized, strategyHookInitialized);
+        }
+        if (!_isExpectedMainPosition(positionTokenId, initializedPoolId)) {
+            revert InvalidMainPosition(positionTokenId);
+        }
+        migrationAttempted = true;
+        migrationSucceeded = true;
+        mainPositionTokenId = positionTokenId;
+        uint256 lockedPositionCount =
+            IUniswapV4PositionManager(_positionManager()).balanceOf(address(positionLock));
+        if (reconciled) {
+            emit MigrationReconciled(auction, true, positionTokenId, lockedPositionCount);
+        } else {
+            emit MigrationAttempted(auction, true, lockedPositionCount);
+        }
+        return true;
+    }
+
+    function _assertConsumedMigrationLifecycle() private view {
+        bytes32 hooklessPoolId = _poolId(launchToken, mainPoolFee, mainPoolTickSpacing, address(0));
+        IUniswapLBPStrategy strategy = IUniswapLBPStrategy(_lbpStrategy());
+        address registeredInitializer = strategy.registeredPoolIds(hooklessPoolId);
+        bytes32 actualParametersHash = keccak256(abi.encode(strategy.initializers(auction)));
+        if (registeredInitializer != address(0) || actualParametersHash != migrationParametersHash)
+        {
+            revert InvalidMigrationLifecycle(registeredInitializer, actualParametersHash);
+        }
+    }
+
+    function _mainPoolTopology()
+        private
+        view
+        returns (bool hooklessInitialized, bool strategyHookInitialized, bytes32 initializedPoolId)
+    {
+        bytes32 hooklessPoolId = _poolId(launchToken, mainPoolFee, mainPoolTickSpacing, address(0));
+        bytes32 strategyHookPoolId =
+            _poolId(launchToken, mainPoolFee, mainPoolTickSpacing, _lbpStrategy());
+        (uint160 hooklessPrice,,,) = IUniswapV4StateView(_stateView()).getSlot0(hooklessPoolId);
+        (uint160 strategyHookPrice,,,) =
+            IUniswapV4StateView(_stateView()).getSlot0(strategyHookPoolId);
+        hooklessInitialized = hooklessPrice != 0;
+        strategyHookInitialized = strategyHookPrice != 0;
+        initializedPoolId = hooklessInitialized ? hooklessPoolId : strategyHookPoolId;
+    }
+
+    function _isExpectedMainPosition(uint256 tokenId, bytes32 initializedPoolId)
+        private
+        view
+        returns (bool)
+    {
+        IUniswapV4PositionManager manager = IUniswapV4PositionManager(_positionManager());
+        if (manager.ownerOf(tokenId) != address(positionLock)) return false;
+        (VeydriftV4PoolKey memory key, uint256 info) = manager.getPoolAndPositionInfo(tokenId);
+        if (
+            key.currency0 >= key.currency1 || key.fee != mainPoolFee
+                || key.tickSpacing != mainPoolTickSpacing
+                || (key.hooks != address(0) && key.hooks != _lbpStrategy())
+                || keccak256(abi.encode(key)) != initializedPoolId
+        ) return false;
+        (address expectedCurrency0, address expectedCurrency1) =
+            _weth() < launchToken ? (_weth(), launchToken) : (launchToken, _weth());
+        if (key.currency0 != expectedCurrency0 || key.currency1 != expectedCurrency1) return false;
+        int24 tickLower;
+        int24 tickUpper;
+        assembly ("memory-safe") {
+            tickLower := signextend(2, shr(8, info))
+            tickUpper := signextend(2, shr(32, info))
+        }
+        // This is the official Uniswap v4 TickMath usable-boundary formula.
+        // forge-lint: disable-next-line(divide-before-multiply)
+        int24 minTick = (-887_272 / mainPoolTickSpacing) * mainPoolTickSpacing;
+        // forge-lint: disable-next-line(divide-before-multiply)
+        int24 maxTick = (887_272 / mainPoolTickSpacing) * mainPoolTickSpacing;
+        return
+            tickLower == minTick && tickUpper == maxTick
+                && manager.getPositionLiquidity(tokenId) != 0;
     }
 
     function _auctionParameters(LaunchConfig calldata config)

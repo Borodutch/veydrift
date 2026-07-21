@@ -79,6 +79,12 @@ contract VerifyVeydriftUniswapLaunch is Script {
                 == 4,
             "LOCKED_POSITION_COUNT"
         );
+        require(main.mainPositionTokenId() != 0, "MAIN_POSITION_ID");
+        require(
+            IUniswapV4PositionManager(VeydriftUniswapDeployments.POSITION_MANAGER)
+                .ownerOf(main.mainPositionTokenId()) == lock,
+            "MAIN_POSITION_OWNER"
+        );
         for (uint256 i = 0; i < 3; i++) {
             bytes32 poolId = resources.poolIds(i);
             (uint160 sqrtPriceX96,,,) =

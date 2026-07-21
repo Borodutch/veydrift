@@ -15,11 +15,27 @@ contract FinalizeVeydriftUniswapCCA is Script {
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
         VeydriftUniswapCCALauncher launcher =
             VeydriftUniswapCCALauncher(vm.envAddress("VEYDRIFT_UNISWAP_CCA_LAUNCHER_ADDRESS"));
+        bool reconcile = vm.envOr("VEYDRIFT_RECONCILE_MIGRATION", false);
+        uint256 positionTokenId = vm.envOr("VEYDRIFT_UNISWAP_MAIN_POSITION_TOKEN_ID", uint256(0));
 
         vm.startBroadcast(privateKey);
-        positionMinted = launcher.finalizeAndMigrate();
+        positionMinted = reconcile
+            ? launcher.reconcileMigration(positionTokenId)
+            : launcher.finalizeAndMigrate();
         vm.stopBroadcast();
-        require(positionMinted, "MIGRATION_RECOVERY_BRANCH");
-        console2.log("CCA migrated into locked v4 position");
+        require(launcher.migrationAttempted(), "MIGRATION_STATE_MISSING");
+        if (positionMinted) {
+            require(launcher.migrationSucceeded(), "MIGRATION_SUCCESS_STATE_MISSING");
+            require(launcher.mainPositionTokenId() != 0, "MAIN_POSITION_MISSING");
+            console2.log(
+                reconcile
+                    ? "CCA direct migration reconciled"
+                    : "CCA migrated into locked v4 position"
+            );
+            console2.log("Main v4 position token id", launcher.mainPositionTokenId());
+        } else {
+            require(!launcher.migrationSucceeded(), "MIGRATION_FAILURE_STATE_MISMATCH");
+            console2.log("CCA migration entered the terminal recovery branch");
+        }
     }
 }

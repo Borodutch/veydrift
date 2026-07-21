@@ -290,6 +290,10 @@ The Aerodrome classic scripts are retained as fallback-only and must not be incl
 Implementation, codehash pins, owner gates, simulation commands, security review, failure recovery,
 and environment variable names are in
 [`../../docs/veydrift-uniswap-cca-v4-launch-VEY-741.md`](../../docs/veydrift-uniswap-cca-v4-launch-VEY-741.md).
+Because the official strategy migration entrypoint is permissionless, the finalization script has an
+explicit reconciliation mode for a migration mined before the wrapper call. It requires the exact
+main position token id and verifies the consumed initializer lifecycle, exclusive pool topology, and
+locked full-range position; see the runbook before simulating either mode.
 Validate the non-broadcast proof with:
 
 ```bash

@@ -7,6 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {
     IUniswapCCAAuction,
+    IUniswapLBPStrategy,
     IUniswapV4PositionManager,
     VeydriftUniswapCCALauncher,
     VeydriftUniswapDeployments,
@@ -132,8 +133,12 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
         uint256 expectedPositionId =
             IUniswapV4PositionManager(VeydriftUniswapDeployments.POSITION_MANAGER).nextTokenId();
         vm.roll(config.migrationBlock);
-        assertTrue(launcher.finalizeAndMigrate());
+        vm.prank(makeAddr("fork-permissionless-migrator"));
+        IUniswapLBPStrategy(VeydriftUniswapDeployments.LBP_STRATEGY).migrate(auction);
+        assertFalse(launcher.migrationAttempted());
+        assertTrue(launcher.reconcileMigration(expectedPositionId));
         assertTrue(launcher.migrationSucceeded());
+        assertEq(launcher.mainPositionTokenId(), expectedPositionId);
         assertEq(
             IUniswapV4PositionManager(VeydriftUniswapDeployments.POSITION_MANAGER)
                 .ownerOf(expectedPositionId),
