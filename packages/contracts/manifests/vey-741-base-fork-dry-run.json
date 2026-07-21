@@ -1,0 +1,75 @@
+{
+  "schema": "veydrift.uniswap-launch-manifest.v1",
+  "task": "VEY-KANEO-741",
+  "environment": "base-mainnet-fork",
+  "broadcast": false,
+  "status": "passed",
+  "chain": { "name": "Base", "chainId": 8453 },
+  "officialDeployments": {
+    "weth": { "address": "0x4200000000000000000000000000000000000006", "codehash": "0x8a3a1f6a9f9dce633117adee5b458245835a8645a8c8726a26382a4622508b1c" },
+    "ccaFactoryV2_1_0": { "address": "0x000000001F26a0044BaA66024e7b6599c61963F8", "codehash": "0xa1d2a90564f4f63580b25de42efaff92505c254b00fc666f65ab38126cce5cfa" },
+    "lbpStrategyV3_1_0": { "address": "0x34385dD739FE5464892BF0bA4CC42492804dA000", "codehash": "0x74723f633d30e7ea54ebb2ad6a605965010ced6185cde8ac9dce8504c55787a5" },
+    "poolManager": { "address": "0x498581fF718922c3f8e6A244956aF099B2652b2b", "codehash": "0x83b2af6e9f3158defc2811cbcb0db71ecf8b2ba2abea39c39e370ac5c6f43eb6" },
+    "positionManager": { "address": "0x7C5f5A4bBd8fD63184577525326123B519429bDc", "codehash": "0x243f9e091ddf11c7c04e28059fdbbf1bab82b72d414fafb8e096c097aaeb622a" },
+    "stateView": { "address": "0xA3c0c9b65baD0b08107Aa264b0f3dB444b867A71", "codehash": "0xbbd5859677ef5491143133e8ed2b8faa0272f6fc2cbae94c53e79cc8c0538545" },
+    "permit2": { "address": "0x000000000022D473030F116dDEE9F6B43aC78BA3", "codehash": "0xa67739abc3ede9dbdc0491636c67d6a14ac07fab9030c3f509b1eb7b11dff8ed" }
+  },
+  "allocationWei": {
+    "total": "1000000000000000000000000000",
+    "launchBootstrap": "500000000000000000000000000",
+    "cca": "250000000000000000000000000",
+    "v4Main": "250000000000000000000000000",
+    "resourcePools": "150000000000000000000000000",
+    "development": "150000000000000000000000000",
+    "contributors": "100000000000000000000000000",
+    "ecosystem": "100000000000000000000000000"
+  },
+  "auction": {
+    "currency": "0x4200000000000000000000000000000000000006",
+    "durationBlocks": 1800,
+    "durationMinutes": 60,
+    "validationHook": "0x0000000000000000000000000000000000000000",
+    "testBidWethWei": "10000000000000000000",
+    "finalized": true,
+    "graduated": true,
+    "fundsRecipient": "0x34385dD739FE5464892BF0bA4CC42492804dA000"
+  },
+  "mainPool": {
+    "venue": "Uniswap v4",
+    "pair": "VEYDRIFT/WETH",
+    "positionsMinted": 1,
+    "positionOwner": "immutable-v4-position-lock",
+    "hooklessPreferred": true,
+    "auditedStrategyHookFallbackOnly": true
+  },
+  "resourcePools": [
+    { "pair": "vMETAL/VEYDRIFT", "resourceRaw": "333333000", "veydriftWei": "50000000000000000000000000", "venue": "Uniswap v4", "range": "full", "hook": "0x0000000000000000000000000000000000000000", "minInputUsageMps": 9900000 },
+    { "pair": "vCRYSTAL/VEYDRIFT", "resourceRaw": "222222000", "veydriftWei": "50000000000000000000000000", "venue": "Uniswap v4", "range": "full", "hook": "0x0000000000000000000000000000000000000000", "minInputUsageMps": 9900000 },
+    { "pair": "vDEUT/VEYDRIFT", "resourceRaw": "133333000", "veydriftWei": "50000000000000000000000000", "venue": "Uniswap v4", "range": "full", "hook": "0x0000000000000000000000000000000000000000", "minInputUsageMps": 9900000 }
+  ],
+  "flows": {
+    "authorityToCcaLauncherWei": "500000000000000000000000000",
+    "ccaLauncherToAuctionWei": "250000000000000000000000000",
+    "ccaLauncherToLbpStrategyWei": "250000000000000000000000000",
+    "authorityToResourceLauncherWei": "150000000000000000000000000",
+    "residualLauncherBalances": "0",
+    "residualAllowances": "0"
+  },
+  "topology": {
+    "canonicalPools": ["VEYDRIFT/WETH", "vMETAL/VEYDRIFT", "vCRYSTAL/VEYDRIFT", "vDEUT/VEYDRIFT"],
+    "aerodromeSeeded": false,
+    "resourceWethSeeded": false,
+    "resourceStableSeeded": false,
+    "duplicateVenueSeeded": false
+  },
+  "reserveBacking": {
+    "releaseSource": "VeydriftGame.releaseExcessResourceReserves",
+    "liabilitiesPlusApprovedMarginsRequired": true,
+    "mintUsed": false
+  },
+  "evidence": {
+    "command": "BASE_MAINNET_RPC_URL=<redacted-or-public> forge test --match-path test/VeydriftUniswapLaunchMainnetFork.t.sol -vv",
+    "result": "1 passed; 0 failed",
+    "coverage": ["official codehash and wiring", "CCA creation", "Permit2 WETH bid", "checkpoint and graduation", "automatic v4 migration", "four locked NFTs", "three full-range resource pools", "zero authority allowances"]
+  }
+}

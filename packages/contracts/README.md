@@ -281,6 +281,26 @@ Veydrift is in open alpha as of 2026-05-29, so contract deployments must preserv
 existing player state. Read `../../docs/open-alpha-state-preservation.md` before
 running any deploy or upgrade command.
 
+## VEYDRIFT Uniswap CCA/v4 launch
+
+The approved production path is the official Base CCA v2.1.0 and Liquidity Launcher v3.1.0 flow,
+followed by one canonical v4 VEYDRIFT/WETH position and three hookless full-range resource positions.
+The Aerodrome classic scripts are retained as fallback-only and must not be included in this bundle.
+
+Implementation, codehash pins, owner gates, simulation commands, security review, failure recovery,
+and environment variable names are in
+[`../../docs/veydrift-uniswap-cca-v4-launch-VEY-741.md`](../../docs/veydrift-uniswap-cca-v4-launch-VEY-741.md).
+Validate the non-broadcast proof with:
+
+```bash
+node scripts/validate-veydrift-uniswap-launch-manifest.mjs
+BASE_MAINNET_RPC_URL=<redacted-or-public-rpc> forge test \
+  --match-path test/VeydriftUniswapLaunchMainnetFork.t.sol -vv
+```
+
+No command in that runbook authorizes a deployment or broadcast. OpenClaw owns rollout only after the
+merged contract-upgrade handoff and explicit owner approvals.
+
 Prefer upgrading an existing proxy when the live contract is upgradeable and
 storage-compatible. If a full redeploy is unavoidable, first record either
 `No alpha player state exists` with onchain/indexer evidence or

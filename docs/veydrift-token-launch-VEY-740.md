@@ -1,7 +1,10 @@
-# $VEYDRIFT token and resource-liquidity launch architecture
+# $VEYDRIFT token foundation and Aerodrome contingency architecture
 
-Status: implementation and dry-run runbook only. No transaction in this document is approved for
-Base mainnet broadcast.
+Status: the fixed-supply, vesting, resource-freeze, and reserve-release foundation remains current.
+The Aerodrome classic launcher is fallback-only and is excluded from the approved launch bundle by
+VEY-KANEO-741. The canonical approved path is documented in
+`veydrift-uniswap-cca-v4-launch-VEY-741.md`. No transaction in this document is approved for Base
+mainnet broadcast.
 
 ## Source parameters
 
@@ -58,7 +61,7 @@ vesting continues linearly). Beneficiaries cannot withdraw unvested tokens. Open
 wallet ownership remains transferable, so a beneficiary can transfer the economic right to future
 releases; this does not accelerate or bypass the schedule and must be disclosed to reviewers.
 
-### Classic volatile launch
+### Classic volatile launch (fallback-only; excluded from the approved bundle)
 
 `VeydriftLiquidityLauncher` creates all four pools in one transaction through Aerodrome's canonical
 classic router. It supports volatile pools only, rejects any pre-existing canonical pair, verifies
@@ -86,8 +89,8 @@ References:
 
 ## Venue decision: classic volatile or Slipstream full-range
 
-The repository implements classic volatile as the preferred first-launch path, but execution remains
-blocked until Nikita approves the venue and pool type.
+The repository retains classic volatile only as a reviewed contingency. It is not the preferred or
+approved first-launch path after VEY-KANEO-741 and must not be deployed or called in the Uniswap bundle.
 
 | Decision | Classic volatile (implemented) | Slipstream full-range (modeled, not implemented) |
 | --- | --- | --- |

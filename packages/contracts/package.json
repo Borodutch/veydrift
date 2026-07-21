@@ -10,6 +10,7 @@
     "check:fast": "forge fmt --check && forge build --sizes && forge build",
     "check:storage": "forge build --force --extra-output storageLayout && node scripts/check-storage-layout.mjs",
     "storage:check": "bun run check:storage",
-    "test": "forge test"
+    "test": "forge test",
+    "manifest:check": "node scripts/validate-veydrift-uniswap-launch-manifest.mjs"
   }
 }

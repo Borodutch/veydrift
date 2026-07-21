@@ -40,6 +40,13 @@ contract VeydriftTokenTest is Test {
         assertEq(token.symbol(), "VEYDRIFT");
         assertEq(token.decimals(), 18);
         assertEq(token.totalSupply(), 1_000_000_000 ether);
+        assertEq(token.LAUNCH_BOOTSTRAP_ALLOCATION(), 500_000_000 ether);
+        assertEq(token.CCA_ALLOCATION(), 250_000_000 ether);
+        assertEq(token.V4_MAIN_LIQUIDITY_ALLOCATION(), 250_000_000 ether);
+        assertEq(
+            token.CCA_ALLOCATION() + token.V4_MAIN_LIQUIDITY_ALLOCATION(),
+            token.LAUNCH_BOOTSTRAP_ALLOCATION()
+        );
         assertEq(token.balanceOf(ethLiquidity), 500_000_000 ether);
         assertEq(token.balanceOf(resourceLiquidity), 150_000_000 ether);
         assertEq(token.balanceOf(address(development)), 150_000_000 ether);
