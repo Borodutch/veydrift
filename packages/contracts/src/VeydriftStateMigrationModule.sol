@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftFormulas} from "./libraries/VeydriftFormulas.sol";
 import {VeydriftPlanetGeneration} from "./libraries/VeydriftPlanetGeneration.sol";
+import {VeydriftReserveRelease} from "./libraries/VeydriftReserveRelease.sol";
 import {Building, Defense, MoonBuilding, Ship, Technology} from "./libraries/VeydriftTypes.sol";
 
 interface IVeydriftStateMigrationMoonSystem {
@@ -103,6 +104,25 @@ contract VeydriftStateMigrationModule is VeydriftResourceReserves {
 
     constructor(address referralSystemAddress) VeydriftResourceReserves(address(0)) {
         _referralSystem = referralSystemAddress;
+    }
+
+    /// @notice Releases provably excess resource reserves to the configured launch treasury.
+    /// @dev Called through the game facade's delegatecall. The explicit `safetyMargin` remains above
+    ///      internal and locked-withdrawal liabilities. The batch reverts atomically if a resource
+    ///      would become under-backed or the recipient is short-delivered.
+    function releaseExcessResourceReserves(
+        address treasury,
+        Resources calldata amount,
+        Resources calldata safetyMargin
+    ) external onlyOwner {
+        VeydriftReserveRelease.release(
+            _resourceTokens,
+            _totalInternalResources,
+            _lockedWithdrawalResources,
+            treasury,
+            amount,
+            safetyMargin
+        );
     }
 
     function importMigratedState(address player, bytes calldata payload) external payable {

@@ -124,6 +124,15 @@ contract ShortTransferResourceToken is MockResourceToken {
     }
 }
 
+contract ShortOutgoingResourceToken is MockResourceToken {
+    function transfer(address to, uint256 amount) external override returns (bool) {
+        if (balanceOf[msg.sender] < amount) return false;
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount - 1;
+        return true;
+    }
+}
+
 contract RejectingReferralInviter {
     receive() external payable {
         revert("reject referral reward");
@@ -248,6 +257,14 @@ contract VeydriftGameTest is Test {
         uint16 galaxy,
         uint16 system,
         uint8 position
+    );
+    event ExcessResourceReserveReleased(
+        Resource indexed resource,
+        address indexed treasury,
+        uint256 amount,
+        uint256 liabilityRequirement,
+        uint256 safetyMargin,
+        uint256 remainingBalance
     );
     event AttackBattleResolved(
         uint256 indexed missionId,
@@ -1720,6 +1737,100 @@ contract VeydriftGameTest is Test {
         game.depositResourceReserves(
             VeydriftGameStorage.Resources({metal: 100, crystal: 0, deuterium: 0})
         );
+    }
+
+    function testOwnerCanReleaseOnlyExcessReserveAboveLiabilitiesAndMargin() public {
+        address treasury = address(0x7EA5);
+        vm.deal(player, 1 ether);
+        vm.prank(player);
+        game.startPlanet{value: 0.05 ether}();
+
+        VeydriftGameStorage.Resources memory amount = VeydriftGameStorage.Resources({
+            metal: 333_333_000, crystal: 222_222_000, deuterium: 133_333_000
+        });
+        VeydriftGameStorage.Resources memory margin = VeydriftGameStorage.Resources({
+            metal: 1_000_000, crystal: 1_000_000, deuterium: 1_000_000
+        });
+
+        vm.expectEmit(true, true, false, true, address(game));
+        emit ExcessResourceReserveReleased(
+            Resource.Metal,
+            treasury,
+            amount.metal,
+            500,
+            margin.metal,
+            RESERVE_FUNDING - amount.metal
+        );
+        vm.prank(admin);
+        game.releaseExcessResourceReserves(treasury, amount, margin);
+
+        assertEq(metalToken.balanceOf(treasury), amount.metal);
+        assertEq(crystalToken.balanceOf(treasury), amount.crystal);
+        assertEq(deuteriumToken.balanceOf(treasury), amount.deuterium);
+        VeydriftGameStorage.Resources memory required = game.resourceReserveRequirement();
+        assertEq(required.metal, 500);
+        assertEq(required.crystal, 500);
+        assertEq(required.deuterium, 0);
+        assertGe(metalToken.balanceOf(address(game)), required.metal + margin.metal);
+        assertGe(crystalToken.balanceOf(address(game)), required.crystal + margin.crystal);
+        assertGe(deuteriumToken.balanceOf(address(game)), required.deuterium + margin.deuterium);
+    }
+
+    function testExcessReserveReleaseRejectsInsolvencyAndIsAtomic() public {
+        address treasury = address(0x7EA5);
+        VeydriftGameStorage.Resources memory amount = VeydriftGameStorage.Resources({
+            metal: uint128(RESERVE_FUNDING), crystal: 1, deuterium: 1
+        });
+        VeydriftGameStorage.Resources memory margin =
+            VeydriftGameStorage.Resources({metal: 1, crystal: 1, deuterium: 1});
+
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.InsufficientExcessResourceReserve.selector,
+                Resource.Metal,
+                uint256(RESERVE_FUNDING),
+                0,
+                1,
+                RESERVE_FUNDING
+            )
+        );
+        game.releaseExcessResourceReserves(treasury, amount, margin);
+
+        assertEq(metalToken.balanceOf(treasury), 0);
+        assertEq(crystalToken.balanceOf(treasury), 0);
+        assertEq(deuteriumToken.balanceOf(treasury), 0);
+    }
+
+    function testOnlyOwnerCanReleaseExcessReserve() public {
+        VeydriftGameStorage.Resources memory zero;
+        vm.prank(player);
+        vm.expectRevert(abi.encodeWithSelector(VeydriftGameStorage.Unauthorized.selector, player));
+        game.releaseExcessResourceReserves(address(0x7EA5), zero, zero);
+    }
+
+    function testExcessReserveReleaseRequiresExactRecipientDelivery() public {
+        ShortOutgoingResourceToken shortToken = new ShortOutgoingResourceToken();
+        shortToken.mint(address(game), RESERVE_FUNDING);
+        vm.prank(admin);
+        game.setResourceToken(Resource.Metal, address(shortToken));
+
+        VeydriftGameStorage.Resources memory amount =
+            VeydriftGameStorage.Resources({metal: 100, crystal: 0, deuterium: 0});
+        VeydriftGameStorage.Resources memory margin;
+        vm.prank(admin);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftGameStorage.ResourceTransferFailed.selector,
+                Resource.Metal,
+                address(shortToken),
+                100
+            )
+        );
+        game.releaseExcessResourceReserves(address(0x7EA5), amount, margin);
+
+        assertEq(shortToken.balanceOf(address(game)), RESERVE_FUNDING);
+        assertEq(shortToken.balanceOf(address(0x7EA5)), 0);
     }
 
     function testReadAbiReturnsEmptyMvpState() public {

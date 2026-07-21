@@ -5,7 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {
     OwnableUpgradeable
 } from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {
+    ERC20Upgradeable
+} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 import {DeployResourceTokens} from "../script/DeployResourceTokens.s.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
@@ -25,6 +29,31 @@ import {
     VeydriftMetal,
     VeydriftResourceToken
 } from "../src/VeydriftResourceToken.sol";
+
+/// @dev Models the currently live owner-upgradeable/mintable implementation for upgrade proof.
+contract LegacyVeydriftMetal is ERC20Upgradeable, OwnableUpgradeable, UUPSUpgradeable {
+    uint256 internal constant INITIAL_SUPPLY = 10_000_000_000 * 1e6;
+
+    constructor() {
+        _disableInitializers();
+    }
+
+    function initialize(address initialOwner, address initialHolder) public initializer {
+        __ERC20_init("Veydrift Metal", "vMETAL");
+        __Ownable_init(initialOwner);
+        _mint(initialHolder, INITIAL_SUPPLY);
+    }
+
+    function decimals() public pure override returns (uint8) {
+        return 6;
+    }
+
+    function mint(address to, uint256 amount) external onlyOwner {
+        _mint(to, amount);
+    }
+
+    function _authorizeUpgrade(address) internal override onlyOwner {}
+}
 
 contract VeydriftResourceTokenTest is Test {
     uint256 internal constant INITIAL_SUPPLY = 10_000_000_000 * 10 ** 6;
@@ -67,22 +96,18 @@ contract VeydriftResourceTokenTest is Test {
         _assertResourceToken(deuterium, "Veydrift Deuterium", "vDEUT");
     }
 
-    function testOwnerCanMintAdditionalSupply() public {
-        uint256 mintAmount = 25_000_000;
+    function testResourceTokensExposeNoPostGenesisMintAuthority() public {
+        bytes memory mintCall = abi.encodeWithSignature("mint(address,uint256)", treasury, 1);
 
         vm.prank(admin);
-        metal.mint(treasury, mintAmount);
-
-        assertEq(metal.balanceOf(treasury), mintAmount);
-        assertEq(metal.totalSupply(), INITIAL_SUPPLY + mintAmount);
-    }
-
-    function testNonOwnerCannotMintAdditionalSupply() public {
+        (bool ownerSuccess,) = address(metal).call(mintCall);
         vm.prank(player);
-        vm.expectRevert(
-            abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, player)
-        );
-        crystal.mint(player, 1);
+        (bool playerSuccess,) = address(crystal).call(mintCall);
+
+        assertFalse(ownerSuccess);
+        assertFalse(playerSuccess);
+        assertEq(metal.totalSupply(), INITIAL_SUPPLY);
+        assertEq(crystal.totalSupply(), INITIAL_SUPPLY);
     }
 
     function testResourceTokensRemainTransferableERC20s() public {
@@ -130,19 +155,34 @@ contract VeydriftResourceTokenTest is Test {
         );
     }
 
-    function testOnlyOwnerCanAuthorizeUpgrade() public {
-        VeydriftMetal nextImplementation = new VeydriftMetal();
-
-        vm.prank(player);
-        vm.expectRevert(
-            abi.encodeWithSelector(OwnableUpgradeable.OwnableUnauthorizedAccount.selector, player)
+    function testFinalUpgradeRemovesMintAndPermanentlyDisablesUups() public {
+        LegacyVeydriftMetal legacyImplementation = new LegacyVeydriftMetal();
+        LegacyVeydriftMetal legacy = LegacyVeydriftMetal(
+            _deployProxy(
+                address(legacyImplementation),
+                abi.encodeCall(LegacyVeydriftMetal.initialize, (admin, game))
+            )
         );
-        metal.upgradeToAndCall(address(nextImplementation), "");
+        vm.prank(admin);
+        legacy.mint(treasury, 25_000_000);
+        uint256 supplyBefore = legacy.totalSupply();
+
+        VeydriftMetal noMintImplementation = new VeydriftMetal();
+        vm.prank(admin);
+        legacy.upgradeToAndCall(address(noMintImplementation), "");
+        VeydriftMetal frozen = VeydriftMetal(address(legacy));
+        assertEq(frozen.owner(), admin);
+        assertEq(frozen.totalSupply(), supplyBefore);
 
         vm.prank(admin);
-        metal.upgradeToAndCall(address(nextImplementation), "");
-        assertEq(metal.owner(), admin);
-        assertEq(metal.balanceOf(game), INITIAL_SUPPLY);
+        (bool mintSucceeded,) =
+            address(frozen).call(abi.encodeWithSignature("mint(address,uint256)", treasury, 1));
+        assertFalse(mintSucceeded);
+        VeydriftMetal forbiddenImplementation = new VeydriftMetal();
+        vm.expectRevert(VeydriftResourceToken.ResourceTokenUpgradesDisabled.selector);
+        vm.prank(admin);
+        frozen.upgradeToAndCall(address(forbiddenImplementation), "");
+        assertEq(frozen.totalSupply(), supplyBefore);
     }
 
     function testFullDeployScriptWiresGameAndResourceTokenReserves() public {
