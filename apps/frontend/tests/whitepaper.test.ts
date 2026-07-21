@@ -5,7 +5,7 @@ import { SettlementSupportLinks } from "../src/FirstPlanetSettlementApp";
 import { TopBar } from "../src/components/TopBar";
 import { WHITEPAPER_URL } from "../src/supportLinks";
 
-const expectedHash = "29072d391b6bf66bf72c13ebb48f4ababb859856caaf2f6d7592529d4f6c2719";
+const expectedHash = "b220d34a8bf6edc769b77793345d0a802ef3633e041ded0443be03fe7bf81180";
 const landingSource = await Bun.file(new URL("../src/ComingSoonApp.tsx", import.meta.url)).text();
 const whitepaper = Bun.file(new URL("../public/whitepaper.pdf", import.meta.url));
 
