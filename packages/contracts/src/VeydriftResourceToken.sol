@@ -48,9 +48,14 @@ abstract contract VeydriftResourceToken is ERC20Upgradeable, OwnableUpgradeable,
     /// @dev The live legacy implementation authorizes the one final owner upgrade into this
     ///      implementation. Once installed, every subsequent UUPS upgrade is permanently blocked,
     ///      so no future implementation can restore mint authority or exceed the 10B supply.
-    function _authorizeUpgrade(address) internal virtual override {
+    ///      Revert at the public entrypoint instead of `_authorizeUpgrade` so the compiler does not
+    ///      report OpenZeppelin's subsequent upgrade call as unreachable code.
+    function upgradeToAndCall(address, bytes memory) public payable override {
         revert ResourceTokenUpgradesDisabled();
     }
+
+    /// @dev Required by UUPSUpgradeable but unreachable because `upgradeToAndCall` always reverts.
+    function _authorizeUpgrade(address) internal override {}
 }
 
 contract VeydriftMetal is VeydriftResourceToken {

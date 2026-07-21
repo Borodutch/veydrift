@@ -2,7 +2,14 @@
 pragma solidity ^0.8.28;
 
 import {Test} from "forge-std/Test.sol";
+import {
+    OwnableUpgradeable
+} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {
+    ERC20Upgradeable
+} from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {Deploy} from "../script/Deploy.s.sol";
 import {DeployResourceTokens} from "../script/DeployResourceTokens.s.sol";
 import {VeydriftAttackProtectionModule} from "../src/VeydriftAttackProtectionModule.sol";
@@ -24,9 +31,21 @@ import {
 } from "../src/VeydriftResourceToken.sol";
 
 /// @dev Models the currently live owner-upgradeable/mintable implementation for upgrade proof.
-contract LegacyVeydriftMetal is VeydriftResourceToken {
+contract LegacyVeydriftMetal is ERC20Upgradeable, OwnableUpgradeable, UUPSUpgradeable {
+    uint256 internal constant INITIAL_SUPPLY = 10_000_000_000 * 1e6;
+
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(address initialOwner, address initialHolder) public initializer {
-        __VeydriftResourceToken_init("Veydrift Metal", "vMETAL", initialOwner, initialHolder);
+        __ERC20_init("Veydrift Metal", "vMETAL");
+        __Ownable_init(initialOwner);
+        _mint(initialHolder, INITIAL_SUPPLY);
+    }
+
+    function decimals() public pure override returns (uint8) {
+        return 6;
     }
 
     function mint(address to, uint256 amount) external onlyOwner {
