@@ -14,6 +14,7 @@ abstract contract VeydriftResourceToken is ERC20Upgradeable, OwnableUpgradeable,
     uint256 public constant INITIAL_SUPPLY = 10_000_000_000 * 10 ** RESOURCE_DECIMALS;
 
     error InvalidInitialHolder();
+    error ResourceTokenUpgradesDisabled();
 
     event ResourceTokenInitialized(
         address indexed initialOwner, address indexed initialHolder, uint256 initialSupply
@@ -25,10 +26,6 @@ abstract contract VeydriftResourceToken is ERC20Upgradeable, OwnableUpgradeable,
 
     function decimals() public pure override returns (uint8) {
         return RESOURCE_DECIMALS;
-    }
-
-    function mint(address to, uint256 amount) external onlyOwner {
-        _mint(to, amount);
     }
 
     function __VeydriftResourceToken_init(
@@ -48,7 +45,12 @@ abstract contract VeydriftResourceToken is ERC20Upgradeable, OwnableUpgradeable,
         emit ResourceTokenInitialized(initialOwner, initialHolder, INITIAL_SUPPLY);
     }
 
-    function _authorizeUpgrade(address) internal override onlyOwner {}
+    /// @dev The live legacy implementation authorizes the one final owner upgrade into this
+    ///      implementation. Once installed, every subsequent UUPS upgrade is permanently blocked,
+    ///      so no future implementation can restore mint authority or exceed the 10B supply.
+    function _authorizeUpgrade(address) internal virtual override {
+        revert ResourceTokenUpgradesDisabled();
+    }
 }
 
 contract VeydriftMetal is VeydriftResourceToken {

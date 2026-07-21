@@ -375,6 +375,14 @@ abstract contract VeydriftGameStorage is Initializable {
     error ResourceTokenUnset(Resource resource);
     error ResourceTransferFailed(Resource resource, address token, uint256 amount);
     error InsufficientResourceReserve(Resource resource, uint256 required, uint256 available);
+    error InvalidResourceTreasury();
+    error InsufficientExcessResourceReserve(
+        Resource resource,
+        uint256 requested,
+        uint256 liabilityRequirement,
+        uint256 safetyMargin,
+        uint256 available
+    );
     error UnsupportedGameplayModule();
     error DefenseLimitReached(Defense defense);
     error MissileSiloCapacityExceeded(uint32 requiredSlots, uint32 availableSlots);
@@ -659,6 +667,14 @@ abstract contract VeydriftGameStorage is Initializable {
     event ResourceTokensUpdated(address metalToken, address crystalToken, address deuteriumToken);
     event ResourceReservesDeposited(
         address indexed depositor, uint128 metal, uint128 crystal, uint128 deuterium
+    );
+    event ExcessResourceReserveReleased(
+        Resource indexed resource,
+        address indexed treasury,
+        uint256 amount,
+        uint256 liabilityRequirement,
+        uint256 safetyMargin,
+        uint256 remainingBalance
     );
     event MarketResourceDeposited(
         address indexed player, uint256 indexed planetId, Resource indexed resource, uint128 amount
