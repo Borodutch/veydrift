@@ -11,7 +11,7 @@
     "check:storage": "forge build --force --extra-output storageLayout && node scripts/check-storage-layout.mjs",
     "storage:check": "bun run check:storage",
     "test": "forge test",
-    "manifest:generate": "VEYDRIFT_SOURCE_COMMIT=$(git rev-parse HEAD) VEYDRIFT_MANIFEST_PATH=manifests/vey-741-base-fork-dry-run.json forge test --match-path test/VeydriftUniswapLaunchMainnetFork.t.sol -vv",
+    "manifest:generate": "VEYDRIFT_SOURCE_COMMIT=$(git log -1 --format=%H -- . ':(exclude)manifests/vey-741-base-fork-dry-run.json') VEYDRIFT_MANIFEST_PATH=manifests/vey-741-base-fork-dry-run.json forge test --match-path test/VeydriftUniswapLaunchMainnetFork.t.sol -vv",
     "manifest:check": "node scripts/validate-veydrift-uniswap-launch-manifest.mjs"
   }
 }
