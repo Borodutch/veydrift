@@ -227,6 +227,7 @@ contract VeydriftUniswapCCALauncher {
     int24 public mainPoolTickSpacing;
     bytes32 public configurationHash;
     bytes32 public migrationParametersHash;
+    bytes32 public reconciliationEvidenceHash;
     uint256 public mainPositionTokenId;
 
     struct LaunchConfig {
@@ -267,6 +268,7 @@ contract VeydriftUniswapCCALauncher {
     error InvalidMigrationLifecycle(address registeredInitializer, bytes32 actualParametersHash);
     error InvalidMainPoolTopology(bool hooklessInitialized, bool strategyHookInitialized);
     error InvalidMainPosition(uint256 tokenId);
+    error InvalidReconciliationEvidence();
 
     event LaunchRegistered(
         address indexed token,
@@ -284,7 +286,8 @@ contract VeydriftUniswapCCALauncher {
         address indexed auction,
         bool positionMinted,
         uint256 indexed positionTokenId,
-        uint256 lockedPositionCount
+        uint256 lockedPositionCount,
+        bytes32 indexed evidenceHash
     );
 
     constructor(address launchAuthority_, VeydriftV4PositionLock positionLock_) {
@@ -432,23 +435,29 @@ contract VeydriftUniswapCCALauncher {
         positionMinted = _recordSuccessfulMigration(expectedPositionTokenId, false);
     }
 
-    /// @notice Reconciles an official one-shot migration completed directly by any third party.
-    /// @dev The official strategy entrypoint is permissionless. Reconciliation is fail-closed and accepts
-    ///      success only when the registered initializer was consumed, exactly one approved pool exists,
-    ///      and the supplied locked NFT is the full-range position for that exact pool. Passing tokenId zero
-    ///      records the terminal official recovery branch only when neither approved main pool exists.
-    ///      Untracked NFTs in the permissionless ERC-721 receiver are deliberately ignored.
-    function reconcileMigration(uint256 positionTokenId) external returns (bool positionMinted) {
+    /// @notice Authority reconciliation for an official one-shot migration completed directly by any caller.
+    /// @dev The official strategy entrypoint remains permissionless. Reconciliation is authority-only because
+    ///      terminal recovery and a third-party initialized pool plus matching NFT are not distinguishable from
+    ///      contract state alone. `evidenceHash` binds the owner action to the reviewed migration receipt and
+    ///      before/after asset-delta artifact. Passing tokenId zero records terminal recovery only when neither
+    ///      approved main pool exists. Untracked NFTs in the lock are deliberately ignored.
+    function reconcileMigration(uint256 positionTokenId, bytes32 evidenceHash)
+        external
+        returns (bool positionMinted)
+    {
+        if (msg.sender != launchAuthority) revert Unauthorized(msg.sender);
         if (!launched || migrationAttempted) revert AlreadyFinalized();
         if (block.number < migrationBlock) revert MigrationNotReady(migrationBlock, block.number);
+        if (evidenceHash == bytes32(0)) revert InvalidReconciliationEvidence();
         _assertConsumedMigrationLifecycle();
+        reconciliationEvidenceHash = evidenceHash;
         if (positionTokenId == 0) {
             (bool hooklessInitialized, bool strategyHookInitialized,) = _mainPoolTopology();
             if (hooklessInitialized || strategyHookInitialized) {
                 revert InvalidMainPoolTopology(hooklessInitialized, strategyHookInitialized);
             }
             migrationAttempted = true;
-            emit MigrationReconciled(auction, false, 0, 0);
+            emit MigrationReconciled(auction, false, 0, 0, evidenceHash);
             return false;
         }
         positionMinted = _recordSuccessfulMigration(positionTokenId, true);
@@ -522,7 +531,7 @@ contract VeydriftUniswapCCALauncher {
         migrationSucceeded = true;
         mainPositionTokenId = positionTokenId;
         if (reconciled) {
-            emit MigrationReconciled(auction, true, positionTokenId, 1);
+            emit MigrationReconciled(auction, true, positionTokenId, 1, reconciliationEvidenceHash);
         } else {
             emit MigrationAttempted(auction, true, 1);
         }

@@ -33,8 +33,25 @@ const hash = (field) => {
   if (typeof value !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(value)) fail(`${field} must be bytes32`);
   return value.toLowerCase();
 };
+const observedOutflow = (prefix) => {
+  const before = uint(`${prefix}BeforeWei`);
+  const after = uint(`${prefix}AfterWei`);
+  const outflow = uint(`${prefix}OutflowWei`);
+  if (after > before) fail(`${prefix} increased instead of producing an outflow`);
+  eq(before - after, outflow, `${prefix} observed outflow`);
+  return outflow;
+};
+const observedInflow = (prefix) => {
+  const before = uint(`${prefix}BeforeWei`);
+  const after = uint(`${prefix}AfterWei`);
+  const inflow = uint(`${prefix}InflowWei`);
+  if (after < before) fail(`${prefix} decreased instead of receiving an inflow`);
+  eq(after - before, inflow, `${prefix} observed inflow`);
+  return inflow;
+};
 const sorted = (left, right) => left < right ? [left, right] : [right, left];
 const zero = "0x0000000000000000000000000000000000000000";
+const zeroHash = `0x${"0".repeat(64)}`;
 
 eq(manifest.schema, "veydrift.uniswap-launch-manifest.v2", "schema");
 eq(manifest.task, "VEY-KANEO-741", "task");
@@ -105,6 +122,9 @@ eq(manifest.migrationAttempted, true, "migrationAttempted");
 eq(manifest.migrationSucceeded, true, "migrationSucceeded");
 hash("launchConfigurationHash");
 hash("migrationParametersHash");
+const reconciliationEvidenceHash = hash("reconciliationEvidenceHash");
+if (reconciliationEvidenceHash === zeroHash) fail("reconciliation evidence hash is zero");
+eq(reconciliationEvidenceHash, hash("mainMigrationEvidenceHash"), "reconciliation evidence binding");
 
 const [mainCurrency0, mainCurrency1] = sorted(token, deployments.officialWeth[0]);
 eq(address("mainCurrency0"), mainCurrency0, "mainCurrency0");
@@ -117,8 +137,26 @@ hash("mainPoolId");
 if (uint("mainSqrtPriceX96") === 0n) fail("main pool is uninitialized");
 eq(address("mainPositionOwner"), lock, "mainPositionOwner");
 if (uint("mainPositionTokenId") === 0n || uint("mainPositionLiquidity") === 0n) fail("main canonical position is empty");
-eq(uint("mainVeydriftReservedWei"), uint("allocationV4MainWei"), "mainVeydriftReservedWei");
-eq(uint("mainWethBidInputWei"), uint("auctionTestBidWethWei"), "mainWethBidInputWei");
+const mainVeydriftOutflow = observedOutflow("mainVeydriftStrategy");
+const mainWethOutflow = observedOutflow("mainWethAuction");
+const mainVeydriftDestinationInflow = observedInflow("mainVeydriftPoolManager")
+  + observedInflow("mainVeydriftPositionManager")
+  + observedInflow("mainVeydriftRecoveryRecipient");
+const mainWethDestinationInflow = observedInflow("mainWethPoolManager")
+  + observedInflow("mainWethPositionManager")
+  + observedInflow("mainWethRecoveryRecipient")
+  + observedInflow("mainWethStrategy");
+eq(mainVeydriftOutflow, uint("allocationV4MainWei"), "observed main VEYDRIFT outflow");
+eq(mainWethOutflow, uint("auctionTestBidWethWei"), "observed main WETH outflow");
+eq(mainVeydriftOutflow, mainVeydriftDestinationInflow, "main VEYDRIFT flow conservation");
+eq(mainWethOutflow, mainWethDestinationInflow, "main WETH flow conservation");
+if (uint("mainVeydriftPoolManagerInflowWei") === 0n || uint("mainWethPoolManagerInflowWei") === 0n) {
+  fail("main pool received no observed VEYDRIFT/WETH");
+}
+eq(uint("mainVeydriftPositionManagerInflowWei"), 0n, "main PositionManager VEYDRIFT residual");
+eq(uint("mainWethPositionManagerInflowWei"), 0n, "main PositionManager WETH residual");
+eq(uint("mainVeydriftReservedWei"), mainVeydriftOutflow, "mainVeydriftReservedWei observed delta");
+eq(uint("mainWethBidInputWei"), mainWethOutflow, "mainWethBidInputWei observed delta");
 eq(uint("veydriftPositionManagerDonationBefore"), 7n * 10n ** 18n, "veydrift donation before");
 eq(uint("veydriftPositionManagerDonationAfter"), uint("veydriftPositionManagerDonationBefore"), "veydrift donation isolation");
 

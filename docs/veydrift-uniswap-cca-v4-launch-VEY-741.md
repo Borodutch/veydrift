@@ -62,8 +62,8 @@ PoolManager getter are also checked.
 The launch EOA is immutable and must be
 `0xca6C67515aa9aa21DA37e07C7469Fd2C5880e2F4`. The launcher:
 
-1. validates the official deployment code and wiring, 18-decimal 1B token supply, recipients, empty
-   position lock, absent hookless main pool, exact schedule, and v4 inputs;
+1. validates the official deployment code and wiring, 18-decimal 1B token supply, recipients, absent
+   hookless main pool, exact schedule, and v4 inputs;
 2. requires an exact 500M authority allowance and consumes it completely;
 3. sends a 250M auction allocation and 250M reserve to the official LBPStrategy in one transaction;
 4. verifies the deployed auction token, WETH currency, recipients, timing, validation hook, tick
@@ -71,16 +71,22 @@ The launch EOA is immutable and must be
    `configurationHash`;
 5. exposes a terminal pre-launch `abort(reasonHash)`; and
 6. exposes permissionless, one-shot `finalizeAndMigrate()` after the approved migration block; and
-7. reconciles a direct call to the official strategy with `reconcileMigration(positionTokenId)`.
+7. lets only the immutable launch authority reconcile a direct official-strategy call with
+   `reconcileMigration(positionTokenId, evidenceHash)`.
 
 The official `LBPStrategy.migrate(initializer)` entrypoint is itself permissionless. A third party may
 therefore consume its one-shot registration before the launcher wrapper runs. The launcher commits the
-exact official migrator-parameter hash at registration. Reconciliation accepts success only after the
-official hookless-pool registration is consumed, the stored initializer parameters still match that
-commitment, exactly one approved hookless-or-strategy-hook pool is initialized, and the supplied NFT is
-owned by the immutable lock, belongs to that exact VEYDRIFT/WETH pool, has the configured fee/tick
-spacing, spans the full usable range, and has nonzero liquidity. An unrelated locked NFT, an initialized
-candidate pool with a still-live registration, and mixed hookless/fallback state all fail closed.
+exact official migrator-parameter hash at registration. Contract state cannot distinguish a terminal
+official recovery followed by an attacker-created matching pool/NFT from a successful official mint.
+Reconciliation is therefore authority-only and requires a nonzero digest of the reviewed migration
+receipt plus before/after VEYDRIFT/WETH balance-delta artifact. Reconciliation accepts success only
+after the official hookless-pool registration is consumed, the stored initializer parameters still
+match that commitment, exactly one approved hookless-or-strategy-hook pool is initialized, and the
+supplied NFT is owned by the immutable lock, belongs to that exact VEYDRIFT/WETH pool, has the
+configured fee/tick spacing, spans the full usable range, and has nonzero liquidity. An unrelated
+locked NFT, an initialized candidate pool with a still-live registration, and mixed hookless/fallback
+state all fail closed.
+An untrusted caller cannot turn a terminal recovery plus canonical-looking spoof NFT into success.
 
 CCA v2.1.0 stores the required-currency threshold immutably but does not expose a
 `requiredCurrencyRaised()` getter. The CREATE2 prediction, emitted factory configuration, launcher
@@ -145,7 +151,9 @@ At the pinned block, the fork test uses the compiled non-upgradeable `VeydriftTo
 resource/game proxies only inside the fork, proves the numeric reserve-release inequalities, and uses
 the released live resource tokens. Against the official CCA/LBP/v4 deployments it creates the CCA,
 submits a Permit2-funded WETH bid, checkpoints and graduates, reconciles a permissionless automatic
-migration, and creates the three resource pools. It also proves that three unrelated lock NFTs and
+migration through the launch authority, records observed strategy/auction outflows and
+PoolManager/recovery/PositionManager destination deltas, and creates the three resource pools. It also
+proves that three unrelated lock NFTs and
 pre-existing PositionManager balances cannot prove, subsidize, distort, or block the four canonical
 positions. It never broadcasts.
 
@@ -189,7 +197,10 @@ deployment owner after the merged contract-upgrade handoff; Symphony must not pe
    and PositionManager events, then simulate `FinalizeVeydriftUniswapCCA.s.sol`. Use the default wrapper
    only while the registration is live. If another address already called the official strategy, set
    `VEYDRIFT_RECONCILE_MIGRATION=true` and set `VEYDRIFT_UNISWAP_MAIN_POSITION_TOKEN_ID` to the exact NFT
-   minted by that migration receipt; simulate the reconciliation before broadcast. Token id `0` is only
+   minted by that migration receipt. Produce a reviewed evidence artifact containing the receipt,
+   emitted pool/NFT data, and observed VEYDRIFT/WETH before/after balances and deltas; set
+   `VEYDRIFT_MIGRATION_EVIDENCE_DIGEST` to its nonzero digest. Reconciliation must be broadcast by the
+   immutable launch authority and simulated before broadcast. Token id `0` is only
    for recording a proven terminal recovery branch with no initialized approved main pool; unrelated
    NFTs already held by the lock are ignored. A `false` result is terminal and is never permission to
    retry.
@@ -236,7 +247,7 @@ for checking the referenced evidence.
 | Bidder/refund edge cases | Official audited CCA v2.1.0; Permit2 flow covered on Base fork; monitor checkpoints; disclose max-price/slippage; test exits, partial exits, claims, unsold sweep, and under-graduation before approval |
 | MEV and price manipulation | Continuous auction instead of first-block AMM price; no promise of fill price; public bid/backrun risk disclosed; resource prices come from approved valuation policy; protocol accounting never reads AMM spot |
 | Finalization failure | Permissionless one-shot wrapper after migration block; official strategy catches failure and returns WETH/reserve tokens to recovery; false migration result is terminal and blocks resource pools |
-| Permissionless migration race | Reconciliation verifies the committed official initializer parameters, consumed pool registration, exclusive pool topology, exact locked full-range NFT metadata, and nonzero liquidity before setting success; direct failure reconciliation requires no initialized approved main pool and ignores unrelated lock NFTs |
+| Permissionless migration race | Official migration remains permissionless, but reconciliation is restricted to the immutable launch authority and binds a nonzero reviewed receipt/balance-delta evidence digest on-chain. It also verifies committed initializer parameters, consumed registration, exclusive pool topology, exact locked full-range NFT metadata, and nonzero liquidity. Direct failure reconciliation requires no initialized approved main pool and ignores unrelated lock NFTs; an untrusted caller cannot bless a post-recovery spoof NFT |
 | Main/resource pool initialization front-run | Main and all three resource preflights reject existing approved pool IDs; recheck immediately before private submission. Any resource-pool squatting aborts the bundle. Re-keying fee/tick/pool IDs requires a new signed manifest, simulation, security review, and explicit owner approval; never deposit into the squatted pool by weakening checks |
 | Position custody | Four NFTs mint directly to one immutable, no-rescue time lock; beneficiary and timestamp fixed; Base fork verifies ownership |
 | Decimal/ratio error | 18-decimal 1B VEYDRIFT and 6-decimal 10B resources asserted; exact raw inputs; currency sorting; minimum 99% use; fork uses real PositionManager actions |
@@ -258,7 +269,8 @@ for checking the referenced evidence.
   250M reserve to the immutable recovery recipient and emits recovery/failure events. The launcher
   records migration failure and resource creation remains permanently blocked. Never auto-retry.
 - If the official strategy registration is already zero, do not call the wrapper again. Resolve the
-  direct migration receipt and NFT id, then use the explicit reconciliation mode. Unrelated NFTs,
+  direct migration receipt, NFT id, and before/after VEYDRIFT/WETH balance deltas; hash that reviewed
+  artifact and use the authority-only reconciliation mode. Unrelated NFTs,
   candidate-only initialization, or both main-pool variants are blockers, not evidence to override.
 - Successful v4 pool creation is irreversible market state. The immutable lock cannot release early.
 - Resource dust within the approved maximum/minimum envelope returns to recovery. A minimum-use breach

@@ -100,6 +100,25 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
         VeydriftGameStorage.Resources balanceAfter;
     }
 
+    struct MainAssetBalances {
+        uint256 veydriftStrategy;
+        uint256 wethStrategy;
+        uint256 veydriftAuction;
+        uint256 wethAuction;
+        uint256 veydriftPoolManager;
+        uint256 wethPoolManager;
+        uint256 veydriftPositionManager;
+        uint256 wethPositionManager;
+        uint256 veydriftRecoveryRecipient;
+        uint256 wethRecoveryRecipient;
+    }
+
+    struct MainMigrationEvidence {
+        MainAssetBalances beforeBalances;
+        MainAssetBalances afterBalances;
+        bytes32 receiptAndDeltaHash;
+    }
+
     struct ManifestContext {
         address authority;
         VeydriftToken token;
@@ -112,6 +131,7 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
         uint256 mainPositionId;
         uint256[3] resourcePositionIds;
         ReserveEvidence reserveEvidence;
+        MainMigrationEvidence mainMigrationEvidence;
         uint256[4] positionManagerDonations;
     }
 
@@ -205,12 +225,33 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
 
         uint256 expectedPositionId =
             IUniswapV4PositionManager(VeydriftUniswapDeployments.POSITION_MANAGER).nextTokenId();
+        MainMigrationEvidence memory mainMigrationEvidence;
+        mainMigrationEvidence.beforeBalances =
+            _mainAssetBalances(address(token), auction, config.recoveryRecipient);
         vm.roll(config.migrationBlock);
         vm.prank(makeAddr("fork-permissionless-migrator"));
         IUniswapLBPStrategy(VeydriftUniswapDeployments.LBP_STRATEGY).migrate(auction);
+        mainMigrationEvidence.afterBalances =
+            _mainAssetBalances(address(token), auction, config.recoveryRecipient);
+        mainMigrationEvidence.receiptAndDeltaHash = keccak256(
+            abi.encode(
+                block.chainid,
+                auction,
+                expectedPositionId,
+                mainMigrationEvidence.beforeBalances,
+                mainMigrationEvidence.afterBalances
+            )
+        );
+        _assertMainMigrationFlows(mainMigrationEvidence);
         assertFalse(launcher.migrationAttempted());
-        assertTrue(launcher.reconcileMigration(expectedPositionId));
+        vm.prank(authority);
+        assertTrue(
+            launcher.reconcileMigration(
+                expectedPositionId, mainMigrationEvidence.receiptAndDeltaHash
+            )
+        );
         assertTrue(launcher.migrationSucceeded());
+        assertEq(launcher.reconciliationEvidenceHash(), mainMigrationEvidence.receiptAndDeltaHash);
         assertEq(launcher.mainPositionTokenId(), expectedPositionId);
         assertEq(
             IUniswapV4PositionManager(VeydriftUniswapDeployments.POSITION_MANAGER)
@@ -313,9 +354,54 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
         manifest.mainPositionId = expectedPositionId;
         manifest.resourcePositionIds = resourcePositionIds;
         manifest.reserveEvidence = reserveEvidence;
+        manifest.mainMigrationEvidence = mainMigrationEvidence;
         manifest.positionManagerDonations =
             [donatedVeydrift, donatedMetal, donatedCrystal, donatedDeuterium];
         _writeManifestIfRequested(manifest);
+    }
+
+    function _mainAssetBalances(address token, address auction_, address recoveryRecipient)
+        private
+        view
+        returns (MainAssetBalances memory balances)
+    {
+        IERC20 veydrift = IERC20(token);
+        IERC20 weth = IERC20(VeydriftUniswapDeployments.WETH);
+        balances.veydriftStrategy = veydrift.balanceOf(VeydriftUniswapDeployments.LBP_STRATEGY);
+        balances.wethStrategy = weth.balanceOf(VeydriftUniswapDeployments.LBP_STRATEGY);
+        balances.veydriftAuction = veydrift.balanceOf(auction_);
+        balances.wethAuction = weth.balanceOf(auction_);
+        balances.veydriftPoolManager = veydrift.balanceOf(VeydriftUniswapDeployments.POOL_MANAGER);
+        balances.wethPoolManager = weth.balanceOf(VeydriftUniswapDeployments.POOL_MANAGER);
+        balances.veydriftPositionManager =
+            veydrift.balanceOf(VeydriftUniswapDeployments.POSITION_MANAGER);
+        balances.wethPositionManager = weth.balanceOf(VeydriftUniswapDeployments.POSITION_MANAGER);
+        balances.veydriftRecoveryRecipient = veydrift.balanceOf(recoveryRecipient);
+        balances.wethRecoveryRecipient = weth.balanceOf(recoveryRecipient);
+    }
+
+    function _assertMainMigrationFlows(MainMigrationEvidence memory evidence) private pure {
+        MainAssetBalances memory beforeBalances = evidence.beforeBalances;
+        MainAssetBalances memory afterBalances = evidence.afterBalances;
+        uint256 veydriftOutflow = beforeBalances.veydriftStrategy - afterBalances.veydriftStrategy;
+        uint256 veydriftDestinations = afterBalances.veydriftPoolManager
+            - beforeBalances.veydriftPoolManager + afterBalances.veydriftPositionManager
+            - beforeBalances.veydriftPositionManager + afterBalances.veydriftRecoveryRecipient
+            - beforeBalances.veydriftRecoveryRecipient;
+        uint256 wethOutflow = beforeBalances.wethAuction - afterBalances.wethAuction;
+        uint256 wethDestinations = afterBalances.wethPoolManager - beforeBalances.wethPoolManager
+            + afterBalances.wethPositionManager - beforeBalances.wethPositionManager
+            + afterBalances.wethRecoveryRecipient - beforeBalances.wethRecoveryRecipient
+            + afterBalances.wethStrategy - beforeBalances.wethStrategy;
+        assertEq(veydriftOutflow, 250_000_000 ether);
+        assertEq(veydriftOutflow, veydriftDestinations);
+        assertEq(wethOutflow, 10 ether);
+        assertEq(wethOutflow, wethDestinations);
+        assertGt(afterBalances.veydriftPoolManager - beforeBalances.veydriftPoolManager, 0);
+        assertGt(afterBalances.wethPoolManager - beforeBalances.wethPoolManager, 0);
+        assertEq(afterBalances.veydriftPositionManager, beforeBalances.veydriftPositionManager);
+        assertEq(afterBalances.wethPositionManager, beforeBalances.wethPositionManager);
+        assertTrue(evidence.receiptAndDeltaHash != bytes32(0));
     }
 
     function _writeManifestIfRequested(ManifestContext memory context) private {
@@ -488,6 +574,9 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
         vm.serializeBytes32(
             object, "migrationParametersHash", context.launcher.migrationParametersHash()
         );
+        vm.serializeBytes32(
+            object, "reconciliationEvidenceHash", context.launcher.reconciliationEvidenceHash()
+        );
     }
 
     function _serializeMainPool(string memory object, ManifestContext memory context) private {
@@ -502,8 +591,7 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
         _serializeUintString(
             object, "mainPositionLiquidity", manager.getPositionLiquidity(context.mainPositionId)
         );
-        _serializeUintString(object, "mainVeydriftReservedWei", 250_000_000 ether);
-        _serializeUintString(object, "mainWethBidInputWei", 10 ether);
+        _serializeMainMigrationEvidence(object, context.mainMigrationEvidence);
         _serializeUintString(
             object, "veydriftPositionManagerDonationBefore", context.positionManagerDonations[0]
         );
@@ -511,6 +599,97 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
             object,
             "veydriftPositionManagerDonationAfter",
             context.token.balanceOf(VeydriftUniswapDeployments.POSITION_MANAGER)
+        );
+    }
+
+    function _serializeMainMigrationEvidence(
+        string memory object,
+        MainMigrationEvidence memory evidence
+    ) private {
+        MainAssetBalances memory beforeBalances = evidence.beforeBalances;
+        MainAssetBalances memory afterBalances = evidence.afterBalances;
+        vm.serializeBytes32(object, "mainMigrationEvidenceHash", evidence.receiptAndDeltaHash);
+        _serializeObservedOutflow(
+            object,
+            "mainVeydriftStrategy",
+            beforeBalances.veydriftStrategy,
+            afterBalances.veydriftStrategy
+        );
+        _serializeObservedOutflow(
+            object, "mainWethAuction", beforeBalances.wethAuction, afterBalances.wethAuction
+        );
+        _serializeObservedInflow(
+            object,
+            "mainVeydriftPoolManager",
+            beforeBalances.veydriftPoolManager,
+            afterBalances.veydriftPoolManager
+        );
+        _serializeObservedInflow(
+            object,
+            "mainWethPoolManager",
+            beforeBalances.wethPoolManager,
+            afterBalances.wethPoolManager
+        );
+        _serializeObservedInflow(
+            object,
+            "mainVeydriftPositionManager",
+            beforeBalances.veydriftPositionManager,
+            afterBalances.veydriftPositionManager
+        );
+        _serializeObservedInflow(
+            object,
+            "mainWethPositionManager",
+            beforeBalances.wethPositionManager,
+            afterBalances.wethPositionManager
+        );
+        _serializeObservedInflow(
+            object,
+            "mainVeydriftRecoveryRecipient",
+            beforeBalances.veydriftRecoveryRecipient,
+            afterBalances.veydriftRecoveryRecipient
+        );
+        _serializeObservedInflow(
+            object,
+            "mainWethRecoveryRecipient",
+            beforeBalances.wethRecoveryRecipient,
+            afterBalances.wethRecoveryRecipient
+        );
+        _serializeObservedInflow(
+            object, "mainWethStrategy", beforeBalances.wethStrategy, afterBalances.wethStrategy
+        );
+        _serializeUintString(
+            object,
+            "mainVeydriftReservedWei",
+            beforeBalances.veydriftStrategy - afterBalances.veydriftStrategy
+        );
+        _serializeUintString(
+            object, "mainWethBidInputWei", beforeBalances.wethAuction - afterBalances.wethAuction
+        );
+    }
+
+    function _serializeObservedOutflow(
+        string memory object,
+        string memory prefix,
+        uint256 beforeBalance,
+        uint256 afterBalance
+    ) private {
+        _serializeUintString(object, string.concat(prefix, "BeforeWei"), beforeBalance);
+        _serializeUintString(object, string.concat(prefix, "AfterWei"), afterBalance);
+        _serializeUintString(
+            object, string.concat(prefix, "OutflowWei"), beforeBalance - afterBalance
+        );
+    }
+
+    function _serializeObservedInflow(
+        string memory object,
+        string memory prefix,
+        uint256 beforeBalance,
+        uint256 afterBalance
+    ) private {
+        _serializeUintString(object, string.concat(prefix, "BeforeWei"), beforeBalance);
+        _serializeUintString(object, string.concat(prefix, "AfterWei"), afterBalance);
+        _serializeUintString(
+            object, string.concat(prefix, "InflowWei"), afterBalance - beforeBalance
         );
     }
 

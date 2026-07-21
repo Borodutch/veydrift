@@ -383,14 +383,21 @@ contract VeydriftUniswapLaunchTest is Test {
         vm.prank(makeAddr("permissionless-migrator"));
         UniswapLaunchMockStrategy(STRATEGY).migrate(AUCTION);
 
-        assertTrue(launcher.reconcileMigration(1));
+        vm.expectRevert(VeydriftUniswapCCALauncher.InvalidReconciliationEvidence.selector);
+        vm.prank(authority);
+        launcher.reconcileMigration(1, bytes32(0));
+        bytes32 evidenceHash = keccak256("permissionless-migration-receipt-and-deltas");
+        vm.prank(authority);
+        assertTrue(launcher.reconcileMigration(1, evidenceHash));
         assertTrue(launcher.migrationAttempted());
         assertTrue(launcher.migrationSucceeded());
+        assertEq(launcher.reconciliationEvidenceHash(), evidenceHash);
         assertEq(launcher.mainPositionTokenId(), 1);
         assertEq(UniswapLaunchMockPositionManager(POSITION_MANAGER).balanceOf(address(lock)), 1);
 
         vm.expectRevert(VeydriftUniswapCCALauncher.AlreadyFinalized.selector);
-        launcher.reconcileMigration(1);
+        vm.prank(authority);
+        launcher.reconcileMigration(1, evidenceHash);
     }
 
     function testUnrelatedLockedNftDoesNotBlockLaunchOrMigrationReconciliation() public {
@@ -416,9 +423,11 @@ contract VeydriftUniswapLaunchTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(VeydriftUniswapCCALauncher.InvalidMainPosition.selector, 1)
         );
-        launcher.reconcileMigration(1);
+        vm.prank(authority);
+        launcher.reconcileMigration(1, keccak256("unrelated-nft-evidence"));
         assertFalse(launcher.migrationAttempted());
-        assertTrue(launcher.reconcileMigration(2));
+        vm.prank(authority);
+        assertTrue(launcher.reconcileMigration(2, keccak256("canonical-nft-evidence")));
         assertEq(launcher.mainPositionTokenId(), 2);
     }
 
@@ -439,7 +448,8 @@ contract VeydriftUniswapLaunchTest is Test {
                 launcher.migrationParametersHash()
             )
         );
-        launcher.reconcileMigration(1);
+        vm.prank(authority);
+        launcher.reconcileMigration(1, keccak256("candidate-only-evidence"));
     }
 
     function testReconciliationRejectsMixedMainPoolTopology() public {
@@ -458,7 +468,8 @@ contract VeydriftUniswapLaunchTest is Test {
                 VeydriftUniswapCCALauncher.InvalidMainPoolTopology.selector, true, true
             )
         );
-        launcher.reconcileMigration(1);
+        vm.prank(authority);
+        launcher.reconcileMigration(1, keccak256("mixed-topology-evidence"));
     }
 
     function testDirectWrapperRecordsTerminalMigrationFailure() public {
@@ -497,8 +508,54 @@ contract VeydriftUniswapLaunchTest is Test {
         UniswapLaunchMockPositionManager(POSITION_MANAGER)
             .mint(address(lock), unrelated, -887_270, 887_270, 1);
 
-        assertFalse(launcher.reconcileMigration(0));
+        bytes32 evidenceHash = keccak256("terminal-recovery-receipt-and-deltas");
+        vm.prank(authority);
+        assertFalse(launcher.reconcileMigration(0, evidenceHash));
         assertTrue(launcher.migrationAttempted());
+        assertFalse(launcher.migrationSucceeded());
+        assertEq(launcher.reconciliationEvidenceHash(), evidenceHash);
+    }
+
+    function testTerminalFailureCannotBeSpoofedIntoSuccessByUntrustedCaller() public {
+        VeydriftUniswapCCALauncher.LaunchConfig memory config = _config();
+        vm.startPrank(authority);
+        token.approve(address(launcher), 500_000_000 ether);
+        launcher.launch(address(token), config, keccak256("VEY-741-terminal-spoof"));
+        vm.stopPrank();
+        UniswapLaunchMockStrategy(STRATEGY).setMigrationFails(true);
+        vm.roll(config.migrationBlock);
+        vm.prank(makeAddr("permissionless-terminal-migrator"));
+        UniswapLaunchMockStrategy(STRATEGY).migrate(AUCTION);
+
+        VeydriftV4PoolKey memory fakeCanonicalKey = VeydriftV4PoolKey({
+            currency0: WETH < address(token) ? WETH : address(token),
+            currency1: WETH < address(token) ? address(token) : WETH,
+            fee: config.v4Fee,
+            tickSpacing: config.v4TickSpacing,
+            hooks: address(0)
+        });
+        (bytes32 hooklessPoolId,) = launcher.mainPoolIds();
+        UniswapLaunchMockStateView(STATE_VIEW).setPool(hooklessPoolId, 1 << 96);
+        UniswapLaunchMockPositionManager(POSITION_MANAGER)
+            .mint(address(lock), fakeCanonicalKey, -887_220, 887_220, 1);
+
+        address attacker = makeAddr("terminal-spoof-attacker");
+        vm.expectRevert(
+            abi.encodeWithSelector(VeydriftUniswapCCALauncher.Unauthorized.selector, attacker)
+        );
+        vm.prank(attacker);
+        launcher.reconcileMigration(1, keccak256("fabricated-evidence"));
+        assertFalse(launcher.migrationAttempted());
+        assertFalse(launcher.migrationSucceeded());
+        assertEq(launcher.mainPositionTokenId(), 0);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VeydriftUniswapCCALauncher.InvalidMainPoolTopology.selector, true, false
+            )
+        );
+        vm.prank(authority);
+        launcher.reconcileMigration(0, keccak256("terminal-recovery-receipt"));
         assertFalse(launcher.migrationSucceeded());
     }
 
