@@ -64,9 +64,10 @@ contract VeydriftLPLock {
     }
 }
 
-/// @notice One-shot atomic bootstrap for the four canonical classic volatile Aerodrome pools.
-/// @dev This contract deliberately supports no swaps, stable pools, extra pairs, rescue authority,
-///      or repeat launch. It is appropriate only when the classic volatile venue decision is approved.
+/// @notice Fallback-only one-shot bootstrap for four classic volatile Aerodrome pools.
+/// @dev This contract is excluded from the approved Uniswap CCA/v4 launch bundle. It deliberately
+///      supports no swaps, stable pools, extra pairs, rescue authority, or repeat launch and may only
+///      be used after a separate owner decision explicitly abandons the approved Uniswap path.
 contract VeydriftLiquidityLauncher {
     using SafeERC20 for IERC20;
 

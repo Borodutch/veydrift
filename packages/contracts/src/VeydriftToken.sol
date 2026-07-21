@@ -10,7 +10,9 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 ///      minter, proxy, pause authority, or post-genesis issuance path.
 contract VeydriftToken is ERC20 {
     uint256 public constant MAX_SUPPLY = 1_000_000_000 ether;
-    uint256 public constant ETH_LIQUIDITY_ALLOCATION = 500_000_000 ether;
+    uint256 public constant LAUNCH_BOOTSTRAP_ALLOCATION = 500_000_000 ether;
+    uint256 public constant CCA_ALLOCATION = 250_000_000 ether;
+    uint256 public constant V4_MAIN_LIQUIDITY_ALLOCATION = 250_000_000 ether;
     uint256 public constant RESOURCE_LIQUIDITY_ALLOCATION = 150_000_000 ether;
     uint256 public constant DEVELOPMENT_ALLOCATION = 150_000_000 ether;
     uint256 public constant CONTRIBUTOR_ALLOCATION = 100_000_000 ether;
@@ -19,24 +21,25 @@ contract VeydriftToken is ERC20 {
     error InvalidAllocationRecipient();
 
     constructor(
-        address ethLiquidityRecipient,
+        address launchBootstrapRecipient,
         address resourceLiquidityRecipient,
         address developmentVestingWallet,
         address contributorVestingWallet,
         address ecosystemVestingWallet
     ) ERC20("Veydrift", "VEYDRIFT") {
         if (
-            ethLiquidityRecipient == address(0) || resourceLiquidityRecipient == address(0)
+            launchBootstrapRecipient == address(0) || resourceLiquidityRecipient == address(0)
                 || developmentVestingWallet == address(0) || contributorVestingWallet == address(0)
                 || ecosystemVestingWallet == address(0)
         ) revert InvalidAllocationRecipient();
 
-        _mint(ethLiquidityRecipient, ETH_LIQUIDITY_ALLOCATION);
+        _mint(launchBootstrapRecipient, LAUNCH_BOOTSTRAP_ALLOCATION);
         _mint(resourceLiquidityRecipient, RESOURCE_LIQUIDITY_ALLOCATION);
         _mint(developmentVestingWallet, DEVELOPMENT_ALLOCATION);
         _mint(contributorVestingWallet, CONTRIBUTOR_ALLOCATION);
         _mint(ecosystemVestingWallet, ECOSYSTEM_ALLOCATION);
 
+        assert(CCA_ALLOCATION + V4_MAIN_LIQUIDITY_ALLOCATION == LAUNCH_BOOTSTRAP_ALLOCATION);
         assert(totalSupply() == MAX_SUPPLY);
     }
 }

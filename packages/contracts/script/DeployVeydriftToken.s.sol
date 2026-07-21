@@ -12,6 +12,8 @@ import {
 /// @notice Deploys the fixed-supply token and immutable release wallets from explicit inputs.
 /// @dev This script does not deploy liquidity, move resource reserves, or create pools.
 contract DeployVeydriftToken is Script {
+    address internal constant APPROVED_LAUNCH_EOA = 0xca6C67515aa9aa21DA37e07C7469Fd2C5880e2F4;
+
     function run()
         external
         returns (
@@ -22,7 +24,8 @@ contract DeployVeydriftToken is Script {
         )
     {
         uint256 privateKey = vm.envUint("PRIVATE_KEY");
-        address ethLiquidityTreasury = vm.envAddress("VEYDRIFT_ETH_LIQUIDITY_TREASURY");
+        address launchBootstrapRecipient = vm.envAddress("VEYDRIFT_LAUNCH_AUTHORITY");
+        require(launchBootstrapRecipient == APPROVED_LAUNCH_EOA, "UNAPPROVED_LAUNCH_AUTHORITY");
         address resourceLiquidityTreasury = vm.envAddress("VEYDRIFT_RESOURCE_LIQUIDITY_TREASURY");
         address developmentBeneficiary = vm.envAddress("VEYDRIFT_DEVELOPMENT_BENEFICIARY");
         address contributorBeneficiary = vm.envAddress("VEYDRIFT_CONTRIBUTOR_BENEFICIARY");
@@ -41,7 +44,7 @@ contract DeployVeydriftToken is Script {
         VeydriftEcosystemVestingWallet ecosystem =
             new VeydriftEcosystemVestingWallet(ecosystemBeneficiary, startTimestamp);
         VeydriftToken deployedToken = new VeydriftToken(
-            ethLiquidityTreasury,
+            launchBootstrapRecipient,
             resourceLiquidityTreasury,
             address(development),
             address(contributor),
@@ -55,6 +58,21 @@ contract DeployVeydriftToken is Script {
         ecosystemWallet = address(ecosystem);
 
         require(deployedToken.totalSupply() == deployedToken.MAX_SUPPLY(), "BAD_TOTAL_SUPPLY");
+        require(
+            deployedToken.CCA_ALLOCATION() + deployedToken.V4_MAIN_LIQUIDITY_ALLOCATION()
+                == deployedToken.LAUNCH_BOOTSTRAP_ALLOCATION(),
+            "BAD_LAUNCH_BOOTSTRAP_SPLIT"
+        );
+        require(
+            deployedToken.balanceOf(launchBootstrapRecipient)
+                == deployedToken.LAUNCH_BOOTSTRAP_ALLOCATION(),
+            "BAD_LAUNCH_BOOTSTRAP_ALLOCATION"
+        );
+        require(
+            deployedToken.balanceOf(resourceLiquidityTreasury)
+                == deployedToken.RESOURCE_LIQUIDITY_ALLOCATION(),
+            "BAD_RESOURCE_ALLOCATION"
+        );
         require(
             deployedToken.balanceOf(developmentWallet) == deployedToken.DEVELOPMENT_ALLOCATION(),
             "BAD_DEVELOPMENT_ALLOCATION"

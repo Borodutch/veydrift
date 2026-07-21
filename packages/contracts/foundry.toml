@@ -8,6 +8,7 @@ optimizer_runs = 1
 via_ir = true
 cbor_metadata = false
 bytecode_hash = "none"
+fs_permissions = [{ access = "write", path = "./manifests" }]
 
 [rpc_endpoints]
 base_sepolia = "${BASE_SEPOLIA_RPC_URL}"
