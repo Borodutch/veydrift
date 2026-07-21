@@ -106,6 +106,9 @@ contract ResourcePoolsMockPositionManager {
     mapping(uint256 => address) public ownerOf;
     mapping(address => mapping(address => bool)) public isApprovedForAll;
     uint256 public nextTokenId;
+    mapping(uint256 => VeydriftV4PoolKey) internal poolKeys;
+    mapping(uint256 => uint256) internal positionInfos;
+    mapping(uint256 => uint128) internal liquidities;
 
     function initialize() external {
         nextTokenId = 1;
@@ -135,13 +138,42 @@ contract ResourcePoolsMockPositionManager {
             params[0], (VeydriftV4PoolKey, int24, int24, uint256, uint128, uint128, address, bytes)
         );
         require(
-            tickLower < 0 && tickUpper > 0 && liquidity != 0 && hookData.length == 0, "POSITION"
+            tickLower < 0 && tickUpper > 0 && liquidity != 0 && liquidity <= type(uint128).max
+                && hookData.length == 0,
+            "POSITION"
         );
         require(IERC20(key.currency0).transfer(POOL_MANAGER, amount0Max), "TRANSFER_0");
         require(IERC20(key.currency1).transfer(POOL_MANAGER, amount1Max), "TRANSFER_1");
         uint256 tokenId = nextTokenId++;
         ownerOf[tokenId] = recipient;
         balanceOf[recipient]++;
+        poolKeys[tokenId] = key;
+        uint256 packedInfo;
+        assembly ("memory-safe") {
+            packedInfo := or(shl(8, and(tickLower, 0xffffff)), shl(32, and(tickUpper, 0xffffff)))
+        }
+        positionInfos[tokenId] = packedInfo;
+        // Safe because the mock rejected values above uint128.max before this cast.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        liquidities[tokenId] = uint128(liquidity);
+    }
+
+    function mintUnrelated(address recipient) external returns (uint256 tokenId) {
+        tokenId = nextTokenId++;
+        ownerOf[tokenId] = recipient;
+        balanceOf[recipient]++;
+    }
+
+    function getPositionLiquidity(uint256 tokenId) external view returns (uint128) {
+        return liquidities[tokenId];
+    }
+
+    function getPoolAndPositionInfo(uint256 tokenId)
+        external
+        view
+        returns (VeydriftV4PoolKey memory, uint256)
+    {
+        return (poolKeys[tokenId], positionInfos[tokenId]);
     }
 
     function setApprovalForAll(address operator, bool approved) external {
@@ -243,6 +275,7 @@ contract VeydriftUniswapResourcePoolsTest is Test {
 
     function testCreatesOnlyThreeFullRangeResourcePoolsAndClearsApprovals() public {
         VeydriftUniswapResourcePools.ResourcePoolConfig[3] memory configs = _configs();
+        ResourcePoolsMockPositionManager(POSITION_MANAGER).mintUnrelated(address(lock));
         vm.startPrank(authority);
         veydrift.approve(address(launcher), 150_000_000 ether);
         metal.approve(address(launcher), 333_333_000);
@@ -253,8 +286,9 @@ contract VeydriftUniswapResourcePoolsTest is Test {
         vm.stopPrank();
 
         assertTrue(poolIds[0] != poolIds[1] && poolIds[0] != poolIds[2] && poolIds[1] != poolIds[2]);
-        assertEq(ResourcePoolsMockPositionManager(POSITION_MANAGER).balanceOf(address(lock)), 3);
+        assertEq(ResourcePoolsMockPositionManager(POSITION_MANAGER).balanceOf(address(lock)), 4);
         for (uint256 i = 0; i < 3; i++) {
+            assertEq(tokenIds[i], i + 2);
             assertEq(
                 ResourcePoolsMockPositionManager(POSITION_MANAGER).ownerOf(tokenIds[i]),
                 address(lock)

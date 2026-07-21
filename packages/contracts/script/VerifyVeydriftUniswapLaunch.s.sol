@@ -10,7 +10,8 @@ import {
     IUniswapV4PositionManager,
     IUniswapV4StateView,
     VeydriftUniswapCCALauncher,
-    VeydriftUniswapDeployments
+    VeydriftUniswapDeployments,
+    VeydriftV4PoolKey
 } from "../src/VeydriftUniswapLaunch.sol";
 import {VeydriftUniswapResourcePools} from "../src/VeydriftUniswapResourcePools.sol";
 
@@ -74,28 +75,31 @@ contract VerifyVeydriftUniswapLaunch is Script {
         (uint160 fallbackPrice,,,) =
             IUniswapV4StateView(VeydriftUniswapDeployments.STATE_VIEW).getSlot0(strategyHookMain);
         require((hooklessPrice == 0) != (fallbackPrice == 0), "MAIN_POOL_COUNT");
-        require(
-            IUniswapV4PositionManager(VeydriftUniswapDeployments.POSITION_MANAGER).balanceOf(lock)
-                == 4,
-            "LOCKED_POSITION_COUNT"
+        uint256 mainPositionId = main.mainPositionTokenId();
+        require(mainPositionId != 0, "MAIN_POSITION_ID");
+        bytes32 initializedMainPool = hooklessPrice == 0 ? strategyHookMain : hooklessMain;
+        _verifyPosition(
+            mainPositionId, initializedMainPool, token, VeydriftUniswapDeployments.WETH, lock
         );
-        require(main.mainPositionTokenId() != 0, "MAIN_POSITION_ID");
-        require(
-            IUniswapV4PositionManager(VeydriftUniswapDeployments.POSITION_MANAGER)
-                .ownerOf(main.mainPositionTokenId()) == lock,
-            "MAIN_POSITION_OWNER"
-        );
+        uint256[3] memory resourcePositionIds;
         for (uint256 i = 0; i < 3; i++) {
             bytes32 poolId = resources.poolIds(i);
             (uint160 sqrtPriceX96,,,) =
                 IUniswapV4StateView(VeydriftUniswapDeployments.STATE_VIEW).getSlot0(poolId);
             require(sqrtPriceX96 != 0, "RESOURCE_POOL_MISSING");
-            require(
-                IUniswapV4PositionManager(VeydriftUniswapDeployments.POSITION_MANAGER)
-                    .ownerOf(resources.positionTokenIds(i)) == lock,
-                "RESOURCE_POSITION_OWNER"
-            );
+            resourcePositionIds[i] = resources.positionTokenIds(i);
+            address resourceToken =
+                i == 0 ? resources.metal() : i == 1 ? resources.crystal() : resources.deuterium();
+            _verifyPosition(resourcePositionIds[i], poolId, token, resourceToken, lock);
         }
+        require(
+            mainPositionId != resourcePositionIds[0] && mainPositionId != resourcePositionIds[1]
+                && mainPositionId != resourcePositionIds[2]
+                && resourcePositionIds[0] != resourcePositionIds[1]
+                && resourcePositionIds[0] != resourcePositionIds[2]
+                && resourcePositionIds[1] != resourcePositionIds[2],
+            "DUPLICATE_POSITION_ID"
+        );
 
         address authority = main.launchAuthority();
         _requireNoApproval(token, authority, address(main));
@@ -113,6 +117,41 @@ contract VerifyVeydriftUniswapLaunch is Script {
         _requireNoAerodromePair(aerodrome, resources.crystal(), token);
         _requireNoAerodromePair(aerodrome, resources.deuterium(), token);
         console2.log("Uniswap CCA/v4 postflight verification passed");
+    }
+
+    function _verifyPosition(
+        uint256 tokenId,
+        bytes32 expectedPoolId,
+        address expectedTokenA,
+        address expectedTokenB,
+        address lock
+    ) private view {
+        IUniswapV4PositionManager manager = IUniswapV4PositionManager(
+            VeydriftUniswapDeployments.POSITION_MANAGER
+        );
+        require(manager.ownerOf(tokenId) == lock, "POSITION_OWNER");
+        (VeydriftV4PoolKey memory key, uint256 info) = manager.getPoolAndPositionInfo(tokenId);
+        require(keccak256(abi.encode(key)) == expectedPoolId, "POSITION_POOL_KEY");
+        (address expectedCurrency0, address expectedCurrency1) = expectedTokenA < expectedTokenB
+            ? (expectedTokenA, expectedTokenB)
+            : (expectedTokenB, expectedTokenA);
+        require(
+            key.currency0 == expectedCurrency0 && key.currency1 == expectedCurrency1,
+            "POSITION_CURRENCIES"
+        );
+        int24 tickLower;
+        int24 tickUpper;
+        assembly ("memory-safe") {
+            tickLower := signextend(2, shr(8, info))
+            tickUpper := signextend(2, shr(32, info))
+        }
+        // Match Uniswap v4 TickMath's usable full-range boundary formula.
+        // forge-lint: disable-next-line(divide-before-multiply)
+        int24 expectedLower = (-887_272 / key.tickSpacing) * key.tickSpacing;
+        // forge-lint: disable-next-line(divide-before-multiply)
+        int24 expectedUpper = (887_272 / key.tickSpacing) * key.tickSpacing;
+        require(tickLower == expectedLower && tickUpper == expectedUpper, "POSITION_RANGE");
+        require(manager.getPositionLiquidity(tokenId) != 0, "POSITION_LIQUIDITY");
     }
 
     function _verifyResource(

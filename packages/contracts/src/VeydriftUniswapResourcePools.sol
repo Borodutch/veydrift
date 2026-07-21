@@ -208,16 +208,12 @@ contract VeydriftUniswapResourcePools {
         _pullExact(crystal, CRYSTAL_AMOUNT);
         _pullExact(deuterium, DEUTERIUM_AMOUNT);
 
-        uint256 positionsBefore =
-            IUniswapV4PositionManager(_positionManager()).balanceOf(address(positionLock));
         for (uint256 i = 0; i < 3; i++) {
             tokenIds[i] = _initializeAndMint(veydrift, configs[i], deadline);
             poolIds[i] = ids[i];
             positionTokenIds[i] = tokenIds[i];
         }
-        uint256 positionsAfter =
-            IUniswapV4PositionManager(_positionManager()).balanceOf(address(positionLock));
-        if (positionsAfter != positionsBefore + 3) revert InvalidPosition(0);
+        if (tokenIds[0] == tokenIds[1] || tokenIds[0] == tokenIds[2] || tokenIds[1] == tokenIds[2]) revert InvalidPosition(0);
 
         _returnDust(veydrift);
         _returnDust(metal);
@@ -288,10 +284,20 @@ contract VeydriftUniswapResourcePools {
         if (amount0Used < config.amount0Min || amount1Used < config.amount1Min) {
             revert InvalidPoolConfiguration(type(uint256).max);
         }
-        if (IUniswapV4PositionManager(_positionManager()).ownerOf(tokenId) != address(positionLock))
-        {
-            revert InvalidPosition(tokenId);
+        IUniswapV4PositionManager manager = IUniswapV4PositionManager(_positionManager());
+        if (manager.ownerOf(tokenId) != address(positionLock)) revert InvalidPosition(tokenId);
+        (VeydriftV4PoolKey memory actualKey, uint256 info) = manager.getPoolAndPositionInfo(tokenId);
+        int24 actualTickLower;
+        int24 actualTickUpper;
+        assembly ("memory-safe") {
+            actualTickLower := signextend(2, shr(8, info))
+            actualTickUpper := signextend(2, shr(32, info))
         }
+        if (
+            keccak256(abi.encode(actualKey)) != keccak256(abi.encode(key))
+                || actualTickLower != tickLower || actualTickUpper != tickUpper
+                || manager.getPositionLiquidity(tokenId) != config.liquidity
+        ) revert InvalidPosition(tokenId);
     }
 
     function _pullExact(address token, uint256 amount) private {

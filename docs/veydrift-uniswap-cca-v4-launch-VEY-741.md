@@ -189,7 +189,10 @@ deployment owner after the merged contract-upgrade handoff; Symphony must not pe
    read—then simulate all three configs atomically with `LaunchVeydriftUniswapResources.s.sol`. Before
    execution, grant the resource launcher exact allowances for 150M VEYDRIFT and the three fixed raw
    resource amounts; every allowance must be consumed to zero.
-9. Run `VerifyVeydriftUniswapLaunch.s.sol` read-only. Publish receipts/events, auction and pool IDs,
+9. Run `VerifyVeydriftUniswapLaunch.s.sol` read-only. It verifies the four stored canonical position
+   IDs independently (owner, exact pool key, full-range ticks, nonzero liquidity, and distinctness);
+   unrelated permissionlessly transferred PositionManager NFTs in the immutable lock are ignored.
+   Publish receipts/events, auction and pool IDs,
    NFT IDs/owner, lock terms, actual used/returned amounts, reserve backing, codehashes, and zero
    allowances from the signed manifest.
 

@@ -382,13 +382,7 @@ contract VeydriftUniswapLaunchTest is Test {
         launcher.reconcileMigration(1);
     }
 
-    function testReconciliationRejectsUnrelatedLockedNft() public {
-        VeydriftUniswapCCALauncher.LaunchConfig memory config = _config();
-        vm.startPrank(authority);
-        token.approve(address(launcher), 500_000_000 ether);
-        launcher.launch(address(token), config, keccak256("VEY-741-unrelated"));
-        vm.stopPrank();
-
+    function testUnrelatedLockedNftDoesNotBlockLaunchOrMigrationReconciliation() public {
         VeydriftV4PoolKey memory unrelated = VeydriftV4PoolKey({
             currency0: WETH < address(token) ? WETH : address(token),
             currency1: WETH < address(token) ? address(token) : WETH,
@@ -398,6 +392,12 @@ contract VeydriftUniswapLaunchTest is Test {
         });
         UniswapLaunchMockPositionManager(POSITION_MANAGER)
             .mint(address(lock), unrelated, -887_270, 887_270, 1);
+
+        VeydriftUniswapCCALauncher.LaunchConfig memory config = _config();
+        vm.startPrank(authority);
+        token.approve(address(launcher), 500_000_000 ether);
+        launcher.launch(address(token), config, keccak256("VEY-741-unrelated"));
+        vm.stopPrank();
 
         vm.roll(config.migrationBlock);
         UniswapLaunchMockStrategy(STRATEGY).migrate(AUCTION);
@@ -475,6 +475,16 @@ contract VeydriftUniswapLaunchTest is Test {
         UniswapLaunchMockStrategy(STRATEGY).setMigrationFails(true);
         vm.roll(config.migrationBlock);
         UniswapLaunchMockStrategy(STRATEGY).migrate(AUCTION);
+
+        VeydriftV4PoolKey memory unrelated = VeydriftV4PoolKey({
+            currency0: WETH < address(token) ? WETH : address(token),
+            currency1: WETH < address(token) ? address(token) : WETH,
+            fee: 500,
+            tickSpacing: 10,
+            hooks: address(0)
+        });
+        UniswapLaunchMockPositionManager(POSITION_MANAGER)
+            .mint(address(lock), unrelated, -887_270, 887_270, 1);
 
         assertFalse(launcher.reconcileMigration(0));
         assertTrue(launcher.migrationAttempted());

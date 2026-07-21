@@ -150,6 +150,15 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
             1
         );
 
+        _launchUnrelatedResourcePositions(
+            authority, token, launcher, lock, config.recoveryRecipient
+        );
+        assertEq(
+            IUniswapV4PositionManager(VeydriftUniswapDeployments.POSITION_MANAGER)
+                .balanceOf(address(lock)),
+            4
+        );
+
         VeydriftUniswapForkResource metal =
             new VeydriftUniswapForkResource("Fork Metal", "fvMETAL", authority);
         VeydriftUniswapForkResource crystal =
@@ -182,7 +191,7 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
         assertEq(
             IUniswapV4PositionManager(VeydriftUniswapDeployments.POSITION_MANAGER)
                 .balanceOf(address(lock)),
-            4
+            7
         );
         for (uint256 i = 0; i < 3; i++) {
             assertEq(
@@ -196,6 +205,41 @@ contract VeydriftUniswapLaunchMainnetForkTest is Test {
         assertEq(crystal.allowance(authority, address(resourceLauncher)), 0);
         assertEq(deuterium.allowance(authority, address(resourceLauncher)), 0);
         assertEq(token.balanceOf(address(resourceLauncher)), 0);
+    }
+
+    function _launchUnrelatedResourcePositions(
+        address authority,
+        VeydriftUniswapForkToken token,
+        VeydriftUniswapCCALauncher mainLauncher,
+        VeydriftV4PositionLock lock,
+        address recoveryRecipient
+    ) private {
+        VeydriftUniswapForkResource noiseA =
+            new VeydriftUniswapForkResource("Noise A", "nA", authority);
+        VeydriftUniswapForkResource noiseB =
+            new VeydriftUniswapForkResource("Noise B", "nB", authority);
+        VeydriftUniswapForkResource noiseC =
+            new VeydriftUniswapForkResource("Noise C", "nC", authority);
+        VeydriftUniswapResourcePools noiseLauncher = new VeydriftUniswapResourcePools(
+            authority,
+            recoveryRecipient,
+            IVeydriftMainLaunch(address(mainLauncher)),
+            address(noiseA),
+            address(noiseB),
+            address(noiseC),
+            lock
+        );
+        VeydriftUniswapResourcePools.ResourcePoolConfig[3] memory noiseConfigs;
+        noiseConfigs[0] = _resourceConfig(address(token), address(noiseA), 333_333_000);
+        noiseConfigs[1] = _resourceConfig(address(token), address(noiseB), 222_222_000);
+        noiseConfigs[2] = _resourceConfig(address(token), address(noiseC), 133_333_000);
+        vm.startPrank(authority);
+        token.approve(address(noiseLauncher), 150_000_000 ether);
+        noiseA.approve(address(noiseLauncher), 333_333_000);
+        noiseB.approve(address(noiseLauncher), 222_222_000);
+        noiseC.approve(address(noiseLauncher), 133_333_000);
+        noiseLauncher.launchResourcePools(noiseConfigs, block.timestamp + 30 minutes);
+        vm.stopPrank();
     }
 
     function _resourceConfig(address veydrift, address resource, uint256 resourceAmount)

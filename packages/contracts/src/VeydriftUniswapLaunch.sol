@@ -335,10 +335,6 @@ contract VeydriftUniswapCCALauncher {
                 address(positionLock), positionLock.positionManager(), _positionManager()
             );
         }
-        if (IUniswapV4PositionManager(_positionManager()).balanceOf(address(positionLock)) != 0) {
-            revert UnexpectedBalance(_positionManager(), address(positionLock), 1);
-        }
-
         VeydriftMigratorParameters memory migrator = _migratorParameters(token, config);
         VeydriftAuctionParameters memory auctionParams = _auctionParameters(config);
         bytes memory initializerParams = abi.encode(auctionParams);
@@ -423,11 +419,7 @@ contract VeydriftUniswapCCALauncher {
         if (nextPositionTokenId == expectedPositionTokenId) {
             _assertConsumedMigrationLifecycle();
             migrationAttempted = true;
-            emit MigrationAttempted(
-                auction,
-                false,
-                IUniswapV4PositionManager(_positionManager()).balanceOf(address(positionLock))
-            );
+            emit MigrationAttempted(auction, false, 0);
             return false;
         }
         if (nextPositionTokenId != expectedPositionTokenId + 1) {
@@ -440,15 +432,13 @@ contract VeydriftUniswapCCALauncher {
     /// @dev The official strategy entrypoint is permissionless. Reconciliation is fail-closed and accepts
     ///      success only when the registered initializer was consumed, exactly one approved pool exists,
     ///      and the supplied locked NFT is the full-range position for that exact pool. Passing tokenId zero
-    ///      records the terminal official recovery branch only when the lock contains no position at all.
+    ///      records the terminal official recovery branch only when neither approved main pool exists.
+    ///      Untracked NFTs in the permissionless ERC-721 receiver are deliberately ignored.
     function reconcileMigration(uint256 positionTokenId) external returns (bool positionMinted) {
         if (!launched || migrationAttempted) revert AlreadyFinalized();
         if (block.number < migrationBlock) revert MigrationNotReady(migrationBlock, block.number);
         _assertConsumedMigrationLifecycle();
-        uint256 lockedPositionCount =
-            IUniswapV4PositionManager(_positionManager()).balanceOf(address(positionLock));
         if (positionTokenId == 0) {
-            if (lockedPositionCount != 0) revert InvalidMainPosition(positionTokenId);
             (bool hooklessInitialized, bool strategyHookInitialized,) = _mainPoolTopology();
             if (hooklessInitialized || strategyHookInitialized) {
                 revert InvalidMainPoolTopology(hooklessInitialized, strategyHookInitialized);
@@ -527,12 +517,10 @@ contract VeydriftUniswapCCALauncher {
         migrationAttempted = true;
         migrationSucceeded = true;
         mainPositionTokenId = positionTokenId;
-        uint256 lockedPositionCount =
-            IUniswapV4PositionManager(_positionManager()).balanceOf(address(positionLock));
         if (reconciled) {
-            emit MigrationReconciled(auction, true, positionTokenId, lockedPositionCount);
+            emit MigrationReconciled(auction, true, positionTokenId, 1);
         } else {
-            emit MigrationAttempted(auction, true, lockedPositionCount);
+            emit MigrationAttempted(auction, true, 1);
         }
         return true;
     }
