@@ -14,9 +14,9 @@ import {
   FileRandomnessCommitmentStore,
   RandomnessCommitmentWorker,
   type RandomnessCommitmentChainClient,
+  type RandomnessCommitmentInventory,
   type RandomnessCommitmentStatus,
   type RandomnessCommitmentStore,
-  type RandomnessPendingCommitment,
   type RandomnessRequestEvent
 } from "./randomness";
 
@@ -35,17 +35,14 @@ const randomnessEngineAbi = [
   },
   {
     type: "function",
-    name: "pendingCommitment",
+    name: "randomnessCommitmentInventory",
     stateMutability: "view",
     inputs: [],
-    outputs: [{ type: "bytes32" }]
-  },
-  {
-    type: "function",
-    name: "pendingCommitmentBlock",
-    stateMutability: "view",
-    inputs: [],
-    outputs: [{ type: "uint64" }]
+    outputs: [
+      { type: "bytes32[]", name: "commitments" },
+      { type: "uint64[]", name: "committedAtBlocks" },
+      { type: "uint256", name: "readyCount" }
+    ]
   },
   {
     type: "function",
@@ -75,9 +72,9 @@ const randomnessEngineAbi = [
   },
   {
     type: "function",
-    name: "commitRandomness",
+    name: "commitRandomnessBatch",
     stateMutability: "nonpayable",
-    inputs: [{ type: "bytes32", name: "commitment" }],
+    inputs: [{ type: "bytes32[]", name: "commitments" }],
     outputs: []
   },
   {
@@ -110,7 +107,7 @@ type EngineRequest = {
  */
 export class ViemRandomnessCommitmentChainClient implements RandomnessCommitmentChainClient {
   private scanFloorId = 1n;
-  private scansSinceFullRescan = 0;
+  private lastFullRescanAt = Date.now();
 
   constructor(
     private readonly publicClient: PublicClient,
@@ -128,21 +125,20 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
     return Number(await this.publicClient.getBlockNumber());
   }
 
-  async getPendingCommitment(): Promise<RandomnessPendingCommitment> {
-    const [commitment, committedAtBlock] = await Promise.all([
-      this.publicClient.readContract({
-        abi: randomnessEngineAbi,
-        address: this.engineAddress,
-        functionName: "pendingCommitment"
-      }) as Promise<Hex>,
-      this.publicClient.readContract({
-        abi: randomnessEngineAbi,
-        address: this.engineAddress,
-        functionName: "pendingCommitmentBlock"
-      }) as Promise<bigint>
-    ]);
+  async getCommitmentInventory(): Promise<RandomnessCommitmentInventory> {
+    const [commitments, committedAtBlocks, readyCount] = (await this.publicClient.readContract({
+      abi: randomnessEngineAbi,
+      address: this.engineAddress,
+      functionName: "randomnessCommitmentInventory"
+    })) as readonly [readonly Hex[], readonly bigint[], bigint];
 
-    return { commitment, committedAtBlock: Number(committedAtBlock) };
+    return {
+      commitments: commitments.map((commitment, index) => ({
+        commitment,
+        committedAtBlock: Number(committedAtBlocks[index] ?? 0n)
+      })),
+      readyCommitments: Number(readyCount)
+    };
   }
 
   /**
@@ -160,14 +156,14 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
     return commitment;
   }
 
-  async commitRandomness(commitment: string): Promise<string> {
+  async commitRandomnessBatch(commitments: string[]): Promise<string> {
     const hash = await this.walletClient.writeContract({
       abi: randomnessEngineAbi,
       account: this.account,
       address: this.engineAddress,
       chain: this.chain,
-      functionName: "commitRandomness",
-      args: [commitment as Hex]
+      functionName: "commitRandomnessBatch",
+      args: [commitments as Hex[]]
     });
     await this.confirm(hash);
     return hash;
@@ -193,11 +189,11 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
       functionName: "nextRequestId"
     })) as bigint;
 
-    if (this.scansSinceFullRescan >= fullRandomnessRequestRescanInterval) {
+    const now = Date.now();
+    if (now - this.lastFullRescanAt >= fullRandomnessRequestRescanIntervalMs) {
       this.scanFloorId = 1n;
-      this.scansSinceFullRescan = 0;
+      this.lastFullRescanAt = now;
     }
-    this.scansSinceFullRescan += 1;
 
     const pending: RandomnessRequestEvent[] = [];
     let oldestUnfulfilled = nextRequestId;
@@ -269,13 +265,14 @@ const consoleLogger: RandomnessCommitterLogger = {
   error: (message, error) => console.error(message, error)
 };
 
-const defaultCommitIntervalMs = 15_000;
-const fullRandomnessRequestRescanInterval = 20;
+const defaultCommitIntervalMs = 1_000;
+// Keep the safety rescan wall-clock based. Tying it to ticks made the one-second refill cadence
+// rescan the full, ever-growing request history every 20 seconds instead of every five minutes.
+const fullRandomnessRequestRescanIntervalMs = 5 * 60 * 1_000;
 
 /**
- * Long-running service that drives {@link RandomnessCommitmentWorker} on an interval so a pending
- * commitment is essentially always available on-chain (otherwise attacks/combat revert with
- * NoRandomnessCommitment). Mirrors the start/stop/snapshot shape of the other backend services.
+ * Long-running service that keeps a burst inventory ready on-chain. The one-second interval is a
+ * fallback/recovery cadence; normal attacks consume from the already-ready inventory.
  */
 export class RandomnessCommitterService {
   private readonly enabled: boolean;
@@ -288,6 +285,7 @@ export class RandomnessCommitterService {
   private lastRunAt: string | null = null;
   private lastError: string | null = null;
   private lastStatus: RandomnessCommitmentStatus | null = null;
+  private activeAlerts = new Set<string>();
 
   constructor(
     private readonly config: BackendConfig,
@@ -361,9 +359,13 @@ export class RandomnessCommitterService {
     try {
       const status = await this.worker.tick();
       this.lastStatus = status;
+      const nextAlerts = new Set(status.alerts);
       for (const alert of status.alerts) {
-        this.logger.warn(`[randomness-committer] ${alert}`);
+        if (!this.activeAlerts.has(alert)) {
+          this.logger.warn(`[randomness-committer] ${alert}`);
+        }
       }
+      this.activeAlerts = nextAlerts;
       this.lastError = null;
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);

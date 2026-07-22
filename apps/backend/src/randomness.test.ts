@@ -10,7 +10,7 @@ import {
   secureRandomUint256,
   type RandomnessChainClient,
   type RandomnessCommitmentChainClient,
-  type RandomnessPendingCommitment,
+  type RandomnessCommitmentInventory,
   type RandomnessRequestEvent
 } from "./randomness";
 
@@ -90,13 +90,12 @@ function fakeCommitment(word: bigint): string {
 }
 
 /**
- * Minimal in-memory model of RandomnessEngine's precommit semantics: at most one pending commitment,
- * a one-block consumption delay, and reveal-must-match-commitment.
+ * Minimal in-memory model of RandomnessEngine's FIFO inventory, one-block activation delay, and
+ * reveal-must-match-commitment behavior.
  */
 class FakeRandomnessEngine implements RandomnessCommitmentChainClient {
   block = 1;
-  pendingCommitment = zeroCommitment;
-  pendingCommitmentBlock = 0;
+  inventory: RandomnessCommitmentInventory["commitments"] = [];
   failCommit = false;
   commits: string[] = [];
   private readonly requests = new Map<
@@ -108,24 +107,43 @@ class FakeRandomnessEngine implements RandomnessCommitmentChainClient {
     return this.block;
   }
 
-  async getPendingCommitment(): Promise<RandomnessPendingCommitment> {
-    return { commitment: this.pendingCommitment, committedAtBlock: this.pendingCommitmentBlock };
+  get pendingCommitment(): string {
+    return this.inventory[0]?.commitment ?? zeroCommitment;
+  }
+
+  set pendingCommitment(commitment: string) {
+    if (commitment === zeroCommitment) this.inventory = [];
+    else this.inventory = [{ commitment, committedAtBlock: this.pendingCommitmentBlock }];
+  }
+
+  get pendingCommitmentBlock(): number {
+    return this.inventory[0]?.committedAtBlock ?? 0;
+  }
+
+  set pendingCommitmentBlock(committedAtBlock: number) {
+    if (this.inventory[0]) this.inventory[0].committedAtBlock = committedAtBlock;
+  }
+
+  async getCommitmentInventory(): Promise<RandomnessCommitmentInventory> {
+    return {
+      commitments: this.inventory.map((entry) => ({ ...entry })),
+      readyCommitments: this.inventory.filter((entry) => this.block > entry.committedAtBlock).length
+    };
   }
 
   async computeCommitment(randomWord: bigint): Promise<string> {
     return fakeCommitment(randomWord);
   }
 
-  async commitRandomness(commitment: string): Promise<string> {
+  async commitRandomnessBatch(commitments: string[]): Promise<string> {
     if (this.failCommit) {
       throw new Error("oracle wallet has no gas");
     }
-    if (this.pendingCommitment !== zeroCommitment) {
-      throw new Error("RandomnessCommitmentAlreadyPending");
-    }
-    this.pendingCommitment = commitment;
-    this.pendingCommitmentBlock = this.block;
-    this.commits.push(commitment);
+    this.inventory.push(...commitments.map((commitment) => ({
+      commitment,
+      committedAtBlock: this.block
+    })));
+    this.commits.push(...commitments);
     return "0xcommit";
   }
 
@@ -161,9 +179,8 @@ class FakeRandomnessEngine implements RandomnessCommitmentChainClient {
     if (this.block <= this.pendingCommitmentBlock) {
       throw new Error("RandomnessCommitmentNotActive");
     }
-    this.requests.set(requestId, { commitment: this.pendingCommitment, createdAt, fulfilled: false });
-    this.pendingCommitment = zeroCommitment;
-    this.pendingCommitmentBlock = 0;
+    const consumed = this.inventory.shift()!;
+    this.requests.set(requestId, { commitment: consumed.commitment, createdAt, fulfilled: false });
   }
 
   requestFulfilledWith(requestId: string): bigint | undefined {
@@ -180,7 +197,8 @@ describe("Randomness commitment worker", () => {
     const words = [100n, 200n];
     const worker = new RandomnessCommitmentWorker(engine, store, {
       now,
-      randomWord: () => words.shift() ?? 0n
+      randomWord: () => words.shift() ?? 0n,
+      targetCommitments: 1
     });
 
     // Block 1: nothing pending -> commit the first word.
@@ -211,7 +229,11 @@ describe("Randomness commitment worker", () => {
   test("does not post a second commitment while one is still pending", async () => {
     const engine = new FakeRandomnessEngine();
     const store = new InMemoryRandomnessCommitmentStore();
-    const worker = new RandomnessCommitmentWorker(engine, store, { now, randomWord: () => 321n });
+    const worker = new RandomnessCommitmentWorker(engine, store, {
+      now,
+      randomWord: () => 321n,
+      targetCommitments: 1
+    });
 
     engine.block = 1;
     await worker.tick();
@@ -229,14 +251,22 @@ describe("Randomness commitment worker", () => {
     const store = new InMemoryRandomnessCommitmentStore();
 
     engine.block = 1;
-    const before = new RandomnessCommitmentWorker(engine, store, { now, randomWord: () => 500n });
+    const before = new RandomnessCommitmentWorker(engine, store, {
+      now,
+      randomWord: () => 500n,
+      targetCommitments: 1
+    });
     await before.tick();
 
     engine.block = 2;
     engine.consume("7", 1_000);
 
     // Fresh worker instance (process restart) shares only the persisted store, not in-memory state.
-    const after = new RandomnessCommitmentWorker(engine, store, { now, randomWord: () => 600n });
+    const after = new RandomnessCommitmentWorker(engine, store, {
+      now,
+      randomWord: () => 600n,
+      targetCommitments: 1
+    });
     const status = await after.tick();
 
     expect(engine.requestFulfilledWith("7")).toBe(500n);
@@ -249,7 +279,11 @@ describe("Randomness commitment worker", () => {
     const engine = new FakeRandomnessEngine();
     engine.failCommit = true;
     const store = new InMemoryRandomnessCommitmentStore();
-    const worker = new RandomnessCommitmentWorker(engine, store, { now, randomWord: () => 1n });
+    const worker = new RandomnessCommitmentWorker(engine, store, {
+      now,
+      randomWord: () => 1n,
+      targetCommitments: 1
+    });
 
     engine.block = 1;
     const status = await worker.tick();
@@ -259,7 +293,7 @@ describe("Randomness commitment worker", () => {
     expect(status.alerts).toContain(
       "no pending randomness commitment available; randomness-consuming actions will revert"
     );
-    expect(status.alerts.some((alert) => alert.includes("failed to commit next randomness word"))).toBe(
+    expect(status.alerts.some((alert) => alert.includes("failed to refill randomness commitment inventory"))).toBe(
       true
     );
   });
@@ -267,7 +301,11 @@ describe("Randomness commitment worker", () => {
   test("flags a consumed request whose reveal word was lost", async () => {
     const engine = new FakeRandomnessEngine();
     const store = new InMemoryRandomnessCommitmentStore();
-    const worker = new RandomnessCommitmentWorker(engine, store, { now, randomWord: () => 900n });
+    const worker = new RandomnessCommitmentWorker(engine, store, {
+      now,
+      randomWord: () => 900n,
+      targetCommitments: 1
+    });
 
     // A request that consumed a commitment this worker never tracked (e.g. word permanently lost).
     engine.block = 5;
@@ -280,6 +318,10 @@ describe("Randomness commitment worker", () => {
     expect(engine.requestFulfilledWith("99")).toBeUndefined();
     expect(status.failed).toBe(1);
     expect(status.alerts.some((alert) => alert.includes("no tracked random word"))).toBe(true);
+
+    const repeated = await worker.tick();
+    expect(repeated.failed).toBe(1);
+    expect(worker.failureHistory()).toHaveLength(1);
   });
 
   test("survives a real process restart via the file-backed store", async () => {
@@ -291,7 +333,8 @@ describe("Randomness commitment worker", () => {
       engine.block = 1;
       const before = new RandomnessCommitmentWorker(engine, new FileRandomnessCommitmentStore(filePath), {
         now,
-        randomWord: () => 4242n
+        randomWord: () => 4242n,
+        targetCommitments: 1
       });
       await before.tick();
 
@@ -301,7 +344,8 @@ describe("Randomness commitment worker", () => {
       // New store instance reads the on-disk secret the previous worker wrote.
       const after = new RandomnessCommitmentWorker(engine, new FileRandomnessCommitmentStore(filePath), {
         now,
-        randomWord: () => 9999n
+        randomWord: () => 9999n,
+        targetCommitments: 1
       });
       const status = await after.tick();
 
@@ -315,7 +359,11 @@ describe("Randomness commitment worker", () => {
   test("reveals a fresh word for fulfill-only (no-commitment) requests", async () => {
     const engine = new FakeRandomnessEngine();
     const store = new InMemoryRandomnessCommitmentStore();
-    const worker = new RandomnessCommitmentWorker(engine, store, { now, randomWord: () => 7n });
+    const worker = new RandomnessCommitmentWorker(engine, store, {
+      now,
+      randomWord: () => 7n,
+      targetCommitments: 1
+    });
 
     engine.block = 1;
     // Pre-commit disabled on-chain: request carries the zero commitment.

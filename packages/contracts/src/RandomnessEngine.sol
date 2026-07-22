@@ -17,6 +17,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgradeable {
     bytes32 private constant RANDOMNESS_COMMITMENT_DOMAIN =
         keccak256("veydrift.randomness-commitment.v1");
+    uint256 public constant MAX_COMMITMENT_INVENTORY = 16;
 
     struct Request {
         address requester;
@@ -36,6 +37,13 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
     mapping(address requester => bool authorized) public authorizedRequesters;
     mapping(uint256 requestId => Request request) private _requests;
 
+    // Appended for UUPS storage compatibility. `pendingCommitment` stays the FIFO front so an
+    // upgrade preserves the commitment that was already live on the proxy.
+    mapping(uint256 index => bytes32 commitment) private _queuedCommitments;
+    mapping(uint256 index => uint64 committedAtBlock) private _queuedCommitmentBlocks;
+    uint256 private _queuedCommitmentHead;
+    uint256 private _queuedCommitmentTail;
+
     error UnauthorizedRequester(address requester);
     error UnauthorizedFulfiller(address account);
     error UnknownRequest(uint256 requestId);
@@ -44,6 +52,7 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
     error PurposeMismatch(bytes32 expected, bytes32 actual);
     error NoRandomnessCommitment();
     error RandomnessCommitmentAlreadyPending(bytes32 commitment);
+    error RandomnessCommitmentInventoryFull(uint256 maximum);
     error RandomnessCommitmentNotActive(bytes32 commitment, uint64 committedAtBlock);
     error RandomnessCommitmentMismatch(bytes32 expected, bytes32 actual);
     error ZeroAddress();
@@ -115,14 +124,89 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
     }
 
     function commitRandomness(bytes32 commitment) external whenNotPaused onlyFulfiller {
+        _commitRandomness(commitment);
+    }
+
+    /// @notice Atomically fill future request slots so bursty attacks do not drain randomness
+    ///         between backend polling cycles.
+    function commitRandomnessBatch(bytes32[] calldata commitments)
+        external
+        whenNotPaused
+        onlyFulfiller
+    {
+        for (uint256 i; i < commitments.length; ++i) {
+            _commitRandomness(commitments[i]);
+        }
+    }
+
+    function randomnessCommitmentInventory()
+        external
+        view
+        returns (
+            bytes32[] memory commitments,
+            uint64[] memory committedAtBlocks,
+            uint256 readyCount
+        )
+    {
+        uint256 count = commitmentInventoryCount();
+        commitments = new bytes32[](count);
+        committedAtBlocks = new uint64[](count);
+        if (count == 0) return (commitments, committedAtBlocks, 0);
+
+        commitments[0] = pendingCommitment;
+        committedAtBlocks[0] = pendingCommitmentBlock;
+        if (block.number > pendingCommitmentBlock) ++readyCount;
+
+        uint256 outputIndex = 1;
+        for (uint256 index = _queuedCommitmentHead; index < _queuedCommitmentTail; ++index) {
+            commitments[outputIndex] = _queuedCommitments[index];
+            uint64 committedAtBlock = _queuedCommitmentBlocks[index];
+            committedAtBlocks[outputIndex] = committedAtBlock;
+            if (block.number > committedAtBlock) ++readyCount;
+            ++outputIndex;
+        }
+    }
+
+    function commitmentInventoryCount() public view returns (uint256) {
+        if (pendingCommitment == bytes32(0)) return 0;
+        return 1 + (_queuedCommitmentTail - _queuedCommitmentHead);
+    }
+
+    function readyCommitmentCount() external view returns (uint256 readyCount) {
+        if (pendingCommitment == bytes32(0)) return 0;
+        if (block.number > pendingCommitmentBlock) ++readyCount;
+        for (uint256 index = _queuedCommitmentHead; index < _queuedCommitmentTail; ++index) {
+            if (block.number > _queuedCommitmentBlocks[index]) ++readyCount;
+        }
+    }
+
+    function _commitRandomness(bytes32 commitment) private {
         if (commitment == bytes32(0)) revert ZeroRandomnessCommitment();
-        if (pendingCommitment != bytes32(0)) {
-            revert RandomnessCommitmentAlreadyPending(pendingCommitment);
+        if (_containsCommitment(commitment)) {
+            revert RandomnessCommitmentAlreadyPending(commitment);
+        }
+        if (commitmentInventoryCount() >= MAX_COMMITMENT_INVENTORY) {
+            revert RandomnessCommitmentInventoryFull(MAX_COMMITMENT_INVENTORY);
         }
 
-        pendingCommitment = commitment;
-        pendingCommitmentBlock = uint64(block.number);
-        emit RandomnessCommitted(msg.sender, commitment, uint64(block.number));
+        uint64 committedAtBlock = uint64(block.number);
+        if (pendingCommitment == bytes32(0)) {
+            pendingCommitment = commitment;
+            pendingCommitmentBlock = committedAtBlock;
+        } else {
+            _queuedCommitments[_queuedCommitmentTail] = commitment;
+            _queuedCommitmentBlocks[_queuedCommitmentTail] = committedAtBlock;
+            ++_queuedCommitmentTail;
+        }
+        emit RandomnessCommitted(msg.sender, commitment, committedAtBlock);
+    }
+
+    function _containsCommitment(bytes32 commitment) private view returns (bool) {
+        if (pendingCommitment == commitment) return true;
+        for (uint256 index = _queuedCommitmentHead; index < _queuedCommitmentTail; ++index) {
+            if (_queuedCommitments[index] == commitment) return true;
+        }
+        return false;
     }
 
     function pause() external onlyOwner {
@@ -224,7 +308,15 @@ contract RandomnessEngine is OwnableUpgradeable, PausableUpgradeable, UUPSUpgrad
             revert RandomnessCommitmentNotActive(commitment, pendingCommitmentBlock);
         }
 
-        delete pendingCommitment;
-        delete pendingCommitmentBlock;
+        if (_queuedCommitmentHead < _queuedCommitmentTail) {
+            pendingCommitment = _queuedCommitments[_queuedCommitmentHead];
+            pendingCommitmentBlock = _queuedCommitmentBlocks[_queuedCommitmentHead];
+            delete _queuedCommitments[_queuedCommitmentHead];
+            delete _queuedCommitmentBlocks[_queuedCommitmentHead];
+            ++_queuedCommitmentHead;
+        } else {
+            delete pendingCommitment;
+            delete pendingCommitmentBlock;
+        }
     }
 }

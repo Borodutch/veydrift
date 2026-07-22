@@ -14,7 +14,7 @@ if (requiredProblems.length > 0) {
 }
 
 const service = new RandomnessCommitterService(loaded.config, {
-  intervalMs: Number.parseInt(process.env.VEYDRIFT_RANDOMNESS_POLL_INTERVAL_MS ?? "5000", 10)
+  intervalMs: Number.parseInt(process.env.VEYDRIFT_RANDOMNESS_POLL_INTERVAL_MS ?? "1000", 10)
 });
 
 if (!service.snapshot().enabled) {

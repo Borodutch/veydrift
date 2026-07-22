@@ -47,10 +47,13 @@ export type RandomnessWorkerOptions = {
   maxPendingAgeSeconds?: number;
   now?: () => Date;
   randomWord?: () => bigint;
+  targetCommitments?: number;
 };
 
 const uint256Bytes = 32;
 const defaultMaxPendingAgeSeconds = 5 * 60;
+const defaultTargetCommitments = 8;
+const maximumCommitmentInventory = 16;
 
 export class RandomnessFulfillmentWorker {
   private readonly failures: RandomnessFailureRecord[] = [];
@@ -209,6 +212,11 @@ export type RandomnessPendingCommitment = {
   committedAtBlock: number;
 };
 
+export type RandomnessCommitmentInventory = {
+  commitments: RandomnessPendingCommitment[];
+  readyCommitments: number;
+};
+
 /**
  * Chain client for the full precommit lifecycle (commit -> wait a block -> consume -> reveal ->
  * recommit). Extends the read/fulfill surface of {@link RandomnessChainClient} with the commit-side
@@ -216,9 +224,9 @@ export type RandomnessPendingCommitment = {
  */
 export interface RandomnessCommitmentChainClient {
   getBlockNumber(): Promise<number>;
-  getPendingCommitment(): Promise<RandomnessPendingCommitment>;
+  getCommitmentInventory(): Promise<RandomnessCommitmentInventory>;
   computeCommitment(randomWord: bigint): Promise<string>;
-  commitRandomness(commitment: string): Promise<string>;
+  commitRandomnessBatch(commitments: string[]): Promise<string>;
   listPendingRequests(): Promise<RandomnessRequestEvent[]>;
   fulfillRandomness(requestId: bigint, randomWord: bigint): Promise<string>;
 }
@@ -231,6 +239,9 @@ export type RandomnessCommitmentStatus = {
   lastFulfilledAt: string | null;
   pendingCommitmentAvailable: boolean;
   pendingCommitmentAgeBlocks: number | null;
+  commitmentInventory: number;
+  readyCommitments: number;
+  targetCommitments: number;
   trackedCommitments: number;
   alerts: string[];
 };
@@ -247,10 +258,9 @@ function isZeroCommitment(commitment: string | undefined): boolean {
 
 /**
  * Runs the documented Fulfiller Runbook commit side. Each tick:
- *  1. reveals any request that has consumed a tracked commitment (using the exact committed word);
- *  2. keeps exactly one pending commitment available on-chain, persisting the secret before the
- *     commit tx so a crash can never lose a word that a request later consumes;
- *  3. surfaces operational alerts (no pending commitment, stale requests, unknown on-chain
+ *  1. refills the bounded on-chain inventory before doing any fulfillment work;
+ *  2. reveals requests that consumed tracked commitments;
+ *  3. surfaces operational alerts (low inventory, stale requests, unknown on-chain
  *     commitment, commit failures).
  */
 export class RandomnessCommitmentWorker {
@@ -269,37 +279,38 @@ export class RandomnessCommitmentWorker {
     const records = await this.ensureLoaded();
     const blockNumber = await this.chainClient.getBlockNumber();
 
+    const targetCommitments = Math.min(
+      Math.max(this.options.targetCommitments ?? defaultTargetCommitments, 1),
+      maximumCommitmentInventory
+    );
+    let inventory = await this.chainClient.getCommitmentInventory();
+    this.reconcileInventoryRecords(records, inventory);
+    if (inventory.commitments.length < targetCommitments) {
+      await this.commitNextWords(
+        records,
+        blockNumber,
+        targetCommitments - inventory.commitments.length
+      );
+      inventory = await this.chainClient.getCommitmentInventory();
+      this.reconcileInventoryRecords(records, inventory);
+    }
+
     const pending = await this.chainClient.listPendingRequests();
     const stillPending = await this.revealConsumedCommitments(pending, records);
 
-    const onChain = await this.chainClient.getPendingCommitment();
-    let pendingCommitmentAvailable = !isZeroCommitment(onChain.commitment);
-    let pendingCommitmentAgeBlocks: number | null = pendingCommitmentAvailable
-      ? Math.max(blockNumber - onChain.committedAtBlock, 0)
-      : null;
-
-    if (pendingCommitmentAvailable) {
-      const known = records.find(
-        (record) => record.commitment === normalizeCommitment(onChain.commitment)
-      );
-      if (!known) {
-        this.lastCommitError =
-          "on-chain pending commitment " + onChain.commitment + " has no tracked reveal word";
-      } else {
-        this.lastCommitError = null;
-      }
-    } else {
-      const committed = await this.commitNextWord(records, blockNumber);
-      pendingCommitmentAvailable = committed;
-      pendingCommitmentAgeBlocks = committed ? 0 : null;
-    }
-
     await this.store.save(records);
+
+    const front = inventory.commitments[0];
 
     return this.status({
       pendingRequests: stillPending,
-      pendingCommitmentAvailable,
-      pendingCommitmentAgeBlocks,
+      pendingCommitmentAvailable: inventory.commitments.length > 0,
+      pendingCommitmentAgeBlocks: front
+        ? Math.max(blockNumber - front.committedAtBlock, 0)
+        : null,
+      commitmentInventory: inventory.commitments.length,
+      readyCommitments: inventory.readyCommitments,
+      targetCommitments,
       trackedCommitments: records.length
     });
   }
@@ -320,10 +331,11 @@ export class RandomnessCommitmentWorker {
           randomWord: word.toString(),
           transactionHash: txHash
         });
+        this.clearFailure(request.requestId);
         this.dropRecord(records, request.randomnessCommitment);
       } catch (error) {
         stillPending.push(request);
-        this.failures.push({
+        this.upsertFailure({
           ...request,
           failedAt: this.now().toISOString(),
           error: error instanceof Error ? error.message : String(error)
@@ -332,6 +344,24 @@ export class RandomnessCommitmentWorker {
     }
 
     return stillPending;
+  }
+
+  private upsertFailure(failure: RandomnessFailureRecord): void {
+    const existingIndex = this.failures.findIndex(
+      (entry) => entry.requestId === failure.requestId
+    );
+    if (existingIndex >= 0) {
+      this.failures[existingIndex] = failure;
+    } else {
+      this.failures.push(failure);
+    }
+  }
+
+  private clearFailure(requestId: string): void {
+    const existingIndex = this.failures.findIndex((entry) => entry.requestId === requestId);
+    if (existingIndex >= 0) {
+      this.failures.splice(existingIndex, 1);
+    }
   }
 
   private resolveRevealWord(
@@ -354,33 +384,56 @@ export class RandomnessCommitmentWorker {
     return BigInt(record.word);
   }
 
-  private async commitNextWord(
+  private async commitNextWords(
     records: RandomnessCommitmentRecord[],
-    blockNumber: number
-  ): Promise<boolean> {
+    blockNumber: number,
+    quantity: number
+  ): Promise<void> {
     try {
-      const word = this.randomWord();
-      const commitment = normalizeCommitment(await this.chainClient.computeCommitment(word));
+      const staged = records.filter((record) => record.committedAtBlock === null).slice(0, quantity);
+      while (staged.length < quantity) {
+        const word = this.randomWord();
+        const commitment = normalizeCommitment(await this.chainClient.computeCommitment(word));
+        if (records.some((record) => record.commitment === commitment)) continue;
+        const record: RandomnessCommitmentRecord = {
+          commitment,
+          word: word.toString(),
+          committedAtBlock: null,
+          createdAt: this.now().toISOString()
+        };
+        records.push(record);
+        staged.push(record);
+      }
 
-      // Persist the secret before broadcasting so a crash between save and confirmation cannot strand
-      // a request that later consumes this commitment.
-      const record: RandomnessCommitmentRecord = {
-        commitment,
-        word: word.toString(),
-        committedAtBlock: null,
-        createdAt: this.now().toISOString()
-      };
-      records.push(record);
+      // Persist every reveal secret before broadcasting the batch.
       await this.store.save(records);
 
-      await this.chainClient.commitRandomness(commitment);
-      record.committedAtBlock = blockNumber;
+      await this.chainClient.commitRandomnessBatch(staged.map((record) => record.commitment));
+      for (const record of staged) record.committedAtBlock = blockNumber;
       this.lastCommitError = null;
-      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.lastCommitError = "failed to commit next randomness word: " + message;
-      return false;
+      this.lastCommitError = "failed to refill randomness commitment inventory: " + message;
+    }
+  }
+
+  private reconcileInventoryRecords(
+    records: RandomnessCommitmentRecord[],
+    inventory: RandomnessCommitmentInventory
+  ): void {
+    const unknown: string[] = [];
+    for (const onChain of inventory.commitments) {
+      const normalized = normalizeCommitment(onChain.commitment);
+      const record = records.find((entry) => entry.commitment === normalized);
+      if (record) {
+        record.committedAtBlock = onChain.committedAtBlock;
+      } else {
+        unknown.push(normalized);
+      }
+    }
+    if (unknown.length > 0) {
+      this.lastCommitError =
+        "on-chain randomness commitments have no tracked reveal words: " + unknown.join(", ");
     }
   }
 
@@ -405,6 +458,9 @@ export class RandomnessCommitmentWorker {
     pendingRequests: RandomnessRequestEvent[];
     pendingCommitmentAvailable: boolean;
     pendingCommitmentAgeBlocks: number | null;
+    commitmentInventory: number;
+    readyCommitments: number;
+    targetCommitments: number;
     trackedCommitments: number;
   }): RandomnessCommitmentStatus {
     const nowSeconds = Math.floor(this.now().getTime() / 1000);
@@ -418,6 +474,14 @@ export class RandomnessCommitmentWorker {
     if (!input.pendingCommitmentAvailable) {
       alerts.push(
         "no pending randomness commitment available; randomness-consuming actions will revert"
+      );
+    }
+    if (input.commitmentInventory < input.targetCommitments) {
+      alerts.push(
+        "randomness commitment inventory below target: "
+          + input.commitmentInventory
+          + "/"
+          + input.targetCommitments
       );
     }
     if (
@@ -449,6 +513,9 @@ export class RandomnessCommitmentWorker {
       lastFulfilledAt: this.fulfilled[this.fulfilled.length - 1]?.fulfilledAt ?? null,
       pendingCommitmentAvailable: input.pendingCommitmentAvailable,
       pendingCommitmentAgeBlocks: input.pendingCommitmentAgeBlocks,
+      commitmentInventory: input.commitmentInventory,
+      readyCommitments: input.readyCommitments,
+      targetCommitments: input.targetCommitments,
       trackedCommitments: input.trackedCommitments,
       alerts
     };

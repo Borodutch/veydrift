@@ -194,7 +194,7 @@ contract RandomnessEngineTest is Test {
         consumer.start(nextPurpose);
     }
 
-    function testOnlyFulfillerCanCommitAndPendingCommitmentCannotBeReplaced() public {
+    function testOnlyFulfillerCanCommitAndDuplicateCommitmentCannotBeQueued() public {
         bytes32 firstCommitment = engine.randomnessCommitment(1);
         bytes32 secondCommitment = engine.randomnessCommitment(2);
 
@@ -208,12 +208,68 @@ contract RandomnessEngineTest is Test {
         engine.commitRandomness(firstCommitment);
 
         vm.prank(fulfiller);
+        engine.commitRandomness(secondCommitment);
+
+        vm.prank(fulfiller);
         vm.expectRevert(
             abi.encodeWithSelector(
                 RandomnessEngine.RandomnessCommitmentAlreadyPending.selector, firstCommitment
             )
         );
-        engine.commitRandomness(secondCommitment);
+        engine.commitRandomness(firstCommitment);
+    }
+
+    function testBatchCommitmentsStayReadyAndAreConsumedInOrder() public {
+        bytes32[] memory commitments = new bytes32[](3);
+        commitments[0] = engine.randomnessCommitment(11);
+        commitments[1] = engine.randomnessCommitment(22);
+        commitments[2] = engine.randomnessCommitment(33);
+
+        vm.prank(fulfiller);
+        engine.commitRandomnessBatch(commitments);
+
+        assertEq(engine.commitmentInventoryCount(), 3);
+        assertEq(engine.readyCommitmentCount(), 0);
+        (bytes32[] memory inventory, uint64[] memory blocks, uint256 ready) =
+            engine.randomnessCommitmentInventory();
+        assertEq(inventory.length, 3);
+        assertEq(blocks.length, 3);
+        assertEq(inventory[0], commitments[0]);
+        assertEq(inventory[1], commitments[1]);
+        assertEq(inventory[2], commitments[2]);
+        assertEq(ready, 0);
+
+        vm.roll(block.number + 1);
+        assertEq(engine.readyCommitmentCount(), 3);
+
+        consumer.start(purpose);
+        assertEq(engine.request(consumer.requestId()).randomnessCommitment, commitments[0]);
+        assertEq(engine.pendingCommitment(), commitments[1]);
+        assertEq(engine.commitmentInventoryCount(), 2);
+
+        consumer.start(keccak256("battle:planet:7:mission:4"));
+        assertEq(engine.request(consumer.requestId()).randomnessCommitment, commitments[1]);
+        assertEq(engine.pendingCommitment(), commitments[2]);
+        assertEq(engine.commitmentInventoryCount(), 1);
+    }
+
+    function testCommitmentInventoryIsBounded() public {
+        bytes32[] memory commitments = new bytes32[](engine.MAX_COMMITMENT_INVENTORY());
+        for (uint256 i; i < commitments.length; ++i) {
+            commitments[i] = engine.randomnessCommitment(i + 1);
+        }
+        vm.prank(fulfiller);
+        engine.commitRandomnessBatch(commitments);
+
+        bytes32 overflowCommitment = engine.randomnessCommitment(100);
+        uint256 maximum = engine.MAX_COMMITMENT_INVENTORY();
+        vm.prank(fulfiller);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RandomnessEngine.RandomnessCommitmentInventoryFull.selector, maximum
+            )
+        );
+        engine.commitRandomness(overflowCommitment);
     }
 
     function testOwnerCanExplicitlyAcceptCentralizedFulfillmentMode() public {

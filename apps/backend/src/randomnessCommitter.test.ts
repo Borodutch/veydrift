@@ -4,7 +4,7 @@ import { loadBackendConfig, type BackendConfig } from "./config";
 import {
   InMemoryRandomnessCommitmentStore,
   type RandomnessCommitmentChainClient,
-  type RandomnessPendingCommitment,
+  type RandomnessCommitmentInventory,
   type RandomnessRequestEvent
 } from "./randomness";
 import { RandomnessCommitterService } from "./randomnessCommitter";
@@ -24,15 +24,13 @@ const baseConfig: BackendConfig = {
   randomnessEngineAddress: "0x51a5faba3fa903edcecdebceea3865bd63d359bb"
 };
 
-const zeroCommitment = "0x" + "0".repeat(64);
-
 // Silent logger so deliberate failure-path tests don't print to the CI output scanner.
 const silentLogger = { warn: () => {}, error: () => {} };
 
 /** In-memory engine simulating the commit-reveal lifecycle for service-level tests. */
 class FakeEngineChainClient implements RandomnessCommitmentChainClient {
   block = 100;
-  pending: RandomnessPendingCommitment = { commitment: zeroCommitment, committedAtBlock: 0 };
+  inventory: RandomnessCommitmentInventory["commitments"] = [];
   requests: RandomnessRequestEvent[] = [];
   committed: string[] = [];
   fulfilled: Array<{ requestId: bigint; randomWord: bigint }> = [];
@@ -41,8 +39,11 @@ class FakeEngineChainClient implements RandomnessCommitmentChainClient {
     return this.block;
   }
 
-  async getPendingCommitment(): Promise<RandomnessPendingCommitment> {
-    return this.pending;
+  async getCommitmentInventory(): Promise<RandomnessCommitmentInventory> {
+    return {
+      commitments: this.inventory.map((entry) => ({ ...entry })),
+      readyCommitments: this.inventory.filter((entry) => this.block > entry.committedAtBlock).length
+    };
   }
 
   async computeCommitment(randomWord: bigint): Promise<string> {
@@ -50,12 +51,12 @@ class FakeEngineChainClient implements RandomnessCommitmentChainClient {
     return "0x" + randomWord.toString(16).padStart(64, "0");
   }
 
-  async commitRandomness(commitment: string): Promise<string> {
-    if (this.pending.commitment !== zeroCommitment) {
-      throw new Error("RandomnessCommitmentAlreadyPending");
-    }
-    this.pending = { commitment, committedAtBlock: this.block };
-    this.committed.push(commitment);
+  async commitRandomnessBatch(commitments: string[]): Promise<string> {
+    this.inventory.push(...commitments.map((commitment) => ({
+      commitment,
+      committedAtBlock: this.block
+    })));
+    this.committed.push(...commitments);
     return "0xcommit";
   }
 
@@ -86,7 +87,7 @@ describe("RandomnessCommitterService", () => {
     expect(service.snapshot().status).toBeNull();
   });
 
-  test("commits a word when none is pending and surfaces the resulting status", async () => {
+  test("fills the burst inventory and reports readiness after activation", async () => {
     const engine = new FakeEngineChainClient();
     const service = new RandomnessCommitterService(baseConfig, {
       logger: silentLogger,
@@ -99,9 +100,16 @@ describe("RandomnessCommitterService", () => {
 
     await service.tick();
 
-    expect(engine.committed.length).toBe(1);
+    expect(engine.committed.length).toBe(8);
+    expect(service.snapshot().status?.commitmentInventory).toBe(8);
+    expect(service.snapshot().status?.readyCommitments).toBe(0);
+
+    engine.block += 1;
+    await service.tick();
     const snapshot = service.snapshot();
     expect(snapshot.status?.pendingCommitmentAvailable).toBe(true);
+    expect(snapshot.status?.readyCommitments).toBe(8);
+    expect(snapshot.status?.targetCommitments).toBe(8);
     expect(snapshot.status?.alerts ?? []).not.toContain(
       "no pending randomness commitment available; randomness-consuming actions will revert"
     );
@@ -120,7 +128,7 @@ describe("RandomnessCommitterService", () => {
     const committedWord = BigInt(committedCommitment); // computeCommitment is identity-hex in the fake
 
     // The game consumes the commitment: a request now carries it, and on-chain pending clears.
-    engine.pending = { commitment: zeroCommitment, committedAtBlock: 0 };
+    engine.inventory.shift();
     engine.block = 105;
     engine.requests = [
       {
@@ -138,7 +146,7 @@ describe("RandomnessCommitterService", () => {
 
     expect(engine.fulfilled).toEqual([{ requestId: 7n, randomWord: committedWord }]);
     // After revealing and clearing the request, it recommits so a commitment stays pending.
-    expect(engine.committed.length).toBe(2);
+    expect(engine.committed.length).toBe(9);
     expect(restarted.snapshot().status?.pendingCommitmentAvailable).toBe(true);
   });
 
@@ -156,5 +164,36 @@ describe("RandomnessCommitterService", () => {
     await service.tick();
 
     expect(service.snapshot().lastError).toContain("rpc down");
+  });
+
+  test("logs a persistent readiness alert once until it clears", async () => {
+    const engine = new FakeEngineChainClient();
+    const warnings: string[] = [];
+    const store = new InMemoryRandomnessCommitmentStore();
+    const service = new RandomnessCommitterService(baseConfig, {
+      logger: { warn: (message) => warnings.push(message), error: () => {} },
+      chainClient: engine,
+      store
+    });
+
+    engine.commitRandomnessBatch = async () => {
+      throw new Error("oracle wallet has no gas");
+    };
+    await service.tick();
+    const firstWarningCount = warnings.length;
+    expect(firstWarningCount).toBeGreaterThan(0);
+
+    await service.tick();
+    expect(warnings).toHaveLength(firstWarningCount);
+
+    engine.commitRandomnessBatch = async (commitments) => {
+      engine.inventory.push(...commitments.map((commitment) => ({
+        commitment,
+        committedAtBlock: engine.block
+      })));
+      return "0xcommit";
+    };
+    await service.tick();
+    expect(service.snapshot().status?.alerts).toEqual([]);
   });
 });
