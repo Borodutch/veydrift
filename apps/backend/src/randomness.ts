@@ -331,10 +331,11 @@ export class RandomnessCommitmentWorker {
           randomWord: word.toString(),
           transactionHash: txHash
         });
+        this.clearFailure(request.requestId);
         this.dropRecord(records, request.randomnessCommitment);
       } catch (error) {
         stillPending.push(request);
-        this.failures.push({
+        this.upsertFailure({
           ...request,
           failedAt: this.now().toISOString(),
           error: error instanceof Error ? error.message : String(error)
@@ -343,6 +344,24 @@ export class RandomnessCommitmentWorker {
     }
 
     return stillPending;
+  }
+
+  private upsertFailure(failure: RandomnessFailureRecord): void {
+    const existingIndex = this.failures.findIndex(
+      (entry) => entry.requestId === failure.requestId
+    );
+    if (existingIndex >= 0) {
+      this.failures[existingIndex] = failure;
+    } else {
+      this.failures.push(failure);
+    }
+  }
+
+  private clearFailure(requestId: string): void {
+    const existingIndex = this.failures.findIndex((entry) => entry.requestId === requestId);
+    if (existingIndex >= 0) {
+      this.failures.splice(existingIndex, 1);
+    }
   }
 
   private resolveRevealWord(

@@ -318,6 +318,10 @@ describe("Randomness commitment worker", () => {
     expect(engine.requestFulfilledWith("99")).toBeUndefined();
     expect(status.failed).toBe(1);
     expect(status.alerts.some((alert) => alert.includes("no tracked random word"))).toBe(true);
+
+    const repeated = await worker.tick();
+    expect(repeated.failed).toBe(1);
+    expect(worker.failureHistory()).toHaveLength(1);
   });
 
   test("survives a real process restart via the file-backed store", async () => {

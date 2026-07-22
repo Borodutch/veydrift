@@ -107,7 +107,7 @@ type EngineRequest = {
  */
 export class ViemRandomnessCommitmentChainClient implements RandomnessCommitmentChainClient {
   private scanFloorId = 1n;
-  private scansSinceFullRescan = 0;
+  private lastFullRescanAt = Date.now();
 
   constructor(
     private readonly publicClient: PublicClient,
@@ -189,11 +189,11 @@ export class ViemRandomnessCommitmentChainClient implements RandomnessCommitment
       functionName: "nextRequestId"
     })) as bigint;
 
-    if (this.scansSinceFullRescan >= fullRandomnessRequestRescanInterval) {
+    const now = Date.now();
+    if (now - this.lastFullRescanAt >= fullRandomnessRequestRescanIntervalMs) {
       this.scanFloorId = 1n;
-      this.scansSinceFullRescan = 0;
+      this.lastFullRescanAt = now;
     }
-    this.scansSinceFullRescan += 1;
 
     const pending: RandomnessRequestEvent[] = [];
     let oldestUnfulfilled = nextRequestId;
@@ -266,7 +266,9 @@ const consoleLogger: RandomnessCommitterLogger = {
 };
 
 const defaultCommitIntervalMs = 1_000;
-const fullRandomnessRequestRescanInterval = 20;
+// Keep the safety rescan wall-clock based. Tying it to ticks made the one-second refill cadence
+// rescan the full, ever-growing request history every 20 seconds instead of every five minutes.
+const fullRandomnessRequestRescanIntervalMs = 5 * 60 * 1_000;
 
 /**
  * Long-running service that keeps a burst inventory ready on-chain. The one-second interval is a
@@ -283,6 +285,7 @@ export class RandomnessCommitterService {
   private lastRunAt: string | null = null;
   private lastError: string | null = null;
   private lastStatus: RandomnessCommitmentStatus | null = null;
+  private activeAlerts = new Set<string>();
 
   constructor(
     private readonly config: BackendConfig,
@@ -356,9 +359,13 @@ export class RandomnessCommitterService {
     try {
       const status = await this.worker.tick();
       this.lastStatus = status;
+      const nextAlerts = new Set(status.alerts);
       for (const alert of status.alerts) {
-        this.logger.warn(`[randomness-committer] ${alert}`);
+        if (!this.activeAlerts.has(alert)) {
+          this.logger.warn(`[randomness-committer] ${alert}`);
+        }
       }
+      this.activeAlerts = nextAlerts;
       this.lastError = null;
     } catch (error) {
       this.lastError = error instanceof Error ? error.message : String(error);

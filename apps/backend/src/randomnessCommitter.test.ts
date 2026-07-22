@@ -165,4 +165,35 @@ describe("RandomnessCommitterService", () => {
 
     expect(service.snapshot().lastError).toContain("rpc down");
   });
+
+  test("logs a persistent readiness alert once until it clears", async () => {
+    const engine = new FakeEngineChainClient();
+    const warnings: string[] = [];
+    const store = new InMemoryRandomnessCommitmentStore();
+    const service = new RandomnessCommitterService(baseConfig, {
+      logger: { warn: (message) => warnings.push(message), error: () => {} },
+      chainClient: engine,
+      store
+    });
+
+    engine.commitRandomnessBatch = async () => {
+      throw new Error("oracle wallet has no gas");
+    };
+    await service.tick();
+    const firstWarningCount = warnings.length;
+    expect(firstWarningCount).toBeGreaterThan(0);
+
+    await service.tick();
+    expect(warnings).toHaveLength(firstWarningCount);
+
+    engine.commitRandomnessBatch = async (commitments) => {
+      engine.inventory.push(...commitments.map((commitment) => ({
+        commitment,
+        committedAtBlock: engine.block
+      })));
+      return "0xcommit";
+    };
+    await service.tick();
+    expect(service.snapshot().status?.alerts).toEqual([]);
+  });
 });
