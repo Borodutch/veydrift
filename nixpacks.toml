@@ -1,10 +1,12 @@
 [phases.setup]
 nixPkgs = ["nodejs_22", "bun"]
 nixLibs = ["gcc-unwrapped"]
-aptPkgs = ["libstdc++6", "fontconfig", "fonts-dejavu-core"]
 
 [phases.install]
-cmds = ["NODE_ENV=development bun install --frozen-lockfile && cd apps/frontend && NODE_ENV=development bun install --frozen-lockfile --force && rm -rf /root/.cache/nix"]
+cmds = [
+  "sudo find /etc/apt -type f \\( -name '*.list' -o -name '*.sources' \\) -exec sed -i 's|http://|https://|g' {} + && sudo apt-get update && sudo apt-get install -y --no-install-recommends libstdc++6 fontconfig fonts-dejavu-core",
+  "NODE_ENV=development bun install --frozen-lockfile && cd apps/frontend && NODE_ENV=development bun install --frozen-lockfile --force && rm -rf /root/.cache/nix",
+]
 
 [phases.build]
 cmds = ["cd apps/frontend && bun run build && rm -rf /root/.bun/install/cache /tmp/*"]
